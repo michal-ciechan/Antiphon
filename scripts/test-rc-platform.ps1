@@ -42,7 +42,7 @@ function New-C1323Nodes {
 function Get-C1323Required($Nodes, $Exclusions) {
     return @($Nodes | Where-Object {
         $n = [pscustomobject]@{ ClassName = $_.class; Type = $_.class; Method = $_.method; Categories = $_.categories }
-        (Get-NightlyDiscoveryDisposition $n $Exclusions -ProfileAware).Disposition -eq 'required'
+        ([Antiphon.Nightly.NightlyCensus]::Disposition($n, $Exclusions, $true)).Disposition -eq 'required'
     } | ForEach-Object uid)
 }
 
@@ -437,7 +437,7 @@ function Test-C1415_SkipExclusions {
     foreach ($platform in @('windows', 'linux')) {
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', 'antiphon', $platform))
         $expected = if ($platform -eq 'windows') { $windowsOnly } else { @() }
-        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+        $census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $exclusions, $true)
         $excluded = @($census.Excluded | ForEach-Object { $_.uid })
         Assert-C1323 ((Same-C1323Set $excluded $expected) -and @($census.Excluded | Where-Object owner -cne 'CARD-1415').Count -eq 0) "c1415-$platform-excludes-exactly" ($excluded -join ',')
         $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
@@ -511,7 +511,7 @@ function Test-LinuxSessionRunnerAdmission {
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', 'session-runner', $platform))
         $expectedRequired = if ($platform -ceq 'windows') { @('portable-sibling') } else { @($nodes.Uid) }
         $expectedExcluded = if ($platform -ceq 'windows') { $linuxUids } else { @() }
-        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+        $census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $exclusions, $true)
         Assert-C1323 ($census.Ok -and (Same-C1323Set @($census.Required.uid) $expectedRequired) -and (Same-C1323Set @($census.Excluded.uid) $expectedExcluded)) "linux-runner-$platform-census" "required=$($census.RequiredCount) excluded=$($census.ExcludedCount)"
         Assert-C1323 (@($census.Excluded | Where-Object { -not $_.reason -or -not $_.owner }).Count -eq 0) "linux-runner-$platform-attribution"
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)

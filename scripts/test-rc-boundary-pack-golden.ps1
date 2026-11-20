@@ -95,7 +95,7 @@ function New-FixtureNode([string]$Type, [string]$Method = 'Run', [int]$Row = 0) 
         Method=$Method; Uid="$Type/$Method/$Row"; Categories=@(); Excluded=$false }
 }
 function Get-FixtureLeaves([object[]]$Nodes) {
-    foreach ($class in @($Nodes | Group-Object { Get-NightlyBareClassIdentity -Name $_.ClassName })) {
+    foreach ($class in @($Nodes | Group-Object { [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($_.ClassName) })) {
         [pscustomobject]@{ id='all-profile-1'; classes=@($class.Name); exactFilter=''; nodes=@() }
     }
 }
@@ -157,7 +157,7 @@ function Get-FixtureGoldens {
 function Get-RealTreeInputs([object[]]$Nodes) {
     $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($node in $Nodes) {
-        $bare = Get-NightlyBareClassIdentity $node.ClassName
+        $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($node.ClassName)
         if (-not $byClass.ContainsKey($bare)) { $byClass.Add($bare, [Collections.Generic.List[object]]::new()) }
         $byClass[$bare].Add($node)
     }

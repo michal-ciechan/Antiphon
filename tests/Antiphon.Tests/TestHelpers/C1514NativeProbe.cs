@@ -47,7 +47,7 @@ internal static class C1514NativeProbe
         New-Item -ItemType Directory -Path $diag | Out-Null
         $discovery = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @($probe,'--list-tests','--no-progress','--no-ansi','--diagnostic','--diagnostic-output-directory',$diag) -WorkingDirectory $work -TimeoutMilliseconds 30000 -Environment $environment -LogPath (Join-Path $work 'discovery.log')
         if ($discovery.ExitCode -ne 0 -or $discovery.TimedOut) { throw 'probe discovery failed' }
-        $parsed = ConvertFrom-NightlyDiagnosticLog -Path (Get-NightlyLatestDiagnosticLog -Directory $diag) -Kind discovery
+        $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($diag), 'discovery')
         $nodes = @($parsed.Nodes)
         if ($nodes.Count -ne 9) { throw ('probe discovery count: ' + $nodes.Count) }
         $classes = @('TimingProbeTests','TimingPlainProbeTests','TimingAsyncProbeTests')

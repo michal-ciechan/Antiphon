@@ -125,7 +125,7 @@ foreach ($node in $nodes) {
     $native = @($inventory | Where-Object { $_.s -ceq $node.s -and $_.c -ceq $node.c -and $_.m -ceq $node.m })
     $workflow = @($manual | Where-Object { $_.c -ceq $node.c -and $_.m -ceq $node.m })
     $windowsRows = $exclusions[$node.s + "|windows"]
-    $d = Get-NightlyDiscoveryDisposition $node $windowsRows -ProfileAware
+    $d = [Antiphon.Nightly.NightlyCensus]::Disposition($node, $windowsRows, $true)
     $wantExcluded = ($native.Count -gt 0 -or $workflow.Count -gt 0)
     if (($d.Disposition -ceq 'excluded') -ne $wantExcluded) { $wrong += $node.Uid }
     if ($wantExcluded -and ($d.Owner -cne @($native + $workflow)[0].owner -or [string]::IsNullOrWhiteSpace($d.Reason))) { $wrong += ($node.Uid+':attribution') }
@@ -136,7 +136,7 @@ foreach ($node in $nodes) {
         $terminal += [pscustomobject]@{ Identity=$node.Uid; Outcome=$(if ($wantExcluded) { 'NotExecuted' } else { 'Passed' }) }
     }
     $linuxRows = $exclusions[$node.s + "|linux"]
-    $ld = Get-NightlyDiscoveryDisposition $node $linuxRows -ProfileAware
+    $ld = [Antiphon.Nightly.NightlyCensus]::Disposition($node, $linuxRows, $true)
     if (($ld.Disposition -ceq 'excluded') -ne ($workflow.Count -gt 0)) { $linuxMissing += $node.Uid }
 }
 Assert-C487 ($missing.Count -eq 0 -and $nodes.Count -gt 50) 'CoverageAdmission source-roster' ($missing -join ',')

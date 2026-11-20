@@ -732,8 +732,8 @@ function Test-C599_MetadataParsers {
 
     # Profile-aware: the SAME nodes now resolve by declared rows, not by category.
     foreach ($n in @($doc.Nodes)) {
-        $defaultExcluded = Test-NightlyDiscoveryExcluded -Node $n
-        $profileExcluded = Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $exclusions -ProfileAware
+        $defaultExcluded = [Antiphon.Nightly.NightlyCensus]::Excluded($n, $null, $false)
+        $profileExcluded = [Antiphon.Nightly.NightlyCensus]::Excluded($n, $exclusions, $true)
         if ([string]$n.Uid -eq 'u1') {
             Assert-C487 -Cond ($defaultExcluded -and (-not $profileExcluded)) -Name 'C599 MetadataParsers OptIn excluded by default but required in a profile' -Detail ('default=' + $defaultExcluded + ' profile=' + $profileExcluded)
         } else {
@@ -741,8 +741,8 @@ function Test-C599_MetadataParsers {
         }
     }
 
-    $jsonUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($doc.Nodes) -ProfileExclusions $exclusions -ProfileAware)
-    $diagUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($diag, @($doc.Nodes)[1]) -ProfileExclusions $exclusions -ProfileAware)
+    $jsonUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($doc.Nodes), @(), $exclusions, $true))
+    $diagUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($diag, @($doc.Nodes)[1]), @(), $exclusions, $true))
     Assert-C487 -Cond ((($jsonUids | Sort-Object) -join ',') -eq (($diagUids | Sort-Object) -join ',')) -Name 'C599 MetadataParsers json and diagnostic required uid sets are identical' -Detail (($jsonUids -join ',') + ' vs ' + ($diagUids -join ','))
 
     # A truncated record is an error, never a silently dropped row.
@@ -763,7 +763,7 @@ function Test-C599_EligibilityCensus {
     $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', '', 'windows'))
     $nodes = New-C599Nodes
 
-    $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+    $census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $exclusions, $true)
     Assert-C487 -Cond ($census.Ok) -Name 'C599 EligibilityCensus profile census is well formed' -Detail ($census.Duplicates -join ',')
     Assert-C487 -Cond (($census.RequiredCount + $census.ExcludedCount) -eq $nodes.Count) -Name 'C599 EligibilityCensus every uid has exactly one disposition' -Detail ('req=' + $census.RequiredCount + ' exc=' + $census.ExcludedCount + ' total=' + $nodes.Count)
 
@@ -780,23 +780,23 @@ function Test-C599_EligibilityCensus {
 
     # A brand new unclassified case must stay required, not inherit manual status.
     $withNew = New-C599Nodes -WithUnclassified
-    $census2 = Get-NightlyDiscoveryCensus -DiscoveryNodes $withNew -ProfileExclusions $exclusions -ProfileAware
+    $census2 = [Antiphon.Nightly.NightlyCensus]::Census($withNew, $exclusions, $true)
     $required2 = @($census2.Required | ForEach-Object { [string]$_.uid })
     Assert-C487 -Cond ($required2 -contains 'u-brand-new') -Name 'C599 EligibilityCensus a new unclassified case stays required' -Detail ($required2 -join ',')
     Assert-C487 -Cond ($census2.Digest -ne $census.Digest) -Name 'C599 EligibilityCensus a new case changes the census digest' -Detail $census2.Digest
 
     # The default nightly lane is unchanged by any of this.
-    $defaultCensus = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
+    $defaultCensus = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $null, $false)
     $defaultRequired = @($defaultCensus.Required | ForEach-Object { [string]$_.uid })
     Assert-C487 -Cond ($defaultRequired -notcontains 'u-optin-1') -Name 'C599 EligibilityCensus default lane still excludes OptIn' -Detail ($defaultRequired -join ',')
     Assert-C487 -Cond ($defaultRequired -contains 'u-mixed-live') -Name 'C599 EligibilityCensus default lane ignores profile method rows' -Detail ($defaultRequired -join ',')
 
-    $dupCensus = Get-NightlyDiscoveryCensus -DiscoveryNodes @($nodes[0], $nodes[0]) -ProfileExclusions $exclusions -ProfileAware
+    $dupCensus = [Antiphon.Nightly.NightlyCensus]::Census(@($nodes[0], $nodes[0]), $exclusions, $true)
     Assert-C487 -Cond ($dupCensus.Duplicates.Count -eq 1) -Name 'C599 EligibilityCensus duplicate uid is reported' -Detail ($dupCensus.Duplicates -join ',')
 
-    $allExcluded = Get-NightlyDiscoveryCensus -DiscoveryNodes @($nodes[0]) -ProfileExclusions $exclusions -ProfileAware
+    $allExcluded = [Antiphon.Nightly.NightlyCensus]::Census(@($nodes[0]), $exclusions, $true)
     Assert-C487 -Cond ((-not $allExcluded.Ok) -and $allExcluded.RequiredCount -eq 0) -Name 'C599 EligibilityCensus zero required uids is not ok' -Detail ([string]$allExcluded.RequiredCount)
-    Assert-C487 -Cond ($census.Digest -eq (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware).Digest) -Name 'C599 EligibilityCensus digest is stable for the same roster' -Detail $census.Digest
+    Assert-C487 -Cond ($census.Digest -eq ([Antiphon.Nightly.NightlyCensus]::Census($nodes, $exclusions, $true)).Digest) -Name 'C599 EligibilityCensus digest is stable for the same roster' -Detail $census.Digest
 }
 
 function Test-C599_ExpandedCoverage {

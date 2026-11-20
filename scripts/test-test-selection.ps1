@@ -62,7 +62,7 @@ function Test-C1313_MixedDeliveryInventory {
     $exclusions=@([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'agents-pty', 'windows'))
     $fake=[pscustomobject]@{Uid='fake';ClassName='Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests';Type='ClaudeVerifiedDeliveryTests';Method='Fake_evidence_appears_then_submit_completes_a_turn';Categories=@()}
     $real=[pscustomobject]@{Uid='real';ClassName=$fake.ClassName;Type=$fake.Type;Method='Real_evidence_appears_then_submit_completes_a_turn';Categories=@('OptIn','Headed')}
-    Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition $fake $exclusions -ProfileAware).Disposition -eq 'required' -and (Get-NightlyDiscoveryDisposition $real $exclusions -ProfileAware).Disposition -eq 'excluded') -Name 'C1313 fake-required-real-excluded'
+    Assert-C487 -Cond (([Antiphon.Nightly.NightlyCensus]::Disposition($fake, $exclusions, $true)).Disposition -eq 'required' -and ([Antiphon.Nightly.NightlyCensus]::Disposition($real, $exclusions, $true)).Disposition -eq 'excluded') -Name 'C1313 fake-required-real-excluded'
     $catalog=Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     $oracles=@($catalog.sets|Where-Object {$_.id -in @('provider.codex.vendor-offline','provider.grok.vendor-offline')})
     Assert-C487 -Cond ($oracles.Count -eq 2 -and @($oracles|Where-Object {$_.resources.api -ne 'none' -or $_.resources.vendorExecutable -eq 'none' -or $_.eligibility -ne 'manual'}).Count -eq 0) -Name 'C1313 vendor-oracles-are-not-fakes'

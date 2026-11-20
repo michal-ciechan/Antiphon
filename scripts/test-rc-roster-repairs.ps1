@@ -27,8 +27,8 @@ function Test-Mirror {
     $nodes += New-Node 'CardWorktreeMirrorCleanupTests' 'FuturePortableSibling' 'sibling'
     $win = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
     $linux = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'linux'))
-    $wc = Get-NightlyDiscoveryCensus $nodes $win -ProfileAware
-    $lc = Get-NightlyDiscoveryCensus $nodes $linux -ProfileAware
+    $wc = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $win, $true)
+    $lc = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $linux, $true)
     Assert-C487 ($wc.RequiredCount -eq 1 -and $wc.ExcludedCount -eq 27 -and $lc.RequiredCount -eq 28 -and $lc.ExcludedCount -eq 0) 'C1561 platform required UID sets' ($wc | ConvertTo-Json -Depth 3 -Compress)
     $owned = @($wc.Excluded | Where-Object { $_.owner -eq 'CARD-1561' -and $_.reason -like '*Linux*' })
     Assert-C487 ($owned.Count -eq 27) 'C1561 all excluded UIDs have Linux obligation'
@@ -42,8 +42,8 @@ function Test-Explicit {
     $offline.ClassName = $live.ClassName
     foreach ($platform in @('windows','linux')) {
         $ex = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', $platform))
-        $c = Get-NightlyDiscoveryCensus @($live,$offline) $ex -ProfileAware
-        $d = Get-NightlyDiscoveryDisposition $live $ex -ProfileAware
+        $c = [Antiphon.Nightly.NightlyCensus]::Census(@($live,$offline), $ex, $true)
+        $d = [Antiphon.Nightly.NightlyCensus]::Disposition($live, $ex, $true)
         Assert-C487 ($c.RequiredCount -eq 1 -and $c.ExcludedCount -eq 1 -and $d.Owner -eq 'CARD-1566' -and $d.Reason -like '*WQ-3*') ('C1566 owned manual disposition ' + $platform)
         $chunks = @(Get-NightlyProfileLaunchPlan @($live,$offline) @([pscustomobject]@{ id='all'; classes=@() }) $ex)
         Assert-C487 ($chunks.Count -eq 1 -and $chunks[0].exactFilter -like '*/OfflineSibling') ('C1566 only offline sibling launched ' + $platform)

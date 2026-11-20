@@ -99,7 +99,7 @@ function Get-NCFixtureNodes([int]$Take) {
             $i++
             for ($k = 0; $k -lt $count; $k++) {
                 $class = $fields[0]
-                $bare = Get-NightlyBareClassIdentity $class
+                $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($class)
                 $dot = $bare.LastIndexOf('.')
                 $categories = @(); if ($fields[1] -ceq 'S') { $categories = @('Slow') }
                 $nodes.Add([pscustomobject]@{ ClassName = $class; Namespace = $bare.Substring(0, $dot); Type = $class.Substring($dot + 1)
@@ -126,10 +126,10 @@ function Test-NCCoreMatchesFallback {
     $classes = @($nodes | ForEach-Object { $_.ClassName } | Select-Object -Unique | Select-Object -First 9)
 
     $r = Invoke-NCBothWays { [ordered]@{
-        census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $rules -ProfileAware
-        defaultCensus = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
-        required = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $nodes -RequiredClasses $classes -ProfileExclusions $rules -ProfileAware)
-        defaultRequired = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $nodes)
+        census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $rules, $true)
+        defaultCensus = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $null, $false)
+        required = @([Antiphon.Nightly.NightlyCensus]::RequiredUids($nodes, $classes, $rules, $true))
+        defaultRequired = @([Antiphon.Nightly.NightlyCensus]::RequiredUids($nodes, @(), $null, $false))
     } } 'census'
     Assert-NC $r.Core 'coreLoaded' 'NightlyCore.cs did not compile or load'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'census' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
@@ -140,7 +140,7 @@ function Test-NCCoreMatchesFallback {
 
     $r = Invoke-NCBothWays {
         $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
-        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $rules -ProfileAware
+        $view = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, $rules, $true)
         [ordered]@{ excluded = @($view.Excluded); byClass = $view.ByClass; required = $view.RequiredUids; classes = $view.Classes; census = $view.Census.Digest }
     } 'indexView'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'indexView' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
@@ -294,7 +294,7 @@ function Test-NCDiagnosticsMatchFallback {
     $r = Invoke-NCBothWays { [ordered]@{
         cells = @(foreach ($v in $values) { ConvertTo-TestPhaseCsvCell -Value $v })
         native = @(Get-TestPhaseNativeIds -Text $stdout); nativeEmpty = @(Get-TestPhaseNativeIds -Text '')
-        bag = @(Get-NightlyIdentityBagKey -ClassName 'A.B.C(x)' -TypeName 'T' -MethodName 'M', (Get-NightlyIdentityBagKey -ClassName ' ' -TypeName 'N.Type' -MethodName 'Run'))
+        bag = @([Antiphon.Nightly.NightlyClassNames]::BagKey('A.B.C(x)', 'T', @('M', ([Antiphon.Nightly.NightlyClassNames]::BagKey(' ', 'N.Type', 'Run')))))
         outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($o) })
         sha = Get-NightlyFileSha256 -Path $hashed
         csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
@@ -577,12 +577,12 @@ function Test-NCVerdictsMatchFallback {
     } @('failed-row', 'zero-terminal-rows', 'sha-mismatch')
     $r = Invoke-NCBothWays {
         $entry.Views.Clear()
-        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows')) -ProfileAware
+        $view = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows')), $true)
         [ordered]@{
             perClassSet = @(foreach ($set in $classSets) { [ordered]@{
                 cross = Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set)
                 present = Test-NightlyRequiredClassesPresent -TerminalRows $trx.ToArray() -RequiredClasses $set
-                required = @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $set)
+                required = @([Antiphon.Nightly.NightlyDiscoveryIndex]::RequiredUids($view, $set))
             } })
             expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $terminal.ToArray() -RequiredUids @($nodes | Select-Object -First 300 | ForEach-Object { $_.Uid })
             expandedNull = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $null -RequiredUids $null
@@ -939,7 +939,7 @@ function Get-NCLaunchGroupsGolden {
     $node = { param($class, $method, $uid, $slow) [pscustomobject]@{ ClassName = $class; Method = $method; Uid = $uid; Categories = $(if ($slow) { @('Slow') } else { @() }) } }
     $many = { param($class, $methods, $count, $slow) foreach ($m in $methods) { for ($k = 0; $k -lt $count; $k++) { & $node $class $m ($class + '/' + $m + '/' + $k) $slow } } }
     $leaf = { param($id, $class, $exact, $nodes) [pscustomobject]@{ id = $id; classes = @($class); exactFilter = $exact; nodes = @($nodes) } }
-    $leaves = { param($nodes, $prefix) $seen = [Collections.Generic.List[string]]::new(); foreach ($n in $nodes) { $b = Get-NightlyBareClassIdentity $n.ClassName; if (-not $seen.Contains($b)) { $seen.Add($b) } }
+    $leaves = { param($nodes, $prefix) $seen = [Collections.Generic.List[string]]::new(); foreach ($n in $nodes) { $b = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($n.ClassName); if (-not $seen.Contains($b)) { $seen.Add($b) } }
         $i = 0; foreach ($b in $seen) { $i++; & $leaf ($prefix + '-profile-' + $i) $b '' @() } }
     $project = { param($name, $plan) [ordered]@{ scenario = $name; groups = @(foreach ($g in $plan) {
         $uids = @($g.nodes | ForEach-Object { [string]$_.Uid })
@@ -1146,7 +1146,7 @@ function Test-NCPlannedManifestMatchesFallback {
         $s = ''; for ($k = $rng.Next(1, 5); $k -gt 0; $k--) { $s += $alpha[$rng.Next($alpha.Count)] }
         & $node ('Ns.' + $s) $(if ($i % 4 -eq 0) { 'Ns.Ex' } else { 'Ns.C' })
     })
-    $r = Invoke-NCBothWays { Get-NightlyDiscoveryCensus -DiscoveryNodes $tieNodes -ProfileExclusions $rules -ProfileAware } 'censusTies'
+    $r = Invoke-NCBothWays { [Antiphon.Nightly.NightlyCensus]::Census($tieNodes, $rules, $true) } 'censusTies'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'censusTies' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
@@ -1188,9 +1188,9 @@ function Test-NCDiscoveryViewKey {
     # One entry: equal content in new objects gets the same view object, different content another one.
     $nodes = @(Get-NCFixtureNodes 400)
     $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
-    $first = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions (& $fresh) -ProfileAware
-    if (-not [object]::ReferenceEquals($first, (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions (& $fresh) -ProfileAware))) { $bad.Add('equal content: second view') }
-    if ([object]::ReferenceEquals($first, (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $lists.fewer -ProfileAware))) { $bad.Add('different content: same view') }
+    $first = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, (& $fresh), $true)
+    if (-not [object]::ReferenceEquals($first, ([Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, (& $fresh), $true)))) { $bad.Add('equal content: second view') }
+    if ([object]::ReferenceEquals($first, ([Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, $lists.fewer, $true)))) { $bad.Add('different content: same view') }
     if ($entry.Views.Count -ne 2) { $bad.Add('views ' + $entry.Views.Count) }
     $node = { param($state) [pscustomobject]@{ Uid = 'u'; State = $state } }
     $sets = [ordered]@{
@@ -1244,9 +1244,9 @@ function Test-NCDiscoveryCacheAgrees {
     $kept = [IO.File]::GetLastWriteTimeUtc($path)
     Assert-NightlyCoreAvailable 'Test-NCDiscoveryCacheAgrees'
     [Antiphon.Nightly.NightlyClassNames]::ClearHashes()
-    $index = New-NightlyDiscoveryIndex
-    $first = Get-NightlyDiscoveryIndexEntry -Index $index -Path $path
-    $firstUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($first.Document.Nodes))
+    $index = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
+    $first = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($index, $path)
+    $firstUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($first.Document.Nodes), @(), $null, $false))
     $before = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
     $len1 = (Get-Item -LiteralPath $path).Length
     Assert-NC (($firstUids -join ',') -ceq 'u1' -and $u1.Length -eq $u2.Length -and $len1 -eq $utf8.GetBytes($u1).Length) 'primed' ('uids=' + ($firstUids -join ',') + ' chars=' + $u1.Length + '/' + $u2.Length)
@@ -1258,10 +1258,10 @@ function Test-NCDiscoveryCacheAgrees {
     [IO.File]::SetLastWriteTimeUtc($path, $kept)
     $len2 = (Get-Item -LiteralPath $path).Length
     $after = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
-    $again = Get-NightlyDiscoveryIndexEntry -Index $index -Path $path
-    $againUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($again.Document.Nodes))
+    $again = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($index, $path)
+    $againUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($again.Document.Nodes), @(), $null, $false))
     $disk = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($path)
-    $diskUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($disk.Nodes))
+    $diskUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($disk.Nodes), @(), $null, $false))
     $row = [pscustomobject]@{ Uid = 'u1'; Outcome = 'Passed'; ClassName = 'N.C'; Type = 'C'; Method = 'M' }
     $cachedCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($again.Document.Nodes) -TerminalRows @($row) -RequiredUids $againUids
     $diskCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($disk.Nodes) -TerminalRows @($row) -RequiredUids $diskUids

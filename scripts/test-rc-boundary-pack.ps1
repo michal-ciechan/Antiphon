@@ -13,7 +13,7 @@ function Node([string]$Type, [string]$Method = 'Run', [int]$Row = 0) {
         Method=$Method; Uid="$Type/$Method/$Row"; Categories=@(); Excluded=$false }
 }
 function Leaves([object[]]$Nodes) {
-    foreach ($class in @($Nodes | Group-Object { Get-NightlyBareClassIdentity -Name $_.ClassName })) {
+    foreach ($class in @($Nodes | Group-Object { [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($_.ClassName) })) {
         [pscustomobject]@{ id='all-profile-1'; classes=@($class.Name); exactFilter=''; nodes=@() }
     }
 }

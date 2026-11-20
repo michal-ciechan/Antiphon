@@ -701,7 +701,7 @@ function Test-C1044_MultilineDiscovery {
         catch { $errorText = (Get-NightlyRefusalText $_) }
         Assert-C487 -Cond (Test-C1044Inventory -Nodes $nodes) -Name ('C1044 ' + $variant + ' complete inventory') -Detail $errorText
         Assert-C487 -Cond (Test-C1044Metadata -Nodes $nodes) -Name ('C1044 ' + $variant + ' exact metadata')
-        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
+        $census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $null, $false)
         Assert-C487 -Cond ($census.Ok -and $census.RequiredCount -eq 8 -and $census.ExcludedCount -eq 1 -and
             $census.Excluded[0].uid -ceq 'C487.Probe.Manual.1.1.ManualOne.1.1.0') -Name ('C1044 ' + $variant + ' dispositions')
         Assert-C487 -Cond ($census.Digest -ceq $expectedDigest) -Name ('C1044 ' + $variant + ' sorted digest')
@@ -900,10 +900,10 @@ function Test-C1044_ParserCompatibility {
     $roundtrip = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($jsonPath, 'discovery')
     Assert-C487 -Cond ((Test-C1044Metadata -Nodes $roundtrip.Nodes) -and $roundtrip.AssemblyHash -ceq 'fixture-hash') -Name 'C1044 discovery JSON roundtrip'
     $manual = @($nodes | Where-Object { $_.Type -eq 'Manual' })[0]
-    Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition -Node $manual).Disposition -eq 'excluded') -Name 'C1044 default OptIn excluded'
-    Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition -Node $manual -ProfileAware).Disposition -eq 'required') -Name 'C1044 profile OptIn required'
+    Assert-C487 -Cond (([Antiphon.Nightly.NightlyCensus]::Disposition($manual, $null, $false)).Disposition -eq 'excluded') -Name 'C1044 default OptIn excluded'
+    Assert-C487 -Cond (([Antiphon.Nightly.NightlyCensus]::Disposition($manual, $null, $true)).Disposition -eq 'required') -Name 'C1044 profile OptIn required'
     $exclusions = @([pscustomobject]@{ Class = 'Manual'; Methods = @('ManualOne'); Reason = 'manual fixture'; Owner = 'C1044' })
-    $disposition = Get-NightlyDiscoveryDisposition -Node $manual -ProfileAware -ProfileExclusions $exclusions
+    $disposition = [Antiphon.Nightly.NightlyCensus]::Disposition($manual, $exclusions, $true)
     Assert-C487 -Cond ($disposition.Disposition -eq 'excluded' -and $disposition.Reason -eq 'manual fixture' -and
         $disposition.Owner -eq 'C1044') -Name 'C1044 explicit profile exclusion'
     Assert-C1044Rejects -Name 'unsupported TUnit refuses' -Text ($golden.Replace("Version: '1.44.0.0'", "Version: '9.0.0.0'")) -Pattern 'version-drift'
@@ -1428,9 +1428,9 @@ function Test-C1391_ClassMatch {
     $agentsSuffix = 'Antiphon.Tests.Agents.Widget(Factory)'
     $requiredApp = 'Antiphon.Tests.Application.Widget'
     $requiredAgents = 'Antiphon.Tests.Agents.Widget'
-    $sameNs = Test-NightlyClassAssigned -ClassName $appSuffix -TypeName '' -RequiredClasses @($requiredApp)
-    $otherNs = Test-NightlyClassAssigned -ClassName $agentsSuffix -TypeName '' -RequiredClasses @($requiredApp)
-    $unqualified = Test-NightlyClassAssigned -ClassName $appSuffix -TypeName '' -RequiredClasses @('Widget')
+    $sameNs = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($appSuffix, '', @($requiredApp))
+    $otherNs = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($agentsSuffix, '', @($requiredApp))
+    $unqualified = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($appSuffix, '', @('Widget'))
     $present = Test-NightlyRequiredClassesPresent -TerminalRows @([pscustomobject]@{ ClassName = $appSuffix }) -RequiredClasses @($requiredApp, $requiredAgents)
     $missing = @($present.Missing)
     $agentsMissing = $missing -ccontains $requiredAgents
@@ -1740,12 +1740,12 @@ function Test-C1397_RcAntiphonLaunchGroups {
         $fixtureOk = ($fixtureArg.Contains('C1397FixtureTests') -and -not $fixtureArg.Contains('C1397Factory'))
         $unsafeOr = $false
         foreach ($chunk in $orChunks) {
-            $bare0 = Get-NightlyBareClassIdentity -Name ([string]@($chunk.classes)[0])
+            $bare0 = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]@($chunk.classes)[0]))
             $dot = $bare0.LastIndexOf('.')
             $ns = $bare0.Substring(0, $dot)
             $types = @($typesByNs[$ns])
             foreach ($c in @($chunk.classes)) {
-                $type = (Get-NightlyBareClassIdentity -Name ([string]$c)).Substring($ns.Length + 1)
+                $type = ([Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$c))).Substring($ns.Length + 1)
                 foreach ($other in $types) {
                     if ($other.Length -gt $type.Length -and $other.StartsWith($type, [StringComparison]::Ordinal)) { $unsafeOr = $true }
                 }
@@ -1871,7 +1871,7 @@ function Test-C1404_Group10MeasuredBudget {
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         if ($exclusions.Count -eq 0) { [void]$reasons.Add('rc-exclusions') }
         foreach ($node in $nodes) {
-            if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { [void]$reasons.Add('excluded:' + $node.Uid) }
+            if ([Antiphon.Nightly.NightlyCensus]::Excluded($node, $exclusions, $true)) { [void]$reasons.Add('excluded:' + $node.Uid) }
         }
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
@@ -1983,7 +1983,7 @@ function Test-C1584_E2EExpandedBudget {
         }
         $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'e2e', 'windows'))
-        $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded $_ $exclusions -ProfileAware) })
+        $required = @($nodes | Where-Object { -not ([Antiphon.Nightly.NightlyCensus]::Excluded($_, $exclusions, $true)) })
         $reasons = New-Object System.Collections.Generic.List[string]
         # Exact census of the committed roster. The added identity is
         # C467_RetainedEvidenceCompletesCleanup, the portable stalled-receipt
@@ -2030,7 +2030,7 @@ function Test-C1584_E2EExpandedBudget {
             if ($hits.Count -eq 0) { throw 'empty emitted selection' }
             $seconds = 0.0
             foreach ($node in $hits) {
-                if (Test-NightlyDiscoveryExcluded $node $exclusions -ProfileAware) { $reasons.Add('selected-exclusion') }
+                if ([Antiphon.Nightly.NightlyCensus]::Excluded($node, $exclusions, $true)) { $reasons.Add('selected-exclusion') }
                 $seconds += $bounds[$node.ClassName]
                 $covered[$node.Uid] = 1 + [int]$covered[$node.Uid]
             }
@@ -2384,9 +2384,9 @@ function Test-C1410_MeasuredCostGroups {
         $byBare = @{}
         $required = New-Object System.Collections.Generic.List[object]
         foreach ($node in $nodeArray) {
-            if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { continue }
+            if ([Antiphon.Nightly.NightlyCensus]::Excluded($node, $exclusions, $true)) { continue }
             [void]$required.Add($node)
-            $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
+            $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$node.ClassName))
             if (-not $byBare.ContainsKey($bare)) { $byBare[$bare] = New-Object System.Collections.Generic.List[object] }
             [void]$byBare[$bare].Add($node)
         }
@@ -2436,7 +2436,7 @@ function Test-C1410_MeasuredCostGroups {
             $methods = @{}
             $placed = @{}
             foreach ($node in $hits) {
-                $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
+                $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$node.ClassName))
                 $unit = Get-C1410Seconds -Node $node -Bare $bare
                 $seconds += $unit
                 if ($bare -cne $synthetic) { $suiteSeconds += $unit }
@@ -2604,7 +2604,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     $indexedReads = 0
     $indexed = @()
     try {
-        $index = New-NightlyDiscoveryIndex
+        $index = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
         foreach ($l in $launches) {
             $before = $script:C1419Reads
             $v = Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root -Index $index
@@ -2627,7 +2627,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
             -Name 'C1419 launch verdicts reconcile only their own classes' -Detail ($text -join ' || ')
 
         # The same bytes at a new path per launch (the per-chunk discovery shape).
-        $copyIndex = New-NightlyDiscoveryIndex
+        $copyIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
         $before = $script:C1419Reads
         foreach ($l in $launches[0..2]) {
             $copy = Join-Path $l.Dir 'launch.discovery.json'
@@ -2638,7 +2638,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
 
         # Profile lane: the exclusion census and its required set come from the index.
         $hold = @([pscustomobject]@{ Class = 'ClassC'; Methods = @('Two'); Reason = 'held'; Owner = 'C1419' })
-        $profileIndex = New-NightlyDiscoveryIndex
+        $profileIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
         $held = New-C1419Launch -Root $root -Name 'held' -Class 'ClassC' -Methods @('One')
         $before = $script:C1419Reads
         $pv = @()
@@ -2682,7 +2682,8 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
         }
         $makers = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
             $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $a.Left.VariablePath.UserPath -eq $argName -and
-            @($a.Right.FindAll({ param($b) $b -is [System.Management.Automation.Language.CommandAst] -and $b.GetCommandName() -eq 'New-NightlyDiscoveryIndex' }, $true)).Count -gt 0 }, $true))
+            @($a.Right.FindAll({ param($b) $b -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $b.Static -and
+                $b.Member.Value -eq 'new' -and $b.Expression.TypeName.FullName -eq 'Antiphon.Nightly.NightlyDiscoveryIndex' }, $true)).Count -gt 0 }, $true))
         $loop = $null
         if ($calls.Count -eq 1) {
             $p = $calls[0].Parent

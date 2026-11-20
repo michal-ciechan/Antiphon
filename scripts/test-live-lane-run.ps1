@@ -23,10 +23,11 @@ $repo = Split-Path $PSScriptRoot -Parent
 # the same core, and handed in.
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
+    'scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs','scripts/lib/Antiphon.Nightly/DiagnosticLog.cs','scripts/lib/Antiphon.Nightly/DiagScan.cs',
     'scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = 'ddfd0a19e6c5634f8660f9b7f67836917b1a80874b7503bcdd29b5fc10812f82'
+$script:PinnedInputDigest = 'aaf2c078924cd8a4c776009f8f91027ee16a8b94254cce80a3603aa63f65d937'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
@@ -269,7 +270,7 @@ function Read-Census($root) {
             @{ Uid='sentinel-excluded'; ClassName='Antiphon.Tests.Agents.ClaudeAdapterIntegrationTests'; Method='RoundTrip'; Categories=@('Integration') }
         )
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'antiphon', 'linux'))
-        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+        $census = [Antiphon.Nightly.NightlyCensus]::Census($nodes, $exclusions, $true)
         return [ordered]@{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
     }
     $ps = [PowerShell]::Create()
@@ -306,10 +307,10 @@ function Test-WrapperOnlyPaidManifest {
     Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     [IO.File]::WriteAllText($policyPath, $original)
     $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
-    # A reader edit that excludes every node (the census is compiled, so the edit replaces the function that calls it),
-    # and an edit to the compiled census source alone, which only the pin can see.
-    [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryCensus { param([object[]]`$DiscoveryNodes, `$ProfileExclusions = `$null, [switch]`$ProfileAware) return [pscustomobject]@{ Required = @(); Excluded = @(`$DiscoveryNodes | ForEach-Object { [pscustomobject]@{ uid = [string]`$_.Uid } }) } }`n")
-    $readerEdit = (Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot)
+    # The census is compiled, so no edit to the PowerShell reader or to the compiled census source changes a census
+    # read in this process: only the pin can see either.
+    [IO.File]::AppendAllText($reader, "`n# fixture edit`n")
+    $readerEdit = -not (Test-ProtectedInputs $beforeRoot)
     $coreRoot = Join-Path $ResultsDirectory 'pinned-core'
     Copy-ProtectedInputs $repo $coreRoot
     $coreEdit = Test-ProtectedInputs $coreRoot

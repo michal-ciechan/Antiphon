@@ -225,240 +225,6 @@ function Test-NightlyFreshEvidence {
     return [pscustomobject]@{ Ok = $true; Reason = '' }
 }
 
-function Get-NightlyBareClassIdentity {
-    # TUnit 1.44 GetClassTypeName appends constructor arguments, for example
-    # AgentTuiApiTests(AgentTuiApiWebAppFactory). The treenode filter path uses
-    # the metadata class name and does not include that suffix, so chunking,
-    # filters, roster matching, policy rows, and TRX keys share the bare name.
-    param([string]$Name)
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $Name }
-    $open = $Name.IndexOf('(')
-    if ($open -gt 0 -and $Name.EndsWith(')', [StringComparison]::Ordinal)) {
-        return $Name.Substring(0, $open)
-    }
-    return $Name
-}
-
-function Get-NightlyClassNameFromIdentity {
-    param([string]$ClassName)
-    if ([string]::IsNullOrWhiteSpace($ClassName)) { return $ClassName }
-    $bare = Get-NightlyBareClassIdentity -Name $ClassName
-    $parts = $bare.Split('.')
-    return $parts[$parts.Length - 1]
-}
-
-function Test-NightlyClassAssigned {
-    param([string]$ClassName, [string]$TypeName, [string[]]$RequiredClasses)
-    if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $true }
-    # A required class names the node's ClassName or Type, or the bare form of either, ignoring case.
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Test-NightlyClassAssigned' }
-    return [Antiphon.Nightly.NightlyClassNames]::Assigned($ClassName, $TypeName, $RequiredClasses)
-}
-
-function Test-NightlyDiscoveryExcluded {
-    <#
-      CARD-0599 D-5: in the default nightly lane OptIn/Explicit still excludes, which is
-      what -ProfileExclusions absent means. When a profile supplies its dispositions, the
-      raw category is preserved on the node but no longer decides: only a declared
-      class (or class+method) row excludes. An unclassified node therefore stays required
-      and fails the census rather than silently inheriting manual status.
-    #>
-    param($Node, $ProfileExclusions = $null, [switch]$ProfileAware)
-    if ($null -eq $Node) { return $false }
-    if ($ProfileAware) {
-        return ([Antiphon.Nightly.NightlyPolicy]::NodeExcluded($Node, $ProfileExclusions))
-    }
-    if ([bool]$Node.Excluded) { return $true }
-    foreach ($c in @($Node.Categories)) {
-        if ([string]$c -eq 'OptIn' -or [string]$c -eq 'Explicit') { return $true }
-    }
-    return $false
-}
-
-function Get-NightlyDiscoveryDisposition {
-    <#
-      D-5: every discovery UID must resolve to exactly one disposition. Returns
-      'required' or 'excluded' carrying the declaring policy row's reason and owner, so
-      the manifest can record why a node was left out and under whose ownership.
-    #>
-    param($Node, $ProfileExclusions = $null, [switch]$ProfileAware)
-    if (-not $ProfileAware) {
-        if (Test-NightlyDiscoveryExcluded -Node $Node) {
-            return [pscustomobject]@{ Disposition = 'excluded'; Reason = 'category-optin'; Owner = 'nightly-default'; Uid = [string]$Node.Uid }
-        }
-        return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
-    }
-    $simple = Get-NightlyClassNameFromIdentity -ClassName ([string]$Node.ClassName)
-    if ([string]::IsNullOrWhiteSpace($simple)) { $simple = [string]$Node.Type }
-    foreach ($row in @($ProfileExclusions)) {
-        $cls = [string]$row.Class
-        if ([string]::IsNullOrWhiteSpace($cls)) { continue }
-        $match = [string]::Equals($cls, $simple, [StringComparison]::OrdinalIgnoreCase) -or
-                 [string]::Equals($cls, [string]$Node.ClassName, [StringComparison]::OrdinalIgnoreCase)
-        if (-not $match) { continue }
-        $methods = @($row.Methods)
-        if ($methods.Count -eq 0) {
-            return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
-        }
-        foreach ($m in $methods) {
-            if ([string]::Equals([string]$m, [string]$Node.Method, [StringComparison]::OrdinalIgnoreCase)) {
-                return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
-            }
-        }
-    }
-    return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
-}
-
-function Get-NightlyDiscoveryDispositionIndexed {
-    <# Get-NightlyDiscoveryDisposition (profile-aware) against a New-NightlyProfileExclusionIndex: only the rows
-       that match the node's class are walked, in policy order, so the first declaring row still wins. #>
-    param($Index, $Node)
-    return $Index.Disposition($Node)
-}
-
-function New-NightlyClassAssignmentCache {
-    <# Test-NightlyClassAssigned depends only on (ClassName, TypeName) for fixed RequiredClasses: a caller that tests
-       many nodes keeps one of these and asks once per class. #>
-    param([string[]]$RequiredClasses = @())
-    Assert-NightlyCoreAvailable 'New-NightlyClassAssignmentCache'
-    return [Antiphon.Nightly.ClassAssignment]::new($RequiredClasses)
-}
-
-function Test-NightlyClassAssignedCached {
-    param($Cache, [string]$ClassName, [string]$TypeName)
-    return $Cache.Assigned($ClassName, $TypeName)
-}
-
-function Get-NightlyDiscoveryCensus {
-    <#
-      D-5: the expanded-UID manifest. Every discovered node gets exactly one
-      disposition; duplicates and unclassified nodes are reported, never dropped.
-    #>
-    param([object[]]$DiscoveryNodes, $ProfileExclusions = $null, [switch]$ProfileAware)
-    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryCensus'
-    # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
-    $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
-    $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
-    $required = [Collections.Generic.List[object]]::new()
-    $excluded = [Collections.Generic.List[object]]::new()
-    $duplicates = [Collections.Generic.List[object]]::new()
-    $required.AddRange([object[]]$rows.Required)
-    $excluded.AddRange([object[]]$rows.Excluded)
-    $duplicates.AddRange([object[]]$rows.Duplicates)
-    # Sorted-UID digest (OrdinalIgnoreCase, Ordinal tie-break), compiled.
-    $digest = [Antiphon.Nightly.PlannedManifestCheck]::CensusDigest([object[]]$rows.Required, [object[]]$rows.Excluded)
-    return [pscustomobject]@{
-        Ok = ($duplicates.Count -eq 0 -and $required.Count -gt 0)
-        Required = $required.ToArray()
-        Excluded = $excluded.ToArray()
-        Duplicates = $duplicates.ToArray()
-        Digest = $digest
-        RequiredCount = $required.Count
-        ExcludedCount = $excluded.Count
-    }
-}
-
-function Get-NightlyRequiredDiscoveryUids {
-    param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
-    Assert-NightlyCoreAvailable 'Get-NightlyRequiredDiscoveryUids'
-    $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
-    return [Antiphon.Nightly.NightlyDiscovery]::RequiredUids(@($DiscoveryNodes), $RequiredClasses, $exclusionIndex)
-}
-
-<#
-  CARD-1419: every launch of a native suite is judged against the same discovery,
-  so a suite parses and censuses it once. A launch then looks up only its own
-  classes instead of walking every discovered node again. Results equal the
-  per-node functions above; the index only stops repeating them.
-#>
-function New-NightlyDiscoveryIndex {
-    return [pscustomobject]@{
-        Entries = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    }
-}
-
-function Get-NightlyDiscoveryIndexEntry {
-    # Keyed by content, not path: the profile lane reuses one file, the default
-    # lane writes the same discovery beside each launch, and a rewrite is new bytes.
-    param($Index, [string]$Path)
-    $key = ''
-    if ((Test-NightlyDriveFile $Path) -or (-not (Test-NightlyDriveDirectory $Path) -and (Test-Path -LiteralPath $Path -PathType Leaf))) {
-        Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexEntry'
-        # The content digest: a queued write's bytes, else the disk digest reused while the file is provably
-        # unchanged (EvidenceFiles.CachedSha256).
-        $key = [Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)
-        if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
-    }
-    $document = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($Path)
-    # The nodes whose State -eq 'InProgress', in order (DiscoveryViewKey.InProgressNodes). It returns null for a
-    # node list it cannot read as that loop would (a State or a node that is itself a list): the loop then.
-    $inProgressNodes = [Antiphon.Nightly.DiscoveryViewKey]::InProgressNodes($document.Nodes)
-    if ($null -eq $inProgressNodes) {
-        $inProgress = [Collections.Generic.List[object]]::new()
-        foreach ($n in @($document.Nodes)) {
-            if ($n.State -eq 'InProgress') { $inProgress.Add($n) }
-        }
-        $inProgressNodes = $inProgress.ToArray()
-    }
-    $entry = [pscustomobject]@{
-        Document = $document
-        InProgress = $inProgressNodes
-        Views = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    }
-    if ($key) { $Index.Entries[$key] = $entry }
-    return $entry
-}
-
-function Get-NightlyDiscoveryIndexView {
-    # One disposition pass per entry and exclusion policy: the census, the
-    # all-classes required set, and a class lookup that mirrors
-    # Test-NightlyClassAssigned (name or bare name, of ClassName or Type).
-    param($Entry, $ProfileExclusions = $null, [switch]$ProfileAware)
-    $policyKey = 'default'
-    if ($ProfileAware) {
-        # A digest of the exclusions' content (DiscoveryViewKey.PolicyKey), never their identity: every value,
-        # name, type and position the JSON text carried, so two lists share a view only where their JSON was
-        # equal. Null for a shape it does not vouch for; the JSON text is the key then, as before.
-        $policyKey = $null
-        if (Test-NightlyCoreAvailable) { $policyKey = [Antiphon.Nightly.DiscoveryViewKey]::PolicyKey($ProfileExclusions) }
-        if ($null -eq $policyKey) { $policyKey = 'profile:' + (ConvertTo-Json -InputObject $ProfileExclusions -Depth 8 -Compress) }
-    }
-    if ($Entry.Views.ContainsKey($policyKey)) { return $Entry.Views[$policyKey] }
-    $nodes = @($Entry.Document.Nodes)
-    $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
-    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexView'
-    $pass = [Antiphon.Nightly.NightlyDiscovery]::IndexView($nodes, $exclusionIndex)
-    $view = [pscustomobject]@{
-        Nodes = $nodes
-        Excluded = $pass.Excluded
-        ByClass = $pass.ByClass
-        RequiredUids = $pass.RequiredUids
-        Classes = $pass.Classes
-        Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
-    }
-    $Entry.Views[$policyKey] = $view
-    return $view
-}
-
-function Get-NightlyDiscoveryIndexRequiredUids {
-    # Same set and discovery order as Get-NightlyRequiredDiscoveryUids, from the
-    # launch's classes alone.
-    param($View, [string[]]$RequiredClasses = @())
-    if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $View.RequiredUids }
-    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexRequiredUids'
-    return [Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($View.ByClass, $View.Excluded, $View.Nodes, $RequiredClasses)
-}
-
-function Get-NightlyIdentityBagKey {
-    param([string]$ClassName, [string]$TypeName, [string]$MethodName)
-    # '<simple class name>.<method>' in lower case; the type names the class when ClassName is blank.
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyIdentityBagKey' }
-    return [Antiphon.Nightly.NightlyClassNames]::BagKey($ClassName, $TypeName, $MethodName)
-}
-
 function Test-NightlyChunkMembership {
     param([string[]]$EligibleClasses, $Chunks)
     $assigned = @{}
@@ -953,7 +719,7 @@ function Test-NightlyTrxDiagnosticCrossCheck {
 
 function Test-NightlySuiteUidUnion {
     param([object[]]$DiscoveryNodes, [object[]]$ChunkTerminalNodes)
-    $required = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $DiscoveryNodes -RequiredClasses @())
+    $required = @([Antiphon.Nightly.NightlyCensus]::RequiredUids($DiscoveryNodes, @(), $null, $false))
     return (Test-NightlyExpandedRowsPresent -DiscoveryNodes $DiscoveryNodes -TerminalRows $ChunkTerminalNodes -RequiredUids $required)
 }
 
@@ -1035,8 +801,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         $reasons += 'missing-discovery'
     } else {
         try {
-            if ($null -eq $DiscoveryIndex) { $DiscoveryIndex = New-NightlyDiscoveryIndex }
-            $discoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
+            if ($null -eq $DiscoveryIndex) { $DiscoveryIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new() }
+            $discoveryEntry = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($DiscoveryIndex, $DiscoveryPath)
             $discoveryNodes = @($discoveryEntry.Document.Nodes)
             if ($discoveryNodes.Count -eq 0) {
                 $reasons += 'empty-discovery'
@@ -1087,8 +853,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     if (-not $discoveryPresent) {
         $coverageComplete = $false
     } else {
-        $discoveryView = Get-NightlyDiscoveryIndexView -Entry $discoveryEntry -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
-        $requiredUids = @(Get-NightlyDiscoveryIndexRequiredUids -View $discoveryView -RequiredClasses $RequiredClasses)
+        $discoveryView = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($discoveryEntry, $ProfileExclusions, [bool]($ProfileAware))
+        $requiredUids = @([Antiphon.Nightly.NightlyDiscoveryIndex]::RequiredUids($discoveryView, $RequiredClasses))
         $censusCheck = $discoveryView.Census
         if ($censusCheck.Duplicates.Count -gt 0) {
             $coverageComplete = $false
@@ -1181,10 +947,10 @@ function New-NightlyExactRoster {
     if (@($parsed.Nodes).Count -eq 0) { throw 'empty-discovery' }
     $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($member in $Members) {
-        $class = Get-NightlyBareClassIdentity -Name ([string]$member.class)
+        $class = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$member.class))
         $method = [string]$member.method
         if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$' -or ($method -and $method -notmatch '^[A-Za-z_][A-Za-z0-9_]*$')) { throw 'unresolvable-exact-member' }
-        $matches = @($parsed.Nodes | Where-Object { (Get-NightlyBareClassIdentity -Name ([string]$_.ClassName)) -ceq $class -and (-not $method -or $_.Method -ceq $method) })
+        $matches = @($parsed.Nodes | Where-Object { ([Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$_.ClassName))) -ceq $class -and (-not $method -or $_.Method -ceq $method) })
         if ($matches.Count -eq 0) { throw ('missing-exact-member:' + $class + '.' + $method) }
         foreach ($node in $matches) { [void]$selected.Add($node.Uid) }
     }
@@ -1202,7 +968,7 @@ function New-NightlyExactRoster {
     $groups = [Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($node in $parsed.Nodes) {
         if (-not $selected.Contains($node.Uid)) { continue }
-        $bareType = Get-NightlyBareClassIdentity -Name ([string]$node.Type)
+        $bareType = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$node.Type))
         foreach ($part in @($node.Namespace, $bareType, $node.Method)) {
             if ($part -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'unresolvable-filter-identity' }
         }

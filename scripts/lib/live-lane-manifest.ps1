@@ -28,6 +28,9 @@ $script:LiveLaneProtectedPaths = @(
     'scripts/lib/nightly-common.ps1',
     'scripts/lib/Antiphon.Nightly/NightlyPolicy.cs',
     'scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
+    'scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs',
+    'scripts/lib/Antiphon.Nightly/DiagnosticLog.cs',
+    'scripts/lib/Antiphon.Nightly/DiagScan.cs',
     'scripts/lib/nightly-coverage.ps1'
 )
 # Discovery child budget. Loaded-host n=3 discovery 71966, 74696, 79685 ms (p95 = 79685).
@@ -2809,7 +2812,7 @@ function Get-LiveLaneDispositionSets {
         }
         $isExcluded = $false
         if ($ProfileAware) { $isExcluded = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded($node, $Exclusions) }
-        else { $isExcluded = Test-NightlyDiscoveryExcluded -Node $node }
+        else { $isExcluded = [Antiphon.Nightly.NightlyCensus]::Excluded($node, $null, $false) }
         if ($isExcluded) { $excluded += $node.Uid } else { $required += $node.Uid }
     }
     return @{ Required = @($required); Excluded = @($excluded) }

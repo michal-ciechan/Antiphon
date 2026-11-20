@@ -99,7 +99,7 @@ function Get-NightlyProfileExecutionChunks {
 
 function Get-NightlyBareTypeParts {
     param([string]$ClassName)
-    $bare = Get-NightlyBareClassIdentity -Name $ClassName
+    $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($ClassName)
     if ([string]::IsNullOrWhiteSpace($bare)) { return $null }
     $dot = $bare.LastIndexOf('.')
     if ($dot -lt 1) { return $null }
@@ -877,7 +877,7 @@ function Get-NightlyNativeExecutionArguments {
         $nativeArgs += $GroupFilter
     } elseif ($Classes -and @($Classes).Count -gt 0) {
         if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
-        $class = Get-NightlyBareClassIdentity -Name ([string]$Classes[0])
+        $class = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$Classes[0]))
         if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'invalid-class-filter' }
         $dot = $class.LastIndexOf('.')
         $namespace = if ($dot -lt 0) { '*' } else { $class.Substring(0, $dot) }
@@ -1022,7 +1022,7 @@ function Prepare-NightlySuiteExecution {
     $profileDiscoveryPath = ''
     $suiteCensus = $null
     # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
-    $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
+    $suiteDiscoveryIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
     if ($isNative -and (($profileAware -and $profileExclusions.Count -gt 0) -or $dispatchNeedsDiscovery)) {
         $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
         $profileEnv = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
@@ -1039,9 +1039,9 @@ function Prepare-NightlySuiteExecution {
             $planningName = 'planning'
             if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
             Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
-            $suiteDiscoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
+            $suiteDiscoveryEntry = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($suiteDiscoveryIndex, $profileDiscoveryPath)
             $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
-            $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
+            $suiteCensus = ([Antiphon.Nightly.NightlyDiscoveryIndex]::View($suiteDiscoveryEntry, $profileExclusions, $true)).Census
             if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
             $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
             # S6b shadow: one discovery per suite. Carry cannot skip it. Recording grants no gate credit.
@@ -1502,14 +1502,14 @@ function Complete-NightlySuiteExecution {
     if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
         $unionNodes = [Collections.Generic.List[object]]::new()
         if ($null -ne $profileDiscovery -and -not [string]::IsNullOrWhiteSpace($profileDiscoveryPath)) {
-            $unionEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
-            $unionView = Get-NightlyDiscoveryIndexView -Entry $unionEntry -ProfileExclusions $profileExclusions -ProfileAware:$profileAware
+            $unionEntry = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($suiteDiscoveryIndex, $profileDiscoveryPath)
+            $unionView = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($unionEntry, $profileExclusions, [bool]($profileAware))
             Assert-NightlyCoreAvailable 'Complete-NightlySuiteExecution'
             # The view's nodes that are not excluded, in discovery order (SuiteCompletionParts.IncludedNodes).
             $unionNodes.AddRange([Antiphon.Nightly.SuiteCompletionParts]::IncludedNodes($unionView.Nodes, $unionView.Excluded))
         } else {
             foreach ($dn in @($suiteDiscoveryNodes)) {
-                if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
+                if ([Antiphon.Nightly.NightlyCensus]::Excluded($dn, $profileExclusions, [bool]($profileAware))) { continue }
                 $unionNodes.Add($dn)
             }
         }

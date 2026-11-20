@@ -30,7 +30,7 @@ function Assert-FF([bool]$Ok, [string]$Name, [string]$Detail = '') {
     Assert-C487 $Ok ('FF ' + $Case + '.' + $Name) $Detail
 }
 function New-FFNode([string]$Class, [string]$Method = 'Run', [string]$Uid = '') {
-    $bare = Get-NightlyBareClassIdentity $Class
+    $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($Class)
     $dot = $bare.LastIndexOf('.')
     if (-not $Uid) { $Uid = $Class + '.' + $Method }
     [pscustomobject]@{ ClassName = $Class; Namespace = $bare.Substring(0,$dot); Type = $Class.Substring($dot+1); Method = $Method; Uid = $Uid; Categories = @(); Excluded = $false }
@@ -101,7 +101,7 @@ function New-FFHistoricalFixture {
     $summary = [ordered]@{ runId='retained-run'; attempt='1'; invocationId='retained-run'; completedAt='2026-10-29T00:00:00Z'; sha=('a'*40); profile='rc'; platform='windows'; policyHash=('b'*64); selectedSuites=@('antiphon','session-runner','agents-pty','e2e'); suites=$suites; timingRoot='timing' }
     Write-FFJson (Join-Path $run 'summary.json') $summary
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
-    $fallback = @($nodesBySuite.antiphon | Where-Object { $_.Uid.StartsWith('diag-') } | ForEach-Object { Get-NightlyBareClassIdentity $_.ClassName } | Select-Object -Unique) + @('Antiphon.Tests.Checkpoints.UnobservedCoPackedTests')
+    $fallback = @($nodesBySuite.antiphon | Where-Object { $_.Uid.StartsWith('diag-') } | ForEach-Object { [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($_.ClassName) } | Select-Object -Unique) + @('Antiphon.Tests.Checkpoints.UnobservedCoPackedTests')
     $nodesBySuite.antiphon += New-FFNode 'Antiphon.Tests.Checkpoints.UnobservedCoPackedTests'
     Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{ version=1; suite='antiphon'; runId='retained-run'; attempt='1'; sourceDigest=('a'*40); policyDigest=('b'*64); assemblyDigest='fixture-assembly'; groups=@([ordered]@{ chunk='all-group-105'; classes=$fallback; plannedTestIds=@($nodesBySuite.antiphon | Where-Object { $_.Uid.StartsWith('diag-') -or $_.ClassName.EndsWith('UnobservedCoPackedTests') } | ForEach-Object { $_.Uid }) }) })
     # The singleton is intentionally another suite. It must never define antiphon membership.
@@ -420,7 +420,7 @@ function New-FFGlobalFixture {
     $anchors = @()
     foreach ($ordinal in @(23,99,101,118)) {
         $anchor = $replay.chunks[$ordinal-1]
-        $class = Get-NightlyBareClassIdentity ([string]$anchor.classes[0])
+        $class = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$anchor.classes[0]))
         $anchors += [pscustomobject]@{ordinal=$ordinal;chunk=$anchor.id;className=$class}
         if (@($history.members | Where-Object {$_.className -ceq $class}).Count -eq 0) { $history.members += [pscustomobject]@{suite='antiphon';className=$class;reasons=@('Failed');observations=@()} }
     }
@@ -730,11 +730,11 @@ function Invoke-FFPreparedArm {
         $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($s.nodes, 'fixture')
         [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($discPath, $doc)
         if ($s.PSObject.Properties.Name -notcontains 'SharedDiscoveryIndex') {
-            $s | Add-Member -NotePropertyName SharedDiscoveryIndex -NotePropertyValue (New-NightlyDiscoveryIndex)
+            $s | Add-Member -NotePropertyName SharedDiscoveryIndex -NotePropertyValue ([Antiphon.Nightly.NightlyDiscoveryIndex]::new())
         }
         $index = $s.SharedDiscoveryIndex
-        $entry = Get-NightlyDiscoveryIndexEntry -Index $index -Path $discPath
-        $census = (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $s.exclusions -ProfileAware).Census
+        $entry = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($index, $discPath)
+        $census = ([Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, $s.exclusions, $true)).Census
         $variables = @{
             suiteId=$s.id;suite=[pscustomobject]@{assembly=$s.id};label=$s.id;mode='unattended';isNative=$true;chunks=$s.chunks
             profileExclusions=$s.exclusions;suiteHost=[pscustomobject]@{FilePath=('fixture-'+$s.id);Prefix=@();AssemblyPath='fixture'}

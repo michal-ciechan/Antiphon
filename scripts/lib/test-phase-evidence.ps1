@@ -503,9 +503,9 @@ function Write-TestPhasePlannedManifest {
         Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     }
     if ($null -ne $DiscoveryIndex -and -not [string]::IsNullOrWhiteSpace($DiscoveryPath)) {
-        $entry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
+        $entry = [Antiphon.Nightly.NightlyDiscoveryIndex]::EntryOf($DiscoveryIndex, $DiscoveryPath)
     }
-    $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $ProfileExclusions -ProfileAware
+    $view = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, $ProfileExclusions, $true)
     $basisMap = Get-TestPhaseClassBasisMap
     $groupRows = @()
     foreach ($group in @($Groups)) {
@@ -522,7 +522,7 @@ function Write-TestPhasePlannedManifest {
         } else {
             $classes = @()
             foreach ($c in @($group.classes)) { $classes += [string]$c }
-            [Antiphon.Nightly.PlannedManifestCheck]::AddStrings($ids, @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $classes))
+            [Antiphon.Nightly.PlannedManifestCheck]::AddStrings($ids, @([Antiphon.Nightly.NightlyDiscoveryIndex]::RequiredUids($view, $classes)))
         }
         $allPlanned.AddRange($ids)
         $bases = @{}

@@ -27,7 +27,7 @@ $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]
 $byNamespace = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
 $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($node in $nodes) {
-    $bare = Get-NightlyBareClassIdentity $node.ClassName
+    $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($node.ClassName)
     if (-not $expected.Add([string]$node.Uid)) { throw 'duplicate discovered UID' }
     if (-not $byClass.ContainsKey($bare)) { $byClass.Add($bare, [Collections.Generic.List[object]]::new()) }
     $byClass[$bare].Add($node)

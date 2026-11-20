@@ -241,7 +241,7 @@ public sealed class TestPhaseSupervisorTests
         }
         $discPath = Join-Path $work 'discovery.json'
         Write-TestPhaseTextAtomic -Path $discPath -Text (ConvertTo-TestPhaseJsonText -Value $doc)
-        $parsed = Read-NightlyDiscoveryDocument -Path $discPath
+        $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($discPath)
         $table = Get-NightlyClassCostTable
         $hugeKey = 'Antiphon.Tests.C1514.Huge'
         $had = $table.ContainsKey($hugeKey)
@@ -299,7 +299,7 @@ public sealed class TestPhaseSupervisorTests
                 InProgress = @()
                 Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
             }
-            $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $exclusions -ProfileAware
+            $view = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, $exclusions, $true)
             $required = @($view.RequiredUids | ForEach-Object { [string]$_ })
             $watch = [Diagnostics.Stopwatch]::StartNew()
             $written = Write-TestPhasePlannedManifest -LogRoot $work -RunId 'run-v7' -Attempt '1' -Suite 'antiphon' -SourceDigest 'src' -AssemblyDigest 'asm' -PolicyDigest 'pol' -CostFileDigest 'cost' -AssemblyId 'Antiphon.Tests' -Groups $plan1 -DiscoveryNodes @($parsed.Nodes) -ProfileExclusions $exclusions
