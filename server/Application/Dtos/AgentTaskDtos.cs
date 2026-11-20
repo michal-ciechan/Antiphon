@@ -368,7 +368,11 @@ public sealed record AgentTaskSummaryDto(
     /// has no session or that session recorded none. The chip prefers it over the current
     /// tier alias only when the two differ.
     /// </summary>
-    string? EffectiveModelId = null);
+    string? EffectiveModelId = null,
+    /// <summary>
+    /// Explicit delegatable alias stored on the task. Null keeps the tier ladder.
+    /// </summary>
+    string? RequestedModelAlias = null);
 
 /// <summary>CARD-0515. Echo of the list/summary scope the caller selected.</summary>
 public sealed record AgentTaskScopeEchoDto(

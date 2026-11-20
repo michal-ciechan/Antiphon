@@ -1174,7 +1174,12 @@ public class AgentTaskPoolTests
         (await dispatcher.TryReuseWarmAgentAsync(alias, DateTime.UtcNow, CancellationToken.None))
             .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
                 "a pinned alias follow-up relaunches so --model is the requested slug");
-        alias.AgentId.ShouldBeNull();
+        alias.AgentId.ShouldBe(agentId, "the pin stays; the spawn path relaunches this row");
+        alias.AgentSessionId.ShouldBeNull();
+        alias.Status.ShouldBe(AgentTaskStatus.Queued);
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agentId)).Status
+            .ShouldBe(AgentStatus.Idle);
     }
 
     [Test]

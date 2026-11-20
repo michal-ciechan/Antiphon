@@ -1019,6 +1019,19 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.Workspace), message, "workspace_default_not_git");
         }
 
+        // An explicit alias with neither kind nor level would be stamped onto the default
+        // complexity chain and then launched as that chain's ladder slug. Refuse it here,
+        // after a pin or standing agent has had its chance to fill the pair.
+        if (!string.IsNullOrWhiteSpace(request.Model)
+            && request.AgentKind is null
+            && request.ModelLevel is null)
+        {
+            throw new ValidationException(
+                "model",
+                "model requires agentKind and modelLevel. Pass -Kind and -Level with -Model.",
+                "model_requires_kind_and_level");
+        }
+
         // CARD-0097: inspect the post-pin, post-standing-agent request. An empty matrix
         // preserves the legacy path; a read failure must not turn an ordinary create into Blocked.
         var complexityDefaulted = false;
@@ -3337,6 +3350,7 @@ public sealed class AgentTaskService
         task.RoutingPinId = null;
         task.ExplicitAgentKind = null;
         task.ExplicitModelLevel = null;
+        task.RequestedModelAlias = null; // a kind/level move launches the new ladder slug
         var detail = $"rerouted to {alias} (explicit; chain governance ended)";
 
         if (task.Status == AgentTaskStatus.Queued)
@@ -3629,6 +3643,7 @@ public sealed class AgentTaskService
 
         task.AgentKind = chosen.Kind;
         task.ModelLevel = chosen.Level;
+        task.RequestedModelAlias = null; // a kind/level move launches the new ladder slug
         task.FailureReason = detail;
         await RequeueAsync(task, AgentTaskEventType.Rerouted, chosen.Level, detail, ct);
         _logger.LogInformation(
@@ -4287,6 +4302,7 @@ public sealed class AgentTaskService
     internal static bool MatrixDefaultApplies(CreateAgentTaskRequest request, bool liveFollowUp) =>
         request.Complexity is null && request.AgentKind is null && request.ModelLevel is null
         && request.AgentId is null && !request.IgnoreModelDisabled
+        && string.IsNullOrWhiteSpace(request.Model)
         && request.Kind == AgentTaskKind.Worker && !AgentTaskRoles.IsSpecialist(request.Role)
         && !liveFollowUp;
 
@@ -4950,7 +4966,8 @@ public sealed class AgentTaskService
             task.ObservedPlatform,
             task.RunnerDefaultsRevision,
             task.RunnerSelectionSource,
-            EffectiveModelId: effectiveModelId);
+            EffectiveModelId: effectiveModelId,
+            RequestedModelAlias: task.RequestedModelAlias);
     }
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)
