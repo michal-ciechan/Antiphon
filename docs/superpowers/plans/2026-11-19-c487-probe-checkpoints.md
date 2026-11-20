@@ -47,6 +47,13 @@ Unit lane. No positive controls. Cost floor is the sum of `EstimatedMinutes`
   Build slot `lease=d2f6c1a4-3463-4928-8396-a3de042a4e89 waited=0s held=198s`
   (`load1=5.05`). Run slot `lease=c95fb17b-7ac8-47f9-945a-4528468f85a4 waited=0s held=17s`
   (`load1=13.38`). No `LINUX COMPILER` line.
+- One green rerun of that same filter after the fix, on the native default
+  output, before the cold checkpoint, at `942d1fff5686943694565fdf47f626384b2e2067`.
+  Passed 2, failed 0, skipped 0, duration 11s 952ms. Build `load1=4.31`, slot
+  `lease=a524a2b5-b03d-4f0f-b40f-7436356fe72e waited=0s held=286s`, 0 errors.
+  Run waited until `load1=14.41` (first sample `22.06`), slot
+  `lease=1c66caa9-01cb-431d-a1ef-f826d13f5185 waited=0s held=16s`.
+  No `LINUX COMPILER` line. CP-1 repeats the class on an isolated output.
 
 ## Verification design
 
