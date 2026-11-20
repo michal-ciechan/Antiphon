@@ -123,11 +123,13 @@ public class CodexDelegateDispatchTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         using var workspace = new TempWorkspace();
-        var created = await CreateServiceWithHolds(db).CreateAsync(
+        var service = CreateServiceWithHolds(db);
+        var created = await service.CreateAsync(
             CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra),
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
         var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        (await service.GetSummaryAsync(task, [task])).RequestedModelAlias.ShouldBe(ModelAlias.Gpt62Astra);
         var (dispatcher, _) = CreateHarness();
         var args = SpecOf(dispatcher, task).Args.ToList();
         args[args.IndexOf("--model") + 1].ShouldBe(ModelAlias.Gpt62Astra);
@@ -165,6 +167,62 @@ public class CodexDelegateDispatchTests
                 CancellationToken.None));
         otherKind.StatusCode.ShouldBe(422);
         otherKind.Errors["model"][0].ShouldContain(ModelAlias.Gpt62Astra);
+    }
+
+    [Test]
+    public async Task explicit_alias_conflicts_with_the_standing_agents_model()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var agentId = Guid.NewGuid();
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = "standing-sol",
+            Slug = "standing-sol",
+            Kind = AgentKind.Codex,
+            ModelLevel = AgentModelLevel.High,
+            ModelId = "gpt-6.2-sol",
+            WorkingDirectory = workspace.Path,
+            Status = AgentStatus.Running,
+            IsPoolDelegate = false,
+        });
+        await db.SaveChangesAsync();
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            CreateServiceWithHolds(db).CreateAsync(
+                new CreateAgentTaskRequest(
+                    "audit this diff",
+                    Role: AgentTaskRole.Code,
+                    AgentKind: AgentKind.Codex,
+                    ModelLevel: AgentModelLevel.High,
+                    AgentId: agentId,
+                    Workspace: WorkspaceMode.Shared)
+                { Model = ModelAlias.Gpt62Astra },
+                new AgentTaskService.Caller(null, null, workspace.Path),
+                CancellationToken.None));
+        ex.StatusCode.ShouldBe(422);
+        ex.Code.ShouldBe("model_alias_conflict");
+    }
+
+    [Test]
+    public async Task complexity_and_model_together_are_422()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            CreateServiceWithHolds(db).CreateAsync(
+                new CreateAgentTaskRequest(
+                    "audit this diff",
+                    Role: AgentTaskRole.Code,
+                    Complexity: TaskComplexity.Hard,
+                    Workspace: WorkspaceMode.Shared)
+                { Model = ModelAlias.Gpt62Astra },
+                new AgentTaskService.Caller(null, null, workspace.Path),
+                CancellationToken.None));
+        ex.StatusCode.ShouldBe(422);
+        ex.Errors["model"][0].ShouldContain("complexity cannot be combined with model");
     }
 
     [Test]

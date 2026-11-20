@@ -1860,6 +1860,7 @@ public sealed partial class AgentTaskDispatcher
         var from = currentAlias;
         task.AgentKind = chosen.Kind;
         task.ModelLevel = chosen.Level;
+        task.RequestedModelAlias = null; // a kind/level move launches the new ladder slug
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
                 _db, task.Id, "rerouted-at-dispatch", ct, (chosen.Kind, chosen.Alias));
@@ -2039,6 +2040,7 @@ public sealed partial class AgentTaskDispatcher
             task.Status = AgentTaskStatus.Queued;
             task.AgentKind = chosen.Kind;
             task.ModelLevel = chosen.Level;
+            task.RequestedModelAlias = null; // resume adopts the chain candidate's ladder slug
             task.FailureReason = null;
             task.ConcurrencyToken = Guid.NewGuid();
             var index = 0;
@@ -8867,6 +8869,16 @@ public sealed partial class AgentTaskDispatcher
             if (!pinned.IsPoolDelegate)
                 return await PlaceOnStandingAgentAsync(claimed, pinned, now, ct);
 
+            // A requested alias is a launch argument. The pinned pool process was launched
+            // without it, or for a different slug, so the follow-up starts cold.
+            if (!PoolDelegateRelease.MayWarmPool(claimed.RequestedModelAlias))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to pool delegate '{Agent}' with requested alias {Alias} — relaunching so --model is that slug",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name, claimed.RequestedModelAlias);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
 
@@ -8924,6 +8936,13 @@ public sealed partial class AgentTaskDispatcher
 
             agent = pinned;
         }
+        else if (!PoolDelegateRelease.MayWarmPool(claimed.RequestedModelAlias))
+        {
+            _logger.LogInformation(
+                "Task {ShortId} requested alias {Alias} — declining warm reuse so a fresh process can launch it",
+                DelegationReportFormatter.Short(claimed.Id), claimed.RequestedModelAlias);
+            return ReuseOutcome.SpawnFresh;
+        }
         else if (_settings.PoolEnabled)
         {
             var reservationCutoff = now.AddMinutes(-Math.Max(0, _settings.PoolReservedForCallerMinutes));
@@ -8932,6 +8951,7 @@ public sealed partial class AgentTaskDispatcher
                     && a.Status == AgentStatus.Idle
                     && a.PoolIdleSince != null
                     && !PoolDelegateRelease.Reservations(_db).Any(p => p.AgentId == a.Id)
+                    && !_db.AgentTasks.Any(t => t.AgentId == a.Id && t.RequestedModelAlias != null)
                     && a.ModelLevel == claimed.ModelLevel
                     // A warm process retains its launch environment. Scope equality includes
                     // null == null: global-only delegates may serve global-only tasks, never a
@@ -9555,6 +9575,7 @@ public sealed partial class AgentTaskDispatcher
                 .Select(t => new
                 {
                     AgentId = t.AgentId!.Value, t.Id, t.RootTaskId, t.Status, t.Workspace, t.CompletedAt,
+                    t.RequestedModelAlias,
                     Sourced = t.SourceLandingOperationId != null,
                 })
                 .ToListAsync(ct))
@@ -9599,7 +9620,8 @@ public sealed partial class AgentTaskDispatcher
             }
 
             if (_settings.PoolEnabled && newest.Workspace == WorkspaceMode.Shared
-                && liveStatus[sessionId] is SessionStatus.Starting or SessionStatus.Running)
+                && liveStatus[sessionId] is SessionStatus.Starting or SessionStatus.Running
+                && PoolDelegateRelease.MayWarmPool(newest.RequestedModelAlias))
             {
                 PoolDelegateRelease.PoolWarm(agent, newest.RootTaskId, now);
                 _logger.LogWarning(

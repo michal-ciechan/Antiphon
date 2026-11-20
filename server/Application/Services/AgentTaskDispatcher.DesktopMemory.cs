@@ -46,12 +46,14 @@ public sealed partial class AgentTaskDispatcher
             var pinned = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pinnedId, ct);
             if (pinned is null)
                 return false;
+            if (pinned.IsPoolDelegate && !PoolDelegateRelease.MayWarmPool(task.RequestedModelAlias))
+                return false;
             if (await LiveSessionIdOfAsync(pinned, ct) is not null)
                 return true;
             return !pinned.IsPoolDelegate && pinned.AlwaysOn;
         }
 
-        if (!_settings.PoolEnabled)
+        if (!_settings.PoolEnabled || !PoolDelegateRelease.MayWarmPool(task.RequestedModelAlias))
             return false;
 
         var reservationCutoff = UtcNow().AddMinutes(-Math.Max(0, _settings.PoolReservedForCallerMinutes));
@@ -60,6 +62,7 @@ public sealed partial class AgentTaskDispatcher
             .Where(a => a.IsPoolDelegate
                 && a.Status == AgentStatus.Idle
                 && a.PoolIdleSince != null
+                && !_db.AgentTasks.Any(t => t.AgentId == a.Id && t.RequestedModelAlias != null)
                 && a.ModelLevel == task.ModelLevel
                 && a.PoolProjectId == task.ProjectId
                 && a.Kind == task.AgentKind

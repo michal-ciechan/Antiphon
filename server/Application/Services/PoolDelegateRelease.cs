@@ -14,7 +14,8 @@ namespace Antiphon.Server.Application.Services;
 /// <para>A Shared delegate whose session is live goes warm; anything else is killed, and the agent
 /// row — the process's only owner — goes only once the session is verified terminal (D-3). A kill
 /// that did not take leaves the row Idle for the janitor instead of deleting it while the process
-/// lives on, which is the CARD-0221 zombie by construction.</para>
+/// lives on, which is the CARD-0221 zombie by construction. A requested model alias is a launch
+/// argument, so that process is killed instead of warmed: reuse never re-selects <c>--model</c>.</para>
 /// </summary>
 internal static class PoolDelegateRelease
 {
@@ -29,6 +30,13 @@ internal static class PoolDelegateRelease
 
     internal static bool CanRelease(Agent agent) => agent.IsPoolDelegate && !agent.AlwaysOn
         && agent.BoardId is null && agent.StandingSpecialistRole is null && agent.StandingSpecialistOwnerId is null;
+
+    /// <summary>
+    /// False when the settled task carried a requested alias. Both warm-pool sites call this
+    /// so an alias process cannot be pooled by one and killed by the other.
+    /// </summary>
+    internal static bool MayWarmPool(string? requestedModelAlias) =>
+        string.IsNullOrWhiteSpace(requestedModelAlias);
 
     // Scope the reservation to its still-open blocked attempt. Continuation or explicit
     // cancellation releases only that attempt; another blocked task's custody survives.

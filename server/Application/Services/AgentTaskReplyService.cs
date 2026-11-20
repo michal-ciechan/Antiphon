@@ -2891,7 +2891,8 @@ public sealed partial class AgentTaskReplyService
             return;
         }
 
-        if (_settings.PoolEnabled && task.SourceLandingOperationId is null && task.Workspace == WorkspaceMode.Shared && sessionAlive)
+        if (_settings.PoolEnabled && task.SourceLandingOperationId is null && task.Workspace == WorkspaceMode.Shared
+            && sessionAlive && PoolDelegateRelease.MayWarmPool(task.RequestedModelAlias))
         {
             if (await SessionMessageQueueService.IsWorkingAsync(db, task.AgentSessionId!.Value, ct))
                 _logger.LogWarning(

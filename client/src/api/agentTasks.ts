@@ -204,6 +204,8 @@ export interface AgentTaskSummaryDto {
    * alias only when the two differ.
    */
   effectiveModelId?: string | null
+  /** Explicit delegatable alias stored on the task. Absent on an older server. */
+  requestedModelAlias?: string | null
 }
 
 export type AgentTaskScopeSource = 'Task' | 'Card' | 'None'
