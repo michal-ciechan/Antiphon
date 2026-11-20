@@ -73,40 +73,9 @@ function Push-ReleaseGateExactTag {
     return $push
 }
 
-function New-ReleaseGateCandidateRef {
-    param([datetime]$Utc)
-    if ($null -eq $Utc -or $Utc -eq [datetime]::MinValue) { $Utc = (Get-Date).ToUniversalTime() }
-    return ('release/rc-{0}' -f $Utc.ToUniversalTime().ToString('yyyyMMddTHHmmss') + 'Z')
-}
-
 # ------------------------------------------------------------------- state ---
 
 # -------------------------------------------------------------- shared lock ---
-
-function Test-ReleaseGateSameInstant {
-    <#
-      ConvertFrom-Json coerces an ISO-8601 string into a DateTime, so a naive
-      string compare between what was written and what was read back fails under
-      a non-invariant culture. Compare instants when both sides parse, and fall
-      back to an ordinal compare only when they do not.
-    #>
-    param($Left, $Right)
-    $leftEmpty = ($null -eq $Left) -or [string]::IsNullOrWhiteSpace([string]$Left)
-    $rightEmpty = ($null -eq $Right) -or [string]::IsNullOrWhiteSpace([string]$Right)
-    if ($leftEmpty -and $rightEmpty) { return $true }
-    if ($leftEmpty -or $rightEmpty) { return $false }
-    $l = [datetime]::MinValue
-    $r = [datetime]::MinValue
-    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-    $lOk = $false
-    $rOk = $false
-    if ($Left -is [datetime]) { $l = ([datetime]$Left).ToUniversalTime(); $lOk = $true }
-    else { $lOk = [datetime]::TryParse([string]$Left, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$l) }
-    if ($Right -is [datetime]) { $r = ([datetime]$Right).ToUniversalTime(); $rOk = $true }
-    else { $rOk = [datetime]::TryParse([string]$Right, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$r) }
-    if ($lOk -and $rOk) { return ($l.ToUniversalTime() -eq $r.ToUniversalTime()) }
-    return [string]::Equals([string]$Left, [string]$Right, [StringComparison]::OrdinalIgnoreCase)
-}
 
 function New-ReleaseGateLockOwner {
     <#
@@ -154,7 +123,7 @@ function Enter-ReleaseGateNativeLock {
         $pidOk = ([int]$existing.pid -eq $ContinueOwnerPid)
         $startOk = $true
         if (-not [string]::IsNullOrWhiteSpace($ContinueOwnerStartedAt)) {
-            $startOk = Test-ReleaseGateSameInstant -Left $existing.processStartedAt -Right $ContinueOwnerStartedAt
+            $startOk = [Antiphon.Nightly.ReleaseGateCredit]::SameInstant($existing.processStartedAt, $ContinueOwnerStartedAt)
         }
         $laneOk = [string]::Equals([string]$existing.lane, $Lane, [StringComparison]::OrdinalIgnoreCase)
         if (-not ($alive -and $runOk -and $pidOk -and $startOk -and $laneOk)) {

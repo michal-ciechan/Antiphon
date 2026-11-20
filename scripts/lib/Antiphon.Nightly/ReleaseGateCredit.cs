@@ -83,6 +83,28 @@ namespace Antiphon.Nightly
             return Note("Ok", false, "Reason", "ref-shape", "Stamp", "", "CandidateId", "", "Ref", "", "Kind", "");
         }
 
+
+        /// <summary>
+        /// Test-ReleaseGateSameInstant: both blank, or the same instant when both read as dates (a DateTime as itself in
+        /// UTC, text as an invariant-culture date assumed UTC), else the same text ignoring case. ConvertFrom-Json turns
+        /// an ISO-8601 string into a DateTime, so text written and read back compares as an instant.
+        /// </summary>
+        public static bool SameInstant(object left, object right)
+        {
+            var leftEmpty = left == null || string.IsNullOrWhiteSpace(PsValue.Str(left));
+            var rightEmpty = right == null || string.IsNullOrWhiteSpace(PsValue.Str(right));
+            if (leftEmpty && rightEmpty) return true;
+            if (leftEmpty || rightEmpty) return false;
+            if (Instant(left, out var l) && Instant(right, out var r)) return l.ToUniversalTime() == r.ToUniversalTime();
+            return string.Equals(PsValue.Str(left), PsValue.Str(right), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool Instant(object value, out DateTime instant)
+        {
+            if (PsOps.Base(value) is DateTime dt) { instant = dt.ToUniversalTime(); return true; }
+            return DateTime.TryParse(PsValue.Str(value), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out instant);
+        }
+
         /// <summary>
         /// Get-ReleaseGateCreditKind (D-2): the credit a run may earn from its identity alone, before its green flags;
         /// "" for an unknown combination, which is no credit (never the master default). An absent profile is the

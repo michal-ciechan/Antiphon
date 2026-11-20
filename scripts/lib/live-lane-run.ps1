@@ -28,7 +28,7 @@ function Test-LiveLaneOwner {
     return ([int]$current.pid -eq [int]$Saved.pid -and
         [string]$current.runId -ceq [string]$Saved.runId -and
         [string]$current.lane -ceq [string]$Saved.lane -and
-        (Test-ReleaseGateSameInstant $current.processStartedAt $Saved.processStartedAt) -and
+        ([Antiphon.Nightly.ReleaseGateCredit]::SameInstant($current.processStartedAt, $Saved.processStartedAt)) -and
         (Test-NightlyProcessAlive -ProcessId ([int]$Saved.pid)))
 }
 
@@ -46,7 +46,7 @@ function Test-LiveLaneContext {
     foreach ($field in @('pid','runId','lane')) {
         if ([string]$Context.owner[$field] -cne [string]$Expected.owner[$field]) { return 'context-stale' }
     }
-    if (-not (Test-ReleaseGateSameInstant $Context.owner.processStartedAt $Expected.owner.processStartedAt) -or
+    if (-not ([Antiphon.Nightly.ReleaseGateCredit]::SameInstant($Context.owner.processStartedAt, $Expected.owner.processStartedAt)) -or
         -not (Test-LiveLaneOwner $Expected.owner $CoordinationRoot)) { return 'context-stale' }
     return ''
 }
