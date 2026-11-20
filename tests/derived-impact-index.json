@@ -295,14 +295,14 @@
       "reason": "cap",
       "owed": 60,
       "first": [
+        "CodexDelegateDispatchTests",
         "DispatchConcurrencyAdmissionTests",
+        "MatrixDefaultComplexityCreateTests",
         "PinnedAgentKindTests",
         "TaskCeilingCreateBindingTests",
-        "MatrixDefaultComplexityCreateTests",
         "ModelAvailabilityManualTests",
         "WorktreeRetirementRaceTests",
-        "BlockedTaskParkDeliveryTests",
-        "C0824RefOnlyConsumerTests"
+        "BlockedTaskParkDeliveryTests"
       ]
     },
     {
@@ -311,14 +311,14 @@
       "reason": "cap",
       "owed": 57,
       "first": [
+        "ModelAvailabilityManualTests",
+        "RolePolicyInvalidValuesCreateTests",
         "RunnerDefaultsWireTests",
         "TaskCeilingCreateBindingTests",
         "WorktreeRetirementRaceTests",
         "BlockedTaskParkDeliveryTests",
         "C0824RefOnlyConsumerTests",
-        "C0824WorkspaceSlotServerTests",
-        "CardPlatformTests",
-        "ChannelOutboundIsolatedTests"
+        "C0824WorkspaceSlotServerTests"
       ]
     },
     {
@@ -331,10 +331,10 @@
         "AdvisoryChangePolicyTests",
         "AgentTaskCheckScheduleTests",
         "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
         "DispatchConcurrencyAdmissionTests",
-        "PinnedAgentKindTests",
-        "BlockedTaskParkDeliveryTests",
-        "MatrixDefaultComplexityCreateTests"
+        "MatrixDefaultComplexityCreateTests",
+        "PinnedAgentKindTests"
       ]
     },
     {
@@ -455,18 +455,18 @@
     },
     {
       "path": "server/Application/Exceptions/ValidationException.cs",
-      "classes": 101,
+      "classes": 102,
       "reason": "cap",
-      "owed": 76,
+      "owed": 77,
       "first": [
+        "RoutingPinServiceTests",
         "StartRefAvailabilityTests",
         "WorktreeDefaultContinuationTests",
         "WorktreeStartRefDispatchTests",
         "AgentTaskCallerResolutionTests",
         "AgentTaskWorktreeBaseCreateTests",
         "ApiKeyStoreTests",
-        "BlockedTaskParkDeliveryTests",
-        "CodexDelegateDispatchTests"
+        "BlockedTaskParkDeliveryTests"
       ]
     },
     {
@@ -780,13 +780,13 @@
       "owed": 182,
       "first": [
         "DefaultRunnerRerouteTests",
+        "HeldStandingAgentChainTests",
         "ModelAvailabilityManualTests",
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
         "AgentTaskCallerResolutionTests",
         "ChannelOutboundIsolatedTests",
-        "ComplexityCreateTests",
-        "DispatchConcurrencyAdmissionTests"
+        "ComplexityCreateTests"
       ]
     },
     {
@@ -1388,14 +1388,14 @@
       "reason": "cap",
       "owed": 171,
       "first": [
+        "AgentTaskDeliveryWatchdogTests",
         "ChannelOutboundIsolatedTests",
         "CodexCliObservationTests",
-        "CodexDelegateDispatchTests",
+        "ComplexityDispatcherTests",
         "ContextCompactionSettingsTests",
         "GrokDelegateDispatchTests",
         "HerdrLaunchContextTitleTests",
-        "KanbanPersistenceTests",
-        "PoolProviderProjectionStampTests"
+        "KanbanPersistenceTests"
       ]
     },
     {
@@ -1436,14 +1436,14 @@
       "reason": "cap",
       "owed": 402,
       "first": [
+        "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
         "DispatchHeldAttentionTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "SessionStatePinQueryTests",
         "TaskInputAttentionCostTests",
-        "TerminalRunnerSeatReleaseTests",
-        "AgentTaskCheckSweepTests"
+        "TerminalRunnerSeatReleaseTests"
       ]
     },
     {
@@ -2418,11 +2418,11 @@
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
         "AgentTaskLandMonitoringTests",
+        "ComplexityDispatcherTests",
         "DefaultRunnerRerouteTests",
         "AgentTaskCardBindingTests",
         "PhoneHomeQueuedTurnTests",
-        "AgentTaskConcurrencyLimitTests",
-        "AgentTaskLandApprovalRequestTests"
+        "AgentTaskConcurrencyLimitTests"
       ]
     }
   ],
@@ -4486,6 +4486,7 @@
     {
       "path": "server/Application/Core/ModelAlias.cs",
       "classes": [
+        "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
@@ -4497,6 +4498,7 @@
         "HeldModelEscalationTests",
         "HeldStandingAgentChainTests",
         "HerdrSupervisionBackoffTests",
+        "MatrixDefaultComplexityCreateTests",
         "ModelAliasTests",
         "ModelAvailabilityCreateTests",
         "ModelAvailabilityTests",
@@ -4789,17 +4791,17 @@
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskServiceIntegrationTests",
         "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
         "ComplexityCreateTests",
         "DefaultRunnerCreateTests",
         "DefaultRunnerPinTests",
         "LaunchEnvLayersIntegrationTests",
+        "MatrixDefaultComplexityCreateTests",
         "ModelAvailabilityCreateTests",
-        "ModelAvailabilityManualTests",
         "MutationAdmissionTests",
         "PinnedAgentKindTests",
         "RemotePoolFollowUpAdmissionTests",
         "RepairSourceDispatchTests",
-        "RolePolicyInvalidValuesCreateTests",
         "RolePolicyToolBundleDispatchTests",
         "RoutingPinCandidateCreateTests",
         "RoutingPinCreateTests",
@@ -5903,6 +5905,7 @@
         "BlockedTaskParkReplyAdmissionTests",
         "CardCorrectionIntegrationTests",
         "CardReorderIntegrationTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainServiceTests",
         "DelegationCapabilityTests",
         "DispatchConcurrencySettingsTests",
@@ -5914,7 +5917,6 @@
         "PlanCatalogServiceTests",
         "ProviderEndpointProjectionTests",
         "RoutingPinCandidateTests",
-        "RoutingPinServiceTests",
         "WorkflowEngineParsingTests"
       ]
     },
@@ -9770,6 +9772,7 @@
         "CodexCliObservationTests",
         "CodexDelegateDispatchTests",
         "CodexGpt62LadderTests",
+        "ComplexityDispatcherTests",
         "ComplexityRoutingComposeTests",
         "DelegationSequencingE2ETests",
         "InstructionBundleTests",
@@ -12927,7 +12930,6 @@
         "AgentBundleAttachmentTests",
         "AgentControlServiceIntegrationTests",
         "AgentTaskCardBindingTests",
-        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTuiLaunchResolverTests",
@@ -12939,6 +12941,7 @@
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundPolicyTests",
         "ChannelOutboundRecoveryTests",
+        "CodexDelegateDispatchTests",
         "CodexPhoneHomeProjectionTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrPlacementSettingsTests",
@@ -13123,7 +13126,6 @@
     {
       "path": "server/Domain/Entities/AgentTask.cs",
       "classes": [
-        "AgentTaskAutoTitleTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskConcurrencyLimitTests",
         "AgentTaskDeliveryWatchdogTests",
@@ -13137,6 +13139,7 @@
         "C0824RefOnlyIdentityTests",
         "CapacityAdmissionLifecycleTests",
         "CheckNoteDeliveryHandoffTests",
+        "ComplexityDispatcherTests",
         "DataRetentionServiceTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DispatchBaseNotificationTests",
