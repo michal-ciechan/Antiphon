@@ -6,6 +6,8 @@ using Antiphon.LandGraphAudit;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -232,6 +234,9 @@ public sealed class LandNonCodeSkipTests
         var path = newProject ? "server/extra.csproj" : "server/Antiphon.Server.csproj";
         await h.Fixture.PushIndependentAsync("graph-drift", path,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><EmbeddedResource Include=\"../docs/**/*.md\" /></ItemGroup></Project>");
+        // The drifted tree's own manifest is present and well formed, and it does not describe that tree.
+        await h.Fixture.PushIndependentAsync("stale-target-manifest", ManifestPath,
+            new string('A', 64) + "\n1\n");
         await LandAndAssertAsync(h, build: true);
         (await h.OperationAsync())!.VerificationCommand.ShouldNotBeNull().ShouldContain("unrecognized-build-graph");
     }
@@ -2677,6 +2682,138 @@ public sealed class LandNonCodeSkipTests
         (await h.OperationAsync())!.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
     }
 
+    private const string ManifestPath = "server/Application/Services/LandVerificationBuildGraph.manifest.txt";
+
+    [Test]
+    public async Task C_FT2_CurrentTargetManifestSkipsWhenEmbeddedDiffers()
+    {
+        await using var h = await CreateAsync();
+        var raw = await h.Fixture.RequiredAsync(h.Fixture.Repository, "ls-tree", "-r", "-z", "HEAD");
+        SelectGraph(raw, out var selected).ShouldBeTrue();
+        var manifest = LandVerificationBuildGraph.FingerprintOf(selected) + "\n"
+            + selected.Count.ToString(CultureInfo.InvariantCulture) + "\n";
+        await h.Fixture.PushIndependentAsync("current-target-manifest", ManifestPath, manifest);
+        await h.AddDocsOnlySourceAsync();
+        using (LandVerificationBuildGraph.UseManifestText(new string('B', 64) + "\n1\n"))
+        {
+            await h.RequestAsync();
+            await h.RunQueuedAsync();
+        }
+
+        var op = (await h.OperationAsync())!;
+        h.Verifier.Calls.ShouldBe(0,
+            $"a docs-only candidate whose graph matches the target manifest must not build; publication={op.Publication}; reason={op.LastReason}; command={op.VerificationCommand}");
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.VerificationPassed.ShouldBeFalse();
+        op.VerificationSkipReason.ShouldBe("docs-skip-target-manifest");
+        await using var db = h.CreateContext();
+        var row = await db.StageOutcomes.SingleAsync(o => o.SubjectTaskId == h.Fixture.TaskId && o.Stage == OrchestrationStage.Verify);
+        row.Outcome.ShouldBe(StageOutcomeKind.Skipped);
+        row.Detail.ShouldBe("docs-skip-target-manifest");
+    }
+
+    [Test]
+    [Arguments("stale-digest")]
+    [Arguments("stale-count")]
+    public async Task C_FT2_StaleTargetManifestBuilds(string variant)
+    {
+        await using var repo = await Ft2Repo.CreateAsync();
+        var (digest, count) = await repo.GraphAsync();
+        var text = variant == "stale-count"
+            ? digest + "\n" + (count + 1).ToString(CultureInfo.InvariantCulture) + "\n"
+            : new string('A', 64) + "\n" + count.ToString(CultureInfo.InvariantCulture) + "\n";
+        await repo.CommitFileAsync(ManifestPath, text, "stale manifest");
+        var target = await repo.HeadAsync();
+        await repo.CommitFileAsync("docs/note.md", "docs\n", "docs");
+        var decision = await repo.DecideAsync(target, embedded: new string('B', 64) + "\n1\n");
+        decision.Skip.ShouldBeFalse(decision.Reason);
+        decision.Reason.ShouldBe("unrecognized-build-graph");
+    }
+
+    [Test]
+    [Arguments("malformed")]
+    [Arguments("missing")]
+    public async Task C_FT2_MalformedTargetManifestBuilds(string variant)
+    {
+        await using var repo = await Ft2Repo.CreateAsync();
+        if (variant == "malformed")
+            await repo.CommitFileAsync(ManifestPath, "not-a-digest\n", "malformed manifest");
+        var target = await repo.HeadAsync();
+        await repo.CommitFileAsync("docs/note.md", "docs\n", "docs");
+        var decision = await repo.DecideAsync(target, embedded: new string('B', 64) + "\n1\n");
+        decision.Skip.ShouldBeFalse(decision.Reason);
+        decision.Reason.ShouldBe("unrecognized-build-graph");
+    }
+
+    [Test]
+    public async Task C_FT2_UnreadableTargetManifestBuilds()
+    {
+        var target = new string('1', 40);
+        var candidate = new string('2', 40);
+        var row = "100644 blob " + new string('a', 40) + "\tApp.csproj";
+        using var embedded = LandVerificationBuildGraph.UseManifestText(new string('B', 64) + "\n1\n");
+        var decision = await new LandVerificationPolicy(new ScriptedGit(args => args[0] switch
+        {
+            "diff-tree" => new(0, ":000000 100644 " + new string('0', 40) + " " + new string('c', 40) + " A\0docs/note.md\0", ""),
+            "ls-tree" => new(0, row + "\0", ""),
+            "show" => new(128, "", "unreadable"),
+            _ => new(1, "", "unexpected")
+        })).DecideAsync("repo", "refs/heads/master", target, candidate, null, false, CancellationToken.None);
+        decision.Skip.ShouldBeFalse(decision.Reason);
+        decision.Reason.ShouldBe("unrecognized-build-graph");
+    }
+
+    [Test]
+    public async Task C_FT2_CandidateGraphDiffersFromTargetBuilds()
+    {
+        var target = new string('1', 40);
+        var candidate = new string('2', 40);
+        var targetRow = "100644 blob " + new string('a', 40) + "\tApp.csproj";
+        var candidateRow = "100644 blob " + new string('b', 40) + "\tApp.csproj";
+        var manifest = LandVerificationBuildGraph.FingerprintOf([targetRow]) + "\n1\n";
+        using var embedded = LandVerificationBuildGraph.UseManifestText(new string('B', 64) + "\n1\n");
+        var decision = await new LandVerificationPolicy(new ScriptedGit(args => args[0] switch
+        {
+            "diff-tree" => new(0, ":000000 100644 " + new string('0', 40) + " " + new string('c', 40) + " A\0docs/note.md\0", ""),
+            "ls-tree" => new(0, (args[3] == target ? targetRow : candidateRow) + "\0", ""),
+            "show" => new(0, manifest, ""),
+            _ => new(1, "", "unexpected")
+        })).DecideAsync("repo", "refs/heads/master", target, candidate, null, false, CancellationToken.None);
+        decision.Skip.ShouldBeFalse(decision.Reason);
+        decision.Reason.ShouldBe("unrecognized-build-graph");
+    }
+
+    [Test]
+    public async Task C_FT2_BuildDefinitionByteStillBuilds()
+    {
+        await using var repo = await Ft2Repo.CreateAsync();
+        await repo.CommitFileAsync("Directory.Build.props", "<Project>\n</Project>\n", "props");
+        var (digest, count) = await repo.GraphAsync();
+        await repo.CommitFileAsync(ManifestPath, digest + "\n" + count.ToString(CultureInfo.InvariantCulture) + "\n", "manifest");
+        var target = await repo.HeadAsync();
+        await repo.CommitFileAsync("Directory.Build.props", "<Project>\n </Project>\n", "one byte");
+        await repo.CommitFileAsync("docs/note.md", "docs\n", "docs");
+        var decision = await repo.DecideAsync(target, embedded: new string('B', 64) + "\n1\n");
+        decision.Skip.ShouldBeFalse(decision.Reason);
+        decision.Reason.ShouldBe("diff-requires-build");
+    }
+
+    [Test]
+    [Arguments("missing")]
+    [Arguments("stale")]
+    public async Task C_FT2_EmbeddedManifestSkipUnchanged(string variant)
+    {
+        await using var repo = await Ft2Repo.CreateAsync();
+        var (digest, count) = await repo.GraphAsync();
+        if (variant == "stale")
+            await repo.CommitFileAsync(ManifestPath, new string('A', 64) + "\n1\n", "stale manifest");
+        var target = await repo.HeadAsync();
+        await repo.CommitFileAsync("docs/note.md", "docs\n", "docs");
+        var decision = await repo.DecideAsync(target, embedded: digest + "\n" + count.ToString(CultureInfo.InvariantCulture) + "\n");
+        decision.Skip.ShouldBeTrue(decision.Reason);
+        decision.Reason.ShouldBe("non-code");
+    }
+
     private static async Task<LandingSafetyHarness> CreateAsync(bool force = false)
     {
         var h = new LandingSafetyHarness();
@@ -2992,7 +3129,9 @@ public sealed class LandNonCodeSkipTests
         }).WaitAsync(TimeSpan.FromSeconds(30));
     }
 
-    private static async Task GitAsync(string root, params string[] args)
+    private static async Task GitAsync(string root, params string[] args) => _ = await GitOutAsync(root, args);
+
+    private static async Task<string> GitOutAsync(string root, params string[] args)
     {
         var start = GitStart(root, args);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
@@ -3001,6 +3140,7 @@ public sealed class LandNonCodeSkipTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await process.WaitForExitAsync(timeout.Token);
         process.ExitCode.ShouldBe(0, await stdout + await stderr);
+        return await stdout;
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> BlobBytes = new(StringComparer.Ordinal);
@@ -3066,5 +3206,91 @@ public sealed class LandNonCodeSkipTests
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         return start;
+    }
+
+    private static bool SelectGraph(string raw, out List<string> selected)
+    {
+        selected = [];
+        if (!raw.EndsWith('\0') || raw.Contains('\uFFFD')) return false;
+        var graph = new LandVerificationBuildGraph();
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in raw.Split('\0').SkipLast(1))
+        {
+            var tab = row.IndexOf('\t');
+            if (tab < 0) return false;
+            var metadata = row[..tab].Split(' ');
+            var path = row[(tab + 1)..];
+            if (metadata.Length != 3 || !GitObjectId.IsFull(metadata[2]) || !Ft2SafePath(path) || !paths.Add(path)) return false;
+            if (!((metadata[0] is "100644" or "100755" or "120000") && metadata[1] == "blob"
+                || metadata[0] == "160000" && metadata[1] == "commit")
+                || metadata[2].All(c => c == '0')) return false;
+            if (!graph.Includes(path)) continue;
+            if (metadata[0] is not ("100644" or "100755") || metadata[1] != "blob") return false;
+            selected.Add(row);
+        }
+        return true;
+    }
+
+    private static bool Ft2SafePath(string path) => path.Length > 0 && !path.Contains('\\')
+        && !path.Any(char.IsControl) && !path.Contains('\uFFFD')
+        && path.Split('/').All(component => component is not ("" or "." or ".."));
+
+    private sealed class ScriptedGit(Func<IReadOnlyList<string>, LandingGitResult> answer) : LandingGit
+    {
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(answer(arguments));
+        }
+    }
+
+    private sealed class Ft2Repo : IAsyncDisposable
+    {
+        private readonly string _root;
+        private Ft2Repo(string root) => _root = root;
+
+        public static async Task<Ft2Repo> CreateAsync()
+        {
+            var root = Directory.CreateTempSubdirectory("ft2-land-").FullName;
+            var repo = new Ft2Repo(root);
+            await GitAsync(root, "init", "-b", "master");
+            await GitAsync(root, "config", "user.email", "ft2@example.com");
+            await GitAsync(root, "config", "user.name", "FT2");
+            await GitAsync(root, "config", "core.autocrlf", "false");
+            await GitAsync(root, "config", "commit.gpgsign", "false");
+            await repo.CommitFileAsync("App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n", "graph");
+            return repo;
+        }
+
+        public async Task CommitFileAsync(string path, string content, string message)
+        {
+            var full = Path.Combine(_root, path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            await File.WriteAllTextAsync(full, content);
+            await GitAsync(_root, "add", "--", path);
+            await GitAsync(_root, "commit", "-m", message);
+        }
+
+        public async Task<string> HeadAsync() => (await GitOutAsync(_root, "rev-parse", "HEAD")).Trim();
+
+        public async Task<(string Digest, int Count)> GraphAsync()
+        {
+            var raw = await GitOutAsync(_root, "ls-tree", "-r", "-z", "HEAD");
+            SelectGraph(raw, out var selected).ShouldBeTrue();
+            return (LandVerificationBuildGraph.FingerprintOf(selected), selected.Count);
+        }
+
+        public async Task<LandVerificationPolicy.Decision> DecideAsync(string target, string embedded)
+        {
+            using var scope = LandVerificationBuildGraph.UseManifestText(embedded);
+            return await new LandVerificationPolicy(new LandingGit()).DecideAsync(
+                _root, "refs/heads/master", target, await HeadAsync(), null, false, CancellationToken.None);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+            return ValueTask.CompletedTask;
+        }
     }
 }

@@ -12,6 +12,7 @@ public sealed class AgentTaskLandingStateTests
 {
     [Test]
     [Arguments("valid", true)]
+    [Arguments("target-manifest", true)]
     [Arguments("rc", false)]
     [Arguments("filter", false)]
     [Arguments("schema2", false)]
@@ -28,6 +29,7 @@ public sealed class AgentTaskLandingStateTests
         op.VerificationSkipReason = "non-code";
         switch (variant)
         {
+            case "target-manifest": op.VerificationSkipReason = "docs-skip-target-manifest"; break;
             case "rc": op.TargetFullRef = op.DestinationFullRef = "refs/heads/rc/fixture"; break;
             case "filter": op.VerificationFilter = "/*/*/Selected/*"; break;
             case "schema2": op.SchemaVersion = 2; break;
