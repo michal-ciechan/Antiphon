@@ -315,11 +315,15 @@ namespace Antiphon.Nightly
         /// A real git child with captured raw stdout bytes and a bounded wait. On timeout the child is killed and joined
         /// before returning; the result is a failure. Command-line config overrides a system core.fsmonitor=true.
         /// </summary>
-        public static GitRun Git(string repositoryRoot, params string[] arguments)
+        public static GitRun Git(string repositoryRoot, params string[] arguments) => GitWithInput(repositoryRoot, null, arguments);
+
+        /// <summary>Git with stdinText written to the child's standard input (closed after it); null leaves it unredirected.</summary>
+        public static GitRun GitWithInput(string repositoryRoot, string stdinText, params string[] arguments)
         {
             var start = new ProcessStartInfo("git")
             {
                 UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+                RedirectStandardInput = stdinText != null,
             };
             foreach (var a in new[] { "-c", "core.fsmonitor=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-C", repositoryRoot ?? "" }) start.ArgumentList.Add(a);
             foreach (var a in arguments ?? new string[0]) start.ArgumentList.Add(a ?? "");
@@ -327,6 +331,12 @@ namespace Antiphon.Nightly
             try
             {
                 process = Process.Start(start);
+                if (stdinText != null)
+                {
+                    var input = new UTF8Encoding(false).GetBytes(stdinText);
+                    process.StandardInput.BaseStream.Write(input, 0, input.Length);
+                    process.StandardInput.Close();
+                }
                 var buffer = new MemoryStream();
                 var copy = process.StandardOutput.BaseStream.CopyToAsync(buffer);
                 var error = process.StandardError.ReadToEndAsync();
@@ -401,17 +411,34 @@ namespace Antiphon.Nightly
             return new AuthorityPolicy { Object = policy, PolicyHash = policy.ComputedHash, RequiredSuites = suites, Exclusions = exclusions.ToArray() };
         }
 
-        /// <summary>The policy blob at the pinned commit, read through git (never the working tree) and identity-checked.</summary>
+        /// <summary>
+        /// The policy blob at the pinned commit, read through git (never the working tree) and identity-checked. One git
+        /// child: cat-file --batch resolves sha:path as rev-parse does and returns the object's id, type, size and bytes.
+        /// An unresolvable name is policy-blob-unresolved; a name that is not a blob, or output that does not hold the
+        /// stated size, is policy-blob-unreadable.
+        /// </summary>
         public static PinnedBlob ReadPinnedBlob(string repositoryRoot, string sha)
         {
-            var id = Git(repositoryRoot, "rev-parse", "--verify", "--quiet", sha + ":" + PolicyPath);
-            if (id.ExitCode != 0) throw Refuse("policy-blob-unresolved");
-            var blobId = id.Text.Trim();
-            var blob = Git(repositoryRoot, "cat-file", "blob", blobId);
-            if (blob.ExitCode != 0) throw Refuse("policy-blob-unreadable");
-            if (!string.Equals(GitBlobId(blob.Bytes), blobId, StringComparison.OrdinalIgnoreCase)) throw Refuse("policy-blob-identity");
-            return new PinnedBlob { BlobId = blobId, Bytes = blob.Bytes };
+            var name = (sha ?? "") + ":" + PolicyPath;
+            if (name.IndexOf('\n') >= 0 || name.IndexOf('\r') >= 0) throw Refuse("policy-blob-unresolved");
+            var run = GitWithInput(repositoryRoot, name + "\n", "cat-file", "--batch");
+            if (run.ExitCode != 0) throw Refuse("policy-blob-unresolved");
+            var bytes = run.Bytes ?? new byte[0];
+            var eol = Array.IndexOf(bytes, (byte)'\n');
+            if (eol < 0) throw Refuse("policy-blob-unresolved");
+            var header = Encoding.ASCII.GetString(bytes, 0, eol).Split(' ');
+            if (header.Length != 3 || !IsObjectId(header[0])) throw Refuse("policy-blob-unresolved");
+            if (header[1] != "blob" || !int.TryParse(header[2], NumberStyles.None, CultureInfo.InvariantCulture, out var size)
+                || size < 0 || bytes.Length < eol + 1 + size) throw Refuse("policy-blob-unreadable");
+            var blobId = header[0];
+            var blob = new byte[size];
+            Buffer.BlockCopy(bytes, eol + 1, blob, 0, size);
+            if (!string.Equals(GitBlobId(blob), blobId, StringComparison.OrdinalIgnoreCase)) throw Refuse("policy-blob-identity");
+            return new PinnedBlob { BlobId = blobId, Bytes = blob };
         }
+
+        private static bool IsObjectId(string text) =>
+            (text.Length == 40 || text.Length == 64) && text.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
 
         /// <summary>The pinned scripts' digests, then one digest per compiled source tree, keyed by relative path.</summary>
         public static OrderedDictionary ScriptHashes(string scriptsRoot)
