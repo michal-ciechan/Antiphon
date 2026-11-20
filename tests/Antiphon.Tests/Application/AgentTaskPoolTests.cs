@@ -1080,6 +1080,104 @@ public class AgentTaskPoolTests
     }
 
     [Test]
+    public async Task an_alias_task_is_killed_on_release_instead_of_pooling()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (_, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            cs, workspace.Path, AgentTaskStatus.Succeeded, TimeSpan.FromMinutes(3),
+            kind: AgentKind.Codex, level: AgentModelLevel.Frontier,
+            requestedModelAlias: ModelAlias.Gpt62Astra);
+
+        var acted = await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
+
+        acted.ShouldBe(1);
+        stopper.Killed.ShouldBe([sessionId],
+            "a requested alias is a launch argument; settlement kills that process instead of warming it");
+    }
+
+    [Test]
+    public async Task a_ladder_task_pools_and_the_next_alias_claim_spawns_fresh()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId, pooled) = await SeedUnreleasedDelegateAsync(
+            cs, workspace.Path, AgentTaskStatus.Succeeded, TimeSpan.FromMinutes(3),
+            kind: AgentKind.Codex, level: AgentModelLevel.High);
+
+        var acted = await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
+
+        acted.ShouldBe(1);
+        stopper.Killed.ShouldNotContain(sessionId);
+        var alias = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.High, rootTaskId: pooled.RootTaskId,
+            kind: AgentKind.Codex, connectionString: cs, requestedModelAlias: ModelAlias.Gpt62Astra);
+        (await dispatcher.TryReuseWarmAgentAsync(alias, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "an alias claim must not take a warm ladder process");
+        alias.AgentId.ShouldBeNull();
+
+        var ladder = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.High, rootTaskId: pooled.RootTaskId,
+            kind: AgentKind.Codex, connectionString: cs);
+        (await dispatcher.TryReuseWarmAgentAsync(ladder, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused,
+                "the ladder process stays claimable by a task with no alias");
+        ladder.AgentId.ShouldBe(agentId);
+    }
+
+    [Test]
+    public async Task a_warm_alias_delegate_is_not_claimed_by_the_next_ladder_task()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Frontier, idleMinutes: 10,
+            kind: AgentKind.Codex, connectionString: cs);
+        await SeedTaskOnDelegateAsync(
+            cs, agentId, sessionId, workspace.Path, AgentTaskStatus.Succeeded,
+            DateTime.UtcNow.AddMinutes(-30), kind: AgentKind.Codex,
+            level: AgentModelLevel.Frontier, requestedModelAlias: ModelAlias.Gpt62Astra);
+        var ladder = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Frontier, kind: AgentKind.Codex, connectionString: cs);
+
+        (await dispatcher.TryReuseWarmAgentAsync(ladder, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "a pool row launched for an alias is not claimable by a ladder task");
+        ladder.AgentId.ShouldNotBe(agentId);
+    }
+
+    [Test]
+    public async Task a_pinned_alias_task_does_not_reuse_its_warm_pool_delegate()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, _) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.High, idleMinutes: 10,
+            kind: AgentKind.Codex, connectionString: cs);
+        var alias = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.High, pinnedAgentId: agentId,
+            kind: AgentKind.Codex, connectionString: cs, requestedModelAlias: ModelAlias.Gpt62Astra);
+
+        (await dispatcher.TryReuseWarmAgentAsync(alias, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "a pinned alias follow-up relaunches so --model is the requested slug");
+        alias.AgentId.ShouldBeNull();
+    }
+
+    [Test]
     public async Task the_release_sweep_kills_a_running_worktree_delegate_with_no_open_task()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -1331,7 +1429,9 @@ public class AgentTaskPoolTests
 
     private static async Task<(Guid AgentId, Guid SessionId, AgentTask Task)> SeedUnreleasedDelegateAsync(
         string connectionString, string directory, AgentTaskStatus status, TimeSpan completedAgo,
-        WorkspaceMode workspace = WorkspaceMode.Shared, bool sourced = false)
+        WorkspaceMode workspace = WorkspaceMode.Shared, bool sourced = false,
+        AgentKind kind = AgentKind.ClaudeCode, AgentModelLevel level = AgentModelLevel.Medium,
+        string? requestedModelAlias = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -1340,7 +1440,7 @@ public class AgentTaskPoolTests
         await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
-            Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+            Id = sessionId, DefinitionName = "fake", AgentKind = kind,
             Status = SessionStatus.Running, Cwd = directory, Cols = 120, Rows = 30,
             CreatedAt = now.AddMinutes(-30), StartedAt = now.AddMinutes(-30), LastSeenAt = now,
         });
@@ -1349,7 +1449,7 @@ public class AgentTaskPoolTests
         {
             Id = agentId, Name = name, Slug = name, WorkingDirectory = directory,
             Details = "CARD-0691 unreleased pool delegate.", Status = AgentStatus.Running,
-            Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true,
+            Kind = kind, ModelLevel = level, IsPoolDelegate = true,
             PersistentSessionId = sessionId.ToString("D"), LaunchEnvJson = "{}",
             CreatedAt = now.AddMinutes(-30), UpdatedAt = now.AddMinutes(-30),
         });
@@ -1381,13 +1481,15 @@ public class AgentTaskPoolTests
         }
 
         var task = await SeedTaskOnDelegateAsync(connectionString, agentId, sessionId, directory, status,
-            now - completedAgo, workspace, operationId);
+            now - completedAgo, workspace, operationId, kind, level, requestedModelAlias);
         return (agentId, sessionId, task);
     }
 
     private static async Task<AgentTask> SeedTaskOnDelegateAsync(
         string connectionString, Guid agentId, Guid sessionId, string directory, AgentTaskStatus status,
-        DateTime? completedAt, WorkspaceMode workspace = WorkspaceMode.Shared, Guid? sourceLandingOperationId = null)
+        DateTime? completedAt, WorkspaceMode workspace = WorkspaceMode.Shared, Guid? sourceLandingOperationId = null,
+        AgentKind kind = AgentKind.ClaudeCode, AgentModelLevel level = AgentModelLevel.Medium,
+        string? requestedModelAlias = null)
     {
         var id = Guid.NewGuid();
         var at = completedAt ?? DateTime.UtcNow;
@@ -1395,7 +1497,7 @@ public class AgentTaskPoolTests
         {
             Id = id, RootTaskId = id, Title = "CARD-0691 settled work", Goal = "the settled work",
             Role = sourceLandingOperationId is null ? AgentTaskRole.Docs : AgentTaskRole.Mutation,
-            AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, Workspace = workspace,
+            AgentKind = kind, ModelLevel = level, RequestedModelAlias = requestedModelAlias, Workspace = workspace,
             WorkingDirectory = directory, AgentId = agentId, AgentSessionId = sessionId, Status = status,
             SourceLandingOperationId = sourceLandingOperationId,
             SourceLandingSha = sourceLandingOperationId is null ? null : new string('a', 40),
@@ -1544,7 +1646,8 @@ public class AgentTaskPoolTests
         AgentKind kind = AgentKind.ClaudeCode,
         string? worktreePath = null,
         string? inheritedLaunchEnvJson = null,
-        string? connectionString = null)
+        string? connectionString = null,
+        string? requestedModelAlias = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -1556,6 +1659,7 @@ public class AgentTaskPoolTests
             Role = AgentTaskRole.Docs,
             AgentKind = kind,
             ModelLevel = level,
+            RequestedModelAlias = requestedModelAlias,
             Workspace = worktreePath is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree,
             WorkingDirectory = directory,
             WorktreePath = worktreePath,

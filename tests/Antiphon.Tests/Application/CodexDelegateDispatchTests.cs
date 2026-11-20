@@ -200,6 +200,67 @@ public class CodexDelegateDispatchTests
         frontier.Status.ShouldBe(AgentTaskStatus.Queued);
     }
 
+    [Test]
+    public async Task reroute_of_an_alias_task_to_claude_launches_without_the_codex_slug()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var service = CreateServiceWithHolds(db);
+        var created = await service.CreateAsync(
+            CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra), caller, CancellationToken.None);
+
+        var summary = await service.RerouteAsync(
+            created.Id, AgentKind.ClaudeCode, AgentModelLevel.High, CancellationToken.None);
+
+        summary.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        task.RequestedModelAlias.ShouldBeNull();
+        var detail = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Rerouted)
+            .Select(e => e.Detail)
+            .SingleAsync();
+        var claude = ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.High);
+        detail.ShouldContain(claude);
+        detail.ShouldNotContain(ModelAlias.Gpt62Astra);
+        var (dispatcher, provider) = CreateHarness();
+        await using var owned = provider;
+        var args = SpecOf(dispatcher, task).Args.ToList();
+        args.ShouldNotContain(ModelAlias.Gpt62Astra);
+        args[args.IndexOf("--model") + 1].ShouldBe(claude);
+    }
+
+    [Test]
+    public async Task reroute_of_an_alias_task_from_high_to_medium_launches_the_medium_slug()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var service = CreateServiceWithHolds(db);
+        var created = await service.CreateAsync(
+            CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra), caller, CancellationToken.None);
+
+        await service.RerouteAsync(
+            created.Id, AgentKind.Codex, AgentModelLevel.Medium, CancellationToken.None);
+
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        task.ModelLevel.ShouldBe(AgentModelLevel.Medium);
+        task.RequestedModelAlias.ShouldBeNull();
+        var detail = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Rerouted)
+            .Select(e => e.Detail)
+            .SingleAsync();
+        detail.ShouldContain("gpt-6.2-sol");
+        detail.ShouldNotContain(ModelAlias.Gpt62Astra);
+        var (dispatcher, provider) = CreateHarness();
+        await using var owned = provider;
+        var args = SpecOf(dispatcher, task).Args.ToList();
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol");
+        ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
+    }
+
     private static CreateAgentTaskRequest CodexRequest(AgentModelLevel level, string? model) =>
         new CreateAgentTaskRequest(
             "audit this diff",
