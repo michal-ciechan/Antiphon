@@ -1,7 +1,9 @@
 # FT-2 checkpoints (Code task df40f8cb)
 
 Closed list for the docs-only target-manifest skip. The first row's cold build uses
-`EstimatedMinutes` 15. Later rows reuse that build. Positive controls stay pending.
+`EstimatedMinutes` 15. Later rows reuse that build. The output is `bin-ft2b/` because
+the first red run kept `bin-ft2/` and a recorded build source is not overwritten.
+Positive controls stay pending.
 Mutation is waived (operator 2026-11-12). Windows is unobserved: `WindowsUnitPlatformAdmissionTests`
 is not in this list.
 
@@ -13,7 +15,7 @@ skip, the registry match, and the manifest-parse witnesses.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | FT-2 | tests/Antiphon.Tests -> bin-ft2/ | ft2-witness | `/*/*/LandNonCodeSkipTests/(C_FT2*)\|(C1380_TargetGraphDrift*)` | FT-2 (a) current target manifest skips, (b) one build-definition byte builds, (c) candidate graph differs, (d) stale malformed missing and unreadable manifests build, (e) embedded skip stays non-code, plus the stale-manifest drift case | 12 executed, 0 failed/skipped | 12 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-1 | FT-2 | tests/Antiphon.Tests -> bin-ft2b/ | ft2-witness | `/*/*/LandNonCodeSkipTests/(C_FT2*)\|(C1380_TargetGraphDrift*)` | FT-2 (a) current target manifest skips, (b) one build-definition byte builds, (c) candidate graph differs, (d) stale malformed missing and unreadable manifests build, (e) embedded skip stays non-code, plus the stale-manifest drift case | 12 executed, 0 failed/skipped | 12 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | FT-2 | CP-1 | ft2-publication | `/*/*/AgentTaskLandingStateTests/C1380_NonCode*` | publication accepts docs-skip-target-manifest on pinned master schema 3 | 7 executed, 0 failed/skipped | 7 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | FT-2 | CP-1 | ft2-policy | `/*/*/LandNonCodeSkipTests/(C1380*)\|(C1385_Registry*)\|(C1385_Unrelated*)\|(C1390_M*)` | existing land-verification policy skips and the registry graph witness | 46 executed, 0 failed/skipped | 46 | 10 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | FT-2 | CP-1 | ft2-classify | `/*/*/TestClassificationPolicyTests/*` | classification policy, once | 40 executed, 0 failed/skipped | 40 | 3 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
