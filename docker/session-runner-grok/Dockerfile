@@ -126,15 +126,15 @@ RUN mkdir -p /tmp/jq-download \
  && test "$(/usr/local/bin/jq --version)" = "jq-${JQ_VERSION}" \
  && rm -rf /tmp/jq-download
 # CARD-0660 D-1/D-2: codex-cli's native linux-x64 platform package, pinned by version AND npm's
-# published SHA-512 (dist.integrity sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==
+# published SHA-512 (dist.integrity sha512-6cCZJaZL17tiTAvhd1Pirt8vsV1dP8CfG94+IHygUO4m24oYLQrIInJJLyKzcMv/uUonbu1dF2JmcXhA/s5bsg==
 # in hex). The archive is hashed before tar runs; a re-published tarball fails the build and the
 # remedy is a new reviewed pair, never a refreshed digest. The WHOLE package is kept: the binary
 # finds codex-code-mode-host, codex-path/rg and codex-resources/bwrap through codex-package.json
 # in its package root, so a binary-only copy is not an install. Root-owned, not writable by 1654.
 # No CODEX_HOME, credential file or credential name is ever a layer: the runner's home lives on
 # the runner-state volume (docker/stack/init-state.sh), signed in there by the operator.
-ARG CODEX_VERSION=0.160.0
-ARG CODEX_SHA512=288ffbdcea86ac7991d7cb3bc9aec4d4da95eab4f4cb7971af4b3c4b5a91da6eb353a41117f1e5479dbd8c02cb879be37549ec453e00868c6dd1ac5be2463df6
+ARG CODEX_VERSION=0.170.0
+ARG CODEX_SHA512=e9c09925a64bd7bb624c0be17753e2aedf2fb15d5d3fc09f1bde3e207ca050ee26db8a182d0ac82272492f22b370cbffb94a276eed5d176266717840fece5bb2
 RUN mkdir -p /opt/codex-download "/opt/codex/${CODEX_VERSION}" /opt/codex-probe/home \
  && curl -fsSL -o /opt/codex-download/codex.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_VERSION}-linux-x64.tgz" \
  && echo "${CODEX_SHA512}  /opt/codex-download/codex.tgz" | sha512sum -c - \

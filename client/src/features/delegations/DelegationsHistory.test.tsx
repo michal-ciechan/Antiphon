@@ -206,7 +206,7 @@ describe('DelegationsHistory', () => {
         title: 'Current Codex high',
         agentKind: 'Codex',
         modelLevel: 'High',
-        effectiveModelId: 'gpt-6.1-sol',
+        effectiveModelId: 'gpt-6.2-sol',
         status: 'Succeeded',
         completedAt: '2026-08-07T10:00:00Z',
       }),
@@ -218,7 +218,7 @@ describe('DelegationsHistory', () => {
     const medium = screen.getByTestId(`history-row-${shortId(mediumId)}`)
     expect(within(medium).getByTestId('tier-Medium')).toHaveTextContent('gpt-5.6-terra')
     const current = screen.getByTestId(`history-row-${shortId(currentId)}`)
-    expect(within(current).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+    expect(within(current).getByTestId('tier-High')).toHaveTextContent('gpt-6.2-sol')
   })
 
   it('lists newest-settled first and hides a Working row in the mock', async () => {

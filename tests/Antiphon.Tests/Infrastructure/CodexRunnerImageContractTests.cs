@@ -23,13 +23,13 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class CodexRunnerImageContractTests
 {
-    private const string Version = "0.160.0";
+    private const string Version = "0.170.0";
     // Microsoft's 9.0.20 release metadata, sdk.files dotnet-sdk-linux-x64.tar.gz.
     private const string Net9SdkSha512 = "e8685293a3512178e0de1bb3c1663e31fdf9d761af705094bf833cc1ff6b9a18c543aa4141f0216503c98039c719585a6d32905b0bbb3279e93b7e7616e047c3";
 
-    // npm's dist.integrity for @openai/codex@0.160.0-linux-x64, verified against the tarball for CARD-0904.
+    // npm's dist.integrity for @openai/codex@0.170.0-linux-x64, verified against the tarball on 2026-11-19.
     private const string NpmIntegrity =
-        "sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==";
+        "sha512-6cCZJaZL17tiTAvhd1Pirt8vsV1dP8CfG94+IHygUO4m24oYLQrIInJJLyKzcMv/uUonbu1dF2JmcXhA/s5bsg==";
 
     private const string PackageRoot = "/opt/codex/${CODEX_VERSION}/package";
     private const string NativeBinary = PackageRoot + "/vendor/x86_64-unknown-linux-musl/bin/codex";

@@ -48,7 +48,7 @@ public class ModelAvailabilityCreateTests
         current.AgentKind.ShouldBe(AgentKind.Codex, "C967-current-kind");
         current.ModelLevel.ShouldBe(level, "C967-current-level");
         var currentAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, null);
-        currentAlias.ShouldBe(ModelAlias.Gpt61Sol, "C967-current-alias");
+        currentAlias.ShouldBe(ModelAlias.Gpt62Sol, "C967-current-alias");
         await Service(db).RequireAsync(AgentKind.Codex, currentAlias, CancellationToken.None);
 
         var refused = await Should.ThrowAsync<ModelDisabledException>(() =>

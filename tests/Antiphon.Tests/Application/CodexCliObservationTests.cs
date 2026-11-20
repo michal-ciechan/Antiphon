@@ -39,19 +39,19 @@ public sealed class CodexCliObservationTests
         string? Floor(AgentKind kind, string? model) => ModelLevelAliases.MinimumCodexCliVersion(kind, model)?.ToString();
         foreach (var level in new[] { AgentModelLevel.High, AgentModelLevel.Medium, (AgentModelLevel)999 })
             (ModelLevelAliases.ForCodexEntry(level).MinimumCliVersion?.ToString())
-                .ShouldBe("0.159.1", "C959-pc-124 Sol entry floor " + level);
+                .ShouldBe("0.169.1", "C959-pc-124 Sol entry floor " + level);
         ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion
             .ShouldBeNull("C959-pc-125 Frontier entry floor");
         ModelLevelAliases.ForCodexEntry(AgentModelLevel.Low).MinimumCliVersion
             .ShouldBeNull("C1029-pc-264 Low entry floor");
         Floor(AgentKind.Codex, "GPT-6.1-SOL").ShouldBe("0.159.1", "C959-pc-126 exact canonical lookup");
         foreach (var level in new[] { AgentModelLevel.High, AgentModelLevel.Medium })
-            ModelLevelAliases.ForCodex(level).ShouldBe("gpt-6.1-sol", "C959-pc-127 public alias " + level);
+            ModelLevelAliases.ForCodex(level).ShouldBe("gpt-6.2-sol", "C959-pc-127 public alias " + level);
         foreach (var (level, model, floor) in new[]
         {
-            (AgentModelLevel.High, "gpt-6.1-sol", "0.159.1"),
-            (AgentModelLevel.Medium, "gpt-6.1-sol", "0.159.1"),
-            ((AgentModelLevel)999, "gpt-6.1-sol", "0.159.1"),
+            (AgentModelLevel.High, "gpt-6.2-sol", "0.169.1"),
+            (AgentModelLevel.Medium, "gpt-6.2-sol", "0.169.1"),
+            ((AgentModelLevel)999, "gpt-6.2-sol", "0.169.1"),
             (AgentModelLevel.Frontier, "gpt-6-astra", (string?)null),
             (AgentModelLevel.Low, "gpt-5.6-luna", (string?)null),
         })
@@ -188,7 +188,7 @@ public sealed class CodexCliObservationTests
                 adapter.SubmittedBodies.Single().ShouldBe(expected, "C959-v21-pointer " + vector);
                 var args = adapter.StartedArgs.ToList();
                 args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 " + vector);
-                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", "C959-pc-184 " + vector);
+                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol", "C959-pc-184 " + vector);
             }
             k.Client.Requests.ShouldBeEmpty("C959-inert-delivery " + vector);
             row.RunnerId.ShouldBeNull("C959-pc-185 " + vector);
@@ -291,7 +291,7 @@ public sealed class CodexCliObservationTests
                 (await File.ReadAllBytesAsync(frozen.Path!)).ShouldBe(Encoding.UTF8.GetBytes(frozen.Full), "C959-pc-194 spill " + vector);
                 var args = adapter.StartedArgs.ToList();
                 args.Count(a => a == "--model").ShouldBe(1, "C959-v22-model " + vector);
-                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", "C959-v22-model " + vector);
+                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol", "C959-v22-model " + vector);
                 adapter.SubmittedBodies.Single().ShouldBe(frozen.Wire, "C959-pc-194 recipient " + vector);
                 var queued = await finalDb.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
                 var session = await finalDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == row.AgentSessionId);
@@ -352,7 +352,7 @@ public sealed class CodexCliObservationTests
         {
             await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
             foreach (var (level, exact, expected) in new[] {
-                (AgentModelLevel.Medium, (string?)null, "gpt-6.1-sol"),
+                (AgentModelLevel.Medium, (string?)null, "gpt-6.2-sol"),
                 (AgentModelLevel.Frontier, (string?)null, "gpt-6-astra"),
                 (AgentModelLevel.Low, (string?)null, "gpt-5.6-luna"),
                 (AgentModelLevel.High, "gpt-6.1-sol", "gpt-6.1-sol"),
@@ -485,7 +485,7 @@ public sealed class CodexCliObservationTests
         await db.Agents.Where(a => a.Id == warm.Harness.AgentId).ExecuteUpdateAsync(u => u
             .SetProperty(a => a.Kind, AgentKind.Codex).SetProperty(a => a.ModelLevel, AgentModelLevel.High));
         await db.AgentSessions.Where(s => s.Id == warm.Harness.SessionId).ExecuteUpdateAsync(u => u
-            .SetProperty(s => s.AgentKind, AgentKind.Codex).SetProperty(s => s.EffectiveModelId, "gpt-6.1-sol"));
+            .SetProperty(s => s.AgentKind, AgentKind.Codex).SetProperty(s => s.EffectiveModelId, "gpt-6.2-sol"));
         warm.Harness.Adapter.CodexComposerChrome = true;
         warm.Client.Sample = sample(DateTimeOffset.UtcNow);
         AgentTaskCreatedDto created;
@@ -512,7 +512,7 @@ public sealed class CodexCliObservationTests
         (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(full), "C959-warm-complete-E " + vector);
     }
 
-    private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label, string expectedModel = "gpt-6.1-sol")
+    private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label, string expectedModel = "gpt-6.2-sol")
     {
         using (TestTrace.Span("launch-queue wait")) await kit.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         await using var db = kit.Context();

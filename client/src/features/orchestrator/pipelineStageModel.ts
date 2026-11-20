@@ -161,7 +161,7 @@ export function stagePinLabel(stage: AgentTaskPipelineStageDto): string | null {
 
 /**
  * Drops only the `gpt-5.6-` prefix so a Codex cell stays inside ~14 characters. The current
- * `gpt-6-astra` and `gpt-6.1-sol` slugs are 11 characters and render whole at every tier.
+ * `gpt-6-astra` and `gpt-6.2-sol` slugs are 11 characters and render whole at every tier.
  */
 export function compactAlias(level: AgentModelLevel, kind: AgentKind): string {
   const alias = tierAlias(level, kind)

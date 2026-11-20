@@ -38,6 +38,10 @@ public class ModelAliasTests
     [Arguments("GPT-6-Sol", "gpt-6-sol")]
     [Arguments("gpt-6.1-sol", "gpt-6.1-sol")]
     [Arguments("GPT-6.1-Sol", "gpt-6.1-sol")]
+    [Arguments("gpt-6.2-sol", "gpt-6.2-sol")]
+    [Arguments("GPT-6.2-Sol", "gpt-6.2-sol")]
+    [Arguments("gpt-6.2-astra", "gpt-6.2-astra")]
+    [Arguments("GPT-6.2-Astra", "gpt-6.2-astra")]
     [Arguments("sol", "gpt-6-sol")]
     [Arguments("gpt-5.6-sol", "gpt-5.6-sol")]
     [Arguments("gpt-5.6-terra", "gpt-5.6-terra")]
@@ -122,7 +126,7 @@ public class ModelAliasTests
     [Arguments("HAIKU", "haiku")]
     [Arguments("grok-4.7", "grok-4.7")]
     [Arguments("gpt-6-astra", "gpt-6-astra")]
-    [Arguments("gpt-6.1-sol", "gpt-6.1-sol")]
+    [Arguments("gpt-6.2-sol", "gpt-6.2-sol")]
     [Arguments("*", "*")]
     public void CanonicalHoldAlias_accepts_known_aliases_and_star(string raw, string expected)
     {
@@ -136,6 +140,8 @@ public class ModelAliasTests
     [Arguments("grok-4.6")]
     [Arguments("gpt-5.6-sol")]
     [Arguments("gpt-6-sol")]
+    [Arguments("gpt-6.1-sol")]
+    [Arguments("gpt-6.2-astra")]
     [Arguments("gpt-5.6-terra")]
     [Arguments("bogus")]
     [Arguments("")]
@@ -146,8 +152,8 @@ public class ModelAliasTests
     }
 
     /// <summary>
-    /// CARD-0903: the bare Sol word keeps its historical gpt-6-sol meaning for hold text;
-    /// the 6.1 model has an explicit versioned arm. Retired rung ids still normalize, but
+    /// CARD-0903: the bare Sol word keeps its historical gpt-6-sol meaning for hold text.
+    /// Versioned Sol and Astra ids have explicit arms. Retired rung ids still normalize, but
     /// only current rung ids appear in the delegatable hold vocabulary.
     /// </summary>
     [Test]
@@ -166,14 +172,14 @@ public class ModelAliasTests
         ModelAlias.Normalize(AgentKind.Codex, "gpt-5.6-terra").ShouldBe(ModelAlias.Gpt56Terra);
 
         // And the ladder the hold vocabulary is derived from names the new pin, not the old one.
-        ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.1-sol");
-        ModelLevelAliases.ForCodex(AgentModelLevel.Medium).ShouldBe("gpt-6.1-sol");
-        ModelLevelAliases.ForCodex((AgentModelLevel)999).ShouldBe("gpt-6.1-sol");
+        ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.2-sol");
+        ModelLevelAliases.ForCodex(AgentModelLevel.Medium).ShouldBe("gpt-6.2-sol");
+        ModelLevelAliases.ForCodex((AgentModelLevel)999).ShouldBe("gpt-6.2-sol");
         ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(ModelAlias.Gpt6Astra);
         ModelLevelAliases.ForCodex(AgentModelLevel.Low).ShouldBe(ModelAlias.Gpt56Luna);
         ModelAlias.DelegatableAliases
             .Where(entry => entry.Kind == AgentKind.Codex)
             .Select(entry => entry.Alias)
-            .ShouldBe(["gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-luna"]);
+            .ShouldBe(["gpt-6-astra", "gpt-6.2-sol", "gpt-5.6-luna"]);
     }
 }

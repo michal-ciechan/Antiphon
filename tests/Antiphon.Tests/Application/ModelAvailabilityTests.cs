@@ -58,7 +58,8 @@ public class ModelAvailabilityTests
             var availability = Service(db);
             (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt6Sol, CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt61Sol, CancellationToken.None)).ShouldBeFalse();
-            (await availability.ListAvailableAsync(CancellationToken.None)).ShouldContain(ModelAlias.Gpt61Sol);
+            (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt62Sol, CancellationToken.None)).ShouldBeFalse();
+            (await availability.ListAvailableAsync(CancellationToken.None)).ShouldContain(ModelAlias.Gpt62Sol);
         }
         finally
         {
@@ -281,7 +282,9 @@ public class ModelAvailabilityTests
             available.ShouldContain("haiku");
             available.ShouldContain("grok-4.7");
             available.ShouldContain("gpt-6-astra");
-            available.ShouldContain("gpt-6.1-sol");
+            available.ShouldContain("gpt-6.2-sol");
+            available.ShouldNotContain("gpt-6.1-sol");
+            available.ShouldNotContain("gpt-6.2-astra");
             available.ShouldNotContain("gpt-5.6-sol");
         }
         finally

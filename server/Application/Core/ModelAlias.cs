@@ -19,6 +19,8 @@ public static class ModelAlias
     public const string Grok47 = "grok-4.7";
     public const string Grok46 = "grok-4.6";
     public const string Gpt6Astra = "gpt-6-astra";
+    public const string Gpt62Astra = "gpt-6.2-astra";
+    public const string Gpt62Sol = "gpt-6.2-sol";
     public const string Gpt61Sol = "gpt-6.1-sol";
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt56Sol = "gpt-5.6-sol";
@@ -37,7 +39,7 @@ public static class ModelAlias
         (AgentKind.ClaudeCode, Haiku),
         (AgentKind.Grok, Grok47),
         (AgentKind.Codex, Gpt6Astra),
-        (AgentKind.Codex, Gpt61Sol),
+        (AgentKind.Codex, Gpt62Sol),
         (AgentKind.Codex, Gpt56Luna),
     ];
 
@@ -92,6 +94,8 @@ public static class ModelAlias
         if (IsHaiku(folded)) return Haiku;
         if (IsGrok47(folded)) return Grok47;
         if (IsGrok46(folded)) return Grok46;
+        if (IsAstra62(folded)) return Gpt62Astra;
+        if (IsSol62(folded)) return Gpt62Sol;
         if (IsAstra(folded)) return Gpt6Astra;
         if (IsSol61(folded)) return Gpt61Sol;
         if (IsSol6(folded)) return Gpt6Sol;
@@ -171,13 +175,22 @@ public static class ModelAlias
     private static bool IsGrok46(string folded) =>
         folded is "grok 4 6" or "grok 46";
 
+    // Folded "gpt 6 2 astra" is the catalogued 6.2 Astra slug. It is not a ladder rung.
+    // Bare "astra" stays on the older arm below. The backend 400s bare -m astra.
+    private static bool IsAstra62(string folded) =>
+        folded is "gpt 6 2 astra" or "gpt62 astra";
+
+    // Folded "gpt 6 2 sol" is the launched High and Medium slug. Bare "sol" stays historical.
+    private static bool IsSol62(string folded) =>
+        folded is "gpt 6 2 sol" or "gpt62 sol";
+
     // Folded "astra" maps to the canonical slug for holds / TUI text. Launch never uses this
     // path: ModelLevelAliases.ForCodex returns "gpt-6-astra". The backend 400s bare -m astra.
     private static bool IsAstra(string folded) =>
         folded is "gpt 6 astra" or "gpt6 astra" or "astra";
 
-    // Bare "sol" keeps its gpt-6-sol meaning for existing hold text and rows. The 6.1 pin
-    // requires an explicit versioned name; older Sol and Terra ids remain recognized history.
+    // Bare "sol" keeps its gpt-6-sol meaning for existing hold text and rows. Versioned Sol
+    // ids require an explicit name; older Sol and Terra ids remain recognized history.
     private static bool IsSol61(string folded) =>
         folded is "gpt 6 1 sol" or "gpt61 sol";
 

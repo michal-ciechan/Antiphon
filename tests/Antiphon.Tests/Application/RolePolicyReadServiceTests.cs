@@ -32,7 +32,7 @@ public sealed class RolePolicyReadServiceTests
         docs.Alias.ShouldBe("grok-4.7");
         docs.Effective.AgentKind.ShouldBe(AgentKind.Grok);
         docs.Effective.Alias.ShouldBe("grok-4.7");
-        Row(dto, AgentTaskRole.Commit).Alias.ShouldBe("gpt-6.1-sol");
+        Row(dto, AgentTaskRole.Commit).Alias.ShouldBe("gpt-6.2-sol");
         var code = Row(dto, AgentTaskRole.Code);
         code.Kind.ShouldBeNull();
         code.Alias.ShouldBe("fable");

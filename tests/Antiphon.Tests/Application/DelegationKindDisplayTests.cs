@@ -57,12 +57,12 @@ public class ModelLevelAliasDisplayTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra")]
-    [Arguments(AgentModelLevel.High, "gpt-6.1-sol")]
-    [Arguments(AgentModelLevel.Medium, "gpt-6.1-sol")]
+    [Arguments(AgentModelLevel.High, "gpt-6.2-sol")]
+    [Arguments(AgentModelLevel.Medium, "gpt-6.2-sol")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
     public void the_codex_ladder_answers_for_the_codex_kind(AgentModelLevel level, string expected)
     {
-        // CARD-0903: High and Medium share Sol 6.1; effort keeps their tiers distinct.
+        // High and Medium share gpt-6.2-sol; effort keeps their tiers distinct.
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(expected);
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(ModelLevelAliases.ForCodex(level));
     }
@@ -72,9 +72,9 @@ public class ModelLevelAliasDisplayTests
     {
         // routing-pin.ps1 -Candidates sends Kind/Level tokens; the server alias is ModelLevelAliases.For.
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.High))
-            .ShouldBe("Codex/High (gpt-6.1-sol)");
+            .ShouldBe("Codex/High (gpt-6.2-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Medium))
-            .ShouldBe("Codex/Medium (gpt-6.1-sol)");
+            .ShouldBe("Codex/Medium (gpt-6.2-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier))
             .ShouldBe("Codex/Frontier (gpt-6-astra)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Low))
@@ -138,7 +138,7 @@ public class ModelLevelAliasDisplayTests
 
         var handoff = DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull();
 
-        handoff.ShouldContain("at gpt-6.1-sol, escalated to gpt-6.1-sol");
+        handoff.ShouldContain("at gpt-6.2-sol, escalated to gpt-6.2-sol");
         handoff.ShouldNotContain("sonnet");
         handoff.ShouldNotContain("opus");
     }
