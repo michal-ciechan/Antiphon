@@ -15,7 +15,7 @@ Windows behavior is UNOBSERVED. WindowsUnitPlatformAdmissionTests is omitted on 
 No PC is defined. Mutation execution is operator-waived (2026-11-12). Every PC stays pending for caller-commissioned SourceLanding Mutation.
 Restart: none.
 
-Min floors are the case counts on this tree: a `[Test]` with N `[Arguments]` counts as N, and `[Test]` tokens inside string literals are not cases. Policy is 45. The guard union is 43. DerivedImpactIndexTests is 27. Antiphon.Tests ProcessSpawnLimitTests is 57.
+Min floors are the case counts on this tree: a `[Test]` with N `[Arguments]` counts as N, and `[Test]` tokens inside string literals are not cases. Policy is 45. The guard union is 39: TaskPlatformGuidanceTests contributes 5, and the four RunnerDefaultGuidanceTests methods in the same file are a different class outside this filter. DerivedImpactIndexTests is 27. Antiphon.Tests ProcessSpawnLimitTests is 57.
 
 Unlisted, named in the Code report: the red four-class run, the two green confirmations of that filter, the derived-impact driver build and its two regenerate passes, and the checkpoint tool host build. The nightly-core cache for this source stamp is installed by the casing witness. A separate pre-warm is only needed if that stamp changes.
 
@@ -27,7 +27,7 @@ Unlisted, named in the Code report: the red four-class run, the two green confir
 | CP-2 | advisories | `CP-1` | shadow-harness | `/*/*/RcIncrementalShadowTests/*` | V-2 | all 12, 0 failed/skipped | 12 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | advisories | `CP-1` | dirty-harness | `/*/*/RcDirtyLaunchOrderTests/*` | V-3 | all 6, 0 failed/skipped | 6 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | advisories | `CP-1` | policy | `/*/*/TestClassificationPolicyTests/*` | V-4 | 45 executed, 0 failed/skipped | 45 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-5 | advisories | `CP-1` | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-5 | 43 executed, 0 failed/skipped | 43 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-5 | advisories | `CP-1` | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-5 | 39 executed, 0 failed/skipped | 39 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | advisories | `CP-1` | derived-index | `/*/*/DerivedImpactIndexTests/*` | V-6 | 27 executed, 0 failed/skipped | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | advisories | `CP-1` | nightly-core | `/*/*/NightlyCoreTests/*` | V-7 | 1 executed, 0 failed/skipped | 1 | 4 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | advisories | `CP-1` | live-lane | `/*/*/LiveLaneRunnerTests/*` | V-8 | all 4, 0 failed/skipped | 4 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
