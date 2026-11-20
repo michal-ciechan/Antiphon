@@ -213,8 +213,8 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 | Tier | Claude | Grok | Codex |
 |---|---|---|---|
 | `Frontier` | `fable` | `grok-4.7` | `gpt-6-astra` |
-| `High` (default) | `opus` | `grok-4.7` | `gpt-6.1-sol` |
-| `Medium` | `sonnet` | `grok-4.7` | `gpt-6.1-sol` |
+| `High` (default) | `opus` | `grok-4.7` | `gpt-6.2-sol` |
+| `Medium` | `sonnet` | `grok-4.7` | `gpt-6.2-sol` |
 | `Low` | `haiku` | `grok-4.7` | `gpt-5.6-luna` |
 
 **Model-tier names are not `AgentKind` values.** Fable (Frontier), Opus (High), Sonnet
@@ -257,12 +257,15 @@ Three things worth knowing about that table:
   `-m luna` is rejected locally ("Model metadata for `luna` not found") *and* by the service
   (HTTP 400). Bare `-m astra` 400s the same way; the selectable id is `gpt-6-astra`. There are
   no unversioned aliases in Codex's catalogue. Frontier remains `gpt-6-astra` and Low remains
-  `gpt-5.6-luna`. High and Medium both pin `gpt-6.1-sol` (CARD-0903), with explicit `high`
-  and `medium` reasoning effort respectively; the 0.160.0 bundled catalog supports both.
-  Medium→High is a same-model fresh-context escalation at deeper effort. Low→Medium and
-  High→Frontier change models. Earlier `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile
-  model ids and recognized historical aliases; bare `sol` still normalizes to `gpt-6-sol` for
-  existing hold text. Frontier requires codex-cli 0.153.4+ and `gpt-6.1-sol` requires 0.159.1+.
+  `gpt-5.6-luna`. High and Medium both pin `gpt-6.2-sol` (operator 2026-11-19), with explicit
+  `high` and `medium` reasoning effort respectively; the 0.170.0 bundled catalog supports both
+  and still defaults those slugs to `low`. Medium→High is a same-model fresh-context escalation
+  at deeper effort. Low→Medium and High→Frontier change models. Earlier `gpt-6.1-sol`,
+  `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile model ids and recognized historical
+  aliases; bare `sol` still normalizes to `gpt-6-sol` and bare `astra` still normalizes to
+  `gpt-6-astra`. `gpt-6.2-astra` is recognized and floored, and it is not a ladder rung.
+  Frontier requires codex-cli 0.153.4+ (documented, not enforced). `gpt-6.2-sol` and
+  `gpt-6.2-astra` require 0.169.1+. `gpt-6.1-sol` keeps 0.159.1.
   CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model
   metadata only. Failed, stale, missing, malformed, clock-skewed and older observations
   never refuse create, retry, dispatch, warm reuse or final launch, and those paths start
@@ -515,7 +518,7 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
 ## 6. Codex (OpenAI codex-cli)
 
 **Launch.** `codex.cmd --no-alt-screen --dangerously-bypass-approvals-and-sandbox
-[--model gpt-6.1-sol] -c model_reasoning_effort=<level> -c disable_paste_burst=true
+[--model gpt-6.2-sol] -c model_reasoning_effort=<level> -c disable_paste_burst=true
 [-c developer_instructions=<text>]`
 — **and no session-identity argument**, because `SessionResume` is `Unknown` for Codex and
 `BuildSessionIdentityArgs` only fires for kinds whose resume contract is `Supported`.
@@ -527,7 +530,7 @@ the model rides `-c` TOML config overrides, all of which live in
 | `-c` override | Why |
 |---|---|
 | `developer_instructions=<text>` | the standing-instructions channel. **Measured, not read off the docs**: it lands as an additional `input_text` block at the head of the first developer message and *appends*, leaving Codex's own base instructions byte-identical. The neighbouring key `instructions` is **inert** in this CLI version — a bundle sent that way is silently dropped. Passed as one argv element with no quoting of our own; Codex parses it as TOML and falls back to the raw literal, which is what a multi-line markdown bundle always does (newlines, tabs, quotes, backticks and Windows backslashes all survive). |
-| `model_reasoning_effort=<low\|medium\|high\|xhigh>` | set **explicitly on every launch**, from the tier. The 0.160.0 catalog defaults `gpt-6-astra` and `gpt-6.1-sol` to `low`, while a local `~/.codex/config.toml` can override that. The tier is therefore authoritative: Frontier `xhigh`, High `high`, Medium `medium`, Low `low`. `ultra` is available in Astra and Sol but is not wired. |
+| `model_reasoning_effort=<low\|medium\|high\|xhigh>` | set **explicitly on every launch**, from the tier. The 0.170.0 catalog defaults `gpt-6-astra`, `gpt-6.2-sol` and `gpt-6.1-sol` to `low`, while a local `~/.codex/config.toml` can override that. The tier is therefore authoritative: Frontier `xhigh`, High `high`, Medium `medium`, Low `low`. `ultra` is available in Astra and Sol but is not wired. |
 | `disable_paste_burst=true` | CARD-0133. Codex's PasteBurst heuristic suppresses Enter for 120 ms after a typed burst and re-extends that window on every suppressed Enter; the queue's ~20 ms body→Enter gap lands inside it (9 of 78 cold Codex delegate launches). A static launch flag, not a delay. Official top-level boolean (default false); `-c` outranks `~/.codex/config.toml`, which does not set this key. Applied to both delegate and named-agent Codex launches. |
 
 **Startup readiness (CARD-0574).** Cold Codex work is withheld until a positively identified

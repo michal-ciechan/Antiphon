@@ -90,18 +90,18 @@ describe('TaskChip', () => {
   it('shows the current tier alias for a new Codex task and when nothing was recorded', () => {
     const { rerender } = renderWithProviders(
       <TaskChip
-        task={{ ...task, agentKind: 'Codex', modelLevel: 'High', effectiveModelId: 'gpt-6.1-sol' }}
+        task={{ ...task, agentKind: 'Codex', modelLevel: 'High', effectiveModelId: 'gpt-6.2-sol' }}
         onOpen={() => {}}
       />,
     )
-    expect(screen.getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+    expect(screen.getByTestId('tier-High')).toHaveTextContent('gpt-6.2-sol')
     rerender(
       <TaskChip
         task={{ ...task, agentKind: 'Codex', modelLevel: 'Medium', effectiveModelId: null }}
         onOpen={() => {}}
       />,
     )
-    expect(screen.getByTestId('tier-Medium')).toHaveTextContent('gpt-6.1-sol')
+    expect(screen.getByTestId('tier-Medium')).toHaveTextContent('gpt-6.2-sol')
   })
 
   it('labels a recovered elapsed time as unobserved', async () => {

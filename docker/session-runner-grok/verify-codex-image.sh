@@ -8,14 +8,14 @@
 # on the throwaway volume, and the only API key is a dummy aimed at an unreachable loopback port.
 set -u
 
-CODEX_VERSION=0.160.0
+CODEX_VERSION=0.170.0
 GROK_VERSION=1.0.41
 JQ_VERSION=1.7.1
 JQ_DESTINATION=/usr/local/bin/jq
 PACKAGE_ROOT=/opt/codex/$CODEX_VERSION/package
 VENDOR=$PACKAGE_ROOT/vendor/x86_64-unknown-linux-musl
-# Regular files in @openai/codex@0.160.0-linux-x64 (measured from the pinned tarball).
-PACKAGE_FILES=46
+# Regular files in @openai/codex@0.170.0-linux-x64 (measured from the pinned tarball).
+PACKAGE_FILES=45
 PROBE_HOME=/c660-home
 SEEDED_CONFIG='check_for_update_on_startup = false
 cli_auth_credentials_store = "file"
@@ -117,8 +117,8 @@ case "$row" in
     for f in bin/codex bin/codex-code-mode-host codex-path/rg codex-resources/bwrap; do
       [ -f "$VENDOR/$f" ] && [ -x "$VENDOR/$f" ] || result fail "missing executable $f"
     done
-    grep -q '"version": "0.160.0-linux-x64"' "$PACKAGE_ROOT/package.json" || result fail "package.json version"
-    grep -q '"version": "0.160.0"' "$VENDOR/codex-package.json" || result fail "codex-package.json version"
+    grep -q '"version": "0.170.0-linux-x64"' "$PACKAGE_ROOT/package.json" || result fail "package.json version"
+    grep -q '"version": "0.170.0"' "$VENDOR/codex-package.json" || result fail "codex-package.json version"
     grep -q '"entrypoint": "bin/codex"' "$VENDOR/codex-package.json" || result fail "codex-package.json entrypoint"
     count=$(find "$PACKAGE_ROOT" -type f | wc -l)
     [ "$count" -eq "$PACKAGE_FILES" ] || result fail "files=$count expected=$PACKAGE_FILES"

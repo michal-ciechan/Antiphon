@@ -318,7 +318,7 @@ describe('DelegationsBoard', () => {
         title: 'Current Codex high',
         agentKind: 'Codex',
         modelLevel: 'High',
-        effectiveModelId: 'gpt-6.1-sol',
+        effectiveModelId: 'gpt-6.2-sol',
         status: 'Working',
         dispatchedAt: '2026-08-07T10:00:00Z',
       }),
@@ -336,9 +336,9 @@ describe('DelegationsBoard', () => {
     expect(within(mediumRow).getByTestId('tier-Medium')).toHaveTextContent('gpt-5.6-terra')
 
     const currentChip = screen.getByTestId(`task-chip-${shortId(currentId)}`)
-    expect(within(currentChip).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+    expect(within(currentChip).getByTestId('tier-High')).toHaveTextContent('gpt-6.2-sol')
     const currentRow = screen.getByTestId(`task-tree-row-${shortId(currentId)}`)
-    expect(within(currentRow).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+    expect(within(currentRow).getByTestId('tier-High')).toHaveTextContent('gpt-6.2-sol')
   })
 
   it('carries health and rank at the same time, on separate channels', async () => {

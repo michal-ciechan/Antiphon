@@ -65,7 +65,7 @@ public class NamedCodexAgentLaunchTests
         // Rendered, not the raw template: {agentName} expands the same way it does for Claude.
         instructions.ShouldContain("You are BridgeQueue.");
         instructions.ShouldNotContain("{agentName}");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
     }
 
@@ -83,7 +83,7 @@ public class NamedCodexAgentLaunchTests
         instructions.ShouldContain(CodexInstructionFixtures.Incident);
         instructions.ShouldContain(CodexInstructionFixtures.StartSentinel);
         instructions.Length.ShouldBeGreaterThan(8_191);
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
     }
 
@@ -110,7 +110,7 @@ public class NamedCodexAgentLaunchTests
         await StartAsync(h);
 
         var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
         args.ShouldNotContain("--append-system-prompt");
         args.ShouldNotContain("--name");

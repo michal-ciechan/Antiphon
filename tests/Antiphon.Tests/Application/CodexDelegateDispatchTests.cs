@@ -49,7 +49,7 @@ public class CodexDelegateDispatchTests
 
         args.ShouldNotContain("--name", customMessage:
             "Codex has no --name flag at all; the launch would die on an unknown argument");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-sol");
         args.ShouldNotContain("--append-system-prompt", customMessage:
             "Codex's standing-instruction channel is a -c config override, not Claude's flag");
         args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
@@ -88,8 +88,8 @@ public class CodexDelegateDispatchTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
-    [Arguments(AgentModelLevel.High, "gpt-6.1-sol", "high")]
-    [Arguments(AgentModelLevel.Medium, "gpt-6.1-sol", "medium")]
+    [Arguments(AgentModelLevel.High, "gpt-6.2-sol", "high")]
+    [Arguments(AgentModelLevel.Medium, "gpt-6.2-sol", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
     public void every_tier_pins_a_full_slug_and_names_its_own_reasoning_effort(
         AgentModelLevel level, string expectedSlug, string expectedEffort)
@@ -157,7 +157,7 @@ public class CodexDelegateDispatchTests
         args.ShouldNotContain("-c", customMessage:
             "Codex's config overrides must never leak onto a Claude command line");
         args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag);
-        args.ShouldNotContain("gpt-6.1-sol");
+        args.ShouldNotContain("gpt-6.2-sol");
     }
 
     [Test]
@@ -233,7 +233,7 @@ public class CodexDelegateDispatchTests
 
         var detail = await LatestEscalationDetailAsync(task.Id);
         // High Sol -> Frontier Astra.
-        detail.ShouldStartWith("Escalated gpt-6.1-sol -> gpt-6-astra.");
+        detail.ShouldStartWith("Escalated gpt-6.2-sol -> gpt-6-astra.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
@@ -251,7 +251,7 @@ public class CodexDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: AgentModelLevel.Medium, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-6.1-sol.");
+        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-6.2-sol.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
@@ -267,7 +267,7 @@ public class CodexDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: AgentModelLevel.High, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldStartWith("Escalated gpt-6.1-sol -> gpt-6.1-sol.");
+        detail.ShouldStartWith("Escalated gpt-6.2-sol -> gpt-6.2-sol.");
         detail.ShouldContain("FRESH CONTEXT at the same model at deeper reasoning effort (medium → high)");
     }
 
@@ -388,7 +388,7 @@ public class CodexDelegateDispatchTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         var detail = await LatestDispatchDetailAsync(task.Id);
-        detail.ShouldContain("gpt-6.1-sol");
+        detail.ShouldContain("gpt-6.2-sol");
         detail.ShouldNotContain("sonnet");
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);

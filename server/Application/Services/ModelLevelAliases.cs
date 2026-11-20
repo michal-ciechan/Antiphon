@@ -17,17 +17,21 @@ namespace Antiphon.Server.Application.Services;
 /// twice over — "Model metadata for `luna` not found" locally, then HTTP 400 "the 'luna' model is
 /// not supported" from the service. There are no unversioned aliases in Codex's catalog (bare
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
-/// (<c>gpt-6-astra</c> / <c>gpt-6.1-sol</c> / <c>gpt-6.1-sol</c> / <c>gpt-5.6-luna</c>) and needs
-/// deliberate catalog bumps. <c>gpt-6-astra</c> requires codex-cli 0.153.4+; <c>gpt-6.1-sol</c>
-/// has recorded floor 0.159.1. CARD-0959 reports runner CLI observations and retains floor
-/// metadata as data only; it does not enforce compatibility or require a fleet upgrade.</para>
+/// (<c>gpt-6-astra</c> / <c>gpt-6.2-sol</c> / <c>gpt-6.2-sol</c> / <c>gpt-5.6-luna</c>) and needs
+/// deliberate catalog bumps. <c>gpt-6-astra</c>'s documented floor is codex-cli 0.153.4 and is
+/// not stored as <c>MinimumCliVersion</c>. <c>gpt-6.2-sol</c> and catalogued <c>gpt-6.2-astra</c>
+/// have floor 0.169.1. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1. CARD-0959 reports runner
+/// CLI observations and retains floor metadata as data only; it does not enforce compatibility
+/// or require a fleet upgrade.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
     public sealed record CodexLadderEntry(string ModelId, CodexCliVersion? MinimumCliVersion);
     private static readonly CodexLadderEntry CodexFrontier = new(ModelAlias.Gpt6Astra, null);
-    private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt61Sol, CodexCliVersion.Parse("0.159.1")!);
+    private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt62Sol, CodexCliVersion.Parse("0.169.1")!);
     private static readonly CodexLadderEntry CodexLow = new(ModelAlias.Gpt56Luna, null);
+    private static readonly CodexCliVersion Codex62AstraFloor = CodexCliVersion.Parse("0.169.1")!;
+    private static readonly CodexCliVersion Codex61SolFloor = CodexCliVersion.Parse("0.159.1")!;
 
     public static CodexLadderEntry ForCodexEntry(AgentModelLevel level) => level switch
     {
@@ -37,9 +41,20 @@ public static class ModelLevelAliases
     };
 
     /// <summary>The floor belongs to the actual explicit model, including exact profile pins.</summary>
-    public static CodexCliVersion? MinimumCodexCliVersion(AgentKind kind, string? actualModel) =>
-        kind == AgentKind.Codex && string.Equals(actualModel?.Trim(), CodexSol.ModelId, StringComparison.OrdinalIgnoreCase)
-            ? CodexSol.MinimumCliVersion : null;
+    public static CodexCliVersion? MinimumCodexCliVersion(AgentKind kind, string? actualModel)
+    {
+        if (kind != AgentKind.Codex || string.IsNullOrWhiteSpace(actualModel))
+            return null;
+
+        var model = actualModel.Trim();
+        if (string.Equals(model, CodexSol.ModelId, StringComparison.OrdinalIgnoreCase))
+            return CodexSol.MinimumCliVersion;
+        if (string.Equals(model, ModelAlias.Gpt62Astra, StringComparison.OrdinalIgnoreCase))
+            return Codex62AstraFloor;
+        if (string.Equals(model, ModelAlias.Gpt61Sol, StringComparison.OrdinalIgnoreCase))
+            return Codex61SolFloor;
+        return null;
+    }
     public static string ForClaude(AgentModelLevel level) => level switch
     {
         AgentModelLevel.Frontier => "fable",
@@ -58,16 +73,18 @@ public static class ModelLevelAliases
     /// <summary>
     /// Codex's ladder (CARD-0099 S3, CARD-0396, CARD-0611, CARD-0903). Frontier remains
     /// <c>gpt-6-astra</c> and Low remains <c>gpt-5.6-luna</c>. The operator pinned both High
-    /// and Medium to <c>gpt-6.1-sol</c> on 2026-10-02. They use the same model but retain distinct
-    /// reasoning efforts (high and medium). The old <c>gpt-6-sol</c> and <c>gpt-5.6-terra</c>
+    /// and Medium to <c>gpt-6.2-sol</c> on 2026-11-19. They use the same model but retain distinct
+    /// reasoning efforts (high and medium). <c>gpt-6.2-astra</c> stays catalogued and off this
+    /// ladder. The old <c>gpt-6.1-sol</c>, <c>gpt-6-sol</c> and <c>gpt-5.6-terra</c>
     /// slugs remain selectable profile ids and recognizable historical aliases.
     ///
     /// <para>Low → Medium and High → Frontier are real model changes. Medium → High and High → Medium
     /// use <c>AgentTaskService.SameModelEscalationNote</c>'s same-alias fresh-context wording;
     /// the former increases reasoning effort. The note compares aliases for every kind.</para>
     ///
-    /// <para><c>gpt-6.1-sol</c> is bundled from codex-cli 0.159.1 onward and supports both
-    /// medium and high effort in 0.160.0. Do not pass bare <c>astra</c> or <c>sol</c> to Codex.</para>
+    /// <para><c>gpt-6.2-sol</c> is bundled from codex-cli 0.169.1 onward and supports both
+    /// medium and high effort in 0.170.0. Its catalog default is still <c>low</c>. Do not pass
+    /// bare <c>astra</c> or <c>sol</c>, and do not pass <c>ultra</c>.</para>
     /// </summary>
     public static string ForCodex(AgentModelLevel level) => ForCodexEntry(level).ModelId;
 
