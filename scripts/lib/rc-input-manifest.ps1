@@ -493,22 +493,87 @@ function Test-RcStarWalkerPath {
     return $false
 }
 
-function Get-RcTestAttributeCount([string]$Text) {
-    $count=0
-    if (-not $Text) { return 0 }
+function Get-RcTestIdentities([string]$Text) {
+    # Roster key is namespace.class|method|Arguments, not the [Test] count.
+    $counts=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    if (-not $Text) { return $counts }
+    $kept=New-Object System.Text.StringBuilder
     foreach ($line in ($Text -split '\n')) {
         $trim=$line.Trim().TrimEnd("`r")
         if ($trim.StartsWith('//',[StringComparison]::Ordinal) -or $trim.StartsWith('*',[StringComparison]::Ordinal) -or $trim.StartsWith('/*',[StringComparison]::Ordinal)) { continue }
-        $count += [regex]::Matches($trim,'\[Test(?![A-Za-z0-9_])').Count
+        [void]$kept.AppendLine($line.TrimEnd("`r"))
     }
-    return $count
+    $source=$kept.ToString()
+    $nsMatch=[regex]::Match($source,'namespace\s+([A-Za-z_][A-Za-z0-9_.]*)')
+    $ns= if ($nsMatch.Success) { $nsMatch.Groups[1].Value } else { '' }
+    $pattern='(?<attrs>(?:\[[^\]]+\]\s*)+)(?:(?:public|private|protected|internal|static|async|sealed|override|virtual|new|unsafe|partial|file)\s+)*(?:async\s+)?(?:Task(?:<[^>\r\n]+>)?|void|ValueTask(?:<[^>\r\n]+>)?)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\('
+    foreach ($method in [regex]::Matches($source,$pattern)) {
+        $attrs=$method.Groups['attrs'].Value
+        if ($attrs -notmatch '\[Test(?![A-Za-z0-9_])') { continue }
+        $prefix=$source.Substring(0,$method.Index)
+        $classes=[regex]::Matches($prefix,'(?<![A-Za-z0-9_])class\s+([A-Za-z_][A-Za-z0-9_]*)')
+        $type= if ($classes.Count -gt 0) { $classes[$classes.Count-1].Groups[1].Value } else { '' }
+        $bare= if ($ns -and $type) { $ns+'.'+$type } elseif ($type) { $type } else { '' }
+        $name=$method.Groups['name'].Value -replace '_Batch\d+$',''
+        $arguments=@([regex]::Matches($attrs,'\[Arguments\((.*?)\)\]') | ForEach-Object { $_.Groups[1].Value })
+        if ($arguments.Count -eq 0) { $arguments=@('') }
+        foreach ($argument in $arguments) {
+            $id=$bare+'|'+$name+'|'+$argument
+            if (-not $counts.ContainsKey($id)) { $counts[$id]=0 }
+            $counts[$id]++
+        }
+    }
+    return $counts
 }
 
-function Test-RcAddedTestAttribute {
+function Test-RcTestIdentityChange {
     param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, [string]$Path)
-    $before=Get-RcTestAttributeCount (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
-    $after=Get-RcTestAttributeCount (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
-    return $after -gt $before
+    $before=Get-RcTestIdentities (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
+    $after=Get-RcTestIdentities (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
+    return -not (Test-RcCountMapsEqual $before $after)
+}
+
+function Get-RcLiteralPathPrefix([string]$Pattern) {
+    if (-not $Pattern) { return $null }
+    $star=$Pattern.IndexOfAny([char[]]@('*','?'))
+    $literal= if ($star -lt 0) { $Pattern } else { $Pattern.Substring(0,$star) }
+    $literal=$literal.TrimEnd('/')
+    if (-not $literal) { return $null }
+    # scripts/nightly-*.ps1 cuts mid-segment. The directory before that segment is the prefix.
+    if ($star -ge 0 -and -not $Pattern.Substring(0,$star).EndsWith('/')) {
+        $slash=$literal.LastIndexOf('/')
+        if ($slash -lt 0) { return $null }
+        $literal=$literal.Substring(0,$slash)
+    }
+    return $literal
+}
+
+function Get-RcMissingOwnerLiteralPaths {
+    param([string]$RepositoryRoot, [string]$MapJson)
+    if (-not $RepositoryRoot -or -not $MapJson) { throw 'missing-owner-literal-input' }
+    $map=ConvertFrom-Json -InputObject $MapJson -AsHashtable
+    $patterns=New-Object System.Collections.Generic.List[string]
+    if ($map.Contains('suiteProjects') -and $map.suiteProjects) { $patterns.Add([string]$map.suiteProjects) }
+    if ($map.Contains('testOnly') -and $null -ne $map.testOnly) {
+        foreach ($name in @('paths','exceptPaths')) {
+            if (-not $map.testOnly.Contains($name)) { continue }
+            foreach ($item in @($map.testOnly[$name])) { if ($item) { $patterns.Add([string]$item) } }
+        }
+    }
+    foreach ($root in @($map.roots)) {
+        if ($null -eq $root -or -not $root.path) { continue }
+        $patterns.Add([string]$root.path)
+    }
+    $missing=New-Object System.Collections.Generic.List[string]
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($pattern in $patterns) {
+        $prefix=Get-RcLiteralPathPrefix $pattern
+        if (-not $prefix -or -not $seen.Add($prefix)) { continue }
+        $full=Join-Path $RepositoryRoot ($prefix -replace '/',[IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $full)) { $missing.Add('missing-literal-path: '+$prefix+' <= '+$pattern) }
+    }
+    # Emit each gap as its own string. A wrapped array makes an empty result look present.
+    return $missing.ToArray()
 }
 
 function Get-RcContainingSuiteId {
@@ -617,7 +682,7 @@ function Get-RcInputManifest {
                 if ($null -ne $record -and (Test-RcProductEdgeReason ([string]$record.reason) $policy ([string]$after[0].project))) { $keep=$true; continue }
                 $changeStatus= if ($status.ContainsKey($path)) { $status[$path] } else { 'M' }
                 if ((Test-RcStructuralChange $RepositoryRoot $BaselineSha $CandidateSha $path $changeStatus) -and (Test-RcWalkerSuite $id $path $policy)) { $keep=$true }
-                if ((Test-RcStarWalkerPath $path $policy) -and (Test-RcAddedTestAttribute $RepositoryRoot $BaselineSha $CandidateSha $path)) { $keep=$true }
+                if ((Test-RcStarWalkerPath $path $policy) -and (Test-RcTestIdentityChange $RepositoryRoot $BaselineSha $CandidateSha $path)) { $keep=$true }
             }
             if (-not $keep) {
                 $remove.Add($id)

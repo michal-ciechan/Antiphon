@@ -2,7 +2,7 @@
 
 Review r1 blocker D-1: a `project-tree:<P>` reason whose project is not the suite's own is a product edge. A body edit under a referenced helper selects every suite that references it. A body edit inside the suite's own project still defers.
 
-A-1: `tests/Antiphon.E2E/**/*.cs` has `walker: true`. An added file selects every suite. An added `[Test]` on that star walker selects every suite. A later body edit still defers. A body edit of `ClaudeDialogWatchdogCanaryTests.cs` selects `Antiphon.Agents.Pty.Tests` because `runtime-reader-scan` is a product edge. That reason's only test-only path is the canary file.
+A-1: `tests/Antiphon.E2E/**/*.cs` has `walker: true`. An added file selects every suite. An added `[Test]` on that star walker selects every suite. A later body edit still defers. A body edit of `ClaudeDialogWatchdogCanaryTests.cs` selects `Antiphon.Agents.Pty.Tests` because `runtime-reader-scan` is a product edge. That reason is not limited to the canary. Three `tests/fixtures/**` files also carry it: `tests/fixtures/card0490-linux/card0490-live.example.json`, `tests/fixtures/card1336-release-gate-followups.ps1` and `tests/fixtures/incremental-selection-soundness.json`. Their reader is Antiphon.Tests, so an edit selects Antiphon.Tests. That is the safe direction.
 
 A-3: `enabled: false` selects the same suites as the enabled closure before deferral. Selection parity, not manifest bytes. `gateCredit` stays false and `activation` stays `shadow-only`.
 
