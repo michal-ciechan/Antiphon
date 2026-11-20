@@ -4,6 +4,35 @@
 . (Join-Path $PSScriptRoot 'checkpoint-index-paths.ps1')
 . (Join-Path $PSScriptRoot 'checkpoint-tool-reads.ps1')
 
+# Two confinement reads run-checkpoint.ps1 makes at a checkout's top level, answered from the repository's files with
+# no git child: `rev-parse HEAD` (CheckpointProcessRunner.ReadHead) and `ls-files -z -s`
+# (CheckpointIndexPaths.StageListing over the git dir CheckpointProcessRunner.TopLevelRepository names). Exactly the
+# stdout git prints, or $null when git must answer: another command form, a directory that is not the top level,
+# any layout those decline, or an older loaded type without the method.
+function Get-CheckpointFileGitRead {
+    param([string]$WorkDir, [string[]]$GitArgs)
+    $isHead = $GitArgs.Count -eq 2 -and $GitArgs[0] -ceq 'rev-parse' -and $GitArgs[1] -ceq 'HEAD'
+    $isStage = $GitArgs.Count -eq 3 -and $GitArgs[0] -ceq 'ls-files' -and $GitArgs[1] -ceq '-z' -and $GitArgs[2] -ceq '-s'
+    if (-not ($isHead -or $isStage) -or [string]::IsNullOrWhiteSpace($WorkDir)) { return $null }
+    try {
+        $runner = [Antiphon.Checkpoints.CheckpointProcessRunner]
+        if ($isHead) {
+            if ($null -eq $runner.GetMethod('ReadHead', [Type[]]@([string]))) { return $null }
+            $sha = $runner::ReadHead($WorkDir)
+            if ([string]::IsNullOrEmpty($sha)) { return $null }
+            return [string]$sha + "`n"
+        }
+        $index = 'Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]
+        if ($null -eq $index -or $null -eq $index.GetMethod('StageListing', [Type[]]@([string]))) { return $null }
+        if ($null -eq $runner.GetMethod('TopLevelRepository', [Type[]]@([string]))) { return $null }
+        $found = $runner::TopLevelRepository($WorkDir)
+        if ($null -eq $found) { return $null }
+        return $index::StageListing([string]$found[1])
+    } catch {
+        return $null
+    }
+}
+
 function Get-CheckpointGitBytes {
     param([string]$Repository, [string[]]$Arguments)
     # A read the named tool build answers in process (rev-parse --show-toplevel, for run-checkpoint.ps1's root).

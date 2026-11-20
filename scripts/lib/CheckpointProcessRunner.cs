@@ -291,6 +291,7 @@ namespace Antiphon.Checkpoints
         {
             public string GitDir;
             public string TopLevel;
+            public string CommonDir;
             public List<string> ConfigFiles;
         }
 
@@ -328,6 +329,7 @@ namespace Antiphon.Checkpoints
             }
             if (gitDir == null) return null;
             var files = new List<string> { Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") };
+            var commonDir = gitDir;
             var commonPointer = Path.Combine(gitDir, "commondir");
             if (File.Exists(commonPointer))
             {
@@ -339,8 +341,9 @@ namespace Antiphon.Checkpoints
                 if (AnyLinkOnPath(common)) return null;
                 files.Add(Path.Combine(common, "config"));
                 files.Add(Path.Combine(common, "config.worktree"));
+                commonDir = common;
             }
-            return new RepositoryFiles { GitDir = gitDir, TopLevel = top, ConfigFiles = files };
+            return new RepositoryFiles { GitDir = gitDir, TopLevel = top, CommonDir = commonDir, ConfigFiles = files };
         }
 
         // The one "bare" line git init writes for a checkout. Any other mention of "bare" (true in any form git
@@ -367,6 +370,12 @@ namespace Antiphon.Checkpoints
         /// </summary>
         public static string[] FindRepository(string start)
         {
+            var found = FindRepositoryChecked(start);
+            return found == null ? null : new[] { found.TopLevel, found.GitDir };
+        }
+
+        private static RepositoryFiles FindRepositoryChecked(string start)
+        {
             try
             {
                 foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
@@ -388,7 +397,77 @@ namespace Antiphon.Checkpoints
                     if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0
                         || text.IndexOf("include", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
                 }
-                return new[] { found.TopLevel, found.GitDir };
+                return found;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
+                || ex is NotSupportedException || ex is System.Security.SecurityException)
+            {
+                return null;
+            }
+        }
+
+        private static bool SamePath(string a, string b) => string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+        private static readonly System.Text.RegularExpressions.Regex FullObjectId = new System.Text.RegularExpressions.Regex(
+            "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // FindRepository's repository, only when this directory is itself its top level (where git run here prints
+        // root-relative answers); null otherwise.
+        private static RepositoryFiles AtTopLevel(string start)
+        {
+            var found = FindRepositoryChecked(start);
+            return found != null && SamePath(found.TopLevel, start) ? found : null;
+        }
+
+        /// <summary>
+        /// [top level, git dir] when this directory is itself the top level of a repository FindRepository settles
+        /// from its files; null otherwise (git answers).
+        /// </summary>
+        public static string[] TopLevelRepository(string start)
+        {
+            var found = AtTopLevel(start);
+            return found == null ? null : new[] { found.TopLevel, found.GitDir };
+        }
+
+        /// <summary>
+        /// `git rev-parse HEAD` at this checkout's top level, read from its files: the commit HEAD names, directly
+        /// (detached) or through a branch ref (refs/heads/...), loose in the common dir or else in packed-refs. Null
+        /// when git must answer: not a top level FindRepository settles, a reftable repository, an unborn branch, a
+        /// HEAD naming anything but a branch, a ref that is itself symbolic or not a full object id.
+        /// </summary>
+        public static string ReadHead(string topLevel)
+        {
+            try
+            {
+                var found = AtTopLevel(topLevel);
+                if (found == null || Directory.Exists(Path.Combine(found.CommonDir, "reftable"))) return null;
+                var head = File.ReadAllText(Path.Combine(found.GitDir, "HEAD")).TrimEnd('\r', '\n');
+                if (FullObjectId.IsMatch(head)) return head;
+                if (!head.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return null;
+                var name = head.Substring("ref: ".Length);
+                if (name.IndexOf('\\') >= 0 || HasParentSegment(name) || name.EndsWith("/", StringComparison.Ordinal)) return null;
+                var loose = Path.Combine(found.CommonDir, name.Replace('/', Path.DirectorySeparatorChar));
+                if (Directory.Exists(loose)) return null;
+                if (File.Exists(loose))
+                {
+                    var value = File.ReadAllText(loose).TrimEnd('\r', '\n');
+                    return FullObjectId.IsMatch(value) ? value : null;
+                }
+                var packed = Path.Combine(found.CommonDir, "packed-refs");
+                if (!File.Exists(packed)) return null;
+                foreach (var line in File.ReadLines(packed))
+                {
+                    if (line.Length == 0 || line[0] == '#' || line[0] == '^') continue;
+                    var space = line.IndexOf(' ');
+                    if (space > 0 && string.Equals(line.Substring(space + 1), name, StringComparison.Ordinal))
+                    {
+                        var oid = line.Substring(0, space);
+                        return FullObjectId.IsMatch(oid) ? oid : null;
+                    }
+                }
+                return null;
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
                 || ex is NotSupportedException || ex is System.Security.SecurityException)

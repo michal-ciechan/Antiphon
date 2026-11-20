@@ -149,7 +149,35 @@ namespace Antiphon.Checkpoints
 
         // Paths of a plain version-2 SHA-1 index, in file order; null for anything else (see the class comment).
         // assumeUnchanged: some entry carries the assume-valid bit (0x8000), which `ls-files -v` prints lower case.
-        internal static List<string> ListIndex(byte[] data, out bool assumeUnchanged)
+        internal static List<string> ListIndex(byte[] data, out bool assumeUnchanged) =>
+            ListIndex(data, out assumeUnchanged, null);
+
+        /// <summary>
+        /// `git ls-files -z -s` (mode, object id, stage 0, path, NUL per entry) for the index in this git dir: the
+        /// git dir CheckpointProcessRunner.TopLevelRepository names for a checkout's top level, where git lists
+        /// root-relative paths. Exactly git's bytes for a plain version-2 SHA-1 index of regular, executable and
+        /// symlink entries at stage 0; null (git answers) for anything else, the same refusals as AnyTracked, or no
+        /// index file at all.
+        /// </summary>
+        public static string StageListing(string gitDir)
+        {
+            if (string.IsNullOrEmpty(gitDir)) return null;
+            try
+            {
+                var data = ReadIndexAt(Path.GetFullPath(gitDir));
+                if (data == null) return null;
+                var listing = new StringBuilder();
+                return ListIndex(data, out _, listing) == null ? null : listing.ToString();
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
+                || ex is NotSupportedException || ex is System.Security.SecurityException || ex is DecoderFallbackException)
+            {
+                return null;
+            }
+        }
+
+        // The entries' paths; with a listing, each entry as `ls-files -z -s` prints it too.
+        private static List<string> ListIndex(byte[] data, out bool assumeUnchanged, StringBuilder listing)
         {
             assumeUnchanged = false;
             const int Header = 12, Hash = 20, Fixed = 62;
@@ -180,7 +208,14 @@ namespace Antiphon.Checkpoints
                 if (nameLength == 0 || nameStart + nameLength >= body || data[nameStart + nameLength] != 0) return null;
                 for (var b = nameStart; b < nameStart + nameLength; b++)
                     if (data[b] < 0x20 || data[b] == 0x7f) return null;
-                paths.Add(StrictUtf8.GetString(data, nameStart, nameLength));
+                var name = StrictUtf8.GetString(data, nameStart, nameLength);
+                paths.Add(name);
+                if (listing != null)
+                {
+                    listing.Append(Convert.ToString((int)mode, 8)).Append(' ')
+                        .Append(Convert.ToHexString(data, at + 40, Hash).ToLowerInvariant()).Append(" 0\t")
+                        .Append(name).Append('\0');
+                }
                 at += (Fixed + nameLength + 8) & ~7;
             }
             while (at < body)

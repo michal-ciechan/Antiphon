@@ -175,6 +175,77 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         CheckpointIndexPaths.AnyHiddenEntry(root, gitDir).ShouldBe(false);
     }
 
+    [Test]
+    [Timeout(120_000)]
+    public async Task Head_and_stage_listing_read_from_files_are_git_s(CancellationToken cancellationToken)
+    {
+        var created = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(created, "init", "-q", "-b", "main");
+        var root = Path.GetFullPath(CheckpointFixtureProcess.Git(created, "rev-parse", "--show-toplevel").Trim());
+        Write(root, "a.txt");
+        Write(root, "dir/b.txt");
+        Write(root, "dir/caf" + (char)0xE9 + ".txt");
+        CheckpointFixtureProcess.Git(root, "add", "-A");
+        if (!OperatingSystem.IsWindows())
+        {
+            CheckpointFixtureProcess.Git(root, "update-index", "--chmod=+x", "a.txt");
+        }
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        string GitHead(string at) => CheckpointFixtureProcess.Git(at, "rev-parse", "HEAD").Trim();
+        void Agrees(string at, string label)
+        {
+            CheckpointProcessRunner.ReadHead(at).ShouldBe(GitHead(at), label + " HEAD");
+            var found = CheckpointProcessRunner.TopLevelRepository(at);
+            found.ShouldNotBeNull(label);
+            CheckpointIndexPaths.StageListing(found[1]).ShouldBe(CheckpointFixtureProcess.Git(at, "ls-files", "-z", "-s"), label + " stage listing");
+        }
+
+        Agrees(root, "loose branch ref");
+        CheckpointFixtureProcess.Git(root, "pack-refs", "--all");
+        File.Exists(Path.Combine(root, ".git", "refs", "heads", "main")).ShouldBeFalse("the branch is packed");
+        Agrees(root, "packed branch ref");
+        var linked = Path.Combine(TempDir(), "linked");
+        CheckpointFixtureProcess.Git(root, "worktree", "add", "-q", "-b", "side", linked);
+        Agrees(Path.GetFullPath(CheckpointFixtureProcess.Git(linked, "rev-parse", "--show-toplevel").Trim()), "linked worktree");
+        CheckpointFixtureProcess.Git(root, "checkout", "-q", "--detach");
+        Agrees(root, "detached HEAD");
+
+        // Where the files cannot say it as git does, git answers.
+        var sub = Directory.CreateDirectory(Path.Combine(root, "dir")).FullName;
+        CheckpointProcessRunner.ReadHead(sub).ShouldBeNull("not the top level");
+        CheckpointProcessRunner.TopLevelRepository(sub).ShouldBeNull("not the top level");
+        var fresh = Directory.CreateDirectory(Path.Combine(TempDir(), "fresh")).FullName;
+        CheckpointFixtureProcess.Git(fresh, "init", "-q");
+        CheckpointProcessRunner.ReadHead(fresh).ShouldBeNull("an unborn branch");
+        CheckpointFixtureProcess.Git(root, "update-index", "--skip-worktree", "a.txt");
+        CheckpointIndexPaths.StageListing(Path.Combine(root, ".git")).ShouldBeNull("a version 3 index");
+
+        // The script's reader starts no git for either read, and prints what git prints.
+        CheckpointFixtureProcess.Git(root, "update-index", "--no-skip-worktree", "a.txt");
+        var trace = Directory.CreateDirectory(Path.Combine(TempDir(), "trace-fileread")).FullName;
+        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+        var source = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-source.ps1");
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", $$"""
+            $ErrorActionPreference = 'Stop'
+            . {{Quote(source)}}
+            $head = Get-CheckpointFileGitRead {{Quote(root)}} @('rev-parse', 'HEAD')
+            $listing = Get-CheckpointFileGitRead {{Quote(root)}} @('ls-files', '-z', '-s')
+            'HEAD=' + $head.Trim()
+            'LISTING=' + ([string]$listing).Replace([string][char]0, '|')
+            """ })
+            start.ArgumentList.Add(argument);
+        start.Environment["GIT_TRACE2_EVENT"] = trace;
+        var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
+        run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+        run.Stdout.ShouldContain("HEAD=" + GitHead(root));
+        run.Stdout.ShouldContain("LISTING=" + CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s").Replace("\0", "|", StringComparison.Ordinal));
+        Directory.GetFiles(trace).ShouldBeEmpty("both reads answered from the repository's files");
+    }
+
     private static bool GitTracks(string root, string full) =>
         CheckpointFixtureProcess.Git(root, "ls-files", "-z", "--", full).Length != 0;
 
