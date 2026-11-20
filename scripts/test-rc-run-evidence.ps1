@@ -485,9 +485,7 @@ try {
             if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
                 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
             }
-            if(-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)){
-                . (Join-Path $PSScriptRoot 'lib/nightly-watchdog-admission.ps1')
-            }
+
             if($null -eq ('Antiphon.Nightly.NightlyChunkVerdict' -as [type])){
                 . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
             }

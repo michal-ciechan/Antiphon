@@ -2865,9 +2865,8 @@ function Test-Group4NativeTrxReader {
     Assert-C487 -Cond ($graceValue -eq 60000 -and $script:NightlyCompletionGraceMilliseconds -eq $graceValue) -Name 'group4 grace constant is the unmeasured 60000 ms placeholder' -Detail ('csharp=' + $graceValue + ' powershell=' + $script:NightlyCompletionGraceMilliseconds)
     $ownerText = [System.IO.File]::ReadAllText($ownerPath)
     Assert-C487 -Cond ($ownerText.Contains('NightlyCompletionGrace.Wait(') -and $ownerText.Contains('2x') -and $ownerText.Contains('p95')) -Name 'group4 native loop waits on the named grace constant'
-    $admissionPath = Join-Path $lib 'nightly-watchdog-admission.ps1'
-    $admissionText = [System.IO.File]::ReadAllText($admissionPath)
-    Assert-C487 -Cond (-not $admissionText.Contains('function Invoke-NightlyCompletionGrace')) -Name 'group4 powershell grace copy is not a second implementation'
+    $graceImplText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+    Assert-C487 -Cond (-not $graceImplText.Contains('function Invoke-NightlyCompletionGrace')) -Name 'group4 powershell grace copy is not a second implementation'
 
     $measured = -1.0
     $measureError = ''
@@ -2894,13 +2893,13 @@ function Test-Group4NativeTrxReader {
 
     $hangField = $null
     $hangError = ''
-    try { $hangField = [string](Get-NightlyHarnessHangField -CompletedButHung) } catch { $hangError = $_.Exception.Message }
+    try { $hangField = [string]([Antiphon.Nightly.NightlyWatchdog]::HarnessHangField($true)) } catch { $hangError = $_.Exception.Message }
     Assert-C487 -Cond ($hangField -eq 'completed-but-hung') -Name 'group4 summary harnessHang reason is completed-but-hung' -Detail $hangError
     $clearField = 'present'
-    try { $clearField = [string](Get-NightlyHarnessHangField) } catch { $clearField = 'present' }
+    try { $clearField = [string]([Antiphon.Nightly.NightlyWatchdog]::HarnessHangField($false)) } catch { $clearField = 'present' }
     Assert-C487 -Cond ($clearField -eq '') -Name 'group4 summary harnessHang is empty when the chunk is not a hang' -Detail $clearField
     $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
-    Assert-C487 -Cond ($implText.Contains('harnessHang =') -and $implText.Contains('Get-NightlyHarnessHangField')) -Name 'group4 summary records harnessHang beside the red result'
+    Assert-C487 -Cond ($implText.Contains('harnessHang =') -and $implText.Contains('NightlyWatchdog]::HarnessHangField')) -Name 'group4 summary records harnessHang beside the red result'
     $notePath = Join-Path $repo (Join-Path 'docs' (Join-Path 'investigations' '2026-11-10-why-missed-session-runner-group4-post-completion-hang.md'))
     $noteText = [System.IO.File]::ReadAllText($notePath)
     Assert-C487 -Cond ($noteText.Contains('publicationTerminal') -and $noteText.Contains('failed-run') -and $noteText.Contains('<ResultSummary')) -Name 'group4 note records the opening-tag reader and publicationTerminal failed-run'
@@ -2923,51 +2922,51 @@ function Test-Group4CompletedHang {
     [System.IO.File]::WriteAllText($matchDiag, ($pad + "`ntotal ran: 119`nrequest execute stop`n"))
     $finished = $false
     $finishedError = ''
-    try { $finished = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $matchDiag) } catch { $finishedError = $_.Exception.Message }
+    try { $finished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($matchTrx, $matchDiag)) } catch { $finishedError = $_.Exception.Message }
     Assert-C487 -Cond ($finished -and [string]::IsNullOrEmpty($finishedError)) -Name 'group4 completed trx plus matching total ran is finished' -Detail $finishedError
 
     $lowDiag = Join-Path $root 'low.diag'
     [System.IO.File]::WriteAllText($lowDiag, "total ran: 118`nrequest execute stop`n")
     $low = $true
-    try { $low = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $lowDiag) } catch { $low = $true }
+    try { $low = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($matchTrx, $lowDiag)) } catch { $low = $true }
     Assert-C487 -Cond (-not $low) -Name 'group4 total ran that misses the trx total is not finished'
 
     $noStop = Join-Path $root 'nostop.diag'
     [System.IO.File]::WriteAllText($noStop, "total ran: 119`n")
     $stopped = $true
-    try { $stopped = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $noStop) } catch { $stopped = $true }
+    try { $stopped = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($matchTrx, $noStop)) } catch { $stopped = $true }
     Assert-C487 -Cond (-not $stopped) -Name 'group4 total ran without request execute stop is not finished'
 
     $bare = Join-Path $root 'bare.trx'
     Write-C487Trx -Path $bare -Rows @([pscustomobject]@{ Id = '1'; ClassName = 'A'; MethodName = 'M'; Outcome = 'Passed' })
     $bareFinished = $true
-    try { $bareFinished = [bool](Test-NightlyExecutionFinished -TrxPath $bare -DiagnosticPath $matchDiag) } catch { $bareFinished = $true }
+    try { $bareFinished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($bare, $matchDiag)) } catch { $bareFinished = $true }
     Assert-C487 -Cond (-not $bareFinished) -Name 'group4 trx without ResultSummary is not finished'
 
     $partial = Join-Path $root 'partial.trx'
     & $writeTrx $partial 'Completed' 119 118 1
     $partialFinished = $true
-    try { $partialFinished = [bool](Test-NightlyExecutionFinished -TrxPath $partial -DiagnosticPath $matchDiag) } catch { $partialFinished = $true }
+    try { $partialFinished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($partial, $matchDiag)) } catch { $partialFinished = $true }
     Assert-C487 -Cond (-not $partialFinished) -Name 'group4 notExecuted row is not a completed hang'
 
     $failedTrx = Join-Path $root 'failed.trx'
     & $writeTrx $failedTrx 'Failed' 119 119 0
     $failedFinished = $true
-    try { $failedFinished = [bool](Test-NightlyExecutionFinished -TrxPath $failedTrx -DiagnosticPath $matchDiag) } catch { $failedFinished = $true }
+    try { $failedFinished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($failedTrx, $matchDiag)) } catch { $failedFinished = $true }
     Assert-C487 -Cond (-not $failedFinished) -Name 'group4 Failed outcome is not a completed hang'
 
     $hung = $null
     $hungError = ''
-    try { $hung = Resolve-NightlyCompletedHang -TimedOut $true -Finished $true -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $hungError = $_.Exception.Message }
+    try { $hung = [Antiphon.Nightly.NightlyWatchdog]::CompletedHang($true, $true, 'session-runner', 'pid=42/image=git') } catch { $hungError = $_.Exception.Message }
     $hungOk = ($null -ne $hung -and [bool]$hung.CompletedButHung -and [string]$hung.Reason -eq 'completed-but-hung session-runner children=pid=42/image=git')
     Assert-C487 -Cond $hungOk -Name 'group4 finished timeout records completed-but-hung and the child list' -Detail $hungError
 
     $openHang = $null
-    try { $openHang = Resolve-NightlyCompletedHang -TimedOut $true -Finished $false -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $openHang = $null }
+    try { $openHang = [Antiphon.Nightly.NightlyWatchdog]::CompletedHang($true, $false, 'session-runner', 'pid=42/image=git') } catch { $openHang = $null }
     Assert-C487 -Cond ($null -ne $openHang -and -not [bool]$openHang.CompletedButHung -and [string]$openHang.Reason -eq 'watchdog-timeout') -Name 'group4 unfinished timeout stays watchdog-timeout'
 
     $clean = $null
-    try { $clean = Resolve-NightlyCompletedHang -TimedOut $false -Finished $true -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $clean = $null }
+    try { $clean = [Antiphon.Nightly.NightlyWatchdog]::CompletedHang($false, $true, 'session-runner', 'pid=42/image=git') } catch { $clean = $null }
     Assert-C487 -Cond ($null -ne $clean -and -not [bool]$clean.CompletedButHung) -Name 'group4 a finished run that exited is not a hang'
 
     $disp = $null
@@ -2979,16 +2978,16 @@ function Test-Group4CompletedHang {
     Assert-C487 -Cond ([string]$still.Reason -eq 'watchdog-timeout' -and -not [bool]$still.TestsPassed -and -not [bool]$still.CoverageComplete) -Name 'group4 generic watchdog disposition is unchanged'
 
     $formatted = ''
-    try { $formatted = [string](Format-NightlyHangChildren -Identities @('42:2026-11-09T22:33:18.0000000Z') -Images @('git') -RootPid 7) } catch { $formatted = '' }
+    try { $formatted = [string]([Antiphon.Nightly.NightlyWatchdog]::HangChildren(@('42:2026-11-09T22:33:18.0000000Z'), @('git'), 7)) } catch { $formatted = '' }
     Assert-C487 -Cond ($formatted -eq 'pid=42/image=git') -Name 'group4 hang children format pid and image' -Detail $formatted
 
     $fallback = 'present'
-    try { $fallback = [string](Format-NightlyHangChildren -Identities @() -Images @() -RootPid 9) } catch { $fallback = 'present' }
+    try { $fallback = [string]([Antiphon.Nightly.NightlyWatchdog]::HangChildren(@(), @(), 9)) } catch { $fallback = 'present' }
     Assert-C487 -Cond ($fallback -eq 'pid=9/image=') -Name 'group4 hang with no descendants names the root' -Detail $fallback
 
     $capture = Join-Path $root 'capture.hang.txt'
     $captureError = ''
-    try { Write-NightlyHangCapture -Path $capture -SuiteId 'session-runner' -Children 'pid=42/image=git' -RootPid 7 } catch { $captureError = $_.Exception.Message }
+    try { [Antiphon.Nightly.NightlyWatchdog]::WriteHangCapture($capture, 'session-runner', 'pid=42/image=git', 7) } catch { $captureError = $_.Exception.Message }
     $captureText = ''
     if (Test-Path -LiteralPath $capture) { $captureText = [System.IO.File]::ReadAllText($capture) }
     $captureOk = ($captureText.Contains('completed-hang-capture') -and $captureText.Contains('handles=not-enumerated') -and $captureText.Contains('pid=42/image=git') -and $captureText.Contains('suite=session-runner'))
@@ -3042,7 +3041,7 @@ function Test-Group4CompletedHang {
     Assert-C487 -Cond ($ownerText.Contains('NtQuerySystemInformation')) -Name 'group4 hang capture lists open handles'
     Assert-C487 -Cond (-not $ownerText.Contains('NtQueryObject')) -Name 'group4 hang capture does not query handle names'
     Assert-C487 -Cond ($ownerText.Contains('total ran:') -and $ownerText.Contains('request execute stop')) -Name 'group4 native grace uses the same finish markers'
-    Assert-C487 -Cond ($implText.Contains('Resolve-NightlyCompletedHang')) -Name 'group4 chunk classifies a completed hang'
+    Assert-C487 -Cond ($implText.Contains('NightlyWatchdog]::CompletedHang')) -Name 'group4 chunk classifies a completed hang'
     Assert-C487 -Cond ($implText.Contains("-HangCapturePath (`$logPath + '.hang.txt')") -and $implText.Contains('-ExecutionGraceMilliseconds')) -Name 'group4 chunk arms the native grace and hang capture'
     Assert-C487 -Cond ($implText.Contains("notmatch '^process-exit-'")) -Name 'group4 completed hang drops the kill exit code reason'
     Assert-C487 -Cond ($implText.Contains('if ($completedHang)') -and $implText.Contains("Set-NightlyOutcome TESTS") -and $implText.Contains("`$timingWhy = 'completed-but-hung'")) -Name 'group4 completed hang is a test outcome rather than a generic timeout'

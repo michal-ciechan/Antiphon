@@ -6,11 +6,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     if (-not (Get-Command Test-NightlyCoreAvailable -ErrorAction SilentlyContinue)) {
         . (Join-Path $PSScriptRoot 'nightly-core.ps1')
     }
-    # Script scope, and only when absent. A function-scoped dot disappears on return.
-    if (-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
-    }
-    # The TRX reader and the coverage verdict are compiled (Antiphon.Nightly.NightlyChunkVerdict).
+    # The TRX run summary, the TRX reader and the coverage verdict are compiled (NightlyWatchdog, NightlyChunkVerdict).
     $null = Test-NightlyCoreAvailable
 }
 
@@ -172,7 +168,7 @@ function Write-RcRunEvidenceWarning {
 }
 
 function Test-NightlyRcOutcomeReadersReady {
-    return ((Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue) -and $null -ne ('Antiphon.Nightly.NightlyChunkVerdict' -as [type]))
+    return ($null -ne ('Antiphon.Nightly.NightlyWatchdog' -as [type]) -and $null -ne ('Antiphon.Nightly.NightlyChunkVerdict' -as [type]))
 }
 
 function Test-NightlyRcWholeNumber {
@@ -222,7 +218,7 @@ function Get-NightlyRcTrxChunkOutcome {
     if ($null -eq $doc.DocumentElement) {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unparseable' }
     }
-    $summary = Read-NightlyTrxRunSummary -Path $ResultsPath
+    $summary = [Antiphon.Nightly.NightlyWatchdog]::TrxRunSummary($ResultsPath)
     if (-not $summary.Present -or [string]::IsNullOrWhiteSpace([string]$summary.Outcome)) {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-summary-unreadable' }
     }

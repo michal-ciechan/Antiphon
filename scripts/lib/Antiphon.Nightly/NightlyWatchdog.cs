@@ -227,5 +227,138 @@ namespace Antiphon.Nightly
         /// </summary>
         public static PSObject TimeoutDisposition(bool trxPresent, bool terminalAccounting, bool completedButHung) =>
             Note("CoverageComplete", false, "TestsPassed", false, "Incomplete", true, "Reason", completedButHung ? "completed-but-hung" : "watchdog-timeout", "Pass", false);
+
+        // ---- completion and hang evidence ------------------------------------------------------------------------
+
+        /// <summary>
+        /// Read-NightlyTrxRunSummary: { Present, Outcome, Total, Executed, Passed, Failed, NotExecuted } from the TRX
+        /// ResultSummary (read while the writer may still hold it). Not present (counters -1) for a missing or unreadable
+        /// file, or without total, executed and notExecuted counters.
+        /// </summary>
+        public static PSObject TrxRunSummary(string path)
+        {
+            PSObject Missing() => Note("Present", false, "Outcome", "", "Total", -1, "Executed", -1, "Passed", -1, "Failed", -1, "NotExecuted", -1);
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) return Missing();
+            var doc = new System.Xml.XmlDocument { XmlResolver = null };
+            try
+            {
+                using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                    doc.Load(stream);
+            }
+            catch (Exception) { return Missing(); }
+            if (!(doc.SelectSingleNode("//*[local-name()=\"ResultSummary\"]") is System.Xml.XmlElement summary)) return Missing();
+            if (!(summary.SelectSingleNode("./*[local-name()=\"Counters\"]") is System.Xml.XmlElement counters)) return Missing();
+            int Read(string name, out bool ok)
+            {
+                ok = int.TryParse(counters.GetAttribute(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value);
+                return value;
+            }
+            var total = Read("total", out var totalOk);
+            var executed = Read("executed", out var executedOk);
+            var notExecuted = Read("notExecuted", out var notOk);
+            if (!totalOk || !executedOk || !notOk) return Missing();
+            var passed = Read("passed", out _);
+            var failed = Read("failed", out _);
+            return Note("Present", true, "Outcome", summary.GetAttribute("outcome"), "Total", total, "Executed", executed, "Passed", passed,
+                "Failed", failed, "NotExecuted", notExecuted);
+        }
+
+        /// <summary>Read-NightlyTextTail: the last byteCount bytes of the file as UTF-8 ("" when missing, empty or unreadable).</summary>
+        public static string TextTail(string path, int byteCount)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) return "";
+            try
+            {
+                using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                {
+                    var length = stream.Length;
+                    if (length <= 0) return "";
+                    var take = byteCount > length ? (int)length : byteCount;
+                    if (take <= 0) return "";
+                    stream.Seek(length - take, System.IO.SeekOrigin.Begin);
+                    var buffer = new byte[take];
+                    var read = stream.Read(buffer, 0, take);
+                    return read <= 0 ? "" : System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+                }
+            }
+            catch (Exception) { return ""; }
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex TotalRan =
+            new System.Text.RegularExpressions.Regex(@"total ran:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.RightToLeft);
+
+        /// <summary>
+        /// Test-NightlyExecutionFinished: the TRX says Completed with every test executed, and the diagnostic's tail holds
+        /// "request execute stop" and a last "total ran: N" equal to the TRX total.
+        /// </summary>
+        public static bool ExecutionFinished(string trxPath, string diagnosticPath)
+        {
+            var summary = TrxRunSummary(trxPath);
+            if (!(bool)summary.Properties["Present"].Value) return false;
+            if ((string)summary.Properties["Outcome"].Value != "Completed") return false;
+            var total = (int)summary.Properties["Total"].Value;
+            if ((int)summary.Properties["Executed"].Value != total || (int)summary.Properties["NotExecuted"].Value != 0) return false;
+            var tail = TextTail(diagnosticPath, 16384);
+            if (string.IsNullOrEmpty(tail)) return false;
+            // $tail.IndexOf('...'): String.IndexOf(string), current culture, as PowerShell calls it.
+            if (tail.IndexOf("request execute stop", StringComparison.CurrentCulture) < 0) return false;
+            var match = TotalRan.Match(tail);
+            if (!match.Success) return false;
+            return int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ran) && ran == total;
+        }
+
+        /// <summary>
+        /// Format-NightlyHangChildren: "pid=P/image=I" per child identity ("pid:start", the pid part) and image, comma
+        /// separated; the root alone when there are none and it is known; "" otherwise.
+        /// </summary>
+        public static string HangChildren(object identities, object images, int rootPid)
+        {
+            var ids = PsValue.AsArray(identities);
+            var imgs = PsValue.AsArray(images);
+            var parts = new List<string>();
+            for (var i = 0; i < ids.Length; i++)
+            {
+                var text = PsValue.Str(ids[i]);
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                var pidText = text;
+                var colon = text.IndexOf(':');
+                if (colon > 0) pidText = text.Substring(0, colon);
+                var image = i < imgs.Length && imgs[i] != null ? PsValue.Str(imgs[i]) : "";
+                parts.Add("pid=" + pidText + "/image=" + image);
+            }
+            if (parts.Count == 0) return rootPid > 0 ? "pid=" + rootPid.ToString(CultureInfo.CurrentCulture) + "/image=" : "";
+            return string.Join(",", parts);
+        }
+
+        /// <summary>
+        /// Resolve-NightlyCompletedHang: { CompletedButHung, Reason } - a launch that timed out after its tests finished is
+        /// completed-but-hung (with its leftover children), anything else a watchdog timeout.
+        /// </summary>
+        public static PSObject CompletedHang(bool timedOut, bool finished, string suiteId, string children)
+        {
+            if (timedOut && finished)
+            {
+                var childText = string.IsNullOrWhiteSpace(children) ? "pid=0/image=" : children;
+                return Note("CompletedButHung", true, "Reason", "completed-but-hung " + (suiteId ?? "") + " children=" + childText);
+            }
+            return Note("CompletedButHung", false, "Reason", "watchdog-timeout");
+        }
+
+        /// <summary>Write-NightlyHangCapture: the completed-hang capture file (suite, children, root pid; handles not enumerated).</summary>
+        public static void WriteHangCapture(string path, string suiteId, string children, int rootPid)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            var dir = System.IO.Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir)) System.IO.Directory.CreateDirectory(dir);
+            var lines = new[]
+            {
+                "completed-hang-capture", "suite=" + (suiteId ?? ""), "children=" + (children ?? ""),
+                "root pid=" + rootPid.ToString(CultureInfo.CurrentCulture), "handles=not-enumerated",
+            };
+            System.IO.File.WriteAllText(path, string.Join("\n", lines) + "\n");
+        }
+
+        /// <summary>Get-NightlyHarnessHangField: completed-but-hung, or "".</summary>
+        public static string HarnessHangField(bool completedButHung) => completedButHung ? "completed-but-hung" : "";
     }
 }

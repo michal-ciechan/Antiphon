@@ -4,7 +4,6 @@
 
 if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
-. (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
@@ -75,6 +74,10 @@ $script:NightlyLaunchHeavyFamilyFactor = 2
 $script:NightlyLaunchTargetSeconds = 900
 $script:NightlyLaunchLoneClassBudgetSeconds = 2400
 $script:NightlyLaunchMaxGroupOperands = 30
+# Once total ran and request execute stop are on disk, a leftover tree is killed after this grace instead of the
+# full launch watchdog. Unmeasured placeholder: chunk logs record execution-stop-to-exit-seconds; set this near 2x
+# that p95 (docs/test-performance-standards.md). 60000 matches NightlyCompletionGrace.DefaultMilliseconds.
+$script:NightlyCompletionGraceMilliseconds = 60000
 $script:NightlyClassCostPath = Join-Path $PSScriptRoot 'nightly-class-costs.json'
 $script:NightlyClassCostTable = $null
 
@@ -1131,15 +1134,15 @@ function Invoke-NightlyScheduledChunk {
         if ($null -ne $run.PSObject.Properties['Pid'] -and $null -ne $run.Pid) { $rootPid = [int]$run.Pid }
         if ($isNative) {
             $hangDiag = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
-            try { $finished = [bool](Test-NightlyExecutionFinished -TrxPath $trxPath -DiagnosticPath $hangDiag) } catch { $finished = $false }
+            try { $finished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($trxPath, $hangDiag)) } catch { $finished = $false }
             $identities = @()
             $images = @()
             if ($null -ne $run.PSObject.Properties['DescendantIdentities']) { $identities = @($run.DescendantIdentities) }
             if ($null -ne $run.PSObject.Properties['DescendantImages']) { $images = @($run.DescendantImages) }
-            $childText = [string](Format-NightlyHangChildren -Identities $identities -Images $images -RootPid $rootPid)
+            $childText = [string]([Antiphon.Nightly.NightlyWatchdog]::HangChildren($identities, $images, $rootPid))
             if ($null -ne $run.PSObject.Properties['CompletedButHung'] -and [bool]$run.CompletedButHung) { $finished = $true }
         }
-        $resolvedHang = Resolve-NightlyCompletedHang -TimedOut $true -Finished $finished -SuiteId $suiteId -Children $childText
+        $resolvedHang = [Antiphon.Nightly.NightlyWatchdog]::CompletedHang($true, $finished, $suiteId, $childText)
         $completedHang = [bool]$resolvedHang.CompletedButHung
         $timeoutDisposition = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition((Test-Path -LiteralPath $trxPath), $false, [bool]($completedHang))
         $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
@@ -1164,7 +1167,7 @@ function Invoke-NightlyScheduledChunk {
             if ([string]::IsNullOrWhiteSpace($capturePath) -or -not (Test-Path -LiteralPath $capturePath)) {
                 $capturePath = $logPath + '.hang.txt'
                 if (-not (Test-Path -LiteralPath $capturePath)) {
-                    Write-NightlyHangCapture -Path $capturePath -SuiteId $suiteId -Children $childText -RootPid $rootPid
+                    [Antiphon.Nightly.NightlyWatchdog]::WriteHangCapture($capturePath, $suiteId, $childText, $rootPid)
                 }
             }
             $row.hangCapture = $capturePath
@@ -1833,7 +1836,7 @@ function Invoke-AntiphonNightlyTests {
         platform = $platform
         coverageScope = $coverageScope
         outcome = $script:NightlyTestsOutcome
-        harnessHang = (Get-NightlyHarnessHangField -CompletedButHung:($harnessHangReason -eq 'completed-but-hung'))
+        harnessHang = ([Antiphon.Nightly.NightlyWatchdog]::HarnessHangField([bool](($harnessHangReason -eq 'completed-but-hung'))))
         succeeded = (-not $overallFailed -and $coverageComplete)
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
