@@ -30,13 +30,13 @@ function New-PinnedChunks {
     foreach ($i in 0..15) {
         $items.Add(@{
             id = ('c{0:d2}' -f $i); suite = 'alpha'; boundary = 'north'
-            duration = 1; passed = $true
+            duration = 1; passed = $true; completelyCarryable = $true
         })
     }
     foreach ($i in 16..30) {
         $items.Add(@{
             id = ('c{0:d2}' -f $i); suite = 'alpha'; boundary = 'south'
-            duration = 100000; passed = $false
+            duration = 100000; passed = $false; completelyCarryable = $true
         })
     }
     $items.Add(@{ id = 'skip-a'; suite = 'alpha'; boundary = 'north'; expectedSkipOnly = $true; duration = 1; passed = $true })
@@ -53,6 +53,7 @@ function New-Population([int]$Count, [int]$Strata) {
             boundary = ('b{0:d2}' -f ($i % $Strata))
             duration = $(if ($i % 2 -eq 0) { 1 } else { 100000 })
             passed = ($i % 3 -eq 0)
+            completelyCarryable = $true
         })
     }
     return ,$items.ToArray()
@@ -101,10 +102,15 @@ function New-Anchor {
 }
 
 function New-Pilot([string]$CutId, [string]$Platform = 'windows', [string]$Sample = 'executed') {
+    $executed = $Sample -ceq 'executed'
     return @{
-        cutId = $CutId; platform = $Platform; sample = $Sample; shadowPilot = ($Sample -ceq 'executed')
+        cutId = $CutId; platform = $Platform; sample = $Sample; shadowPilot = $executed
         discrepancy = $false; openFailure = $false; nativeReceipts = 'current'; fullOverdue = $false
-        contractDigest = $script:Digest; nExecuted = $(if ($Sample -ceq 'executed') { 30 } else { 0 })
+        contractDigest = $script:Digest
+        n = $(if ($executed) { 30 } else { 0 })
+        nExecuted = $(if ($executed) { 30 } else { 0 })
+        cchunk = 600
+        stratumCount = 1
     }
 }
 
