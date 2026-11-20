@@ -131,6 +131,34 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         git.ShouldContain("branch=");
     }
 
+    [Test]
+    public void git_snapshot_read_in_process_agrees_with_git()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(root, "init", "-q", "-b", "snap");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "one\n");
+        CheckpointFixtureProcess.Git(root, "add", "tracked.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first subject");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "two\n");
+        File.WriteAllText(Path.Combine(root, "loose.txt"), "new\n");
+        var head = CheckpointFixtureProcess.Git(root, "rev-parse", "HEAD").Trim();
+
+        var text = GitSnapshot.Capture(root);
+        text.ShouldContain("HEAD=" + head);
+        text.ShouldContain("branch=snap");
+        text.ShouldContain(" M tracked.txt");
+        text.ShouldContain("?? loose.txt");
+        text.ShouldContain(head[..7] + " first subject");
+        GitSnapshot.Head(root).ShouldBe(head);
+        GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+
+        // Detached: git prints HEAD for the branch.
+        CheckpointFixtureProcess.Git(root, "checkout", "-q", "--detach");
+        GitSnapshot.Branch(root).ShouldBe("HEAD");
+        GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+        GitSnapshot.Capture(root).ShouldContain("branch=HEAD");
+    }
+
     private static ReportModel Model(string dir, int exit) => new()
     {
         RunId = "r",

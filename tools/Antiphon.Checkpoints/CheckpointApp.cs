@@ -586,9 +586,9 @@ public static class CheckpointApp
                     throw new ManifestValidationException("source", "source_mismatch or source_dirty");
             }
             if (string.IsNullOrWhiteSpace(request.Commit))
-                request.Commit = request.Source.Start.Commit ?? GitSnapshot.Run(repo, "rev-parse", "HEAD");
+                request.Commit = request.Source.Start.Commit ?? GitSnapshot.Head(repo);
             if (string.IsNullOrWhiteSpace(request.Branch))
-                request.Branch = runtime.SourceBranch ?? GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
+                request.Branch = runtime.SourceBranch ?? GitSnapshot.Branch(repo);
             WriteRunText(context, runDirectory, "request.json", JsonSerializer.Serialize(request, Json));
             return runDirectory;
         }
