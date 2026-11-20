@@ -575,6 +575,8 @@ public sealed class WorktreeDefaultCallerTests
             worktree.Output.ShouldContain("REFUSED");
 
             var state = Path.Combine(root, "state-clone");
+            // -NoSync admits a dedicated clone only when local core.longpaths is exactly true.
+            await clone.GitAsync("config", "--local", "core.longpaths", "true");
             var admitted = await RunNightlyAsync(clone.Path, state, whatIf: true);
             admitted.Exit.ShouldBe(0, admitted.Output);
             admitted.Output.ShouldNotContain("REFUSED");
