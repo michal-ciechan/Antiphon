@@ -8869,16 +8869,6 @@ public sealed partial class AgentTaskDispatcher
             if (!pinned.IsPoolDelegate)
                 return await PlaceOnStandingAgentAsync(claimed, pinned, now, ct);
 
-            // A requested alias is a launch argument. The pinned pool process was launched
-            // without it, or for a different slug, so the follow-up starts cold.
-            if (!PoolDelegateRelease.MayWarmPool(claimed.RequestedModelAlias))
-            {
-                _logger.LogInformation(
-                    "Task {ShortId} is pinned to pool delegate '{Agent}' with requested alias {Alias} — relaunching so --model is that slug",
-                    DelegationReportFormatter.Short(claimed.Id), pinned.Name, claimed.RequestedModelAlias);
-                return ReuseOutcome.SpawnFresh;
-            }
-
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
 
@@ -8930,7 +8920,17 @@ public sealed partial class AgentTaskDispatcher
                 return ReuseOutcome.WaitForAgent;
 
             // Only a FREE pinned delegate reaches this: a busy one is waited for above, never
-            // replaced by a second session mid-task (CARD-1481 repair).
+            // replaced by a second session mid-task (CARD-1481 repair). A requested alias is a
+            // launch argument, on this claim or on any task this row already ran.
+            if (!PoolDelegateRelease.MayWarmPool(claimed.RequestedModelAlias)
+                || await PoolDelegateRelease.WithRequestedAlias(_db).AnyAsync(t => t.AgentId == pinned.Id, ct))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to pool delegate '{Agent}' with requested alias {Alias} — relaunching so --model matches the task",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name, claimed.RequestedModelAlias);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             if (!ClaudeEffortMatchesPool(pinned, claimed))
                 return ReuseOutcome.SpawnFresh;
 
@@ -8951,7 +8951,7 @@ public sealed partial class AgentTaskDispatcher
                     && a.Status == AgentStatus.Idle
                     && a.PoolIdleSince != null
                     && !PoolDelegateRelease.Reservations(_db).Any(p => p.AgentId == a.Id)
-                    && !_db.AgentTasks.Any(t => t.AgentId == a.Id && t.RequestedModelAlias != null)
+                    && !PoolDelegateRelease.WithRequestedAlias(_db).Any(t => t.AgentId == a.Id)
                     && a.ModelLevel == claimed.ModelLevel
                     // A warm process retains its launch environment. Scope equality includes
                     // null == null: global-only delegates may serve global-only tasks, never a
