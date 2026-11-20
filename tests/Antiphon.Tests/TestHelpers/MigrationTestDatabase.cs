@@ -25,12 +25,15 @@ internal static class MigrationTestDatabase
     }
 
     /// <summary>
-    /// Drops the additive host-load objects and their history rows. Their Down methods throw,
-    /// so a cloned tip has to be returned to <see cref="LastReversibleMigration"/> this way
-    /// before an older reversible migration can run.
+    /// Drops additive objects whose Down methods throw, and their history rows, so a cloned tip
+    /// can return to <see cref="LastReversibleMigration"/> before an older reversible migration runs.
+    /// An empty land-verification addition is detached first. A recorded failure is refused with
+    /// the migration's own message and is not dropped.
     /// </summary>
-    public static Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default) =>
-        db.Database.ExecuteSqlRawAsync(
+    public static async Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default)
+    {
+        await DetachLandVerificationFailureAsync(db, ct);
+        await db.Database.ExecuteSqlRawAsync(
             """
             DROP TABLE IF EXISTS "CardCompletionShadowEvents";
             DROP TABLE IF EXISTS "HostLoadRetentionStates";
@@ -57,6 +60,43 @@ internal static class MigrationTestDatabase
                 '20261108121426_Card1773TranscriptPromptStampIndex',
                 '20261110213738_Card1294ShadowCohort');
             """, ct);
+    }
+
+    /// <summary>
+    /// <c>AddLandVerificationFailure.Down</c> always throws. A tip clone that never stored a
+    /// failure value drops the empty columns and the history row here. A stored value is refused
+    /// with that same message; this helper does not call Down and does not discard the row.
+    /// </summary>
+    private static async Task DetachLandVerificationFailureAsync(AppDbContext db, CancellationToken ct)
+    {
+        var present = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'AgentTaskLandings'
+              AND column_name = 'VerificationFailureStep'
+            """).SingleAsync(ct);
+        if (present == 0)
+            return;
+
+        var recorded = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM "AgentTaskLandings"
+            WHERE "VerificationFailureStep" IS NOT NULL
+               OR "VerificationFailureOutput" IS NOT NULL
+               OR "VerificationFailingProjects" IS NOT NULL
+            """).SingleAsync(ct);
+        if (recorded > 0)
+            throw new NotSupportedException(
+                "Recorded land verification failures cannot be discarded by a downgrade.");
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            DROP INDEX IF EXISTS "IX_AgentTaskLandings_TargetBuildFailure";
+            ALTER TABLE "AgentTaskLandings" DROP COLUMN IF EXISTS "VerificationFailingProjects";
+            ALTER TABLE "AgentTaskLandings" DROP COLUMN IF EXISTS "VerificationFailureOutput";
+            ALTER TABLE "AgentTaskLandings" DROP COLUMN IF EXISTS "VerificationFailureStep";
+            DELETE FROM "__EFMigrationsHistory"
+            WHERE "MigrationId" = '20261119045705_AddLandVerificationFailure';
+            """, ct);
+    }
 
     public static async Task<IsolatedTestSchema> CreateAsync(string migration, CancellationToken ct)
     {
