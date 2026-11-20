@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "base": "ba9ffc8ccc5496ef849af656e1d2906b7d308e43",
+  "census": {
+    "unowned": 202,
+    "noopPathsCovered": 164,
+    "ownerPathsAdded": 6,
+    "testOnlyPathsAdded": 1,
+    "residueUnowned": 32,
+    "unresolved": 18,
+    "note": "Apply noop rows and owner roots only. testOnly.paths does not remove a path from the unowned set (scripts/lib/rc-input-manifest.ps1:285-286), so the one test-only path stays in the residue. The 18 unresolved closure rows still set creditBlockedBy=unowned-paths even if unowned later reaches 0."
+  },
+  "rc-input-noop.json": {
+    "rows": [
+      {
+        "path": "_bmad/**/*.csv",
+        "reason": "bmad skill manifests are not suite inputs",
+        "evidence": "tests, scripts (including nightly), src, server, client, docker, tools, and AppHost contain no _bmad path. The already-owned file _bmad/_config/manifest.yaml is not a csv. .claude skills load _bmad markdown, which **/*.md already owns."
+      },
+      {
+        "path": "_bmad/**/*.html",
+        "reason": "bmad skill content is not a suite input",
+        "evidence": "Same suite and nightly search as the csv row. No html file under _bmad is an owner root."
+      },
+      {
+        "path": "_bmad/**/*.css",
+        "reason": "bmad skill content is not a suite input",
+        "evidence": "Same suite and nightly search as the csv row. One css file, under _bmad/wds, and no owner root matches it."
+      },
+      {
+        "path": "_bmad/**/*.js",
+        "reason": "bmad skill content is not a suite input",
+        "evidence": "Same suite and nightly search as the csv row. One js file, under _bmad/wds, and no owner root matches it."
+      },
+      {
+        "path": "_bmad/**/*.json",
+        "reason": "bmad skill content is not a suite input",
+        "evidence": "Same suite and nightly search as the csv row. Two json files under _bmad/wds, and no owner root matches them."
+      },
+      {
+        "path": "_bmad/**/*.groovy",
+        "reason": "bmad skill content is not a suite input",
+        "evidence": "Same suite and nightly search as the csv row. The only groovy file is _bmad/tea/workflows/testarch/bmad-testarch-ci/jenkins-pipeline-template.groovy."
+      },
+      {
+        "path": "_bmad/_config/agents/**",
+        "reason": "bmad agent customize files are not suite inputs",
+        "evidence": "Directory contains only the 19 unowned customize yaml files. It does not contain _bmad/_config/manifest.yaml."
+      },
+      {
+        "path": "_bmad/_config/ides/**",
+        "reason": "bmad IDE config is not a suite input",
+        "evidence": "The only tracked file is _bmad/_config/ides/claude-code.yaml. Suite and nightly searches contain no _bmad path."
+      },
+      {
+        "path": "_bmad/_memory/config.yaml",
+        "reason": "bmad memory config is not a suite input",
+        "evidence": "Exact file. _bmad/_memory/** is not used because that directory also contains markdown already owned by **/*.md."
+      },
+      {
+        "path": "_bmad/bmm/**/*.yaml",
+        "reason": "bmad workflow yaml is not a suite input",
+        "evidence": "25 yaml files. The glob does not match the 1014 _bmad markdown files owned by **/*.md or _bmad/_config/manifest.yaml."
+      },
+      {
+        "path": "_bmad/cis/**/*.yaml",
+        "reason": "bmad workflow yaml is not a suite input",
+        "evidence": "6 yaml files. Same suite and nightly absence as the other _bmad rows."
+      },
+      {
+        "path": "_bmad/core/**/*.yaml",
+        "reason": "bmad workflow yaml is not a suite input",
+        "evidence": "12 yaml files. Same suite and nightly absence as the other _bmad rows."
+      },
+      {
+        "path": "_bmad/tea/**/*.yaml",
+        "reason": "bmad workflow yaml is not a suite input",
+        "evidence": "28 yaml files. Same suite and nightly absence as the other _bmad rows."
+      },
+      {
+        "path": "_bmad/wds/**/*.yaml",
+        "reason": "bmad workflow yaml is not a suite input",
+        "evidence": "5 yaml files. Same suite and nightly absence as the other _bmad rows."
+      },
+      {
+        "path": "_bmad-output/**/*.yaml",
+        "reason": "bmad planning output is not a suite input",
+        "evidence": "The only yaml file is _bmad-output/implementation-artifacts/sprint-status.yaml. Eight markdown files under _bmad-output stay owned by **/*.md."
+      },
+      {
+        "path": "_bmad-output/**/*.html",
+        "reason": "bmad planning output is not a suite input",
+        "evidence": "The only html file is _bmad-output/planning-artifacts/ux-design-directions.html."
+      },
+      {
+        "path": ".antiphon/c959-code-evidence/**",
+        "reason": "historical checkpoint archive",
+        "evidence": "No tests, scripts, or project file names c959-code-evidence. The directory has no markdown, so the glob does not collide with **/*.md."
+      },
+      {
+        "path": ".antiphon/c959-cont-evidence/**",
+        "reason": "historical checkpoint archive",
+        "evidence": "No tests, scripts, or project file names c959-cont-evidence. The directory has no markdown."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.txt",
+        "reason": "historical checkpoint archive",
+        "evidence": "No tests, scripts, or project file names c959-second-evidence. Extension globs skip README.md and mutation-pending.md, which **/*.md already owns."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.tsv",
+        "reason": "historical checkpoint archive",
+        "evidence": "Same archive proof as the txt row. Matches trx-roster.tsv and unit-windows-exclusions.tsv only."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.json",
+        "reason": "historical checkpoint archive",
+        "evidence": "Same archive proof as the txt row. Matches run-history.json only."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.ps1",
+        "reason": "historical checkpoint archive",
+        "evidence": "Same archive proof as the txt row. Matches inspect-receipts.ps1 only. No script invokes it."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.gz",
+        "reason": "historical checkpoint archive",
+        "evidence": "Same archive proof as the txt row. Matches raw-checkpoints.tar.gz only."
+      },
+      {
+        "path": ".antiphon/c959-second-evidence/**/*.sha256",
+        "reason": "historical checkpoint archive",
+        "evidence": "Same archive proof as the txt row. Matches archive.sha256 only."
+      },
+      {
+        "path": "LICENSE",
+        "reason": "license text is not a suite input",
+        "evidence": "No .cs, .ps1, .json, .yml, .csproj, Dockerfile, or script contains the path LICENSE."
+      },
+      {
+        "path": ".pts-vibe/config.yml",
+        "reason": "editor vibe config is not a suite input",
+        "evidence": "No suite, script, or project file contains .pts-vibe. CachingChatClientTests.cs:71 mentions the basename config.yml inside a synthetic unix path. .pts-vibe/README.md stays owned by **/*.md."
+      },
+      {
+        "path": "tools/Antiphon.NativeLinuxMigrationAudit/Program.cs",
+        "reason": "one-time audit CLI is not a suite input",
+        "evidence": "Antiphon.Tests.csproj:186 compiles NativeLinuxWindowsReasonAudit.cs only. That file is already owned and is not this row. The CARD-1613 plan states normal tests, discovery, and qualification never invoke this tool."
+      },
+      {
+        "path": "tools/Antiphon.NativeLinuxMigrationAudit/Antiphon.NativeLinuxMigrationAudit.csproj",
+        "reason": "unreferenced audit project selects nothing",
+        "evidence": "No suite ProjectReference includes this csproj. scripts/test-rc-input-owners.ps1:496 writes a synthetic copy in a temp repository and does not read this file."
+      }
+    ]
+  },
+  "rc-input-owners.json": {
+    "roots": [
+      {
+        "path": ".antiphon/fixtures/card-1521/partial-boot-pointers.approved.json",
+        "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"],
+        "reason": "runtime-reader-scan"
+      },
+      {
+        "path": ".config/dotnet-tools.json",
+        "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"],
+        "reason": "runtime-reader-scan"
+      },
+      {
+        "path": ".dockerignore",
+        "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"],
+        "reason": "runtime-reader-scan"
+      },
+      {
+        "path": ".gitattributes",
+        "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"],
+        "reason": "runtime-reader-scan"
+      },
+      {
+        "path": "restart-server.ps1",
+        "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"],
+        "reason": "runtime-reader-scan"
+      },
+      {
+        "path": "tests/live-lanes.json",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        ],
+        "reason": "runtime-reader-scan"
+      }
+    ],
+    "testOnlyPaths": ["tests/card-file-privacy-controls.py"]
+  }
+}
