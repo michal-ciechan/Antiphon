@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 337,
+      "classes": 338,
       "reason": "allowlist"
     },
     {
@@ -2117,18 +2117,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 39,
+      "classes": 40,
       "reason": "cap",
-      "owed": 14,
+      "owed": 15,
       "first": [
+        "HangfireLeaseDocumentationTests",
         "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
         "ZombieCensusPlatformTests",
-        "DirectoryBuildRspTests",
-        "DockerDeliveryObservationTests"
+        "DirectoryBuildRspTests"
       ]
     },
     {
@@ -2898,6 +2898,7 @@
     {
       "path": "docker/session-runner-grok/Dockerfile",
       "classes": [
+        "CodexGpt62LadderTests",
         "CodexRunnerImageContractTests",
         "CustodyHelperContractTests",
         "DindRunnerContractTests",
@@ -3071,6 +3072,7 @@
       "path": "docs/agent-kinds.md",
       "classes": [
         "BootStallDocumentationTests",
+        "CodexGpt62LadderTests",
         "DockerStackDocumentationTests",
         "GrokRunnerImageContractTests",
         "PublishedRoutingDocumentationTests",
@@ -4465,6 +4467,7 @@
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
         "CheckCompactionAutomaticRestartTests",
+        "CodexGpt62LadderTests",
         "ComplexityDispatcherTests",
         "DelegationCapabilityTests",
         "HeldModelEscalationTests",
@@ -9702,6 +9705,7 @@
         "ApiErrorRecoveryServiceTests",
         "CodexCliObservationTests",
         "CodexDelegateDispatchTests",
+        "CodexGpt62LadderTests",
         "ComplexityRoutingComposeTests",
         "DelegationSequencingE2ETests",
         "InstructionBundleTests",
@@ -18033,6 +18037,7 @@
       "path": "src/Antiphon.SessionRunner.Contracts/CodexCliVersion.cs",
       "classes": [
         "CodexCliVersionProbeTests",
+        "CodexGpt62LadderTests",
         "RunnerCodexCliEvidenceTests"
       ]
     },
@@ -24126,6 +24131,7 @@
         "C1744G1DesktopWinComposeTests",
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
+        "CodexGpt62LadderTests",
         "CodexRootExecContractTests",
         "CodexRunnerImageContractTests",
         "CustodyHelperContractTests",
@@ -24135,7 +24141,6 @@
         "DotnetToolManifestContractTests",
         "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
-        "HangfireLeaseDocumentationTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
