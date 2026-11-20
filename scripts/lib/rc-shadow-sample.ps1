@@ -48,7 +48,8 @@ function ConvertTo-RcShadowChunk {
         suite = $suite
         boundary = $boundary
         expectedSkipOnly = ($skip -is [bool] -and $skip)
-        completelyCarryable = ($null -eq $carry -or ($carry -is [bool] -and $carry))
+        # Unknown carryability is dirty. Only an explicit true is sampled.
+        completelyCarryable = ($carry -is [bool] -and $carry)
     }
 }
 
@@ -238,6 +239,130 @@ function New-RcShadowProposal {
     return [pscustomobject]$proposal
 }
 
+function Test-RcShadowDigest {
+    param($Value)
+    return ($Value -is [string]) -and ($Value -cmatch '\A[0-9a-f]{64}\z')
+}
+
+function Test-RcShadowWholeNumber {
+    param($Value)
+    if ($Value -isnot [int] -and $Value -isnot [long]) { return $false }
+    $number = [long]$Value
+    return $number -ge 0 -and $number -le [int]::MaxValue
+}
+
+function Test-RcShadowResultRow {
+    param($Row, [string]$ChunkId)
+    $skip = Get-RcShadowField $Row 'unexpectedSkip'
+    $outcome = Get-RcShadowField $Row 'outcome'
+    if (($skip -is [bool] -and $skip) -or ($outcome -is [string] -and $outcome -ceq 'skipped')) {
+        return [pscustomobject]@{ kind = 'unexpected-skip'; chunkId = $ChunkId }
+    }
+    if ($null -ne $skip -and $skip -isnot [bool]) {
+        return [pscustomobject]@{ kind = 'unexpected-skip'; chunkId = $ChunkId }
+    }
+    if ($outcome -isnot [string] -or [string]::IsNullOrEmpty($outcome)) {
+        return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = $ChunkId }
+    }
+    $provenance = Get-RcShadowField $Row 'provenance'
+    $provenanceFailure = Get-RcShadowField $Row 'provenanceFailure'
+    if (($provenanceFailure -is [bool] -and $provenanceFailure) -or $provenance -isnot [string] -or $provenance -cne 'verified') {
+        return [pscustomobject]@{ kind = 'provenance-failure'; chunkId = $ChunkId }
+    }
+    if ($outcome -cne 'passed') {
+        return [pscustomobject]@{ kind = 'sample-outcome'; chunkId = $ChunkId }
+    }
+    return $null
+}
+
+function Get-RcShadowSampleEvidenceFailure {
+    param($Evidence)
+    $sawSampled = Test-RcShadowKey $Evidence 'sampled'
+    $sawResults = Test-RcShadowKey $Evidence 'results'
+    if (-not $sawSampled -and -not $sawResults) { return $null }
+    $ids = [Collections.Generic.List[string]]::new()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($sawSampled) {
+        $sampled = Get-RcShadowField $Evidence 'sampled'
+        if ($null -eq $sampled) {
+            return [pscustomobject]@{ kind = 'empty-results'; chunkId = '' }
+        }
+        foreach ($id in @($sampled)) {
+            if ($id -isnot [string] -or [string]::IsNullOrEmpty($id)) {
+                return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = '' }
+            }
+            if (-not $seen.Add($id)) {
+                return [pscustomobject]@{ kind = 'provenance-failure'; chunkId = $id }
+            }
+            $ids.Add($id)
+        }
+    }
+    $rows = [Collections.Generic.List[object]]::new()
+    if ($sawResults) {
+        $results = Get-RcShadowField $Evidence 'results'
+        if ($null -eq $results) {
+            $chunkId = ''
+            if ($ids.Count -gt 0) { $chunkId = [string]$ids[0] }
+            return [pscustomobject]@{ kind = 'empty-results'; chunkId = $chunkId }
+        }
+        foreach ($row in @($results)) {
+            if ($null -eq $row) {
+                return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = '' }
+            }
+            $rows.Add($row)
+        }
+    }
+    if ($ids.Count -gt 0 -and $rows.Count -eq 0) {
+        return [pscustomobject]@{ kind = 'empty-results'; chunkId = [string]$ids[0] }
+    }
+    if ($ids.Count -eq 0) {
+        if ($rows.Count -eq 0) { return $null }
+        foreach ($row in $rows) {
+            $rowId = Get-RcShadowField $row 'chunkId'
+            $label = ''
+            if ($rowId -is [string]) { $label = $rowId }
+            $failure = Test-RcShadowResultRow $row $label
+            if ($null -ne $failure) { return $failure }
+        }
+        return $null
+    }
+    foreach ($id in $ids) {
+        $matches = [Collections.Generic.List[object]]::new()
+        foreach ($row in $rows) {
+            $rowId = Get-RcShadowField $row 'chunkId'
+            if ($rowId -is [string] -and [string]::Equals($rowId, $id, [StringComparison]::Ordinal)) {
+                $matches.Add($row)
+            }
+        }
+        if ($matches.Count -eq 0) {
+            return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = $id }
+        }
+        if ($matches.Count -gt 1) {
+            return [pscustomobject]@{ kind = 'provenance-failure'; chunkId = $id }
+        }
+        $failure = Test-RcShadowResultRow $matches[0] $id
+        if ($null -ne $failure) { return $failure }
+    }
+    return $null
+}
+
+function Test-RcShadowKey {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $false }
+    if ($Object -is [Collections.IDictionary]) {
+        foreach ($key in @($Object.Keys)) {
+            if ($key -is [string] -and [string]::Equals($key, $Name, [StringComparison]::Ordinal)) { return $true }
+        }
+        return $false
+    }
+    if ($Object -is [pscustomobject]) {
+        foreach ($property in @($Object.PSObject.Properties)) {
+            if ([string]::Equals($property.Name, $Name, [StringComparison]::Ordinal)) { return $true }
+        }
+    }
+    return $false
+}
+
 function Test-RcShadowPilotEligible {
     param($Pilot, [string]$ContractDigest = '')
     if ($null -eq $Pilot) { return $false }
@@ -259,8 +384,23 @@ function Test-RcShadowPilotEligible {
     if ($open -isnot [bool] -or $open) { return $false }
     if ($receipts -cne 'current') { return $false }
     if ($overdue -isnot [bool] -or $overdue) { return $false }
-    if ($digest -cne $ContractDigest) { return $false }
-    if (($executed -isnot [int] -and $executed -isnot [long]) -or [int]$executed -lt 1) { return $false }
+    # An empty or missing digest is unproven. Only a 64-character lowercase hex digest can match.
+    if (-not (Test-RcShadowDigest $digest) -or -not (Test-RcShadowDigest $ContractDigest) -or ($digest -cne $ContractDigest)) { return $false }
+    $planned = Get-RcShadowField $Pilot 'n'
+    $population = Get-RcShadowField $Pilot 'cchunk'
+    $strata = Get-RcShadowField $Pilot 'stratumCount'
+    if (-not (Test-RcShadowWholeNumber $planned) -or -not (Test-RcShadowWholeNumber $executed)) { return $false }
+    $plannedN = [int]$planned
+    $executedN = [int]$executed
+    # Without a recorded population the D-8 floor is 30. A recorded population recomputes N.
+    $minimum = 30
+    if ($null -ne $population -or $null -ne $strata) {
+        if (-not (Test-RcShadowWholeNumber $population) -or -not (Test-RcShadowWholeNumber $strata)) { return $false }
+        $populationN = [int]$population
+        $strataN = [int]$strata
+        $minimum = Get-RcShadowSampleCount $populationN $strataN
+    }
+    if ($minimum -lt 1 -or $plannedN -lt $minimum -or $executedN -lt $plannedN -or $executedN -lt $minimum) { return $false }
     return $true
 }
 
@@ -303,8 +443,12 @@ function Get-RcShadowTrustDecision {
             if ([string]$reason -clike 'contract-*') { [void]$reasons.Add([string]$reason) }
         }
     }
-    if ($null -ne $SampleFailure) { [void]$reasons.Add('sample-failed') }
+    # The caller flag can only add a failure. Missing, skipped, or unproven sample evidence fails closed.
+    $derivedFailure = Get-RcShadowSampleEvidenceFailure -Evidence $Evidence
+    if ($null -ne $SampleFailure -or $null -ne $derivedFailure) { [void]$reasons.Add('sample-failed') }
     if ($RosterChanged) { [void]$reasons.Add('sample-roster-changed') }
+    $preservedFailure = $SampleFailure
+    if ($null -eq $preservedFailure) { $preservedFailure = $derivedFailure }
     $reasons.Sort([StringComparer]::Ordinal)
     $invalidate = $reasons.Count -gt 0
     $invalidated = [string[]]::new(0)
@@ -348,7 +492,7 @@ function Get-RcShadowTrustDecision {
         requiredPilots = 2
         carriesInvalidated = [bool]$invalidate
         invalidatedCarries = $invalidated
-        preservedSampleFailure = $SampleFailure
+        preservedSampleFailure = $preservedFailure
         expandedToFull = $false
         trustRecordWritten = $false
         shadowPilot = $false
