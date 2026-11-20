@@ -152,6 +152,28 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         Lookups().ShouldBe(1);
         starts.Count(args => args.Contains("status") && args.Contains("diff.scope.textconv=")).ShouldBe(2);
 
+        // A scope opened inside an active one joins it: one lookup, and closing the inner one keeps the outer.
+        starts.Clear();
+        using (CheckpointProcessRunner.DriverSettingsScope())
+        {
+            Status();
+            using (CheckpointProcessRunner.DriverSettingsScope()) Status();
+            Status();
+        }
+        Lookups().ShouldBe(1);
+
+        // The same checkout spelled with the other separator is the same answer.
+        starts.Clear();
+        using (CheckpointProcessRunner.DriverSettingsScope())
+        {
+            Status();
+            var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root.Replace('\\', '/') + "/" };
+            foreach (var argument in new[] { "-C", root, "status", "--porcelain" }) start.ArgumentList.Add(argument);
+            CheckpointProcessRunner.RunObserved(start, 30_000, true,
+                child => starts.Add(child.ArgumentList.ToArray()), 0, cancellationToken).Exit.ShouldBe(0);
+        }
+        Lookups().ShouldBe(1);
+
         // Outside any scope every read asks again (the default).
         starts.Clear();
         Status(); Status();
@@ -162,7 +184,8 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     [Timeout(120_000)]
     public async Task Script_source_snapshot_asks_for_drivers_once_and_closes_its_scope(CancellationToken cancellationToken)
     {
-        var root = TempDir();
+        // A subfolder: TempDir's own scope files would be untracked entries of a repository at its root.
+        var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
         CheckpointFixtureProcess.Git(root, "init", "-q");
         CheckpointFixtureProcess.Git(root, "config", "filter.scope.clean", "scope-driver-must-not-run");
         File.WriteAllText(Path.Combine(root, "tracked.txt"), "one\n");

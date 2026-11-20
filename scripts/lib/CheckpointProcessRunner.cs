@@ -121,30 +121,45 @@ namespace Antiphon.Checkpoints
         // checkpoint starts runs inside a snapshot, and a process still alive then can already run code
         // itself, so reusing the answer lets no build-written config run a driver. Each new scope (the
         // next snapshot, after the build) asks again. Callers dispose the scope; it does not outlive them.
+        // A scope opened inside an active one joins it (same read block): only the outermost scope owns the
+        // answers, so there is never more than one scope to close or revive.
         public static IDisposable DriverSettingsScope()
         {
-            var previous = ScopedDriverSettings.Value;
+            if (ScopedDriverSettings.Value != null) return JoinedScope.Instance;
             var own = new Dictionary<string, string>(StringComparer.Ordinal);
             ScopedDriverSettings.Value = own;
-            return new DriverSettingsScopeExit(own, previous);
+            return new DriverSettingsScopeExit(own);
+        }
+
+        private sealed class JoinedScope : IDisposable
+        {
+            public static readonly JoinedScope Instance = new JoinedScope();
+            public void Dispose() { }
         }
 
         private sealed class DriverSettingsScopeExit : IDisposable
         {
             private readonly Dictionary<string, string> _own;
-            private readonly Dictionary<string, string> _previous;
             private bool _disposed;
-            public DriverSettingsScopeExit(Dictionary<string, string> own, Dictionary<string, string> previous)
-            { _own = own; _previous = previous; }
+            public DriverSettingsScopeExit(Dictionary<string, string> own) { _own = own; }
             public void Dispose()
             {
                 if (_disposed) return;
                 _disposed = true;
-                // Out of order (an outer scope first) or from another flow: never revive a closed scope.
-                // A scope is always closed, though: its answers are not reused once it is disposed.
-                if (ReferenceEquals(ScopedDriverSettings.Value, _own)) ScopedDriverSettings.Value = _previous;
+                // Disposed from another flow: leave that flow's value alone. Either way the answers are dropped.
+                if (ReferenceEquals(ScopedDriverSettings.Value, _own)) ScopedDriverSettings.Value = null;
                 lock (DriverSettingsGate) _own.Clear();
             }
+        }
+
+        // The directory part of a driver-settings key: the same checkout spelled C:\repo, C:/repo or C:\Repo\
+        // is one answer (git's config does not depend on the spelling). A subfolder stays a separate key.
+        private static string DirectoryKey(string directory)
+        {
+            if (string.IsNullOrEmpty(directory)) return "";
+            try { directory = Path.GetFullPath(directory).TrimEnd('\\', '/'); }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException || ex is System.Security.SecurityException) { }
+            return OperatingSystem.IsWindows() ? directory.ToUpperInvariant() : directory;
         }
 
         private static string DriverSettings(ProcessStartInfo config, int lifetime, CancellationToken cancellationToken, Action<ProcessStartInfo> beforeStart)
@@ -153,7 +168,7 @@ namespace Antiphon.Checkpoints
             var scoped = ScopedDriverSettings.Value;
             if (lifetime > 0 || scoped != null)
             {
-                var parts = new List<string> { config.FileName, config.WorkingDirectory };
+                var parts = new List<string> { config.FileName, DirectoryKey(config.WorkingDirectory) };
                 foreach (var pair in config.Environment) parts.Add(pair.Key + "=" + pair.Value);
                 parts.Sort(2, parts.Count - 2, StringComparer.Ordinal);
                 parts.AddRange(config.ArgumentList);

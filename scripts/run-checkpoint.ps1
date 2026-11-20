@@ -1167,17 +1167,23 @@ function Invoke-ConfinedCheckpointBuild {
         return 2
     }
     $layout = Get-CheckpointOutputLayout -Repo $root -ProjectPath $project -Output $outputValue
-    $status = Get-CheckpointTrackedStatus $root
-    if ($null -ne $status.Error) {
-        Write-Host 'refused: tracked-snapshot'
-        Write-Host ([string]$status.Error)
-        return 2
-    }
-    if (@($status.Paths).Count -gt 0) {
-        Write-Host (Format-CheckpointDirty @($status.Paths))
-        return 2
-    }
-    $before = Get-CheckpointTrackedSnapshot -Projects @($projectFull)
+    # The status read and the snapshot are one git read block (no other child runs between them): one driver
+    # lookup for both, as the tool's BuildConfinement.Prepare does. The snapshot's own scope joins this one.
+    $drivers = $null
+    try {
+        $drivers = New-CheckpointDriverScope
+        $status = Get-CheckpointTrackedStatus $root
+        if ($null -ne $status.Error) {
+            Write-Host 'refused: tracked-snapshot'
+            Write-Host ([string]$status.Error)
+            return 2
+        }
+        if (@($status.Paths).Count -gt 0) {
+            Write-Host (Format-CheckpointDirty @($status.Paths))
+            return 2
+        }
+        $before = Get-CheckpointTrackedSnapshot -Projects @($projectFull)
+    } finally { if ($null -ne $drivers) { $drivers.Dispose() } }
     if ($null -ne $before.Error) {
         Write-Host 'refused: tracked-snapshot'
         Write-Host ([string]$before.Error)
