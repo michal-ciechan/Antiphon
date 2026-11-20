@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Antiphon.Tests.Application;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
