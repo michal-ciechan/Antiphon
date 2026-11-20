@@ -72,11 +72,15 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // owner/generation reads: idle-flush receipt fence, delivery receipt fence, transcript baseline.
     // CARD-1892 adds two required reads: 4e4362bec's fresh uncertain-attempt probe
     // and ecc9eb971's composer-less hold probe. Keep both ahead of new input.
-    [Arguments("running-recovery-existing-brief", 72)]
+    // CARD-1987 (540761e84) replaced RecordActivityAsync's session load, streaming-attempt
+    // load and save with one -- rt.activity.write. These windows join that write, so 72 - 2.
+    // Exact equality stays: a later drop can be a missing safety read, and the roster prints on failure.
+    [Arguments("running-recovery-existing-brief", 70)]
     // CARD-1543 removed four probes (67 - 4). CARD-1574 adds two owner/generation reads:
     // direct ensure's delivery receipt fence and transcript baseline; no idle flush is needed.
     // The same two CARD-1892 safety reads apply to this direct-ensure path.
-    [Arguments("running-recovery-missing-brief", 67)]
+    // The same CARD-1987 activity write removes two statements here: 67 - 2.
+    [Arguments("running-recovery-missing-brief", 65)]
     // Measured 6. The delivered session drops out of pass 1c: selects only, no write.
     [Arguments("repeated-discovery-after-delivery", 6)]
     // Measured 12. One Blocked event; under the design ceiling of 65.
@@ -84,7 +88,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // CARD-1543 removed four probes (67 - 4). CARD-1574 adds the same two direct-ensure
     // receipt/baseline reads; the independent watchdog and fresh body/Enter guards remain.
     // Plus the same two CARD-1892 safety reads, independently reached by the watchdog.
-    [Arguments("watchdog-first-recovery", 67)]
+    // The same CARD-1987 activity write removes two statements here: 67 - 2.
+    [Arguments("watchdog-first-recovery", 65)]
     // Two scans are equal. Measured 5 on the second scan. Delta 0.
     [Arguments("empty-healthy-scan", 5)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
