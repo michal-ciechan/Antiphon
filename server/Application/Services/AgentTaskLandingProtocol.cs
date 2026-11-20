@@ -21,12 +21,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock,
     IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null,
     IOptions<GitSettings>? gitSettings = null, ILandWorkspace? landWorkspace = null,
-    IOptions<LandingSettings>? landingSettings = null)
+    IOptions<LandingSettings>? landingSettings = null, IBuildSlotGate? buildSlots = null)
 {
     private readonly AgentTaskLandingState _state = new();
 
     /// <summary>CARD-0688 D-11: wall seconds of this invocation's land-worktree reset(s), for the profile line.</summary>
     internal double? LastResetSeconds { get; private set; }
+
+    /// <summary>Tests replace this. Production builds the driver in the land worktree under one build slot.</summary>
+    internal IDerivedImpactIndexRegenerator IndexRegenerator { get; set; } = new DerivedImpactIndexRegenerator(buildSlots);
     internal Action<Guid>? TaskIdentityCompared { get; set; }
 
     /// <summary>The land worktree seam; built from the Git settings when DI did not register one.</summary>

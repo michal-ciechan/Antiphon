@@ -314,7 +314,7 @@ public sealed class LandNonCodeSkipTests
         var command = (await h.OperationAsync())!.VerificationCommand;
         command.ShouldNotBeNull();
         command.ShouldContain("Skipped(non-code)");
-        command.ShouldContain("graph=");
+        command.ShouldContain("graph=" + LandVerificationBuildGraph.Fingerprint);
     }
 
     [Test]
@@ -2706,6 +2706,11 @@ public sealed class LandNonCodeSkipTests
         op.Publication.ShouldBe(LandPublicationOutcome.Landed);
         op.VerificationPassed.ShouldBeFalse();
         op.VerificationSkipReason.ShouldBe("docs-skip-target-manifest");
+        var command = op.VerificationCommand;
+        command.ShouldNotBeNull();
+        command.ShouldContain("Skipped(docs-skip-target-manifest)");
+        command.ShouldContain("graph=" + manifest.Split('\n')[0]);
+        command.ShouldNotContain("graph=" + new string('B', 64));
         await using var db = h.CreateContext();
         var row = await db.StageOutcomes.SingleAsync(o => o.SubjectTaskId == h.Fixture.TaskId && o.Stage == OrchestrationStage.Verify);
         row.Outcome.ShouldBe(StageOutcomeKind.Skipped);
