@@ -276,6 +276,36 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         Real("ls-files", "--", "Lib").Trim().ShouldBe("Lib/bin-probe/Lib.dll");
         Real("status", "--porcelain", "--untracked-files=all").ShouldBeEmpty();
 
+        // init -q -b and add -- <paths> (without -f: ignored files under a named directory are left out), in process.
+        string RealIn(string at, params string[] args) => CheckpointFixtureProcess.Git(at, args);
+        var quiet = Directory.CreateDirectory(Path.Combine(scope, "quiet")).FullName;
+        git.Git(quiet, "init", "-q", "-b", "inner");
+        File.WriteAllText(Path.Combine(quiet, ".gitignore"), "obj/\n");
+        Directory.CreateDirectory(Path.Combine(quiet, "src", "obj"));
+        File.WriteAllText(Path.Combine(quiet, "src", "kept.cs"), "class K { }\n");
+        File.WriteAllText(Path.Combine(quiet, "src", "obj", "out.o"), "o\n");
+        File.WriteAllText(Path.Combine(quiet, "loose.txt"), "loose\n");
+        git.Git(quiet, "add", "--", "src", Path.Combine(quiet, ".gitignore"));
+        git.Git(quiet, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "inner", "--no-verify");
+        git.GitChildren.ShouldBe(0);
+        RealIn(quiet, "rev-parse", "--abbrev-ref", "HEAD").Trim().ShouldBe("inner");
+        RealIn(quiet, "ls-files").Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal)
+            .ShouldBe([".gitignore", "src/kept.cs"]);
+        RealIn(quiet, "status", "--porcelain", "--untracked-files=all").Trim().ShouldBe("?? loose.txt");
+
+        // A nested repository goes to git, which stages it as a gitlink.
+        var vendor = Directory.CreateDirectory(Path.Combine(quiet, "vendor")).FullName;
+        git.Git(vendor, "init", "-b", "vendor");
+        File.WriteAllText(Path.Combine(vendor, "v.txt"), "v\n");
+        git.Git(vendor, "add", "-A");
+        git.Git(vendor, "-c", "user.email=v@example.invalid", "-c", "user.name=v",
+            "-c", "commit.gpgsign=false", "commit", "-m", "vendor", "--no-verify");
+        git.GitChildren.ShouldBe(0);
+        git.Git(quiet, "add", "-A");
+        git.GitChildren.ShouldBe(1, "add -A over a nested repository went to git");
+        RealIn(quiet, "ls-files", "-s", "--", "vendor").ShouldStartWith("160000 ");
+
         // Where git refuses, git answers (and refuses): each of these goes to a git child, which fails.
         void Refused(string repository, string because, params string[] args)
         {
@@ -284,6 +314,7 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
             git.GitChildren.ShouldBe(before + 1);
         }
         Refused(root, "did not match any files", "add", "-f", "--", Path.Combine(root, "missing.txt"));
+        Refused(quiet, "ignored", "add", "--", "src/obj/out.o");
         File.WriteAllText(Path.Combine(root, "staged.txt"), "staged\n");
         git.Git(root, "add", "-A");
         Refused(root, "empty commit message", "-c", "user.email=a@example.invalid", "-c", "user.name=a",

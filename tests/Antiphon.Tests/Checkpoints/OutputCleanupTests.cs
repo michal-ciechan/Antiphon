@@ -1642,7 +1642,12 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Build = output, Filter = "/*/*/Unused/*", MinExecuted = 1 }],
     };
 
-    private static void Git(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
+    // Fixture setup: the common setup commands run in process (FixtureGitInProcess), anything else in a git child.
+    private static void Git(string root, params string[] args)
+    {
+        if (FixtureGitInProcess.TryRun(root, args) is null)
+            CheckpointFixtureProcess.Git(root, args);
+    }
 
     private string Tree()
     {
