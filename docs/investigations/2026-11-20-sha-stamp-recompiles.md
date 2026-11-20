@@ -51,8 +51,8 @@ How each column was measured:
 | E0 also SourceLink off | e690897c | `dev` + `EnableSourceLink=false` | 33 s | 0:30.6 | 2 | 42 | 12.7 |
 | E docs-only commit, constant + no SourceLink | d71d06f0 | `dev` + `EnableSourceLink=false` | **21 s** | **0:18.8** | **2** | 42 | 13.3 |
 | G AppHost build, deploy-style stamp | d71d06f0 | `SourceRevisionId=<HEAD>` + `EnableSourceLink=false` | 133 s | 2:10.7 | 10 | 0 | ~13 |
-| P0 proposed patch applied (switch) | see below | none | see below | | | | |
-| P docs-only commit on the proposed patch | see below | none | see below | | | | |
+| P0 proposed patch applied (switch) | 17834d3b | none | 253 s | 4:11.3 | 40 | 4 | 14.5 |
+| **P docs-only commit on the proposed patch** | 7cf4135c | **none** | **27 s** | **0:24.2** | **2** | 42 | 14.9 |
 
 Notes on the runs:
 - The 2 assemblies in D, E0 and E are `Antiphon.PtyHost.dll` and `Antiphon.PtyHost.Protocol.dll`. They
@@ -68,7 +68,17 @@ Notes on the runs:
   compares timestamps, so removing an input does not dirty it. The first build after the switch keeps
   the old PDB SourceLink map, which is harmless.
 
-The P0/P rows and the witness runs are filled in under "Proposed patch verified" below.
+- P0 and P ran with the proposed patch applied and committed in the throwaway worktree, and no extra
+  properties. After P, the AssemblyInfo read `1.0.0+unknown` and no `obj/*.sourcelink.json` was written.
+
+One more invalidator showed up: **a change to `Directory.Build.props` itself, mtime included.**
+- After the witness red run, `git checkout` restored `Directory.Build.props` and the three scripts to
+  their patched content. The next build (Q) changed only one test file, yet it recompiled all 40
+  assemblies (3:23.3).
+- `Directory.Build.props` feeds every project through `$(MSBuildAllProjects)`, an input to CoreCompile.
+  The `.ps1` files are not compile inputs.
+- So the cause is the rewritten props file. This is inferred and was not isolated by a separate touch-only
+  run. It happens only when the props file really changes, not once per commit.
 
 ### Slot worktrees keep bin/obj (refinement)
 
@@ -255,7 +265,27 @@ It does **not** include the regenerated land-graph manifest or evaluation files.
 
 ## Proposed patch verified
 
-RESULTS-PENDING
+In the throwaway worktree (base `ce3670f5` plus probe docs commits), the patch file was applied and
+committed as `17834d3b`:
+- **Build:** `tests/Antiphon.Tests` built with 0 errors (P0). That closure includes
+  `Antiphon.LandGraphAudit.Core`, so the `AllowedProperties` edit compiled.
+  `tests/Antiphon.SessionRunner.Tests` built with 0 errors, so the C1022 edit compiled.
+- **Docs-only commit:** with no extra properties, the rebuild recompiled only the PtyHost pair, in 24.2 s
+  (P). The stamped tree took 420–622 s for the same kind of commit (B/C).
+- **Witness, green:** `SourceRevisionStampContractTests` on the patched tree gave total 4, succeeded 4.
+- **Witness, red:** with `Directory.Build.props`, `dev-aspire.ps1`, `scripts/run-daemon.ps1` and
+  `scripts/start-windows-phone-home-runner.ps1` restored to their `ce3670f5` content (`--no-build`, the
+  test reads the files at run time), it gave total 4, **failed 4**. So every case can go red.
+- **Witness fix:** the first witness draft text-matched `rev-parse` and tripped on the new props comment.
+  The shipped version asserts on XML elements: no `Target`, no `Exec`, a single unconditional
+  `EnableSourceLink=false`, and a single `SourceRevisionId` of `unknown`.
+
+Not run:
+- HealthEndpointTests needs Postgres (`AntiphonWebAppFactory`).
+- C1022 and the Windows phone-home harness are Windows-only.
+- The land-graph `-Update`/`-Check` and the pwsh restart harnesses were not run either.
+
+All of these belong to the Code slice (rows below).
 
 ## Red witnesses and checkpoint rows for the Code slice
 
