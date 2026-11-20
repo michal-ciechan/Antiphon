@@ -144,19 +144,19 @@ function Test-EpsVerdict {
     $committed = @([Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster((Join-Path $repo 'tests/expected-platform-skips.json')))
     $windows = @($committed | Where-Object { [string]$_.platform -ceq 'windows' })
     $unique = @($windows | ForEach-Object { [string]$_.test } | Select-Object -Unique)
-    $gaps = @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $repo -Platform 'windows' -Entries $committed)
+    $gaps = @([Antiphon.Nightly.NightlyExpectedSkips]::SourceGaps($repo, 'windows', $committed, $null))
     Assert-C487 -Cond ($windows.Count -eq 25 -and $unique.Count -eq 25 -and $gaps.Count -eq 0) `
         -Name 'EPS census-matches-source' -Detail ('windows=' + $windows.Count + ' unique=' + $unique.Count + ' gaps=' + ($gaps -join ','))
 
     $planted = @($committed) + @([pscustomobject]@{ platform = 'windows'; test = $missing; reasonPrefix = 'gone' })
-    $plantedGaps = @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $repo -Platform 'windows' -Entries $planted)
+    $plantedGaps = @([Antiphon.Nightly.NightlyExpectedSkips]::SourceGaps($repo, 'windows', $planted, $null))
     Assert-C487 -Cond ($plantedGaps.Count -eq 1 -and [string]$plantedGaps[0] -ceq $missing) `
         -Name 'EPS census-reports-missing' -Detail ($plantedGaps -join ',')
 
-    $reasonCmd = Get-Command -Name 'Get-NightlyExpectedSkipReasonGaps' -CommandType Function -ErrorAction SilentlyContinue
+    $reasonCmd = ('Antiphon.Nightly.NightlyExpectedSkips' -as [type])
     $reasonGaps = @()
     if ($null -ne $reasonCmd) {
-        $reasonGaps = @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $repo -Platform 'windows' -Entries $committed)
+        $reasonGaps = @([Antiphon.Nightly.NightlyExpectedSkips]::ReasonGaps($repo, 'windows', $committed, $null))
     }
     Assert-C487 -Cond ($null -ne $reasonCmd -and $reasonGaps.Count -eq 0) `
         -Name 'EPS reason-text-matches-source' -Detail ($(if ($null -eq $reasonCmd) { 'missing-command' } else { $reasonGaps -join ',' }))
@@ -170,14 +170,14 @@ function Test-EpsVerdict {
     }
     $wrongGaps = @()
     if ($null -ne $reasonCmd) {
-        $wrongGaps = @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $repo -Platform 'windows' -Entries $wrongReason)
+        $wrongGaps = @([Antiphon.Nightly.NightlyExpectedSkips]::ReasonGaps($repo, 'windows', $wrongReason, $null))
     }
     Assert-C487 -Cond ($null -ne $reasonCmd -and @($wrongGaps) -contains $wrongId) `
         -Name 'EPS reason-text-reports-mismatch' -Detail ($(if ($null -eq $reasonCmd) { 'missing-command' } else { $wrongGaps -join ',' }))
 
-    $driftCmd = Get-Command -Name 'Get-NightlyExpectedSkipRosterDrift' -CommandType Function -ErrorAction SilentlyContinue
+    $driftCmd = ('Antiphon.Nightly.NightlyExpectedSkips' -as [type])
     $drift = $null
-    if ($null -ne $driftCmd) { $drift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $repo -Entries $committed }
+    if ($null -ne $driftCmd) { $drift = [Antiphon.Nightly.NightlyExpectedSkips]::RosterDrift($repo, $committed, $null) }
     $driftDetail = 'missing-command'
     $driftStable = $false
     if ($null -ne $drift) {
@@ -193,7 +193,7 @@ function Test-EpsVerdict {
         } else { $drifted += $entry }
     }
     $driftBad = $null
-    if ($null -ne $driftCmd) { $driftBad = Get-NightlyExpectedSkipRosterDrift -RepoRoot $repo -Entries $drifted }
+    if ($null -ne $driftCmd) { $driftBad = [Antiphon.Nightly.NightlyExpectedSkips]::RosterDrift($repo, $drifted, $null) }
     $driftBadDetail = 'missing-command'
     $driftCaught = $false
     if ($null -ne $driftBad) {

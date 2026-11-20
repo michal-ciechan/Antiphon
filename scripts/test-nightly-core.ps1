@@ -773,7 +773,7 @@ function Test-NCSourceGapsMatchFallback {
         'N.Skipped.Run', 'X.Beta.Go', 'Beta.Go', 'Beta', '', '.Go', 'N.AlphaBeta.Other', 'N.Gamma.Run', 'N.gamma.Run', 'N.Alpha.Run')) {
         [pscustomobject]@{ platform = 'windows'; test = $test }
     }) + @($null, [pscustomobject]@{ platform = 'linux'; test = 'N.Nope.Run' })
-    $r = Invoke-NCBothWays { @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $fixture -Platform 'windows' -Entries $entries) } 'sourceGaps'
+    $r = Invoke-NCBothWays { @([Antiphon.Nightly.NightlyExpectedSkips]::SourceGaps($fixture, 'windows', $entries, $null)) } 'sourceGaps'
     Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Compiled.Contains('N.Alpha.Missing') -and -not $r.Compiled.Contains('"N.Alpha.Run"')) 'sourceGaps' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     $path = Join-Path $tests 'C/Cache.cs'
     [IO.File]::WriteAllText($path, 'class Cached { void Alpha() { } }')

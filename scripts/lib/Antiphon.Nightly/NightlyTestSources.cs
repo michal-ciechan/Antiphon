@@ -1,5 +1,5 @@
-// Test-source reads for the expected-skip scans (nightly-coverage.ps1), and the compiled form of
-// Get-NightlyExpectedSkipSourceGaps, whose PowerShell body stays as the fallback (Windows PowerShell 5.1, no core).
+// Test-source reads for the expected-skip scans (NightlyExpectedSkips), and the source-gap check itself
+// (Get-NightlyExpectedSkipSourceGaps when it was PowerShell).
 //
 // ReadText is File.ReadAllText with a process-wide cache. A cached text is reused only while the file keeps the
 // length and last-write time it had when read, and a text is cached only when that write time was already more

@@ -190,7 +190,7 @@ function Get-RealTreeNodes {
         throw 'real target requires -DiscoveryLog and -AssemblyPath'
     }
     $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($DiscoveryLog, 'discovery')
-    $document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), (Get-NightlyAssemblyHash $AssemblyPath))
+    $document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), ([Antiphon.Nightly.NightlyDiagnosticLog]::AssemblyHash($AssemblyPath)))
     return @(([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($document, 'antiphon-tunit-discovery-v1')).Nodes)
 }
 

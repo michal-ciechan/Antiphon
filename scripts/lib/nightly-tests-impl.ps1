@@ -1950,7 +1950,7 @@ function Invoke-AntiphonNightlyTests {
             if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
                 $expectedSkipRoster = @([Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster($rosterFile))
                 # The end-of-run skip scans read only tests/ and the roster: they run while the chunks do.
-                $expectedSkipScan = Start-NightlyExpectedSkipScan -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster
+                $expectedSkipScan = [Antiphon.Nightly.NightlyExpectedSkips]::Start($RepoRoot, $platform, $expectedSkipRoster)
             }
             . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites -DispatchHistory $dispatchInput.History -DispatchHistoryDigest $dispatchInput.Digest -DispatchPreviousRun $dispatchInput.PreviousRun -DispatchFallbackReason $dispatchInput.FallbackReason
 
@@ -1988,15 +1988,15 @@ function Invoke-AntiphonNightlyTests {
     $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
     $testsProject = Join-Path $RepoRoot (Join-Path 'tests' 'Antiphon.Tests')
     if ((Test-Path -LiteralPath $rosterFile -PathType Leaf) -and (Test-Path -LiteralPath $testsProject -PathType Container) -and @($expectedSkipRoster).Count -gt 0) {
-        foreach ($gap in @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster -Scan $expectedSkipScan)) {
+        foreach ($gap in @([Antiphon.Nightly.NightlyExpectedSkips]::SourceGaps($RepoRoot, $platform, $expectedSkipRoster, $expectedSkipScan))) {
             $gapWarning = 'stale-roster:' + [string]$gap
             if ($expectedSkipWarnings -notcontains $gapWarning) { $expectedSkipWarnings += $gapWarning }
         }
-        foreach ($reasonGap in @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster -Scan $expectedSkipScan)) {
+        foreach ($reasonGap in @([Antiphon.Nightly.NightlyExpectedSkips]::ReasonGaps($RepoRoot, $platform, $expectedSkipRoster, $expectedSkipScan))) {
             $reasonWarning = 'skip-reason:' + [string]$reasonGap
             if ($expectedSkipWarnings -notcontains $reasonWarning) { $expectedSkipWarnings += $reasonWarning }
         }
-        $rosterDrift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $RepoRoot -Entries $expectedSkipRoster -Scan $expectedSkipScan
+        $rosterDrift = [Antiphon.Nightly.NightlyExpectedSkips]::RosterDrift($RepoRoot, $expectedSkipRoster, $expectedSkipScan)
         foreach ($driftId in @($rosterDrift.Mismatches)) {
             $driftText = [string]$driftId
             if ([string]::IsNullOrWhiteSpace($driftText)) { continue }
@@ -2006,7 +2006,7 @@ function Invoke-AntiphonNightlyTests {
     }
     # A scan whose results were not wanted (the condition above is false) is still waited for here; one left by
     # an exception before this point never faults and is waited for by the next scan or in-line walk.
-    if ($null -ne $expectedSkipScan) { Wait-NightlyExpectedSkipScan -Task $expectedSkipScan.Task }
+    if ($null -ne $expectedSkipScan) { [Antiphon.Nightly.NightlyExpectedSkips]::Wait($expectedSkipScan.Task) }
 
     $coverageScope = 'Full'
     if ($Profile -eq 'rc' -and $platform -eq 'linux') {
@@ -2131,14 +2131,14 @@ function Invoke-NightlyExactRoster {
     param([string]$AssemblyPath, $Discovery, [object[]]$Members, [string]$ResultsDirectory,
           [string[]]$ClassifiedUids = $null, [hashtable]$Environment = $null)
     $roster = [Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($Discovery, $Members, $ClassifiedUids)
-    if ($roster.AssemblyHash -cne (Get-NightlyAssemblyHash $AssemblyPath)) { throw 'discovery-build-mismatch' }
+    if ($roster.AssemblyHash -cne ([Antiphon.Nightly.NightlyDiagnosticLog]::AssemblyHash($AssemblyPath))) { throw 'discovery-build-mismatch' }
     if ($roster.UnresolvedUids.Count -gt 0) { throw 'new-uid-required: classification required before launch' }
     if (Test-Path -LiteralPath $ResultsDirectory) { throw 'execution-output-already-exists' }
     [void][IO.Directory]::CreateDirectory($ResultsDirectory)
     . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
     $terminal = @(); $receipts = @(); $index = 0
     foreach ($chunk in $roster.Chunks) {
-        if ($roster.AssemblyHash -cne (Get-NightlyAssemblyHash $AssemblyPath)) { throw 'discovery-build-mismatch' }
+        if ($roster.AssemblyHash -cne ([Antiphon.Nightly.NightlyDiagnosticLog]::AssemblyHash($AssemblyPath))) { throw 'discovery-build-mismatch' }
         $dir = Join-Path $ResultsDirectory ('leaf-' + (++$index))
         [void][IO.Directory]::CreateDirectory($dir)
         $trx = Join-Path $dir 'run.trx'

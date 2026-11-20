@@ -209,6 +209,19 @@ namespace Antiphon.Nightly
             return Note("Nodes", nodes.ToArray());
         }
 
+        /// <summary>
+        /// Get-NightlyAssemblyHash: the cached SHA-256 of the assembly beside exePath (its .dll), else of exePath itself,
+        /// else of the path text (a discovery made for an assembly that is not on disk).
+        /// </summary>
+        public static string AssemblyHash(string exePath)
+        {
+            var path = exePath ?? "";
+            var dll = path.Length == 0 ? "" : System.IO.Path.ChangeExtension(path, ".dll");
+            if (dll.Length > 0 && System.IO.File.Exists(dll)) return NightlyClassNames.CachedFileSha256(dll);
+            if (path.Length > 0 && System.IO.File.Exists(path)) return NightlyClassNames.CachedFileSha256(path);
+            return TestPhaseRecords.Sha256Text(path);
+        }
+
         /// <summary>ConvertTo-NightlyDiscoveryDocument: the document the discovery producer writes for these nodes.</summary>
         public static OrderedDictionary NewDiscoveryDocument(object[] nodes, string assemblyHash)
         {

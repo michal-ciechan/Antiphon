@@ -19,7 +19,7 @@ foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc
 # dotnet run --no-build --list-tests. No Windows-only native owner is needed.
 $parseWatch = [Diagnostics.Stopwatch]::StartNew()
 $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($DiscoveryLogPath, 'discovery')
-$document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), (Get-NightlyAssemblyHash $AssemblyPath))
+$document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), ([Antiphon.Nightly.NightlyDiagnosticLog]::AssemblyHash($AssemblyPath)))
 [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument((Join-Path $ResultsDirectory 'discovery.json'), $document)
 $parseWatch.Stop()
 $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($document, 'antiphon-tunit-discovery-v1')).Nodes)
