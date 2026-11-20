@@ -462,9 +462,11 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8 -EscapeHandling EscapeNonAscii))
             """);
         var progress = Path.Combine(root, "progress");
-        // The validator reads only the evidence it is given (and git at the receipt's commit, which the fake Sha has
-        // nowhere): the case's own root, never the shared checkout.
+        // The validator reads only the evidence it is given, and git at the receipt's commit, which the fake Sha has
+        // nowhere (wherever it asks, the read fails as git_exit): the case's own root, never the shared checkout.
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
+        foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
+            start.Environment.Remove(name);
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString(), progress })
             start.ArgumentList.Add(token);
@@ -939,15 +941,20 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
 
     private static async Task<(int Exit, string Output)> ValidateFileWithScriptAsync(string evidence, string? rows = null)
     {
+        // One full path for both the child's working directory (the case's own directory, never the shared
+        // checkout) and its -Evidence, so a relative path cannot resolve twice.
+        var full = Path.GetFullPath(evidence);
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo("pwsh")
         {
-            WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(evidence))!,
+            WorkingDirectory = Path.GetDirectoryName(full)!,
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
         };
+        foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
+            process.StartInfo.Environment.Remove(name);
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File",
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-            "-Evidence", evidence, "-ExpectedSourceSha", Sha })
+            "-Evidence", full, "-ExpectedSourceSha", Sha })
             process.StartInfo.ArgumentList.Add(token);
         if (rows is not null)
         {
@@ -957,8 +964,20 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         process.Start();
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await process.WaitForExitAsync(timeout.Token);
+        // A second or two on an idle host; this class runs beside the strict lane at width 2, so a call gets well
+        // over 2x a loaded host's time. A call past it is killed, tree and all, before the failure is reported.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stdout, stderr);
+            throw;
+        }
         return (process.ExitCode, await stdout + await stderr);
     }
 

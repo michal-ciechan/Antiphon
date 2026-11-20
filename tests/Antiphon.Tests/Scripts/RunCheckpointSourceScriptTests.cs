@@ -757,12 +757,17 @@ public sealed class RunCheckpointSourceScriptTests
             process.StartInfo = new ProcessStartInfo(file) { WorkingDirectory = cwd,
                 RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
             foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+            // git in a child stays in the case's own repository whatever the host exported (a git hook's GIT_DIR).
+            foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
+                process.StartInfo.Environment.Remove(name);
             if (environment is not null)
                 foreach (var (key, value) in environment) process.StartInfo.Environment[key] = value;
             process.Start();
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            // About 8 s on an idle laptop; this class runs beside the strict lane (and wider on Linux), so a child
+            // gets well over 2x a loaded host's time before the case fails.
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(180));
             try
             {
                 await process.WaitForExitAsync(cancel.Token);
