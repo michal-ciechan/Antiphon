@@ -126,6 +126,54 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 
     [Test]
     [Timeout(60_000)]
+    public void Repository_found_from_its_files_names_what_rev_parse_names(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        string[] Git(string directory)
+        {
+            var lines = CheckpointFixtureProcess.Git(directory, "rev-parse", "--show-toplevel", "--absolute-git-dir")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return [Path.GetFullPath(lines[0]).TrimEnd('\\', '/'), Path.GetFullPath(lines[1]).TrimEnd('\\', '/')];
+        }
+        void Agrees(string directory, string label)
+        {
+            var found = CheckpointProcessRunner.FindRepository(directory);
+            found.ShouldNotBeNull(label);
+            var expected = Git(directory);
+            string.Equals(Path.GetFullPath(found[0]).TrimEnd('\\', '/'), expected[0], comparison).ShouldBeTrue(label + " top level: " + found[0] + " vs " + expected[0]);
+            string.Equals(Path.GetFullPath(found[1]).TrimEnd('\\', '/'), expected[1], comparison).ShouldBeTrue(label + " git dir: " + found[1] + " vs " + expected[1]);
+        }
+
+        var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(root, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(root, "a.txt"), "a\n");
+        CheckpointFixtureProcess.Git(root, "add", "a.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        Agrees(root, "checkout root");
+        var sub = Directory.CreateDirectory(Path.Combine(root, "sub", "deeper")).FullName;
+        Agrees(sub, "subdirectory");
+
+        // A linked worktree: a .git file naming its git dir under the main repository's worktrees/.
+        var linked = Path.Combine(TempDir(), "linked");
+        CheckpointFixtureProcess.Git(root, "worktree", "add", "-q", linked);
+        Agrees(linked, "linked worktree");
+
+        // What the files cannot settle as git does is git's to answer.
+        CheckpointProcessRunner.FindRepository(Path.Combine(root, ".git")).ShouldBeNull("a git dir has no top level");
+        CheckpointProcessRunner.FindRepository(Path.Combine(sub, "..")).ShouldBeNull("a .. segment");
+        CheckpointProcessRunner.FindRepository(TempDir()).ShouldBeNull("no repository");
+        var bare = Directory.CreateDirectory(Path.Combine(TempDir(), "bare.git")).FullName;
+        CheckpointFixtureProcess.Git(bare, "init", "-q", "--bare");
+        CheckpointProcessRunner.FindRepository(bare).ShouldBeNull("a bare repository");
+        CheckpointFixtureProcess.Git(root, "config", "core.worktree", sub);
+        CheckpointProcessRunner.FindRepository(root).ShouldBeNull("core.worktree moves the top level");
+        CheckpointFixtureProcess.Git(root, "config", "--unset", "core.worktree");
+        Agrees(root, "after core.worktree is unset");
+    }
+
+    [Test]
+    [Timeout(60_000)]
     public void Driver_lookup_answers_a_driverless_config_from_its_files(CancellationToken cancellationToken)
     {
         var root = TempDir();
@@ -308,6 +356,8 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             "both capture passes ran");
         argvs.Count(text => text.Contains("\"ls-files\"", StringComparison.Ordinal)).ShouldBe(0,
             "a plain version-2 index answers the hidden-flag check without ls-files -v");
+        argvs.Count(text => text.Contains("\"rev-parse\"", StringComparison.Ordinal)).ShouldBe(0,
+            "the repository's files name its top level and git dir (CheckpointProcessRunner.FindRepository)");
         argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)
             && text.Contains("\"filter.scope.clean=\"", StringComparison.Ordinal)).ShouldBe(2,
             "the reused answer still disables the driver on every read");

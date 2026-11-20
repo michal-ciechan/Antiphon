@@ -157,10 +157,20 @@ function Get-CheckpointSource {
     try {
         # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).
         $drivers = New-CheckpointDriverScope
-        # The toplevel and the git dir git uses, in one read: the index-file flag check trusts only that git dir.
-        $located = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel', '--absolute-git-dir')))) -split "`n"
-        $root = ([string]$located[0]).Trim()
-        $gitDir = if ($located.Count -gt 1) { ([string]$located[1]).Trim() } else { '' }
+        # The toplevel and the git dir git uses: read from the repository's files where they settle it as git's
+        # discovery does (CheckpointProcessRunner.FindRepository), one rev-parse otherwise, or when the loaded runner
+        # predates it. The index-file flag check trusts only that git dir.
+        $found = $null
+        $runner = [Antiphon.Checkpoints.CheckpointProcessRunner]
+        if ($null -ne $runner.GetMethod('FindRepository', [Type[]]@([string]))) { $found = $runner::FindRepository($Repository) }
+        if ($null -ne $found) {
+            $root = [string]$found[0]
+            $gitDir = [string]$found[1]
+        } else {
+            $located = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel', '--absolute-git-dir')))) -split "`n"
+            $root = ([string]$located[0]).Trim()
+            $gitDir = if ($located.Count -gt 1) { ([string]$located[1]).Trim() } else { '' }
+        }
         $first = Get-CheckpointSourceOnce $root $gitDir
         $second = Get-CheckpointSourceOnce $root $gitDir
         if ($first.commit -cne $second.commit -or $first.dirtyFiles -ne $second.dirtyFiles -or $first.fingerprint -cne $second.fingerprint) { throw 'capture_changed' }

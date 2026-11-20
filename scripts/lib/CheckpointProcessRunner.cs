@@ -282,6 +282,102 @@ namespace Antiphon.Checkpoints
                 || (key.StartsWith("diff.", StringComparison.Ordinal) && key.EndsWith(".textconv", StringComparison.Ordinal));
         }
 
+        // The repository git finds from this directory, as far as its files settle it the way git's discovery does:
+        // each directory's .git first, then the directory itself as a git dir. Its git dir, its top level (null for a
+        // git dir found as the directory itself: bare, or a directory inside .git) and the config files git reads
+        // there. Null for any doubt: a link on the path (git climbs the real path), a .git git might skip or read
+        // differently, a gitdir: pointer or commondir it would resolve after a link, no repository at all.
+        private sealed class RepositoryFiles
+        {
+            public string GitDir;
+            public string TopLevel;
+            public List<string> ConfigFiles;
+        }
+
+        private static RepositoryFiles FindRepositoryFiles(string start)
+        {
+            string gitDir = null;
+            string top = null;
+            for (var directory = new DirectoryInfo(start); directory != null; directory = directory.Parent)
+            {
+                if (!directory.Exists || (directory.Attributes & FileAttributes.ReparsePoint) != 0) return null;
+                var here = directory.FullName;
+                var dotGit = Path.Combine(here, ".git");
+                if (Directory.Exists(dotGit))
+                {
+                    if ((File.GetAttributes(dotGit) & FileAttributes.ReparsePoint) != 0 || !LooksLikeGitDir(dotGit)) return null;
+                    gitDir = dotGit;
+                    top = here;
+                    break;
+                }
+                if (File.Exists(dotGit))
+                {
+                    var pointer = File.ReadAllText(dotGit).Trim();
+                    if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return null;
+                    var target = pointer.Substring("gitdir:".Length).Trim();
+                    if (HasParentSegment(target)) return null;
+                    gitDir = Path.GetFullPath(Path.Combine(here, target));
+                    if (AnyLinkOnPath(gitDir) || !LooksLikeGitDir(gitDir)) return null;
+                    top = here;
+                    break;
+                }
+                // A git dir itself (bare, or a directory inside .git): git uses it as the repository.
+                if (LooksLikeGitDir(here)) { gitDir = here; break; }
+            }
+            if (gitDir == null) return null;
+            var files = new List<string> { Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") };
+            var commonPointer = Path.Combine(gitDir, "commondir");
+            if (File.Exists(commonPointer))
+            {
+                // gitDir's path has no link on it (checked above), so collapsing the leading "../" run git
+                // writes ("../..") lands where git's does; a ".." anywhere after that is git's to resolve.
+                var commonText = File.ReadAllText(commonPointer).Trim();
+                if (commonText.Split('/', '\\').SkipWhile(segment => segment == "..").Any(segment => segment == "..")) return null;
+                var common = Path.GetFullPath(Path.Combine(gitDir, commonText));
+                if (AnyLinkOnPath(common)) return null;
+                files.Add(Path.Combine(common, "config"));
+                files.Add(Path.Combine(common, "config.worktree"));
+            }
+            return new RepositoryFiles { GitDir = gitDir, TopLevel = top, ConfigFiles = files };
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex BareSetting = new System.Text.RegularExpressions.Regex(
+            @"bare\s*=\s*(true|yes|on|1)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// [top level, absolute git dir] for this directory as `git rev-parse --show-toplevel --absolute-git-dir`
+        /// names them (this process's full paths, not git's forward-slash spelling), read from the repository's
+        /// files with no git child. Null when git must answer: a variable that moves git's repository or discovery
+        /// (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_CEILING_DIRECTORIES, GIT_DISCOVERY_ACROSS_FILESYSTEM), a ".."
+        /// in the path, any doubt FindRepositoryFiles has, a git dir with no work tree (bare, or a directory inside
+        /// .git), or config that mentions a work tree or a bare setting (core.worktree, extensions.worktreeConfig,
+        /// core.bare true). git rejects a repository it does not trust (safe.directory) at its next read, as here.
+        /// </summary>
+        public static string[] FindRepository(string start)
+        {
+            try
+            {
+                foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
+                    if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name))) return null;
+                if (string.IsNullOrEmpty(start) || HasParentSegment(start)) return null;
+                var found = FindRepositoryFiles(Path.GetFullPath(start));
+                if (found == null || found.TopLevel == null) return null;
+                foreach (var file in found.ConfigFiles)
+                {
+                    if (Directory.Exists(file)) return null;
+                    if (!File.Exists(file)) continue;
+                    var text = File.ReadAllText(file);
+                    if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0 || BareSetting.IsMatch(text)) return null;
+                }
+                return new[] { found.TopLevel, found.GitDir };
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
+                || ex is NotSupportedException || ex is System.Security.SecurityException)
+            {
+                return null;
+            }
+        }
+
         // Whether the driver lookup's answer is empty without asking git (the read's leading options are all -c and
         // -C; DriverSettings does not ask otherwise). The lookup is hardened (GIT_CONFIG_NOSYSTEM,
         // GIT_CONFIG_GLOBAL on the null device), so git reads only the repository's own config files: config in its
@@ -316,45 +412,9 @@ namespace Antiphon.Checkpoints
                 var start = Path.GetFullPath(working);
                 foreach (var directory in leading.Directories)
                     start = Path.GetFullPath(Path.Combine(start, directory));
-                string gitDir = null;
-                for (var directory = new DirectoryInfo(start); directory != null; directory = directory.Parent)
-                {
-                    if (!directory.Exists || (directory.Attributes & FileAttributes.ReparsePoint) != 0) return false;
-                    var here = directory.FullName;
-                    var dotGit = Path.Combine(here, ".git");
-                    if (Directory.Exists(dotGit))
-                    {
-                        if ((File.GetAttributes(dotGit) & FileAttributes.ReparsePoint) != 0 || !LooksLikeGitDir(dotGit)) return false;
-                        gitDir = dotGit;
-                        break;
-                    }
-                    if (File.Exists(dotGit))
-                    {
-                        var pointer = File.ReadAllText(dotGit).Trim();
-                        if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return false;
-                        var target = pointer.Substring("gitdir:".Length).Trim();
-                        if (HasParentSegment(target)) return false;
-                        gitDir = Path.GetFullPath(Path.Combine(here, target));
-                        if (AnyLinkOnPath(gitDir) || !LooksLikeGitDir(gitDir)) return false;
-                        break;
-                    }
-                    // A git dir itself (bare, or a directory inside .git): git uses it as the repository.
-                    if (LooksLikeGitDir(here)) { gitDir = here; break; }
-                }
-                if (gitDir == null) return false;
-                var files = new List<string> { Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") };
-                var commonPointer = Path.Combine(gitDir, "commondir");
-                if (File.Exists(commonPointer))
-                {
-                    // gitDir's path has no link on it (checked above), so collapsing the leading "../" run git
-                    // writes ("../..") lands where git's does; a ".." anywhere after that is git's to resolve.
-                    var commonText = File.ReadAllText(commonPointer).Trim();
-                    if (commonText.Split('/', '\\').SkipWhile(segment => segment == "..").Any(segment => segment == "..")) return false;
-                    var common = Path.GetFullPath(Path.Combine(gitDir, commonText));
-                    if (AnyLinkOnPath(common)) return false;
-                    files.Add(Path.Combine(common, "config"));
-                    files.Add(Path.Combine(common, "config.worktree"));
-                }
+                var found = FindRepositoryFiles(start);
+                if (found == null) return false;
+                var files = found.ConfigFiles;
                 var read = false;
                 foreach (var file in files)
                 {
