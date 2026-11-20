@@ -10,8 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Integration")]
 [Category("Slow")]
 [Category("C835")]
-[ParallelLimiter<ProcessSpawnLimit>]
-[SharedCheckoutChild]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
 {
     private static readonly string Sha = new('a', 40);
@@ -463,7 +462,9 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8 -EscapeHandling EscapeNonAscii))
             """);
         var progress = Path.Combine(root, "progress");
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+        // The validator reads only the evidence it is given (and git at the receipt's commit, which the fake Sha has
+        // nowhere): the case's own root, never the shared checkout.
+        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString(), progress })
             start.ArgumentList.Add(token);
@@ -941,7 +942,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo("pwsh")
         {
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
+            WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(evidence))!,
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
         };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File",

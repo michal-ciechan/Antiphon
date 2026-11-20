@@ -134,6 +134,10 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.RollingProductionMountTests),
         typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleCensusChurnTests),
         typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests),
+        // Every child (run-checkpoint.ps1, its pwsh dotnet shim, the receipt validator, git) runs in the case's own
+        // seeded repository; the checkout is only read for script paths. No port, no change to this process's
+        // environment or directory, and no file this process wrote is exec'd (the shims are pwsh -File scripts).
+        typeof(Antiphon.Tests.Scripts.RunCheckpointSourceScriptTests),
     ];
 
     [Test]
@@ -365,7 +369,6 @@ public class ProcessSpawnLimitTests
     [
         "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests",
         "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests",
-        "Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests",
         "Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests",
         "Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests",
         "Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests",

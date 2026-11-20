@@ -10,10 +10,9 @@ namespace Antiphon.Tests.Scripts;
 
 [Category("Integration")]
 [Category("C835")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunCheckpointSourceScriptTests
 {
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1035_ChildCwdMatchesCertifiedRoot()
     {
         using var native = new Fixture(seed: "repository A");
@@ -77,7 +76,7 @@ public sealed class RunCheckpointSourceScriptTests
         Directory.GetFiles(certified.External, "parent-*.json").Length.ShouldBe(2);
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_DiagnosticReceipts()
     {
         using var fixture = new Fixture();
@@ -106,7 +105,7 @@ public sealed class RunCheckpointSourceScriptTests
         failed.Line.ShouldContain("sourceState=dirty", Case.Sensitive, "dirty-test-failure-is-still-failure");
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_StrictAdmission()
     {
         using var fixture = new Fixture();
@@ -153,7 +152,7 @@ public sealed class RunCheckpointSourceScriptTests
             "post-slot-observation-refuses-drift");
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_DriftAndReuse()
     {
         using var fixture = new Fixture();
@@ -235,7 +234,7 @@ public sealed class RunCheckpointSourceScriptTests
             "dirty-to-clean-is-source-drift");
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_TerminalEvidence()
     {
         using var fixture = new Fixture();
@@ -264,7 +263,7 @@ public sealed class RunCheckpointSourceScriptTests
             "handled-interruption-is-not-eligible-review-evidence");
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_ReceiptValidation()
     {
         using var fixture = new Fixture();
@@ -369,7 +368,7 @@ public sealed class RunCheckpointSourceScriptTests
         helperVerdict.Exit.ShouldBe(1, "source-helper-expected-sha-shape: " + helperVerdict.Output);
     }
 
-    [Test]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     [Arguments("linux", "rostered-skip", 0)]
     [Arguments("ubuntu", "rostered-skip", 0)]
     [Arguments("darwin", "rostered-skip", 0)]
