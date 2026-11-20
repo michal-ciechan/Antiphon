@@ -139,9 +139,9 @@ function Read-ReleaseSelectionBaseline {
     $historical = Get-ReleaseSelectionContract $Request.RepositoryRoot $receipt.sha 'rc'
     if ((ConvertTo-NightlyCanonicalJson $historical) -cne (ConvertTo-NightlyCanonicalJson $receipt.contract)) { throw 'baseline-contract' }
     if ($authority.policyHash -cne $historical.policyHash) { throw 'baseline-policy' }
-    $blob = Read-ReleaseAuthorityPinnedBlob $Request.RepositoryRoot $receipt.sha
-    $policy = ConvertFrom-ReleaseAuthorityPolicyBytes $blob.Bytes
-    if ($authority.policyBlobId -cne $blob.BlobId -or $authority.policyRawSha256 -cne (Get-ReleaseAuthorityBytesSha256 $blob.Bytes) -or
+    $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Request.RepositoryRoot, $receipt.sha)
+    $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
+    if ($authority.policyBlobId -cne $blob.BlobId -or $authority.policyRawSha256 -cne ([Antiphon.Nightly.ReleaseAuthority]::Sha256($blob.Bytes)) -or
         (ConvertTo-NightlyCanonicalJson @($authority.requiredSuites)) -cne (ConvertTo-NightlyCanonicalJson @($policy.RequiredSuites))) { throw 'baseline-policy' }
     $plan = $documents['authority/execution-plan.json']; $discovery = $documents['authority/discovery.json']
     if ($ledger.authorityDigest -cne $receipt.files.'authority/authority.json' -or
@@ -160,7 +160,7 @@ function Read-ReleaseSelectionBaseline {
                 (@($rows[0].entries.id | Sort-Object) -join ',') -cne (@($planned[0].entries | Sort-Object) -join ',')) { throw 'baseline-roster-incomplete' }
             continue
         }
-        $requiredUids = @(Get-ReleaseAuthorityRequiredUids @($discovery.suites.$suite) $policy.Exclusions $suite)
+        $requiredUids = @([Antiphon.Nightly.ReleaseAuthority]::RequiredUids(@($discovery.suites.$suite), $policy.Exclusions, $suite))
         $executed = @()
         foreach ($chunk in @($planned[0].chunks)) {
             $rows = @($ledger.chunks | Where-Object chunk -CEQ $chunk.id)
@@ -191,7 +191,6 @@ function New-ReleaseSelectionAttemptCore {
     if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'selection-pwsh-required' }
     . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $PSScriptRoot 'release-gate.ps1')
-    . (Join-Path $PSScriptRoot 'release-authority.ps1')
     . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
     . (Join-Path $PSScriptRoot 'test-selection.ps1')
     Assert-ReleaseSelectionCommit $Request.RepositoryRoot $Request.CandidateSha

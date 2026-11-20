@@ -6,6 +6,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Management.Automation;
 using System.Xml;
 
@@ -25,8 +26,11 @@ namespace Antiphon.Nightly
         private static XmlNodeList Select(XmlDocument doc, XmlNamespaceManager ns, bool qualified, string qualifiedPath, string barePath) =>
             qualified ? doc.SelectNodes(qualifiedPath, ns) : doc.SelectNodes(barePath);
 
-        /// <summary>Error is the refusal Read-NightlyTrxIdentities would throw (empty when none); Rows its rows.</summary>
-        public static PSObject IdentityRows(XmlDocument doc)
+        /// <summary>
+        /// The identity rows of a loaded TRX, or the refusal Read-NightlyTrxIdentities would throw (Error, empty when
+        /// none; Rows then holds the rows read before it). Plain records: no PowerShell types.
+        /// </summary>
+        public static TrxIdentityRead Identities(XmlDocument doc)
         {
             var nsm = doc.DocumentElement == null ? "" : doc.DocumentElement.NamespaceURI;
             var qualified = !string.IsNullOrEmpty(nsm);
@@ -54,7 +58,7 @@ namespace Antiphon.Nightly
             }
             var results = Select(doc, ns, qualified, "//t:Results/t:UnitTestResult", "//Results/UnitTestResult");
             if (results.Count == 0) results = Select(doc, ns, qualified, "//t:UnitTestResult", "//UnitTestResult");
-            var rows = new List<object>();
+            var rows = new List<TrxIdentity>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var error = "";
             foreach (XmlNode node in results)
@@ -87,20 +91,56 @@ namespace Antiphon.Nightly
                         }
                     }
                 }
+                rows.Add(new TrxIdentity
+                {
+                    TestId = testId, ClassName = className, MethodName = methodName, Display = display, Outcome = outcome,
+                    Identity = className + "." + methodName, DebugTrace = debugTrace,
+                });
+            }
+            return new TrxIdentityRead { Error = error, Rows = rows.ToArray() };
+        }
+
+        /// <summary>
+        /// Read-NightlyTrxIdentities: the identity rows of the TRX file at path. Refuses (NightlyRefusal) a missing file,
+        /// anything but a regular file, XML that does not load, and a row the identity walk refuses.
+        /// </summary>
+        public static TrxIdentity[] ReadIdentities(string path)
+        {
+            if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !Directory.Exists(path))) throw new NightlyRefusal("missing TRX " + path);
+            if (TestPhaseFiles.Kind(path, out _) != "regular") throw new NightlyRefusal("refused TRX " + path);
+            var doc = new XmlDocument();
+            try { doc.LoadXml(File.ReadAllText(path)); }
+            catch (Exception ex) when (ex is XmlException || ex is IOException || ex is UnauthorizedAccessException)
+            {
+                throw new NightlyRefusal("malformed TRX " + path + ": " + ex.Message);
+            }
+            var read = Identities(doc);
+            if (read.Error.Length > 0) throw new NightlyRefusal(read.Error);
+            return read.Rows;
+        }
+
+        /// <summary>Error is the refusal Read-NightlyTrxIdentities would throw (empty when none); Rows its rows.</summary>
+        public static PSObject IdentityRows(XmlDocument doc)
+        {
+            var read = Identities(doc);
+            var rows = new object[read.Rows.Length];
+            for (var i = 0; i < rows.Length; i++)
+            {
+                var source = read.Rows[i];
                 var row = new PSObject();
-                row.Properties.Add(new PSNoteProperty("TestId", testId));
+                row.Properties.Add(new PSNoteProperty("TestId", source.TestId));
                 row.Properties.Add(new PSNoteProperty("Uid", ""));
-                row.Properties.Add(new PSNoteProperty("ClassName", className));
-                row.Properties.Add(new PSNoteProperty("MethodName", methodName));
-                row.Properties.Add(new PSNoteProperty("Display", display));
-                row.Properties.Add(new PSNoteProperty("Outcome", outcome));
-                row.Properties.Add(new PSNoteProperty("Identity", className + "." + methodName));
-                row.Properties.Add(new PSNoteProperty("DebugTrace", debugTrace));
-                rows.Add(row);
+                row.Properties.Add(new PSNoteProperty("ClassName", source.ClassName));
+                row.Properties.Add(new PSNoteProperty("MethodName", source.MethodName));
+                row.Properties.Add(new PSNoteProperty("Display", source.Display));
+                row.Properties.Add(new PSNoteProperty("Outcome", source.Outcome));
+                row.Properties.Add(new PSNoteProperty("Identity", source.Identity));
+                row.Properties.Add(new PSNoteProperty("DebugTrace", source.DebugTrace));
+                rows[i] = row;
             }
             var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Error", error));
-            result.Properties.Add(new PSNoteProperty("Rows", rows.ToArray()));
+            result.Properties.Add(new PSNoteProperty("Error", read.Error));
+            result.Properties.Add(new PSNoteProperty("Rows", rows));
             return result;
         }
 
@@ -123,5 +163,24 @@ namespace Antiphon.Nightly
             }
             return rows;
         }
+    }
+
+    /// <summary>One TRX result row with its resolved identity (Read-NightlyTrxIdentities' row).</summary>
+    public sealed class TrxIdentity
+    {
+        public string TestId { get; set; } = "";
+        public string Uid { get; set; } = "";
+        public string ClassName { get; set; } = "";
+        public string MethodName { get; set; } = "";
+        public string Display { get; set; } = "";
+        public string Outcome { get; set; } = "";
+        public string Identity { get; set; } = "";
+        public string DebugTrace { get; set; } = "";
+    }
+
+    public sealed class TrxIdentityRead
+    {
+        public string Error { get; set; } = "";
+        public TrxIdentity[] Rows { get; set; } = new TrxIdentity[0];
     }
 }

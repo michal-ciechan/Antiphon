@@ -886,7 +886,7 @@ function Test-ReleaseGatePublicationGate {
       D-8/D-15: publication preconditions. Every one of these is a hard refusal; none
       of them can be waived by a later readback succeeding. The required suite set
       and the pass/fail verdict come ONLY from the pinned authority and its full
-      execution ledger (Test-ReleaseGateAuthority); a report or summary confers
+      execution ledger (ReleaseAuthority.Check); a report or summary confers
       none. ExpectedPolicyHash / RequiredSuites are legacy extra equality
       assertions against that authority, never a replacement for it, and an
       absent value never waives the pinned requirement.

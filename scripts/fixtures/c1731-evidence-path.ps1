@@ -92,7 +92,7 @@ function Test-C1731_EvidenceRefusals {
     )
     $got = @{}
     foreach ($c in $cases) {
-        $got[$c.n] = [string](Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $cand -Relative $c.r)
+        $got[$c.n] = [string]([Antiphon.Nightly.ReleaseAuthority]::ResolveEvidencePath($cand, $c.r))
     }
     Assert-C487 ($got['ordinary'] -ceq $ordinary) 'C1731 ordinary relative evidence resolves under the candidate root' $got['ordinary']
     Assert-C487 (($got['missing-file'] -ceq $missing) -and ($got['missing-parent'] -ceq $missingParent)) 'C1731 missing evidence resolves when no component is a reparse point' ($got['missing-file'] + ' ' + $got['missing-parent'])
@@ -116,11 +116,11 @@ function Test-C1731_EvidenceRefusals {
     $fresh = Join-Path $cand 'fresh'
     New-Item -ItemType Directory -Path $fresh -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $fresh 'file.trx'), 'f')
-    $before = [string](Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $cand -Relative 'fresh/file.trx')
+    $before = [string]([Antiphon.Nightly.ReleaseAuthority]::ResolveEvidencePath($cand, 'fresh/file.trx'))
     Remove-Item -LiteralPath (Join-Path $fresh 'file.trx') -Force
     Remove-Item -LiteralPath $fresh -Force
     New-C1731DirectoryLink -Link $fresh -Target (Join-Path $fx.Root 'outside')
-    $after = [string](Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $cand -Relative 'fresh/escape.trx')
+    $after = [string]([Antiphon.Nightly.ReleaseAuthority]::ResolveEvidencePath($cand, 'fresh/escape.trx'))
     $expectedBefore = Get-C1731EvidenceFull -Candidate $cand -Relative 'fresh/file.trx'
     Assert-C487 (($before -ceq $expectedBefore) -and ($after -ceq '')) 'C1731 an accepted path refuses after that component becomes a link' ('before=' + $before + ' after=' + $after)
 }
@@ -136,7 +136,7 @@ function Test-C1731_EvidenceWalk {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     for ($i = 0; $i -lt 47; $i++) {
         foreach ($p in $paths) {
-            [void](Resolve-ReleaseAuthorityEvidencePath -CandidateRoot $cand -Relative $p)
+            [void]([Antiphon.Nightly.ReleaseAuthority]::ResolveEvidencePath($cand, $p))
         }
     }
     $ms = $sw.Elapsed.TotalMilliseconds

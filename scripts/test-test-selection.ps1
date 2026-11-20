@@ -5,7 +5,6 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
-. "$PSScriptRoot/lib/release-authority.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
@@ -26,7 +25,7 @@ function Test-C1313_ProjectAndCatalogUniverse {
     $hasObservability = Test-Path (Join-Path $repoRoot $observability)
     $ownedAssembly = @($roles | Where-Object { $_.project -ceq $observability -and $_.role -ceq 'primary' -and $_.reason -and @($_.consumers).Count -eq 0 })
     $assemblyOwned = -not $hasObservability -or ($ownedAssembly.Count -eq 1 -and $policy.Object.profiles.rc.requiredSuites -ccontains 'observability' -and $policy.Object.profiles.nightly.requiredSuites -ccontains 'observability')
-    $authority=ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
+    $authority=[Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
     Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq (10 + [int]$hasObservability) -and $assemblyOwned -and $ownedProbes.Count -eq 2 -and $authority.RequiredSuites.Count -eq (12 + [int]$hasObservability) -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq (10 + [int]$hasObservability)) -Name 'C1313 primary-and-probe-ownership'
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     Assert-C487 -Cond (@($catalog.sets | Where-Object id -eq core).members.Count -eq 7) -Name 'C1313 seven-method-core'

@@ -63,7 +63,6 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'publish-release'
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
-. (Join-Path $lib 'release-authority.ps1')
 
 function Write-PublishLine { param([string]$Message) Write-Host ('[publish-release] {0}' -f $Message) }
 
@@ -177,8 +176,7 @@ function Invoke-AntiphonPublishRelease {
     # the checkout's origin); evidence may not post-date the publisher's clock; the
     # receipt must match the release card as the Antiphon API serves it now.
     $attemptUtc = (Get-ReleaseGateUtcNow).ToUniversalTime()
-    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
-        -Repository $Repository -NowUtc $attemptUtc -CardApiBaseUrl $AntiphonApiUrl
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, $attemptUtc, $AntiphonApiUrl, $PSScriptRoot)
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
         -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
@@ -191,13 +189,15 @@ function Invoke-AntiphonPublishRelease {
         $result.Refusal = 'remote-tag-inventory-failed'; $result.ExitCode = 3; return [pscustomobject]$result
     }
     $pinned = $authority.Pinned.Authority
-    $ledgerDoc = Read-ReleaseAuthorityJson -Path (Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $paths.Root) 'ledger.json')
+    $ledgerDoc = $null
+    $ledgerPath = Join-Path ([Antiphon.Nightly.ReleaseAuthority]::Dir($paths.Root)) 'ledger.json'
+    if (Test-Path -LiteralPath $ledgerPath -PathType Leaf) { try { $ledgerDoc = Get-Content -LiteralPath $ledgerPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { } }
     $sanitizedSuites = @($authority.Suites)
     $sanitizedExclusions = @($pinned.exclusions | ForEach-Object {
         [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; reason = [string]$_.reason; owner = [string]$_.owner } })
     $summaryDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
         profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions }))
-    $pubAuthority = New-ReleaseGatePublicationAuthority -CandidateRoot $paths.Root -Pinned $authority.Pinned -SummaryDigest $summaryDigest -NoWrite:$WhatIf
+    $pubAuthority = [Antiphon.Nightly.ReleaseAuthority]::Publication($paths.Root, $authority.Pinned, $summaryDigest, [bool]$WhatIf)
     if (-not $pubAuthority.Ok) {
         Write-PublishLine ('REFUSED: {0}.' -f $pubAuthority.Reason)
         $result.Refusal = $pubAuthority.Reason; $result.ExitCode = 3; return [pscustomobject]$result

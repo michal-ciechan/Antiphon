@@ -38,7 +38,6 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'promote-release'
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
-. (Join-Path $lib 'release-authority.ps1')
 
 function Write-PromoteLine { param([string]$Message) Write-Host ('[promote-release] {0}' -f $Message) }
 
@@ -159,8 +158,7 @@ function Invoke-AntiphonPromoteRelease {
             $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
     }
     # Requalify every attempt, including read-only previews and same-final recovery.
-    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
-        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow) -CardApiBaseUrl $AntiphonApiUrl
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, (Get-ReleaseGateUtcNow), $AntiphonApiUrl, $PSScriptRoot)
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $liveSha -Authority $authority
     if (-not $gate.Ok) {
         Write-PromoteLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))

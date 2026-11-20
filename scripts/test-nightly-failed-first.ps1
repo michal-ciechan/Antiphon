@@ -989,7 +989,6 @@ function Test-FFAuthorityConservation {
         Set-Item -Path ('function:script:'+ $definition.Name) -Value $definition.Body.GetScriptBlock()
     }
     . (Join-Path $PSScriptRoot 'lib/release-gate.ps1')
-    . (Join-Path $PSScriptRoot 'lib/release-authority.ps1')
     $here=$PSScriptRoot;$repoRoot=$repo;$ResultsDirectory=Join-Path $root 'authority-fixture';[void][IO.Directory]::CreateDirectory($ResultsDirectory)
     $script:CandidateId='rc-20260923T083000Z';$script:CandidateRef='release/rc-20260923T083000Z'
     $script:C599RepoPolicyPath=Join-Path $repo 'tests/test-execution-policy.json';$script:C599IntentId='intent-20260923T083000Z';$script:C599RunId='rc-run-1'

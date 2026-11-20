@@ -18,7 +18,6 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
-. (Join-Path $lib 'release-authority.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
 . (Join-Path $lib 'nightly-tests-impl.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
@@ -288,7 +287,7 @@ function New-C599RcGreen {
 
 # ============================================ CARD-0599 D-15 authority fixture ===
 # A real scratch git repository holds the policy at a real commit; the authority is
-# frozen by the PRODUCTION New-ReleaseGateAuthority / New-ReleaseGateExecutionPlan,
+# frozen by the PRODUCTION ReleaseAuthority.Freeze / ReleaseAuthority.Plan,
 # and the chunk evidence is real TRX read back by the production TRX reader. Every
 # negative below starts from this valid control and changes exactly one thing.
 
@@ -307,7 +306,7 @@ $script:C599Now = [datetime]::Parse('2026-09-23T10:00:00Z', [System.Globalizatio
 
 function Invoke-C599RealGit {
     param([string]$Repo, [string[]]$Arguments)
-    $r = Invoke-ReleaseAuthorityGit -RepositoryRoot $Repo -Arguments $Arguments
+    $r = [Antiphon.Nightly.ReleaseAuthority]::Git($Repo, [string[]]$Arguments)
     if ([int]$r.ExitCode -ne 0) { throw ('fixture git {0} failed: {1}' -f ($Arguments -join ' '), $r.Error) }
     return $r.Text.Trim()
 }
@@ -355,7 +354,7 @@ function Get-C599Discovery {
 
 function Get-C599AuthorityDir {
     param($Fx)
-    return (Get-ReleaseAuthorityDir -CandidateRoot (Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId))
+    return ([Antiphon.Nightly.ReleaseAuthority]::Dir((Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId)))
 }
 
 function Update-C599Json {
@@ -410,12 +409,11 @@ function New-C599Authority {
     #>
     param([string]$ReleaseRoot, [string]$Checkout, [string]$Sha, [string]$Repository = 'michal-ciechan/Antiphon')
     $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
-    $auth = New-ReleaseGateAuthority -RepositoryRoot $Checkout -CandidateRoot $root -Sha $Sha -Repository $Repository `
-        -CandidateId $CandidateId -CandidateRef $CandidateRef -IntentId $script:C599IntentId -ReleaseCardId $script:C599ReleaseCardId `
-        -CreatedUtc ([datetime]'2026-09-23T08:30:30Z')
+    $auth = [Antiphon.Nightly.ReleaseAuthority]::Freeze($Checkout, $root, $Sha, $Repository, $CandidateId, $CandidateRef, $script:C599IntentId, $script:C599ReleaseCardId,
+        ([datetime]'2026-09-23T08:30:30Z'), $here)
     $discovery = Get-C599Discovery
-    $plan = New-ReleaseGateExecutionPlan -CandidateRoot $root -Discovery $discovery -Rosters $script:C599Rosters
-    $dir = Get-ReleaseAuthorityDir -CandidateRoot $root
+    $plan = [Antiphon.Nightly.ReleaseAuthority]::Plan($root, $discovery, $script:C599Rosters)
+    $dir = [Antiphon.Nightly.ReleaseAuthority]::Dir($root)
     $byUid = @{}
     foreach ($suite in $discovery.Keys) { foreach ($n in $discovery[$suite]) { $byUid[[string]$n.uid] = $n } }
     $chunks = @()
@@ -2161,7 +2159,7 @@ function Test-C599_ExecutionArtifacts {
 function Test-C599B_MissingDiscovery {
     foreach ($variant in @('missing', 'empty', 'null')) {
         $root = New-C599Root
-        $dir = Get-ReleaseAuthorityDir -CandidateRoot $root
+        $dir = [Antiphon.Nightly.ReleaseAuthority]::Dir($root)
         Write-NightlyAtomicJson -Path (Join-Path $dir 'authority.json') -Object ([ordered]@{
             candidateId = $CandidateId; intentId = $script:C599IntentId; sha = $ShaB
             requiredSuites = @('markdown-pdf'); exclusions = @()
@@ -2169,7 +2167,7 @@ function Test-C599B_MissingDiscovery {
         $discovery = @{}
         if ($variant -eq 'empty') { $discovery['markdown-pdf'] = @() }
         if ($variant -eq 'null') { $discovery['markdown-pdf'] = $null }
-        $plan = New-ReleaseGateExecutionPlan -CandidateRoot $root -Discovery $discovery -Rosters @{}
+        $plan = [Antiphon.Nightly.ReleaseAuthority]::Plan($root, $discovery, @{})
         $frozen = Get-Content -LiteralPath (Join-Path $dir 'discovery.json') -Raw | ConvertFrom-Json
         Assert-C487 -Cond (@($plan.suites).Count -eq 1 -and @($plan.suites[0].chunks).Count -eq 0 -and
             @($frozen.suites.'markdown-pdf').Count -eq 0) -Name ('C599 missing-discovery-' + $variant) `
@@ -2265,7 +2263,7 @@ function Test-C599B_AllChunks {
 # One valid B1 fixture per method. Every variant restores that control byte for
 # byte, changes exactly one field, row or handshake and requires the NAMED refusal
 # token. Gate variants run the same production composition publish-release.ps1
-# runs before its first write (Test-ReleaseGateAuthority + the publication gate +
+# runs before its first write (ReleaseAuthority.Check + the publication gate +
 # the credit verdict); one publisher variant per guard also proves zero remote
 # writes through the observer. Rows aggregate each guard's variants.
 
@@ -2334,8 +2332,7 @@ function Get-C599AGate {
     $green = Get-Content -LiteralPath $paths.GreenPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $remoteSha = Read-C599Remote -Seams $Fx.Git -Ref $CandidateRef
-    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $Fx.Checkout -Green $green -Candidate $candidate `
-        -Repository 'michal-ciechan/Antiphon' -NowUtc $script:C599Now -CardApiBaseUrl $Fx.CardApi.Url
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $Fx.Checkout, $green, $candidate, 'michal-ciechan/Antiphon', $script:C599Now, $Fx.CardApi.Url, $here)
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
     $verdict = Get-ReleaseGateCreditVerdict -State $green
     $script:C1731Timing.gateSeconds += $gateWatch.Elapsed.TotalSeconds
@@ -2455,7 +2452,7 @@ function Move-C599AEvidenceTime {
     #>
     param($Fx, [timespan]$Offset)
     $c599aOffset = $Offset
-    $c599aShift = { param($v) (Test-ReleaseAuthorityInstant -Value $v).Add($c599aOffset).ToString('o') }
+    $c599aShift = { param($v) ([Antiphon.Nightly.ReleaseAuthority]::Instant($v)).Add($c599aOffset).ToString('o') }
     Update-C599AAuthority -Fx $Fx -Mutate { param($a) $a.createdAt = (& $c599aShift $a.createdAt) }
     Update-C599Ledger -Fx $Fx -Ledger {
         param($l)
@@ -2516,8 +2513,8 @@ function Set-C599APinnedPolicy {
     Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $Fx) 'authority.json') -Mutate {
         param($a)
         $a.sha = $pinSha
-        $a.policyBlobId = (Get-ReleaseAuthorityGitBlobId -Bytes $PolicyBytes)
-        $a.policyRawSha256 = (Get-ReleaseAuthorityBytesSha256 -Bytes $PolicyBytes)
+        $a.policyBlobId = ([Antiphon.Nightly.ReleaseAuthority]::GitBlobId($PolicyBytes))
+        $a.policyRawSha256 = ([Antiphon.Nightly.ReleaseAuthority]::Sha256($PolicyBytes))
         $a.policyHash = $pinHash
     }
     $pinDigest = Get-NightlyFileSha256 -Path (Join-Path (Get-C599AuthorityDir -Fx $Fx) 'authority.json')
@@ -2726,9 +2723,9 @@ function Test-C599A_PinnedPolicySchema {
     Write-NightlyAtomicJson -Path $pubJournal -Object ([ordered]@{ schemaVersion = 1; reservations = @([ordered]@{
         candidateId = 'rc-20260923T020000Z'; sha = $ShaC; tag = 'v2026.09.23.1'; sequence = 1; reservedAt = '2026-09-23T02:00:00Z'
         published = $true; releaseId = 'R-0'; releaseUrl = 'https://example/releases/tag/v2026.09.23.1' }) })
-    $journalBefore = Get-ReleaseAuthorityBytesSha256 -Bytes ([System.IO.File]::ReadAllBytes($pubJournal))
+    $journalBefore = [Antiphon.Nightly.ReleaseAuthority]::Sha256([System.IO.File]::ReadAllBytes($pubJournal))
     $secondPreview = Invoke-C599Publish -Fx $fx -Extra @{ WhatIf = $true }
-    $journalAfter = Get-ReleaseAuthorityBytesSha256 -Bytes ([System.IO.File]::ReadAllBytes($pubJournal))
+    $journalAfter = [Antiphon.Nightly.ReleaseAuthority]::Sha256([System.IO.File]::ReadAllBytes($pubJournal))
     Assert-C487 -Cond ($absentBefore -and $absentAfter -and [int]$firstPreview.ExitCode -eq 0 -and [string]$firstPreview.Tag -eq 'v2026.09.23.1' -and
             [int]$secondPreview.ExitCode -eq 0 -and [string]$secondPreview.Tag -eq 'v2026.09.23.2' -and $journalBefore -ceq $journalAfter -and (Test-C599NoRemoteWrite -Fx $fx)) `
         -Name 'C599 V-18: -WhatIf proposes the next tag without reserving it and leaves publications.json byte-identical' `
@@ -2784,7 +2781,7 @@ function Invoke-C599AFieldMatrix {
         @{ n = 'policyHash'; t = @('policy-hash-mismatch'); wt = 7; fv = ('0' * 64) },
         @{ n = 'requiredSuites'; t = @('authority-suites-type', 'authority-suites-mismatch'); wt = 8; fv = @($eight | Where-Object { $_ -ne 'e2e' }); k = @{ foreign = @('authority-suites-mismatch') } },
         @{ n = 'exclusions'; t = @('authority-exclusions-type', 'authority-exclusions-mismatch'); wt = 'none'; fv = 'drop-first'; k = @{ foreign = @('authority-exclusions-mismatch') } },
-        @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/release-authority.ps1'); wt = 'x'; fv = 'one-changed' },
+        @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/release-gate.ps1'); wt = 'x'; fv = 'one-changed' },
         @{ n = 'createdAt'; t = @('ledger-timestamps'); wt = $true; fv = '2026-09-23T09:00:00Z' }
     )
     $fields = @($fields | Select-Object -Skip $Skip -First $Take)
@@ -2803,7 +2800,7 @@ function Invoke-C599AFieldMatrix {
                         'array' { Set-C599AField $a $f.n (New-C599AWrapped -Value $a.($f.n)) }
                         'foreign' {
                             if ($f.fv -is [string] -and $f.fv -eq 'drop-first') { $a.exclusions = @($a.exclusions | Select-Object -Skip 1) }
-                            elseif ($f.fv -is [string] -and $f.fv -eq 'one-changed') { $a.scriptHashes.'lib/release-authority.ps1' = ('0' * 64) }
+                            elseif ($f.fv -is [string] -and $f.fv -eq 'one-changed') { $a.scriptHashes.'lib/release-gate.ps1' = ('0' * 64) }
                             else { Set-C599AField $a $f.n $f.fv }
                         }
                     }
@@ -2858,7 +2855,7 @@ function Test-C599A_PinnedPolicyBindings {
             @{ l = 'exclusion methods joined string'; t = 'authority-exclusions-type'; e = { param($a) Set-C599AField $a.exclusions[0] 'methods' 'Live' } },
             @{ l = 'exclusion class array-wrapped'; t = 'authority-exclusions-type'; e = { param($a) Set-C599AField $a.exclusions[0] 'class' (New-C599AWrapped -Value ([string]$a.exclusions[0].class)) } },
             @{ l = 'exclusion row a string'; t = 'authority-exclusions-type'; e = { param($a) $a.exclusions = @('antiphon:ClaudeAdapterIntegrationTests') + @($a.exclusions | Select-Object -Skip 1) } },
-            @{ l = 'script digest array-wrapped'; t = 'script-digest-mismatch:lib/release-authority.ps1'; e = { param($a) $a.scriptHashes.'lib/release-authority.ps1' = (New-C599AWrapped -Value ([string]$a.scriptHashes.'lib/release-authority.ps1')) } },
+            @{ l = 'script digest array-wrapped'; t = 'script-digest-mismatch:lib/release-gate.ps1'; e = { param($a) $a.scriptHashes.'lib/release-gate.ps1' = (New-C599AWrapped -Value ([string]$a.scriptHashes.'lib/release-gate.ps1')) } },
             @{ l = 'createdAt array-wrapped'; t = 'ledger-timestamps'; e = { param($a) Set-C599AField $a 'createdAt' (New-C599AWrapped -Value ([string]$a.createdAt)) } })) {
         $c599aShape = $shape
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $shape.l -Expect @($shape.t) -Mutate { Update-C599AAuthority -Fx $fx -Mutate $c599aShape.e }
@@ -2880,7 +2877,7 @@ function Test-C599A_PinnedPolicyBindings {
         }
     }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'checkout origin removed' -Expect @('checkout-origin-repository') -Cleanup {
-        [void](Invoke-ReleaseAuthorityGit -RepositoryRoot $fx.Checkout -Arguments @('remote', 'add', 'origin', $originUrl))
+        [void]([Antiphon.Nightly.ReleaseAuthority]::Git($fx.Checkout, [string[]]@('remote', 'add', 'origin', $originUrl)))
     } -Mutate { [void](Invoke-C599RealGit -Repo $fx.Checkout -Arguments @('remote', 'remove', 'origin')) }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher foreign destination' -Publish -Expect @('authority-repository', 'checkout-origin-repository') `
         -Extra @{ Repository = 'someone-else/Antiphon' } -Mutate { }
@@ -3260,7 +3257,7 @@ function Test-C599A_ExecutionLedgerJoins {
 
     # G-300: the authority, plan, discovery and every executable script digest bind.
     $m = @()
-    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/release-authority.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
+    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('script ' + $scriptRel) -Expect @('script-digest-mismatch:' + $scriptRel) -Mutate {
             Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.$scriptRel = ('0' * 64) }
         }
@@ -4065,7 +4062,7 @@ function Test-C1311_MovingTipAuthority {
     $firstId = [string]$fx.CandidateId
     $secondId = 'rc-2026-10-15-' + $secondSha.Substring(0, 12)
     $firstRoot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $firstId
-    $authPath = Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $firstRoot) 'authority.json'
+    $authPath = Join-Path ([Antiphon.Nightly.ReleaseAuthority]::Dir($firstRoot)) 'authority.json'
     $published = Invoke-C599Publish -Fx $fx -CandidateId $firstId
     $firstTag = [string]$published.Tag
     $authBefore = ''
@@ -4184,11 +4181,11 @@ function Test-C1311_MovingTipAuthority {
         -Name 'C1311 MovingTipAuthority promote of a moved tip refuses remote-candidate-moved' `
         -Detail ('exit=' + [string]$promoted.ExitCode + ' refusal=' + [string]$promoted.Refusal + ' final=' + $finalName + '/' + $finalPeeled + ' recorded=' + $finalRecorded + ' pre=' + $preStill)
 
-    $want = @($script:ReleaseAuthorityScripts) + @($script:ReleaseAuthoritySourceTrees)
+    $want = @([Antiphon.Nightly.ReleaseAuthority]::Scripts) + @([Antiphon.Nightly.ReleaseAuthority]::SourceTrees)
     $have = @()
     if ($null -ne $authDoc -and $null -ne $authDoc.scriptHashes) { $have = @($authDoc.scriptHashes.PSObject.Properties.Name) }
-    $fresh = Get-ReleaseAuthorityScriptHashes
-    $same = ($want.Count -eq 9 -and $have.Count -eq $want.Count)
+    $fresh = [Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here)
+    $same = ($want.Count -eq 8 -and $have.Count -eq $want.Count)
     $omitsTip = $true
     foreach ($rel in $want) {
         if ($have -notcontains $rel) { $same = $false; continue }
@@ -4648,7 +4645,7 @@ function Test-C1339_RemoteTagAllocation {
     Add-C1339Tag $fx 'v2026.10.15.1' $fx.B
     $journal = Join-Path $fx.ReleaseRoot 'publications.json'
     $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId
-    $pubAuthority = Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $root) 'publication-authority.json'
+    $pubAuthority = Join-Path ([Antiphon.Nightly.ReleaseAuthority]::Dir($root)) 'publication-authority.json'
     $preview = Invoke-C1339Publish $fx -WhatIf
     $emptyPreview = $preview.ExitCode -eq 0 -and $preview.Tag -ceq 'v2026.10.15.2-rc.1' -and -not (Test-Path -LiteralPath $journal)
     $emptyAuthority = -not (Test-Path -LiteralPath $pubAuthority)
@@ -4818,8 +4815,8 @@ function Test-C1339_PromoteAuthorityHash {
     $snap = Save-C1339Snapshot $fx
     $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
     $auth = Get-Content (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') -Raw | ConvertFrom-Json
-    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 9 -and
-        $auth.scriptHashes.'promote-release.ps1' -ceq (Get-ReleaseAuthorityScriptHashes)['promote-release.ps1']) 'seven script and two source-tree digests'
+    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 8 -and
+        $auth.scriptHashes.'promote-release.ps1' -ceq ([Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here))['promote-release.ps1']) 'six script and two source-tree digests'
     foreach ($missing in @($false, $true)) {
         $hashChecks += Invoke-C1339AuthorityVariant $fx $snap {
             Update-C599AAuthority $fx { param($a)

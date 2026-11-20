@@ -7,7 +7,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0599 D-15 (round B1, V-18 / R-9). Each method runs the matching <c>Test-C599B_*</c> case of
 /// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION publisher. The release clone is a real
 /// git repository whose commit holds the policy; the authority, frozen chunk plan and ledger are
-/// written by the production <c>release-authority.ps1</c> functions and the chunk evidence is real TRX.
+/// written by the production <c>ReleaseAuthority</c> (nightly core) and the chunk evidence is real TRX.
 /// Recipient state (the fake remote and the file-backed GitHub store) is read by a separate observer.
 ///
 /// <para>The decisive behaviours: the policy blob re-read at the pinned SHA - never the summary or

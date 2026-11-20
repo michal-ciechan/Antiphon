@@ -2,7 +2,7 @@
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
 param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
+foreach ($name in @('nightly-common', 'nightly-coverage', 'release-gate', 'test-selection', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -73,7 +73,7 @@ function Test-C1323_PlatformPolicy {
     $loaded = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
     Assert-C1323 ($loaded.SchemaVersion -eq 4) 'schema4-loads'
     $bytes = [IO.File]::ReadAllBytes($path)
-    $authorityPolicy = ConvertFrom-ReleaseAuthorityPolicyBytes $bytes
+    $authorityPolicy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($bytes)
     $expectedSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e', 'markdown-pdf')
     if ($policy.suites.observability) { $expectedSuites += 'observability' }
     if ($policy.suites.PSObject.Properties.Name -contains 'server-git') { $expectedSuites += 'server-git' }
@@ -85,11 +85,11 @@ function Test-C1323_PlatformPolicy {
         $missing.profiles.rc.requiredSuites = @($missing.profiles.rc.requiredSuites | Where-Object { $_ -cne 'observability' })
         $missing.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($missing | ConvertTo-Json -Depth 40))
         $message = ''
-        try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([Text.Encoding]::UTF8.GetBytes(($missing | ConvertTo-Json -Depth 40)))) } catch { $message = $_.Exception.Message }
+        try { [void]([Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes([Text.Encoding]::UTF8.GetBytes(($missing | ConvertTo-Json -Depth 40)))) } catch { $message = Get-NightlyRefusalText $_ }
         $observabilityRequired = $message -ceq 'policy-rc-suite-missing:observability'
     }
     Assert-C1323 ((Same-C1323Set $authorityPolicy.RequiredSuites $expectedSuites) -and $observabilityRequired) 'nine-suite-authority'
-    Assert-C1323 (Same-C1323Set (Get-ReleaseAuthorityRequiredUids $nodes $authorityPolicy.Exclusions 'e2e') $expectedWindows) 'authority-resolves-windows'
+    Assert-C1323 (Same-C1323Set ([Antiphon.Nightly.ReleaseAuthority]::RequiredUids($nodes, $authorityPolicy.Exclusions, 'e2e')) $expectedWindows) 'authority-resolves-windows'
 
     $invalid = @('macos', '', 'Windows', 1, $true, $null, @('linux'), @{ os = 'linux' })
     $missed = @()
@@ -119,14 +119,14 @@ function Test-C1323_PlatformPolicy {
     [IO.File]::WriteAllText($path, ($changed | ConvertTo-Json -Depth 40))
     $message = ''; try { [void]([Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)) } catch { $message = $_.Exception.Message }
     Assert-C1323 ($message -match 'stale policy hash') 'stale-platform-hash-refuses'
-    $message = ''; try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))) } catch { $message = $_.Exception.Message }
+    $message = ''; try { [void]([Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes([IO.File]::ReadAllBytes($path))) } catch { $message = Get-NightlyRefusalText $_ }
     Assert-C1323 ($message -eq 'policy-hash-stale') 'authority-stale-hash-refuses'
     $historical = Copy-C1323Object $policy
     $historical.schemaVersion = 3
     $historical.profiles.rc.exclusions = @($historical.profiles.rc.exclusions | Where-Object owner -ne 'CARD-1323')
     Write-C1323Policy $historical $path
     $old = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
-    $oldAuthority = ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))
+    $oldAuthority = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes([IO.File]::ReadAllBytes($path))
     Assert-C1323 ($old.SchemaVersion -eq 3 -and (Same-C1323Set $oldAuthority.RequiredSuites $expectedSuites) -and (Same-C1323Set (Get-C1323Required $nodes @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($old.Object, 'rc', 'e2e', 'linux'))) $expectedWindows)) 'schema3-compatibility'
     $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
@@ -174,18 +174,17 @@ function Test-C1323_PlatformPolicy {
 
 function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
     $candidate = Join-Path $ResultsDirectory 'candidate'
-    $identity = @{ RepositoryRoot = $Root; CandidateRoot = $candidate; Sha = $Sha; Repository = 'fixture/c1323'; CandidateId = 'fixture'; CandidateRef = 'fixture-ref' }
-    $authority = New-ReleaseGateAuthority @identity -IntentId 'fixture-intent' -ReleaseCardId '13231323-1323-1323-1323-132313231323' -CreatedUtc ([datetime]'2026-01-01T00:00:00Z')
-    $pinned = Test-ReleaseGatePinnedAuthority @identity
-    Assert-C1323 ($pinned.Ok -and (Same-C1323Set (Get-ReleaseAuthorityRequiredUids $Nodes $authority.exclusions 'e2e') $ExpectedWindows)) 'pinned-authority-validates-windows' ($pinned.Reasons -join ',')
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::Freeze($Root, $candidate, $Sha, 'fixture/c1323', 'fixture', 'fixture-ref', 'fixture-intent', '13231323-1323-1323-1323-132313231323', ([datetime]'2026-01-01T00:00:00Z'), $PSScriptRoot)
+    $pinned = [Antiphon.Nightly.ReleaseAuthority]::Pinned($candidate, $Root, $Sha, 'fixture', 'fixture-ref', 'fixture/c1323', $PSScriptRoot)
+    Assert-C1323 ($pinned.Ok -and (Same-C1323Set ([Antiphon.Nightly.ReleaseAuthority]::RequiredUids($Nodes, $authority.exclusions, 'e2e')) $ExpectedWindows)) 'pinned-authority-validates-windows' ($pinned.Reasons -join ',')
     $discovery = @{}
     foreach ($suite in $authority.requiredSuites) {
         if ($suite -in @('scripts', 'client')) { continue }
         $discovery[$suite] = @([pscustomobject]@{ uid = "$suite-ordinary"; class = 'OfflineTests'; method = 'Runs' })
     }
     $discovery['e2e'] = $Nodes
-    $plan = New-ReleaseGateExecutionPlan $candidate $discovery @{ scripts = @('script'); client = @('client') }
-    $dir = Get-ReleaseAuthorityDir $candidate
+    $plan = [Antiphon.Nightly.ReleaseAuthority]::Plan($candidate, $discovery, @{ scripts = @('script'); client = @('client') })
+    $dir = [Antiphon.Nightly.ReleaseAuthority]::Dir($candidate)
     $planPath = Join-Path $dir 'execution-plan.json'
     $ledgerPath = Join-Path $dir 'ledger.json'
     $start = '2026-01-01T00:01:00Z'; $end = '2026-01-01T00:02:00Z'
@@ -196,7 +195,7 @@ function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
         startedAt = $start; completedAt = $end; chunks = @(); rosters = @()
         prerequisites = @(@{ id = 'build'; exitCode = 0; succeeded = $true }, @{ id = 'client-bundle'; exitCode = 0; succeeded = $true }, @{ id = 'script-census'; exitCode = 0; succeeded = $true })
         prepublicationReceipt = @{
-            kind = $script:ReleaseAuthorityReceiptKind; recipient = @{ kind = $script:ReleaseAuthorityRecipientKind; cardId = $authority.releaseCardId; revision = 1 }
+            kind = [Antiphon.Nightly.ReleaseAuthority]::ReceiptKind; recipient = @{ kind = [Antiphon.Nightly.ReleaseAuthority]::RecipientKind; cardId = $authority.releaseCardId; revision = 1 }
             correlation = @{ intentId = $authority.intentId; candidateId = $authority.candidateId; sha = $Sha; runId = 'fixture-run' }; acceptedAt = $end
         }
     }
@@ -218,15 +217,16 @@ function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
     }
     # Only card I/O is supplied here; every authority, membership, digest and
     # credit decision remains production code. No HTTP or publisher is invoked.
-    function Read-ReleaseGateReleaseCard {
+    $correlation = [Antiphon.Nightly.ReleaseAuthority]::CorrelationPrefix + " intentId=$($authority.intentId) candidateId=$($authority.candidateId) sha=$Sha runId=fixture-run"
+    [Antiphon.Nightly.ReleaseAuthority]::CardReader = [Func[string, string, Antiphon.Nightly.CardReadback]]{
         param($BaseUrl, $CardId)
-        $description = "$script:ReleaseAuthorityCorrelationPrefix intentId=$($authority.intentId) candidateId=$($authority.candidateId) sha=$Sha runId=fixture-run"
-        return @{ Ok = $true; Card = [pscustomobject]@{ id = $CardId; revisionCount = 1; description = $description } }
-    }
+        $card = [Antiphon.Nightly.PlainJson]::Parse((@{ id = $CardId; revisionCount = 1; description = $correlation } | ConvertTo-Json -Compress))
+        return [Antiphon.Nightly.CardReadback]@{ Ok = $true; Card = $card }
+    }.GetNewClosure()
     Write-NightlyAtomicJson $ledgerPath $ledger
     $green = [pscustomobject]@{ runId = 'fixture-run' }
     $now = [datetime]'2026-01-01T00:03:00Z'
-    $valid = Test-ReleaseGateExecutionLedger $candidate $pinned $green $now
+    try { $valid = [Antiphon.Nightly.ReleaseAuthority]::Ledger($candidate, $pinned, $green, $now, '') } finally { [Antiphon.Nightly.ReleaseAuthority]::CardReader = $null }
     Assert-C1323 $valid.Ok 'complete-synthetic-ledger-validates' ($valid.Reasons -join ',')
     $missing = 'AgentTaskLandDeliveryE2ETests-1'
     $chunk = @($plan.suites | Where-Object id -eq 'e2e')[0].chunks[0]
@@ -238,7 +238,12 @@ function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
     Write-C487Trx $trx @($chunk.uids | ForEach-Object { @{ Id = $_; ClassName = $chunk.classes[0]; MethodName = 'Expanded'; Outcome = 'Passed' } })
     $row.trxSha256 = Get-NightlyFileSha256 $trx; $row.executed--; $row.passed--
     Write-NightlyAtomicJson $ledgerPath $ledger
-    $invalid = Test-ReleaseGateExecutionLedger $candidate $pinned $green $now
+    [Antiphon.Nightly.ReleaseAuthority]::CardReader = [Func[string, string, Antiphon.Nightly.CardReadback]]{
+        param($BaseUrl, $CardId)
+        $card = [Antiphon.Nightly.PlainJson]::Parse((@{ id = $CardId; revisionCount = 1; description = $correlation } | ConvertTo-Json -Compress))
+        return [Antiphon.Nightly.CardReadback]@{ Ok = $true; Card = $card }
+    }.GetNewClosure()
+    try { $invalid = [Antiphon.Nightly.ReleaseAuthority]::Ledger($candidate, $pinned, $green, $now, '') } finally { [Antiphon.Nightly.ReleaseAuthority]::CardReader = $null }
     Assert-C1323 (-not $invalid.Ok -and (Same-C1323Set $invalid.Reasons @("plan-uid-missing:$missing", "uid-missing:$missing"))) 'missing-windows-uid-refuses' ($invalid.Reasons -join ',')
 }
 
@@ -519,9 +524,9 @@ function Test-LinuxSessionRunnerAdmission {
         Assert-C1323 (Same-C1323Set $launched $expectedRequired) "linux-runner-$platform-launch-plan" ($launched -join ',')
     }
     # Frozen RC authority always resolves Windows, including on a Linux coordinator.
-    $authority = ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes((Join-Path $repoRoot 'tests/test-execution-policy.json')))
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes([IO.File]::ReadAllBytes((Join-Path $repoRoot 'tests/test-execution-policy.json')))
     $authorityNodes = @($nodes | ForEach-Object { [pscustomobject]@{ uid = $_.Uid; class = $_.ClassName; method = $_.Method } })
-    Assert-C1323 (Same-C1323Set @(Get-ReleaseAuthorityRequiredUids $authorityNodes $authority.Exclusions 'session-runner') @('portable-sibling')) 'linux-runner-frozen-windows-authority'
+    Assert-C1323 (Same-C1323Set @([Antiphon.Nightly.ReleaseAuthority]::RequiredUids($authorityNodes, $authority.Exclusions, 'session-runner')) @('portable-sibling')) 'linux-runner-frozen-windows-authority'
     # A skip alone is insufficient: the coverage verdict deliberately keeps it incomplete.
     $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if ($linuxUids -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
     $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash

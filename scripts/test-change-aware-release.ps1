@@ -5,7 +5,6 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/release-gate.ps1"
-. "$PSScriptRoot/lib/release-authority.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
 . "$PSScriptRoot/lib/release-selection.ps1"
 . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
@@ -185,14 +184,14 @@ function Write-BaselineArchive($Fx, $ArchiveId = 'full-b') {
     # TRX. This proves the reader only; it is not a production supplier fixture.
     $root = Join-Path $Fx.Release ('archive/' + $ArchiveId); $dir=Join-Path $root 'authority'
     $contract = Get-ReleaseSelectionContract $Fx.Clone $Fx.B 'rc'
-    $blob = Read-ReleaseAuthorityPinnedBlob $Fx.Clone $Fx.B
-    $policy = ConvertFrom-ReleaseAuthorityPolicyBytes $blob.Bytes
+    $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Fx.Clone, $Fx.B)
+    $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
     $authority = @{schemaVersion=1;kind='release-authority';repository=$Fx.Repository;profile='rc';sha=$Fx.B;candidateId='historical-b';candidateRef=$Fx.Ref
         intentId='historical-intent';releaseCardId='e83e4f3f-7b8c-45e1-8d93-5b337e343f53';requiredSuites=@($policy.RequiredSuites);exclusions=@($policy.Exclusions)
-        policyHash=$policy.PolicyHash;policyBlobId=$blob.BlobId;policyRawSha256=(Get-ReleaseAuthorityBytesSha256 $blob.Bytes)}
+        policyHash=$policy.PolicyHash;policyBlobId=$blob.BlobId;policyRawSha256=([Antiphon.Nightly.ReleaseAuthority]::Sha256($blob.Bytes))}
     Write-NightlyAtomicJson (Join-Path $dir 'authority.json') $authority
     $discovery=@{};foreach($suite in $policy.RequiredSuites){if($suite -cnotin @('client','scripts')){$discovery[$suite]=@(@{uid=($suite+'-one');class='Fixture';method='One'})}}
-    $plan=New-ReleaseGateExecutionPlan $root $discovery @{client=@('client-tests');scripts=@('script-tests')}
+    $plan=[Antiphon.Nightly.ReleaseAuthority]::Plan($root, $discovery, @{client=@('client-tests');scripts=@('script-tests')})
     $chunks=@(); foreach($suite in $plan.suites){foreach($chunk in $suite.chunks){
         $trx=Join-Path $root ('evidence/'+$chunk.id+'.trx');Write-C487Trx $trx @(@{Id=$chunk.uids[0];ClassName='Fixture';MethodName='One';Outcome='Passed'})
         $chunks+=@{suite=$suite.id;chunk=$chunk.id;exitCode=0;trx=('evidence/'+$chunk.id+'.trx');trxSha256=(Get-NightlyFileSha256 $trx)}
@@ -205,7 +204,8 @@ function Write-BaselineArchive($Fx, $ArchiveId = 'full-b') {
     $green=@{profile='rc';trigger='rc';ref=$Fx.Ref;sha=$Fx.B;expectedSha=$Fx.B;candidateId='historical-b';runId='baseline-run';policyHash=$policy.PolicyHash;exitCode=0
         coverageComplete=$true;testsPassed=$true;reportDelivered=$true;coverageScope='Full'}
     Write-NightlyAtomicJson (Join-Path $root 'complete-green.json') $green
-    $pub=New-ReleaseGatePublicationAuthority $root @{Authority=$authority;Digest=$ledger.authorityDigest} ('a'*64)
+    $pinnedAuthority=[Antiphon.Nightly.PinnedAuthority]@{Authority=[Antiphon.Nightly.AuthorityRecord]::Read((Join-Path $dir 'authority.json'));Digest=$ledger.authorityDigest}
+    $pub=[Antiphon.Nightly.ReleaseAuthority]::Publication($root, $pinnedAuthority, ('a'*64), $false)
     $manifest=New-ReleaseGateManifest @{repository=$Fx.Repository;candidateId='historical-b';sha=$Fx.B;publicationAuthorityDigest=$pub.Digest}
     Write-NightlyAtomicJson (Join-Path $root 'release-manifest.json') $manifest
     Write-NightlyAtomicJson (Join-Path $root 'publish.json') @{steps=@('published');sha=$Fx.B;publicationAuthorityDigest=$pub.Digest;manifestDigest=(Get-ReleaseGateManifestDigest $manifest)

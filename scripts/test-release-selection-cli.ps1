@@ -5,7 +5,7 @@
 # without a baseline; each refusal is the worker's). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common', 'nightly-coverage', 'release-gate', 'release-authority', 'release-selection', 'test-selection', 'c487-harness') {
+foreach ($name in 'nightly-common', 'nightly-coverage', 'release-gate', 'release-selection', 'test-selection', 'c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path -Parent $PSScriptRoot
@@ -239,14 +239,14 @@ function Write-RSReceipt($Fixture, [string]$Release, [string]$Sha, [string]$Name
     $candidateRoot = 'archive/' + $Name
     $croot = Join-Path $Release $candidateRoot; $dir = Join-Path $croot 'authority'
     $contract = Get-ReleaseSelectionContract $Fixture.Root $Sha 'rc'
-    $blob = Read-ReleaseAuthorityPinnedBlob $Fixture.Root $Sha
-    $policy = ConvertFrom-ReleaseAuthorityPolicyBytes $blob.Bytes
+    $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Fixture.Root, $Sha)
+    $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
     $authority = @{schemaVersion=1;kind='release-authority';repository='fixture/repository';profile='rc';sha=$Sha;candidateId=('historical-' + $Name);candidateRef='rc/2026-11-08'
         intentId='historical-intent';releaseCardId='e83e4f3f-7b8c-45e1-8d93-5b337e343f53';requiredSuites=@($policy.RequiredSuites);exclusions=@($policy.Exclusions)
-        policyHash=$policy.PolicyHash;policyBlobId=$blob.BlobId;policyRawSha256=(Get-ReleaseAuthorityBytesSha256 $blob.Bytes)}
+        policyHash=$policy.PolicyHash;policyBlobId=$blob.BlobId;policyRawSha256=([Antiphon.Nightly.ReleaseAuthority]::Sha256($blob.Bytes))}
     Write-NightlyAtomicJson (Join-Path $dir 'authority.json') $authority
     $discovery = @{}; foreach ($suite in $policy.RequiredSuites) { if ($suite -cnotin @('client', 'scripts')) { $discovery[$suite] = @(@{uid=($suite + '-one');class='Fixture';method='One'}) } }
-    $plan = New-ReleaseGateExecutionPlan $croot $discovery @{client=@('client-tests');scripts=@('script-tests')}
+    $plan = [Antiphon.Nightly.ReleaseAuthority]::Plan($croot, $discovery, @{client=@('client-tests');scripts=@('script-tests')})
     $chunks = @(); foreach ($suite in $plan.suites) { foreach ($chunk in $suite.chunks) {
         $trx = Join-Path $croot ('evidence/' + $chunk.id + '.trx'); Write-C487Trx $trx @(@{Id=$chunk.uids[0];ClassName='Fixture';MethodName='One';Outcome='Passed'})
         $chunks += @{suite=$suite.id;chunk=$chunk.id;exitCode=0;trx=('evidence/' + $chunk.id + '.trx');trxSha256=(Get-NightlyFileSha256 $trx)}
@@ -258,7 +258,8 @@ function Write-RSReceipt($Fixture, [string]$Release, [string]$Sha, [string]$Name
     Write-NightlyAtomicJson (Join-Path $dir 'ledger.json') $ledger
     Write-NightlyAtomicJson (Join-Path $croot 'complete-green.json') @{profile='rc';trigger='rc';ref='rc/2026-11-08';sha=$Sha;expectedSha=$Sha;candidateId=$authority.candidateId
         runId='baseline-run';policyHash=$policy.PolicyHash;exitCode=0;coverageComplete=$true;testsPassed=$true;reportDelivered=$true;coverageScope='Full'}
-    $pub = New-ReleaseGatePublicationAuthority $croot @{Authority=$authority;Digest=$ledger.authorityDigest} ('a' * 64)
+    $pinnedAuthority = [Antiphon.Nightly.PinnedAuthority]@{ Authority = [Antiphon.Nightly.AuthorityRecord]::Read((Join-Path $dir 'authority.json')); Digest = $ledger.authorityDigest }
+    $pub = [Antiphon.Nightly.ReleaseAuthority]::Publication($croot, $pinnedAuthority, ('a' * 64), $false)
     $manifest = New-ReleaseGateManifest @{repository='fixture/repository';candidateId=$authority.candidateId;sha=$Sha;publicationAuthorityDigest=$pub.Digest}
     Write-NightlyAtomicJson (Join-Path $croot 'release-manifest.json') $manifest
     Write-NightlyAtomicJson (Join-Path $croot 'publish.json') @{steps=@('published');sha=$Sha;publicationAuthorityDigest=$pub.Digest;manifestDigest=(Get-ReleaseGateManifestDigest $manifest)

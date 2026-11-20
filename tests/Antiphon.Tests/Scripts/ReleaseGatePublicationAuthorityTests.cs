@@ -7,7 +7,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0599 D-15 full V-12 matrix (round B1; ordinary contract is
 /// <see cref="ReleaseGateAuthorityContractTests"/>). Each method runs exactly one <c>Test-C599A_*</c>
 /// case of <c>scripts/test-release-gate.ps1</c> as its own pwsh child under the harness's unchanged
-/// 300-second limit, against the PRODUCTION <c>release-authority.ps1</c> guards and publisher.
+/// 300-second limit, against the PRODUCTION <c>ReleaseAuthority</c> guards (nightly core) and publisher.
 /// CARD-1731 removes redundant snapshot work; completed phase measurements, rather than
 /// the historical 30-second estimate, determine the recorded cost and budget.
 ///
