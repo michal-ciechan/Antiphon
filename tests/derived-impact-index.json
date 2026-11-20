@@ -291,9 +291,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.Ceiling.cs",
-      "classes": 84,
+      "classes": 85,
       "reason": "cap",
-      "owed": 59,
+      "owed": 60,
       "first": [
         "DispatchConcurrencyAdmissionTests",
         "PinnedAgentKindTests",
@@ -306,10 +306,26 @@
       ]
     },
     {
-      "path": "server/Application/Dtos/AgentTaskDtos.cs",
-      "classes": 99,
+      "path": "server/Application/Dtos/AgentTaskDtos.Model.cs",
+      "classes": 82,
       "reason": "cap",
-      "owed": 74,
+      "owed": 57,
+      "first": [
+        "RunnerDefaultsWireTests",
+        "TaskCeilingCreateBindingTests",
+        "WorktreeRetirementRaceTests",
+        "BlockedTaskParkDeliveryTests",
+        "C0824RefOnlyConsumerTests",
+        "C0824WorkspaceSlotServerTests",
+        "CardPlatformTests",
+        "ChannelOutboundIsolatedTests"
+      ]
+    },
+    {
+      "path": "server/Application/Dtos/AgentTaskDtos.cs",
+      "classes": 100,
+      "reason": "cap",
+      "owed": 75,
       "first": [
         "WorktreeDefaultContinuationTests",
         "AdvisoryChangePolicyTests",
@@ -439,9 +455,9 @@
     },
     {
       "path": "server/Application/Exceptions/ValidationException.cs",
-      "classes": 100,
+      "classes": 101,
       "reason": "cap",
-      "owed": 75,
+      "owed": 76,
       "first": [
         "StartRefAvailabilityTests",
         "WorktreeDefaultContinuationTests",
@@ -450,7 +466,7 @@
         "AgentTaskWorktreeBaseCreateTests",
         "ApiKeyStoreTests",
         "BlockedTaskParkDeliveryTests",
-        "RepairSourceDispatchTests"
+        "CodexDelegateDispatchTests"
       ]
     },
     {
@@ -763,14 +779,14 @@
       "reason": "cap",
       "owed": 182,
       "first": [
+        "DefaultRunnerRerouteTests",
         "ModelAvailabilityManualTests",
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
         "AgentTaskCallerResolutionTests",
         "ChannelOutboundIsolatedTests",
         "ComplexityCreateTests",
-        "DispatchConcurrencyAdmissionTests",
-        "HeldStandingAgentChainTests"
+        "DispatchConcurrencyAdmissionTests"
       ]
     },
     {
@@ -1041,18 +1057,18 @@
     },
     {
       "path": "server/Application/Services/ModelAvailability.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "ModelAvailabilityCreateTests",
         "ModelAvailabilityManualTests",
         "ProviderQuotaRefusalAcceptanceTests",
         "AgentControlServiceIntegrationTests",
         "AgentSupervisionTests",
         "AgentTaskReplyIntegrationTests",
         "CapacityRecoveryRefusalTests",
-        "CapacityRecoveryTaskTests",
-        "ChannelBridgeTests"
+        "CapacityRecoveryTaskTests"
       ]
     },
     {
@@ -1554,18 +1570,18 @@
     },
     {
       "path": "server/Domain/Entities/ModelAvailabilityHold.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
+        "DefaultRunnerPinTests",
         "DefaultRunnerRerouteTests",
         "DelegationCapabilityTests",
         "HeldModelEscalationTests",
         "HeldStandingAgentChainTests",
         "MatrixDefaultComplexityCreateTests",
         "ModelAvailabilityDispatcherTests",
-        "ModelAvailabilityHttpTests",
-        "PolicyRefreshServiceTests"
+        "ModelAvailabilityHttpTests"
       ]
     },
     {
@@ -1646,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 610,
+      "classes": 611,
       "reason": "cap",
-      "owed": 585,
+      "owed": 586,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1662,9 +1678,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 610,
+      "classes": 611,
       "reason": "cap",
-      "owed": 585,
+      "owed": 586,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2341,8 +2357,8 @@
         "BoardProjectArchiveTests",
         "CardWorkTransitionServiceTests",
         "CodexCliObservationTests",
-        "ExternalTrackerSyncIdentifierTests",
-        "PipelineSpeedIntegrationTests"
+        "CodexDelegateDispatchTests",
+        "ExternalTrackerSyncIdentifierTests"
       ]
     },
     {
@@ -2367,9 +2383,9 @@
       "reason": "cap",
       "owed": 113,
       "first": [
+        "ChannelOutboundDispatchIntegrationTests",
         "ClaudeEffortByRoleDispatchTests",
         "ClosedCardSweepTests",
-        "CodexDelegateDispatchTests",
         "ComplexityDispatcherTests",
         "DefaultRunnerPinTests",
         "LaunchEnvLayersIntegrationTests",
@@ -4474,6 +4490,7 @@
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
         "CheckCompactionAutomaticRestartTests",
+        "CodexDelegateDispatchTests",
         "CodexGpt62LadderTests",
         "ComplexityDispatcherTests",
         "DelegationCapabilityTests",
@@ -4757,6 +4774,36 @@
         "RoutingPinCreateTests",
         "RunnerDefaultPlacementTests",
         "RunnerDefaultsWireTests",
+        "TaskPlatformPlacementTests",
+        "WorktreeDefaultAdmissionTests",
+        "WorktreeDefaultContinuationTests",
+        "WorktreeStartRefDispatchTests"
+      ]
+    },
+    {
+      "path": "server/Application/Dtos/AgentTaskDtos.Model.cs",
+      "classes": [
+        "AgentNamePinTests",
+        "AgentTaskAgentKindTests",
+        "AgentTaskCheckScheduleTests",
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskServiceIntegrationTests",
+        "CapacityRecoveryRefusalTests",
+        "ComplexityCreateTests",
+        "DefaultRunnerCreateTests",
+        "DefaultRunnerPinTests",
+        "LaunchEnvLayersIntegrationTests",
+        "ModelAvailabilityCreateTests",
+        "ModelAvailabilityManualTests",
+        "MutationAdmissionTests",
+        "PinnedAgentKindTests",
+        "RemotePoolFollowUpAdmissionTests",
+        "RepairSourceDispatchTests",
+        "RolePolicyInvalidValuesCreateTests",
+        "RolePolicyToolBundleDispatchTests",
+        "RoutingPinCandidateCreateTests",
+        "RoutingPinCreateTests",
+        "RunnerDefaultPlacementTests",
         "TaskPlatformPlacementTests",
         "WorktreeDefaultAdmissionTests",
         "WorktreeDefaultContinuationTests",
@@ -5687,6 +5734,7 @@
       "classes": [
         "AgentControlServiceIntegrationTests",
         "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
         "ComplexityCreateTests",
         "ComplexityDispatcherTests",
         "DelegationCapabilityTests",
@@ -7083,8 +7131,8 @@
         "CapacityRecoveryRefusalTests",
         "ChannelOutboundDeadlineTests",
         "ChannelOutboundDeliveryTests",
+        "CodexDelegateDispatchTests",
         "DefaultRunnerPinTests",
-        "DefaultRunnerRerouteTests",
         "DelegationCapabilityTests",
         "LaunchEnvLayersIntegrationTests",
         "ModelAvailabilityCreateTests",
@@ -9688,6 +9736,7 @@
         "ApiErrorRecoveryServiceTests",
         "ChannelOutboundDeadlineTests",
         "CodexCliObservationTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainRaceTests",
         "ComplexityChainRoleTests",
         "ComplexityChainServiceTests",
@@ -9702,7 +9751,6 @@
         "HeldStandingAgentChainTests",
         "MatrixDefaultComplexityCreateTests",
         "MatrixDefaultComplexityRoutingTests",
-        "ModelAvailabilityCreateTests",
         "ModelAvailabilityTests",
         "OrchestratorInstructionsRefreshTests",
         "RequiredSingleCandidateRefusalTests",
@@ -14072,12 +14120,12 @@
         "ChannelInboundRecoveryTests",
         "ChannelOutboundDeadlineTests",
         "CheckCompactionAutomaticRestartTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainServiceTests",
         "ComplexityCreateTests",
         "ComplexityDispatcherTests",
         "ComplexityEffectiveHttpTests",
         "ComplexityRoutingWalkTests",
-        "DefaultRunnerPinTests",
         "HerdrSupervisionBackoffTests",
         "ModelAvailabilityCreateTests",
         "ModelAvailabilityManualTests",
@@ -26290,7 +26338,7 @@
         "CardTaskSettlementTests",
         "ChannelOutboundDeadlineTests",
         "ChannelOutboundDeliveryTests",
-        "ChannelOutboundDispatchIntegrationTests",
+        "CodexDelegateDispatchTests",
         "DefaultRunnerRerouteTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DesktopLaunchMemoryAdmissionTests",
