@@ -22,28 +22,13 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         if (!OperatingSystem.IsLinux())
             Skip.Test("Linux inherited-pipe custody proof");
 
-        var healthy = await CaptureAsync("healthy", cancellationToken);
+        // Fingerprint v2 reads the checkout with libgit2: the tool's capture starts no git child at all, so no
+        // git pipe can be inherited or held. The fake git on PATH records any call.
+        var healthy = await CaptureAsync("tool-real-repo", cancellationToken, "tool");
         healthy.Watchdog.ShouldBeFalse();
         healthy.Observation!.CaptureStatus.ShouldBe("known");
-        healthy.Observation.Commit.ShouldBe(new string('a', 40));
-        healthy.Observation.DirtyFiles.ShouldBe(2);
-        // SHA-256 of v1's eight-byte big-endian length frames: version, HEAD,
-        // status, HEAD diff, cached diff, raw.bin path and SHA-256(raw.bin).
-        healthy.Observation.Fingerprint.ShouldBe("a8772ccdfabb7a27dac404c71c7fb916415e53bf40f4cc64436440be3697773b",
-            "raw diff bytes (including invalid UTF-8), NUL paths, CRLF and binary data must retain v1 identity");
-
-        var blocked = await CaptureAsync("held-pipe", cancellationToken);
-        blocked.Watchdog.ShouldBeFalse("default SourceSnapshot Git drain required the independent 35 s watchdog");
-        blocked.Milliseconds.ShouldBeLessThan(32_000, "the real 30 s Git budget includes inherited pipe drains");
-        blocked.Observation!.CaptureStatus.ShouldBe("unknown");
-        blocked.Observation.ErrorCode.ShouldBe("git_timeout");
-        blocked.ParentExited.ShouldBeTrue("the selected Git parent must exit before its descendant releases stderr");
-        blocked.DescendantDead.ShouldBeTrue("the pipe holder survived the Git deadline and 2 s death observation");
-
-        var nonzero = await CaptureAsync("nonzero", cancellationToken);
-        nonzero.Watchdog.ShouldBeFalse();
-        nonzero.Observation!.CaptureStatus.ShouldBe("unknown");
-        nonzero.Observation.ErrorCode.ShouldBe("git_exit");
+        healthy.Observation.DirtyFiles.ShouldBe(1, "one untracked file in the real repository");
+        healthy.GitInvoked.ShouldBeFalse("SourceSnapshot.Capture must not start git");
     }
 
     [Test]
@@ -53,16 +38,13 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         if (!OperatingSystem.IsLinux())
             Skip.Test("Linux inherited-pipe custody proof");
 
-        foreach (var caller in new[] { "tool", "script" })
-        {
-            var healthy = await CaptureAsync("healthy", cancellationToken, caller);
-            healthy.Watchdog.ShouldBeFalse();
-            healthy.Observation!.CaptureStatus.ShouldBe("known");
-            healthy.Observation.Commit.ShouldBe(new string('a', 40));
-            healthy.Observation.DirtyFiles.ShouldBe(2);
-            healthy.Observation.Fingerprint.ShouldBe("a8772ccdfabb7a27dac404c71c7fb916415e53bf40f4cc64436440be3697773b",
-                $"{caller} must retain the independent v1 raw-byte vector, including invalid UTF-8 diff bytes");
-        }
+        var healthy = await CaptureAsync("healthy", cancellationToken, "script");
+        healthy.Watchdog.ShouldBeFalse();
+        healthy.Observation!.CaptureStatus.ShouldBe("known");
+        healthy.Observation.Commit.ShouldBe(new string('a', 40));
+        healthy.Observation.DirtyFiles.ShouldBe(2);
+        healthy.Observation.Fingerprint.ShouldBe(HealthyVector(healthy.Root),
+            "the script must keep the independent v2 vector: entries from porcelain v2, work tree from disk");
 
         var nonzero = await CaptureAsync("nonzero", cancellationToken, "script");
         nonzero.Watchdog.ShouldBeFalse();
@@ -79,7 +61,34 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
     }
 
     private sealed record CaptureResult(SourceObservation? Observation, long Milliseconds,
-        bool Watchdog, bool ParentExited, bool DescendantDead);
+        bool Watchdog, bool ParentExited, bool DescendantDead, string Root = "", bool GitInvoked = false);
+
+    private const string HeadOid = "1111111111111111111111111111111111111111";
+    private const string IndexOid = "2222222222222222222222222222222222222222";
+
+    /// <summary>
+    /// The v2 identity the fake status describes, framed independently of both readers: HEAD, then café.txt
+    /// (tracked, modified, absent from the work tree) and raw.bin (untracked, hashed from disk), in byte order.
+    /// </summary>
+    private static string HealthyVector(string root)
+    {
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        void Frame(byte[] bytes)
+        {
+            Span<byte> length = stackalloc byte[8];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(length, bytes.Length);
+            hash.AppendData(length);
+            hash.AppendData(bytes);
+        }
+        Frame([2]);
+        Frame(Encoding.UTF8.GetBytes(new string('a', 40)));
+        foreach (var field in new[] { "café.txt", "100644", HeadOid, "100644", IndexOid, "absent" })
+            Frame(Encoding.UTF8.GetBytes(field));
+        var raw = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(root, "raw.bin"))));
+        foreach (var field in new[] { "raw.bin", "", "", "", "", "file:" + raw })
+            Frame(Encoding.UTF8.GetBytes(field));
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
 
     private async Task<CaptureResult> CaptureAsync(string mode, CancellationToken cancellationToken,
         string caller = "tool")
@@ -87,12 +96,21 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         var root = TempDir();
         var shims = Directory.CreateDirectory(Path.Combine(root, "shims")).FullName;
         var nonce = Guid.NewGuid().ToString("N");
-        File.WriteAllBytes(Path.Combine(root, "status"), Encoding.UTF8.GetBytes(" M café.txt\0?? raw.bin\0"));
-        File.WriteAllBytes(Path.Combine(root, "head.diff"),
-            [.. Encoding.UTF8.GetBytes("diff --git a/café.txt b/café.txt\r\n+"), 0xff, 0xfe, 0, 13, 10]);
-        File.WriteAllBytes(Path.Combine(root, "cached.diff"),
-            [.. Encoding.UTF8.GetBytes("GIT binary patch\r\n"), 0, 0x80, 0xff, 13, 10]);
+        File.WriteAllBytes(Path.Combine(root, "status"), Encoding.UTF8.GetBytes(
+            "# branch.oid " + new string('a', 40) + "\0# branch.head main\0" +
+            "1 .M N... 100644 100644 100644 " + HeadOid + " " + IndexOid + " café.txt\0? raw.bin\0"));
         File.WriteAllBytes(Path.Combine(root, "raw.bin"), [0, 0xff, 0x80, 13, 10, 65]);
+        var target = root;
+        if (mode == "tool-real-repo")
+        {
+            // A real checkout beside the fixture files (the FIFO and scripts stay out of it).
+            target = Directory.CreateDirectory(Path.Combine(root, "repo")).FullName;
+            CheckpointFixtureProcess.Git(target, "init", "-q");
+            File.WriteAllText(Path.Combine(target, "tracked.txt"), "tracked\n");
+            CheckpointFixtureProcess.Git(target, "add", "tracked.txt");
+            CheckpointFixtureProcess.Git(target, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+            File.WriteAllText(Path.Combine(target, "untracked.txt"), "new\n");
+        }
         CheckpointBoundedProbe.Fifo(Path.Combine(root, "gate"));
         CheckpointBoundedProbe.Executable(Path.Combine(root, "holder"), """
             #!/bin/sh
@@ -107,6 +125,7 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         CheckpointBoundedProbe.Executable(Path.Combine(shims, "git"), """
             #!/bin/sh
             set -eu
+            printf 'x' >> "$C1233_ROOT/invoked"
             while [ "$1" = -c ]; do shift 2; done
             case "$1" in
               config)
@@ -131,14 +150,9 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
                 fi
                 /bin/cat "$C1233_ROOT/status"
                 ;;
-              ls-files) printf 'H café.txt\000' ;;
-              diff)
+              ls-files)
                 if [ "$C1233_MODE" = nonzero ]; then printf 'fixture failure\n' >&2; exit 7; fi
-                if [ "$2" = --cached ]; then
-                  /bin/cat "$C1233_ROOT/cached.diff"
-                else
-                  /bin/cat "$C1233_ROOT/head.diff"
-                fi
+                printf 'H café.txt\000'
                 ;;
               *) exit 91 ;;
             esac
@@ -158,9 +172,9 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
             [Console]::Out.WriteLine("C1233_READY $PID`:$startToken`:$env:C1233_NONCE")
             $clock = [Diagnostics.Stopwatch]::StartNew()
             $observation = if ($env:C1233_CALLER -eq 'script') {
-                Get-CheckpointSource $env:C1233_ROOT
+                Get-CheckpointSource $env:C1233_TARGET
             } else {
-                $reader.Capture($env:C1233_ROOT)
+                $reader.Capture($env:C1233_TARGET)
             }
             $clock.Stop()
             [Console]::Out.WriteLine("C1233_RESULT $env:C1233_NONCE " + (@{
@@ -176,6 +190,7 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
             start.ArgumentList.Add(arg);
         start.Environment["PATH"] = shims + Path.PathSeparator + start.Environment["PATH"];
         start.Environment["C1233_ROOT"] = root;
+        start.Environment["C1233_TARGET"] = target;
         start.Environment["C1233_NONCE"] = nonce;
         start.Environment["C1233_MODE"] = mode;
         start.Environment["C1233_CALLER"] = caller;
@@ -223,7 +238,8 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             var milliseconds = json.RootElement.GetProperty("milliseconds").GetInt64();
             Console.WriteLine($"{caller} {mode}: {milliseconds} ms; {observation!.CaptureStatus}/{observation.ErrorCode}; parentExited={parentExited}; descendantDead={descendantDead}");
-            return new CaptureResult(observation, milliseconds, false, parentExited, descendantDead);
+            return new CaptureResult(observation, milliseconds, false, parentExited, descendantDead, root,
+                File.Exists(Path.Combine(root, "invoked")));
         }
         finally
         {

@@ -41,24 +41,26 @@ public sealed class CheckpointSourceStateTests
         clean.CaptureStatus.ShouldBe("known");
         clean.DirtyFiles.ShouldBe(0);
         clean.Commit.ShouldBe(repo.Git("rev-parse", "HEAD").Trim());
-        // Independent framing vector for a clean tree: version byte, HEAD bytes,
-        // then three empty records (porcelain, HEAD diff, cached diff).
+        // Independent framing vector for a clean tree (v2): version byte and HEAD bytes, no listed paths.
         using (var framed = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
         {
-            static void Frame(IncrementalHash hash, byte[] bytes)
-            {
-                Span<byte> length = stackalloc byte[8];
-                BinaryPrimitives.WriteInt64BigEndian(length, bytes.Length);
-                hash.AppendData(length);
-                hash.AppendData(bytes);
-            }
-            Frame(framed, [1]);
+            Frame(framed, [2]);
             Frame(framed, Encoding.UTF8.GetBytes(clean.Commit!));
-            Frame(framed, []);
-            Frame(framed, []);
-            Frame(framed, []);
             clean.Fingerprint.ShouldBe(Convert.ToHexStringLower(framed.GetHashAndReset()), "fixed-vector-parity");
         }
+
+        // And for one untracked file: path, four empty entry fields, then the work-tree token.
+        repo.Write("loose.txt", "loose\n");
+        using (var framed = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+        {
+            Frame(framed, [2]);
+            Frame(framed, Encoding.UTF8.GetBytes(clean.Commit!));
+            Frame(framed, Encoding.UTF8.GetBytes("loose.txt"));
+            for (var i = 0; i < 4; i++) Frame(framed, []);
+            Frame(framed, Encoding.UTF8.GetBytes("file:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("loose\n")))));
+            reader.Capture(repo.Root).Fingerprint.ShouldBe(Convert.ToHexStringLower(framed.GetHashAndReset()), "fixed-untracked-vector");
+        }
+        File.Delete(Path.Combine(repo.Root, "loose.txt"));
 
         repo.Write("bin-c835/generated.txt", "ignored");
         repo.Write("obj/generated.txt", "ignored");
@@ -157,32 +159,29 @@ public sealed class CheckpointSourceStateTests
         missing.DirtyFiles.ShouldBeNull();
 
         using var repo = new GitFixture();
+        var head = repo.Git("rev-parse", "HEAD").Trim();
         var calls = 0;
-        byte[] ChangingGit(string directory, IReadOnlyList<string> args)
-        {
-            if (args.SequenceEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"]))
-                return ++calls == 1 ? [] : Encoding.UTF8.GetBytes(" M seed.txt\0");
-            return args[0] switch
-            {
-                "rev-parse" when args.Count > 1 && args[1] == "--show-toplevel" => Encoding.UTF8.GetBytes(repo.Root + "\n"),
-                "rev-parse" => Encoding.UTF8.GetBytes(repo.Git("rev-parse", "HEAD")),
-                _ => [],
-            };
-        }
-        var unstable = new SourceSnapshot(ChangingGit).Capture(repo.Root);
+        SourceRead Changing(string directory) => ++calls == 1
+            ? new SourceRead(repo.Root, head, [])
+            : new SourceRead(repo.Root, head, [new SourceReadEntry("seed.txt", "100644", head, "100644", head)]);
+        var unstable = new SourceSnapshot(Changing).Capture(repo.Root);
         unstable.CaptureStatus.ShouldBe("unknown", "two-pass-race-is-unknown");
         unstable.ErrorCode.ShouldBe("capture_changed");
         unstable.DirtyFiles.ShouldBeNull();
-        new SourceSnapshot((_, _) => throw new IOException("injected"))
+        new SourceSnapshot(_ => throw new IOException("injected"))
             .Capture(repo.Root).ErrorCode.ShouldBe("file_io", "injected-read-failure");
-        new SourceSnapshot((directory, args) => args[0] == "ls-files"
-                ? throw new IOException("injected ls-files failure")
-                : Encoding.UTF8.GetBytes(GitFixture.Run("git", directory, args.ToArray())))
-            .Capture(repo.Root).CaptureStatus.ShouldBe("unknown", "failed-index-enumeration");
-        new SourceSnapshot((directory, args) => args[0] == "ls-files"
-                ? Encoding.UTF8.GetBytes("? seed.txt\0")
-                : Encoding.UTF8.GetBytes(GitFixture.Run("git", directory, args.ToArray())))
-            .Capture(repo.Root).ErrorCode.ShouldBe("index_flags_invalid", "unexpected-index-tag");
+        new SourceSnapshot(_ => throw new SourceReadException("libgit2_failed"))
+            .Capture(repo.Root).ErrorCode.ShouldBe("libgit2_failed", "reader-refusal-is-unknown");
+        new SourceSnapshot(_ => new SourceRead(repo.Root, "not-a-commit", []))
+            .Capture(repo.Root).ErrorCode.ShouldBe("head_invalid", "reader-head-is-checked");
+        new SourceSnapshot(_ => new SourceRead(repo.Root, head, [new SourceReadEntry("../outside.txt", null, null, null, null)]))
+            .Capture(repo.Root).ErrorCode.ShouldBe("path_escape", "listed-path-stays-inside");
+
+        // A version 4 index is not read in process: unknown, not a guess.
+        repo.Git("update-index", "--index-version", "4");
+        new SourceSnapshot().Capture(repo.Root).ErrorCode.ShouldBe("libgit2_unsupported", "index-version-4");
+        repo.Git("update-index", "--index-version", "2");
+        new SourceSnapshot().Capture(repo.Root).CaptureStatus.ShouldBe("known", "index-version-2-again");
 
         var noHead = Path.Combine(Path.GetTempPath(), "c835-unborn-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(noHead);
@@ -193,12 +192,18 @@ public sealed class CheckpointSourceStateTests
         }
         finally { GitFixtureCleanup.Delete(noHead); }
 
-        byte[] UnsupportedSubmodule(string directory, IReadOnlyList<string> args) =>
-            args[0] == "status" ? Encoding.UTF8.GetBytes(" m submodule\0")
-            : args.Count > 1 && args[1] == "--show-toplevel" ? Encoding.UTF8.GetBytes(repo.Root + "\n")
-            : args[0] == "rev-parse" ? Encoding.UTF8.GetBytes(repo.Git("rev-parse", "HEAD")) : [];
-        new SourceSnapshot(UnsupportedSubmodule).Capture(repo.Root)
+        // A gitlink (submodule) entry in the index.
+        repo.Git("update-index", "--add", "--cacheinfo", "160000," + head + ",submodule");
+        new SourceSnapshot().Capture(repo.Root)
             .ErrorCode.ShouldBe("submodule_unsupported", "unsupported-submodule-is-unknown");
+    }
+
+    private static void Frame(IncrementalHash hash, byte[] bytes)
+    {
+        Span<byte> length = stackalloc byte[8];
+        BinaryPrimitives.WriteInt64BigEndian(length, bytes.Length);
+        hash.AppendData(length);
+        hash.AppendData(bytes);
     }
 
     [Test]

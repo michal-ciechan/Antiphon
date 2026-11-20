@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -44,36 +43,52 @@ public sealed class SourceEvidence
     }
 }
 
+
+/// <summary>One path git status lists (tracked change or untracked file), with its HEAD and index entries.</summary>
+public sealed record SourceReadEntry(string Path, string? HeadMode, string? HeadOid, string? IndexMode, string? IndexOid);
+
+/// <summary>A reading of a checkout: its root, HEAD commit and the listed paths.</summary>
+public sealed record SourceRead(string Root, string Commit, IReadOnlyList<SourceReadEntry> Entries);
+
+/// <summary>A checkout the reader refuses, with the refusal code reported as the observation's error.</summary>
+public sealed class SourceReadException(string code) : Exception(code)
+{
+    public string Code { get; } = code;
+}
+
+/// <summary>
+/// Source identity, fingerprint v2: SHA-256 over length-framed records, version 2, HEAD, then for each path git
+/// status lists (ignored files excluded) in git's byte order: the path, its HEAD mode and id, its index mode and
+/// id (empty when absent) and its work-tree content (<see cref="WorkTreeToken"/>). The checkout is read with
+/// libgit2 in process (no git child); scripts/lib/checkpoint-source.ps1 reads the same facts from
+/// <c>git status --porcelain=v2</c> and must produce the same identity. Captured twice; any difference is
+/// <c>capture_changed</c>.
+/// </summary>
 public sealed class SourceSnapshot
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly Regex FullOid = new("^(?:[0-9a-f]{40}|[0-9a-f]{64})$", RegexOptions.Compiled);
-    private readonly Func<string, IReadOnlyList<string>, byte[]> _git;
+    private readonly Func<string, SourceRead> _read;
 
-    public SourceSnapshot(Func<string, IReadOnlyList<string>, byte[]>? git = null)
+    static SourceSnapshot() => IsolateLibGit2FromUserConfig();
+
+    public SourceSnapshot(Func<string, SourceRead>? read = null)
     {
-        _git = git ?? RunGit;
+        _read = read ?? ReadWithLibGit2;
     }
 
     public SourceObservation Capture(string repository)
     {
-        // One filter/textconv driver lookup for this snapshot's reads (see DriverSettingsScope).
-        using var drivers = CheckpointProcessRunner.DriverSettingsScope();
         try
         {
-            // Resolve a nested caller to the worktree root before hashing untracked paths.
-            // Git's status paths are relative to that root, including for linked worktrees.
-            var root = StrictUtf8.GetString(_git(repository, ["rev-parse", "--show-toplevel"])).Trim();
-            if (string.IsNullOrWhiteSpace(root) || !Path.IsPathRooted(root))
-                throw new SourceCaptureException("root_invalid");
-            var first = CaptureOnce(root);
-            var second = CaptureOnce(root);
+            var first = CaptureOnce(repository);
+            var second = CaptureOnce(repository);
             if (first.Commit != second.Commit || first.DirtyFiles != second.DirtyFiles ||
                 first.Fingerprint != second.Fingerprint)
                 return SourceObservation.Unknown("capture_changed");
             return second with { ObservedAtUtc = DateTimeOffset.UtcNow };
         }
-        catch (SourceCaptureException ex) { return SourceObservation.Unknown(ex.Code); }
+        catch (SourceReadException ex) { return SourceObservation.Unknown(ex.Code); }
         catch (IOException) { return SourceObservation.Unknown("file_io"); }
         catch (UnauthorizedAccessException) { return SourceObservation.Unknown("file_access"); }
         catch (DecoderFallbackException) { return SourceObservation.Unknown("path_encoding"); }
@@ -82,98 +97,83 @@ public sealed class SourceSnapshot
 
     private SourceObservation CaptureOnce(string repository)
     {
-        var commit = StrictUtf8.GetString(_git(repository, ["rev-parse", "HEAD"])).Trim();
-        if (!FullOid.IsMatch(commit)) throw new SourceCaptureException("head_invalid");
-        var status = _git(repository, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"]);
-        // Porcelain and diff omit worktree edits hidden by index flags.
-        // Sparse paths need explicit HEAD-blob verification before certification.
-        CheckIndexFlags(_git(repository, ["ls-files", "-v", "-z"]));
-        var entries = ParseStatus(status);
-        var headDiff = _git(repository, ["-c", "core.quotePath=false", "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]);
-        var cachedDiff = _git(repository, ["-c", "core.quotePath=false", "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]);
+        var read = _read(repository);
+        if (!FullOid.IsMatch(read.Commit)) throw new SourceReadException("head_invalid");
+        if (string.IsNullOrWhiteSpace(read.Root) || !Path.IsPathRooted(read.Root))
+            throw new SourceReadException("root_invalid");
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Add(hash, [1]);
-        Add(hash, StrictUtf8.GetBytes(commit));
-        Add(hash, status);
-        Add(hash, headDiff);
-        Add(hash, cachedDiff);
-        foreach (var path in entries.Untracked.OrderBy(p => p, ByteArrayComparer.Instance))
+        Add(hash, [2]);
+        Add(hash, StrictUtf8.GetBytes(read.Commit));
+        foreach (var entry in read.Entries.OrderBy(e => StrictUtf8.GetBytes(e.Path), ByteArrayComparer.Instance))
         {
-            Add(hash, path);
-            var relative = StrictUtf8.GetString(path);
-            var full = Path.GetFullPath(Path.Combine(repository, relative));
-            var within = Path.GetRelativePath(Path.GetFullPath(repository), full);
-            if (within != ".." && !within.StartsWith("../", StringComparison.Ordinal) &&
-                !within.StartsWith("..\\", StringComparison.Ordinal))
-            {
-                var info = new FileInfo(full);
-                if (!info.Exists && info.LinkTarget is null) throw new SourceCaptureException("untracked_missing");
-                byte[] digest;
-                if (info.LinkTarget is string target)
-                    digest = SHA256.HashData(StrictUtf8.GetBytes(target));
-                else
-                {
-                    var beforeLength = info.Length;
-                    var beforeWrite = info.LastWriteTimeUtc;
-                    digest = SHA256.HashData(ReceiptFile.ReadBytes(full));
-                    info.Refresh();
-                    if (info.Length != beforeLength || info.LastWriteTimeUtc != beforeWrite)
-                        throw new SourceCaptureException("file_changed");
-                }
-                Add(hash, digest);
-            }
-            else throw new SourceCaptureException("path_escape");
+            Add(hash, StrictUtf8.GetBytes(entry.Path));
+            Add(hash, StrictUtf8.GetBytes(entry.HeadMode ?? ""));
+            Add(hash, StrictUtf8.GetBytes(entry.HeadOid ?? ""));
+            Add(hash, StrictUtf8.GetBytes(entry.IndexMode ?? ""));
+            Add(hash, StrictUtf8.GetBytes(entry.IndexOid ?? ""));
+            Add(hash, StrictUtf8.GetBytes(WorkTreeToken(read.Root, entry.Path)));
         }
-        return new(commit, entries.Count, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
+        return new(read.Commit, read.Entries.Count, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
             DateTimeOffset.UtcNow, "known");
     }
 
-    private static (int Count, List<byte[]> Untracked) ParseStatus(byte[] bytes)
+    /// <summary>
+    /// The work-tree side of a listed path: <c>file:&lt;sha256&gt;</c> (plus <c>:x</c> when executable off Windows),
+    /// <c>link:&lt;target&gt;</c>, <c>directory</c> (a nested repository git lists as <c>dir/</c>) or <c>absent</c>.
+    /// A file that changes while it is read is <c>file_changed</c>.
+    /// </summary>
+    internal static string WorkTreeToken(string root, string relative)
     {
-        var count = 0;
-        var untracked = new List<byte[]>();
-        var index = 0;
-        while (index < bytes.Length)
-        {
-            var end = Array.IndexOf(bytes, (byte)0, index);
-            if (end < index || end - index < 4 || bytes[index + 2] != (byte)' ')
-                throw new SourceCaptureException("status_invalid");
-            var x = bytes[index];
-            var y = bytes[index + 1];
-            if (x == (byte)'U' || y == (byte)'U' || x == (byte)'A' && y == (byte)'A' ||
-                x == (byte)'D' && y == (byte)'D')
-                throw new SourceCaptureException("unmerged_index");
-            var path = bytes[(index + 3)..end];
-            if (x == (byte)'?' && y == (byte)'?') untracked.Add(path);
-            else if (x == (byte)'m' || y == (byte)'m' || x == (byte)'?' || y == (byte)'?')
-                throw new SourceCaptureException("submodule_unsupported");
-            count++;
-            index = end + 1;
-            if (x is (byte)'R' or (byte)'C' || y is (byte)'R' or (byte)'C')
-            {
-                end = Array.IndexOf(bytes, (byte)0, index);
-                if (end < index) throw new SourceCaptureException("status_invalid");
-                index = end + 1;
-            }
-        }
-        return (count, untracked);
+        var full = Path.GetFullPath(Path.Combine(root, relative.TrimEnd('/')));
+        var within = Path.GetRelativePath(Path.GetFullPath(root), full);
+        if (within == ".." || within.StartsWith("../", StringComparison.Ordinal) ||
+            within.StartsWith("..\\", StringComparison.Ordinal) || Path.IsPathRooted(within))
+            throw new SourceReadException("path_escape");
+        var info = new FileInfo(full);
+        if (info.LinkTarget is string target) return "link:" + target;
+        var directory = new DirectoryInfo(full);
+        if (directory.LinkTarget is string directoryTarget) return "link:" + directoryTarget;
+        if (directory.Exists) return "directory";
+        if (!info.Exists) return "absent";
+        var beforeLength = info.Length;
+        var beforeWrite = info.LastWriteTimeUtc;
+        var digest = Convert.ToHexString(SHA256.HashData(ReceiptFile.ReadBytes(full))).ToLowerInvariant();
+        info.Refresh();
+        if (info.Length != beforeLength || info.LastWriteTimeUtc != beforeWrite)
+            throw new SourceReadException("file_changed");
+        var executable = !OperatingSystem.IsWindows() && (info.UnixFileMode & UnixFileMode.UserExecute) != 0;
+        return "file:" + digest + (executable ? ":x" : "");
     }
 
-    private static void CheckIndexFlags(byte[] bytes)
+    private static SourceRead ReadWithLibGit2(string repository)
     {
-        var index = 0;
-        while (index < bytes.Length)
+        try
         {
-            var end = Array.IndexOf(bytes, (byte)0, index);
-            if (end < index + 3 || bytes[index + 1] != (byte)' ')
-                throw new SourceCaptureException("index_flags_invalid");
-            var flag = bytes[index];
-            if (flag == (byte)'S' || flag is >= (byte)'a' and <= (byte)'z')
-                throw new SourceCaptureException("indexed_path_hidden");
-            if (flag is < (byte)'A' or > (byte)'Z')
-                throw new SourceCaptureException("index_flags_invalid");
-            index = end + 1;
+            var reading = Antiphon.GitInProcess.WorkTreeIdentity.Read(repository);
+            return new SourceRead(reading.Root, reading.Commit, reading.Entries
+                .Select(e => new SourceReadEntry(e.Path, e.HeadMode, e.HeadOid, e.IndexMode, e.IndexOid)).ToList());
         }
+        catch (Antiphon.GitInProcess.WorkTreeIdentityException ex) { throw new SourceReadException(ex.Code); }
+        catch (LibGit2Sharp.LibGit2SharpException) { throw new SourceReadException("libgit2_failed"); }
+    }
+
+    /// <summary>
+    /// The hardened git child reads only the repository's config (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL set to the
+    /// null device). libgit2 in this process would also read the system, global and XDG files (Git for Windows'
+    /// system file sets core.autocrlf; a user's global excludes hide untracked files), so point those search paths
+    /// at an empty directory. No long-lived host loads this assembly: the tool runs as its own process, and the test
+    /// host already isolates libgit2 the same way.
+    /// </summary>
+    private static void IsolateLibGit2FromUserConfig()
+    {
+        var empty = Path.Combine(Path.GetTempPath(), "antiphon-checkpoint-libgit2-noconfig");
+        Directory.CreateDirectory(empty);
+        foreach (var level in new[]
+                 {
+                     LibGit2Sharp.ConfigurationLevel.System, LibGit2Sharp.ConfigurationLevel.Global,
+                     LibGit2Sharp.ConfigurationLevel.Xdg, LibGit2Sharp.ConfigurationLevel.ProgramData,
+                 })
+            LibGit2Sharp.GlobalSettings.SetConfigSearchPaths(level, empty);
     }
 
     private static void Add(IncrementalHash hash, ReadOnlySpan<byte> bytes)
@@ -182,26 +182,6 @@ public sealed class SourceSnapshot
         BinaryPrimitives.WriteInt64BigEndian(length, bytes.Length);
         hash.AppendData(length);
         hash.AppendData(bytes);
-    }
-
-    private static byte[] RunGit(string repository, IReadOnlyList<string> args)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repository,
-        };
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        CheckpointProcessRunner.BytesResult result;
-        try { result = CheckpointProcessRunner.RunBytes(start, 30_000, git: true); }
-        catch (System.ComponentModel.Win32Exception) { throw new SourceCaptureException("git_start"); }
-        if (result.TimedOut) throw new SourceCaptureException("git_timeout");
-        if (result.Exit != 0) throw new SourceCaptureException("git_exit");
-        return result.Stdout;
-    }
-
-    private sealed class SourceCaptureException(string code) : Exception
-    {
-        public string Code { get; } = code;
     }
 
     private sealed class ByteArrayComparer : IComparer<byte[]>

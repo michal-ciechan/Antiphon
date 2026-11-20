@@ -11,5 +11,7 @@
     <InternalsVisibleTo Include="Antiphon.SessionRunner.Tests" />
     <InternalsVisibleTo Include="Antiphon.Tests" />
     <InternalsVisibleTo Include="Antiphon.GitInProcess.Tests" />
+    <!-- The checkpoint tool's source identity reads the checkout through WorkTreeIdentity. -->
+    <InternalsVisibleTo Include="Antiphon.Checkpoints" />
   </ItemGroup>
 </Project>

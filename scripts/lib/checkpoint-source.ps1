@@ -25,13 +25,36 @@ function Add-CheckpointSourceBytes {
     $Hash.AppendData($Bytes)
 }
 
+# Fingerprint v2 (the tool's SourceSnapshot computes the same identity from libgit2): SHA-256 over length-framed
+# records: version 2, HEAD, then for each path status lists (ignored files excluded), in git's byte order, the
+# path, its HEAD mode and id, its index mode and id (empty when absent) and its work-tree token. Two git reads
+# per capture: status --porcelain=v2 (HEAD, modes and ids) and ls-files -v (index flags).
+function Get-CheckpointWorkTreeToken {
+    param([string]$Root, [string]$Relative)
+    $full = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $Relative.TrimEnd('/')))
+    $within = [System.IO.Path]::GetRelativePath([System.IO.Path]::GetFullPath($Root), $full)
+    if ($within -eq '..' -or $within.StartsWith('../') -or $within.StartsWith('..\') -or [System.IO.Path]::IsPathRooted($within)) { throw 'path_escape' }
+    $info = [System.IO.FileInfo]::new($full)
+    if ($null -ne $info.LinkTarget) { return 'link:' + $info.LinkTarget }
+    $directory = [System.IO.DirectoryInfo]::new($full)
+    if ($null -ne $directory.LinkTarget) { return 'link:' + $directory.LinkTarget }
+    if ($directory.Exists) { return 'directory' }
+    if (-not $info.Exists) { return 'absent' }
+    $beforeLength = $info.Length
+    $beforeWrite = $info.LastWriteTimeUtc
+    $digest = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $full))).ToLowerInvariant()
+    $info.Refresh()
+    if ($info.Length -ne $beforeLength -or $info.LastWriteTimeUtc -ne $beforeWrite) { throw 'file_changed' }
+    $executable = (-not $IsWindows) -and (([int]$info.UnixFileMode -band [int][System.IO.UnixFileMode]::UserExecute) -ne 0)
+    if ($executable) { return 'file:' + $digest + ':x' }
+    return 'file:' + $digest
+}
+
 function Get-CheckpointSourceOnce {
     param([string]$Repository)
     $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
-    $commit = $utf8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', 'HEAD'))).Trim()
-    if ($commit -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'head_invalid' }
-    [byte[]]$status = Get-CheckpointGitBytes $Repository @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none')
-    # Porcelain and diff omit worktree edits hidden by index flags. Refuse to
+    [byte[]]$status = Get-CheckpointGitBytes $Repository @('status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--ignore-submodules=none', '--no-renames')
+    # Porcelain omits worktree edits hidden by index flags. Refuse to
     # certify any such index until its working content has been verified.
     [byte[]]$indexFlags = Get-CheckpointGitBytes $Repository @('ls-files', '-v', '-z')
     $flagIndex = 0
@@ -43,57 +66,56 @@ function Get-CheckpointSourceOnce {
         if ($flag -cnotmatch '^[A-Z]$') { throw 'index_flags_invalid' }
         $flagIndex = $flagEnd + 1
     }
-    $untracked = [System.Collections.Generic.List[byte[]]]::new()
-    $count = 0
+    $commit = $null
+    $entries = [System.Collections.Generic.List[object]]::new()
     $index = 0
     while ($index -lt $status.Length) {
         $end = [array]::IndexOf($status, [byte]0, $index)
-        if ($end -lt $index -or $end - $index -lt 4 -or $status[$index + 2] -ne 32) { throw 'status_invalid' }
-        $x = [char]$status[$index]
-        $y = [char]$status[$index + 1]
-        if ($x -eq 'U' -or $y -eq 'U' -or ($x -eq 'A' -and $y -eq 'A') -or ($x -eq 'D' -and $y -eq 'D')) { throw 'unmerged_index' }
-        [byte[]]$path = $status[($index + 3)..($end - 1)]
-        if ($x -eq '?' -and $y -eq '?') { $untracked.Add($path) }
-        elseif ($x -ceq 'm' -or $y -ceq 'm' -or $x -ceq '?' -or $y -ceq '?') { throw 'submodule_unsupported' }
-        $count++
+        if ($end -le $index) { throw 'status_invalid' }
+        $record = $utf8.GetString($status, $index, $end - $index)
         $index = $end + 1
-        if ($x -in @('R', 'C') -or $y -in @('R', 'C')) {
-            $end = [array]::IndexOf($status, [byte]0, $index)
-            if ($end -lt $index) { throw 'status_invalid' }
-            $index = $end + 1
+        if ($record.StartsWith('# ', [StringComparison]::Ordinal)) {
+            if ($record.StartsWith('# branch.oid ', [StringComparison]::Ordinal)) { $commit = $record.Substring(13) }
+            continue
+        }
+        switch -CaseSensitive ($record.Substring(0, 2)) {
+            '1 ' {
+                # 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+                $fields = $record.Split(' ', 9)
+                if ($fields.Count -ne 9 -or $fields[8].Length -eq 0) { throw 'status_invalid' }
+                if ($fields[2] -cne 'N...') { throw 'submodule_unsupported' }
+                $absent = '000000'
+                $entries.Add([pscustomobject]@{
+                    Path = $fields[8]
+                    HeadMode = if ($fields[3] -ceq $absent) { '' } else { $fields[3] }
+                    HeadOid = if ($fields[3] -ceq $absent) { '' } else { $fields[6] }
+                    IndexMode = if ($fields[4] -ceq $absent) { '' } else { $fields[4] }
+                    IndexOid = if ($fields[4] -ceq $absent) { '' } else { $fields[7] }
+                })
+            }
+            '? ' {
+                $entries.Add([pscustomobject]@{ Path = $record.Substring(2); HeadMode = ''; HeadOid = ''; IndexMode = ''; IndexOid = '' })
+            }
+            'u ' { throw 'unmerged_index' }
+            default { throw 'status_invalid' }
         }
     }
-    [byte[]]$headDiff = Get-CheckpointGitBytes $Repository @('-c', 'core.quotePath=false', 'diff', 'HEAD', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames')
-    [byte[]]$cachedDiff = Get-CheckpointGitBytes $Repository @('-c', 'core.quotePath=false', 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames')
+    if ($null -eq $commit -or $commit -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'head_invalid' }
     $hash = [System.Security.Cryptography.IncrementalHash]::CreateHash([System.Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
-        Add-CheckpointSourceBytes $hash ([byte[]]@(1))
+        Add-CheckpointSourceBytes $hash ([byte[]]@(2))
         Add-CheckpointSourceBytes $hash ($utf8.GetBytes($commit))
-        Add-CheckpointSourceBytes $hash $status
-        Add-CheckpointSourceBytes $hash $headDiff
-        Add-CheckpointSourceBytes $hash $cachedDiff
-        foreach ($path in @($untracked | Sort-Object { [System.Convert]::ToHexString($_) } -CaseSensitive)) {
-            Add-CheckpointSourceBytes $hash $path
-            $relative = $utf8.GetString($path)
-            $full = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Repository, $relative))
-            $within = [System.IO.Path]::GetRelativePath([System.IO.Path]::GetFullPath($Repository), $full)
-            if ($within -eq '..' -or $within.StartsWith('../') -or $within.StartsWith('..\')) { throw 'path_escape' }
-            $info = [System.IO.FileInfo]::new($full)
-            if (-not $info.Exists -and $null -eq $info.LinkTarget) { throw 'untracked_missing' }
-            if ($null -ne $info.LinkTarget) {
-                [byte[]]$digest = [System.Security.Cryptography.SHA256]::HashData($utf8.GetBytes($info.LinkTarget))
-            } else {
-                $beforeLength = $info.Length
-                $beforeWrite = $info.LastWriteTimeUtc
-                [byte[]]$digest = [System.Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $full))
-                $info.Refresh()
-                if ($info.Length -ne $beforeLength -or $info.LastWriteTimeUtc -ne $beforeWrite) { throw 'file_changed' }
-            }
-            Add-CheckpointSourceBytes $hash $digest
+        foreach ($entry in @($entries | Sort-Object { [System.Convert]::ToHexString($utf8.GetBytes($_.Path)) } -CaseSensitive)) {
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.Path))
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.HeadMode))
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.HeadOid))
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.IndexMode))
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.IndexOid))
+            Add-CheckpointSourceBytes $hash ($utf8.GetBytes((Get-CheckpointWorkTreeToken $Repository $entry.Path)))
         }
         return [pscustomobject]@{
             commit = $commit
-            dirtyFiles = $count
+            dirtyFiles = $entries.Count
             fingerprint = [System.Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
             observedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
             captureStatus = 'known'
