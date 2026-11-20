@@ -239,10 +239,21 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
 
     public static IEnumerable<string> ScenarioNames() => Scenarios.Select(s => s.Name);
 
+    // CARD-1830. MAX_PATH and NTFS index timestamps. Same early return as the other
+    // Windows-only cases in this project: the method still runs on Linux, and these
+    // three arguments still run on Windows.
+    private static readonly HashSet<string> WindowsOnlyScenarios = new(StringComparer.Ordinal)
+    {
+        "long-path-untracked",
+        "same-size-edit-mtime-restored-inside-the-index-second",
+        "same-size-edit-mtime-restored-settled",
+    };
+
     [Test]
     [MethodDataSource(nameof(ScenarioNames))]
     public async Task Status_and_ls_files_verdicts_match_git(string name)
     {
+        if (!OperatingSystem.IsWindows() && WindowsOnlyScenarios.Contains(name)) return;
         var scenario = Scenarios.Single(s => s.Name == name);
         await using var repo = await Repo.CreateAsync(scenario.Linked);
         await scenario.Arrange(repo);
