@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -127,6 +128,19 @@ public sealed class MatrixDefaultComplexityCreateTests
         task.RoutingPinId.ShouldBe(pin.Id);
     }
 
+    [Test]
+    public async Task A_model_only_create_is_refused_and_is_not_chain_governed()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await f.Row(AgentTaskRole.Code, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.High));
+        var ex = await Should.ThrowAsync<ValidationException>(() => f.Create(new CreateAgentTaskRequest(
+            "audit this diff", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared)
+        { Model = ModelAlias.Gpt62Astra }));
+        ex.StatusCode.ShouldBe(422);
+        ex.Code.ShouldBe("model_requires_kind_and_level");
+        (await f.Db.AgentTasks.CountAsync()).ShouldBe(0);
+    }
+
     [Test, Category("Unit")]
     [Arguments("plain", true)]
     [Arguments("Check", false)]
@@ -134,6 +148,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     [Arguments("agent", false)]
     [Arguments("kind", false)]
     [Arguments("level", false)]
+    [Arguments("model", false)]
     [Arguments("ignore", false)]
     [Arguments("follow-up", false)]
     public void The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled(string variant, bool expected)
@@ -146,6 +161,7 @@ public sealed class MatrixDefaultComplexityCreateTests
             "agent" => request with { AgentId = Guid.NewGuid() },
             "kind" => request with { AgentKind = AgentKind.Codex },
             "level" => request with { ModelLevel = AgentModelLevel.High },
+            "model" => request with { Model = ModelAlias.Gpt62Astra },
             "ignore" => request with { IgnoreModelDisabled = true },
             "plain" or "follow-up" => request,
             _ => throw new ArgumentOutOfRangeException(nameof(variant)),

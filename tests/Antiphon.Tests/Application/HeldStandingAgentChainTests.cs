@@ -142,6 +142,33 @@ public class HeldStandingAgentChainTests
         after.ModelLevel.ShouldBe(AgentModelLevel.High, "C1496-wall-control-level");
     }
 
+    [Test]
+    public async Task Wall_reroute_drops_the_explicit_alias()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await WallRerouteFixture.SeedHardChainAsync(schema);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await SeedHoldAsync(db, ModelAlias.Fable, DateTime.UtcNow.AddHours(1));
+        var agentId = await SeedAgentAsync(db, ModelAlias.Opus, ephemeral: true);
+        var sessionId = Guid.NewGuid();
+        var task = await SeedChainTaskAsync(
+            db, Path.GetTempPath(), AgentTaskStatus.Working, sessionId, agentId, ephemeral: true);
+        var tracked = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        tracked.RequestedModelAlias = ModelAlias.Gpt62Astra;
+        await db.SaveChangesAsync();
+
+        var decision = await CreateService(db, new RecordingSessionStopper()).RerouteOnWallAsync(
+            tracked, ModelAlias.Fable, "usage wall", false, CancellationToken.None);
+
+        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Rerouted);
+        decision.NewAlias.ShouldBe(ModelAlias.Opus);
+        db.ChangeTracker.Clear();
+        var after = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        after.ModelLevel.ShouldBe(AgentModelLevel.High);
+        after.RequestedModelAlias.ShouldBeNull();
+        after.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+    }
+
     private static async Task<Guid> SeedAgentAsync(AppDbContext db, string modelId, bool ephemeral)
     {
         var slug = (ephemeral ? "ephemeral-" : "standing-") + modelId;

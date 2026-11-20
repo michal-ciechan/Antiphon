@@ -95,6 +95,49 @@ public class ComplexityDispatcherTests
     }
 
     [Test]
+    public async Task A_blocked_chain_resume_drops_the_explicit_alias()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var taskId = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "blocked plan hard",
+                Goal = "plan it",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier,
+                Complexity = TaskComplexity.Hard,
+                RequestedModelAlias = ModelAlias.Gpt62Astra,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Blocked,
+                FailureReason = ComplexityRoutingService.RoutingExhaustedPrefix
+                    + "Plan/Hard chain is empty (no Plan/Hard row, no any-role Hard row, no config default).",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SeedChainAsync(schema, TaskComplexity.Hard, AgentTaskRole.Plan,
+            (AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        var dispatcher = CreateDispatcher(schema);
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.RequestedModelAlias.ShouldBeNull();
+        var args = LaunchArgs(dispatcher, stored);
+        args[args.IndexOf("--model") + 1].ShouldBe(ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        args.ShouldNotContain(ModelAlias.Gpt62Astra);
+    }
+
+    [Test]
     public async Task A_held_head_is_rerouted_to_the_next_candidate_at_dispatch()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -115,6 +158,34 @@ public class ComplexityDispatcherTests
         stored.Complexity.ShouldBe(TaskComplexity.Hard);
         (await verify.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task A_dispatch_rewalk_drops_the_explicit_alias()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await SeedHardChainAsync(schema);
+        await SeedHoldAsync(schema, "fable", DateTime.UtcNow.AddHours(1));
+        var (agentId, _) = await SeedWarmAgentAsync(schema, workspace.Path);
+        var task = await SeedQueuedChainTaskAsync(schema, workspace.Path, agentId);
+        await using (var db = CreateContext(schema))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.RequestedModelAlias = "fable";
+            await db.SaveChangesAsync();
+        }
+
+        var dispatcher = CreateDispatcher(schema);
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.High);
+        stored.RequestedModelAlias.ShouldBeNull();
+        var args = LaunchArgs(dispatcher, stored);
+        args[args.IndexOf("--model") + 1].ShouldBe(ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.High));
+        args.ShouldNotContain("fable");
     }
 
     // CARD-1513: the walk skips a held tier alias and returns Rerouted, but a standing agent
@@ -405,6 +476,32 @@ public class ComplexityDispatcherTests
                 taskId, AgentKind.Grok, AgentModelLevel.Frontier, CancellationToken.None));
         ex.StatusCode.ShouldBe(409);
         ex.Message.ShouldContain("Working");
+    }
+
+    private static List<string> LaunchArgs(AgentTaskDispatcher dispatcher, AgentTask task)
+    {
+        var spec = dispatcher.BuildLaunchSpec(
+            task,
+            new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = "launch",
+                Slug = "launch",
+                WorkingDirectory = task.WorkingDirectory,
+                Kind = task.AgentKind,
+                IsPoolDelegate = true,
+            },
+            new AgentSession
+            {
+                Id = Guid.NewGuid(),
+                DefinitionName = "claude",
+                AgentKind = task.AgentKind,
+                Status = SessionStatus.Starting,
+                Cwd = task.WorkingDirectory,
+                Cols = 120,
+                Rows = 30,
+            });
+        return spec.Args.ToList();
     }
 
     private static AgentTaskDispatcher CreateDispatcher(IsolatedTestSchema schema)
