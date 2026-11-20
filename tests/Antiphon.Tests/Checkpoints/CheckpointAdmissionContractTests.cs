@@ -116,11 +116,48 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         starts.Clear();
         var other = TempDir();
         CheckpointFixtureProcess.Git(other, "init", "-q");
+        CheckpointFixtureProcess.Git(other, "config", "filter.other.clean", "other-driver-must-not-run");
         var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = other };
         foreach (var argument in new[] { "-C", other, "status", "--porcelain" }) start.ArgumentList.Add(argument);
         CheckpointProcessRunner.RunObserved(start, 30_000, true,
             child => starts.Add(child.ArgumentList.ToArray()), 60_000, cancellationToken).Exit.ShouldBe(0);
         starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public void Driver_lookup_answers_a_driverless_config_from_its_files(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        var sub = Directory.CreateDirectory(Path.Combine(root, "sub")).FullName;
+        var starts = new List<string[]>();
+        int Lookups(string directory)
+        {
+            starts.Clear();
+            var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = directory };
+            foreach (var argument in new[] { "status", "--porcelain" }) start.ArgumentList.Add(argument);
+            CheckpointProcessRunner.RunObserved(start, 30_000, true,
+                child => starts.Add(child.ArgumentList.ToArray()), 0, cancellationToken).Exit.ShouldBe(0);
+            return starts.Count(args => args.Contains("--get-regexp"));
+        }
+
+        // Hardened git reads only the repository's own config: with no driver word in it, git would print nothing.
+        Lookups(root).ShouldBe(0, "a driverless config is read from its file");
+        starts.Count.ShouldBe(1, "only the read itself starts");
+        Lookups(sub).ShouldBe(0, "found from a subdirectory too");
+
+        // Any mention of a driver word or an include asks git, even where git would still find no driver.
+        CheckpointFixtureProcess.Git(root, "config", "remote.origin.url", "https://example.invalid/diff-tools.git");
+        Lookups(root).ShouldBe(1, "a URL naming diff is a doubt git settles");
+        CheckpointFixtureProcess.Git(root, "config", "--unset", "remote.origin.url");
+        Lookups(root).ShouldBe(0);
+        var included = Path.Combine(TempDir(), "drivers.gitconfig");
+        File.WriteAllText(included, "[filter \"inc\"]\n\tclean = included-driver-must-not-run\n");
+        CheckpointFixtureProcess.Git(root, "config", "include.path", included);
+        Lookups(root).ShouldBe(1, "an include can name drivers the file does not show");
+        starts.Count(args => args.Contains("status") && args.Contains("filter.inc.clean=")).ShouldBe(1,
+            "git's answer disables the included driver");
     }
 
     [Test]

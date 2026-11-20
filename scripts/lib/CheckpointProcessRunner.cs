@@ -181,6 +181,16 @@ namespace Antiphon.Checkpoints
                         return cached.Value;
                 }
             }
+            if (NoDriverConfigured(config))
+            {
+                if (key != null)
+                    lock (DriverSettingsGate)
+                    {
+                        if (lifetime > 0) DriverSettingsCache[key] = new KeyValuePair<long, string>(Environment.TickCount64, "");
+                        if (scoped != null) scoped[key] = "";
+                    }
+                return "";
+            }
             var settings = RunCoreAsync(config, ReadTextAsync, cancellationToken, beforeStart).GetAwaiter().GetResult();
             var stdout = settings.Stdout ?? "";
             // Exit 1 is "no driver configured"; anything else is not an answer worth keeping.
@@ -191,6 +201,70 @@ namespace Antiphon.Checkpoints
                     if (scoped != null) scoped[key] = stdout;
                 }
             return stdout;
+        }
+
+        // Whether the driver lookup's answer is empty without asking git. The lookup is hardened (GIT_CONFIG_NOSYSTEM,
+        // GIT_CONFIG_GLOBAL on the null device), so git reads only the repository's own config files: config in its
+        // git dir and common dir, config.worktree, and whatever they include. When the nearest repository's files
+        // all exist as plain text that never mentions "filter", "diff" or "include", no key can match the lookup
+        // (filter.*.clean|smudge|process|required, diff.*.textconv) and git would print nothing. Any doubt asks git:
+        // a variable that redirects git's repository or config, no repository found, an unreadable or odd .git,
+        // or one of those words anywhere (a URL containing "diff" included).
+        private static bool NoDriverConfigured(ProcessStartInfo config)
+        {
+            try
+            {
+                var nullPath = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+                if (!config.Environment.TryGetValue("GIT_CONFIG_NOSYSTEM", out var noSystem) || noSystem != "1") return false;
+                if (!config.Environment.TryGetValue("GIT_CONFIG_GLOBAL", out var global)
+                    || !string.Equals(global, nullPath, StringComparison.OrdinalIgnoreCase)) return false;
+                foreach (var name in new[] { "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CEILING_DIRECTORIES" })
+                    if (config.Environment.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value)) return false;
+                var start = string.IsNullOrEmpty(config.WorkingDirectory) ? Environment.CurrentDirectory : config.WorkingDirectory;
+                string gitDir = null;
+                for (var directory = new DirectoryInfo(Path.GetFullPath(start)); directory != null; directory = directory.Parent)
+                {
+                    var here = directory.FullName;
+                    // A git dir itself (bare, or a working directory inside .git): git uses it as the repository.
+                    if (File.Exists(Path.Combine(here, "HEAD")) && Directory.Exists(Path.Combine(here, "objects"))) { gitDir = here; break; }
+                    var dotGit = Path.Combine(here, ".git");
+                    if (Directory.Exists(dotGit)) { gitDir = dotGit; break; }
+                    if (File.Exists(dotGit))
+                    {
+                        var pointer = File.ReadAllText(dotGit).Trim();
+                        if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return false;
+                        gitDir = Path.GetFullPath(Path.Combine(here, pointer.Substring("gitdir:".Length).Trim()));
+                        break;
+                    }
+                }
+                if (gitDir == null || !Directory.Exists(gitDir)) return false;
+                var files = new List<string> { Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") };
+                var commonPointer = Path.Combine(gitDir, "commondir");
+                if (File.Exists(commonPointer))
+                {
+                    var common = Path.GetFullPath(Path.Combine(gitDir, File.ReadAllText(commonPointer).Trim()));
+                    files.Add(Path.Combine(common, "config"));
+                    files.Add(Path.Combine(common, "config.worktree"));
+                }
+                var read = false;
+                foreach (var file in files)
+                {
+                    if (Directory.Exists(file)) return false;
+                    if (!File.Exists(file)) continue;
+                    var text = File.ReadAllText(file);
+                    if (text.IndexOf("filter", StringComparison.OrdinalIgnoreCase) >= 0
+                        || text.IndexOf("diff", StringComparison.OrdinalIgnoreCase) >= 0
+                        || text.IndexOf("include", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return false;
+                    read = true;
+                }
+                return read;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
+                || ex is NotSupportedException || ex is System.Security.SecurityException)
+            {
+                return false;
+            }
         }
 
         private static Task<string> ReadTextAsync(Process process, CancellationToken cancellationToken) =>
