@@ -20599,7 +20599,8 @@
     {
       "path": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
       "classes": [
-        "E2ECopyOwnedPtyHostAppHostContractTests"
+        "E2ECopyOwnedPtyHostAppHostContractTests",
+        "NightlyPolicyTests"
       ]
     },
     {
@@ -21876,6 +21877,7 @@
         "ImpactedClassesSelectorTests",
         "LandGraphAuditProjectInstanceTests",
         "LandNonCodeSkipTests",
+        "NightlyPolicyTests",
         "PlanCoverageBindingTests",
         "ReleaseImpactRuntimeTests",
         "ReleaseImpactScriptTests"
@@ -24905,6 +24907,7 @@
         "C1677TempSweepTests",
         "ExpectedDurationSyncTests",
         "NativeLinuxPolicyExecutionTests",
+        "NightlyPolicyTests",
         "RcFullTimingContractTests",
         "RcFullWatchdogHarnessTests",
         "RcFullWatchdogTests",
@@ -27388,6 +27391,12 @@
         "ImpactedClassesSelectorTests",
         "TimeoutAuditTests",
         "WindowsUnitPlatformAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/test-selection-policy.json",
+      "classes": [
+        "NightlyPolicyTests"
       ]
     },
     {
