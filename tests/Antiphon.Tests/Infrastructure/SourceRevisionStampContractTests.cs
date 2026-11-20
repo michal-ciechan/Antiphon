@@ -114,8 +114,8 @@ public sealed class SourceRevisionStampContractTests
         foreach (var builder in builders)
         {
             var text = DockerStackDocuments.Read(builder.Path);
-            text.ShouldContain(builder.Token, builder.Path);
-            text.ShouldNotContain("SourceRevisionId", builder.Path);
+            text.ShouldContain(builder.Token, customMessage: builder.Path);
+            text.ShouldNotContain("SourceRevisionId", customMessage: builder.Path);
         }
     }
 
@@ -140,7 +140,7 @@ public sealed class SourceRevisionStampContractTests
             leftInfo.SourceLink.ShouldBe(rightInfo.SourceLink, "sourcelink inputs must not carry HEAD");
 
             var stamped = BuildProbe(left, ProbeSha);
-            stamped.Referenced.ShouldContain("+" + ProbeSha, "a global -p:SourceRevisionId must reach the referenced project");
+            stamped.Referenced.ShouldContain("+" + ProbeSha, customMessage: "a global -p:SourceRevisionId must reach the referenced project");
             stamped.Entry.ShouldContain("+" + ProbeSha);
         }
         finally
