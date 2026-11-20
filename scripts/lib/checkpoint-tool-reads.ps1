@@ -36,8 +36,10 @@ function Get-CheckpointToolAssembly {
 # LibGit2VsGit verdict tests), so a later git reading of an unchanged tree agrees with them.
 function Disable-CheckpointToolReads {
     param([string]$Tool, $Failure)
-    $message = if ($null -ne $Failure.Exception.InnerException) { $Failure.Exception.InnerException.Message } else { $Failure.Exception.Message }
-    Write-Verbose ('checkpoint tool reads stopped, git answers the rest of this run: ' + $message)
+    # The innermost cause, past PowerShell's and reflection's wrappers.
+    $inner = $Failure.Exception
+    while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+    Write-Verbose ('checkpoint tool reads stopped, git answers the rest of this run: ' + $inner.GetType().Name + ': ' + $inner.Message)
     $script:CheckpointToolLoads[$Tool] = $false
 }
 
