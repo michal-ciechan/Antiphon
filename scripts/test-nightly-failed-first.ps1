@@ -870,7 +870,7 @@ function Test-FullBytesAndCoverageConserved {
         $seal=[IO.File]::ReadAllText((Join-Path $generation 'seal.json'))|ConvertFrom-Json
         if($seal.projectionDigest -cne ([Antiphon.Nightly.PriorFailureHistory]::Digest((Join-Path $arm.TimingRoot 'groups-executed.json'))) -or $seal.sequence -ne $arm.Launches.Count -or -not $arm.Context.Closed){$journalOk=$false}
         $records=@(Get-ChildItem -LiteralPath $generation -File|Where-Object {$_.Name -match '^\d{8}\.json$'}|Sort-Object Name)
-        for($i=0;$i -lt $records.Count;$i++){$record=[IO.File]::ReadAllText($records[$i].FullName)|ConvertFrom-Json;if($record.sequence -ne $i+1 -or (ConvertFrom-TestPhaseB64 $record.freshSuiteKey) -cne $arm.Launches[$i].suite -or (ConvertFrom-TestPhaseB64 $record.freshChunkKey) -cne $arm.Launches[$i].chunk){$journalOk=$false}}
+        for($i=0;$i -lt $records.Count;$i++){$record=[IO.File]::ReadAllText($records[$i].FullName)|ConvertFrom-Json;if($record.sequence -ne $i+1 -or ([Antiphon.Nightly.TestPhaseText]::FromB64($record.freshSuiteKey)) -cne $arm.Launches[$i].suite -or ([Antiphon.Nightly.TestPhaseText]::FromB64($record.freshChunkKey)) -cne $arm.Launches[$i].chunk){$journalOk=$false}}
     }
     Assert-FF $journalOk 'journalBindings'
     $timelinesOk=$true
@@ -1057,7 +1057,7 @@ function Test-FFArtifactSchemas([object[]]$Arms) {
             $text=[IO.File]::ReadAllText($recordPath.FullName);$record=$text|ConvertFrom-Json
             if(-not (Test-FFSchemaKeys $record @('version','kind','generation','sequence','publicationId','root','freshSuiteKey','settledSuiteKey','freshChunkKey','settledChunkKey','freshRun','freshAttempt','freshHeaderSuite','digest','rowJson','settledRowJson','writerEnvironment','reason'))){$ok=$false}
             $blank=$text.Replace(('"digest":"'+$record.digest+'"'),'"digest":""')
-            if((Get-TestPhaseSha256Text $blank) -cne $record.digest -or $record.generation -cne $pointer.generation -or (ConvertFrom-TestPhaseB64 $record.freshRun) -cne 'conservation-run' -or (ConvertFrom-TestPhaseB64 $record.freshAttempt) -cne '1' -or $record.freshSuiteKey -cne $record.settledSuiteKey -or $record.freshChunkKey -cne $record.settledChunkKey -or $record.writerEnvironment -cne $meta.writerEnvironment){$ok=$false}
+            if(([Antiphon.Nightly.TestPhaseRecords]::Sha256Text($blank)) -cne $record.digest -or $record.generation -cne $pointer.generation -or ([Antiphon.Nightly.TestPhaseText]::FromB64($record.freshRun)) -cne 'conservation-run' -or ([Antiphon.Nightly.TestPhaseText]::FromB64($record.freshAttempt)) -cne '1' -or $record.freshSuiteKey -cne $record.settledSuiteKey -or $record.freshChunkKey -cne $record.settledChunkKey -or $record.writerEnvironment -cne $meta.writerEnvironment){$ok=$false}
         }
         $summary=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.json'))|ConvertFrom-Json
         if(-not (Test-FFSchemaKeys $summary @('version','complete','quality','tornLines','malformedLines','summaryAggregationBudgetMilliseconds','summaryAggregationMilliseconds','tests','sharedFixtures')) -or $summary.complete -or $summary.quality -cnotcontains 'missing-phase-unknown' -or $summary.tornLines -ne 0 -or $summary.malformedLines -ne 0 -or $summary.summaryAggregationBudgetMilliseconds -ne 5000 -or $summary.summaryAggregationMilliseconds -lt 0 -or $summary.sharedFixtures.Count -ne 0 -or $summary.tests.Count -ne 4){$ok=$false}

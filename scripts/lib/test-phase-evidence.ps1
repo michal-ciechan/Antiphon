@@ -72,17 +72,6 @@ function Enable-TestPhaseExecutionEnvironment {
     return $Environment
 }
 
-function ConvertTo-TestPhaseMarkdownCell {
-    param($Value)
-    $text = ''
-    if ($null -ne $Value) { $text = [string]$Value }
-    $text = $text.Replace('\', '\\')
-    $text = $text.Replace('|', '\|')
-    $text = $text.Replace("`r", ' ')
-    $text = $text.Replace("`n", ' ')
-    return $text
-}
-
 function Write-TestPhaseTextAtomic {
     # During a nightly run every write is queued on the evidence file system (nightly-core.ps1). -Deferred is
     # kept for callers written before that.
@@ -104,16 +93,6 @@ function Write-TestPhaseTextAtomic {
     } else {
         [System.IO.File]::Move($tmp, $Path)
     }
-}
-
-function ConvertTo-TestPhaseRelativePath {
-    param([string]$LogRoot, [string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($LogRoot)) { return '' }
-    $root = [System.IO.Path]::GetFullPath($LogRoot).TrimEnd('\', '/')
-    $full = [System.IO.Path]::GetFullPath($Path)
-    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return '' }
-    $rel = $full.Substring($root.Length).TrimStart('\', '/')
-    return ($rel.Replace('\', '/'))
 }
 
 function Get-TestPhaseClassBasisMap {
@@ -154,34 +133,6 @@ function Get-TestPhaseTimingDirectory {
         return [string]$script:QualificationTimingRoot
     }
     return (Join-Path $RunDirectory 'timing')
-}
-
-function Read-TestPhaseTrxAttribute {
-    param([string]$Attrs, [string]$Name)
-    if ([string]::IsNullOrEmpty($Attrs) -or [string]::IsNullOrEmpty($Name)) { return '' }
-    $pattern = '\b' + [regex]::Escape($Name) + '\s*=\s*"([^"]*)"'
-    $match = [regex]::Match($Attrs, $pattern)
-    if ($match.Success) { return [string]$match.Groups[1].Value }
-    $pattern = '\b' + [regex]::Escape($Name) + "\s*=\s*'([^']*)'"
-    $match = [regex]::Match($Attrs, $pattern)
-    if ($match.Success) { return [string]$match.Groups[1].Value }
-    return ''
-}
-
-function Get-TestPhaseStdOutText {
-    param([string]$Body)
-    if ([string]::IsNullOrEmpty($Body)) { return '' }
-    $open = $Body.IndexOf('<StdOut', [StringComparison]::Ordinal)
-    if ($open -lt 0) { return '' }
-    $gt = $Body.IndexOf('>', $open)
-    if ($gt -lt 0) { return '' }
-    $close = $Body.IndexOf('</StdOut>', $gt, [StringComparison]::Ordinal)
-    if ($close -lt 0) { return '' }
-    $inner = $Body.Substring($gt + 1, $close - ($gt + 1))
-    if ($inner.StartsWith('<![CDATA[', [StringComparison]::Ordinal) -and $inner.EndsWith(']]>', [StringComparison]::Ordinal) -and $inner.Length -ge 12) {
-        return $inner.Substring(9, $inner.Length - 12)
-    }
-    return $inner
 }
 
 function Read-TestPhaseTrxRows {
@@ -643,47 +594,6 @@ function ConvertTo-TestPhaseExecutedChunk {
     }
 }
 
-function ConvertTo-TestPhaseB64 {
-    param([string]$Text)
-    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$Text))
-}
-
-function ConvertFrom-TestPhaseB64 {
-    param([string]$Text)
-    if ([string]::IsNullOrEmpty($Text)) { return '' }
-    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$Text))
-}
-
-function Get-TestPhaseSha256Text {
-    param([string]$Text)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Text)
-        $hash = $sha.ComputeHash($bytes)
-        $sb = New-Object System.Text.StringBuilder
-        foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
-        return $sb.ToString()
-    } finally {
-        $sha.Dispose()
-    }
-}
-
-function Get-TestPhaseSha256File {
-    param([string]$Path)
-    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::Sha256($Path) }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-    try {
-        $hash = $sha.ComputeHash($stream)
-        $sb = New-Object System.Text.StringBuilder
-        foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
-        return $sb.ToString()
-    } finally {
-        $stream.Dispose()
-        $sha.Dispose()
-    }
-}
-
 function Find-TestPhaseTimeZoneById {
     param([string]$Id)
     if ($null -ne $script:TestPhaseTimeZoneFinder) {
@@ -764,18 +674,6 @@ function Get-TestPhaseWriterEnvironment {
     if ($offset.Ticks -lt 0) { $sign = '-' }
     $off = $sign + ([math]::Abs($offset.Hours)).ToString('00') + ':' + ([math]::Abs($offset.Minutes)).ToString('00')
     return ($edition + '|' + [string]$PSVersionTable.PSVersion + '|' + $framework + '|' + $culture + '|' + $ui + '|' + [string]$tz.Id + '|' + $off)
-}
-
-function Test-TestPhaseSuiteChunkEqual {
-    param([string]$LeftSuite, [string]$LeftChunk, [string]$RightSuite, [string]$RightChunk)
-    $cmp = [System.StringComparer]::InvariantCultureIgnoreCase
-    if (-not $cmp.Equals([string]$LeftSuite, [string]$RightSuite)) { return $false }
-    return $cmp.Equals([string]$LeftChunk, [string]$RightChunk)
-}
-
-function Test-TestPhaseOrdinalEqual {
-    param([string]$Left, [string]$Right)
-    return [System.StringComparer]::Ordinal.Equals([string]$Left, [string]$Right)
 }
 
 function Test-TestPhaseUnsafeDirectory {
@@ -911,20 +809,6 @@ function Read-TestPhaseJsonFile {
     try { return ((Read-NightlyEvidenceText $Path) | ConvertFrom-Json) } catch { return $null }
 }
 
-function Test-TestPhaseRecordDigest {
-    param([string]$Text)
-    $needle = '"digest":"'
-    $start = $Text.IndexOf($needle)
-    if ($start -lt 0) { return $false }
-    $hexStart = $start + $needle.Length
-    $end = $Text.IndexOf('"', $hexStart)
-    if ($end -lt 0) { return $false }
-    $hex = $Text.Substring($hexStart, $end - $hexStart).ToLowerInvariant()
-    $probe = $Text.Remove($start, ($end + 1) - $start).Insert($start, '"digest":""')
-    $actual = Get-TestPhaseSha256Text -Text $probe
-    return ($actual -eq $hex)
-}
-
 # Test-Path -LiteralPath for the per-chunk directory checks: a drive-qualified path (X:\...) is answered by
 # .NET (the same answer for a file, a directory, a link and a missing path, without the cmdlet's per-call
 # cost); any other form (relative, provider-qualified, UNC, empty) is still the cmdlet's to resolve or refuse,
@@ -1010,9 +894,9 @@ function Write-TestPhaseSeedCache {
     $lines = New-Object System.Collections.Generic.List[string]
     $flag = '0'
     if ($Context.HeaderAttemptSeen) { $flag = '1' }
-    $lines.Add('H' + "`t" + (ConvertTo-TestPhaseB64 ([string]$Context.HeaderRun)) + "`t" + (ConvertTo-TestPhaseB64 ([string]$Context.HeaderAttempt)) + "`t" + (ConvertTo-TestPhaseB64 ([string]$Context.HeaderSuite)) + "`t" + $flag)
+    $lines.Add('H' + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderRun))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderAttempt))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderSuite))) + "`t" + $flag)
     foreach ($row in $Context.SeedRows) {
-        $lines.Add((ConvertTo-TestPhaseB64 ([string]$row.SettledSuite)) + "`t" + (ConvertTo-TestPhaseB64 ([string]$row.SettledChunk)) + "`t" + [string]$row.SettledJson)
+        $lines.Add(([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$row.SettledSuite))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$row.SettledChunk))) + "`t" + [string]$row.SettledJson)
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     Write-NightlyEvidenceLines (Join-Path $genDir 'seed-cache.txt') $lines.ToArray()
@@ -1038,14 +922,14 @@ function Read-TestPhaseSeedCache {
         if ($second -lt 0) { return $false }
         $rows.Add([pscustomobject]@{
             SettledJson = $line.Substring($second + 1)
-            SettledSuite = (ConvertFrom-TestPhaseB64 $line.Substring(0, $first))
-            SettledChunk = (ConvertFrom-TestPhaseB64 $line.Substring($first + 1, $second - $first - 1))
+            SettledSuite = ([Antiphon.Nightly.TestPhaseText]::FromB64($line.Substring(0, $first)))
+            SettledChunk = ([Antiphon.Nightly.TestPhaseText]::FromB64($line.Substring($first + 1, $second - $first - 1)))
         })
     }
     $Context.HeaderReady = $true
-    $Context.HeaderRun = (ConvertFrom-TestPhaseB64 ([string]$parts[1]))
-    $Context.HeaderAttempt = (ConvertFrom-TestPhaseB64 ([string]$parts[2]))
-    $Context.HeaderSuite = (ConvertFrom-TestPhaseB64 ([string]$parts[3]))
+    $Context.HeaderRun = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[1])))
+    $Context.HeaderAttempt = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[2])))
+    $Context.HeaderSuite = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[3])))
     $Context.HeaderAttemptSeen = ([string]$parts[4] -eq '1')
     $Context.SeedRows = $rows
     $Context.HasSeed = $true
@@ -1115,7 +999,7 @@ function Write-TestPhaseGenerationMetadata {
     }
     $path = Join-Path $genDir 'metadata.json'
     Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($meta, 0))
-    $digest = Get-TestPhaseSha256File -Path $path
+    $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($path)
     $pointer = [ordered]@{
         version = 1
         timingRoot = [string]$Context.TimingRoot
@@ -1164,7 +1048,7 @@ function Initialize-TestPhaseSeedGeneration {
     $cache = Import-TestPhaseSeedRows -Parsed $parsed
     Set-TestPhaseSeedHeader -Context $Context -Cache $cache
     Write-TestPhaseSeedCache -Context $Context
-    $digest = Get-TestPhaseSha256File -Path $seedPath
+    $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($seedPath)
     Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $ParentGeneration -SeedDigest $digest
 }
 
@@ -1210,7 +1094,7 @@ function Import-TestPhaseExistingGeneration {
         return
     }
     $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
-    $same = (Test-TestPhaseOrdinalEqual ([string]$meta.runId) ([string]$Context.RunId)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.attempt) ([string]$Context.Attempt)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.source) ([string]$Context.Source)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.writerEnvironment) ([string]$Context.WriterEnvironment))
+    $same = ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.runId), ([string]$Context.RunId))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.attempt), ([string]$Context.Attempt))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.source), ([string]$Context.Source))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.writerEnvironment), ([string]$Context.WriterEnvironment)))
     $sealed = Test-NightlyEvidencePath (Join-Path $genDir 'seal.json')
     $resumeSealed = [bool]$Recover -and $sealed -and -not $prefix.Corrupt -and $same
     if ($ProjectOnly) {
@@ -1273,7 +1157,7 @@ function Import-TestPhaseExistingGeneration {
         Write-TestPhaseSeedCache -Context $Context
         $header = [pscustomobject]@{ Run = [string]$Context.HeaderRun; Attempt = [string]$Context.HeaderAttempt; Suite = [string]$Context.HeaderSuite }
         Update-TestPhaseContextHeader -Context $Context -Header $header
-        Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $Generation -SeedDigest (Get-TestPhaseSha256File -Path $newSeed)
+        Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $Generation -SeedDigest ([Antiphon.Nightly.TestPhaseText]::Sha256File($newSeed))
         return
     }
     $Context.Generation = $Generation
@@ -1350,7 +1234,7 @@ function Open-TestPhaseExecutedContext {
             Initialize-TestPhaseEmptyGeneration -Context $ctx -ParentGeneration ''
         }
     } else {
-        $bound = (Test-TestPhaseOrdinalEqual ([string]$current.timingRoot) ([string]$timing)) -and (-not [string]::IsNullOrWhiteSpace([string]$current.generation))
+        $bound = ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.timingRoot), ([string]$timing))) -and (-not [string]::IsNullOrWhiteSpace([string]$current.generation))
         if (-not $bound) {
             $ctx.Unresolved = $true
             $ctx.CorruptionReason = 'pointer-binding'
@@ -1493,7 +1377,7 @@ function Add-TestPhaseJournalEnvelope {
         try {
             if (Test-NightlyEvidencePath $final 'Leaf') {
                 $existing = Read-NightlyEvidenceText $final
-                if ((Test-TestPhaseRecordDigest -Text $existing) -and $existing.Contains($PublicationId)) { return $true }
+                if (([Antiphon.Nightly.TestPhaseText]::RecordDigest($existing)) -and $existing.Contains($PublicationId)) { return $true }
                 throw 'commit-conflict'
             }
             Write-TestPhaseCommitFile -FinalPath $final -Text $Text
@@ -1606,7 +1490,7 @@ function Add-TestPhaseExecutedChunk {
     if ($Context.Closed -or $Context.Refused) { throw 'context-closed' }
     Invoke-TestPhasePrefixRescan -Context $Context
     $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) 'current.json')
-    if ($null -eq $current -or -not (Test-TestPhaseOrdinalEqual ([string]$current.generation) ([string]$Context.Generation))) { throw 'stale-context' }
+    if ($null -eq $current -or -not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.generation), ([string]$Context.Generation)))) { throw 'stale-context' }
     if ($null -ne $Context.PendingGaps -and $Context.PendingGaps.Count -gt 0) {
         $drained = Submit-TestPhasePendingGaps -Context $Context
         if (-not $drained) {
@@ -1664,7 +1548,7 @@ function Get-TestPhasePublicationStateText {
     }
     $complete = ($quality.Count -eq 0)
     $digest = ''
-    if ($null -ne $ProjectionText) { $digest = Get-TestPhaseSha256Text -Text $ProjectionText }
+    if ($null -ne $ProjectionText) { $digest = [Antiphon.Nightly.TestPhaseRecords]::Sha256Text($ProjectionText) }
     $state = [ordered]@{
         version = 1
         generation = [string]$Context.Generation
@@ -1684,7 +1568,7 @@ function Write-TestPhasePublicationState {
     $text = Get-TestPhasePublicationStateText -Context $Context -ProjectionText $ProjectionText
     $path = Join-Path $Context.TimingRoot 'groups-executed.state.json'
     Write-TestPhaseTextAtomic -Path $path -Text $text
-    return (Get-TestPhaseSha256File -Path $path)
+    return ([Antiphon.Nightly.TestPhaseText]::Sha256File($path))
 }
 
 function Complete-TestPhaseExecutedProjection {
@@ -1709,7 +1593,7 @@ function Complete-TestPhaseExecutedProjection {
         $stateDigest = Write-TestPhasePublicationState -Context $Context -ProjectionText $text
         if ($terminalSet) {
             $projectionDigest = ''
-            if ($null -ne $text) { $projectionDigest = Get-TestPhaseSha256Text -Text $text }
+            if ($null -ne $text) { $projectionDigest = [Antiphon.Nightly.TestPhaseRecords]::Sha256Text($text) }
             $seal = [ordered]@{
                 version = 1
                 generation = [string]$Context.Generation
@@ -1801,11 +1685,11 @@ function Invoke-TestPhaseExecutedRecovery {
         if ($null -ne $seal -and -not $ctx.Unresolved) {
             $preview = Get-TestPhaseProjectedDocument -Context $ctx
             $projectionDigest = ''
-            if ($null -ne $preview) { $projectionDigest = Get-TestPhaseSha256Text -Text $preview }
+            if ($null -ne $preview) { $projectionDigest = [Antiphon.Nightly.TestPhaseRecords]::Sha256Text($preview) }
             $stateText = Get-TestPhasePublicationStateText -Context $ctx -ProjectionText $preview
-            $stateDigest = Get-TestPhaseSha256Text -Text $stateText
-            $projectionMatch = Test-TestPhaseOrdinalEqual $projectionDigest ([string]$seal.projectionDigest)
-            $stateMatch = Test-TestPhaseOrdinalEqual $stateDigest ([string]$seal.stateDigest)
+            $stateDigest = [Antiphon.Nightly.TestPhaseRecords]::Sha256Text($stateText)
+            $projectionMatch = [Antiphon.Nightly.TestPhaseText]::OrdinalEqual($projectionDigest, ([string]$seal.projectionDigest))
+            $stateMatch = [Antiphon.Nightly.TestPhaseText]::OrdinalEqual($stateDigest, ([string]$seal.stateDigest))
             if (-not $projectionMatch -or -not $stateMatch) {
                 $ctx.Reason = 'seal-digest-mismatch'
                 return $ctx
@@ -1862,7 +1746,7 @@ function Get-TestPhasePublicationQuality {
         $mismatch = $false
         if ($hasJournal) {
             $current = Read-TestPhaseJsonFile -Path $currentPath
-            if ($null -eq $current -or -not (Test-TestPhaseOrdinalEqual ([string]$current.generation) ([string]$state.generation))) { $mismatch = $true }
+            if ($null -eq $current -or -not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.generation), ([string]$state.generation)))) { $mismatch = $true }
             else {
                 $prefix = $KnownPrefix
                 if ($null -eq $prefix) {
@@ -1874,10 +1758,10 @@ function Get-TestPhasePublicationQuality {
         }
         $rootFull = ''
         try { $rootFull = [System.IO.Path]::GetFullPath($timing) } catch { $rootFull = $timing }
-        if (-not (Test-TestPhaseOrdinalEqual ([string]$state.root) ([string]$rootFull))) { $mismatch = $true }
+        if (-not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$state.root), ([string]$rootFull)))) { $mismatch = $true }
         if ($hasFlat) {
-            $digest = Get-TestPhaseSha256File -Path $flat
-            if (-not (Test-TestPhaseOrdinalEqual ([string]$state.projectionDigest) ([string]$digest))) { $mismatch = $true }
+            $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($flat)
+            if (-not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$state.projectionDigest), ([string]$digest)))) { $mismatch = $true }
         }
         if ($mismatch) { $tokens.Add('publication-state-mismatch') }
         if ($state.PSObject.Properties.Name -contains 'quality' -and $null -ne $state.quality) {
@@ -1931,7 +1815,7 @@ function Write-TestPhaseExecutedManifest {
         if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
         if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
     }
-    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomeRows) -Trx (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomeRows) -Trx ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
     $persistent = $false
     $bound = $null
     if ($null -ne $script:TestPhaseExecutedContext) {
@@ -2073,7 +1957,7 @@ function ConvertTo-TestPhaseSummaryRows {
             if ($kind -eq 'fixture') { $fixtures += $rec; continue }
             $id = [string]$rec.testId
             if ([string]::IsNullOrWhiteSpace($id)) { continue }
-            $evidenceKey = Get-TestPhaseEvidenceKey -Header $header -TestId $id
+            $evidenceKey = [Antiphon.Nightly.TestPhaseText]::EvidenceKey($header, $id)
             if ($kind -eq 'start') { $starts[$evidenceKey] = $rec; continue }
             if ($kind -ne 'complete') { continue }
             if ($seenComplete.ContainsKey($evidenceKey)) {
@@ -2355,7 +2239,7 @@ function Write-TestPhaseSummaryFiles {
         if ($shown -ge $limit) { break }
         $shown++
         $total = [long]$test.db + [long]$test.host + [long]$test.process + [long]$test.fs + [long]$test.network + [long]$test.fixture + [long]$test.overlapMs + [long]$test.remainderMs
-        $md.Add('| ' + (ConvertTo-TestPhaseMarkdownCell -Value $test.testId) + ' | ' + (ConvertTo-TestPhaseMarkdownCell -Value $test.outcome) + ' | ' + (ConvertTo-TestPhaseMarkdownCell -Value $total) + ' |')
+        $md.Add('| ' + ([Antiphon.Nightly.TestPhaseText]::MarkdownCell($test.testId)) + ' | ' + ([Antiphon.Nightly.TestPhaseText]::MarkdownCell($test.outcome)) + ' | ' + ([Antiphon.Nightly.TestPhaseText]::MarkdownCell($total)) + ' |')
     }
     $md.Add('')
     $md.Add('Shared fixture rows are separate from per-test totals.')
@@ -2379,16 +2263,6 @@ function Invoke-TestPhaseRunSummary {
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $RunDirectory -Code 'phase-summary-failed'
     }
-}
-
-function Get-TestPhaseEvidenceKey {
-    param($Header, [string]$TestId)
-    $suite = ''
-    if ($null -ne $Header -and $Header.PSObject.Properties.Name -contains 'suite') {
-        $suite = [string]$Header.suite
-    }
-    if (-not [string]::IsNullOrWhiteSpace($suite)) { return ($suite + '|' + [string]$TestId) }
-    return [string]$TestId
 }
 
 function Write-TestPhaseOwnerObservation {

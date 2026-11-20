@@ -215,7 +215,7 @@ function Invoke-LegacyExecutedManifest {
         if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
         if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
     }
-    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomes.ToArray()) -Trx (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomes.ToArray()) -Trx ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
     $path = Join-Path $dir 'groups-executed.json'
     $kept = New-Object System.Collections.Generic.List[object]
@@ -1709,7 +1709,7 @@ function Get-MpScaleMetadata {
         dotnet = [Environment]::Version.ToString(); os = [Environment]::OSVersion.VersionString
         culture = [Threading.Thread]::CurrentThread.CurrentCulture.Name; timezone = [TimeZoneInfo]::Local.Id
         host = [Environment]::MachineName; load = $load; synthetic = $true; nativeOwnerLaunches = 0; qualificationCredit = $false
-        oracleSha256 = (Get-TestPhaseSha256Text -Text (${function:Invoke-LegacyExecutedManifest}.ToString()))
+        oracleSha256 = ([Antiphon.Nightly.TestPhaseRecords]::Sha256Text((${function:Invoke-LegacyExecutedManifest}.ToString())))
         perFilesystemOperationTimings = 'unknown; total calls measured separately from initialization and projection'
     }
 }
