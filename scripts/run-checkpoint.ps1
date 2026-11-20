@@ -67,6 +67,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-owned-output.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-process-runner.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'phase-journal-diagnostic.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-index-paths.ps1'))
 $script:sourceStart = $null
 $script:sourceEnd = $null
 $script:buildSource = 'unknown'
@@ -202,6 +203,11 @@ function Test-CheckpointStampRefusal {
     if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
     $owner = Find-CheckpointGitDir $parent
     if ($null -eq $owner) { return $null }
+    # The index file's answer when it is a plain one (CheckpointIndexPaths); git for anything else.
+    if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
+        $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]@($StampPath))
+        if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
+    }
     $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
     if ($top.Reason) { return [string]$top.Reason }
     if ([int]$top.Exit -ne 0) {
@@ -257,6 +263,12 @@ function Test-CheckpointPreflight {
     $owner = Find-CheckpointGitDir $start
     if ($null -eq $owner) { return $null }
     $fullRoots = @($Roots | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
+    # The index file's answer when it is a plain one (CheckpointIndexPaths, loaded by run-checkpoint.ps1); git for
+    # anything else, and when this function runs without that type.
+    if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
+        $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]$fullRoots)
+        if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
+    }
     # Same 8,000-character budget as CheckpointDelete.DefaultCommandLineBudget.
     # A list that fits is still one ls-files invocation, in the same order.
     $budget = 8000
