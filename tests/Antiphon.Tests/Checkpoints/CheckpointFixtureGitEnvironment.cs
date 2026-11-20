@@ -93,9 +93,19 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
         return new CheckpointFixtureGitEnvironment(scratch, home, global, system, restore);
     }
 
+    private int _gitChildren;
+
+    // How many Git(...) calls this environment answered with a git child (any other was answered in process).
+    public int GitChildren => Volatile.Read(ref _gitChildren);
+
     public string Git(string repository, params string[] args)
     {
-        var stdout = InProcess(repository, args) ?? RunGit(repository, args);
+        var stdout = InProcess(repository, args);
+        if (stdout is null)
+        {
+            Interlocked.Increment(ref _gitChildren);
+            stdout = RunGit(repository, args);
+        }
         if (args.Length > 0 && string.Equals(args[0], "init", StringComparison.Ordinal))
             SettleNewRepository(repository, args);
         return stdout;
@@ -106,37 +116,43 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
     // -c commit.gpgsign=false commit -m <message> --no-verify`) and `rev-parse HEAD`. Fixture setup is not what
     // these tests prove: the repository state is git's (libgit2 here reads no user or system config, as the
     // isolated git children do: LibGit2ConfigIsolation), and the tool and script under test still read it their
-    // own way. Null for any other shape or any libgit2 failure: git runs it, as before. Output is git's only for
-    // rev-parse; the other commands' callers do not read theirs.
+    // own way. Null for any other shape, any shape git would refuse, or any failure before the command took effect:
+    // git runs it, as before, from where it started. Output is git's only for rev-parse; the other commands' callers
+    // do not read theirs. GitChildren counts the commands that went to git.
     private static string? InProcess(string repository, string[] args)
     {
         var dotGit = Path.Combine(repository, ".git");
         var created = false;
+        var applied = false;
         try
         {
             switch (args)
             {
                 // A fresh directory only (not a re-init, not a .git file), and a branch name git would accept.
-                case ["init", "-b", var branch] when LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch)
-                                                     && !Directory.Exists(dotGit) && !File.Exists(dotGit):
+                case ["init", "-b", var branch] when GitAcceptsBranch(branch) && !Directory.Exists(dotGit) && !File.Exists(dotGit):
                     created = true;
                     LibGit2Sharp.Repository.Init(repository);
                     File.WriteAllText(Path.Combine(dotGit, "HEAD"), "ref: refs/heads/" + branch + "\n");
                     return "";
                 case ["add", "-A"]:
                     using (var repo = new LibGit2Sharp.Repository(repository))
+                    {
                         LibGit2Sharp.Commands.Stage(repo, "*");
+                        applied = true;
+                    }
                     return "";
-                // As git does, a path that matches nothing fails (here: git runs it and fails).
+                // Paths that exist, named literally (git refuses a path that matches nothing: git answers that). A
+                // directory stages what is under it, ignored files included, as `git add -f` does.
                 case ["add", "-f", "--", ..] when args.Length > 3:
+                    var paths = args.Skip(3).Select(path => Path.GetFullPath(path, repository)).ToArray();
+                    if (paths.Any(path => (!File.Exists(path) && !Directory.Exists(path)) || path.IndexOfAny(['*', '?', '[', ']']) >= 0))
+                        return null;
                     using (var repo = new LibGit2Sharp.Repository(repository))
-                        LibGit2Sharp.Commands.Stage(repo,
-                            args.Skip(3).Select(path => Path.GetRelativePath(repository, Path.GetFullPath(path, repository)).Replace('\\', '/')),
-                            new LibGit2Sharp.StageOptions
-                            {
-                                IncludeIgnored = true,
-                                ExplicitPathsOptions = new LibGit2Sharp.ExplicitPathsOptions { ShouldFailOnUnmatchedPath = true },
-                            });
+                    {
+                        LibGit2Sharp.Commands.Stage(repo, paths.Select(path => Path.GetRelativePath(repository, path).Replace('\\', '/')),
+                            new LibGit2Sharp.StageOptions { IncludeIgnored = true });
+                        applied = true;
+                    }
                     return "";
                 case ["-c", var email, "-c", var name, "-c", "commit.gpgsign=false", "commit", ..] when
                     email.StartsWith("user.email=", StringComparison.Ordinal) && name.StartsWith("user.name=", StringComparison.Ordinal)
@@ -147,6 +163,7 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
                         if (repo.Info.IsHeadUnborn && repo.Index.Count == 0) return null;
                         var who = new LibGit2Sharp.Signature(name["user.name=".Length..], email["user.email=".Length..], DateTimeOffset.Now);
                         repo.Commit(message, who, who);
+                        applied = true;
                     }
                     return "";
                 case ["rev-parse", "HEAD"]:
@@ -158,19 +175,32 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
-            // Any failure leaves the command to git, from where it started: a half-made repository is removed first.
-            if (created)
-                try { Directory.Delete(dotGit, recursive: true); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            // The command took effect (a failure after it, such as on dispose): done, git must not repeat it.
+            if (applied) return "";
+            // A half-made repository is removed so git starts where the command did; if it cannot be, the setup
+            // fails here (git would re-init it and keep libgit2's branch).
+            if (created && (Directory.Exists(dotGit) || File.Exists(dotGit)))
+            {
+                try { Directory.Delete(dotGit, recursive: true); }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+                {
+                    throw new IOException("fixture init of " + repository + " failed in process and its .git could not be removed", ex);
+                }
+            }
             return null;
         }
     }
 
+    // git init -b refuses what `git check-ref-format --branch` refuses, HEAD and a leading '-' included.
+    private static bool GitAcceptsBranch(string branch) =>
+        branch.Length > 0 && branch != "HEAD" && !branch.StartsWith('-') && LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch);
+
     // The message of `commit -m <message> --no-verify` with those two options in either order; null for any other
-    // option list.
+    // option list, and for an empty message (git aborts that commit).
     private static string? CommitMessage(string[] options) => options switch
     {
-        ["-m", var message, "--no-verify"] => message,
-        ["--no-verify", "-m", var message] => message,
+        ["-m", var message, "--no-verify"] when !string.IsNullOrWhiteSpace(message) => message,
+        ["--no-verify", "-m", var message] when !string.IsNullOrWhiteSpace(message) => message,
         _ => null,
     };
 

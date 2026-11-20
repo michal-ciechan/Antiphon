@@ -263,8 +263,35 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         Real("config", "core.autocrlf").Trim().ShouldBe("false");
         Real("cat-file", "-p", "HEAD:App/Program.cs").ShouldBe("class P { }\r\n", "bytes stored as written");
         git.Git(root, "rev-parse", "HEAD").ShouldBe(Real("rev-parse", "HEAD"));
+        git.GitChildren.ShouldBe(0, "the common fixture setup ran in process");
 
-        // Where git would refuse, git still answers (and refuses): a force-add of a path that does not exist.
-        Should.Throw<Exception>(() => git.Git(root, "add", "-f", "--", Path.Combine(root, "missing.txt")));
+        // A second commit with the options the other way round, from a force-added ignored directory.
+        Directory.CreateDirectory(Path.Combine(root, "Lib", "bin-probe"));
+        File.WriteAllText(Path.Combine(root, "Lib", "bin-probe", "Lib.dll"), "dll\n");
+        git.Git(root, "add", "-f", "--", Path.Combine(root, "Lib", "bin-probe"));
+        git.Git(root, "-c", "user.email=card1734@example.invalid", "-c", "user.name=card1734",
+            "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", "second");
+        git.GitChildren.ShouldBe(0);
+        Real("log", "-1", "--format=%s").Trim().ShouldBe("second");
+        Real("ls-files", "--", "Lib").Trim().ShouldBe("Lib/bin-probe/Lib.dll");
+        Real("status", "--porcelain", "--untracked-files=all").ShouldBeEmpty();
+
+        // Where git refuses, git answers (and refuses): each of these goes to a git child, which fails.
+        void Refused(string repository, string because, params string[] args)
+        {
+            var before = git.GitChildren;
+            Should.Throw<ShouldAssertException>(() => git.Git(repository, args)).Message.ShouldContain(because);
+            git.GitChildren.ShouldBe(before + 1);
+        }
+        Refused(root, "did not match any files", "add", "-f", "--", Path.Combine(root, "missing.txt"));
+        File.WriteAllText(Path.Combine(root, "staged.txt"), "staged\n");
+        git.Git(root, "add", "-A");
+        Refused(root, "empty commit message", "-c", "user.email=a@example.invalid", "-c", "user.name=a",
+            "-c", "commit.gpgsign=false", "commit", "-m", " ", "--no-verify");
+        var fresh = Directory.CreateDirectory(Path.Combine(scope, "fresh")).FullName;
+        Refused(fresh, "invalid initial branch name", "init", "-b", "HEAD");
+        git.Git(fresh, "init", "-b", "card1199");
+        Refused(fresh, "nothing to commit", "-c", "user.email=a@example.invalid", "-c", "user.name=a",
+            "-c", "commit.gpgsign=false", "commit", "-m", "empty", "--no-verify");
     }
 }
