@@ -422,7 +422,8 @@ internal static class RcPortCorpus
         var psObject = Activator.CreateInstance(assembly.GetType("System.Management.Automation.PSObject"));
         var properties = psObject.GetType().GetProperty("Properties").GetValue(psObject);
         var note = assembly.GetType("System.Management.Automation.PSNoteProperty");
-        var add = properties.GetType().GetMethod("Add", new[] { assembly.GetType("System.Management.Automation.PSMemberInfo") });
+        var add = properties.GetType().GetMethod("Add", new[] { assembly.GetType("System.Management.Automation.PSPropertyInfo") });
+        if (add == null) throw new InvalidOperationException("ps-property-add");
         foreach (var row in shape["e"]!.AsArray())
         {
             var member = Activator.CreateInstance(note, row!["k"]!.GetValue<string>(), Materialize(row["v"]));
