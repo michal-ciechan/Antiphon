@@ -139333,6 +139333,806 @@
       "expect": {
         "error": "shadow-chunk-duplicate"
       }
+    },
+    {
+      "id": "pswrap-array-of-one",
+      "witness": "PsObjectWrappedArrayOfOne",
+      "op": "proposal",
+      "input": {
+        "chunks": {
+          "t": "pswrap",
+          "v": {
+            "t": "arr",
+            "items": [
+              {
+                "t": "map",
+                "cmp": "ignore",
+                "e": [
+                  {
+                    "k": "id",
+                    "v": {
+                      "t": "str",
+                      "v": "c1"
+                    }
+                  },
+                  {
+                    "k": "suite",
+                    "v": {
+                      "t": "str",
+                      "v": "alpha"
+                    }
+                  },
+                  {
+                    "k": "boundary",
+                    "v": {
+                      "t": "str",
+                      "v": "north"
+                    }
+                  },
+                  {
+                    "k": "completelyCarryable",
+                    "v": {
+                      "t": "bool",
+                      "v": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "seed": "abababababababababababababababababababababababababababababababab",
+        "once": false
+      },
+      "expect": {
+        "bindingState": "proposal-only",
+        "carriesInvalidated": "false",
+        "cchunk": "1",
+        "effectiveMode": "Full",
+        "error": "",
+        "expandedToFull": "false",
+        "format": "antiphon-rc-shadow-proposal-v1",
+        "gateCredit": "false",
+        "incrementalValidation": "Shadow",
+        "launched": "false",
+        "n": "1",
+        "pilotClaim": "false",
+        "sample": "roster",
+        "seed": "abababababababababababababababababababababababababababababababab",
+        "selected": "c1",
+        "shadowPilot": "true",
+        "skips": "",
+        "stratumCount": "1",
+        "trustGranted": "false",
+        "trustRecordWritten": "false"
+      }
+    },
+    {
+      "id": "pswrap-chunk-id",
+      "witness": "PsObjectWrappedChunkId",
+      "op": "trust",
+      "input": {
+        "evidence": {
+          "t": "map",
+          "cmp": "ignore",
+          "e": [
+            {
+              "k": "sampled",
+              "v": {
+                "t": "arr",
+                "items": [
+                  {
+                    "t": "str",
+                    "v": "c1"
+                  }
+                ]
+              }
+            },
+            {
+              "k": "results",
+              "v": {
+                "t": "arr",
+                "items": [
+                  {
+                    "t": "map",
+                    "cmp": "ignore",
+                    "e": [
+                      {
+                        "k": "chunkId",
+                        "v": {
+                          "t": "pswrap",
+                          "v": {
+                            "t": "str",
+                            "v": "c1"
+                          }
+                        }
+                      },
+                      {
+                        "k": "outcome",
+                        "v": {
+                          "t": "str",
+                          "v": "failed"
+                        }
+                      },
+                      {
+                        "k": "provenance",
+                        "v": {
+                          "t": "str",
+                          "v": "verified"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "carries": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "str",
+              "v": "c1"
+            }
+          ]
+        },
+        "currentSample": "roster",
+        "pilots": {
+          "t": "null"
+        },
+        "sampleFailure": {
+          "t": "null"
+        },
+        "rosterChanged": false,
+        "currentContract": {
+          "t": "null"
+        },
+        "baselineContract": {
+          "t": "null"
+        },
+        "fullAnchor": {
+          "t": "null"
+        },
+        "utcNow": "2026-11-13T12:00:00.0000000\u002B00:00",
+        "contractDigest": "",
+        "operatorRecord": {
+          "t": "null"
+        }
+      },
+      "expect": {
+        "carriesInvalidated": "true",
+        "effectiveMode": "Full",
+        "error": "",
+        "expandedToFull": "false",
+        "failureChunk": "c1",
+        "failureKind": "sample-outcome",
+        "failureOutcome": "",
+        "gateCredit": "false",
+        "incrementalValidation": "Shadow",
+        "invalidatedCarries": "c1",
+        "observedPilots": "0",
+        "reason": "sample-failed",
+        "reasons": "sample-failed",
+        "requiredPilots": "2",
+        "shadowPilot": "false",
+        "trustGranted": "false",
+        "trustRecordWritten": "false"
+      }
+    },
+    {
+      "id": "pswrap-attempt",
+      "witness": "PsObjectWrappedAttempt",
+      "op": "dirty",
+      "input": {
+        "obligations": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "map",
+              "cmp": "ignore",
+              "e": [
+                {
+                  "k": "key",
+                  "v": {
+                    "t": "str",
+                    "v": "carry"
+                  }
+                },
+                {
+                  "k": "disposition",
+                  "v": {
+                    "t": "str",
+                    "v": "Carry"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "attempts": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "pswrap",
+              "v": {
+                "t": "map",
+                "cmp": "ignore",
+                "e": [
+                  {
+                    "k": "sequence",
+                    "v": {
+                      "t": "i64",
+                      "v": 1
+                    }
+                  },
+                  {
+                    "k": "sourceSha",
+                    "v": {
+                      "t": "str",
+                      "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                  },
+                  {
+                    "k": "results",
+                    "v": {
+                      "t": "arr",
+                      "items": [
+                        {
+                          "t": "map",
+                          "cmp": "ignore",
+                          "e": [
+                            {
+                              "k": "key",
+                              "v": {
+                                "t": "str",
+                                "v": "carry"
+                              }
+                            },
+                            {
+                              "k": "outcome",
+                              "v": {
+                                "t": "str",
+                                "v": "failed"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "fixes": {
+          "t": "arr",
+          "items": []
+        },
+        "candidate": "candidate-not-in-history",
+        "candidateToken": "",
+        "repoPlan": []
+      },
+      "expect": {
+        "error": "carry-with-open-failure"
+      }
+    },
+    {
+      "id": "contract-keys-entry",
+      "witness": "ContractDictionaryKeysEntry",
+      "op": "trust",
+      "input": {
+        "evidence": {
+          "t": "null"
+        },
+        "carries": {
+          "t": "arr",
+          "items": []
+        },
+        "currentSample": "",
+        "pilots": {
+          "t": "null"
+        },
+        "sampleFailure": {
+          "t": "null"
+        },
+        "rosterChanged": false,
+        "currentContract": {
+          "t": "map",
+          "cmp": "ignore",
+          "e": [
+            {
+              "k": "format",
+              "v": {
+                "t": "str",
+                "v": "antiphon-rc-input-contract-v1"
+              }
+            },
+            {
+              "k": "inputMapVersion",
+              "v": {
+                "t": "str",
+                "v": "1"
+              }
+            },
+            {
+              "k": "sdkVersion",
+              "v": {
+                "t": "str",
+                "v": "10.0.204"
+              }
+            },
+            {
+              "k": "runtimeVersion",
+              "v": {
+                "t": "str",
+                "v": "9.0.10"
+              }
+            },
+            {
+              "k": "platform",
+              "v": {
+                "t": "str",
+                "v": "linux"
+              }
+            },
+            {
+              "k": "executionImplementation",
+              "v": {
+                "t": "str",
+                "v": "compiled"
+              }
+            },
+            {
+              "k": "policyHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "catalogHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "selectorHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "skipResolverHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "discoveryHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "parserHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "coverageHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "launcherHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "custodyHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "buildHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "harnessHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "inputMapHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "sdkHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "runtimeHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "Keys",
+              "v": {
+                "t": "str",
+                "v": "extra"
+              }
+            }
+          ]
+        },
+        "baselineContract": {
+          "t": "map",
+          "cmp": "ignore",
+          "e": [
+            {
+              "k": "format",
+              "v": {
+                "t": "str",
+                "v": "antiphon-rc-input-contract-v1"
+              }
+            },
+            {
+              "k": "inputMapVersion",
+              "v": {
+                "t": "str",
+                "v": "1"
+              }
+            },
+            {
+              "k": "sdkVersion",
+              "v": {
+                "t": "str",
+                "v": "10.0.204"
+              }
+            },
+            {
+              "k": "runtimeVersion",
+              "v": {
+                "t": "str",
+                "v": "9.0.10"
+              }
+            },
+            {
+              "k": "platform",
+              "v": {
+                "t": "str",
+                "v": "linux"
+              }
+            },
+            {
+              "k": "executionImplementation",
+              "v": {
+                "t": "str",
+                "v": "compiled"
+              }
+            },
+            {
+              "k": "policyHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "catalogHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "selectorHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "skipResolverHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "discoveryHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "parserHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "coverageHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "launcherHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "custodyHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "buildHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "harnessHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "inputMapHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "sdkHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "k": "runtimeHash",
+              "v": {
+                "t": "str",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          ]
+        },
+        "fullAnchor": {
+          "t": "null"
+        },
+        "utcNow": "2026-11-13T12:00:00.0000000\u002B00:00",
+        "contractDigest": "",
+        "operatorRecord": {
+          "t": "null"
+        }
+      },
+      "expect": {
+        "carriesInvalidated": "true",
+        "effectiveMode": "Full",
+        "error": "",
+        "expandedToFull": "false",
+        "failureChunk": "",
+        "failureKind": "",
+        "failureOutcome": "",
+        "gateCredit": "false",
+        "incrementalValidation": "Shadow",
+        "invalidatedCarries": "",
+        "observedPilots": "0",
+        "reason": "contract-current-unknown:buildHash|contract-current-unknown:catalogHash|contract-current-unknown:coverageHash|contract-current-unknown:custodyHash|contract-current-unknown:discoveryHash|contract-current-unknown:executionImplementation|contract-current-unknown:extra|contract-current-unknown:format|contract-current-unknown:harnessHash|contract-current-unknown:inputMapHash|contract-current-unknown:inputMapVersion|contract-current-unknown:launcherHash|contract-current-unknown:parserHash|contract-current-unknown:platform|contract-current-unknown:policyHash|contract-current-unknown:runtimeHash|contract-current-unknown:runtimeVersion|contract-current-unknown:sdkHash|contract-current-unknown:sdkVersion|contract-current-unknown:selectorHash|contract-current-unknown:skipResolverHash",
+        "reasons": "contract-current-unknown:buildHash|contract-current-unknown:catalogHash|contract-current-unknown:coverageHash|contract-current-unknown:custodyHash|contract-current-unknown:discoveryHash|contract-current-unknown:executionImplementation|contract-current-unknown:extra|contract-current-unknown:format|contract-current-unknown:harnessHash|contract-current-unknown:inputMapHash|contract-current-unknown:inputMapVersion|contract-current-unknown:launcherHash|contract-current-unknown:parserHash|contract-current-unknown:platform|contract-current-unknown:policyHash|contract-current-unknown:runtimeHash|contract-current-unknown:runtimeVersion|contract-current-unknown:sdkHash|contract-current-unknown:sdkVersion|contract-current-unknown:selectorHash|contract-current-unknown:skipResolverHash",
+        "requiredPilots": "2",
+        "shadowPilot": "false",
+        "trustGranted": "false",
+        "trustRecordWritten": "false"
+      }
+    },
+    {
+      "id": "non-integer-sequence",
+      "witness": "NonIntegerSequence",
+      "op": "dirty",
+      "input": {
+        "obligations": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "map",
+              "cmp": "ignore",
+              "e": [
+                {
+                  "k": "key",
+                  "v": {
+                    "t": "str",
+                    "v": "dirty"
+                  }
+                },
+                {
+                  "k": "disposition",
+                  "v": {
+                    "t": "str",
+                    "v": "Dirty"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "attempts": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "map",
+              "cmp": "ignore",
+              "e": [
+                {
+                  "k": "sequence",
+                  "v": {
+                    "t": "f64",
+                    "v": 1.9
+                  }
+                },
+                {
+                  "k": "sourceSha",
+                  "v": {
+                    "t": "str",
+                    "v": "s"
+                  }
+                },
+                {
+                  "k": "results",
+                  "v": {
+                    "t": "arr",
+                    "items": [
+                      {
+                        "t": "map",
+                        "cmp": "ignore",
+                        "e": [
+                          {
+                            "k": "key",
+                            "v": {
+                              "t": "str",
+                              "v": "dirty"
+                            }
+                          },
+                          {
+                            "k": "outcome",
+                            "v": {
+                              "t": "str",
+                              "v": "passed"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "fixes": {
+          "t": "arr",
+          "items": []
+        },
+        "candidate": "candidate-not-in-history",
+        "candidateToken": "",
+        "repoPlan": []
+      },
+      "expect": {
+        "activation": "off",
+        "candidateEcho": "present",
+        "effectiveMode": "Full",
+        "error": "",
+        "format": "antiphon-rc-dirty-order-v1",
+        "gateCredit": "false",
+        "launch": "dirty:changed:Dirty",
+        "omitted": "",
+        "shadow": "true",
+        "trustTransition": "false"
+      }
+    },
+    {
+      "id": "array-valued-key",
+      "witness": "ArrayValuedKey",
+      "op": "dirty",
+      "input": {
+        "obligations": {
+          "t": "arr",
+          "items": [
+            {
+              "t": "map",
+              "cmp": "ignore",
+              "e": [
+                {
+                  "k": "key",
+                  "v": {
+                    "t": "arr",
+                    "items": [
+                      {
+                        "t": "str",
+                        "v": "a"
+                      },
+                      {
+                        "t": "str",
+                        "v": "b"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "k": "disposition",
+                  "v": {
+                    "t": "str",
+                    "v": "Dirty"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "attempts": {
+          "t": "arr",
+          "items": []
+        },
+        "fixes": {
+          "t": "arr",
+          "items": []
+        },
+        "candidate": "candidate-not-in-history",
+        "candidateToken": "",
+        "repoPlan": []
+      },
+      "expect": {
+        "activation": "off",
+        "candidateEcho": "present",
+        "effectiveMode": "Full",
+        "error": "",
+        "format": "antiphon-rc-dirty-order-v1",
+        "gateCredit": "false",
+        "launch": "a b:not-run:Dirty",
+        "omitted": "",
+        "shadow": "true",
+        "trustTransition": "false"
+      }
     }
   ]
 }

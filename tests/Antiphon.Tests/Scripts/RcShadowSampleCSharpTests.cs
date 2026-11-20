@@ -89,4 +89,26 @@ public sealed class RcShadowSampleCSharpTests
         RcPortCorpus.RequireShadow();
         RcPortCorpus.Replay("DictionaryKeyShadowFailsClosed");
     }
+
+    // CARD-2010. Expected output is the pre-port PowerShell result.
+    [Test]
+    public void PsObjectWrappedChunkId()
+    {
+        RcPortCorpus.RequireShadow();
+        RcPortCorpus.Replay("PsObjectWrappedChunkId");
+    }
+
+    [Test]
+    public void PsObjectWrappedArrayOfOne()
+    {
+        RcPortCorpus.RequireShadow();
+        RcPortCorpus.Replay("PsObjectWrappedArrayOfOne");
+    }
+
+    [Test]
+    public void ContractDictionaryKeysEntry()
+    {
+        RcPortCorpus.RequireShadow();
+        RcPortCorpus.Replay("ContractDictionaryKeysEntry");
+    }
 }
