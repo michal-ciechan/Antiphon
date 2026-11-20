@@ -72,7 +72,7 @@ function New-Fixture {
         Clock = { $F.Tick }
         Trace = { param($s) $F.Trace.Add($s) }
         Slot = { param($r)
-            $lock = Read-NightlyLockRecord (Get-ReleaseGateNativeLockPath $r.CoordinationRoot)
+            $lock = Read-NightlyLockRecord ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($r.CoordinationRoot))
             $F.Trace.Add($(if ($lock.runId -ceq $r.RunId) { 'slot:locked' } else { 'slot:unlocked' }))
             return (-not $F.DenySlot)
         }
@@ -135,7 +135,7 @@ function New-Fixture {
         }
         BeforeRelease = { param($r)
             if ($F.Change -eq 'foreign-lock') {
-                $p = Get-ReleaseGateNativeLockPath $r.CoordinationRoot
+                $p = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($r.CoordinationRoot)
                 $owner = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
                 $owner.runId = 'foreign'; $owner.processStartedAt = '2000-01-01T00:00:00Z'
                 $F.Foreign = $owner | ConvertTo-Json -Compress
@@ -160,7 +160,7 @@ function Run-Fixture($fixture) {
     return $result
 }
 function No-Starts { return ($F.Starts -eq 0 -and @($F.Trace | Where-Object { $_ -like 'slot:*' }).Count -eq 0) }
-function Lock-Exists($q) { return (Test-Path -LiteralPath (Get-ReleaseGateNativeLockPath $q.Request.CoordinationRoot)) }
+function Lock-Exists($q) { return (Test-Path -LiteralPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($q.Request.CoordinationRoot))) }
 function Test-LockBeforeSlot {
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'ordered' ($F.Starts -eq 1 -and $F.Trace.Contains('slot:locked') -and $F.Trace.IndexOf('slot:locked') -lt $F.Trace.IndexOf('start:checkpoint-A'))
@@ -396,7 +396,7 @@ function Test-DeadlineJoinsOwnedChildren {
         Check $fault $ok
     }
     $q = New-Fixture; $F.Change = 'foreign-lock'; $r = Run-Fixture $q
-    $p = Get-ReleaseGateNativeLockPath $q.Request.CoordinationRoot
+    $p = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($q.Request.CoordinationRoot)
     Check 'foreign-lock' ($F.Trace.Contains('join:child-B') -and (Test-Path -LiteralPath $p) -and [IO.File]::ReadAllText($p) -ceq $F.Foreign)
 }
 try {

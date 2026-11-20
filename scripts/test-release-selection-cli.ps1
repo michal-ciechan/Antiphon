@@ -260,9 +260,9 @@ function Write-RSReceipt($Fixture, [string]$Release, [string]$Sha, [string]$Name
         runId='baseline-run';policyHash=$policy.PolicyHash;exitCode=0;coverageComplete=$true;testsPassed=$true;reportDelivered=$true;coverageScope='Full'}
     $pinnedAuthority = [Antiphon.Nightly.PinnedAuthority]@{ Authority = [Antiphon.Nightly.AuthorityRecord]::Read((Join-Path $dir 'authority.json')); Digest = $ledger.authorityDigest }
     $pub = [Antiphon.Nightly.ReleaseAuthority]::Publication($croot, $pinnedAuthority, ('a' * 64), $false)
-    $manifest = New-ReleaseGateManifest @{repository='fixture/repository';candidateId=$authority.candidateId;sha=$Sha;publicationAuthorityDigest=$pub.Digest}
+    $manifest = [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{repository='fixture/repository';candidateId=$authority.candidateId;sha=$Sha;publicationAuthorityDigest=$pub.Digest})
     Write-NightlyAtomicJson (Join-Path $croot 'release-manifest.json') $manifest
-    Write-NightlyAtomicJson (Join-Path $croot 'publish.json') @{steps=@('published');sha=$Sha;publicationAuthorityDigest=$pub.Digest;manifestDigest=(Get-ReleaseGateManifestDigest $manifest)
+    Write-NightlyAtomicJson (Join-Path $croot 'publish.json') @{steps=@('published');sha=$Sha;publicationAuthorityDigest=$pub.Digest;manifestDigest=([Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest))
         releaseId='historical-release';releaseUrl='https://example.invalid/release'}
     $files = @{}
     foreach ($file in @('authority/authority.json', 'authority/execution-plan.json', 'authority/discovery.json', 'authority/ledger.json',

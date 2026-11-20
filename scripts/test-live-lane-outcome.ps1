@@ -308,7 +308,7 @@ function Test-SkipAndZeroNeverGreen {
 }
 function Test-StaleSharedLockRefuses {
     foreach ($age in @('2000-01-01T00:00:00Z','2099-01-01T00:00:00Z')) {
-        $q=New-Fixture; $p=Get-ReleaseGateNativeLockPath $q.Request.CoordinationRoot
+        $q=New-Fixture; $p=[Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($q.Request.CoordinationRoot)
         [void][IO.Directory]::CreateDirectory((Split-Path $p))
         $bytes=@{ pid=2147483647; runId='dead'; lane='fixture-live'; processStartedAt='2000-01-01T00:00:00Z'; acquiredAt=$age } | ConvertTo-Json -Compress
         [IO.File]::WriteAllText($p,$bytes); $r=Run $q

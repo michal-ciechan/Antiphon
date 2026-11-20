@@ -67,15 +67,15 @@ public sealed class TestPhaseCustodyTests
             $lib = Join-Path $repo 'scripts/lib'
             . (Join-Path $lib 'nightly-common.ps1')
             . (Join-Path $lib 'release-gate.ps1')
-            $manifest = New-ReleaseGateManifest -Fields @{ repository = 'michal-ciechan/Antiphon'; sha = 'abc'; profile = 'rc' }
-            $before = Get-ReleaseGateManifestDigest -Manifest $manifest
+            $manifest = [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{ repository = 'michal-ciechan/Antiphon'; sha = 'abc'; profile = 'rc' })
+            $before = [Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest)
             $timing = Join-Path $root 'timing'
             New-Item -ItemType Directory -Path $timing -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $timing 'summary.json'), '{"complete":true}')
             [System.IO.File]::WriteAllText((Join-Path $timing 'malformed'), '{')
-            $after = Get-ReleaseGateManifestDigest -Manifest $manifest
+            $after = [Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest)
             $threw = $false
-            try { New-ReleaseGateManifest -Fields @{ notAField = 1 } } catch { $threw = $true }
+            try { [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{ notAField = 1 }) } catch { $threw = $true }
             if ($threw) { Write-Output ('C1514_DIGEST ' + $before + ' ' + $after + ' threw') }
             else { Write-Output ('C1514_DIGEST ' + $before + ' ' + $after + ' silent') }
             """, cancellationToken);

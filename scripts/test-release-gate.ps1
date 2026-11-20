@@ -1132,7 +1132,7 @@ function Assert-C599RcChild {
 function Test-C599_MasterStateIsolation {
     # An RC run must leave every master state file byte-identical.
     $fx = New-C599RunFx -Rc
-    $masterFiles = Get-ReleaseGateMasterStateFiles -StateRoot $fx.State
+    $masterFiles = [Antiphon.Nightly.ReleaseGatePublication]::MasterStateFiles($fx.State)
     foreach ($f in $masterFiles) { Set-Content -LiteralPath $f -Value ('{"sentinel":"' + [System.IO.Path]::GetFileName($f) + '"}') -Encoding ASCII }
     $before = @{}
     foreach ($f in $masterFiles) { $before[$f] = (Get-NightlyFileSha256 -Path $f) }
@@ -1226,7 +1226,7 @@ function Test-C599_SharedLock {
     $coord = Join-Path $root 'coord'
     $first = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-master' -Lane 'master'
     Assert-C487 -Cond ($first.Ok -and $first.OwnsLock) -Name 'C599 SharedLock first lane acquires' -Detail ([string]$first.Reason)
-    Assert-C487 -Cond (Test-Path -LiteralPath (Get-ReleaseGateNativeLockPath -CoordinationRoot $coord)) -Name 'C599 SharedLock the lock file exists on disk'
+    Assert-C487 -Cond (Test-Path -LiteralPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord))) -Name 'C599 SharedLock the lock file exists on disk'
 
     # A live owner is never stolen, whatever the other lane is.
     $script:ReleaseGateOwnsNativeLock2 = $null
@@ -1234,13 +1234,13 @@ function Test-C599_SharedLock {
     Assert-C487 -Cond ((-not $second.Ok) -and [string]$second.Reason -eq 'deferred-busy') -Name 'C599 SharedLock the second lane gets deferred-busy' -Detail ([string]$second.Reason)
     Assert-C487 -Cond (-not $second.OwnsLock) -Name 'C599 SharedLock the deferred lane owns nothing'
 
-    $record = Read-NightlyLockRecord -LockPath (Get-ReleaseGateNativeLockPath -CoordinationRoot $coord)
+    $record = Read-NightlyLockRecord -LockPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord))
     Assert-C487 -Cond ([int]$record.pid -eq $PID) -Name 'C599 SharedLock owner identity records the pid' -Detail ([string]$record.pid)
     Assert-C487 -Cond ([string]$record.lane -eq 'master') -Name 'C599 SharedLock owner identity records the lane' -Detail ([string]$record.lane)
     Assert-C487 -Cond (-not [string]::IsNullOrWhiteSpace([string]$record.processStartedAt)) -Name 'C599 SharedLock owner identity records the process start' -Detail ([string]$record.processStartedAt)
 
     Exit-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-master'
-    Assert-C487 -Cond (-not (Test-Path -LiteralPath (Get-ReleaseGateNativeLockPath -CoordinationRoot $coord))) -Name 'C599 SharedLock release removes the lock file'
+    Assert-C487 -Cond (-not (Test-Path -LiteralPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord)))) -Name 'C599 SharedLock release removes the lock file'
     $third = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-rc2' -Lane 'rc'
     Assert-C487 -Cond ($third.Ok -and $third.OwnsLock) -Name 'C599 SharedLock the other lane acquires once released' -Detail ([string]$third.Reason)
     Exit-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-rc2'
@@ -1697,16 +1697,16 @@ function Test-C599_PublishRecovery {
 }
 
 function Test-C599_ManifestAllowlist {
-    $manifest = New-ReleaseGateManifest -Fields @{ repository = 'r'; tag = 'v2026.09.23.1'; sha = $ShaB }
-    $check = Test-ReleaseGateManifestAllowlist -Manifest $manifest
+    $manifest = [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{ repository = 'r'; tag = 'v2026.09.23.1'; sha = $ShaB })
+    $check = [Antiphon.Nightly.ReleaseGatePublication]::ManifestAllowlistCheck($manifest)
     Assert-C487 -Cond ($check.Ok) -Name 'C599 ManifestAllowlist a built manifest carries only allowlisted keys' -Detail ($check.Extra -join ',')
     $msg = ''
-    try { [void](New-ReleaseGateManifest -Fields @{ hostname = 'desktop'; tag = 'v1' }) } catch { $msg = $_.Exception.Message }
+    try { [void]([Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{ hostname = 'desktop'; tag = 'v1' })) } catch { $msg = $_.Exception.Message }
     Assert-C487 -Cond ($msg -match 'not allowlisted') -Name 'C599 ManifestAllowlist a hostname field is refused' -Detail $msg
     $leaky = [ordered]@{ tag = 'v1'; transcript = 'secret' }
-    $bad = Test-ReleaseGateManifestAllowlist -Manifest $leaky
+    $bad = [Antiphon.Nightly.ReleaseGatePublication]::ManifestAllowlistCheck($leaky)
     Assert-C487 -Cond ((-not $bad.Ok) -and ($bad.Extra -contains 'transcript')) -Name 'C599 ManifestAllowlist a transcript field is detected' -Detail ($bad.Extra -join ',')
-    $digest = Get-ReleaseGateManifestDigest -Manifest $manifest
+    $digest = [Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest)
     Assert-C487 -Cond ($digest.Length -eq 64) -Name 'C599 ManifestAllowlist the manifest digest is a sha256' -Detail $digest
 }
 
@@ -2333,7 +2333,7 @@ function Get-C599AGate {
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $remoteSha = Read-C599Remote -Seams $Fx.Git -Ref $CandidateRef
     $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $Fx.Checkout, $green, $candidate, 'michal-ciechan/Antiphon', $script:C599Now, $Fx.CardApi.Url, $here)
-    $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
+    $gate = [Antiphon.Nightly.ReleaseGatePublication]::PublicationGate($green, $candidate, $remoteSha, $authority, '', @())
     $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($green)
     $script:C1731Timing.gateSeconds += $gateWatch.Elapsed.TotalSeconds
     return [pscustomobject]@{ Ok = [bool]$gate.Ok; Reasons = @(@($gate.Reasons) + @($verdict.Reasons) | ForEach-Object { [string]$_ }); Suites = @($authority.Suites) }

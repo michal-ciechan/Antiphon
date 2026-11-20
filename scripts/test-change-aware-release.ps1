@@ -206,9 +206,9 @@ function Write-BaselineArchive($Fx, $ArchiveId = 'full-b') {
     Write-NightlyAtomicJson (Join-Path $root 'complete-green.json') $green
     $pinnedAuthority=[Antiphon.Nightly.PinnedAuthority]@{Authority=[Antiphon.Nightly.AuthorityRecord]::Read((Join-Path $dir 'authority.json'));Digest=$ledger.authorityDigest}
     $pub=[Antiphon.Nightly.ReleaseAuthority]::Publication($root, $pinnedAuthority, ('a'*64), $false)
-    $manifest=New-ReleaseGateManifest @{repository=$Fx.Repository;candidateId='historical-b';sha=$Fx.B;publicationAuthorityDigest=$pub.Digest}
+    $manifest=[Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{repository=$Fx.Repository;candidateId='historical-b';sha=$Fx.B;publicationAuthorityDigest=$pub.Digest})
     Write-NightlyAtomicJson (Join-Path $root 'release-manifest.json') $manifest
-    Write-NightlyAtomicJson (Join-Path $root 'publish.json') @{steps=@('published');sha=$Fx.B;publicationAuthorityDigest=$pub.Digest;manifestDigest=(Get-ReleaseGateManifestDigest $manifest)
+    Write-NightlyAtomicJson (Join-Path $root 'publish.json') @{steps=@('published');sha=$Fx.B;publicationAuthorityDigest=$pub.Digest;manifestDigest=([Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest))
         releaseId='historical-release';releaseUrl='https://example.invalid/release'}
     $files=@{};foreach($name in @('authority/authority.json','authority/execution-plan.json','authority/discovery.json','authority/ledger.json','authority/publication-authority.json','release-manifest.json','publish.json','complete-green.json')) {
         $files[$name]=Get-NightlyFileSha256 (Join-Path $root $name)

@@ -129,7 +129,7 @@ function Read-ReleaseSelectionBaseline {
     $digest = Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($publication.inputs))
     if ($publication.digest -cne $digest -or $manifest.publicationAuthorityDigest -cne $digest -or
         $published.publicationAuthorityDigest -cne $digest -or $manifest.sha -cne $receipt.sha -or
-        $published.sha -cne $receipt.sha -or $published.manifestDigest -cne (Get-ReleaseGateManifestDigest $manifest)) { throw 'baseline-publication-binding' }
+        $published.sha -cne $receipt.sha -or $published.manifestDigest -cne ([Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest))) { throw 'baseline-publication-binding' }
     if (@($published.steps) -cnotcontains 'published' -or -not $published.releaseId -or -not $published.releaseUrl) { throw 'baseline-publication-required' }
     if ($ledger.prepublicationReceipt.kind -cne 'prepublication' -or
         $ledger.prepublicationReceipt.correlation.sha -cne $receipt.sha -or

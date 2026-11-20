@@ -23,7 +23,7 @@ function New-LiveLaneChildStartInfo {
 
 function Test-LiveLaneOwner {
     param($Saved, [string]$CoordinationRoot)
-    $current = Read-NightlyLockRecord -LockPath (Get-ReleaseGateNativeLockPath $CoordinationRoot)
+    $current = Read-NightlyLockRecord -LockPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($CoordinationRoot))
     if ($null -eq $current -or $null -eq $Saved) { return $false }
     return ([int]$current.pid -eq [int]$Saved.pid -and
         [string]$current.runId -ceq [string]$Saved.runId -and

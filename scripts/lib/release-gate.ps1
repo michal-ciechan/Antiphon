@@ -17,8 +17,6 @@ $script:AntiphonReleaseGateLoaded = $true
 
 $script:ReleaseGateProfiles = @('nightly', 'rc')
 $script:ReleaseGateCreditKinds = @('master-scheduled', 'rc-release')
-$script:ReleaseGateDefaultCoordinationRoot = 'C:\Antiphon\verification'
-$script:ReleaseGateManifestSchema = 1
 
 # ---------------------------------------------------------------- identity ---
 
@@ -83,24 +81,7 @@ function New-ReleaseGateCandidateRef {
 
 # ------------------------------------------------------------------- state ---
 
-function Get-ReleaseGateMasterStateFiles {
-    # The four files an RC lane must leave byte-identical (V-2).
-    param([string]$StateRoot)
-    return @(
-        (Join-Path $StateRoot 'last-run.json'),
-        (Join-Path $StateRoot 'last-complete-green.json'),
-        (Join-Path $StateRoot 'last-monitor.json'),
-        (Join-Path $StateRoot 'interim-qualification-receipt.json')
-    )
-}
-
 # -------------------------------------------------------------- shared lock ---
-
-function Get-ReleaseGateNativeLockPath {
-    param([string]$CoordinationRoot = '')
-    if ([string]::IsNullOrWhiteSpace($CoordinationRoot)) { $CoordinationRoot = $script:ReleaseGateDefaultCoordinationRoot }
-    return (Join-Path $CoordinationRoot 'native-run.lock')
-}
 
 function Test-ReleaseGateSameInstant {
     <#
@@ -159,7 +140,7 @@ function Enter-ReleaseGateNativeLock {
         [int]$ContinueOwnerPid = 0,
         [string]$ContinueOwnerStartedAt = ''
     )
-    $lockPath = Get-ReleaseGateNativeLockPath -CoordinationRoot $CoordinationRoot
+    $lockPath = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($CoordinationRoot)
     $dir = Split-Path -Parent $lockPath
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
@@ -213,7 +194,7 @@ function Enter-ReleaseGateNativeLock {
 function Exit-ReleaseGateNativeLock {
     param([string]$CoordinationRoot = '', [string]$RunId = '')
     if (-not $script:ReleaseGateOwnsNativeLock) { return }
-    $lockPath = Get-ReleaseGateNativeLockPath -CoordinationRoot $CoordinationRoot
+    $lockPath = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($CoordinationRoot)
     $existing = Read-NightlyLockRecord -LockPath $lockPath
     $same = $false
     if ($existing) {
@@ -260,7 +241,7 @@ function Get-ReleaseGateRemoteTagInventory {
 function Get-ReleaseGatePublicationJournal {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
-        return [pscustomobject]@{ schemaVersion = $script:ReleaseGateManifestSchema; reservations = @() }
+        return [pscustomobject]@{ schemaVersion = [Antiphon.Nightly.ReleaseGatePublication]::ManifestSchema; reservations = @() }
     }
     try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json) }
     catch { throw ('unreadable publication journal {0}: {1}' -f $Path, $_.Exception.Message) }
@@ -342,7 +323,7 @@ function New-ReleaseGateTagReservation {
     foreach ($row in @($journal.reservations)) { $rows += $row }
     $rows += ([Antiphon.Nightly.ReleaseGateTags]::ReservationEntry($CandidateId, $Sha, $tag, $next, (Get-NightlyUtcNow).ToString('o'), $false, '', '', '', ([int]$proposal.Rc), ''))
     Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
-        schemaVersion = $script:ReleaseGateManifestSchema
+        schemaVersion = [Antiphon.Nightly.ReleaseGatePublication]::ManifestSchema
         reservations = $rows
     })
     return [pscustomobject]@{ Tag = $tag; Sequence = $next; Reused = $false }
@@ -366,7 +347,7 @@ function Set-ReleaseGateReservationPublished {
     }
     if (-not $found) { throw ('no reservation for candidate {0}' -f $CandidateId) }
     Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
-        schemaVersion = $script:ReleaseGateManifestSchema
+        schemaVersion = [Antiphon.Nightly.ReleaseGatePublication]::ManifestSchema
         reservations = $rows
     })
     return $true
@@ -431,109 +412,7 @@ function Set-ReleaseGateReservationFinalTag {
 
 # ---------------------------------------------------------------- manifest ---
 
-$script:ReleaseGateManifestAllowlist = @(
-    'schemaVersion', 'repository', 'tag', 'candidateRef', 'candidateId', 'sha',
-    'nativeRunId', 'windmillJobId', 'scheduleSlot', 'startedAt', 'completedAt',
-    'policyHash', 'profile', 'scriptHashes', 'buildHash', 'bundleHash',
-    'suites', 'exclusions', 'summaryDigest', 'capabilities', 'publicationAuthorityDigest'
-)
-
-function New-ReleaseGateManifest {
-    <#
-      D-8: the SHA-bound manifest. Only allowlisted keys reach the public asset;
-      raw logs, credentials, hostnames and transcripts never do.
-    #>
-    param([hashtable]$Fields)
-    $manifest = [ordered]@{}
-    $manifest['schemaVersion'] = $script:ReleaseGateManifestSchema
-    foreach ($key in $script:ReleaseGateManifestAllowlist) {
-        if ($key -eq 'schemaVersion') { continue }
-        if ($Fields -and $Fields.ContainsKey($key)) { $manifest[$key] = $Fields[$key] }
-        else { $manifest[$key] = $null }
-    }
-    if ($Fields) {
-        foreach ($key in $Fields.Keys) {
-            if ($script:ReleaseGateManifestAllowlist -notcontains $key) {
-                throw ('manifest field {0} is not allowlisted' -f $key)
-            }
-        }
-    }
-    return $manifest
-}
-
-function Test-ReleaseGateManifestAllowlist {
-    param($Manifest)
-    $extra = @()
-    $map = [Antiphon.Nightly.PsValue]::NoteMap($Manifest)
-    foreach ($key in @($map.Keys)) {
-        if ($script:ReleaseGateManifestAllowlist -notcontains [string]$key) { $extra += [string]$key }
-    }
-    return [pscustomobject]@{ Ok = ($extra.Count -eq 0); Extra = $extra }
-}
-
-function Get-ReleaseGateManifestDigest {
-    param($Manifest)
-    return (Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Manifest)))
-}
-
 # -------------------------------------------------------------- publication ---
-
-function Test-ReleaseGatePublicationGate {
-    <#
-      D-8/D-15: publication preconditions. Every one of these is a hard refusal; none
-      of them can be waived by a later readback succeeding. The required suite set
-      and the pass/fail verdict come ONLY from the pinned authority and its full
-      execution ledger (ReleaseAuthority.Check); a report or summary confers
-      none. ExpectedPolicyHash / RequiredSuites are legacy extra equality
-      assertions against that authority, never a replacement for it, and an
-      absent value never waives the pinned requirement.
-    #>
-    param(
-        $Green,
-        $Candidate,
-        [string]$RemoteSha = '',
-        $Authority = $null,
-        [string]$ExpectedPolicyHash = '',
-        [string[]]$RequiredSuites = @()
-    )
-    $reasons = @()
-    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($Green)
-    if ($verdict.CreditKind -ne 'rc-release') { $reasons += 'not-rc-complete-green' }
-    if ($null -eq $Candidate) { $reasons += 'missing-candidate-journal' }
-    else {
-        $sha = [string]$Green.sha
-        if (-not [string]::Equals([string]$Candidate.sha, $sha, [StringComparison]::OrdinalIgnoreCase)) { $reasons += 'candidate-sha-mismatch' }
-        if (-not [string]::Equals([string]$Candidate.candidateId, [string]$Green.candidateId, [StringComparison]::OrdinalIgnoreCase)) { $reasons += 'candidate-id-mismatch' }
-        if (-not [string]::IsNullOrWhiteSpace($RemoteSha) -and -not [string]::Equals($RemoteSha, $sha, [StringComparison]::OrdinalIgnoreCase)) { $reasons += 'remote-candidate-moved' }
-        if ([string]::IsNullOrWhiteSpace($RemoteSha)) { $reasons += 'remote-candidate-unresolved' }
-    }
-    if ([bool]$Green.noReport) { $reasons += 'no-report-run' }
-    if ([bool]$Green.diagnostic) { $reasons += 'diagnostic-run' }
-    if ([bool]$Green.seamed) { $reasons += 'seam-driven-run' }
-    if ($null -eq $Authority) {
-        $reasons += 'missing-authority'
-    } else {
-        foreach ($r in @($Authority.Reasons)) { $reasons += [string]$r }
-        $pinned = $null
-        if ($Authority.Pinned) { $pinned = $Authority.Pinned.Authority }
-        $pinnedHash = ''
-        $pinnedSuites = @()
-        if ($pinned) {
-            $pinnedHash = [string]$pinned.policyHash
-            $pinnedSuites = @($pinned.requiredSuites | ForEach-Object { [string]$_ })
-        }
-        if (-not [string]::IsNullOrWhiteSpace($ExpectedPolicyHash) -and
-            -not [string]::Equals($pinnedHash, $ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
-            $reasons += 'policy-hash-mismatch'
-        }
-        if (@($RequiredSuites).Count -gt 0) {
-            $want = @($RequiredSuites | ForEach-Object { [string]$_ } | Sort-Object -Unique)
-            $have = @($pinnedSuites | Sort-Object -Unique)
-            if (($want -join ',') -cne ($have -join ',')) { $reasons += 'required-suites-mismatch' }
-        }
-    }
-    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = @($reasons | Select-Object -Unique) }
-}
 
 # ------------------------------------------------------------------- seams ---
 # Git, GitHub, Windmill and the publisher's clock are injected at the I/O boundary

@@ -177,8 +177,7 @@ function Invoke-AntiphonPublishRelease {
     # receipt must match the release card as the Antiphon API serves it now.
     $attemptUtc = (Get-ReleaseGateUtcNow).ToUniversalTime()
     $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, $attemptUtc, $AntiphonApiUrl, $PSScriptRoot)
-    $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
-        -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
+    $gate = [Antiphon.Nightly.ReleaseGatePublication]::PublicationGate($green, $candidate, $remoteSha, $authority, $ExpectedPolicyHash, $RequiredSuites)
     if (-not $gate.Ok) {
         Write-PublishLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
@@ -236,7 +235,7 @@ function Invoke-AntiphonPublishRelease {
         }
     }
 
-    $manifest = New-ReleaseGateManifest -Fields @{
+    $manifest = [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{
         repository = $Repository
         tag = $tag
         candidateRef = [string]$candidate.ref
@@ -257,13 +256,13 @@ function Invoke-AntiphonPublishRelease {
         summaryDigest = $summaryDigest
         capabilities = $(if ($green.capabilities) { @($green.capabilities) } else { @() })
         publicationAuthorityDigest = $pubAuthority.Digest
-    }
-    $allow = Test-ReleaseGateManifestAllowlist -Manifest $manifest
+    })
+    $allow = [Antiphon.Nightly.ReleaseGatePublication]::ManifestAllowlistCheck($manifest)
     if (-not $allow.Ok) {
         Write-PublishLine ('REFUSED: manifest carries non-allowlisted fields ({0}).' -f ($allow.Extra -join ','))
         $result.Refusal = 'manifest-allowlist'; $result.ExitCode = 3; return [pscustomobject]$result
     }
-    $manifestDigest = Get-ReleaseGateManifestDigest -Manifest $manifest
+    $manifestDigest = [Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest)
     $result.ManifestDigest = $manifestDigest
 
     $publishJournal = $paths.PublishJournalPath

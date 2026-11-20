@@ -159,7 +159,7 @@ function Invoke-AntiphonPromoteRelease {
     }
     # Requalify every attempt, including read-only previews and same-final recovery.
     $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, (Get-ReleaseGateUtcNow), $AntiphonApiUrl, $PSScriptRoot)
-    $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $liveSha -Authority $authority
+    $gate = [Antiphon.Nightly.ReleaseGatePublication]::PublicationGate($green, $candidate, $liveSha, $authority, '', @())
     if (-not $gate.Ok) {
         Write-PromoteLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
