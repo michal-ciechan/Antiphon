@@ -53,6 +53,19 @@
     { "path": "tests/**/*.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
-    { "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" }
+    { "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "_bmad/_config/manifest.yaml", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "appsettings.json.example", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "dev-aspire.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "restart-session-runner.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "verify-dev-stack.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/derived-impact-index-known-os-gated.txt", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/expected-platform-skips.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/fixtures/card0490-linux/card0490-live.example.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/fixtures/card1336-release-gate-followups.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/fixtures/incremental-selection-soundness.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/live-lane-checkpoints/live-claude-core-windows.yaml", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/post-land-unit-shards.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/selector-runtime-inputs.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" }
   ]
 }

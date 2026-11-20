@@ -312,6 +312,7 @@ Write-Output ("unanalysable="+$unanalysable.Count)
 Write-Output ("noop-conflict="+$noopHits.Count)
 Write-Output ("unowned-count="+$unowned.Count)
 Write-Output ("unresolved-count="+@($inv.unresolved).Count)
+foreach ($reason in @($inv.unresolved)) { Write-Output ("unresolved: "+$reason) }
 Write-Output ("creditBlockedBy="+[string]$inv.creditBlockedBy)
 Write-Output ("needsOrchestratorDecision="+[string]$inv.needsOrchestratorDecision)
 if ($repoWalkSuites.Count) { Write-Output ("repo-walk="+($repoWalkSuites -join ',')) } else { Write-Output 'repo-walk=none' }
