@@ -49,4 +49,26 @@ public sealed class RcDirtyOrderCSharpTests
         RcPortCorpus.RequireDirty();
         RcPortCorpus.Replay("UnknownShaRefuses");
     }
+
+    // CARD-2010. Expected output is the pre-port PowerShell result.
+    [Test]
+    public void PsObjectWrappedAttempt()
+    {
+        RcPortCorpus.RequireDirty();
+        RcPortCorpus.Replay("PsObjectWrappedAttempt");
+    }
+
+    [Test]
+    public void NonIntegerSequence()
+    {
+        RcPortCorpus.RequireDirty();
+        RcPortCorpus.Replay("NonIntegerSequence");
+    }
+
+    [Test]
+    public void ArrayValuedKey()
+    {
+        RcPortCorpus.RequireDirty();
+        RcPortCorpus.Replay("ArrayValuedKey");
+    }
 }

@@ -1,7 +1,7 @@
 // CARD-1836 S6c prerequisite. Replays the pre-port PowerShell golden.
 // Require() fails closed until Antiphon.Nightly.RcShadowSample and RcDirtyOrder exist.
 // The same methods then compare compiled verdicts to that fixture. Do not regenerate the fixture
-// after the PowerShell libraries become wrappers.
+// from the wrappers. scripts/generate-rc-port-golden.ps1 reads the libraries at c6565bc95776.
 #nullable disable
 using System.Collections;
 using System.Diagnostics;
@@ -379,10 +379,12 @@ internal static class RcPortCorpus
             case "str": return Str(shape, "v");
             case "bool": return shape["v"]!.GetValue<bool>();
             case "i64": return shape["v"]!.GetValue<long>();
+            case "f64": return shape["v"]!.GetValue<double>();
             case "dt":
                 return DateTimeOffset.Parse(Str(shape, "v"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
             case "map": return MaterializeMapObject(shape);
             case "ps": return MaterializePs(shape);
+            case "pswrap": return AsPsObject(Materialize(shape["v"]!));
             case "expando": return MaterializeExpando(shape);
             case "arr": return Items(shape).ToArray();
             case "list":
@@ -430,6 +432,14 @@ internal static class RcPortCorpus
             add.Invoke(properties, new[] { member });
         }
         return psObject;
+    }
+
+    static object AsPsObject(object inner)
+    {
+        var type = Automation().GetType("System.Management.Automation.PSObject");
+        var method = type.GetMethod("AsPSObject", new[] { typeof(object) });
+        if (method == null) throw new InvalidOperationException("psobject-as");
+        return method.Invoke(null, new[] { inner });
     }
 
     static object MaterializeExpando(JsonObject shape)
