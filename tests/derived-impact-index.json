@@ -67,14 +67,14 @@
       "reason": "cap",
       "owed": 58,
       "first": [
+        "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
         "AgentTaskLandVerifierTests",
         "AgentTaskServiceIntegrationTests",
         "AgentTaskWorktreeBaseCreateTests",
         "AgentTaskWorktreeBaseResolverTests",
-        "AgentTaskWorktreeBaseSyncDebtTests",
-        "C0824DesktopLegacyReleasePolicyTests"
+        "AgentTaskWorktreeBaseSyncDebtTests"
       ]
     },
     {
@@ -1678,18 +1678,18 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
+        "LandNonCodeSkipTests",
         "RunnerSettlementSyncTests",
         "AgentTaskLandVerifierTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "RepairSourceDispatchTests",
         "RepositoryMutationLeaseDescribeTests",
         "RunnerAlarmDeliveryTests",
-        "RunnerStateAlarmExclusionTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "RunnerStateAlarmExclusionTests"
       ]
     },
     {
@@ -2521,13 +2521,13 @@
         "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandCheckpointWorkerTests",
         "AgentTaskLandRecoveryTests",
-        "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskReplyIntegrationTests",
         "C0824RefOnlyConsumerTests",
         "CardTaskFileServiceTests",
         "CompletedCardWorkspaceRemovalTests",
         "InternalDecisionPolicyTests",
         "LandGraphEvaluationTests",
+        "LandNonCodeSkipTests",
         "LandRecoveryCheckoutTests",
         "LibGit2VsGitWorkingTreeVerdictTests",
         "ReleaseImpactEnvelopeTests",
@@ -9619,6 +9619,12 @@
       ]
     },
     {
+      "path": "server/Application/Services/LandVerificationPolicy.cs",
+      "classes": [
+        "LandNonCodeSkipTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/LandingVerifier.cs",
       "classes": [
         "AgentTaskLandRemoteSourceRetentionDTests",
@@ -14745,6 +14751,12 @@
         "InstructionFragmentTests",
         "MutationRoleContractTests",
         "SpecialistRoleContractTests"
+      ]
+    },
+    {
+      "path": "server/Domain/GitObjectId.cs",
+      "classes": [
+        "LandNonCodeSkipTests"
       ]
     },
     {
