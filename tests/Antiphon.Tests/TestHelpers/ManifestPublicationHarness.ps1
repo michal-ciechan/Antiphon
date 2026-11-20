@@ -115,17 +115,17 @@ function Install-MpCounters {
     if ($script:MpCountersInstalled) { return }
     $script:MpCountersInstalled = $true
     $script:MpChunkBlock = ${function:ConvertTo-TestPhaseExecutedChunk}
-    $script:MpJsonBlock = ${function:ConvertTo-TestPhaseJsonText}
     $script:MpAtomicBlock = ${function:Write-TestPhaseTextAtomic}
     $script:MpHashBlock = ${function:Get-NightlyFileSha256}
     $script:MpPriorRows = 0
     $script:MpPriorChunks = 0
-    $script:MpDepth0Bytes = 0
-    $script:MpJsonDepth = 0
+    # The serialised JSON is counted in the core (TestPhaseJson.Measure): every Text call, as the
+    # PowerShell function this harness used to wrap counted its outermost calls.
+    [Antiphon.Nightly.TestPhaseJson]::MeasuredBytes = 0
     $script:MpFlatWrites = 0
     $script:MpHashCount = 0
     $script:MpCountPrior = $false
-    $script:MpCountBytes = $false
+    [Antiphon.Nightly.TestPhaseJson]::Measure = $false
     Set-Item -Path 'function:ConvertTo-TestPhaseExecutedChunk' -Value {
         param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
         if ($null -ne $Item -and $script:MpCountPrior) {
@@ -139,20 +139,6 @@ function Install-MpCounters {
             }
         }
         & $script:MpChunkBlock @PSBoundParameters
-    }
-    Set-Item -Path 'function:ConvertTo-TestPhaseJsonText' -Value {
-        param($Value, [int]$Depth = 0)
-        $outer = ($script:MpJsonDepth -eq 0)
-        $script:MpJsonDepth++
-        try {
-            $text = & $script:MpJsonBlock -Value $Value -Depth $Depth
-            if ($outer -and $script:MpCountBytes) {
-                $script:MpDepth0Bytes += [System.Text.Encoding]::UTF8.GetByteCount([string]$text)
-            }
-            return $text
-        } finally {
-            $script:MpJsonDepth--
-        }
     }
     Set-Item -Path 'function:Write-TestPhaseTextAtomic' -Value {
         param([string]$Path, [string]$Text)
@@ -169,11 +155,11 @@ function Install-MpCounters {
 function Reset-MpCounters {
     $script:MpPriorRows = 0
     $script:MpPriorChunks = 0
-    $script:MpDepth0Bytes = 0
+    [Antiphon.Nightly.TestPhaseJson]::MeasuredBytes = 0
     $script:MpFlatWrites = 0
     $script:MpHashCount = 0
     $script:MpCountPrior = $true
-    $script:MpCountBytes = $true
+    [Antiphon.Nightly.TestPhaseJson]::Measure = $true
 }
 
 function Open-MpContext {
@@ -260,7 +246,7 @@ function Invoke-LegacyExecutedManifest {
         manufacturedPassed = $false
         chunks = @($kept.ToArray())
     }
-    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $manifest)
+    Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($manifest, 0))
 }
 
 function Publish-MpChunk {
@@ -306,7 +292,6 @@ function Measure-MpPublish {
     # observing the following steady-state publication.
     $originals = @{
         'ConvertTo-TestPhaseExecutedChunk' = $script:MpChunkBlock
-        'ConvertTo-TestPhaseJsonText' = $script:MpJsonBlock
         'Write-TestPhaseTextAtomic' = $script:MpAtomicBlock
         'Get-NightlyFileSha256' = $script:MpHashBlock
     }
@@ -332,7 +317,7 @@ function Measure-MpPublish {
     $hashSame = ($PrefixChunks -eq 0) -or ($before -eq $after -and $before -ne '')
     $measured = [pscustomobject]@{
         PriorRows = [int]$script:MpPriorRows
-        Bytes = [int]$script:MpDepth0Bytes
+        Bytes = [int][Antiphon.Nightly.TestPhaseJson]::MeasuredBytes
         HashSame = [bool]$hashSame
         FlatWrites = [int]$script:MpFlatWrites
         HashCount = [int]$script:MpHashCount
@@ -384,7 +369,7 @@ function Test-MpFixedPoint {
         if ([string]::IsNullOrWhiteSpace([string]$envelope.settledRowJson)) { continue }
         $parsed = [string]$envelope.settledRowJson | ConvertFrom-Json
         $again = ConvertTo-TestPhaseExecutedChunk -Item $parsed
-        $againText = ConvertTo-TestPhaseJsonText -Value $again
+        $againText = [Antiphon.Nightly.TestPhaseJson]::Text($again, 0)
         if ($againText -ne [string]$envelope.settledRowJson) {
             return ('settlement-not-fixed-point ' + $file.Name)
         }
@@ -555,7 +540,7 @@ function Invoke-V2 {
         }
         $duringWrites = [int]$script:MpFlatWrites
         $duringPrior = [int]$script:MpPriorRows
-        $duringBytes = [int]$script:MpDepth0Bytes
+        $duringBytes = [int][Antiphon.Nightly.TestPhaseJson]::MeasuredBytes
         $duringHash = [int]$script:MpHashCount
         if ($null -ne $ctx -and -not $ctx.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
             Complete-TestPhaseExecutedProjection -Context $ctx

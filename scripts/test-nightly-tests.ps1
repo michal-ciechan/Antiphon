@@ -2533,13 +2533,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     # The verdict re-read and re-censused all of it after each launch; a suite
     # now parses each distinct discovery once and reconciles only the launch's
     # own classes, with every verdict unchanged.
-    $script:C1419Reads = 0
-    $c1419ReadDiscovery = ${function:Read-NightlyDiscoveryDocument}
-    function Read-NightlyDiscoveryDocument {
-        param([string]$Path)
-        $script:C1419Reads++
-        return (& $c1419ReadDiscovery -Path $Path)
-    }
+    # Discovery parses are counted by the compiled reader (NightlyDiagnosticLog.DiscoveryReads).
     $root = Join-Path $ResultsDirectory ('c1419-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $nodes = @()
@@ -2570,9 +2564,9 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     try {
         $index = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
         foreach ($l in $launches) {
-            $before = $script:C1419Reads
+            $before = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads
             $v = Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root -Index $index
-            $indexedReads += ($script:C1419Reads - $before)
+            $indexedReads += ([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads - $before)
             $plain = Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root
             $vt = Get-C1419VerdictText -Verdict $v
             $pt = Get-C1419VerdictText -Verdict $plain
@@ -2592,24 +2586,24 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
 
         # The same bytes at a new path per launch (the per-chunk discovery shape).
         $copyIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
-        $before = $script:C1419Reads
+        $before = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads
         foreach ($l in $launches[0..2]) {
             $copy = Join-Path $l.Dir 'launch.discovery.json'
             Copy-Item -LiteralPath $disc -Destination $copy -Force
             [void](Invoke-C1419Verdict -Launch $l -Discovery $copy -RunDirectory $root -Index $copyIndex)
         }
-        Assert-C487 -Cond (($script:C1419Reads - $before) -eq 1) -Name 'C1419 identical discovery bytes at three paths parse once' -Detail ('reads=' + ($script:C1419Reads - $before))
+        Assert-C487 -Cond (([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads - $before) -eq 1) -Name 'C1419 identical discovery bytes at three paths parse once' -Detail ('reads=' + ([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads - $before))
 
         # Profile lane: the exclusion census and its required set come from the index.
         $hold = @([pscustomobject]@{ Class = 'ClassC'; Methods = @('Two'); Reason = 'held'; Owner = 'C1419' })
         $profileIndex = [Antiphon.Nightly.NightlyDiscoveryIndex]::new()
         $held = New-C1419Launch -Root $root -Name 'held' -Class 'ClassC' -Methods @('One')
-        $before = $script:C1419Reads
+        $before = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads
         $pv = @()
         foreach ($l in @($launches[0], $held, $launches[1])) {
             $pv += Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root -Index $profileIndex -Exclusions $hold -Aware
         }
-        $profileReads = $script:C1419Reads - $before
+        $profileReads = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads - $before
         $pPlain = Invoke-C1419Verdict -Launch $held -Discovery $disc -RunDirectory $root -Exclusions $hold -Aware
         $pText = Get-C1419VerdictText -Verdict $pv[1]
         $pOk = ($profileReads -eq 1 -and $pText -ceq (Get-C1419VerdictText -Verdict $pPlain) -and [bool]$pv[1].coverageComplete -and
@@ -2619,9 +2613,9 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
         # A rewritten discovery is new bytes: the index parses it again.
         $nodes += @{ uid = 'ClassD.One'; type = 'ClassD'; method = 'One'; namespace = 'Ns'; state = 'Discovered' }
         Write-C487Discovery -Path $disc -Nodes $nodes
-        $before = $script:C1419Reads
+        $before = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads
         $after = Invoke-C1419Verdict -Launch $launches[0] -Discovery $disc -RunDirectory $root -Index $index
-        $rewriteReads = $script:C1419Reads - $before
+        $rewriteReads = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryReads - $before
         Assert-C487 -Cond ($rewriteReads -eq 1 -and [int]$after.census.RequiredCount -eq 9 -and [bool]$after.coverageComplete) `
             -Name 'C1419 rewritten discovery is parsed again' -Detail ('reads=' + $rewriteReads + ' ' + (Get-C1419VerdictText -Verdict $after))
     } catch {

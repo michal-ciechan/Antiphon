@@ -1605,11 +1605,22 @@ namespace Antiphon.Nightly
     {
         public static string Text(object value) => Text(value, 0);
 
+        /// <summary>
+        /// While true, the UTF-8 bytes of every Text result add to MeasuredBytes. The manifest publication harness
+        /// uses them to bound what one publication serialises (it must not re-serialise earlier chunks).
+        /// </summary>
+        public static bool Measure;
+
+        /// <summary>The bytes counted while Measure is on.</summary>
+        public static long MeasuredBytes;
+
         public static string Text(object value, int depth)
         {
             var sb = new StringBuilder();
             Write(sb, value, depth);
-            return sb.ToString();
+            var text = sb.ToString();
+            if (Measure) System.Threading.Interlocked.Add(ref MeasuredBytes, Encoding.UTF8.GetByteCount(text));
+            return text;
         }
 
         public static string String(string text)

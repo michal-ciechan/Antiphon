@@ -240,7 +240,7 @@ public sealed class TestPhaseSupervisorTests
             nodes = @($script:C1514Nodes.ToArray())
         }
         $discPath = Join-Path $work 'discovery.json'
-        Write-TestPhaseTextAtomic -Path $discPath -Text (ConvertTo-TestPhaseJsonText -Value $doc)
+        Write-TestPhaseTextAtomic -Path $discPath -Text ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0))
         $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($discPath)
         $table = Get-NightlyClassCostTable
         $hugeKey = 'Antiphon.Tests.C1514.Huge'
@@ -315,7 +315,7 @@ public sealed class TestPhaseSupervisorTests
                 groups = @($groups.ToArray())
                 plannedPath = [string]$written
             }
-            Write-TestPhaseTextAtomic -Path (Join-Path $work 'pack.json') -Text (ConvertTo-TestPhaseJsonText -Value $report)
+            Write-TestPhaseTextAtomic -Path (Join-Path $work 'pack.json') -Text ([Antiphon.Nightly.TestPhaseJson]::Text($report, 0))
         } finally {
             if ($had) { $table[$hugeKey] = $prev } else { [void]$table.Remove($hugeKey) }
         }
@@ -394,7 +394,7 @@ public sealed class TestPhaseSupervisorTests
             buildAbsent = [bool](Test-C1514PhaseAbsent -Map $build)
             clientAbsent = [bool](Test-C1514PhaseAbsent -Map $client)
         }
-        Write-TestPhaseTextAtomic -Path (Join-Path $work 'launch.json') -Text (ConvertTo-TestPhaseJsonText -Value $result)
+        Write-TestPhaseTextAtomic -Path (Join-Path $work 'launch.json') -Text ([Antiphon.Nightly.TestPhaseJson]::Text($result, 0))
         """;
 
     private const string ActualScript = """
@@ -440,6 +440,6 @@ public sealed class TestPhaseSupervisorTests
             throwCoverage = [bool]$thrownBack.coverageComplete
             throwTests = [bool]$thrownBack.testsPassed
         }
-        Write-TestPhaseTextAtomic -Path (Join-Path $work 'v8.json') -Text (ConvertTo-TestPhaseJsonText -Value $result)
+        Write-TestPhaseTextAtomic -Path (Join-Path $work 'v8.json') -Text ([Antiphon.Nightly.TestPhaseJson]::Text($result, 0))
         """;
 }

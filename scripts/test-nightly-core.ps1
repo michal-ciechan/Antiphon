@@ -158,7 +158,7 @@ function Test-NCCoreMatchesFallback {
         pso = [pscustomobject]@{ z = 1; y = @(1, @(2)); x = $null }; deep = $deep; date = [datetime]'2026-01-02T03:04:05'
         enum = [IO.FileAttributes]::Hidden; ch = [char]'x'; dbnull = [DBNull]::Value; sw = [switch]$true
     }
-    $r = Invoke-NCBothWays { @(foreach ($k in $samples.Keys) { (ConvertTo-TestPhaseJsonText -Value $samples[$k]) + '|' + (ConvertTo-TestPhaseJsonText -Value $samples[$k] -Depth 20) }) + @((ConvertTo-TestPhaseJsonString -Text $null)) } 'json'
+    $r = Invoke-NCBothWays { @(foreach ($k in $samples.Keys) { ([Antiphon.Nightly.TestPhaseJson]::Text($samples[$k], 0)) + '|' + ([Antiphon.Nightly.TestPhaseJson]::Text($samples[$k], 20)) }) + @(([Antiphon.Nightly.TestPhaseJson]::String($null))) } 'json'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'json' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
@@ -292,12 +292,12 @@ function Test-NCDiagnosticsMatchFallback {
     $row = [ordered]@{ testId = '=id'; duration = $null; joined = $true; db = [long]7; outcome = 'say "x"' }
     $stdout = "noise`r`n  ANTIPHON_TEST_PHASE_ID  a.b.c  `r`nC1514_NATIVE 12 x.y`nC1514_NATIVE nospace`nANTIPHON_TEST_PHASE_ID a.b.c`nC1514_NATIVE 1 "
     $r = Invoke-NCBothWays { [ordered]@{
-        cells = @(foreach ($v in $values) { ConvertTo-TestPhaseCsvCell -Value $v })
-        native = @(Get-TestPhaseNativeIds -Text $stdout); nativeEmpty = @(Get-TestPhaseNativeIds -Text '')
+        cells = @(foreach ($v in $values) { [Antiphon.Nightly.TestPhaseSummary]::Cell($v) })
+        native = @(@([Antiphon.Nightly.TestPhaseSummary]::NativeIds($stdout))); nativeEmpty = @(@([Antiphon.Nightly.TestPhaseSummary]::NativeIds('')))
         bag = @([Antiphon.Nightly.NightlyClassNames]::BagKey('A.B.C(x)', 'T', @('M', ([Antiphon.Nightly.NightlyClassNames]::BagKey(' ', 'N.Type', 'Run')))))
         outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($o) })
         sha = Get-NightlyFileSha256 -Path $hashed
-        csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
+        csvRow = (@($row.Keys | ForEach-Object { [Antiphon.Nightly.TestPhaseSummary]::Cell($row[$_]) }) -join ',')
     } } 'summaryHelpers'
     $rowCore = [Antiphon.Nightly.TestPhaseSummary]::Row($row, [string[]]@($row.Keys))
     # TestPhaseSummaryFast: the whole-roster tests.csv lines and the [bool]$test.incomplete scan.

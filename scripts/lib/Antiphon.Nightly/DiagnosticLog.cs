@@ -169,8 +169,15 @@ namespace Antiphon.Nightly
         /// Read-NightlyDiscoveryDocument: the discovery document file (the producer writes UTF-8 with no BOM; a UTF-8 BOM,
         /// a trailing comma and a BOM-led UTF-16 document are accepted; comments are refused).
         /// </summary>
+        /// <summary>
+        /// Discovery documents read so far in this process (every ReadDiscovery call): the CARD-1419 witness
+        /// checks that a suite parses each distinct discovery once.
+        /// </summary>
+        public static long DiscoveryReads;
+
         public static PSObject ReadDiscovery(string path)
         {
+            System.Threading.Interlocked.Increment(ref DiscoveryReads);
             if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !Directory.Exists(path))) throw Refuse("missing discovery " + path);
             var read = NightlyJson.ReadDiscovery(Path.GetFullPath(path));
             if (read.Document == null)
