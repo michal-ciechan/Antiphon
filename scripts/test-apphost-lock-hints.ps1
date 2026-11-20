@@ -23,9 +23,8 @@ function New-C1533Fixture {
     $root = Join-Path ([IO.Path]::GetTempPath()) ('c1533-' + [guid]::NewGuid().ToString('N'))
     $scripts = Join-Path $root 'scripts'
     New-Item -ItemType Directory -Path (Join-Path $scripts 'lib'), (Join-Path $root 'logs') -Force | Out-Null
-    foreach ($name in @('restart-apphost.ps1', 'apphost-common.ps1', 'lib/live-startup-timing.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $here $name) -Destination (Join-Path $scripts $name)
-    }
+    . (Join-Path $here 'lib/apphost-fixture-closure.ps1')
+    Copy-AppHostDotSourceClosure -SourceScriptsRoot $here -DestinationScriptsRoot $scripts -EntryRelative 'restart-apphost.ps1' | Out-Null
     '# inert CARD-1533' | Set-Content -LiteralPath (Join-Path $scripts 'check-daemon-build.ps1') -Encoding ASCII
     '# inert CARD-1533' | Set-Content -LiteralPath (Join-Path $root 'dev-aspire.ps1') -Encoding ASCII
     @'

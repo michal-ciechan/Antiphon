@@ -38,9 +38,8 @@ function New-C1680Fixture($Config) {
     & git -C $root config user.email c1680@example.test
     & git -C $root config user.name c1680
     & git -C $root config commit.gpgsign false
-    foreach ($name in @('restart-apphost.ps1', 'apphost-common.ps1', 'lib/live-startup-timing.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $here $name) -Destination (Join-Path $scripts $name)
-    }
+    . (Join-Path $here 'lib/apphost-fixture-closure.ps1')
+    Copy-AppHostDotSourceClosure -SourceScriptsRoot $here -DestinationScriptsRoot $scripts -EntryRelative 'restart-apphost.ps1' | Out-Null
     '# inert CARD-1680' | Set-Content -LiteralPath (Join-Path $scripts 'check-daemon-build.ps1') -Encoding ASCII
     '# inert CARD-1680' | Set-Content -LiteralPath (Join-Path $root 'dev-aspire.ps1') -Encoding ASCII
     & git -C $root add -A | Out-Null
