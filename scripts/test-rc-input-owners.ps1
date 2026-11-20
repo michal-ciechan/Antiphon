@@ -69,6 +69,35 @@ function ConflictRows($s) {
     if ($null -eq $s -or $null -eq $s.noopConflicts) { return ,@() }
     return ,@(@($s.noopConflicts))
 }
+function Copy-RioMap([bool]$Enabled) {
+    $copy=ConvertFrom-Json -InputObject $mapText -AsHashtable
+    $copy.testOnly.enabled=$Enabled
+    return ($copy | ConvertTo-Json -Depth 8)
+}
+function Add-RioDeferredSuiteIds($Manifest, $Union) {
+    # testOnlyDeferred is suite:path. A one-row result stays an array; do not
+    # stringify that array or only the first suite is counted.
+    $raw=$Manifest.testOnlyDeferred
+    if ($null -eq $raw) { return }
+    $rows=@($raw)
+    if ($rows.Count -eq 1 -and $rows[0] -is [System.Array]) { $rows=@($rows[0]) }
+    foreach ($row in $rows) {
+        if ($null -eq $row) { continue }
+        $text=[string]$row
+        $cut=$text.IndexOf(':')
+        if ($cut -gt 0) { [void]$Union.Add($text.Substring(0,$cut)) }
+    }
+}
+function Note-RioSelectionParity([string]$name, $on, $off) {
+    $union=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in @($on.dirtySuites)) { if ($id) { [void]$union.Add([string]$id) } }
+    Add-RioDeferredSuiteIds $on $union
+    $left=@(Get-TestSelectionSorted @($union)) -join ';'
+    $right=@(Get-TestSelectionSorted @($off.dirtySuites)) -join ';'
+    Note ($left -ceq $right) "parity:${name}:on=$left;off=$right"
+    Note (-not $on.gateCredit -and -not $off.gateCredit) "parity-gate:${name}"
+    Note ([string]$on.activation -ceq 'shadow-only' -and [string]$off.activation -ceq 'shadow-only') "parity-shadow:${name}"
+}
 [void](Git @('init','-q','-b','main'))
 [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $sourceRoot=Split-Path -Parent $PSScriptRoot
@@ -473,6 +502,105 @@ switch ($Case) {
         Note ($rows.Count -eq 1) 'existing-csproj-unowned'
         Note ([string]$rows[0].hint -cne 'new-csproj') "existing-csproj-hint:$($rows[0].hint)"
         Note ($s.dirtySuites.Count -eq 0) "existing-csproj-selects-nothing:$(& $shown $s)"
+    }
+    'HelperProjectBodySelectsReferencers' {
+        # Two suites ProjectReference one helper. A body edit of the helper's
+        # Program.cs selects both. A body edit inside a suite's own project still defers.
+        $helperProj='tests/Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj'
+        $helperSrc='tests/Antiphon.CustodyTestChild/Program.cs'
+        $runner='tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj'
+        Put $helperProj '<Project Sdk="Microsoft.NET.Sdk" />'
+        Put $helperSrc 'class HelperProgram { void Body() { int x = 1; } }'
+        Put $runner '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj" /></ItemGroup></Project>'
+        Put $antiphon '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../server/Server.csproj" /><ProjectReference Include="../Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj" /></ItemGroup></Project>'
+        $baseline=Commit
+        Put $helperSrc 'class HelperProgram { void Body() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
+        Note (SameSet $s @($antiphon,$runner)) "helper-selects-both:$(& $shown $s)"
+        Note ($s.dirtySuites -cnotcontains $helperProj) "helper-own-stays-deferred:$(& $shown $s)"
+        Note ((DeferredRows $s) -ccontains "${helperProj}:${helperSrc}") 'helper-own-deferred-row'
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'helper-stays-shadow'
+        $own='tests/Antiphon.Tests/OwnBodyProbe.cs'
+        Put $own 'class OwnBodyProbe { void Body() { int x = 1; } }'
+        $baseline=Commit
+        Put $own 'class OwnBodyProbe { void Body() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "own-body-still-defers:$(& $shown $s)"
+        Note ((DeferredRows $s) -ccontains "${antiphon}:${own}") 'own-body-deferred-row'
+    }
+    'E2EAddedTestSelectsSuites' {
+        # An added E2E file, and an added [Test] method on an existing E2E class,
+        # select every suite. A later body edit still defers.
+        $added='tests/Antiphon.E2E/AddedProbeTests.cs'
+        Put $added "class AddedE2EProbeTests { [Test] void AddedMethod() { int x = 1; } }"
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-file-selects-all:$(& $shown $s)"
+        Note ($s.dirtySuites -ccontains $e2e) 'e2e-file-selects-e2e'
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-file-stays-shadow'
+        $existing='tests/Antiphon.E2E/ExistingProbeTests.cs'
+        Put $existing 'class ExistingE2EProbeTests { void OldMethod() { int x = 1; } }'
+        $baseline=Commit
+        Put $existing 'class ExistingE2EProbeTests { void OldMethod() { int x = 1; } [Test] void AddedMethod() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-method-selects-all:$(& $shown $s)"
+        $baseline=Git @('rev-parse','HEAD')
+        Put $existing 'class ExistingE2EProbeTests { void OldMethod() { int x = 1; } [Test] void AddedMethod() { int x = 3; } }'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "e2e-body-still-defers:$(& $shown $s)"
+    }
+    'CanaryEditSelectsPtySuite' {
+        # A body edit of the canary file selects the Pty suite that reads it.
+        # The owning Antiphon.Tests project still defers.
+        $pty='tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj'
+        $canary='tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs'
+        Put $canary 'class ClaudeDialogWatchdogCanaryTests { void Body() { int x = 1; } }'
+        $baseline=Commit
+        Put $canary 'class ClaudeDialogWatchdogCanaryTests { void Body() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites -ccontains $pty) "canary-selects-pty:$(& $shown $s)"
+        Note (Owns $s $pty $canary 'runtime-reader-scan') 'canary-reader-reason'
+        Note ($s.dirtySuites -cnotcontains $antiphon) "canary-own-stays-deferred:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'canary-stays-shadow'
+    }
+    'EnabledFalseMatchesBaseSelection' {
+        # enabled=false selects the same suites the enabled closure would have
+        # selected before deferral. Selection parity, not manifest bytes.
+        function Invoke-RioProbe([bool]$Enabled, [scriptblock]$Setup, [string]$Path, [string]$Before, [string]$After) {
+            Put 'scripts/lib/rc-input-owners.json' (Copy-RioMap $Enabled)
+            if ($Setup) { & $Setup }
+            if ($null -ne $Before) { Put $Path $Before }
+            [void](Git @('add','--all'))
+            [void](Git @('commit','-qm','fixture','--allow-empty'))
+            $base=Git @('rev-parse','HEAD')
+            Put $Path $After
+            return Get-RcInputManifest $root $base (Commit) $null
+        }
+        $helperProj='tests/Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj'
+        $helperSrc='tests/Antiphon.CustodyTestChild/Program.cs'
+        $runner='tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj'
+        $armHelper={
+            Put $helperProj '<Project Sdk="Microsoft.NET.Sdk" />'
+            Put $runner '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj" /></ItemGroup></Project>'
+            Put $antiphon '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../server/Server.csproj" /><ProjectReference Include="../Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj" /></ItemGroup></Project>'
+        }
+        $sibling='tests/Antiphon.Tests/TestHelpers/Sibling.cs'
+        $on=Invoke-RioProbe $true $null $sibling 'class SiblingProbe { void Body() { int x = 1; } }' 'class SiblingProbe { void Body() { int x = 2; } }'
+        $off=Invoke-RioProbe $false $null $sibling 'class SiblingProbe { void Body() { int x = 1; } }' 'class SiblingProbe { void Body() { int x = 2; } }'
+        Note-RioSelectionParity 'own-body' $on $off
+        Note ($on.dirtySuites.Count -eq 0) "parity-own-defers:$(& $shown $on)"
+        Note ($off.dirtySuites -ccontains $antiphon) "parity-own-base-selects:$(& $shown $off)"
+        $on=Invoke-RioProbe $true $null 'server/App.cs' 'server source' 'server source changed'
+        $off=Invoke-RioProbe $false $null 'server/App.cs' 'server source' 'server source changed'
+        Note-RioSelectionParity 'product' $on $off
+        $productOn=@(Get-TestSelectionSorted @($on.dirtySuites)) -join ';'
+        $productOff=@(Get-TestSelectionSorted @($off.dirtySuites)) -join ';'
+        Note ($productOn -ceq $productOff) "parity-product-equal:$productOn;$productOff"
+        $on=Invoke-RioProbe $true $armHelper $helperSrc 'class HelperProgram { void Body() { int x = 1; } }' 'class HelperProgram { void Body() { int x = 2; } }'
+        $off=Invoke-RioProbe $false $armHelper $helperSrc 'class HelperProgram { void Body() { int x = 1; } }' 'class HelperProgram { void Body() { int x = 2; } }'
+        Note-RioSelectionParity 'helper' $on $off
+        Note ($off.dirtySuites -ccontains $antiphon -and $off.dirtySuites -ccontains $runner) "parity-helper-base:$(& $shown $off)"
     }
     'ReaderRootsAreEverySuite' {
         foreach ($path in @(

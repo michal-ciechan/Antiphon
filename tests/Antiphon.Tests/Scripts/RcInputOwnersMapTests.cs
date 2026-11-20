@@ -39,4 +39,8 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(60_000)] public Task NoOpOwnerConflictFails(CancellationToken token) => Run(nameof(NoOpOwnerConflictFails), token);
     [Test, Timeout(60_000)] public Task UnownedListAboveFortyIsVisible(CancellationToken token) => Run(nameof(UnownedListAboveFortyIsVisible), token);
     [Test, Timeout(60_000)] public Task ExistingCsprojIsNotANewCsproj(CancellationToken token) => Run(nameof(ExistingCsprojIsNotANewCsproj), token);
+    [Test, Timeout(60_000)] public Task HelperProjectBodySelectsReferencers(CancellationToken token) => Run(nameof(HelperProjectBodySelectsReferencers), token);
+    [Test, Timeout(90_000)] public Task E2EAddedTestSelectsSuites(CancellationToken token) => Run(nameof(E2EAddedTestSelectsSuites), token);
+    [Test, Timeout(60_000)] public Task CanaryEditSelectsPtySuite(CancellationToken token) => Run(nameof(CanaryEditSelectsPtySuite), token);
+    [Test, Timeout(120_000)] public Task EnabledFalseMatchesBaseSelection(CancellationToken token) => Run(nameof(EnabledFalseMatchesBaseSelection), token);
 }
