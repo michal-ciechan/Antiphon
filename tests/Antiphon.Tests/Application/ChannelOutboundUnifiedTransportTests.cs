@@ -46,10 +46,13 @@ public sealed class ChannelOutboundUnifiedTransportTests
     // must answer a metadata request (Testcontainers' State is cached, not live), allowed 20 seconds and asked twice
     // because a loaded host can be slow: one that still does not answer prints `shared=replaced` and is disposed
     // (bounded; a failed disposal is logged and left to the reaper) and replaced. After two failed starts in a row the
-    // remaining tests fail at once with the last start's error instead of each spending its own startup budget. Every
-    // caller bounds its wait (SharedBrokerWait: a start, two probes and a disposal). Disposed after the class, under
-    // the same gate as a start.
-    internal static readonly TimeSpan SharedBrokerWait = TimeSpan.FromSeconds(240);
+    // remaining tests fail at once with the last start's error instead of each spending its own startup budget.
+    // Every step under the gate has its own bound (two 30-second probes, a 60-second disposal, a 120-second start whose
+    // failed-start disposal is bounded too), so a gate holder always finishes and no caller abandons work it started:
+    // a caller waits for the gate at most SharedBrokerGateWait (more than the longest holder) and then does its own
+    // bounded work. A test's own scenario deadline starts after it has the broker. Disposed after the class, under the
+    // same gate.
+    private static readonly TimeSpan SharedBrokerGateWait = TimeSpan.FromSeconds(420);
     private static readonly SemaphoreSlim SharedBrokerGate = new(1, 1);
     private static RedpandaContainer? _sharedBroker;
     private static int _sharedBrokerStartFailures;
@@ -57,7 +60,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
 
     private static async Task<RedpandaContainer> SharedBrokerAsync()
     {
-        await SharedBrokerGate.WaitAsync();
+        if (!await SharedBrokerGate.WaitAsync(SharedBrokerGateWait))
+            throw new TimeoutException("the class's shared Redpanda broker was held by another test past every bound");
         try
         {
             if (_sharedBroker is { } current)
@@ -102,11 +106,14 @@ public sealed class ChannelOutboundUnifiedTransportTests
         try
         {
             var bootstrap = broker.GetBootstrapAddress();
-            return await Task.Run(() =>
+            var asking = Task.Run(() =>
             {
                 using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build();
                 return admin.GetMetadata(TimeSpan.FromSeconds(20)).Brokers.Count > 0;
-            }).WaitAsync(TimeSpan.FromSeconds(30));
+            });
+            _ = asking.ContinueWith(attempt => _ = attempt.Exception,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            return await asking.WaitAsync(TimeSpan.FromSeconds(30));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -130,8 +137,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [After(Class)]
     public static async Task StopSharedBrokerAsync()
     {
-        if (!await SharedBrokerGate.WaitAsync(SharedBrokerWait))
-            return; // a start still holds the gate past every bound: the reaper removes its container
+        if (!await SharedBrokerGate.WaitAsync(SharedBrokerGateWait))
+        {
+            Console.WriteLine("C1934_BROKER_PHASE after-class gate not acquired; the reaper removes any broker left");
+            return;
+        }
         try
         {
             if (_sharedBroker is { } broker)
@@ -149,7 +159,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
     // CARD-1934. C519_Partial_prompt_requires_complete_receipt, C519_Enabled_loss_notice_reaches_adapter
     // and C519_Size_refusal used to pass their 120-second deadline to this same StartAsync. The broker is now shared
     // (above): StartOwnedBrokerAsync gives every start 120 seconds, and each caller bounds its wait for the shared
-    // broker (the three single tests by their own deadline, the matrix tests by SharedBrokerWait). On 08cc3dc the exact main
+    // broker (SharedBrokerGateWait for the gate; each test's own deadline starts once it has the broker). On 08cc3dc the exact main
     // UID spent 12.3s, 16.0s and 13.1s of the old 30-second token on Docker time before the Redpanda
     // container existed (load 21.63, 35.46 and 27.30), 40 to 53 percent of that budget, before Kafka
     // readiness. A failing-tail p95 is unavailable: those three passes finished inside 30 seconds, and
@@ -172,7 +182,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         }
         catch
         {
-            await broker.DisposeAsync();
+            await DisposeBrokerAsync(broker);
             throw;
         }
     }
@@ -272,7 +282,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
 
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
-        var broker = await SharedBrokerAsync().WaitAsync(SharedBrokerWait);
+        var broker = await SharedBrokerAsync();
         foreach (var lateGateway in new[] { false, true })
         foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
         {
@@ -497,8 +507,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Partial_prompt_requires_complete_receipt()
     {
+        var broker = await SharedBrokerAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
         await ReceiveSourceAsync(w, "main", false, new HandoffFault("partial-prompt"), deadline.Token);
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
@@ -511,8 +521,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Enabled_loss_notice_reaches_adapter()
     {
+        var broker = await SharedBrokerAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, gatewayStarted: false);
         var source = await w.H.SeedChannelCorrelationAsync("lost complete source prompt", w.Key,
             sentAtUtc: w.H.Now.AddHours(-2));
@@ -538,8 +548,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Size_refusal()
     {
+        var broker = await SharedBrokerAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, maxMessageBytes: 4096);
         await w.SeedCrashSourceAsync("main");
         // Incompressible bytes cross the client cap and reach the broker's smaller topic cap.
@@ -640,7 +650,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Arguments(false, "result-committed"), Arguments(true, "result-committed")]
     public async Task C519_Converter_handoff(bool busy, string cut)
     {
-        var broker = await SharedBrokerAsync().WaitAsync(SharedBrokerWait);
+        var broker = await SharedBrokerAsync();
         {
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };

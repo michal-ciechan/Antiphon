@@ -258,7 +258,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var deleting = Task.Run(async () =>
         {
             using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = Bootstrap }).Build();
-            await admin.DeleteTopicsAsync([Topic]);
+            await admin.DeleteTopicsAsync([Topic], new DeleteTopicsOptions
+                { RequestTimeout = TimeSpan.FromSeconds(10), OperationTimeout = TimeSpan.FromSeconds(10) });
         });
         _ = deleting.ContinueWith(attempt => _ = attempt.Exception,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
