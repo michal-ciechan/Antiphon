@@ -288,70 +288,25 @@ function New-ReleaseSelectionAttempt {
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $script:ReleaseSelectionRoute = 'worker'
         $handled = $false
-        if ($PSVersionTable.PSVersion.Major -ge 7) {
-            . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
-            # The compiled command (Antiphon.Scripts select-release) answers an attempt exactly as the worker
-            # would, with or without a baseline; exit 10 means not this input, and the worker below decides
-            # instead. It is given this directory: a baseline proposal reads the selector and planner files the
-            # worker would run.
-            $cli = Get-AntiphonScriptsCli
-            if ($cli) {
-                $start = New-Object Diagnostics.ProcessStartInfo($cli)
-                foreach ($arg in @('select-release', $requestPath, $responsePath, $PSScriptRoot)) { $start.ArgumentList.Add($arg) }
-                $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)
-                if (-not $run.TimedOut -and $run.Exit -eq 0) { $handled = $true; $script:ReleaseSelectionRoute = 'cli' }
-            }
+        . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+        # The compiled command (Antiphon.Scripts select-release) answers an attempt exactly as the worker
+        # would, with or without a baseline; exit 10 means not this input, and the worker below decides
+        # instead. It is given this directory: a baseline proposal reads the selector and planner files the
+        # worker would run.
+        $cli = Get-AntiphonScriptsCli
+        if ($cli) {
+            $start = New-Object Diagnostics.ProcessStartInfo($cli)
+            foreach ($arg in @('select-release', $requestPath, $responsePath, $PSScriptRoot)) { $start.ArgumentList.Add($arg) }
+            $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)
+            if (-not $run.TimedOut -and $run.Exit -eq 0) { $handled = $true; $script:ReleaseSelectionRoute = 'cli' }
         }
         if ($handled) {
             # Answered by the compiled command; its response file is read below like the worker's.
-        } elseif ($PSVersionTable.PSVersion.Major -ge 7) {
+        } else {
             $start = New-Object Diagnostics.ProcessStartInfo($pwsh.Source)
             foreach ($arg in @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)) { $start.ArgumentList.Add($arg) }
             $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)
             if ($run.TimedOut) { throw 'selection-worker-timeout' }
-        } else {
-            # 5.1's Arguments has no ArgumentList. Only a fixed switch list and
-            # base64 are transported here; paths/Unicode are decoded by the child.
-            if (-not ('Antiphon.ReleaseSelectionBridge' -as [type])) {
-                Add-Type -TypeDefinition @'
-using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-namespace Antiphon {
-    public static class ReleaseSelectionBridge {
-        [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr a, string n);
-        [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr j, IntPtr p);
-        [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr j, int c, ref ExtendedLimits v, uint s);
-        [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr j, uint c);
-        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-        [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
-            public long ProcessTime, JobTime; public uint Flags;
-            public UIntPtr Minimum, Maximum; public uint Active; public UIntPtr Affinity; public uint Priority, Scheduling;
-        }
-        [StructLayout(LayoutKind.Sequential)] struct IoCounters { public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes; }
-        [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits {
-            public BasicLimits Basic; public IoCounters Io; public UIntPtr ProcessMemory, JobMemory, PeakProcess, PeakJob;
-        }
-        public static void Run(string exe, string encoded) {
-            IntPtr job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero) throw new InvalidOperationException("selection-worker-custody");
-            Process process = null;
-            try {
-                var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000;
-                if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) throw new InvalidOperationException("selection-worker-custody");
-                process = Process.Start(new ProcessStartInfo(exe, "-NoProfile -NonInteractive -EncodedCommand " + encoded) { UseShellExecute=false, CreateNoWindow=true });
-                if (!AssignProcessToJobObject(job, process.Handle)) throw new InvalidOperationException("selection-worker-custody");
-                if (!process.WaitForExit(60000)) throw new TimeoutException("selection-worker-timeout");
-            } finally {
-                TerminateJobObject(job, 1); CloseHandle(job);
-                if (process != null) { if (!process.HasExited) process.Kill(); process.WaitForExit(1000); process.Dispose(); }
-            }
-        }
-    }
-}
-'@
-            }
-            [Antiphon.ReleaseSelectionBridge]::Run($pwsh.Source, $encoded)
         }
         $response = Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $response -or -not $response.ok) { throw ('selection-refused:' + $response.error) }

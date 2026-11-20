@@ -105,8 +105,14 @@ function Assert-OffSwitch($order) {
     $compiled=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/Antiphon.Scripts/ReleaseSelection.cs'))
     Note ($compiled.Contains('("effectiveMode", "Full")')) 'compiled-selector-effective-mode-full'
     Note (-not $compiled.Contains('Incremental')) 'compiled-selector-has-no-incremental'
-    $gate=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/release-gate.ps1'))
-    Note ($gate.Contains("coverageScope -cne 'Full'")) 'gate-credit-refuses-non-full-scope'
+    # The compiled credit verdict refuses an rc green whose explicit coverage scope is not Full.
+    . "$PSScriptRoot/lib/nightly-core.ps1"; $null=Test-NightlyCoreAvailable
+    $scoped=[ordered]@{ profile='rc'; trigger='rc'; ref='rc/2026-10-18'; coverageComplete=$true; testsPassed=$true; reportDelivered=$true; exitCode=0
+        runId='r'; policyHash='p'; sha=('a'*40); expectedSha=('a'*40); candidateId='rc-2026-10-18-aaaaaaaaaaaa'; coverageScope='Shadow' }
+    $shadow=[Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict([pscustomobject]$scoped)
+    $scoped.coverageScope='Full'
+    $full=[Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict([pscustomobject]$scoped)
+    Note (-not $shadow.Ok -and @($shadow.Reasons) -contains 'full-credit-scope-required' -and $full.Ok) 'gate-credit-refuses-non-full-scope'
     foreach ($name in @('publish-release.ps1','promote-release.ps1')) {
         $path=Join-Path $PSScriptRoot $name
         if (Test-Path -LiteralPath $path) {
