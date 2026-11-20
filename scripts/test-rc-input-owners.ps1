@@ -50,6 +50,10 @@ function Test-RioPresentOwned($suite,[string]$path) {
     $reasons=@($record[0].reason.Split(';'))
     return ($reasons -cnotcontains 'unmatched-path-fallback') -and ($reasons -cnotcontains 'unresolved-conservative-all-inputs')
 }
+function UnownedRows($s,[string]$path) {
+    if ($null -eq $s -or $null -eq $s.unowned) { return @() }
+    return @(@($s.unowned) | Where-Object { $null -ne $_ -and [string]$_.path -ceq $path })
+}
 [void](Git @('init','-q','-b','main'))
 [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $sourceRoot=Split-Path -Parent $PSScriptRoot
@@ -86,13 +90,101 @@ Put 'NuGet.config' '<configuration />'
 $baseline=Commit
 $shown={ param($s) if ($null -eq $s) { return 'no-manifest' }; return (@($s.dirtySuites) -join ',') }
 switch ($Case) {
-    'UnknownPathDirtiesAll' {
+    'UnknownPathSelectsNothing' {
+        # Replaces UnknownPathDirtiesAll. That case required unmatched-path-fallback
+        # to select every suite. An unknown path now selects nothing and is flagged.
         Put 'stray/outside.txt' 'unknown'; $s=Select-Manifest (Commit)
         $ids=@($s.snapshots[1].suites.id)
-        Note ($s.unresolved.Count -eq 0) "unknown-not-broadened:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s $ids) "unknown-dirties-all:$(& $shown $s)"
-        Note (Owns $s $messaging 'stray/outside.txt' 'unmatched-path-fallback') 'unknown-fallback-reason'
-        Note (Lacks $s $messaging 'server/App.cs') 'unknown-does-not-blanket-closure'
+        Note (-not (SameSet $s $ids)) "unknown-does-not-select-all:$(& $shown $s)"
+        Note ($s.dirtySuites.Count -eq 0) "unknown-selects-nothing:$(& $shown $s)"
+        Note (Lacks $s $messaging 'stray/outside.txt') 'unknown-not-an-input'
+        Note (Lacks $s $antiphon 'stray/outside.txt') 'unknown-not-antiphon'
+        $rows=UnownedRows $s 'stray/outside.txt'
+        Note ($rows.Count -eq 1 -and [string]$rows[0].hint -ceq 'unknown') "unknown-hint:$($rows.hint)"
+        Note ($s.needsOrchestratorDecision -eq $true) 'unknown-needs-decision'
+        Note ([string]$s.creditBlockedBy -ceq 'unowned-paths') "unknown-credit:$($s.creditBlockedBy)"
+        Note (-not $s.gateCredit -and $s.activation -ceq 'shadow-only' -and -not $s.executionEvidence) 'unknown-stays-shadow'
+    }
+    'NewCsprojNobodyReferencesIsFlagged' {
+        $path='src/BrandNew.Thing/BrandNew.Thing.csproj'
+        Put $path '<Project Sdk="Microsoft.NET.Sdk" />'
+        $s=Select-Manifest (Commit)
+        Note (Lacks $s $messaging $path) 'new-csproj-not-selected'
+        Note (Lacks $s $antiphon $path) 'new-csproj-not-antiphon'
+        Note ($s.dirtySuites.Count -eq 0) "new-csproj-selects-nothing:$(& $shown $s)"
+        $rows=UnownedRows $s $path
+        Note ($rows.Count -eq 1 -and [string]$rows[0].hint -ceq 'new-csproj') "new-csproj-hint:$($rows.hint)"
+        Note ($s.needsOrchestratorDecision -eq $true) 'new-csproj-needs-decision'
+    }
+    'NoOpPathSelectsNothingAndIsSilent' {
+        $noop=@{schemaVersion=1;rows=@(@{path='docs/reviews/**';reason='no test reads review notes';evidence='fixture'})}
+        Put 'scripts/lib/rc-input-noop.json' ($noop | ConvertTo-Json -Depth 6)
+        Put 'docs/reviews/note.md' 'review note'
+        $baseline=Commit
+        Put 'docs/reviews/note.md' 'changed review note'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "noop-selects-nothing:$(& $shown $s)"
+        Note (Lacks $s $antiphon 'docs/reviews/note.md') 'noop-not-an-input'
+        Note ((UnownedRows $s 'docs/reviews/note.md').Count -eq 0) 'noop-not-flagged'
+        Note ($s.needsOrchestratorDecision -ne $true) 'noop-stays-silent'
+        Note ([string]::IsNullOrEmpty([string]$s.creditBlockedBy)) "noop-credit:$($s.creditBlockedBy)"
+    }
+    'DirectoryWalkReadersSelectSuites' {
+        $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
+        Ensure-RioProject $serverGit '<Project Sdk="Microsoft.NET.Sdk" />'
+        $sample='tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs'
+        $migration='src/Antiphon.Messaging.Service/Migrations/20990101000000_Example.cs'
+        Put $sample 'class StaleWorkingTranscriptWatchdogTests {}'
+        Put $migration 'migration'
+        $baseline=Commit
+        Put $sample 'class StaleWorkingTranscriptWatchdogTests { void Renamed() {} }'
+        $s=Select-Manifest (Commit)
+        Note (Owns $s $resilience $sample 'antiphon-tests-source-scan') 'd1a-resilience'
+        Note (Owns $s $serverGit $sample 'antiphon-tests-source-scan') 'd1a-server-git'
+        Note (Owns $s $gitinprocess $sample 'antiphon-tests-source-scan') 'd1a-gitinprocess'
+        Note ($s.dirtySuites -ccontains $resilience -and $s.dirtySuites -ccontains $serverGit) "d1a-dirty:$(& $shown $s)"
+        $baseline=Git @('rev-parse','HEAD')
+        Put $migration 'migration changed'
+        $s=Select-Manifest (Commit)
+        Note (Owns $s $antiphon $migration 'messaging-migration-walk') 'd1b-antiphon'
+        Note (Lacks $s $resilience $migration) 'd1b-not-resilience'
+        Note ($s.dirtySuites -ccontains $antiphon) "d1b-dirty:$(& $shown $s)"
+    }
+    'RepoWalkingProjectSelectedForAnyPath' {
+        $mapCopy=ConvertFrom-Json -InputObject (Get-TestSelectionBlob $sourceRoot $sourceSha 'scripts/lib/rc-input-owners.json') -AsHashtable
+        $roots=New-Object System.Collections.Generic.List[object]
+        foreach ($row in @($mapCopy.roots)) {
+            if ([string]$row.path -ceq '**') { continue }
+            $roots.Add($row)
+        }
+        $roots.Add(@{path='**';consumers=@($messaging);reason='repo-walk'})
+        $mapCopy.roots=@($roots.ToArray())
+        Put 'scripts/lib/rc-input-owners.json' ($mapCopy | ConvertTo-Json -Depth 8)
+        $baseline=Commit
+        Put 'server/App.cs' 'repo walk sees an owned product file'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites -ccontains $messaging) "repo-walk-any-path:$(& $shown $s)"
+        Note (Owns $s $messaging 'server/App.cs' 'repo-walk') 'repo-walk-reason'
+        Note ($s.dirtySuites -ccontains $antiphon) 'repo-walk-keeps-project-owner'
+    }
+    'UnownedPathBlocksCarryCredit' {
+        Put 'brand-new-area/file.txt' 'unowned area'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "credit-selects-nothing:$(& $shown $s)"
+        Note ([string]$s.creditBlockedBy -ceq 'unowned-paths') "credit-blocked:$($s.creditBlockedBy)"
+        Note (-not $s.gateCredit) 'credit-gate-stays-false'
+        Note ($s.needsOrchestratorDecision -eq $true) 'credit-needs-decision'
+        $rows=UnownedRows $s 'brand-new-area/file.txt'
+        Note ($rows.Count -eq 1 -and [string]$rows[0].hint -ceq 'unknown') "credit-hint:$($rows.hint)"
+    }
+    'NamedDocSelectsReadingSuite' {
+        $path='docs/testing-and-build.md'
+        Put $path 'doc contract'
+        $baseline=Commit
+        Put $path 'doc contract changed'
+        $s=Select-Manifest (Commit)
+        Note (Owns $s $antiphon $path 'doc-contract-reader') 'doc-reader-reason'
+        Note ($s.dirtySuites -ccontains $antiphon) "doc-reader-dirty:$(& $shown $s)"
     }
     'ServerChangeDirtiesAntiphonAndE2E' {
         Put 'server/App.cs' 'changed server'; $s=Select-Manifest (Commit)

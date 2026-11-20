@@ -113,13 +113,10 @@ switch ($Case) {
         Note ($committedMap.suiteProjects -ceq 'tests/**/*.csproj') 'committed-map-suite-projects'
         $blanket=@($committedMap.roots | Where-Object { $_.reason -ceq 'repository-scanners-conservative-all-inputs' })
         Note ($blanket.Count -eq 0) 'committed-map-not-blanket'
-        $fallback=@($committedMap.roots | Where-Object { $_.path -ceq '**' })
-        Note ($fallback.Count -eq 1) 'committed-map-one-fallback'
-        if ($fallback.Count -eq 1) {
-            $fallbackConsumers=@(Get-TestSelectionSorted @($fallback[0].consumers))
-            Note (($fallbackConsumers -join ';') -ceq '*') 'committed-map-fallback-star'
-            Note ($fallback[0].reason -ceq 'unmatched-path-fallback') 'committed-map-fallback-reason'
-        }
+        # unmatched-path-fallback used to be the one ** row with consumers *.
+        # That row is gone: an unmatched path is unowned, not assigned to every suite.
+        $fallback=@($committedMap.roots | Where-Object { $_.reason -ceq 'unmatched-path-fallback' -or ($_.path -ceq '**' -and @($_.consumers) -ccontains '*') })
+        Note ($fallback.Count -eq 0) 'committed-map-no-broad-fallback'
         foreach ($path in @('docs/**','**/*.md','scripts/**','docker/**','.claude/**','**/docker-compose*.yml','**/Dockerfile*','client/**')) {
             $reader=@($committedMap.roots | Where-Object { $_.path -ceq $path })
             Note ($reader.Count -eq 1) "committed-map-reader:$path"
@@ -156,12 +153,22 @@ switch ($Case) {
         }
     }
     'DynamicAndUnownedAreDirty' {
+        # Replaces the assertion that an unknown path dirties every suite.
+        # unresolved-conservative-all-inputs no longer copies the closure onto other.
         Put 'unowned/new.txt' 'unknown'; $s=Select-Manifest (Commit)
-        Note ($s.dirtySuites.Count -eq 3 -and $s.unresolved -ccontains 'unknown-path:unowned/new.txt') 'unknown-path-all-dirty'
+        Note ($s.dirtySuites.Count -eq 0) "unknown-selects-nothing:$($s.dirtySuites.Count)"
+        Note ($s.needsOrchestratorDecision -eq $true) 'unknown-needs-decision'
+        Note ([string]$s.creditBlockedBy -ceq 'unowned-paths') "unknown-credit:$($s.creditBlockedBy)"
+        Note (-not (Has $s 'other' 'unowned/new.txt')) 'unknown-not-an-input'
+        $rows=@($s.unowned | Where-Object { $null -ne $_ -and [string]$_.path -ceq 'unowned/new.txt' })
+        Note ($rows.Count -eq 1 -and [string]$rows[0].hint -ceq 'unknown') "unknown-hint:$($rows.hint)"
         Put 'server/Server.csproj' '<Project><Import Project="$(UnknownRoot)/dynamic.props" /></Project>'
         $s=Select-Manifest (Commit)
-        Note ($s.dirtySuites.Count -eq 3 -and @($s.unresolved | Where-Object { $_ -like '*unresolved-import*' }).Count -gt 0) 'dynamic-import-all-dirty'
-        Note (Has $s 'other' 'src/Core/Queue.cs') 'unresolved-inventory-broadens-to-all'
+        Note (@($s.unresolved | Where-Object { $_ -like '*unresolved-import*' }).Count -gt 0) 'dynamic-import-flagged'
+        Note (-not (Has $s 'other' 'src/Core/Queue.cs')) 'unresolved-does-not-broaden'
+        Note ($s.dirtySuites -ccontains 'server') 'dynamic-dirties-changed-project'
+        Note ($s.dirtySuites -cnotcontains 'other') "dynamic-does-not-dirty-other:$($s.dirtySuites -join ',')"
+        Note ([string]$s.creditBlockedBy -ceq 'unowned-paths') 'dynamic-credit-blocked'
         # Old graph dependencies cannot disappear when an edge is removed in the candidate.
         Put 'tests/Runner/Runner.csproj' '<Project />'; Put 'src/Core/Queue.cs' 'old edge consumer'
         $s=Select-Manifest (Commit)
