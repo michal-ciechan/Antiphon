@@ -678,13 +678,13 @@ public sealed class TestClassificationPolicyTests
 
     // 32 hex digits so this directory matches the registered antiphon-owned family.
     // The name is stable so a later process can see probe directories a killed run left.
+    // The root itself is not tracked: ReleaseAll would otherwise delete every sibling.
     internal const string ProbeOwnedLeaf = "c4870000000000000000000000000000";
 
     internal static string ProbeOwnedRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), OwnedTempRoot.OwnedPrefix + ProbeOwnedLeaf);
         Directory.CreateDirectory(root);
-        OwnedTempRoot.Track(root);
         return NormalizeDirectory(root);
     }
 
@@ -710,10 +710,23 @@ public sealed class TestClassificationPolicyTests
         return true;
     }
 
+    private static bool IsProbeReparsePoint(string path)
+    {
+        try
+        {
+            return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
     /// <summary>
     /// Deletes direct children of <paramref name="ownedRoot"/> named <c>c487-probe-</c> plus 32
-    /// lowercase hex digits whose last write is older than 24 hours. The parent must be the
-    /// temp directory. Nothing outside that parent is enumerated.
+    /// lowercase hex digits whose last write is older than 24 hours. A probe-named symlink or
+    /// other reparse point is left in place. The parent must be the temp directory. Nothing
+    /// outside that parent is enumerated.
     /// </summary>
     internal static int SweepStaleProbeDirectories(string ownedRoot, DateTimeOffset utcNow)
     {
@@ -734,6 +747,8 @@ public sealed class TestClassificationPolicyTests
             if (entryParent is null || !SameDirectory(entryParent, root))
                 continue;
             if (!IsExactProbeDirectoryName(Path.GetFileName(full)))
+                continue;
+            if (IsProbeReparsePoint(full))
                 continue;
             var written = new DateTimeOffset(Directory.GetLastWriteTimeUtc(full), TimeSpan.Zero);
             if (utcNow - written <= StaleProbeAge)
