@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -87,13 +88,15 @@ namespace Antiphon.Checkpoints
                     var config = new ProcessStartInfo(start.FileName) { WorkingDirectory = start.WorkingDirectory };
                     foreach (var pair in start.Environment) config.Environment[pair.Key] = pair.Value;
                     HardenGit(config);
-                    // The read's own -C directories: the lookup reads the repository the read will use.
-                    foreach (var directory in LeadingDirectories(start.ArgumentList))
-                    { config.ArgumentList.Add("-C"); config.ArgumentList.Add(directory); }
+                    // The read's own leading -c settings and -C directories: the lookup reads the repository and
+                    // the config the read will use (a caller's -c include.path included).
+                    var leading = ReadLeadingOptions(start.ArgumentList);
+                    foreach (var setting in leading.Settings) { config.ArgumentList.Add("-c"); config.ArgumentList.Add(setting); }
+                    foreach (var directory in leading.Directories) { config.ArgumentList.Add("-C"); config.ArgumentList.Add(directory); }
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
-                    var settings = DriverSettings(config, driverSettingsCacheMs < 0 ? DriverSettingsCacheMilliseconds : driverSettingsCacheMs, deadline.Token, beforeStart);
+                    var settings = DriverSettings(config, driverSettingsCacheMs < 0 ? DriverSettingsCacheMilliseconds : driverSettingsCacheMs, deadline.Token, beforeStart, !leading.Other);
                     foreach (var entry in settings.Split('\0'))
                     {
                         var split = entry.IndexOf('\n');
@@ -165,7 +168,7 @@ namespace Antiphon.Checkpoints
             return OperatingSystem.IsWindows() ? directory.ToUpperInvariant() : directory;
         }
 
-        private static string DriverSettings(ProcessStartInfo config, int lifetime, CancellationToken cancellationToken, Action<ProcessStartInfo> beforeStart)
+        private static string DriverSettings(ProcessStartInfo config, int lifetime, CancellationToken cancellationToken, Action<ProcessStartInfo> beforeStart, bool filesMayAnswer)
         {
             string key = null;
             var scoped = ScopedDriverSettings.Value;
@@ -184,7 +187,7 @@ namespace Antiphon.Checkpoints
                         return cached.Value;
                 }
             }
-            if (NoDriverConfigured(config))
+            if (filesMayAnswer && NoDriverConfigured(config))
             {
                 if (key != null)
                     lock (DriverSettingsGate)
@@ -206,49 +209,100 @@ namespace Antiphon.Checkpoints
             return stdout;
         }
 
-        // The -C directories leading a git command line (after any -c pairs), in order.
-        private static List<string> LeadingDirectories(IList<string> arguments)
+        // The global options a git command line opens with, up to its subcommand: -c settings and -C directories in
+        // order, and whether any other global option (--git-dir, --work-tree, --no-pager, ...) is among them.
+        private sealed class LeadingOptions
         {
-            var directories = new List<string>();
-            for (var i = 0; i + 1 < arguments.Count; i += 2)
-            {
-                if (arguments[i] == "-C") directories.Add(arguments[i + 1]);
-                else if (arguments[i] != "-c") break;
-            }
-            return directories;
+            public readonly List<string> Settings = new List<string>();
+            public readonly List<string> Directories = new List<string>();
+            public bool Other;
         }
 
-        // Whether this directory is one git accepts as a repository's git dir: HEAD, and objects and refs (or a
-        // commondir that holds them, for a linked worktree's git dir).
-        private static bool LooksLikeGitDir(string directory) =>
-            File.Exists(Path.Combine(directory, "HEAD"))
-            && (File.Exists(Path.Combine(directory, "commondir"))
-                || (Directory.Exists(Path.Combine(directory, "objects")) && Directory.Exists(Path.Combine(directory, "refs"))));
+        private static LeadingOptions ReadLeadingOptions(IList<string> arguments)
+        {
+            var options = new LeadingOptions();
+            for (var i = 0; i < arguments.Count; i++)
+            {
+                var argument = arguments[i];
+                if ((argument == "-c" || argument == "-C") && i + 1 < arguments.Count)
+                {
+                    (argument == "-c" ? options.Settings : options.Directories).Add(arguments[++i]);
+                    continue;
+                }
+                if (argument.StartsWith("-", StringComparison.Ordinal)) options.Other = true;
+                break;
+            }
+            return options;
+        }
 
-        // Whether the driver lookup's answer is empty without asking git. The lookup is hardened (GIT_CONFIG_NOSYSTEM,
+        private static readonly System.Text.RegularExpressions.Regex HeadValue = new System.Text.RegularExpressions.Regex(
+            "^(ref: refs/.+|[0-9a-f]{40}|[0-9a-f]{64})$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // Whether git accepts this directory as a repository's git dir: a valid HEAD (a ref under refs/ or a full
+        // object id), and objects and refs (or a commondir that holds them, for a linked worktree's git dir).
+        private static bool LooksLikeGitDir(string directory)
+        {
+            var head = Path.Combine(directory, "HEAD");
+            if (!File.Exists(head) || !HeadValue.IsMatch(File.ReadAllText(head).Trim())) return false;
+            return File.Exists(Path.Combine(directory, "commondir"))
+                || (Directory.Exists(Path.Combine(directory, "objects")) && Directory.Exists(Path.Combine(directory, "refs")));
+        }
+
+        // A path segment "..": after a link, git's chdir lands in the link target's parent while text collapse does
+        // not, so such a path is git's to resolve.
+        private static bool HasParentSegment(string path) =>
+            path.Split('\\', '/').Any(segment => segment == "..");
+
+        // Whether a directory or any of its ancestors is a link (reparse point).
+        private static bool AnyLinkOnPath(string directory)
+        {
+            for (var current = new DirectoryInfo(directory); current != null; current = current.Parent)
+                if (!current.Exists || (current.Attributes & FileAttributes.ReparsePoint) != 0) return true;
+            return false;
+        }
+
+        // A -c setting a caller passes that can name a driver or pull in more config.
+        private static bool NamesDriverOrInclude(string setting)
+        {
+            var equals = setting.IndexOf('=');
+            var key = (equals < 0 ? setting : setting.Substring(0, equals)).ToLowerInvariant();
+            return key.StartsWith("include", StringComparison.Ordinal) || key.StartsWith("filter.", StringComparison.Ordinal)
+                || (key.StartsWith("diff.", StringComparison.Ordinal) && key.EndsWith(".textconv", StringComparison.Ordinal));
+        }
+
+        // Whether the driver lookup's answer is empty without asking git (the read's leading options are all -c and
+        // -C; DriverSettings does not ask otherwise). The lookup is hardened (GIT_CONFIG_NOSYSTEM,
         // GIT_CONFIG_GLOBAL on the null device), so git reads only the repository's own config files: config in its
         // git dir and common dir, config.worktree, and whatever they include. When the repository git would find has
         // files that never mention "filter", "diff" or "include", no key can match the lookup
         // (filter.*.clean|smudge|process|required, diff.*.textconv) and git would print nothing. The search follows
         // git's: from the read's directory (its -C), each directory's .git first, then the directory itself as a git
         // dir. Any doubt asks git: an executable other than plain git, a variable that redirects git's repository or
-        // config, a link anywhere on the path (git climbs the real path), a .git git might skip or read differently,
-        // no repository, an unreadable file, or one of those words anywhere (a URL containing "diff" included).
+        // config, a caller -c naming a driver or an include, a ".." in the directories (git resolves it after links),
+        // a link anywhere on the path (git climbs the real path), a .git git might skip or read differently (invalid
+        // HEAD, no objects and refs), no repository, an unreadable file, or one of those words anywhere in the files
+        // (a URL containing "diff" included).
         private static bool NoDriverConfigured(ProcessStartInfo config)
         {
             try
             {
-                var executable = Path.GetFileName(config.FileName ?? "");
-                if (!(executable == "git" || (OperatingSystem.IsWindows() && string.Equals(executable, "git.exe", StringComparison.OrdinalIgnoreCase)))
-                    || !string.Equals(config.FileName, executable, StringComparison.Ordinal)) return false;
+                var executable = config.FileName ?? "";
+                var plainGit = OperatingSystem.IsWindows()
+                    ? string.Equals(executable, "git", StringComparison.OrdinalIgnoreCase) || string.Equals(executable, "git.exe", StringComparison.OrdinalIgnoreCase)
+                    : executable == "git";
+                if (!plainGit) return false;
                 var nullPath = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
                 if (!config.Environment.TryGetValue("GIT_CONFIG_NOSYSTEM", out var noSystem) || noSystem != "1") return false;
                 if (!config.Environment.TryGetValue("GIT_CONFIG_GLOBAL", out var global)
                     || !string.Equals(global, nullPath, StringComparison.OrdinalIgnoreCase)) return false;
                 foreach (var name in new[] { "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
                     if (config.Environment.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value)) return false;
-                var start = Path.GetFullPath(string.IsNullOrEmpty(config.WorkingDirectory) ? Environment.CurrentDirectory : config.WorkingDirectory);
-                foreach (var directory in LeadingDirectories(config.ArgumentList))
+                var leading = ReadLeadingOptions(config.ArgumentList);
+                if (leading.Other || leading.Settings.Any(NamesDriverOrInclude)) return false;
+                var working = string.IsNullOrEmpty(config.WorkingDirectory) ? Environment.CurrentDirectory : config.WorkingDirectory;
+                if (HasParentSegment(working) || leading.Directories.Any(HasParentSegment)) return false;
+                var start = Path.GetFullPath(working);
+                foreach (var directory in leading.Directories)
                     start = Path.GetFullPath(Path.Combine(start, directory));
                 string gitDir = null;
                 for (var directory = new DirectoryInfo(start); directory != null; directory = directory.Parent)
@@ -266,8 +320,10 @@ namespace Antiphon.Checkpoints
                     {
                         var pointer = File.ReadAllText(dotGit).Trim();
                         if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return false;
-                        gitDir = Path.GetFullPath(Path.Combine(here, pointer.Substring("gitdir:".Length).Trim()));
-                        if (!Directory.Exists(gitDir) || !LooksLikeGitDir(gitDir)) return false;
+                        var target = pointer.Substring("gitdir:".Length).Trim();
+                        if (HasParentSegment(target)) return false;
+                        gitDir = Path.GetFullPath(Path.Combine(here, target));
+                        if (AnyLinkOnPath(gitDir) || !LooksLikeGitDir(gitDir)) return false;
                         break;
                     }
                     // A git dir itself (bare, or a directory inside .git): git uses it as the repository.
@@ -278,7 +334,10 @@ namespace Antiphon.Checkpoints
                 var commonPointer = Path.Combine(gitDir, "commondir");
                 if (File.Exists(commonPointer))
                 {
+                    // gitDir's path has no link on it (checked above), so collapsing a "../.." commondir by text
+                    // lands where git's does.
                     var common = Path.GetFullPath(Path.Combine(gitDir, File.ReadAllText(commonPointer).Trim()));
+                    if (AnyLinkOnPath(common)) return false;
                     files.Add(Path.Combine(common, "config"));
                     files.Add(Path.Combine(common, "config.worktree"));
                 }

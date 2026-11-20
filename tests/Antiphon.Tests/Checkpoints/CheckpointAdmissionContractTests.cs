@@ -132,11 +132,11 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "init", "-q");
         var sub = Directory.CreateDirectory(Path.Combine(root, "sub")).FullName;
         var starts = new List<string[]>();
-        int Lookups(string directory)
+        int Lookups(string directory, string[]? leading = null, string executable = "git")
         {
             starts.Clear();
-            var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = directory };
-            foreach (var argument in new[] { "status", "--porcelain" }) start.ArgumentList.Add(argument);
+            var start = new System.Diagnostics.ProcessStartInfo(executable) { WorkingDirectory = directory };
+            foreach (var argument in (leading ?? []).Concat(["status", "--porcelain"])) start.ArgumentList.Add(argument);
             CheckpointProcessRunner.RunObserved(start, 30_000, true,
                 child => starts.Add(child.ArgumentList.ToArray()), 0, cancellationToken).Exit.ShouldBe(0);
             return starts.Count(args => args.Contains("--get-regexp"));
@@ -146,6 +146,28 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         Lookups(root).ShouldBe(0, "a driverless config is read from its file");
         starts.Count.ShouldBe(1, "only the read itself starts");
         Lookups(sub).ShouldBe(0, "found from a subdirectory too");
+        Lookups(sub, ["-C", root]).ShouldBe(0, "a plain -C into a driverless repository");
+
+        // What the files cannot settle the way git would is git's to answer.
+        var gitPath = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+            .Select(directory => Path.Combine(directory, OperatingSystem.IsWindows() ? "git.exe" : "git"))
+            .First(File.Exists);
+        Lookups(root, executable: gitPath).ShouldBe(1, "a path to an executable is not plain git");
+        Lookups(sub, ["--no-pager"]).ShouldBe(1, "another global option before the subcommand");
+        Lookups(sub, ["-C", ".."]).ShouldBe(1, "a .. segment, which git resolves after links");
+        Lookups(root, ["-c", "include.path=" + Path.Combine(root, "none.gitconfig")]).ShouldBe(1, "a caller's -c include");
+        var junk = Directory.CreateDirectory(Path.Combine(sub, "junk", ".git")).FullName;
+        Directory.CreateDirectory(Path.Combine(junk, "objects"));
+        Directory.CreateDirectory(Path.Combine(junk, "refs"));
+        File.WriteAllText(Path.Combine(junk, "HEAD"), "not a head\n");
+        File.WriteAllText(Path.Combine(junk, "config"), "[core]\n\tbare = false\n");
+        Lookups(Path.Combine(sub, "junk")).ShouldBe(1, "a .git with an invalid HEAD, which git skips");
+        if (!OperatingSystem.IsWindows())
+        {
+            var link = Path.Combine(TempDir(), "linked");
+            Directory.CreateSymbolicLink(link, root);
+            Lookups(link).ShouldBe(1, "a link on the path, which git climbs by its real path");
+        }
 
         // Any mention of a driver word or an include asks git, even where git would still find no driver.
         CheckpointFixtureProcess.Git(root, "config", "remote.origin.url", "https://example.invalid/diff-tools.git");
