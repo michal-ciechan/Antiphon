@@ -171,7 +171,9 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         {
             var link = Path.Combine(TempDir(), "linked");
             Directory.CreateSymbolicLink(link, root);
-            Lookups(link).ShouldBe(1, "a link on the path, which git climbs by its real path");
+            // The fixture teardown refuses a temp root holding a link, so the link goes before it runs.
+            try { Lookups(link).ShouldBe(1, "a link on the path, which git climbs by its real path"); }
+            finally { Directory.Delete(link); }
         }
 
         // Any mention of a driver word or an include asks git, even where git would still find no driver.

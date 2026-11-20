@@ -479,23 +479,62 @@ public sealed class RunCheckpointSourceScriptTests
         private int _round;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
+        // One seeded repository per seed text per test run, copied into each fixture: the same commit (one HEAD per
+        // seed, distinct seeds distinct HEADs) without seven git processes per fixture. A copy's index stat data no
+        // longer matches its files, so git compares their contents and still finds the tree clean.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<(string Directory, string Head)>> Seeds =
+            new(StringComparer.Ordinal);
+        private static readonly Lazy<string> SeedRoot = new(() =>
+        {
+            var root = Path.Combine(Path.GetTempPath(), "c835-seeds-" + Guid.NewGuid().ToString("N"));
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => GitFixtureCleanup.Delete(root);
+            return root;
+        });
+
+        private static (string Directory, string Head) Seeded(string seed)
+        {
+            var repo = Path.Combine(SeedRoot.Value, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(repo);
+            void Put(string path, string value)
+            {
+                var target = Path.Combine(repo, path);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.WriteAllText(target, value);
+            }
+            Run("git", repo, ["init", "-q"]);
+            Run("git", repo, ["config", "user.name", "Checkpoint Test"]);
+            Run("git", repo, ["config", "user.email", "checkpoint@example.invalid"]);
+            Run("git", repo, ["config", "core.autocrlf", "false"]);
+            // No background maintenance writing this .git while fixtures copy it.
+            Run("git", repo, ["config", "maintenance.auto", "false"]);
+            Put(".gitignore","bin-*/\nobj/\n.antiphon/\n");
+            Put("tracked.txt", seed);
+            Put("tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs",
+                File.ReadAllText(Path.Combine(ProjectRoot, "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs")));
+            Put("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            Run("git", repo, ["add", "."]);
+            Run("git", repo, ["commit", "-qm", "seed"]);
+            var head = Run("git", repo, ["rev-parse", "HEAD"]).Output.Trim();
+            head.ShouldMatch("^[0-9a-f]{40,64}$", "seed repository committed");
+            return (repo, head);
+        }
+
+        private static void CopyTree(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (var file in Directory.EnumerateFiles(source))
+                File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+            foreach (var directory in Directory.EnumerateDirectories(source))
+                CopyTree(directory, Path.Combine(destination, Path.GetFileName(directory)));
+        }
+
         public Fixture(string seed = "seed", string repoName = "source")
         {
             Repo = Path.Combine(Root, repoName);
-            Directory.CreateDirectory(Repo);
             Directory.CreateDirectory(External);
-            Run("git", Repo, ["init", "-q"]);
-            Run("git", Repo, ["config", "user.name", "Checkpoint Test"]);
-            Run("git", Repo, ["config", "user.email", "checkpoint@example.invalid"]);
-            Run("git", Repo, ["config", "core.autocrlf", "false"]);
-            Write(".gitignore", "bin-*/\nobj/\n.antiphon/\n");
-            Write("tracked.txt", seed);
-            Write("tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs",
-                File.ReadAllText(Path.Combine(ProjectRoot, "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs")));
-            Write("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
-            Run("git", Repo, ["add", "."]);
-            Run("git", Repo, ["commit", "-qm", "seed"]);
-            Head = Run("git", Repo, ["rev-parse", "HEAD"]).Output.Trim();
+            var seeded = Seeds.GetOrAdd(seed, text => new Lazy<(string, string)>(() => Seeded(text))).Value;
+            CopyTree(seeded.Directory, Repo);
+            Head = seeded.Head;
             File.WriteAllText(Path.Combine(External, "shim.ps1"), """
                 param()
                 $items = @($args)
