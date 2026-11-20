@@ -174,9 +174,11 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         var bare = Directory.CreateDirectory(Path.Combine(TempDir(), "bare.git")).FullName;
         CheckpointFixtureProcess.Git(bare, "init", "-q", "--bare");
         CheckpointProcessRunner.FindRepository(bare).ShouldBeNull("a bare repository");
+        var gitConfig = Path.Combine(root, ".git", "config");
+        var beforeWorktree = File.ReadAllText(gitConfig);
         CheckpointFixtureProcess.Git(root, "config", "core.worktree", sub);
         try { CheckpointProcessRunner.FindRepository(root).ShouldBeNull("core.worktree moves the top level"); }
-        finally { CheckpointFixtureProcess.Git(root, "config", "--unset", "core.worktree"); }
+        finally { File.WriteAllText(gitConfig, beforeWorktree); }
         Agrees(root, "after core.worktree is unset");
 
         // A bare setting in any form git reads as true (valueless, on its section header's line): no work tree.

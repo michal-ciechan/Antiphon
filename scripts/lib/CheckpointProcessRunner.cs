@@ -359,9 +359,11 @@ namespace Antiphon.Checkpoints
         /// files with no git child. Null when git must answer: a variable that moves git's repository or discovery
         /// (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_CEILING_DIRECTORIES, GIT_DISCOVERY_ACROSS_FILESYSTEM), a ".."
         /// in the path, any doubt FindRepositoryFiles has, a git dir with no work tree (bare, or a directory inside
-        /// .git), config that mentions a work tree or a bare setting (core.worktree, extensions.worktreeConfig,
-        /// core.bare not false), or, off Windows, a start below its top level (git stops at filesystem boundaries
-        /// the files cannot show). git rejects a repository it does not trust (safe.directory) at its next read.
+        /// .git), config text that mentions "worktree" (core.worktree, extensions.worktreeConfig), "include" (an
+        /// included file the scan does not read) or "bare" anywhere but git init's own "bare = false" line (a remote
+        /// URL with that word included: declining only costs a git child), or, off Windows, a start below its top
+        /// level (git stops at filesystem boundaries the files cannot show). git rejects a repository it does not
+        /// trust (safe.directory) at its next read.
         /// </summary>
         public static string[] FindRepository(string start)
         {
@@ -383,7 +385,8 @@ namespace Antiphon.Checkpoints
                     if (Directory.Exists(file)) return null;
                     if (!File.Exists(file)) continue;
                     var text = File.ReadAllText(file);
-                    if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
+                    if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0
+                        || text.IndexOf("include", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
                 }
                 return new[] { found.TopLevel, found.GitDir };
             }
