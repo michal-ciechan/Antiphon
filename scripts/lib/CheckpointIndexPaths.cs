@@ -92,7 +92,8 @@ namespace Antiphon.Checkpoints
                 if (found == null || !string.Equals(Path.GetFullPath(found).TrimEnd('\\', '/'),
                         Path.GetFullPath(gitDir).TrimEnd('\\', '/'), comparison))
                     return null;
-                var data = ReadIndex(top);
+                // The index of the git dir just checked, not a second resolution of <root>/.git.
+                var data = ReadIndexAt(found);
                 if (data == null) return null;
                 return ListIndex(data, out var assumeUnchanged) == null ? (bool?)null : assumeUnchanged;
             }
@@ -107,7 +108,12 @@ namespace Antiphon.Checkpoints
         private static byte[] ReadIndex(string root)
         {
             var gitDir = GitDirectory(root);
-            if (gitDir == null) return null;
+            return gitDir == null ? null : ReadIndexAt(gitDir);
+        }
+
+        // A git dir's index file bytes, or null when it is missing or cannot be read whole.
+        private static byte[] ReadIndexAt(string gitDir)
+        {
             var index = Path.Combine(gitDir, "index");
             if (!File.Exists(index)) return null;
             using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
