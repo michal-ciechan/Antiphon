@@ -2149,14 +2149,14 @@
       "reason": "cap",
       "owed": 49,
       "first": [
+        "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
-        "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests"
+        "LiveLaneAttestationTests"
       ]
     },
     {
@@ -2165,12 +2165,12 @@
       "reason": "cap",
       "owed": 26,
       "first": [
+        "RcIncrementalLedgerTests",
         "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcLedgerStatusTests",
         "RcReleaseBaselineTests",
-        "RcRunEvidenceTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests"
       ]
@@ -24610,9 +24610,9 @@
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
         "RcRosterRepairTests",
+        "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ReleaseBranchModelGateTests",
-        "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
@@ -24650,7 +24650,7 @@
         "RcForcedFullTests",
         "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
-        "RcIncrementalLedgerTests",
+        "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
