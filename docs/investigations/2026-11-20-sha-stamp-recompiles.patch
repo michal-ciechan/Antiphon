@@ -239,11 +239,11 @@ index fd020ff82..94133fba8 100644
  }
 diff --git a/tests/Antiphon.Tests/Infrastructure/SourceRevisionStampContractTests.cs b/tests/Antiphon.Tests/Infrastructure/SourceRevisionStampContractTests.cs
 new file mode 100644
-index 000000000..b115cc05d
+index 000000000..937fb3c2b
 --- /dev/null
 +++ b/tests/Antiphon.Tests/Infrastructure/SourceRevisionStampContractTests.cs
-@@ -0,0 +1,38 @@
-+using Antiphon.Tests.TestHelpers;
+@@ -0,0 +1,42 @@
++using System.Xml.Linq;
 +using Shouldly;
 +using TUnit.Core;
 +
@@ -259,14 +259,18 @@ index 000000000..b115cc05d
 +    [Test]
 +    public void Ordinary_builds_never_read_git_for_the_stamp()
 +    {
-+        var props = DockerStackDocuments.Read("Directory.Build.props");
-+        props.ShouldNotContain("rev-parse");
-+        props.ShouldNotContain("<Exec");
-+        props.ShouldNotContain("SetSourceRevisionIdFromGit");
-+        props.ShouldContain("<SourceRevisionId Condition=\"'$(SourceRevisionId)' == ''\">unknown</SourceRevisionId>");
++        var props = XDocument.Parse(DockerStackDocuments.Read("Directory.Build.props"));
++        props.Descendants("Target").ShouldBeEmpty("a props target would run in every project");
++        props.Descendants("Exec").ShouldBeEmpty();
++        var revision = props.Descendants("SourceRevisionId").ShouldHaveSingleItem();
++        revision.Value.ShouldBe("unknown");
++        ((string?)revision.Attribute("Condition")).ShouldBe("'$(SourceRevisionId)' == ''");
 +        // obj/<name>.sourcelink.json carries the HEAD SHA and is a compile input.
-+        props.ShouldContain("<EnableSourceLink>false</EnableSourceLink>");
-+        DockerStackDocuments.Read("Directory.Build.targets").ShouldNotContain("SourceRevisionId");
++        var sourceLink = props.Descendants("EnableSourceLink").ShouldHaveSingleItem();
++        sourceLink.Value.ShouldBe("false");
++        sourceLink.Attribute("Condition").ShouldBeNull();
++        XDocument.Parse(DockerStackDocuments.Read("Directory.Build.targets"))
++            .Descendants("SourceRevisionId").ShouldBeEmpty();
 +    }
 +
 +    [Test]
