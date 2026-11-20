@@ -288,7 +288,7 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         git.Git(root, "add", "-A");
         Refused(root, "empty commit message", "-c", "user.email=a@example.invalid", "-c", "user.name=a",
             "-c", "commit.gpgsign=false", "commit", "-m", " ", "--no-verify");
-        Refused(Directory.CreateDirectory(Path.Combine(scope, "bad-branch")).FullName, "invalid initial branch name", "init", "-b", "HEAD");
+        Refused(Directory.CreateDirectory(Path.Combine(scope, "bad-branch")).FullName, "invalid initial branch name", "init", "-b", "bad..name");
         var fresh = Directory.CreateDirectory(Path.Combine(scope, "fresh")).FullName;
         var beforeInit = git.GitChildren;
         git.Git(fresh, "init", "-b", "card1199");

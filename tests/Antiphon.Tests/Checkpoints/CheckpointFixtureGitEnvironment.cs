@@ -194,7 +194,8 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
         }
     }
 
-    // git init -b refuses what `git check-ref-format --branch` refuses, HEAD and a leading '-' included.
+    // git init -b refuses what `git check-ref-format --branch` refuses (a leading - included; newer git also refuses
+    // HEAD, older git takes it): those names go to git, which decides.
     private static bool GitAcceptsBranch(string branch) =>
         branch.Length > 0 && branch != "HEAD" && !branch.StartsWith('-') && LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch);
 
