@@ -24183,6 +24183,7 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/FixtureGitInProcess.cs",
       "classes": [
+        "CheckpointConfinementLedgerTests",
         "OutputCleanupTests"
       ]
     },
