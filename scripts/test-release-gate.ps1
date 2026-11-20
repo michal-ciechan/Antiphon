@@ -4568,7 +4568,7 @@ function Test-C1339_RemoteTagAllocation {
 
     $day = Get-C1311Utc '2026-10-15T12:00:00Z'
     $journal = Join-Path (New-C599Root) 'publications.json'
-    $row = New-ReleaseGateReservationEntry -CandidateId 'journal-candidate' -Sha $fx.B -Tag 'v2026.10.15.2-rc.7' -Sequence 2 -Rc 7 -Published $false
+    $row = [Antiphon.Nightly.ReleaseGateTags]::ReservationEntry('journal-candidate', $fx.B, 'v2026.10.15.2-rc.7', 2, '', $false, '', '', '', 7, '')
     Write-NightlyAtomicJson -Path $journal -Object @{ schemaVersion = 1; reservations = @($row) }
     $proposalArgs = @{ JournalPath = $journal; CandidateId = $fx.CandidateId; Sha = $fx.Head; CutUtc = $day }
     $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1')

@@ -448,54 +448,6 @@ function Exit-ReleaseGateNativeLock {
 
 # ------------------------------------------------------------------ calver ---
 
-function Get-ReleaseGateOptionalInt {
-    param($Row, [string]$Name)
-    if ($null -eq $Row) { return 0 }
-    if ($Row.PSObject.Properties.Name -notcontains $Name) { return 0 }
-    $text = [string]$Row.$Name
-    if ([string]::IsNullOrWhiteSpace($text)) { return 0 }
-    return [int]$text
-}
-
-function Get-ReleaseGateOptionalText {
-    param($Row, [string]$Name)
-    if ($null -eq $Row) { return '' }
-    if ($Row.PSObject.Properties.Name -notcontains $Name) { return '' }
-    return [string]$Row.$Name
-}
-
-function New-ReleaseGateReservationEntry {
-    # Stamp rows keep the historical keys. rc and finalTag are written only when set,
-    # so a later publish of the same row does not drop them and does not invent them.
-    param(
-        [string]$CandidateId,
-        [string]$Sha,
-        [string]$Tag,
-        [int]$Sequence,
-        [string]$ReservedAt,
-        [bool]$Published,
-        [string]$ReleaseId,
-        [string]$ReleaseUrl,
-        [string]$PublishedAt = '',
-        [int]$Rc = 0,
-        [string]$FinalTag = ''
-    )
-    $entry = [ordered]@{
-        candidateId = $CandidateId
-        sha = $Sha
-        tag = $Tag
-        sequence = $Sequence
-        reservedAt = $ReservedAt
-        published = $Published
-        releaseId = $ReleaseId
-        releaseUrl = $ReleaseUrl
-    }
-    if (-not [string]::IsNullOrWhiteSpace($PublishedAt)) { $entry.publishedAt = $PublishedAt }
-    if ($Rc -ge 1) { $entry.rc = $Rc }
-    if (-not [string]::IsNullOrWhiteSpace($FinalTag)) { $entry.finalTag = $FinalTag }
-    return $entry
-}
-
 function Get-ReleaseGateRemoteTagInventory {
     param([string]$WorkingDirectory)
     $read = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('ls-remote', '--tags', '--refs', 'origin')
@@ -521,55 +473,6 @@ function Get-ReleaseGateRemoteTagInventory {
     return [pscustomobject]@{ Ok = $true; Tags = @($names.Keys) }
 }
 
-function Get-ReleaseGatePreReleaseAllocation {
-    # D-4: one open N per UTC day. The next new SHA on that day takes the next K.
-    # A final tag, or a reservation whose finalTag names that N, closes N.
-    # The next pre-release then takes the next free N at K=1. A new UTC day starts at N=1.
-    param($Journal, [datetime]$CutUtc, [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RemoteTags)
-    $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
-    $closed = @()
-    $used = @()
-    $openN = @()
-    $openK = @()
-    $occupancy = @($Journal.reservations) + @($RemoteTags | ForEach-Object { [pscustomobject]@{ tag = $_ } })
-    foreach ($row in $occupancy) {
-        if ($null -eq $row) { continue }
-        $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag(([string]$row.tag))
-        if ($parsed.Ok -and $parsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
-            $n = [int]$parsed.Sequence
-            if ($used -notcontains $n) { $used += $n }
-            if ($parsed.Prerelease) {
-                $openN += $n
-                $openK += [int]$parsed.Rc
-            } elseif ($closed -notcontains $n) {
-                $closed += $n
-            }
-        }
-        $finalText = Get-ReleaseGateOptionalText -Row $row -Name 'finalTag'
-        if (-not [string]::IsNullOrWhiteSpace($finalText)) {
-            $finalParsed = [Antiphon.Nightly.ReleaseGateTags]::Tag($finalText)
-            if ($finalParsed.Ok -and -not $finalParsed.Prerelease -and $finalParsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
-                $fn = [int]$finalParsed.Sequence
-                if ($closed -notcontains $fn) { $closed += $fn }
-                if ($used -notcontains $fn) { $used += $fn }
-            }
-        }
-    }
-    $bestN = 0
-    $bestK = 0
-    for ($i = 0; $i -lt $openN.Count; $i++) {
-        if ($closed -contains $openN[$i]) { continue }
-        if ($openN[$i] -gt $bestN -or ($openN[$i] -eq $bestN -and $openK[$i] -gt $bestK)) {
-            $bestN = [int]$openN[$i]
-            $bestK = [int]$openK[$i]
-        }
-    }
-    if ($bestN -ge 1) { return [pscustomobject]@{ Sequence = $bestN; Rc = ($bestK + 1) } }
-    $next = 1
-    while (($used -contains $next) -or ($closed -contains $next)) { $next++ }
-    return [pscustomobject]@{ Sequence = $next; Rc = 1 }
-}
-
 function Get-ReleaseGatePublicationJournal {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
@@ -577,23 +480,6 @@ function Get-ReleaseGatePublicationJournal {
     }
     try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json) }
     catch { throw ('unreadable publication journal {0}: {1}' -f $Path, $_.Exception.Message) }
-}
-
-function Get-ReleaseGateReservedTag {
-    <#
-      D-8: a crash after publication must recover the existing release, not allocate
-      another N. An existing reservation for this candidate/SHA is returned as-is.
-    #>
-    param($Journal, [string]$CandidateId, [string]$Sha)
-    foreach ($row in @($Journal.reservations)) {
-        if ([string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
-            return $row
-        }
-    }
-    foreach ($row in @($Journal.reservations)) {
-        if ([string]::Equals([string]$row.sha, $Sha, [StringComparison]::OrdinalIgnoreCase)) { return $row }
-    }
-    return $null
 }
 
 function Get-ReleaseGateTagProposal {
@@ -613,7 +499,7 @@ function Get-ReleaseGateTagProposal {
     if (-not (Test-ReleaseGateFullSha -Sha $Sha)) { throw ('reservation requires a full sha, got {0}' -f $Sha) }
     if ($null -eq $CutUtc -or $CutUtc -eq [datetime]::MinValue) { $CutUtc = Get-NightlyUtcNow }
     $journal = Get-ReleaseGatePublicationJournal -Path $JournalPath
-    $existing = Get-ReleaseGateReservedTag -Journal $journal -CandidateId $CandidateId -Sha $Sha
+    $existing = [Antiphon.Nightly.ReleaseGateTags]::ReservedTag($journal, $CandidateId, $Sha)
     if ($null -ne $existing) {
         if (-not [string]::Equals([string]$existing.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
             throw ('sha {0} already reserved under candidate {1}' -f $Sha, $existing.candidateId)
@@ -624,14 +510,14 @@ function Get-ReleaseGateTagProposal {
         return [pscustomobject]@{
             Tag = [string]$existing.tag
             Sequence = [int]$existing.sequence
-            Rc = (Get-ReleaseGateOptionalInt -Row $existing -Name 'rc')
+            Rc = ([Antiphon.Nightly.ReleaseGateTags]::OptionalInt($existing, 'rc'))
             Reused = $true
             Row = $existing
             Journal = $journal
         }
     }
     if ([Antiphon.Nightly.ReleaseGateTags]::LongLivedCandidateId($CandidateId)) {
-        $alloc = Get-ReleaseGatePreReleaseAllocation -Journal $journal -CutUtc $CutUtc -RemoteTags $RemoteTags
+        $alloc = [Antiphon.Nightly.ReleaseGateTags]::Allocation($journal, $CutUtc, $RemoteTags)
         $pre = [Antiphon.Nightly.ReleaseGateTags]::NewPreReleaseTag($CutUtc, $alloc.Sequence, $alloc.Rc)
         return [pscustomobject]@{ Tag = $pre; Sequence = $alloc.Sequence; Rc = $alloc.Rc; Reused = $false; Row = $null; Journal = $journal }
     }
@@ -670,8 +556,7 @@ function New-ReleaseGateTagReservation {
     $next = $proposal.Sequence
     $rows = @()
     foreach ($row in @($journal.reservations)) { $rows += $row }
-    $rows += (New-ReleaseGateReservationEntry -CandidateId $CandidateId -Sha $Sha -Tag $tag -Sequence $next `
-        -ReservedAt (Get-NightlyUtcNow).ToString('o') -Published $false -ReleaseId '' -ReleaseUrl '' -Rc ([int]$proposal.Rc))
+    $rows += ([Antiphon.Nightly.ReleaseGateTags]::ReservationEntry($CandidateId, $Sha, $tag, $next, (Get-NightlyUtcNow).ToString('o'), $false, '', '', '', ([int]$proposal.Rc), ''))
     Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
         schemaVersion = $script:ReleaseGateManifestSchema
         reservations = $rows
@@ -692,12 +577,7 @@ function Set-ReleaseGateReservationPublished {
     foreach ($row in @($journal.reservations)) {
         if ([string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
             $found = $true
-            $rows += (New-ReleaseGateReservationEntry -CandidateId ([string]$row.candidateId) -Sha ([string]$row.sha) `
-                -Tag ([string]$row.tag) -Sequence ([int]$row.sequence) -ReservedAt ([string]$row.reservedAt) `
-                -Published $true -ReleaseId $ReleaseId -ReleaseUrl $ReleaseUrl `
-                -PublishedAt (Get-NightlyUtcNow).ToString('o') `
-                -Rc (Get-ReleaseGateOptionalInt -Row $row -Name 'rc') `
-                -FinalTag (Get-ReleaseGateOptionalText -Row $row -Name 'finalTag'))
+            $rows += ([Antiphon.Nightly.ReleaseGateTags]::ReservationEntry(([string]$row.candidateId), ([string]$row.sha), ([string]$row.tag), ([int]$row.sequence), ([string]$row.reservedAt), $true, $ReleaseId, $ReleaseUrl, (Get-NightlyUtcNow).ToString('o'), ([Antiphon.Nightly.ReleaseGateTags]::OptionalInt($row, 'rc')), ([Antiphon.Nightly.ReleaseGateTags]::OptionalText($row, 'finalTag'))))
         } else { $rows += $row }
     }
     if (-not $found) { throw ('no reservation for candidate {0}' -f $CandidateId) }

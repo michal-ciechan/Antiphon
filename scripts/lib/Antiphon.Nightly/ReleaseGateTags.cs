@@ -104,5 +104,115 @@ namespace Antiphon.Nightly
             if (matches.Count == 0) return Note("Status", "Absent", "Sha", "");
             return Note("Status", "Found", "Sha", matches[0]);
         }
+
+        // ---- the publication journal's reservations (D-4, D-8) ---------------------------------------------------
+
+        // $Row.PSObject.Properties.Name -contains name: a note or adapted property, case-insensitive.
+        private static bool Has(object row, string name) => row != null && PSObject.AsPSObject(row).Properties[name] != null;
+
+        /// <summary>Get-ReleaseGateOptionalText: the row's [string] field, "" when the row has no such property.</summary>
+        public static string OptionalText(object row, string name) => Has(row, name) ? PsValue.Str(PsValue.Prop(row, name)) : "";
+
+        /// <summary>Get-ReleaseGateOptionalInt: the row's field as [int], 0 when absent or blank.</summary>
+        public static int OptionalInt(object row, string name)
+        {
+            if (!Has(row, name)) return 0;
+            var text = PsValue.Str(PsValue.Prop(row, name));
+            if (string.IsNullOrWhiteSpace(text)) return 0;
+            return (int)LanguagePrimitives.ConvertTo(text, typeof(int), CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// New-ReleaseGateReservationEntry: a journal row with the historical keys in order; publishedAt, rc and finalTag
+        /// are written only when set, so a later publish of the same row neither drops nor invents them.
+        /// </summary>
+        public static System.Collections.Specialized.OrderedDictionary ReservationEntry(string candidateId, string sha, string tag, int sequence, string reservedAt,
+            bool published, string releaseId, string releaseUrl, string publishedAt, int rc, string finalTag)
+        {
+            var entry = new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase)
+            {
+                { "candidateId", candidateId ?? "" }, { "sha", sha ?? "" }, { "tag", tag ?? "" }, { "sequence", sequence },
+                { "reservedAt", reservedAt ?? "" }, { "published", published }, { "releaseId", releaseId ?? "" }, { "releaseUrl", releaseUrl ?? "" },
+            };
+            if (!string.IsNullOrWhiteSpace(publishedAt)) entry["publishedAt"] = publishedAt;
+            if (rc >= 1) entry["rc"] = rc;
+            if (!string.IsNullOrWhiteSpace(finalTag)) entry["finalTag"] = finalTag;
+            return entry;
+        }
+
+        /// <summary>
+        /// Get-ReleaseGateReservedTag (D-8): the journal row for this candidate (ignoring case), else for this SHA, else
+        /// null. A crash after publication recovers the existing release instead of allocating another N.
+        /// </summary>
+        public static object ReservedTag(object journal, string candidateId, string sha)
+        {
+            var rows = PsValue.AsArray(PsValue.Prop(journal, "reservations"));
+            foreach (var row in rows)
+                if (string.Equals(PsValue.Str(PsValue.Prop(row, "candidateId")), candidateId ?? "", StringComparison.OrdinalIgnoreCase)) return row;
+            foreach (var row in rows)
+                if (string.Equals(PsValue.Str(PsValue.Prop(row, "sha")), sha ?? "", StringComparison.OrdinalIgnoreCase)) return row;
+            return null;
+        }
+
+        /// <summary>
+        /// Get-ReleaseGatePreReleaseAllocation (D-4): { Sequence, Rc }. One open N per UTC day: the next new SHA takes the
+        /// next K of the highest open N. A final tag, or a reservation whose finalTag names that N, closes it; the next
+        /// pre-release then takes the next free N at K=1. A new UTC day starts at N=1.
+        /// </summary>
+        public static PSObject Allocation(object journal, DateTime cutUtc, string[] remoteTags)
+        {
+            var day = cutUtc.ToUniversalTime().ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
+            var closed = new List<int>();
+            var used = new List<int>();
+            var openN = new List<int>();
+            var openK = new List<int>();
+            var occupancy = new List<object>(PsValue.AsArray(PsValue.Prop(journal, "reservations")));
+            foreach (var remote in remoteTags ?? new string[0]) occupancy.Add(Note("tag", remote));
+            foreach (var row in occupancy)
+            {
+                if (row == null) continue;
+                var parsed = Tag(PsValue.Str(PsValue.Prop(row, "tag")));
+                if (LanguagePrimitives.IsTrue(PsValue.Prop(parsed, "Ok")) && SameDay(parsed, day))
+                {
+                    var n = (int)PsValue.Prop(parsed, "Sequence");
+                    if (!used.Contains(n)) used.Add(n);
+                    if ((bool)PsValue.Prop(parsed, "Prerelease"))
+                    {
+                        openN.Add(n);
+                        openK.Add((int)PsValue.Prop(parsed, "Rc"));
+                    }
+                    else if (!closed.Contains(n)) closed.Add(n);
+                }
+                var finalText = OptionalText(row, "finalTag");
+                if (!string.IsNullOrWhiteSpace(finalText))
+                {
+                    var finalParsed = Tag(finalText);
+                    if (LanguagePrimitives.IsTrue(PsValue.Prop(finalParsed, "Ok")) && !(bool)PsValue.Prop(finalParsed, "Prerelease") && SameDay(finalParsed, day))
+                    {
+                        var fn = (int)PsValue.Prop(finalParsed, "Sequence");
+                        if (!closed.Contains(fn)) closed.Add(fn);
+                        if (!used.Contains(fn)) used.Add(fn);
+                    }
+                }
+            }
+            var bestN = 0;
+            var bestK = 0;
+            for (var i = 0; i < openN.Count; i++)
+            {
+                if (closed.Contains(openN[i])) continue;
+                if (openN[i] > bestN || (openN[i] == bestN && openK[i] > bestK))
+                {
+                    bestN = openN[i];
+                    bestK = openK[i];
+                }
+            }
+            if (bestN >= 1) return Note("Sequence", bestN, "Rc", bestK + 1);
+            var next = 1;
+            while (used.Contains(next) || closed.Contains(next)) next++;
+            return Note("Sequence", next, "Rc", 1);
+        }
+
+        private static bool SameDay(PSObject parsed, string day) =>
+            ((DateTime)PsValue.Prop(parsed, "Date")).ToUniversalTime().ToString("yyyy.MM.dd", CultureInfo.InvariantCulture) == day;
     }
 }
