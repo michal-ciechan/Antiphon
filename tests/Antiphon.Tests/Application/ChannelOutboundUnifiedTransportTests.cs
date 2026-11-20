@@ -51,6 +51,45 @@ public sealed class ChannelOutboundUnifiedTransportTests
     // UntilMessageIsLogged("Started Kafka API server"), including the container start and the
     // startup-script copy that precede the log line. C1934_BROKER_PHASE repeats the same durations
     // on the test output.
+    // One Redpanda broker for the class instead of one per test: the class runs one test at a time
+    // (ProcessSpawnLimit), and every scenario already has its own topic (with its own size cap), consumer group,
+    // database schema and gateway (UnifiedOutboundTransport), so no test sees another's broker state. Started by the
+    // first test that needs it, inside that test's budget, with the CARD-1934 phase timing; a broker that is no
+    // longer running is replaced. Disposed after the class.
+    private static readonly SemaphoreSlim SharedBrokerGate = new(1, 1);
+    private static RedpandaContainer? _sharedBroker;
+
+    private static async Task<RedpandaContainer> SharedBrokerAsync()
+    {
+        await SharedBrokerGate.WaitAsync();
+        try
+        {
+            if (_sharedBroker is { State: TestcontainersStates.Running } running)
+                return running;
+            if (_sharedBroker is { } stopped)
+            {
+                _sharedBroker = null;
+                await stopped.DisposeAsync();
+            }
+            _sharedBroker = await StartOwnedBrokerAsync();
+            return _sharedBroker;
+        }
+        finally
+        {
+            SharedBrokerGate.Release();
+        }
+    }
+
+    [After(Class)]
+    public static async Task StopSharedBrokerAsync()
+    {
+        if (_sharedBroker is { } broker)
+        {
+            _sharedBroker = null;
+            await broker.DisposeAsync();
+        }
+    }
+
     private static async Task<RedpandaContainer> StartOwnedBrokerAsync()
     {
         var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
@@ -162,7 +201,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
 
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
-        await using var broker = await StartOwnedBrokerAsync();
+        var broker = await SharedBrokerAsync();
         foreach (var lateGateway in new[] { false, true })
         foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
         {
@@ -387,9 +426,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Partial_prompt_requires_complete_receipt()
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await broker.StartAsync(deadline.Token);
+        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
         await ReceiveSourceAsync(w, "main", false, new HandoffFault("partial-prompt"), deadline.Token);
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
@@ -402,9 +440,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Enabled_loss_notice_reaches_adapter()
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await broker.StartAsync(deadline.Token);
+        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, gatewayStarted: false);
         var source = await w.H.SeedChannelCorrelationAsync("lost complete source prompt", w.Key,
             sentAtUtc: w.H.Now.AddHours(-2));
@@ -430,9 +467,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test]
     public async Task C519_Size_refusal()
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await broker.StartAsync(deadline.Token);
+        var broker = await SharedBrokerAsync().WaitAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, maxMessageBytes: 4096);
         await w.SeedCrashSourceAsync("main");
         // Incompressible bytes cross the client cap and reach the broker's smaller topic cap.
@@ -533,7 +569,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Arguments(false, "result-committed"), Arguments(true, "result-committed")]
     public async Task C519_Converter_handoff(bool busy, string cut)
     {
-        await using var broker = await StartOwnedBrokerAsync();
+        var broker = await SharedBrokerAsync();
         {
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };
