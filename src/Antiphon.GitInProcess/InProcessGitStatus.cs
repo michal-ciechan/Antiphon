@@ -327,11 +327,15 @@ internal static class InProcessGitStatus
         bool indexOnly = false) where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
-        // GIT_COMMON_DIR moves git's objects, refs and config elsewhere, and the hardened git children of the direct
-        // callers (SafeDelete, the checkpoint confinement) keep it: git's to answer. They drop GIT_DIR, GIT_WORK_TREE
-        // and GIT_INDEX_FILE, so those children read this checkout's own index, as this does; TryAnswer checks a
-        // child environment that may keep them.
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_COMMON_DIR"))) return null;
+        // A variable that moves git's objects, refs or history elsewhere (GIT_COMMON_DIR, an object store, shallow or
+        // graft files, a namespace or replace-ref base) is kept by the hardened git children of the direct callers
+        // (SafeDelete, the checkpoint confinement): git's to answer. Those children drop GIT_DIR, GIT_WORK_TREE and
+        // GIT_INDEX_FILE, so they read this checkout's own index, as this does; TryAnswer checks a child environment
+        // that may keep them. (GIT_NO_REPLACE_OBJECTS only turns replacement off, and a repository with replace refs
+        // is already declined as unusual.)
+        foreach (var name in new[] { "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+                     "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE" })
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name))) return null;
         try
         {
             using var repo = new Repository(checkout);
