@@ -76,7 +76,8 @@ public partial class C1022BackendLaunchTests
                 var hashes = ConPtyRedistributable.VerifyShippedHashes(dll);
                 hashes.Ok.ShouldBeTrue(hashes.Detail);
                 var build = RunnerBuildIdentity.Resolve();
-                var sha = build.CommitSha.ShouldNotBeNull("runner build SHA is required");
+                // Same build, not a SHA: an ordinary test build is unstamped ("+unknown").
+                build.InformationalVersion.ShouldNotBeNullOrWhiteSpace();
                 var hostIdentity = owned.Captured.Single(p => p.Host).Process;
                 using var host = Process.GetProcessById(hostIdentity.Pid);
                 var loadedDll = host.Modules.Cast<ProcessModule>().Single(module =>
@@ -89,8 +90,8 @@ public partial class C1022BackendLaunchTests
                     architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                     sessionId, hostIdentity.Pid, hostIdentity.StartedUtc, hostIdentity.Image,
                     childPid = dto.Pid, childStartedUtc = dto.StartedAt,
-                    runnerBuild = DescribeBuild(typeof(SessionRunnerRuntime).Assembly.Location, sha),
-                    hostBuild = DescribeBuild(Path.Combine(Path.GetDirectoryName(hostIdentity.Image)!, "Antiphon.PtyHost.dll"), sha),
+                    runnerBuild = DescribeBuild(typeof(SessionRunnerRuntime).Assembly.Location, build.InformationalVersion),
+                    hostBuild = DescribeBuild(Path.Combine(Path.GetDirectoryName(hostIdentity.Image)!, "Antiphon.PtyHost.dll"), build.InformationalVersion),
                     loadedDll, openConsole = console.Process.Image, hashes = hashes.Detail,
                 }));
                 foreach (var cap in new[] { runtime.DescribeCapabilities(build, [SessionBackends.PtyHost], []),
@@ -121,10 +122,10 @@ public partial class C1022BackendLaunchTests
         }
     }
 
-    private static object DescribeBuild(string path, string expectedSha)
+    private static object DescribeBuild(string path, string expectedStamp)
     {
         var version = FileVersionInfo.GetVersionInfo(path).ProductVersion;
-        version.ShouldNotBeNull().ShouldContain(expectedSha, customMessage: "loaded host/runner build SHA");
+        version.ShouldNotBeNull().ShouldBe(expectedStamp, customMessage: "loaded host/runner build stamp");
         using var stream = File.OpenRead(path);
         return new { path, version, sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream)) };
     }

@@ -142,7 +142,13 @@ while ($true) {
         Write-Startup 'build-start'
         $buildClock = [Diagnostics.Stopwatch]::StartNew()
         Write-Log "Building $BuildProjectDir (Debug)..."
-        $buildOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-slot.ps1') -Label daemon-build -- dotnet build $BuildProjectDir -c Debug --nologo 2>&1
+        # A deployed daemon stamps HEAD; an unreadable HEAD builds unstamped ("unknown"), which
+        # check-daemon-build.ps1 and the runner status buildVersion then report.
+        $buildArgs = @('build', $BuildProjectDir, '-c', 'Debug', '--nologo')
+        $sourceRevision = ((& git -C $BuildProjectDir rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+        if ($sourceRevision -match '^[0-9a-f]{40}$') { $buildArgs += "-p:SourceRevisionId=$sourceRevision" }
+        else { Write-Log "WARNING: git rev-parse HEAD failed in $BuildProjectDir; building unstamped." }
+        $buildOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-slot.ps1') -Label daemon-build -- dotnet @buildArgs 2>&1
         $buildCode = $LASTEXITCODE
         Write-Startup 'build-complete' $buildClock.Elapsed.TotalMilliseconds $buildCode
         foreach ($l in $buildOut) {

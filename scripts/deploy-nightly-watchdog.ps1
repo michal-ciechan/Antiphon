@@ -173,7 +173,10 @@ function Invoke-NightlyWatchdogDeployment {
         $ScpRunner = { param($source, $remotePath) $o = @(& scp @scpArgs -o BatchMode=yes $source ('{0}:{1}' -f $target, $remotePath) 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $o } }.GetNewClosure()
     }
     if ($null -eq $PublishRunner) {
-        $PublishRunner = { param($projectPath, $rid, $outputDir) $o = @(& dotnet publish $projectPath -c Release -r $rid --self-contained -p:PublishSingleFile=true -o $outputDir 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $o } }
+        # A deployed watchdog binary stamps HEAD. An unreadable HEAD refuses the publish.
+        $sourceRevision = ((& git -C $RepoRoot rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+        if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw "git rev-parse HEAD failed; refusing an unstamped watchdog publish." }
+        $PublishRunner = { param($projectPath, $rid, $outputDir) $o = @(& dotnet publish $projectPath -c Release -r $rid --self-contained -p:PublishSingleFile=true -p:SourceRevisionId=$sourceRevision -o $outputDir 2>&1 | ForEach-Object { $_.ToString() }); [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $o } }.GetNewClosure()
     }
     if ($null -eq $HttpRunner) {
         $HttpRunner = { param($url) $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 15; [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Body = [string]$r.Content } }
