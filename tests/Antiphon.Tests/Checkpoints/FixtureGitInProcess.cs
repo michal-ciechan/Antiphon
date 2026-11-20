@@ -6,7 +6,7 @@ namespace Antiphon.Tests.Checkpoints;
 /// no user or system config) and by OutputCleanupTests (whose git children read the machine's config). libgit2 here
 /// reads no user or system config and no global attributes file (LibGit2ConfigIsolation): that is the view the
 /// checkpoint code under test hardens its own git to (GIT_CONFIG_NOSYSTEM, an empty GIT_CONFIG_GLOBAL,
-/// core.attributesFile emptied: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a repository
+/// core.attributesFile on the null device: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a repository
 /// set up in process stores its bytes as that code expects. A git child that reads a machine's line-ending config can
 /// store them differently (legacy_hostile_config_produces_hardened_status_differential).
 /// </summary>
@@ -38,7 +38,7 @@ internal static class FixtureGitInProcess
                 case ["add", "-A"]:
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
-                        if (HasNestedRepository(repo, repository, repository)) return null;
+                        if (HasNestedRepository(repo, repository, repository, enterIgnored: false)) return null;
                         LibGit2Sharp.Commands.Stage(repo, "*");
                         applied = true;
                     }
@@ -53,14 +53,18 @@ internal static class FixtureGitInProcess
                     var paths = new List<string>();
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
-                        foreach (var full in args.Skip(force ? 3 : 2).Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, repository))))
+                        foreach (var named in args.Skip(force ? 3 : 2).Select(path => Path.GetFullPath(path, repository)))
                         {
-                            var relative = Path.GetRelativePath(repository, full);
+                            // A trailing separator names a directory only: git refuses it on a file (git answers that).
+                            var full = Path.TrimEndingDirectorySeparator(named);
                             var isDirectory = Directory.Exists(full);
+                            if (full.Length != named.Length && !isDirectory)
+                                return null;
+                            var relative = Path.GetRelativePath(repository, full);
                             if ((!File.Exists(full) && !isDirectory) || relative == "." || relative.StartsWith("..", StringComparison.Ordinal)
                                 || Path.IsPathRooted(relative) || relative.IndexOfAny(['*', '?', '[', ']']) >= 0
                                 || (!OperatingSystem.IsWindows() && relative.Contains('\\'))
-                                || InNestedRepository(repository, full) || (isDirectory && HasNestedRepository(repo, repository, full)))
+                                || InNestedRepository(repository, full) || (isDirectory && HasNestedRepository(repo, repository, full, enterIgnored: force)))
                                 return null;
                             relative = relative.Replace('\\', '/');
                             if (!force && repo.Ignore.IsPathIgnored(isDirectory ? relative + "/" : relative))
@@ -121,13 +125,16 @@ internal static class FixtureGitInProcess
                && LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch) ? branch : null;
     }
 
+    // The default file systems of Windows and macOS ignore case in names; Linux's do not.
     private static StringComparison NameComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     // A `.git` (directory or file) below `top`, other than the repository's own, in a directory add would reach: a
-    // nested repository. Ignored directories are not entered (git add does not reach them without -f; with -f a named
-    // directory below an ignored one is still walked, since `top` itself is not checked).
-    private static bool HasNestedRepository(LibGit2Sharp.Repository repo, string repository, string top)
+    // nested repository. Without -f, directories the repository ignores are not entered (git add does not reach them);
+    // with -f (enterIgnored) every directory is. The ignore rules are the repository's own (no user excludes file):
+    // where a machine's excludes file would make git skip more, the walk is wider than git's, which only sends more
+    // commands to git.
+    private static bool HasNestedRepository(LibGit2Sharp.Repository repo, string repository, string top, bool enterIgnored)
     {
         var own = Path.GetFullPath(Path.Combine(repository, ".git"));
         var pending = new Stack<string>();
@@ -142,7 +149,7 @@ internal static class FixtureGitInProcess
                     continue;
                 }
                 if (Directory.Exists(entry) && !File.GetAttributes(entry).HasFlag(FileAttributes.ReparsePoint)
-                    && !repo.Ignore.IsPathIgnored(Path.GetRelativePath(repository, entry).Replace('\\', '/') + "/"))
+                    && (enterIgnored || !repo.Ignore.IsPathIgnored(Path.GetRelativePath(repository, entry).Replace('\\', '/') + "/")))
                     pending.Push(entry);
             }
         }
