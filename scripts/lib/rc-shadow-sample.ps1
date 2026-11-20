@@ -3,6 +3,7 @@
 # Persists a fixed-seed sample roster before launch. Does not launch, publish,
 # promote, write a trust record, or change IncrementalValidation from Shadow.
 # effectiveMode stays Full and gateCredit stays false.
+# Port this library to compiled C# before it is wired into S6c/S6d. Strict types remove this PowerShell coercion class.
 # A present provenanceFailure or unexpectedSkip that is not the single boolean
 # false is a failure. That includes a string, a number, null, an object, and
 # any array, including a one-element array of false. Boolean false is clean,
@@ -27,7 +28,8 @@ function Get-RcShadowField {
     param($Object, [string]$Name)
     if ($null -eq $Object) { return $null }
     if ($Object -is [Collections.IDictionary]) {
-        foreach ($key in @($Object.Keys)) {
+        # get_Keys: a dictionary entry named Keys hides the Keys property.
+        foreach ($key in @($Object.get_Keys())) {
             if ($key -is [string] -and [string]::Equals($key, $Name, [StringComparison]::Ordinal)) {
                 # The comma keeps a one-element array from unrolling to its element.
                 $value = $Object[$key]
@@ -51,7 +53,7 @@ function Get-RcShadowNames {
     param($Object)
     $names = [Collections.Generic.List[string]]::new()
     if ($Object -is [Collections.IDictionary]) {
-        foreach ($key in @($Object.Keys)) {
+        foreach ($key in @($Object.get_Keys())) {
             if ($key -is [string]) { $names.Add($key) }
         }
     } elseif ($Object -is [pscustomobject]) {
@@ -65,8 +67,12 @@ function Get-RcShadowNames {
 function Test-RcShadowEmptyCollection {
     param($Value)
     if ($null -eq $Value) { return $true }
-    if ($Value -is [string]) { return $false }
-    if ($Value -is [System.Array]) { return $Value.Length -eq 0 }
+    # A blank string yields no ids or rows. Any other string is one scalar.
+    if ($Value -is [string]) { return [string]::IsNullOrWhiteSpace($Value) }
+    # A dictionary is not an id list. Its Count key must not decide emptiness.
+    if ($Value -is [Collections.IDictionary]) { return $false }
+    # List, ArrayList, array, and any other non-dictionary collection.
+    if ($Value -is [Collections.ICollection]) { return $Value.get_Count() -eq 0 }
     return $false
 }
 
@@ -232,12 +238,12 @@ function New-RcShadowProposal {
         $strata[$key].Add($chunk)
     }
     $cchunk = $population.Count
-    $stratumCount = $strata.Count
+    $stratumCount = $strata.get_Count()
     $sampleCount = Get-RcShadowSampleCount $cchunk $stratumCount
     $selected = [Collections.Generic.List[object]]::new()
     if ($cchunk -gt 0) {
         $pickedIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($key in @($strata.Keys)) {
+        foreach ($key in @($strata.get_Keys())) {
             $ordered = Invoke-RcShadowSort -Items $strata[$key].ToArray() -Seed $seed -Purpose 'stratum'
             $best = $ordered[0]
             $selected.Add($best)
@@ -369,6 +375,10 @@ function Get-RcShadowSampleEvidenceFailure {
             }
             $ids.Add($id)
         }
+        # A present sampled key that produced no ids is empty, whatever the container.
+        if ($ids.Count -eq 0) {
+            return [pscustomobject]@{ kind = 'empty-results'; chunkId = '' }
+        }
     }
     $rows = [Collections.Generic.List[object]]::new()
     if ($sawResults) {
@@ -388,6 +398,12 @@ function Get-RcShadowSampleEvidenceFailure {
             }
             $rows.Add($row)
         }
+        # A present results key that produced no rows is empty, whatever the container.
+        if ($rows.Count -eq 0) {
+            $chunkId = ''
+            if ($ids.Count -gt 0) { $chunkId = [string]$ids[0] }
+            return [pscustomobject]@{ kind = 'empty-results'; chunkId = $chunkId }
+        }
     }
     # A result for a carry that this roster did not launch is a contradiction.
     # A passed row fails closed too. A carry listed in sampled stays ordinary.
@@ -406,7 +422,10 @@ function Get-RcShadowSampleEvidenceFailure {
         return [pscustomobject]@{ kind = 'empty-results'; chunkId = [string]$ids[0] }
     }
     if ($ids.Count -eq 0) {
-        if ($rows.Count -eq 0) { return $null }
+        # Reaching here with a present key and nothing collected is still empty-results.
+        if ($rows.Count -eq 0) {
+            return [pscustomobject]@{ kind = 'empty-results'; chunkId = '' }
+        }
         foreach ($row in $rows) {
             $rowId = Get-RcShadowField $row 'chunkId'
             $label = ''
@@ -440,7 +459,7 @@ function Test-RcShadowKey {
     param($Object, [string]$Name)
     if ($null -eq $Object) { return $false }
     if ($Object -is [Collections.IDictionary]) {
-        foreach ($key in @($Object.Keys)) {
+        foreach ($key in @($Object.get_Keys())) {
             if ($key -is [string] -and [string]::Equals($key, $Name, [StringComparison]::Ordinal)) { return $true }
         }
         return $false

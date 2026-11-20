@@ -3,6 +3,7 @@
 Original Code task: bdc2e824-9d04-4689-9a09-68860816ef60.
 Follow-up Code task: 2f6279b4.
 Round-3 Code task: 970e959e.
+Round-4 Code task: ec86be3a.
 Base: d663f5eed4d22e69752963878602ab1b269e7b2f.
 Follow-up base: ccf2dbb0a77d1f291dc8303fc92506afcc7c6ff4.
 Round-3 base: 82faab82aa639f5cec688c491a965860925a46b0.
@@ -12,6 +13,8 @@ Owned files: scripts/lib/rc-shadow-sample.ps1, scripts/test-rc-shadow-sample.ps1
 Red witness commit: 7288542f4c585a77448c72be5587c463e7b3d323. Those four cases fail on the landed counter. The fix commit makes them pass and keeps V-11 green.
 Round-2 red witness: 62d2271e174185492ebe99398fef98f6c4dc69c9. NonBooleanProvenanceFailureInvalidates and CarriedChunkResultInvalidatesCarries fail on ccf2dbb0a because carries stay valid with reason pilot-count. AbsentEvidenceKeepsCarriesUntilWired passes there and must stay green.
 Round-3 red witness: 75acc49afb6e677509b0a2848125ad6d1d671365. On 82faab82a, `[false]` and `@($false)` for both closed flags stay valid, and so do one-element arrays for outcome, provenance, and chunkId. A result row whose chunkId is missing, null, empty, whitespace, a number, an object, or an array stays valid once sampled or results is present. A wrong-case flag key stays valid. A non-string carry is skipped. `[true]`, `[]`, and `[[false]]` already fail closed on that tip. AbsentEvidenceKeepsCarriesUntilWired passes there and must stay green.
+Round-4 red witness: e754d3925c5880432d83b8fbdb1fe1caebf33ce3. On 38efdbde6, an empty List or ArrayList for sampled or results keeps carries valid with reason pilot-count. An empty string sampled is missing-outcome, and an empty string or whitespace results value is unreadable-chunk-id. A dictionary key named Keys hides a true provenanceFailure, unexpectedSkip, or UnexpectedSkip, and hides evidence-level sampled and results, so carries stay valid. Empty arrays, `@()`, and whitespace sampled already return empty-results. Keys named Count, Values, and Item already fail closed. AbsentEvidenceKeepsCarriesUntilWired passes there and must stay green.
+Port this library to compiled C# before it is wired into S6c/S6d. Strict types remove this PowerShell coercion class.
 
 ## Verification design
 
@@ -27,6 +30,8 @@ B-2 UnreadableChunkIdFailsClosed: once sampled or results is present, any result
 Round-2 A-1 WrongCaseFlagFailsClosed: a case-variant of provenanceFailure or unexpectedSkip fails closed. It is not treated as the flag and it is not a missing key. Boolean false on the variant still fails, and an ordinal dictionary that holds both the exact false key and the variant true key fails. The exact boolean false key stays clean when no variant is present.
 Round-2 A-3 NonStringCarryFailsClosed: a non-string entry in -Carries throws shadow-carry-id up front. It is not skipped. Null stays skipped. An empty string stays out of the carried set and still throws only on the invalidate path.
 F-1 precondition: before S6c or S6d uses this library for any carry decision, absent or unrecognised sample evidence must invalidate every carry when Carries is nonempty or CurrentSample is roster or executed, and a pilot without cchunk and stratumCount must be ineligible. This slice does not change that behavior. AbsentEvidenceKeepsCarriesUntilWired documents the current fail-open: null, empty, string, and wrong-case evidence keep carries, and an incomplete pilot with n=30 and nExecuted=30 counts. Flipping it now would turn the V-11 MismatchInvalidatesCarries roster and unknown assertions red. A skipped or pending marker is not used.
+E-1 EmptyCollectionFailsClosed: a present sampled or results key that yields no ids or rows is empty-results. That includes List, ArrayList, an empty array, `@()`, an empty string, and whitespace, for both keys. A dictionary is not an empty id list, so a key named Count does not decide emptiness. Collection emptiness uses ICollection.get_Count.
+K-1 DictionaryKeyShadowFailsClosed: a dictionary key named Keys, Count, Values, or Item does not hide the other keys. A true provenanceFailure, unexpectedSkip, or UnexpectedSkip on that row still fails closed, from ConvertFrom-Json -AsHashtable and from a hand-built hashtable. The same names at evidence level still expose sampled and a failed result. A clean passed/verified row that also has a Keys entry stays valid. No caller dictionary is read through .Keys, .Values, .Item, .IsReadOnly, .Comparer, or .Count.
 effectiveMode stays Full, gateCredit stays false, IncrementalValidation stays Shadow, and no trust record is written. No production caller is added.
 R-1 through R-7 belong to other slices. This follow-up changes none of their surfaces.
 No PC is defined here. Mutation execution is operator-waived (2026-11-12). Every PC stays pending for caller-commissioned SourceLanding Mutation.
@@ -43,6 +48,6 @@ The driver for DerivedImpactIndexTests is built before CP-3 because the Antiphon
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
-| CP-1 | followup | `tests/Antiphon.Tests -> bin-c1836-s8bf/` | shadow-followup | `/*/*/RcIncrementalShadowTests/*` | V-11, A-1, A-2, A-3, A-4, D-1, D-2, B-1, B-2, F-1 | all 10 methods, 0 failed/skipped | 10 | 15 | true |
+| CP-1 | followup | `tests/Antiphon.Tests -> bin-c1836-s8bf/` | shadow-followup | `/*/*/RcIncrementalShadowTests/*` | V-11, A-1, A-2, A-3, A-4, D-1, D-2, B-1, B-2, F-1, E-1, K-1 | all 12 methods, 0 failed/skipped | 12 | 15 | true |
 | CP-2 | followup | `CP-1` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy, mechanical contract, platform guidance, layering | all listed, 0 failed/skipped | 78 | 6 | true |
 | CP-3 | followup | `CP-1` | derived-index | `/*/*/DerivedImpactIndexTests/*` | derived impact index | all listed, 0 failed/skipped | 27 | 12 | true |
