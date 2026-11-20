@@ -2071,42 +2071,51 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 86,
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
+      "classes": 26,
       "reason": "cap",
-      "owed": 61,
+      "owed": 1,
       "first": [
+        "ReportBudgetWorkspacePortabilityTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
+      "classes": 87,
+      "reason": "cap",
+      "owed": 62,
+      "first": [
+        "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests",
-        "CheckpointRecoveryLinuxTests"
+        "CheckpointRecoveryFixtureTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 89,
+      "classes": 90,
       "reason": "cap",
-      "owed": 64,
+      "owed": 65,
       "first": [
+        "CheckpointInheritedFileTests",
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
-        "CheckpointOutputConfinementTests",
-        "CheckpointOwnedOutputTests"
+        "CheckpointOutputConfinementTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 73,
+      "classes": 75,
       "reason": "cap",
-      "owed": 48,
+      "owed": 50,
       "first": [
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
@@ -2140,14 +2149,14 @@
       "reason": "cap",
       "owed": 49,
       "first": [
+        "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
-        "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests"
+        "LiveLaneAttestationTests"
       ]
     },
     {
@@ -2156,12 +2165,12 @@
       "reason": "cap",
       "owed": 26,
       "first": [
+        "RcIncrementalLedgerTests",
         "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcLedgerStatusTests",
         "RcReleaseBaselineTests",
-        "RcRunEvidenceTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests"
       ]
@@ -2200,18 +2209,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 48,
+      "classes": 50,
       "reason": "cap",
-      "owed": 23,
+      "owed": 25,
       "first": [
+        "CheckpointRecoveryWindowsTests",
         "CheckpointScriptReaderDeadlineTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
         "CheckpointShapeConflictTests",
         "CheckpointSlotExecutorTests",
         "CheckpointSourceGitBoundsTests",
-        "CheckpointSourceStateTests",
-        "CheckpointStampSafetyTests"
+        "CheckpointSourceStateTests"
       ]
     },
     {
@@ -15317,8 +15326,7 @@
     {
       "path": "server/Infrastructure/Data/DbCallSiteMetrics.cs",
       "classes": [
-        "DbCallSiteMetricsTests",
-        "PtyUtf8DecoderTests"
+        "DbCallSiteMetricsTests"
       ]
     },
     {
@@ -23871,6 +23879,7 @@
         "CheckpointConfinementLedgerTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
+        "CheckpointIndexPathsTests",
         "CheckpointLargeStampTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
@@ -23878,16 +23887,17 @@
         "CheckpointShadowCustodyTests",
         "CheckpointShapeConflictTests",
         "CheckpointSourceExecutionTests",
+        "CheckpointSourceGitBoundsTests",
         "CheckpointStatePublicationTests",
         "CheckpointStepDeadlineTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
+        "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "DirectoryLinkFixtureTests",
         "OutputCleanupTests",
         "PosixHarnessToolTests",
-        "ReportBudgetWorkspacePortabilityTests",
         "ScriptsLaneRepairTests"
       ]
     },
@@ -23997,12 +24007,12 @@
         "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
+        "CheckpointIndexPathsTests",
         "CheckpointInheritedFileTests",
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
-        "CheckpointNamespaceCensusUsageTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -24027,7 +24037,7 @@
         "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
-        "CheckpointInheritedFileTests",
+        "CheckpointIndexPathsTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -24599,9 +24609,9 @@
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
         "RcRosterRepairTests",
+        "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ReleaseBranchModelGateTests",
-        "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
@@ -24639,7 +24649,7 @@
         "RcForcedFullTests",
         "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
-        "RcIncrementalLedgerTests",
+        "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
@@ -25108,6 +25118,7 @@
         "CheckpointFixtureRoutingTests",
         "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
+        "CheckpointIndexPathsTests",
         "CheckpointInheritedFileTests",
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
@@ -25117,8 +25128,7 @@
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
         "CheckpointRecoveryFixtureTests",
-        "CheckpointRecoveryLinuxTests",
-        "CheckpointRecoveryWindowsTests"
+        "CheckpointRecoveryLinuxTests"
       ]
     },
     {
