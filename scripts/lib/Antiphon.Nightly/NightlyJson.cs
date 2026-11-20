@@ -421,6 +421,8 @@ namespace Antiphon.Nightly
                 writer.WriteEndObject();
                 return;
             }
+            // A core record writes itself.
+            if (obj is IJsonWritable record) { record.WriteJson(writer); return; }
             // Arbitrary .NET objects: ConvertTo-Json's reflection walk.
             throw new GiveUp();
         }

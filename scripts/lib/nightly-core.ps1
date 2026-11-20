@@ -68,17 +68,29 @@ function Install-NightlyCoreBuild {
     try {
         # Another process may have built it while this one waited.
         if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
-        # A warm build: the work directory (restore, obj and the referenced projects' outputs) stays between source
-        # versions, so a changed source restores nothing and recompiles only its own project.
-        $work = Join-Path $cacheDir ('work-' + $Identity.Name)
-        $out = Join-Path $work ('out-' + $Identity.Hash)
-        if ([IO.Directory]::Exists($out)) { [IO.Directory]::Delete($out, $true) }
-        $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
-        if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out $Identity.Output))) {
+        # A standard build into the project's own bin/ and obj/, which stay between source versions: a changed source
+        # restores nothing and recompiles only its own project. The output is copied to this version's cache folder
+        # and loaded from there, because a loaded assembly is locked on Windows and the next build must still be able
+        # to write bin/.
+        $output = & dotnet build $Identity.Project -c Release '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
+        $built = $null
+        $release = Join-Path (Split-Path -Parent $Identity.Project) 'bin/Release'
+        if ([IO.Directory]::Exists($release)) {
+            foreach ($tfm in @([IO.Directory]::GetDirectories($release))) {
+                if ([IO.File]::Exists((Join-Path $tfm $Identity.Output))) { $built = $tfm }
+            }
+        }
+        if ($LASTEXITCODE -ne 0 -or $null -eq $built) {
             $tail = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'error' } | Select-Object -First 5) -join ' | '
             throw ($Identity.Name + ' build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
         }
-        [IO.Directory]::Move($out, $target)
+        $staging = Join-Path $cacheDir ('staging-' + $Identity.Name + '-' + $Identity.Hash)
+        if ([IO.Directory]::Exists($staging)) { [IO.Directory]::Delete($staging, $true) }
+        Copy-Item -LiteralPath $built -Destination $staging -Recurse
+        [IO.Directory]::Move($staging, $target)
+        # The artifacts work directory of the earlier build layout.
+        $work = Join-Path $cacheDir ('work-' + $Identity.Name)
+        if ([IO.Directory]::Exists($work)) { try { [IO.Directory]::Delete($work, $true) } catch { } }
         # Builds of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
         foreach ($old in @([IO.Directory]::GetDirectories($cacheDir, $Identity.Name + '-*'))) {
             if ($old -eq $target -or [IO.Directory]::GetLastWriteTimeUtc($old) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }

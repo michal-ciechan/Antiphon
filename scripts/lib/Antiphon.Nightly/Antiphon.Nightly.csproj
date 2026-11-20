@@ -2,7 +2,7 @@
   <!--
     The nightly scripts' compiled implementation. nightly-core.ps1 builds this project once per source
     version into a cache under the user's temp directory and loads it into the PowerShell session; the
-    PowerShell functions stay the entry points (and the fallback when it cannot be built).
+    tests reference it directly and call the parts that use plain C# types in-process.
     PowerShell's own System.Management.Automation is used at run time: the reference is compile-only.
   -->
   <PropertyGroup>

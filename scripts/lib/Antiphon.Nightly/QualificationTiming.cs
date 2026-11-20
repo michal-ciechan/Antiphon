@@ -1,10 +1,11 @@
 // Qualification chunk timing, moved from test-phase-evidence.ps1 (Update-QualificationChunkTiming and its readers,
-// Get-QualificationTimingReport, Write-QualificationRunPhase, Get-QualificationSetupAccounting).
+// Get-QualificationTimingReport, Write-QualificationRunPhase, Get-QualificationSetupAccounting). Plain C# types and
+// System.Text.Json only: it runs in any process, with or without PowerShell.
 //
 // Update runs at each phase of a chunk (preflight, discovery, run, launch, the end). It writes
 // <logRoot>/<suite>-<chunk>.timing.json, plus a copy under the timing root, and carries forward what earlier
-// calls in this process passed for the chunk. A terminal call (Terminal = $true) also reads three things under
-// one 200 ms budget:
+// calls in this process passed for the chunk. A terminal call (Terminal) also reads three things under one 200 ms
+// budget:
 //   - the prior sidecar, for fields this process no longer remembers;
 //   - the chunk's TRX: test count, p50/p95/max and the slowest tests;
 //   - the chunk's own phase journals under the timing root. These are
@@ -12,7 +13,7 @@
 //     or by their header record. Only that directory is listed.
 // Readers open only regular files: a link, FIFO or directory is refused before any open. A refused or
 // over-budget read nulls the metrics and records why = timing-read-refused; the next publication retries.
-// Update never throws once its keys are valid: a timing sidecar must not change a suite verdict.
+// Update never throws: a timing sidecar must not change a suite verdict.
 //
 // Test seams:
 //   - BudgetWatch and BudgetDeadlineMilliseconds replace the terminal budget (a stopped Stopwatch holds the
@@ -20,13 +21,10 @@
 //   - ReadLog records every open, stream, listing and byte read;
 //   - Forget drops one chunk's process memory.
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -54,6 +52,277 @@ namespace Antiphon.Nightly
         public long ReadBytes => JournalBytes + TrxBytes + SidecarBytes;
     }
 
+    /// <summary>
+    /// One Update call. Identity (LogRoot, Suite, Chunk, RunId, Attempt) and Terminal are always taken as given; every
+    /// other field is either set (its value, possibly empty or null, replaces what the process remembers for the chunk)
+    /// or left unset (the remembered value, or on a terminal call the prior sidecar's, is kept).
+    /// </summary>
+    public sealed class ChunkTimingUpdate
+    {
+        private string timingRoot = "", trxPath = "", why = "", lastPhase = "", startedAt = "", completedAt = "";
+        private double? queueWait, build, discovery, runWall;
+
+        public string LogRoot { get; set; } = "";
+        public string Suite { get; set; } = "";
+        public string Chunk { get; set; } = "";
+        public string RunId { get; set; } = "";
+        public string Attempt { get; set; } = "";
+        public bool Terminal { get; set; }
+
+        public string TimingRoot { get => timingRoot; set { timingRoot = value ?? ""; HasTimingRoot = true; } }
+        public string TrxPath { get => trxPath; set { trxPath = value ?? ""; HasTrxPath = true; } }
+        public string Why { get => why; set { why = value ?? ""; HasWhy = true; } }
+        public string LastPhase { get => lastPhase; set { lastPhase = value ?? ""; HasLastPhase = true; } }
+        public string StartedAt { get => startedAt; set { startedAt = value ?? ""; HasStartedAt = true; } }
+        public string CompletedAt { get => completedAt; set { completedAt = value ?? ""; HasCompletedAt = true; } }
+        public double? QueueWaitSeconds { get => queueWait; set { queueWait = value; HasQueueWaitSeconds = true; } }
+        public double? BuildSeconds { get => build; set { build = value; HasBuildSeconds = true; } }
+        public double? DiscoverySeconds { get => discovery; set { discovery = value; HasDiscoverySeconds = true; } }
+        public double? RunWallSeconds { get => runWall; set { runWall = value; HasRunWallSeconds = true; } }
+
+        public bool HasTimingRoot { get; private set; }
+        public bool HasTrxPath { get; private set; }
+        public bool HasWhy { get; private set; }
+        public bool HasLastPhase { get; private set; }
+        public bool HasStartedAt { get; private set; }
+        public bool HasCompletedAt { get; private set; }
+        public bool HasQueueWaitSeconds { get; private set; }
+        public bool HasBuildSeconds { get; private set; }
+        public bool HasDiscoverySeconds { get; private set; }
+        public bool HasRunWallSeconds { get; private set; }
+    }
+
+    /// <summary>A slow test of a chunk's TRX.</summary>
+    public sealed class SlowTest : IJsonWritable
+    {
+        public string Name { get; set; } = "";
+        public double Seconds { get; set; }
+
+        public void WriteJson(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("name", Name);
+            writer.WriteNumber("seconds", Seconds);
+            writer.WriteEndObject();
+        }
+    }
+
+    /// <summary>A chunk's timing sidecar (&lt;suite&gt;-&lt;chunk&gt;.timing.json).</summary>
+    public sealed class ChunkTiming : IJsonWritable
+    {
+        public string Suite { get; set; } = "";
+        public string Chunk { get; set; } = "";
+        public string TimingRoot { get; set; } = "";
+        public string Trx { get; set; } = "";
+        public bool TrxMissing { get; set; } = true;
+        public string Why { get; set; } = "";
+        public string LastPhase { get; set; } = "";
+        public string LastPhaseUtc { get; set; } = "";
+        public string StartedAt { get; set; } = "";
+        public string CompletedAt { get; set; } = "";
+        public double? QueueWaitSeconds { get; set; }
+        public double? BuildSeconds { get; set; }
+        public double? BuildSlotWaitSeconds { get; set; }
+        public string BuildSlot { get; set; } = "not-used";
+        public double? DiscoverySeconds { get; set; }
+        public double? RunWallSeconds { get; set; }
+        public double? DistillationSeconds { get; set; }
+        public double? FixtureSetupSeconds { get; set; }
+        public double? FixtureTeardownSeconds { get; set; }
+        public double? ProcessSpawnSeconds { get; set; }
+        public double? ProcessWaitSeconds { get; set; }
+        public int TestCount { get; set; }
+        public double? P50Seconds { get; set; }
+        public double? P95Seconds { get; set; }
+        public double? MaxSeconds { get; set; }
+        public SlowTest[] Slowest { get; set; } = new SlowTest[0];
+
+        public void WriteJson(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("suite", Suite);
+            writer.WriteString("chunk", Chunk);
+            writer.WriteString("timingRoot", TimingRoot);
+            writer.WriteString("trx", Trx);
+            writer.WriteBoolean("trxMissing", TrxMissing);
+            writer.WriteString("why", Why);
+            writer.WriteString("lastPhase", LastPhase);
+            writer.WriteString("lastPhaseUtc", LastPhaseUtc);
+            writer.WriteString("startedAt", StartedAt);
+            writer.WriteString("completedAt", CompletedAt);
+            CompactJson.Number(writer, "queueWaitSeconds", QueueWaitSeconds);
+            CompactJson.Number(writer, "buildSeconds", BuildSeconds);
+            CompactJson.Number(writer, "buildSlotWaitSeconds", BuildSlotWaitSeconds);
+            writer.WriteString("buildSlot", BuildSlot);
+            CompactJson.Number(writer, "discoverySeconds", DiscoverySeconds);
+            CompactJson.Number(writer, "runWallSeconds", RunWallSeconds);
+            CompactJson.Number(writer, "distillationSeconds", DistillationSeconds);
+            CompactJson.Number(writer, "fixtureSetupSeconds", FixtureSetupSeconds);
+            CompactJson.Number(writer, "fixtureTeardownSeconds", FixtureTeardownSeconds);
+            CompactJson.Number(writer, "processSpawnSeconds", ProcessSpawnSeconds);
+            CompactJson.Number(writer, "processWaitSeconds", ProcessWaitSeconds);
+            writer.WriteNumber("testCount", TestCount);
+            CompactJson.Number(writer, "p50Seconds", P50Seconds);
+            CompactJson.Number(writer, "p95Seconds", P95Seconds);
+            CompactJson.Number(writer, "maxSeconds", MaxSeconds);
+            writer.WriteStartArray("slowest");
+            foreach (var slow in Slowest ?? new SlowTest[0]) slow.WriteJson(writer);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        /// <summary>The sidecar read from JSON (a missing or mistyped field takes its default).</summary>
+        public static ChunkTiming From(JsonElement root)
+        {
+            var slowest = new List<SlowTest>();
+            if (Json.Field(root, "slowest", out var rows) && rows.ValueKind == JsonValueKind.Array)
+                foreach (var row in rows.EnumerateArray())
+                    if (row.ValueKind == JsonValueKind.Object) slowest.Add(new SlowTest { Name = Json.Text(row, "name"), Seconds = Json.Number(row, "seconds") ?? 0 });
+            return new ChunkTiming
+            {
+                Suite = Json.Text(root, "suite"), Chunk = Json.Text(root, "chunk"), TimingRoot = Json.Text(root, "timingRoot"),
+                Trx = Json.Text(root, "trx"), TrxMissing = !Json.Field(root, "trxMissing", out var missing) || missing.ValueKind != JsonValueKind.False,
+                Why = Json.Text(root, "why"), LastPhase = Json.Text(root, "lastPhase"), LastPhaseUtc = Json.Text(root, "lastPhaseUtc"),
+                StartedAt = Json.Text(root, "startedAt"), CompletedAt = Json.Text(root, "completedAt"),
+                QueueWaitSeconds = Json.Number(root, "queueWaitSeconds"), BuildSeconds = Json.Number(root, "buildSeconds"),
+                BuildSlotWaitSeconds = Json.Number(root, "buildSlotWaitSeconds"), BuildSlot = Json.Has(root, "buildSlot") ? Json.Text(root, "buildSlot") : "not-used",
+                DiscoverySeconds = Json.Number(root, "discoverySeconds"), RunWallSeconds = Json.Number(root, "runWallSeconds"),
+                DistillationSeconds = Json.Number(root, "distillationSeconds"), FixtureSetupSeconds = Json.Number(root, "fixtureSetupSeconds"),
+                FixtureTeardownSeconds = Json.Number(root, "fixtureTeardownSeconds"), ProcessSpawnSeconds = Json.Number(root, "processSpawnSeconds"),
+                ProcessWaitSeconds = Json.Number(root, "processWaitSeconds"), TestCount = (int)(Json.Number(root, "testCount") ?? 0),
+                P50Seconds = Json.Number(root, "p50Seconds"), P95Seconds = Json.Number(root, "p95Seconds"), MaxSeconds = Json.Number(root, "maxSeconds"),
+                Slowest = slowest.ToArray(),
+            };
+        }
+    }
+
+    /// <summary>One suite's span across its chunk sidecars.</summary>
+    public sealed class SuiteTimeline : IJsonWritable
+    {
+        public string Suite { get; set; } = "";
+        public string StartedAt { get; set; } = "";
+        public string CompletedAt { get; set; } = "";
+        public string LastPhase { get; set; } = "";
+        public string LastPhaseUtc { get; set; } = "";
+
+        public void WriteJson(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("suite", Suite);
+            writer.WriteString("startedAt", StartedAt);
+            writer.WriteString("completedAt", CompletedAt);
+            writer.WriteString("lastPhase", LastPhase);
+            writer.WriteString("lastPhaseUtc", LastPhaseUtc);
+            writer.WriteEndObject();
+        }
+    }
+
+    public sealed class TimingReport
+    {
+        public string TimingRoot { get; set; } = "";
+        public ChunkTiming[] Chunks { get; set; } = new ChunkTiming[0];
+        public SuiteTimeline[] Timeline { get; set; } = new SuiteTimeline[0];
+    }
+
+    /// <summary>Fixture setup/teardown and process spawn/wait seconds of a chunk's journals (null: none observed).</summary>
+    public sealed class JournalPhaseSums
+    {
+        public double? FixtureSetupSeconds { get; set; }
+        public double? FixtureTeardownSeconds { get; set; }
+        public double? ProcessSpawnSeconds { get; set; }
+        public double? ProcessWaitSeconds { get; set; }
+        /// <summary>A read was refused or the budget ran out.</summary>
+        public bool Refused { get; set; }
+    }
+
+    /// <summary>A TRX's result durations: count, p50/p95/max (null without results) and the slowest tests.</summary>
+    public sealed class TrxSummary
+    {
+        public int Count { get; set; }
+        public double? P50 { get; set; }
+        public double? P95 { get; set; }
+        public double? Max { get; set; }
+        public SlowTest[] Slowest { get; set; } = new SlowTest[0];
+        /// <summary>False when the read was refused or ran out of budget (nothing else is then set).</summary>
+        public bool Complete { get; set; }
+    }
+
+    /// <summary>An owner file name (own-&lt;token&gt;-&lt;pid&gt;-&lt;nonce&gt;.txt) and the journal it names.</summary>
+    public sealed class OwnerFile
+    {
+        public string Token { get; set; } = "";
+        public string Journal { get; set; } = "";
+    }
+
+    /// <summary>The setup phases of a run (setup-phases.json).</summary>
+    public sealed class SetupPhaseAccounting
+    {
+        public bool CountedOnce { get; set; }
+        public double SetupSeconds { get; set; }
+        /// <summary>The build, npm-build and dotnet-build phases.</summary>
+        public double PerChunkBuildSum { get; set; }
+        public bool Overlapped { get; set; }
+        public long? FirstStartUtcTicks { get; set; }
+    }
+
+    // Field reads that follow PowerShell's property rules (names ignore case) without PowerShell.
+    internal static class Json
+    {
+        public static bool Field(JsonElement o, string name, out JsonElement value)
+        {
+            value = default;
+            if (o.ValueKind != JsonValueKind.Object) return false;
+            if (o.TryGetProperty(name, out value)) return true;
+            foreach (var property in o.EnumerateObject())
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) { value = property.Value; return true; }
+            return false;
+        }
+
+        public static bool Has(JsonElement o, string name) => Field(o, name, out _);
+
+        private static readonly char[] FractionMarks = { '.', 'e', 'E' };
+
+        // [string]$o.name.
+        public static string Text(JsonElement o, string name)
+        {
+            if (!Field(o, name, out var v)) return "";
+            switch (v.ValueKind)
+            {
+                case JsonValueKind.String: return v.GetString() ?? "";
+                case JsonValueKind.Null: return "";
+                case JsonValueKind.True: return "True";
+                case JsonValueKind.False: return "False";
+                case JsonValueKind.Number:
+                    var raw = v.GetRawText();
+                    if (raw.IndexOfAny(FractionMarks) >= 0) return v.GetDouble().ToString(CultureInfo.InvariantCulture);
+                    return v.TryGetInt64(out var whole) ? whole.ToString(CultureInfo.InvariantCulture) : raw;
+                default: return v.GetRawText();
+            }
+        }
+
+        // A number field (null when absent, null or not a number).
+        public static double? Number(JsonElement o, string name) =>
+            Field(o, name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : (double?)null;
+
+        // [double]$o.name for a phase offset: absent or null is 0, a numeric string parses, anything else is null.
+        public static double? Offset(JsonElement o, string name)
+        {
+            if (!Field(o, name, out var v)) return 0;
+            switch (v.ValueKind)
+            {
+                case JsonValueKind.Null: return 0;
+                case JsonValueKind.Number: return v.GetDouble();
+                case JsonValueKind.True: return 1;
+                case JsonValueKind.False: return 0;
+                case JsonValueKind.String:
+                    var text = v.GetString();
+                    if (string.IsNullOrWhiteSpace(text)) return 0;
+                    return double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed) ? parsed : (double?)null;
+                default: return null;
+            }
+        }
+    }
+
     public static class QualificationTiming
     {
         public const string RefusedWhy = "timing-read-refused";
@@ -74,20 +343,15 @@ namespace Antiphon.Nightly
         private static readonly Dictionary<string, Contribution> ShardCache = new Dictionary<string, Contribution>(StringComparer.OrdinalIgnoreCase);
         private static readonly StringComparison PathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         private static readonly JsonDocumentOptions LineOptions = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = 64 };
+        private static readonly JsonDocumentOptions StrictOptions = new JsonDocumentOptions { MaxDepth = 60 };
         private static readonly EnumerationOptions ListAll = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true, RecurseSubdirectories = false };
         private static readonly EnumerationOptions ListVisible = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = false };
-        private static readonly string[] UpdateKeys =
-        {
-            "LogRoot", "TimingRoot", "Suite", "Chunk", "TrxPath", "LastPhase", "Why", "QueueWaitSeconds", "BuildSeconds",
-            "DiscoverySeconds", "RunWallSeconds", "StartedAt", "CompletedAt", "RunId", "Attempt", "Terminal",
-        };
-        private static readonly char[] FractionMarks = { '.', 'e', 'E' };
         private static bool warmed;
 
         private sealed class ChunkMemory
         {
             public string TimingRoot, Trx, Why, LastPhase, StartedAt, CompletedAt;
-            public object QueueWait, Build, Discovery, RunWall;
+            public double? QueueWait, Build, Discovery, RunWall;
         }
 
         // One journal's share: fixture setup/teardown by fixture id (a fixture shared by several journals counts
@@ -97,12 +361,6 @@ namespace Antiphon.Nightly
             public readonly Dictionary<string, double?[]> Fixtures = new Dictionary<string, double?[]>(StringComparer.OrdinalIgnoreCase);
             public double? Spawn;
             public double? Wait;
-        }
-
-        private struct Sums
-        {
-            public double? Setup, Teardown, Spawn, Wait;
-            public bool Refused;
         }
 
         /// <summary>Drops the process memory of one chunk (the next update starts from its sidecar).</summary>
@@ -123,175 +381,157 @@ namespace Antiphon.Nightly
         // ---- the sidecar ---------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Update-QualificationChunkTiming: values holds the parameters this call passes (LogRoot, TimingRoot,
-        /// Suite, Chunk, TrxPath, LastPhase, Why, QueueWaitSeconds, BuildSeconds, DiscoverySeconds, RunWallSeconds,
-        /// StartedAt, CompletedAt, RunId, Attempt, Terminal); a missing key keeps what this process remembers for
-        /// the chunk. nowUtc stamps lastPhaseUtc. An unknown key throws; nothing else does.
+        /// Update-QualificationChunkTiming: writes the chunk's sidecar from the update, what this process remembers for
+        /// the chunk and, on a terminal update, the prior sidecar and the chunk's TRX and journals. nowUtc stamps
+        /// lastPhaseUtc. Never throws.
         /// </summary>
-        public static void Update(IDictionary values, DateTime nowUtc)
+        public static void Update(ChunkTimingUpdate update, DateTime nowUtc)
         {
-            var bound = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-            if (values != null)
-            {
-                foreach (DictionaryEntry entry in values)
-                {
-                    var name = PsValue.Str(entry.Key);
-                    if (Array.FindIndex(UpdateKeys, k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)) < 0)
-                        throw new ArgumentException("qualification-timing-unknown-key: " + name);
-                    bound[name] = entry.Value;
-                }
-            }
-            try { UpdateCore(bound, nowUtc); }
-            catch { }
+            try { if (update != null) UpdateCore(update, nowUtc); }
+            catch (Exception) { }
         }
 
-        private static void UpdateCore(Dictionary<string, object> bound, DateTime nowUtc)
+        private static void UpdateCore(ChunkTimingUpdate u, DateTime nowUtc)
         {
-            bool Has(string name) => bound.ContainsKey(name);
-            string Text(string name) => bound.TryGetValue(name, out var v) ? PsValue.Str(v) : "";
-            var logRoot = Text("LogRoot");
-            var suite = Text("Suite");
-            var chunk = Text("Chunk");
+            var logRoot = u.LogRoot ?? "";
+            var suite = u.Suite ?? "";
+            var chunk = u.Chunk ?? "";
             if (Blank(logRoot) || Blank(suite) || Blank(chunk)) return;
-            var runId = Text("RunId");
-            var attempt = Text("Attempt");
+            var runId = u.RunId ?? "";
+            var attempt = u.Attempt ?? "";
             var key = logRoot + "|" + suite + "|" + chunk;
             ChunkMemory memory;
             lock (Gate) Memory.TryGetValue(key, out memory);
             var path = Path.Combine(logRoot, suite + "-" + chunk + ".timing.json");
 
             var timingRoot = "";
-            if (Has("TimingRoot") && !Blank(Text("TimingRoot"))) timingRoot = Text("TimingRoot");
+            if (u.HasTimingRoot && !Blank(u.TimingRoot)) timingRoot = u.TimingRoot;
             else if (memory != null && !Blank(memory.TimingRoot)) timingRoot = memory.TimingRoot;
-            else if (Has("TimingRoot")) timingRoot = Text("TimingRoot");
-            var trx = Has("TrxPath") ? Text("TrxPath") : memory?.Trx ?? "";
-            var why = Has("Why") ? Text("Why") : memory?.Why ?? "";
-            var phase = Has("LastPhase") ? Text("LastPhase") : memory?.LastPhase ?? "";
-            var started = Has("StartedAt") ? Stamp(bound["StartedAt"]) : memory?.StartedAt ?? "";
-            var completed = Has("CompletedAt") ? Stamp(bound["CompletedAt"]) : memory?.CompletedAt ?? "";
-            var queue = Has("QueueWaitSeconds") ? bound["QueueWaitSeconds"] : memory?.QueueWait;
-            var build = Has("BuildSeconds") ? bound["BuildSeconds"] : memory?.Build;
-            var discovery = Has("DiscoverySeconds") ? bound["DiscoverySeconds"] : memory?.Discovery;
-            var runWall = Has("RunWallSeconds") ? bound["RunWallSeconds"] : memory?.RunWall;
-
-            var trxMissing = true;
-            object p50 = null, p95 = null, max = null;
-            var slowest = new object[0];
-            var count = 0;
-            var sums = new Sums();
-            if (Has("Terminal") && LanguagePrimitives.IsTrue(bound["Terminal"]))
+            else if (u.HasTimingRoot) timingRoot = u.TimingRoot;
+            var record = new ChunkTiming
             {
-                // A refused read is a gap for that publication, not a permanent suite failure.
-                if (!Has("Why") && Same(why, RefusedWhy)) why = "";
-                Warm();
-                var watch = BudgetWatch ?? Stopwatch.StartNew();
-                var deadline = BudgetDeadlineMilliseconds;
-                var refused = false;
-                PSObject prior = null;
-                var sideKind = TestPhaseFiles.Kind(path, out var sideSize);
-                if (sideKind == "missing") { }
-                else if (sideKind != "regular" || sideSize > MaxBytes) refused = true;
-                else
-                {
-                    prior = ReadSidecarCore(path, watch, deadline);
-                    if (prior == null) refused = true;
-                }
-                if (prior != null && !refused)
-                {
-                    if (Blank(started) && prior.Properties["startedAt"] != null) started = Stamp(prior.Properties["startedAt"].Value);
-                    if (!Has("QueueWaitSeconds") && queue == null && prior.Properties["queueWaitSeconds"] != null) queue = prior.Properties["queueWaitSeconds"].Value;
-                    if (!Has("BuildSeconds") && build == null && prior.Properties["buildSeconds"] != null) build = prior.Properties["buildSeconds"].Value;
-                    if (!Has("DiscoverySeconds") && discovery == null && prior.Properties["discoverySeconds"] != null) discovery = prior.Properties["discoverySeconds"].Value;
-                    if (!Has("RunWallSeconds") && runWall == null && prior.Properties["runWallSeconds"] != null) runWall = prior.Properties["runWallSeconds"].Value;
-                    if (!Has("TrxPath") && Blank(trx) && prior.Properties["trx"] != null) trx = PsValue.Str(prior.Properties["trx"].Value);
-                    if (!Has("Why") && Blank(why) && prior.Properties["why"] != null && !Same(PsValue.Str(prior.Properties["why"].Value), RefusedWhy))
-                        why = PsValue.Str(prior.Properties["why"].Value);
-                    if (!Has("CompletedAt") && Blank(completed) && prior.Properties["completedAt"] != null) completed = Stamp(prior.Properties["completedAt"].Value);
-                }
-                TrxTimingStats stats = null;
-                if (!Blank(trx))
-                {
-                    var trxKind = TestPhaseFiles.Kind(trx, out _);
-                    if (trxKind == "missing") trxMissing = true;
-                    else if (trxKind != "regular") refused = true;
-                    else if (watch.ElapsedMilliseconds >= deadline) { trxMissing = false; refused = true; }
-                    else
-                    {
-                        trxMissing = false;
-                        stats = TrxCore(trx, watch, deadline);
-                        if (stats == null) refused = true;
-                    }
-                }
-                if (!Blank(timingRoot))
-                {
-                    if (watch.ElapsedMilliseconds >= deadline) refused = true;
-                    else
-                    {
-                        var read = PhaseSumsCore(timingRoot, chunk, runId, suite, attempt, watch, deadline);
-                        if (read.Refused) refused = true;
-                        else sums = read;
-                    }
-                }
-                if (watch.ElapsedMilliseconds >= deadline) refused = true;
-                if (refused)
-                {
-                    sums = new Sums();
-                    stats = null;
-                    if (Blank(why)) why = RefusedWhy;
-                }
-                if (stats != null)
-                {
-                    if (stats.Count > 0) { p50 = stats.P50; p95 = stats.P95; max = stats.Max; }
-                    slowest = SlowRows(stats);
-                    count = stats.Count;
-                }
-            }
-            var record = new OrderedDictionary
-            {
-                { "suite", suite }, { "chunk", chunk }, { "timingRoot", timingRoot }, { "trx", trx }, { "trxMissing", trxMissing },
-                { "why", why }, { "lastPhase", phase }, { "lastPhaseUtc", nowUtc.ToString("o", CultureInfo.InvariantCulture) },
-                { "startedAt", started }, { "completedAt", completed }, { "queueWaitSeconds", queue }, { "buildSeconds", build },
-                { "buildSlotWaitSeconds", null }, { "buildSlot", "not-used" }, { "discoverySeconds", discovery },
-                { "runWallSeconds", runWall }, { "distillationSeconds", null }, { "fixtureSetupSeconds", sums.Setup },
-                { "fixtureTeardownSeconds", sums.Teardown }, { "processSpawnSeconds", sums.Spawn },
-                { "processWaitSeconds", sums.Wait }, { "testCount", count }, { "p50Seconds", p50 }, { "p95Seconds", p95 },
-                { "maxSeconds", max }, { "slowest", slowest },
+                Suite = suite, Chunk = chunk, TimingRoot = timingRoot,
+                Trx = u.HasTrxPath ? u.TrxPath : memory?.Trx ?? "",
+                Why = u.HasWhy ? u.Why : memory?.Why ?? "",
+                LastPhase = u.HasLastPhase ? u.LastPhase : memory?.LastPhase ?? "",
+                StartedAt = u.HasStartedAt ? u.StartedAt : memory?.StartedAt ?? "",
+                CompletedAt = u.HasCompletedAt ? u.CompletedAt : memory?.CompletedAt ?? "",
+                QueueWaitSeconds = u.HasQueueWaitSeconds ? u.QueueWaitSeconds : memory?.QueueWait,
+                BuildSeconds = u.HasBuildSeconds ? u.BuildSeconds : memory?.Build,
+                DiscoverySeconds = u.HasDiscoverySeconds ? u.DiscoverySeconds : memory?.Discovery,
+                RunWallSeconds = u.HasRunWallSeconds ? u.RunWallSeconds : memory?.RunWall,
+                LastPhaseUtc = nowUtc.ToString("o", CultureInfo.InvariantCulture),
             };
+            if (u.Terminal) ReadTerminal(u, record, path, runId, attempt);
             lock (Gate)
             {
                 Memory[key] = new ChunkMemory
                 {
-                    TimingRoot = timingRoot, Trx = trx, Why = why, LastPhase = phase, StartedAt = started, CompletedAt = completed,
-                    QueueWait = queue, Build = build, Discovery = discovery, RunWall = runWall,
+                    TimingRoot = record.TimingRoot, Trx = record.Trx, Why = record.Why, LastPhase = record.LastPhase,
+                    StartedAt = record.StartedAt, CompletedAt = record.CompletedAt, QueueWait = record.QueueWaitSeconds,
+                    Build = record.BuildSeconds, Discovery = record.DiscoverySeconds, RunWall = record.RunWallSeconds,
                 };
             }
-            var text = TestPhaseJson.Text(record, 0);
+            var text = CompactJson.Text(record);
             EvidenceFiles.WriteAtomic(path, text, true);
-            if (!Blank(timingRoot))
+            if (!Blank(record.TimingRoot))
             {
-                var copy = Path.Combine(timingRoot, suite + "-" + chunk + ".timing.json");
+                var copy = Path.Combine(record.TimingRoot, suite + "-" + chunk + ".timing.json");
                 if (!string.Equals(Path.GetFullPath(copy), Path.GetFullPath(path), PathComparison)) EvidenceFiles.WriteAtomic(copy, text, true);
             }
         }
 
-        private static object[] SlowRows(TrxTimingStats stats)
+        // The terminal reads, filling record's metrics (or why = timing-read-refused) under one budget.
+        private static void ReadTerminal(ChunkTimingUpdate u, ChunkTiming record, string path, string runId, string attempt)
+        {
+            // A refused read is a gap for that publication, not a permanent suite failure.
+            if (!u.HasWhy && Same(record.Why, RefusedWhy)) record.Why = "";
+            Warm();
+            var watch = BudgetWatch ?? Stopwatch.StartNew();
+            var deadline = BudgetDeadlineMilliseconds;
+            var refused = false;
+            ChunkTiming prior = null;
+            var sideKind = TestPhaseFiles.Kind(path, out var sideSize);
+            if (sideKind == "missing") { }
+            else if (sideKind != "regular" || sideSize > MaxBytes) refused = true;
+            else
+            {
+                prior = ReadSidecarCore(path, watch, deadline);
+                if (prior == null) refused = true;
+            }
+            if (prior != null && !refused)
+            {
+                if (Blank(record.StartedAt)) record.StartedAt = prior.StartedAt;
+                if (!u.HasQueueWaitSeconds && record.QueueWaitSeconds == null) record.QueueWaitSeconds = prior.QueueWaitSeconds;
+                if (!u.HasBuildSeconds && record.BuildSeconds == null) record.BuildSeconds = prior.BuildSeconds;
+                if (!u.HasDiscoverySeconds && record.DiscoverySeconds == null) record.DiscoverySeconds = prior.DiscoverySeconds;
+                if (!u.HasRunWallSeconds && record.RunWallSeconds == null) record.RunWallSeconds = prior.RunWallSeconds;
+                if (!u.HasTrxPath && Blank(record.Trx)) record.Trx = prior.Trx;
+                if (!u.HasWhy && Blank(record.Why) && !Same(prior.Why, RefusedWhy)) record.Why = prior.Why;
+                if (!u.HasCompletedAt && Blank(record.CompletedAt)) record.CompletedAt = prior.CompletedAt;
+            }
+            TrxTimingStats stats = null;
+            if (!Blank(record.Trx))
+            {
+                var trxKind = TestPhaseFiles.Kind(record.Trx, out _);
+                if (trxKind == "missing") record.TrxMissing = true;
+                else if (trxKind != "regular") refused = true;
+                else if (watch.ElapsedMilliseconds >= deadline) { record.TrxMissing = false; refused = true; }
+                else
+                {
+                    record.TrxMissing = false;
+                    stats = TrxCore(record.Trx, watch, deadline);
+                    if (stats == null) refused = true;
+                }
+            }
+            JournalPhaseSums sums = null;
+            if (!Blank(record.TimingRoot))
+            {
+                if (watch.ElapsedMilliseconds >= deadline) refused = true;
+                else
+                {
+                    sums = PhaseSumsCore(record.TimingRoot, record.Chunk, runId, record.Suite, attempt, watch, deadline);
+                    if (sums.Refused) refused = true;
+                }
+            }
+            if (watch.ElapsedMilliseconds >= deadline) refused = true;
+            if (refused)
+            {
+                if (Blank(record.Why)) record.Why = RefusedWhy;
+                return;
+            }
+            if (sums != null)
+            {
+                record.FixtureSetupSeconds = sums.FixtureSetupSeconds;
+                record.FixtureTeardownSeconds = sums.FixtureTeardownSeconds;
+                record.ProcessSpawnSeconds = sums.ProcessSpawnSeconds;
+                record.ProcessWaitSeconds = sums.ProcessWaitSeconds;
+            }
+            if (stats != null)
+            {
+                if (stats.Count > 0) { record.P50Seconds = stats.P50; record.P95Seconds = stats.P95; record.MaxSeconds = stats.Max; }
+                record.Slowest = SlowRows(stats);
+                record.TestCount = stats.Count;
+            }
+        }
+
+        private static SlowTest[] SlowRows(TrxTimingStats stats)
         {
             var names = stats.SlowNames ?? new string[0];
             var values = stats.SlowSeconds ?? new double[0];
-            var rows = new object[names.Length];
-            for (var i = 0; i < names.Length; i++)
-                rows[i] = new OrderedDictionary { { "name", names[i] ?? "" }, { "seconds", i < values.Length ? values[i] : 0.0 } };
+            var rows = new SlowTest[names.Length];
+            for (var i = 0; i < names.Length; i++) rows[i] = new SlowTest { Name = names[i] ?? "", Seconds = i < values.Length ? values[i] : 0.0 };
             return rows;
         }
 
         /// <summary>
         /// Get-QualificationTimingReport: every *.timing.json sidecar of logRoot (in name order) and one timeline row per
-        /// suite (earliest start, latest end, the phase with the latest lastPhaseUtc), as { TimingRoot, Chunks, Timeline }.
+        /// suite (earliest start, latest end, the phase with the latest lastPhaseUtc).
         /// </summary>
-        public static PSObject Report(string logRoot, string timingRoot)
+        public static TimingReport Report(string logRoot, string timingRoot)
         {
             EvidenceFiles.FlushKeeping(null);
-            var chunks = new List<object>();
+            var chunks = new List<ChunkTiming>();
             if (!Blank(logRoot) && Directory.Exists(logRoot))
             {
                 var files = new List<FileInfo>();
@@ -309,40 +549,33 @@ namespace Antiphon.Nightly
                     if (row != null) chunks.Add(row);
                 }
             }
-            var bySuite = new Dictionary<string, OrderedDictionary>(StringComparer.OrdinalIgnoreCase);
+            var bySuite = new Dictionary<string, SuiteTimeline>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in chunks)
             {
-                var suite = PsValue.Str(PsValue.Prop(row, "suite"));
-                if (Blank(suite)) continue;
-                if (!bySuite.TryGetValue(suite, out var bag))
+                if (Blank(row.Suite)) continue;
+                if (!bySuite.TryGetValue(row.Suite, out var bag)) bySuite.Add(row.Suite, bag = new SuiteTimeline { Suite = row.Suite });
+                if (!Blank(row.StartedAt) && (Blank(bag.StartedAt) || string.CompareOrdinal(row.StartedAt, bag.StartedAt) < 0)) bag.StartedAt = row.StartedAt;
+                if (!Blank(row.CompletedAt) && string.CompareOrdinal(row.CompletedAt, bag.CompletedAt) > 0) bag.CompletedAt = row.CompletedAt;
+                if (!Blank(row.LastPhaseUtc) && string.CompareOrdinal(row.LastPhaseUtc, bag.LastPhaseUtc) > 0)
                 {
-                    bag = new OrderedDictionary { { "suite", suite }, { "startedAt", "" }, { "completedAt", "" }, { "lastPhase", "" }, { "lastPhaseUtc", "" } };
-                    bySuite.Add(suite, bag);
-                }
-                var start = PsValue.Str(PsValue.Prop(row, "startedAt"));
-                var bagStart = (string)bag["startedAt"];
-                if (!Blank(start) && (Blank(bagStart) || string.CompareOrdinal(start, bagStart) < 0)) bag["startedAt"] = start;
-                var end = PsValue.Str(PsValue.Prop(row, "completedAt"));
-                if (!Blank(end) && string.CompareOrdinal(end, (string)bag["completedAt"]) > 0) bag["completedAt"] = end;
-                var utc = PsValue.Str(PsValue.Prop(row, "lastPhaseUtc"));
-                if (!Blank(utc) && string.CompareOrdinal(utc, (string)bag["lastPhaseUtc"]) > 0)
-                {
-                    bag["lastPhaseUtc"] = utc;
-                    bag["lastPhase"] = PsValue.Str(PsValue.Prop(row, "lastPhase"));
+                    bag.LastPhaseUtc = row.LastPhaseUtc;
+                    bag.LastPhase = row.LastPhase;
                 }
             }
             var suites = new List<string>(bySuite.Keys);
             suites.Sort(StringComparer.OrdinalIgnoreCase);
-            var timeline = new object[suites.Count];
+            var timeline = new SuiteTimeline[suites.Count];
             for (var i = 0; i < suites.Count; i++) timeline[i] = bySuite[suites[i]];
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("TimingRoot", timingRoot ?? ""));
-            result.Properties.Add(new PSNoteProperty("Chunks", chunks.ToArray()));
-            result.Properties.Add(new PSNoteProperty("Timeline", timeline));
-            return result;
+            return new TimingReport { TimingRoot = timingRoot ?? "", Chunks = chunks.ToArray(), Timeline = timeline };
         }
 
         // ---- setup-phases.json -----------------------------------------------------------------------------
+
+        private sealed class SetupPhase
+        {
+            public string Name = "", StartedAt = "", EndedAt = "";
+            public double? Seconds;
+        }
 
         /// <summary>
         /// Write-QualificationRunPhase: records one named setup phase (npm-ci, dotnet-build, ...) in
@@ -353,87 +586,89 @@ namespace Antiphon.Nightly
         {
             if (Blank(timingDirectory) || Blank(name) || !PhaseName(name)) return;
             var path = Path.Combine(timingDirectory, "setup-phases.json");
-            var kept = new List<object>();
-            foreach (var row in SetupRows(path, false))
+            var kept = new List<SetupPhase>();
+            foreach (var row in SetupRows(path)) if (!Same(row.Name, name)) kept.Add(row);
+            kept.Add(new SetupPhase { Name = name, StartedAt = startedAt ?? "", EndedAt = endedAt ?? "", Seconds = seconds });
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer, CompactJson.Options))
             {
-                if (row == null || Same(PsValue.Str(PsValue.Prop(row, "name")), name)) continue;
-                var rowSeconds = PsValue.Prop(row, "seconds");
-                kept.Add(new OrderedDictionary
+                writer.WriteStartObject();
+                writer.WriteNumber("version", 1);
+                writer.WriteStartArray("phases");
+                foreach (var row in kept)
                 {
-                    { "name", PsValue.Str(PsValue.Prop(row, "name")) }, { "startedAt", Stamp(PsValue.Prop(row, "startedAt")) },
-                    { "endedAt", Stamp(PsValue.Prop(row, "endedAt")) },
-                    { "seconds", rowSeconds == null ? 0.0 : (double)LanguagePrimitives.ConvertTo(rowSeconds, typeof(double), CultureInfo.InvariantCulture) },
-                });
+                    writer.WriteStartObject();
+                    writer.WriteString("name", row.Name);
+                    writer.WriteString("startedAt", row.StartedAt);
+                    writer.WriteString("endedAt", row.EndedAt);
+                    writer.WriteNumber("seconds", row.Seconds ?? 0);
+                    writer.WriteEndObject();
+                }
+                writer.WriteEndArray();
+                writer.WriteEndObject();
             }
-            kept.Add(new OrderedDictionary { { "name", name }, { "startedAt", startedAt ?? "" }, { "endedAt", endedAt ?? "" }, { "seconds", seconds } });
-            var doc = new OrderedDictionary { { "version", 1 }, { "phases", kept.ToArray() } };
-            EvidenceFiles.WriteAtomic(path, TestPhaseJson.Text(doc, 0), true);
+            EvidenceFiles.WriteAtomic(path, Encoding.UTF8.GetString(buffer.ToArray()), true);
         }
 
         /// <summary>
-        /// Get-QualificationSetupAccounting: { countedOnce, setupSeconds, perChunkBuildSum (build, npm-build,
-        /// dotnet-build), overlapped, firstStartUtcTicks } of timingDirectory/setup-phases.json.
+        /// Get-QualificationSetupAccounting: the setup seconds, the build phases' sum, whether two phases overlap and
+        /// the first phase's start, of timingDirectory/setup-phases.json.
         /// </summary>
-        public static PSObject SetupAccounting(string timingDirectory)
+        public static SetupPhaseAccounting SetupAccounting(string timingDirectory)
         {
             var path = Path.Combine(timingDirectory ?? "", "setup-phases.json");
-            var countedOnce = TestPhaseFiles.Kind(path, out _) == "regular";
-            double setup = 0, sum = 0;
-            object firstStart = null;
+            var result = new SetupPhaseAccounting { CountedOnce = TestPhaseFiles.Kind(path, out _) == "regular" };
             var recordedFirst = false;
             var intervals = new List<long[]>();
-            foreach (var row in SetupRows(path, true))
+            foreach (var row in SetupRows(path))
             {
-                if (row == null) continue;
-                var rowSeconds = PsValue.Prop(row, "seconds");
-                var value = rowSeconds == null ? 0.0 : (double)LanguagePrimitives.ConvertTo(rowSeconds, typeof(double), CultureInfo.InvariantCulture);
-                setup += value;
-                var phaseName = PsValue.Str(PsValue.Prop(row, "name"));
-                if (Same(phaseName, "build") || Same(phaseName, "npm-build") || Same(phaseName, "dotnet-build")) sum += value;
-                var start = UtcTicks(PsValue.Prop(row, "startedAt"));
-                var end = UtcTicks(PsValue.Prop(row, "endedAt"));
-                if (!recordedFirst) { recordedFirst = true; firstStart = start; }
+                var value = row.Seconds ?? 0;
+                result.SetupSeconds += value;
+                if (Same(row.Name, "build") || Same(row.Name, "npm-build") || Same(row.Name, "dotnet-build")) result.PerChunkBuildSum += value;
+                var start = UtcTicks(row.StartedAt);
+                var end = UtcTicks(row.EndedAt);
+                if (!recordedFirst) { recordedFirst = true; result.FirstStartUtcTicks = start; }
                 if (start != null && end != null) intervals.Add(new[] { start.Value, end.Value });
             }
             intervals.Sort((a, b) => a[0].CompareTo(b[0]));
-            var overlapped = false;
-            for (var i = 1; i < intervals.Count; i++) if (intervals[i][0] < intervals[i - 1][1]) overlapped = true;
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("countedOnce", countedOnce));
-            result.Properties.Add(new PSNoteProperty("setupSeconds", setup));
-            result.Properties.Add(new PSNoteProperty("perChunkBuildSum", sum));
-            result.Properties.Add(new PSNoteProperty("overlapped", overlapped));
-            result.Properties.Add(new PSNoteProperty("firstStartUtcTicks", firstStart));
+            for (var i = 1; i < intervals.Count; i++) if (intervals[i][0] < intervals[i - 1][1]) result.Overlapped = true;
             return result;
         }
 
-        // The phases of setup-phases.json (none when it is not a regular file); dates as ConvertFrom-Json reads them.
-        private static object[] SetupRows(string path, bool dates)
+        // The phases of setup-phases.json (none when it is not a regular file).
+        private static List<SetupPhase> SetupRows(string path)
         {
-            if (TestPhaseFiles.Kind(path, out _) != "regular") return new object[0];
-            var doc = NightlyJson.ParseText(EvidenceFiles.ReadAllText(path), 60, dates);
-            if (doc == null) throw new InvalidDataException("setup-phases-unreadable: " + path);
-            var phases = doc.Properties["phases"]?.Value;
-            return phases == null ? new object[0] : PsValue.AsArray(phases);
+            var rows = new List<SetupPhase>();
+            if (TestPhaseFiles.Kind(path, out _) != "regular") return rows;
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(EvidenceFiles.ReadAllText(path), StrictOptions); }
+            catch (JsonException) { throw new InvalidDataException("setup-phases-unreadable: " + path); }
+            using (doc)
+            {
+                if (!Json.Field(doc.RootElement, "phases", out var phases) || phases.ValueKind != JsonValueKind.Array) return rows;
+                foreach (var row in phases.EnumerateArray())
+                {
+                    if (row.ValueKind != JsonValueKind.Object) continue;
+                    double? seconds = null;
+                    if (Json.Field(row, "seconds", out var s))
+                    {
+                        if (s.ValueKind == JsonValueKind.Number) seconds = s.GetDouble();
+                        else if (s.ValueKind == JsonValueKind.String) seconds = double.Parse(s.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture);
+                    }
+                    rows.Add(new SetupPhase { Name = Json.Text(row, "name"), StartedAt = Json.Text(row, "startedAt"), EndedAt = Json.Text(row, "endedAt"), Seconds = seconds });
+                }
+            }
+            return rows;
         }
 
-        private static long? UtcTicks(object value)
+        // UTC ticks of a stamp as ConvertFrom-Json reads one: "Z" is UTC, an offset converts, no zone is taken as UTC.
+        private static long? UtcTicks(string value)
         {
-            if (value is PSObject ps) value = ps.BaseObject;
-            if (value == null) return null;
-            try
-            {
-                if (value is DateTimeOffset offset) return offset.UtcTicks;
-                if (value is DateTime stamp)
-                {
-                    if (stamp.Kind == DateTimeKind.Local) return stamp.ToUniversalTime().Ticks;
-                    if (stamp.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(stamp, DateTimeKind.Utc).Ticks;
-                    return stamp.Ticks;
-                }
-                return DateTimeOffset.Parse(PsValue.Str(value), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).UtcTicks;
-            }
-            catch (FormatException) { return null; }
-            catch (ArgumentException) { return null; }
+            if (Blank(value)) return null;
+            if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var stamp)) return null;
+            if (stamp.Kind == DateTimeKind.Local) return stamp.ToUniversalTime().Ticks;
+            if (stamp.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(stamp, DateTimeKind.Utc).Ticks;
+            return stamp.Ticks;
         }
 
         private static bool PhaseName(string name)
@@ -492,15 +727,9 @@ namespace Antiphon.Nightly
             return string.CompareOrdinal(identity, 0, token, 0, OwnerPrefixLength) == 0;
         }
 
-        /// <summary>ConvertFrom-QualificationOwnerName: { Token, Journal } of an owner file name, or null.</summary>
-        public static PSObject OwnerName(string name)
-        {
-            if (!OwnerName(name ?? "", out var token, out var journal)) return null;
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Token", token));
-            result.Properties.Add(new PSNoteProperty("Journal", journal));
-            return result;
-        }
+        /// <summary>ConvertFrom-QualificationOwnerName: the token and journal of an owner file name, or null.</summary>
+        public static OwnerFile OwnerName(string name) =>
+            OwnerName(name ?? "", out var token, out var journal) ? new OwnerFile { Token = token, Journal = journal } : null;
 
         // own-<hex token>-<pid>-<nonce>.txt names the journal cases-<pid>-<nonce>.jsonl.
         private static bool OwnerName(string name, out string token, out string journal)
@@ -571,29 +800,21 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Get-QualificationPhaseSums: fixture setup/teardown and process spawn/wait seconds (null where none was
-        /// observed) of the chunk's own journals, with refused when a read was refused or the budget ran out.
-        /// Without a watch each journal gets its own 200 ms slice of deadlineMilliseconds.
+        /// Get-QualificationPhaseSums: the chunk's own journals' fixture and process seconds. Without a watch each
+        /// journal gets its own 200 ms slice of deadlineMilliseconds.
         /// </summary>
-        public static PSObject PhaseSums(string timingRoot, string chunk, string runId, string suite, string attempt) =>
+        public static JournalPhaseSums PhaseSums(string timingRoot, string chunk, string runId, string suite, string attempt) =>
             PhaseSums(timingRoot, chunk, runId, suite, attempt, null, 500);
 
-        public static PSObject PhaseSums(string timingRoot, string chunk, string runId, string suite, string attempt, Stopwatch watch, int deadlineMilliseconds)
+        public static JournalPhaseSums PhaseSums(string timingRoot, string chunk, string runId, string suite, string attempt, Stopwatch watch, int deadlineMilliseconds)
         {
             Warm();
-            var sums = PhaseSumsCore(timingRoot, chunk ?? "", runId ?? "", suite ?? "", attempt ?? "", watch, deadlineMilliseconds);
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("fixtureSetupSeconds", sums.Setup));
-            result.Properties.Add(new PSNoteProperty("fixtureTeardownSeconds", sums.Teardown));
-            result.Properties.Add(new PSNoteProperty("processSpawnSeconds", sums.Spawn));
-            result.Properties.Add(new PSNoteProperty("processWaitSeconds", sums.Wait));
-            result.Properties.Add(new PSNoteProperty("refused", sums.Refused));
-            return result;
+            return PhaseSumsCore(timingRoot, chunk ?? "", runId ?? "", suite ?? "", attempt ?? "", watch, deadlineMilliseconds);
         }
 
-        private static Sums PhaseSumsCore(string timingRoot, string chunk, string runId, string suite, string attempt, Stopwatch watch, int deadline)
+        private static JournalPhaseSums PhaseSumsCore(string timingRoot, string chunk, string runId, string suite, string attempt, Stopwatch watch, int deadline)
         {
-            var result = new Sums();
+            var result = new JournalPhaseSums();
             if (Blank(timingRoot)) return result;
             var rootKind = DirectoryKind(timingRoot);
             if (rootKind == "missing") return result;
@@ -672,10 +893,10 @@ namespace Antiphon.Nightly
                 if (contribution.Spawn != null) spawn = (spawn ?? 0) + contribution.Spawn.Value;
                 if (contribution.Wait != null) wait = (wait ?? 0) + contribution.Wait.Value;
             }
-            if (setup != null) result.Setup = Math.Round(setup.Value, 3);
-            if (teardown != null) result.Teardown = Math.Round(teardown.Value, 3);
-            if (spawn != null) result.Spawn = Math.Round(spawn.Value, 3);
-            if (wait != null) result.Wait = Math.Round(wait.Value, 3);
+            if (setup != null) result.FixtureSetupSeconds = Math.Round(setup.Value, 3);
+            if (teardown != null) result.FixtureTeardownSeconds = Math.Round(teardown.Value, 3);
+            if (spawn != null) result.ProcessSpawnSeconds = Math.Round(spawn.Value, 3);
+            if (wait != null) result.ProcessWaitSeconds = Math.Round(wait.Value, 3);
             result.Refused = refused;
             return result;
         }
@@ -697,7 +918,7 @@ namespace Antiphon.Nightly
                 var text = read.Line;
                 if (Blank(text) || text.IndexOf("\"recordKind\":\"header\"", StringComparison.Ordinal) < 0) return null;
                 var record = ParseRecord(text);
-                if (record == null || !Same(Str(record.Value, "recordKind"), "header")) return null;
+                if (record == null || !Same(Json.Text(record.Value, "recordKind"), "header")) return null;
                 return record;
             }
             catch (Exception) { refused = true; return null; }
@@ -744,11 +965,11 @@ namespace Antiphon.Nightly
         {
             if (header == null) return false;
             var h = header.Value;
-            if (!Same(Str(h, "recordKind"), "header") || !Same(Str(h, "groupId"), chunk) || !Same(Str(h, "runId"), runId)
-                || !Same(Str(h, "suite"), suite) || !Same(Str(h, "attempt"), attempt)) return false;
+            if (!Same(Json.Text(h, "recordKind"), "header") || !Same(Json.Text(h, "groupId"), chunk) || !Same(Json.Text(h, "runId"), runId)
+                || !Same(Json.Text(h, "suite"), suite) || !Same(Json.Text(h, "attempt"), attempt)) return false;
             if (!JournalName(fileName, out var filePid, out var fileNonce)) return false;
-            var headerPid = Str(h, "pid");
-            var headerNonce = Str(h, "nonce");
+            var headerPid = Json.Text(h, "pid");
+            var headerNonce = Json.Text(h, "nonce");
             if (!Blank(headerPid) && !Same(headerPid, filePid)) return false;
             if (!Blank(headerNonce) && !Same(headerNonce, fileNonce)) return false;
             return true;
@@ -757,15 +978,15 @@ namespace Antiphon.Nightly
         private static Contribution Contribute(List<JsonElement> records, string fileName, string chunk, string runId, string suite, string attempt)
         {
             JsonElement? header = null;
-            foreach (var record in records) if (Same(Str(record, "recordKind"), "header")) { header = record; break; }
+            foreach (var record in records) if (Same(Json.Text(record, "recordKind"), "header")) { header = record; break; }
             var result = new Contribution();
             if (!ShardOwned(header, fileName, chunk, runId, suite, attempt)) return result;
             foreach (var record in records)
             {
-                var kind = Str(record, "recordKind");
+                var kind = Json.Text(record, "recordKind");
                 if (Same(kind, "fixture"))
                 {
-                    var id = Str(record, "fixtureId");
+                    var id = Json.Text(record, "fixtureId");
                     if (Blank(id)) id = Guid.NewGuid().ToString("N");
                     if (result.Fixtures.ContainsKey(id)) continue;
                     var bucket = new double?[2];
@@ -773,7 +994,7 @@ namespace Antiphon.Nightly
                     {
                         var seconds = Span(phase);
                         if (seconds == null) continue;
-                        var name = Str(phase, "phase");
+                        var name = Json.Text(phase, "phase");
                         if (Same(name, "fixture-setup")) bucket[0] = (bucket[0] ?? 0) + seconds.Value;
                         else if (Same(name, "fixture-teardown")) bucket[1] = (bucket[1] ?? 0) + seconds.Value;
                     }
@@ -785,7 +1006,7 @@ namespace Antiphon.Nightly
                     {
                         var seconds = Span(phase);
                         if (seconds == null) continue;
-                        var name = Str(phase, "phase");
+                        var name = Json.Text(phase, "phase");
                         if (Same(name, "process-spawn")) result.Spawn = (result.Spawn ?? 0) + seconds.Value;
                         else if (Same(name, "process-wait")) result.Wait = (result.Wait ?? 0) + seconds.Value;
                     }
@@ -796,7 +1017,7 @@ namespace Antiphon.Nightly
 
         private static IEnumerable<JsonElement> Phases(JsonElement record)
         {
-            if (!Field(record, "phases", out var phases)) yield break;
+            if (!Json.Field(record, "phases", out var phases)) yield break;
             if (phases.ValueKind == JsonValueKind.Array) { foreach (var phase in phases.EnumerateArray()) yield return phase; }
             else yield return phases;
         }
@@ -806,83 +1027,33 @@ namespace Antiphon.Nightly
         private static double? Span(JsonElement phase)
         {
             if (phase.ValueKind != JsonValueKind.Object) return null;
-            var start = Number(phase, "startOffsetMs");
+            var start = Json.Offset(phase, "startOffsetMs");
             if (start == null) return null;
-            var end = Number(phase, "endOffsetMs") ?? start.Value;
+            var end = Json.Offset(phase, "endOffsetMs") ?? start.Value;
             if (end < start.Value) end = start.Value;
             return (end - start.Value) / 1000.0;
-        }
-
-        // [double]$o.name: absent or null is 0.
-        private static double? Number(JsonElement o, string name)
-        {
-            if (!Field(o, name, out var v)) return 0;
-            switch (v.ValueKind)
-            {
-                case JsonValueKind.Null: return 0;
-                case JsonValueKind.Number: return v.GetDouble();
-                case JsonValueKind.True: return 1;
-                case JsonValueKind.False: return 0;
-                case JsonValueKind.String:
-                    var text = v.GetString();
-                    if (string.IsNullOrWhiteSpace(text)) return 0;
-                    return double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed) ? parsed : (double?)null;
-                default: return null;
-            }
-        }
-
-        // $o.name, matched as PowerShell matches property names (ignoring case).
-        private static bool Field(JsonElement o, string name, out JsonElement value)
-        {
-            value = default;
-            if (o.ValueKind != JsonValueKind.Object) return false;
-            if (o.TryGetProperty(name, out value)) return true;
-            foreach (var property in o.EnumerateObject())
-                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) { value = property.Value; return true; }
-            return false;
-        }
-
-        // [string]$o.name.
-        private static string Str(JsonElement o, string name)
-        {
-            if (!Field(o, name, out var v)) return "";
-            switch (v.ValueKind)
-            {
-                case JsonValueKind.String: return v.GetString() ?? "";
-                case JsonValueKind.Null: return "";
-                case JsonValueKind.True: return "True";
-                case JsonValueKind.False: return "False";
-                case JsonValueKind.Number:
-                    var raw = v.GetRawText();
-                    if (raw.IndexOfAny(FractionMarks) >= 0) return v.GetDouble().ToString(CultureInfo.InvariantCulture);
-                    return v.TryGetInt64(out var whole) ? whole.ToString(CultureInfo.InvariantCulture) : raw;
-                default: return v.GetRawText();
-            }
         }
 
         // ---- TRX -------------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Get-QualificationTrxStats: { P50, P95, Max, Slowest, Count, Complete } of the TRX's results (null
-        /// percentiles without results; Complete false, nothing else, when the read was refused or out of budget);
-        /// null for a blank path.
+        /// Get-QualificationTrxStats: the TRX's result durations (Complete false, nothing else, when the read was
+        /// refused or out of budget); null for a blank path.
         /// </summary>
-        public static PSObject TrxStats(string trxPath) => TrxStats(trxPath, null, DefaultBudget);
+        public static TrxSummary TrxStats(string trxPath) => TrxStats(trxPath, null, DefaultBudget);
 
-        public static PSObject TrxStats(string trxPath, Stopwatch watch, int deadlineMilliseconds)
+        public static TrxSummary TrxStats(string trxPath, Stopwatch watch, int deadlineMilliseconds)
         {
             Warm();
             if (Blank(trxPath)) return null;
             var stats = TrxCore(trxPath, watch ?? Stopwatch.StartNew(), deadlineMilliseconds);
-            var result = new PSObject();
-            var known = stats != null && stats.Count > 0;
-            result.Properties.Add(new PSNoteProperty("P50", known ? (object)stats.P50 : null));
-            result.Properties.Add(new PSNoteProperty("P95", known ? (object)stats.P95 : null));
-            result.Properties.Add(new PSNoteProperty("Max", known ? (object)stats.Max : null));
-            result.Properties.Add(new PSNoteProperty("Slowest", stats != null ? SlowRows(stats) : new object[0]));
-            result.Properties.Add(new PSNoteProperty("Count", stats != null ? stats.Count : 0));
-            result.Properties.Add(new PSNoteProperty("Complete", stats != null));
-            return result;
+            if (stats == null) return new TrxSummary();
+            var known = stats.Count > 0;
+            return new TrxSummary
+            {
+                Count = stats.Count, P50 = known ? stats.P50 : (double?)null, P95 = known ? stats.P95 : (double?)null,
+                Max = known ? stats.Max : (double?)null, Slowest = SlowRows(stats), Complete = true,
+            };
         }
 
         // The summary; null when the read was refused, incomplete or out of budget.
@@ -905,15 +1076,14 @@ namespace Antiphon.Nightly
         // ---- sidecars --------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Read-QualificationSidecar: the sidecar as ConvertFrom-Json gives it, or null when it is not a regular
-        /// file of at most 256 KiB, is denser than 4000 commas or colons, is not one strict JSON object, or the
-        /// read ran out of budget.
+        /// Read-QualificationSidecar: the sidecar, or null when it is not a regular file of at most 256 KiB, is denser
+        /// than 4000 commas or colons, is not one strict JSON object, or the read ran out of budget.
         /// </summary>
-        public static object ReadSidecar(string path) => ReadSidecar(path, null, DefaultBudget);
+        public static ChunkTiming ReadSidecar(string path) => ReadSidecar(path, null, DefaultBudget);
 
-        public static object ReadSidecar(string path, Stopwatch watch, int deadlineMilliseconds) => ReadSidecarCore(path, watch, deadlineMilliseconds);
+        public static ChunkTiming ReadSidecar(string path, Stopwatch watch, int deadlineMilliseconds) => ReadSidecarCore(path, watch, deadlineMilliseconds);
 
-        private static PSObject ReadSidecarCore(string path, Stopwatch watch, int deadline)
+        private static ChunkTiming ReadSidecarCore(string path, Stopwatch watch, int deadline)
         {
             Warm();
             var log = ReadLog;
@@ -926,10 +1096,23 @@ namespace Antiphon.Nightly
             if (TestPhaseFiles.Kind(path, out var size) != "regular" || size > MaxBytes) return null;
             var bytes = Bounded(path, watch, deadline);
             if (bytes == null || watch.ElapsedMilliseconds >= deadline) return null;
+            // A leading BOM is not the writer's: the sidecar is unreadable, as any other non-strict text.
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return null;
             var text = Encoding.UTF8.GetString(bytes);
             if (TestPhaseRecords.Dense(text, 4000, watch, deadline)) return null;
             if (watch.ElapsedMilliseconds >= deadline) return null;
-            return NightlyJson.ParseText(text, 60);
+            return ParseSidecar(text);
+        }
+
+        /// <summary>A sidecar's text read strictly (one JSON object, no comments or trailing commas), or null.</summary>
+        public static ChunkTiming ParseSidecar(string text)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text, StrictOptions);
+                return doc.RootElement.ValueKind == JsonValueKind.Object ? ChunkTiming.From(doc.RootElement) : null;
+            }
+            catch (JsonException) { return null; }
         }
 
         // At most 256 KiB, the whole file, inside the deadline; null otherwise.
@@ -1025,8 +1208,8 @@ namespace Antiphon.Nightly
                 OwnerName("own-ab-1-warm.txt", out _, out _);
                 ChunkIdentity("warm", "warm", "0", "warm");
                 TestPhaseRecords.Dense("{\"a\":1}", 4000, watch, 10000);
-                NightlyJson.ParseText("{\"a\":1}", 60);
-                TestPhaseJson.Text(new OrderedDictionary { { "why", "" }, { "testCount", 0 }, { "slowest", new object[0] } }, 0);
+                var sample = new ChunkTiming { Slowest = new[] { new SlowTest { Name = "warm", Seconds = 1 } } };
+                ParseSidecar(CompactJson.Text(sample));
                 var probe = Path.Combine(Path.GetTempPath(), "antiphon-timing-warm-" + Guid.NewGuid().ToString("N"));
                 TestPhaseFiles.Kind(probe, out _);
                 DirectoryKind(probe);
@@ -1040,14 +1223,5 @@ namespace Antiphon.Nightly
 
         // PowerShell's -eq on strings.
         private static bool Same(string a, string b) => string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
-
-        // ConvertTo-QualificationStampText: a DateTime as round-trip UTC, anything else as text.
-        private static string Stamp(object value)
-        {
-            if (value is PSObject ps) value = ps.BaseObject;
-            if (value == null) return "";
-            if (value is DateTime stamp) return stamp.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
-            return PsValue.Str(value);
-        }
     }
 }

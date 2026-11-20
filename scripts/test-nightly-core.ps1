@@ -332,25 +332,11 @@ function Test-NCDiagnosticsMatchFallback {
     Test-NCEvidenceRecordsMatchFallback
 }
 
-# TestPhaseRecords.cs and NightlyJson.ParseText: the timing sidecar read (QualificationTiming.ReadSidecar: the
-# density guard and the strict JSON read; anything not one strict JSON object is unreadable), the journal envelope
-# and the owner observation, each against its golden.
+# TestPhaseRecords.cs: the density guard, the journal envelope and the owner observation, each against its golden.
+# (The timing sidecar read is tested in-process: tests/Antiphon.Tests/Scripts/QualificationTimingTests.cs.)
 function Test-NCEvidenceRecordsMatchFallback {
     $dir = Join-Path $root 'nc-records'
     [void][IO.Directory]::CreateDirectory($dir)
-    $sidecars = [ordered]@{
-        plain = '{"suite":"antiphon","chunk":"all-group-1","trxMissing":false,"queueWaitSeconds":1.5,"buildSeconds":3,"startedAt":"2026-11-18T01:02:03.4567890Z","slowest":[{"name":"A","seconds":0.25},{"name":"B","seconds":1}],"why":null,"empty":{},"list":[]}'
-        numbers = '{"big":123456789012345678901234567890,"neg":-0,"exp":1E2,"tiny":5e-324,"long":9223372036854775807,"text":"tab\there \u00e9 \"q\""}'
-        comment = "{ /* note */ `"a`": 1 }"
-        trailing = '{"a":1,}'
-        caseDup = '{"a":1,"A":2}'
-        dup = '{"a":1,"a":2}'
-        nested = '{"a":{"b":{"c":[1,[2,[3]],{"d":true}]}}}'
-        dense = '{"x":[' + ((1..4100) -join ',') + ']}'
-        rootArray = '[1,2]'
-        bom = ([string][char]0xFEFF) + '{"a":1}'
-    }
-    foreach ($name in $sidecars.Keys) { [IO.File]::WriteAllText((Join-Path $dir ($name + '.json')), $sidecars[$name], [Text.UTF8Encoding]::new($false)) }
     $script:NCRecordArm = 0
     $verdicts = @(
         [pscustomobject]@{ RootExitedAtUtc = '2026-11-18T01:00:00Z'; RootStartedAtUtc = [datetime]'2026-11-18T00:59:00'; JobEmpty = 'false'; DrainMilliseconds = '12.5'; ExecutionMilliseconds = 40; ChildrenExited = 1; OutputDrained = $true; RemainingProcessCount = '2'
@@ -362,11 +348,6 @@ function Test-NCEvidenceRecordsMatchFallback {
     )
     Assert-NCGolden 'evidenceRecords' {
         $script:NCRecordArm++
-        $sidecarRows = foreach ($name in $sidecars.Keys) {
-            $value = $null; $err = ''
-            try { $value = [Antiphon.Nightly.QualificationTiming]::ReadSidecar((Join-Path $dir ($name + '.json')), $null, 60000) } catch { $err = $_.Exception.GetType().Name }
-            [ordered]@{ name = $name; err = $err; json = ($value | ConvertTo-Json -Depth 20 -Compress); types = (@(Get-NCValueTypes $value) -join ',') }
-        }
         $densities = foreach ($text in @('', 'a,b:c', ((1..10) -join ','), ('{' + ((1..6) -join ':') + '}'))) {
             [Antiphon.Nightly.TestPhaseRecords]::Dense($text, 5, $null, 0)
         }
@@ -384,8 +365,8 @@ function Test-NCEvidenceRecordsMatchFallback {
                 @(Get-ChildItem -LiteralPath $timing -File | ForEach-Object { $_.Name + '=' + [IO.File]::ReadAllText($_.FullName) }) -join '|'
             }
         }
-        [ordered]@{ sidecars = @($sidecarRows); densities = @($densities); envelopes = $envelopes; owners = @($owners) }
-    } @('System.Numerics.BigInteger', 'missedDescendantPids', 'owner-Session-Runner-Chunk.A-run-0.json', '{"name":"comment","err":"","json":"null"')
+        [ordered]@{ densities = @($densities); envelopes = $envelopes; owners = @($owners) }
+    } @('missedDescendantPids', 'owner-Session-Runner-Chunk.A-run-0.json')
     Test-NCCoveragePartsMatchFallback
 }
 

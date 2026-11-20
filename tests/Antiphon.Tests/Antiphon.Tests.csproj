@@ -78,6 +78,8 @@
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
     <ProjectReference Include="..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
+    <!-- The nightly core, called in-process (plain C# types only: PowerShell is not loaded here). -->
+    <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
