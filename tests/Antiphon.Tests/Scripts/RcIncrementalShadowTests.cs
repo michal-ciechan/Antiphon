@@ -28,4 +28,9 @@ public sealed class RcIncrementalShadowTests
     [Test, Timeout(60_000)] public Task NonBooleanProvenanceFailureInvalidates(CancellationToken token) => Run(nameof(NonBooleanProvenanceFailureInvalidates), token);
     [Test, Timeout(60_000)] public Task CarriedChunkResultInvalidatesCarries(CancellationToken token) => Run(nameof(CarriedChunkResultInvalidatesCarries), token);
     [Test, Timeout(60_000)] public Task AbsentEvidenceKeepsCarriesUntilWired(CancellationToken token) => Run(nameof(AbsentEvidenceKeepsCarriesUntilWired), token);
+
+    // CARD-1836 S8b follow-up round 4. B-1 and B-2 must fail on 38efdbde.
+    // An empty List or ArrayList keeps carries valid. A key named Keys hides the real keys.
+    [Test, Timeout(60_000)] public Task EmptyCollectionFailsClosed(CancellationToken token) => Run(nameof(EmptyCollectionFailsClosed), token);
+    [Test, Timeout(60_000)] public Task DictionaryKeyShadowFailsClosed(CancellationToken token) => Run(nameof(DictionaryKeyShadowFailsClosed), token);
 }
