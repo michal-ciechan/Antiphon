@@ -17,9 +17,12 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     // Ignored node_modules files outside the write roots: enough that the ledger holds a large ignored tree and every
     // per-entry check (stat stamp, admission hash, after-release verify) runs over many entries; the tests name up to
     // f0015. The count is volume, not a threshold: the ledger code has none, and each check compares against it. Each
-    // file costs a write, an age, stats and hashes per run, which at 2,000 dominated this class. Measured with 200 on the
-    // HP laptop (Windows, on battery, the slowest host seen): class 167 s for 21 tests, the strict two-run test 24.6 s,
-    // the next 16.8 s; timeouts are 90 s for that test and 60 s for the rest.
+    // file costs a write, an age, stats and hashes per run, which at 2,000 dominated this class.
+    // Timeouts are provisional (test performance standards R5): one class run with 200 files on the HP laptop (Windows,
+    // on battery, the slowest host seen; 20 tests ran, the Linux-only one skipped): 167 s in all, the strict two-run
+    // test 24.6 s, the next 16.8 s; Linux container 30 s for the class. 90 s for the strict test and 60 s for the rest
+    // leave room for the spawn-lane contention of a full run; the next rc qualification's TRX gives the p95 to set them
+    // near 2x of.
     private const int IgnoredFiles = 200;
     private static readonly string[] Arguments = ["build", "App/App.csproj", "--property:OutputPath=bin-probe/"];
     private static readonly string Sha = new('a', 40);
@@ -37,7 +40,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     [Timeout(60_000)]
     public Task ignored_tree_outside_write_roots_is_stamped_before_the_slot_not_inside_it(CancellationToken cancellationToken)
     {
-        // red: Prepare ignores the ledger and stamps the IgnoredFiles ignored tree inside the slot again.
+        // red: Prepare ignores the ledger and stamps the whole ignored tree (IgnoredFiles entries) inside the slot again.
         var root = BeginRepo();
         var ledger = Capture(root);
         ledger.Files.Keys.Count(path => path.StartsWith("node_modules/", StringComparison.Ordinal)).ShouldBe(IgnoredFiles);
