@@ -95,17 +95,12 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
 
     private int _gitChildren;
 
-    // How many Git(...) calls this environment answered with a git child (any other was answered in process).
+    // How many git children this environment's Git(...) calls started (new-repository settling included).
     public int GitChildren => Volatile.Read(ref _gitChildren);
 
     public string Git(string repository, params string[] args)
     {
-        var stdout = InProcess(repository, args);
-        if (stdout is null)
-        {
-            Interlocked.Increment(ref _gitChildren);
-            stdout = RunGit(repository, args);
-        }
+        var stdout = InProcess(repository, args) ?? RunGit(repository, args);
         if (args.Length > 0 && string.Equals(args[0], "init", StringComparison.Ordinal))
             SettleNewRepository(repository, args);
         return stdout;
@@ -141,16 +136,24 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
                         applied = true;
                     }
                     return "";
-                // Paths that exist, named literally (git refuses a path that matches nothing: git answers that). A
-                // directory stages what is under it, ignored files included, as `git add -f` does.
+                // Paths that exist below the repository root, named literally (git refuses a path that matches nothing:
+                // git answers that). A directory stages what is under it, ignored files included, as `git add -f` does.
+                // The root itself, a path outside it, a pattern character, or (off Windows) a backslash in a name, which
+                // libgit2's pathspec would read differently, go to git.
                 case ["add", "-f", "--", ..] when args.Length > 3:
-                    var paths = args.Skip(3).Select(path => Path.GetFullPath(path, repository)).ToArray();
-                    if (paths.Any(path => (!File.Exists(path) && !Directory.Exists(path)) || path.IndexOfAny(['*', '?', '[', ']']) >= 0))
-                        return null;
+                    var paths = new List<string>();
+                    foreach (var full in args.Skip(3).Select(path => Path.GetFullPath(path, repository)))
+                    {
+                        var relative = Path.GetRelativePath(repository, full);
+                        if ((!File.Exists(full) && !Directory.Exists(full)) || relative == "." || relative.StartsWith("..", StringComparison.Ordinal)
+                            || Path.IsPathRooted(relative) || relative.IndexOfAny(['*', '?', '[', ']']) >= 0
+                            || (!OperatingSystem.IsWindows() && relative.Contains('\\')))
+                            return null;
+                        paths.Add(relative.Replace('\\', '/'));
+                    }
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
-                        LibGit2Sharp.Commands.Stage(repo, paths.Select(path => Path.GetRelativePath(repository, path).Replace('\\', '/')),
-                            new LibGit2Sharp.StageOptions { IncludeIgnored = true });
+                        LibGit2Sharp.Commands.Stage(repo, paths, new LibGit2Sharp.StageOptions { IncludeIgnored = true });
                         applied = true;
                     }
                     return "";
@@ -162,7 +165,7 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
                         // git refuses an empty first commit ("nothing to commit"): git answers that.
                         if (repo.Info.IsHeadUnborn && repo.Index.Count == 0) return null;
                         var who = new LibGit2Sharp.Signature(name["user.name=".Length..], email["user.email=".Length..], DateTimeOffset.Now);
-                        repo.Commit(message, who, who);
+                        repo.Commit(message, who, who, new LibGit2Sharp.CommitOptions());
                         applied = true;
                     }
                     return "";
@@ -270,6 +273,7 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
 
     private string RunGit(string repository, params string[] args)
     {
+        Interlocked.Increment(ref _gitChildren);
         var start = Command("git", repository);
         foreach (var arg in args)
             start.ArgumentList.Add(arg);
