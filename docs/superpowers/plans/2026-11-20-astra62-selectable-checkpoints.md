@@ -1,0 +1,37 @@
+# gpt-6.2-astra selectable checkpoints
+
+Code task `2c673f12`. Base `8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e`. Red witnesses `e75207167a0d0bbe3fbb47ed40986b9a1a82b0b0`. Implementation `686b31a4166317000373eac089115e355f1d2bcf`.
+
+## Verification design
+
+- V-1: `gpt-6.2-astra` is a Codex delegatable alias and a hold alias. `ForCodex` still returns `gpt-6-astra` at Frontier, `gpt-6.2-sol` at High and Medium, and `gpt-5.6-luna` at Low. Bare `astra` stays off `CanonicalHoldAlias`.
+- V-2: a High create with explicit `gpt-6.2-astra` launches `--model gpt-6.2-astra` and `model_reasoning_effort=high`. An unknown alias and `*` are 422. A Claude create of that slug is 422. A hold on `gpt-6.2-astra` is 409 for that alias only. High without the field stays `gpt-6.2-sol` / `high`. Frontier stays `gpt-6-astra` / `xhigh`.
+- V-3: `scripts/delegate.ps1 -Model` is posted only when set. Omitted `-Model` leaves `model` off the create body.
+- V-4: `ListAvailable` includes `gpt-6.2-astra`. The client hold form lists that slug for Codex.
+- V-5: `RequestedModelAlias` is one nullable `character varying(80)` column on `AgentTasks`, sorted after `AddLandVerificationFailure`, with `SET LOCAL lock_timeout = '5s'`. Down throws. The EF model has no pending changes.
+- R-1: `ModelLevelAliasDisplayTests`, `LaunchModelArgumentAppenderTests`, and `RolePolicyReadServiceTests` stay on the ladder slugs. `DelegateScriptKindTests` stays green, including V-3.
+- R-2: the Linux guard batch below. `C1729LayeringGuardTests` prints `VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`.
+- R-3: `DerivedImpactIndexTests` alone. The driver project is built before this table, through `scripts/build-slot.ps1`, because `regenerate_script_reports_changed_then_unchanged` runs `scripts/regenerate-derived-impact-index.ps1 -NoBuild`. Building `tests/Antiphon.Tests` does not produce that driver. That build is unlisted for that reason.
+- R-4: `scripts/audit-land-verification-graph.ps1 -Check` exits 0. An inherited mismatch is a warning, not a failure of this task.
+- R-5: `PinnedInputDigest` stated in `scripts/test-live-lane-run.ps1` equals `-PrintInputDigest`, and `policyHash` in `tests/test-execution-policy.json` equals `Read-NightlyExecutionPolicy`. Neither input was edited, so neither pin moves.
+- R-6: `scripts/check-evidence-diff.ps1` over `8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e..HEAD` exits 0.
+
+Red, already observed at `e75207167a0d0bbe3fbb47ed40986b9a1a82b0b0`, before the fix. Alias lease `db269f67-a0b7-4968-ab5b-ecff8c8165a5`, waited=0s, held=12s: 86 total, 3 failed (`CanonicalHoldAlias(gpt-6.2-astra)` null; Codex delegatable list missing the slug). Dispatch lease `5a35390d-639a-4e6c-9f2c-ca8a09418700`, waited=0s, held=35s: launch stayed `--model gpt-6.2-sol`; unknown and `*` did not throw; the Astra hold did not throw. List lease `02bc060e-8d47-4ac9-a317-827802e7a388`, waited=0s, held=46s: available omitted `gpt-6.2-astra`. Script lease `2cc5dab7-338c-47fb-837c-38a985813290`, waited=0s, held=12s: `-Model` was not a parameter (the omitted call had already passed). The same selections passed after the fix: alias and model classes 90/90 (lease `7a3fc6f8-3c0d-4774-a89d-0d265720fc97`, waited=0s, held=24s); dispatch 26/26 (lease `18a05e42-0933-4329-8e0d-dc29c6dae2cc`, waited=0s, held=85s); list 1/1 (lease `d8ac442a-2881-4081-a81f-c7ed7a289183`, waited=0s, held=40s); script method 1/1 (lease `88418e22-1731-4b07-a7f1-2d9424a30eda`, waited=0s, held=12s).
+
+`WindowsUnitPlatformAdmissionTests` is not a row. On Linux its skip is not a pass. Windows behaviour of this change is unobserved.
+
+Not in this closed list, under the short-test bound (operator 2026-11-18): the Slow members of the migrations impacted-classes row (`C1514HostLoadMigrationTests`, `WorktreeBaseSelectionTests`, `StandingRestartEscalationTests`, `DispatchBaseNotificationTests`, `SessionRuntimeActionRoutingTests`). The same row's other Integration classes were not probed and have no measured wall here: `StandingSpecialistRoutingMigrationTests`, `AgentTaskLandHeldNotificationTests`, `AgentTaskLandNotificationPersistenceTests`, and `RunnerDefaultMigrationTests`. CP-4 is the downgrade selector and the model class, which is the migration obligation this brief names. No positive controls. Mutation is waived (operator 2026-11-12). PCs stay pending for SourceLanding Mutation; this plan has none to execute.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-astra62/` | aliases | `/*/*/(CodexGpt62LadderTests*)\|(ModelAliasTests*)/*` | V-1 | all listed, 0 failed | 86 | 15 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-2 | all | CP-1 | dispatch | `/*/*/CodexDelegateDispatchTests/*` | V-2 | all listed, 0 failed | 26 | 5 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-3 | all | CP-1 | neighbors | `/*/*/(ModelLevelAliasDisplayTests*)\|(LaunchModelArgumentAppenderTests*)\|(RolePolicyReadServiceTests*)\|(DelegateScriptKindTests*)/*` | R-1, V-3 | all listed, 0 failed | 94 | 5 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-4 | all | CP-1 | migration-shape | `/*/*/(RequestedModelAliasMigrationTests*)\|(AppDbContextModelTests*)/*` | V-5 | all listed, 0 failed | 4 | 5 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-5 | all | CP-1 | linux-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | all listed, 0 failed | 81 | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-6 | all | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed | 27 | 12 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-7 | all | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-4 | exit 0 | n/a | 3 | true | n/a |
+| CP-8 | all | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -Repository . -BaseRef 8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e -HeadRef HEAD` | R-6 | exit 0 | n/a | 3 | true | n/a |
+| CP-9 | all | n/a | pins | `pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest > /tmp/astra62-pin.txt && computed=$(tr -d '[:space:]' < /tmp/astra62-pin.txt) && test "$computed" = c0d2a723edfe8f12b63f7eafa7ed360c6a8bc132377c1705d2fa9dd9dce6cd84 && rm /tmp/astra62-pin.txt && echo pin-ok` | R-5 | exit 0; stated digest equals computed digest | n/a | 3 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
