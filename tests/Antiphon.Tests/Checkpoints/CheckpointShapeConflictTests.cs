@@ -104,6 +104,18 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     public Task shape_existing_output_symlink(CancellationToken cancellationToken) =>
         AssertShapeAsync("existing-output-symlink", cancellationToken);
 
+    // Counts SDK projects the mutation factories emit. Each one is a cold build
+    // on both checkpoint entry points.
+    [Test]
+    [Timeout(120_000)]
+    public void shape_fixture_sdk_build_count()
+    {
+        var modified = File.ReadAllText(Path.Combine(BeginRepo("modified-tracked"), "App", "App.csproj"));
+        var deleted = File.ReadAllText(Path.Combine(BeginRepo("deleted-tracked"), "App", "App.csproj"));
+        var sdk = new[] { modified, deleted }.Count(text => text.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal));
+        sdk.ShouldBeGreaterThan(1);
+    }
+
     private async Task AssertShapeAsync(string shape, CancellationToken cancellationToken)
     {
         string? root = null;
