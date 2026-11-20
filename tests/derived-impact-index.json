@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 339,
+      "classes": 340,
       "reason": "allowlist"
     },
     {
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 134,
+      "classes": 135,
       "reason": "cap",
-      "owed": 109,
+      "owed": 110,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2150,14 +2150,14 @@
       "reason": "cap",
       "owed": 50,
       "first": [
-        "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
-        "LiveLaneAttestationTests"
+        "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests"
       ]
     },
     {
@@ -24616,8 +24616,8 @@
         "RcQualificationWatcherScriptTests",
         "RcRosterRepairTests",
         "RcRunEvidenceTests",
-        "RcStoppedRunSeedTests",
         "ReleaseBranchModelGateTests",
+        "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
