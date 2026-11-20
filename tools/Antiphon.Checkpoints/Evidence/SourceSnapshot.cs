@@ -70,8 +70,6 @@ public sealed class SourceSnapshot
     private static readonly Regex FullOid = new("^(?:[0-9a-f]{40}|[0-9a-f]{64})$", RegexOptions.Compiled);
     private readonly Func<string, SourceRead> _read;
 
-    static SourceSnapshot() => IsolateLibGit2FromUserConfig();
-
     public SourceSnapshot(Func<string, SourceRead>? read = null)
     {
         _read = read ?? ReadWithLibGit2;
@@ -147,6 +145,7 @@ public sealed class SourceSnapshot
 
     private static SourceRead ReadWithLibGit2(string repository)
     {
+        ToolLibGit2.EnsureIsolated();
         try
         {
             var reading = Antiphon.GitInProcess.WorkTreeIdentity.Read(repository);
@@ -155,25 +154,6 @@ public sealed class SourceSnapshot
         }
         catch (Antiphon.GitInProcess.WorkTreeIdentityException ex) { throw new SourceReadException(ex.Code); }
         catch (LibGit2Sharp.LibGit2SharpException) { throw new SourceReadException("libgit2_failed"); }
-    }
-
-    /// <summary>
-    /// The hardened git child reads only the repository's config (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL set to the
-    /// null device). libgit2 in this process would also read the system, global and XDG files (Git for Windows'
-    /// system file sets core.autocrlf; a user's global excludes hide untracked files), so point those search paths
-    /// at an empty directory. No long-lived host loads this assembly: the tool runs as its own process, and the test
-    /// host already isolates libgit2 the same way.
-    /// </summary>
-    private static void IsolateLibGit2FromUserConfig()
-    {
-        var empty = Path.Combine(Path.GetTempPath(), "antiphon-checkpoint-libgit2-noconfig");
-        Directory.CreateDirectory(empty);
-        foreach (var level in new[]
-                 {
-                     LibGit2Sharp.ConfigurationLevel.System, LibGit2Sharp.ConfigurationLevel.Global,
-                     LibGit2Sharp.ConfigurationLevel.Xdg, LibGit2Sharp.ConfigurationLevel.ProgramData,
-                 })
-            LibGit2Sharp.GlobalSettings.SetConfigSearchPaths(level, empty);
     }
 
     private static void Add(IncrementalHash hash, ReadOnlySpan<byte> bytes)

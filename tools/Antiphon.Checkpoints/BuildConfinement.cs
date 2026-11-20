@@ -799,6 +799,15 @@ public static class BuildConfinement
 
     private static StatusResult ReadStatus(string repository)
     {
+        // The tracked paths status lists (renames as both paths, conflicts included), read in process; git for a
+        // layout GitInProcess declines.
+        ToolLibGit2.EnsureIsolated();
+        try
+        {
+            if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false) is { } dirty)
+                return new StatusResult(dirty.Order(StringComparer.Ordinal).ToList(), null);
+        }
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException) { }
         var status = Git(repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"]);
         if (status.Error is not null || status.Exit != 0)
             return new StatusResult([], status.Error ?? "git-status");
@@ -830,6 +839,8 @@ public static class BuildConfinement
 
     private static GitResult Git(string workingDirectory, IReadOnlyList<string> args)
     {
+        if (InProcessRead(workingDirectory, args) is { } answered)
+            return answered;
         var psi = new ProcessStartInfo("git")
         {
             WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
@@ -848,6 +859,41 @@ public static class BuildConfinement
         { return new GitResult(128, "", "git-unavailable"); }
         if (result.TimedOut) return new GitResult(128, "", "git-timeout");
         return result.Exit == 0 ? new GitResult(0, result.Stdout, null) : new GitResult(result.Exit, "", "git-failed");
+    }
+
+    /// <summary>
+    /// The confinement's git reads answered in process by libgit2 (GitInProcess), so a confined build starts no
+    /// git child for them: toplevel and HEAD as git prints them, the stage listing byte for byte, and the
+    /// untracked and ignored path sets (each pinned against git by the LibGit2VsGit verdict tests; callers parse
+    /// them into sets). Null for a layout GitInProcess declines (shallow, sparse, gitlinks, a split or version 3+
+    /// index, per-worktree config, a subdirectory for toplevel): git answers those.
+    /// </summary>
+    private static GitResult? InProcessRead(string workingDirectory, IReadOnlyList<string> args)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory)) return null;
+        ToolLibGit2.EnsureIsolated();
+        try
+        {
+            switch (args)
+            {
+                case ["rev-parse", "--show-toplevel"] or ["rev-parse", "HEAD"]:
+                    return Antiphon.GitInProcess.InProcessGitReads.TryAnswer(workingDirectory, args) is { ExitCode: 0 } exact
+                        ? new GitResult(0, exact.Output, null) : null;
+                case ["ls-files", "-z", "-s"]:
+                    return Antiphon.GitInProcess.InProcessGitStatus.IndexListing(workingDirectory, stage: true) is { } listing
+                        ? new GitResult(0, listing, null) : null;
+                case ["ls-files", "-z", "--others", "--exclude-standard"]:
+                case ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]:
+                    return Antiphon.GitInProcess.InProcessGitStatus.OtherPaths(workingDirectory, ignored: args.Count == 5) is { } paths
+                        ? new GitResult(0, string.Concat(paths.Order(StringComparer.Ordinal).Select(path => path + "\0")), null) : null;
+                default:
+                    return null;
+            }
+        }
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static bool TryReadProperty(string token, out string key, out string value)
