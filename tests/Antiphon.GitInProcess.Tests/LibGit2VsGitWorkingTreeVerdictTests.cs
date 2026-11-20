@@ -506,7 +506,15 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             var answer = InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment());
             answer.ShouldNotBeNull("no index: " + string.Join(' ', args));
             answer.Output.ShouldBe(git.Output, "no index: " + string.Join(' ', args));
+            // A child pointed at another index (or repository) reads that one: git's to answer.
+            foreach (var name in new[] { "GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR" })
+                InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment((name, Path.Combine(fresh, "elsewhere"))))
+                    .ShouldBeNull(name + ": " + string.Join(' ', args));
         }
+        // A directory where the index belongs is git's error to report, never an empty listing.
+        Directory.CreateDirectory(Path.Combine(fresh, ".git", "index"));
+        foreach (var args in IndexForms)
+            InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment()).ShouldBeNull("index is a directory: " + string.Join(' ', args));
 
         // A control character in an index path (git refuses to write one on Windows, so the name is patched in with a
         // fresh checksum): git prints it raw, this leaves it to git.

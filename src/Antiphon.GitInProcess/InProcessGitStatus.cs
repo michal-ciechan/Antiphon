@@ -43,6 +43,13 @@ internal static class InProcessGitStatus
         IReadOnlyDictionary<string, string?>? childEnvironment, bool verdictOnly = false)
     {
         if (!InProcessGitReads.Enabled) return null;
+        // A child pointed at another repository, work tree or index reads something else than this: git's to answer.
+        foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR" })
+        {
+            var value = childEnvironment is null ? Environment.GetEnvironmentVariable(name)
+                : childEnvironment.TryGetValue(name, out var set) ? set : null;
+            if (!string.IsNullOrEmpty(value)) return null;
+        }
         var overrides = new List<KeyValuePair<string, string>>();
         var at = 0;
         while (at + 1 < arguments.Count && arguments[at] == "-c")
@@ -237,9 +244,9 @@ internal static class InProcessGitStatus
         {
             byte[] data;
             var index = Path.Combine(repo.Info.Path, "index");
-            // No index file yet (a fresh repository nothing was ever added to): git lists nothing, and neither does
-            // this. One created in between is read below like any other.
-            if (!File.Exists(index)) return "";
+            // No index yet (a fresh repository nothing was ever added to): git lists nothing, and neither does this.
+            // One created in between is read below like any other.
+            if (NoIndexYet(repo.Info.Path)) return "";
             using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read,
                        FileShare.ReadWrite | FileShare.Delete))
             {
@@ -325,7 +332,8 @@ internal static class InProcessGitStatus
             if (repo.Info.IsBare || repo.Info.WorkingDirectory is null || InProcessGitReads.Unusual(repo)) return null;
             if (!GitText.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))
                 && !(indexOnly && MovedLinkedWorktree(repo, checkout))) return null;
-            if (!PlainIndex(repo.Info.Path)) return null;
+            // An index-only read also answers a repository with no index at all yet (IndexListing lists nothing).
+            if (!(indexOnly && NoIndexYet(repo.Info.Path)) && !PlainIndex(repo.Info.Path)) return null;
             // Config only through ConfigOf: touching repo.Config of a linked worktree would install LibGit2Sharp's
             // config, which lacks the repository's own file, into the libgit2 status below.
             if (InProcessGitReads.ConfigOf(repo) is not { } view) return null;
@@ -368,6 +376,16 @@ internal static class InProcessGitStatus
     }
 
     /// <summary>An index file of version 2 and no split-index shared file beside it.</summary>
+    /// <summary>
+    /// Nothing at all at &lt;gitdir&gt;/index (not a file, not a directory) and no shared index: a repository nothing
+    /// was ever added to, where git lists nothing. Anything else odd there is git's to report.
+    /// </summary>
+    private static bool NoIndexYet(string gitDir)
+    {
+        var index = Path.Combine(gitDir, "index");
+        return !File.Exists(index) && !Directory.Exists(index) && !Directory.EnumerateFiles(gitDir, "sharedindex.*").Any();
+    }
+
     private static bool PlainIndex(string gitDir)
     {
         Span<byte> header = stackalloc byte[8];
