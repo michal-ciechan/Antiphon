@@ -17,7 +17,9 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     // Ignored node_modules files outside the write roots: enough that the ledger holds a large ignored tree and every
     // per-entry check (stat stamp, admission hash, after-release verify) runs over many entries; the tests name up to
     // f0015. The count is volume, not a threshold: the ledger code has none, and each check compares against it. Each
-    // file costs a write, an age, stats and hashes per run, which at 2,000 dominated this class.
+    // file costs a write, an age, stats and hashes per run, which at 2,000 dominated this class. Measured with 200 on the
+    // HP laptop (Windows, on battery, the slowest host seen): class 167 s for 21 tests, the strict two-run test 24.6 s,
+    // the next 16.8 s; timeouts are 90 s for that test and 60 s for the rest.
     private const int IgnoredFiles = 200;
     private static readonly string[] Arguments = ["build", "App/App.csproj", "--property:OutputPath=bin-probe/"];
     private static readonly string Sha = new('a', 40);
@@ -32,10 +34,10 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task ignored_tree_outside_write_roots_is_stamped_before_the_slot_not_inside_it(CancellationToken cancellationToken)
     {
-        // red: Prepare ignores the ledger and stamps the 2,000-file ignored tree inside the slot again.
+        // red: Prepare ignores the ledger and stamps the IgnoredFiles ignored tree inside the slot again.
         var root = BeginRepo();
         var ledger = Capture(root);
         ledger.Files.Keys.Count(path => path.StartsWith("node_modules/", StringComparison.Ordinal)).ShouldBe(IgnoredFiles);
@@ -57,7 +59,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task tracked_file_under_a_write_root_is_stamped_inside_the_slot_not_in_the_ledger(CancellationToken cancellationToken)
     {
         // red: the ledger takes tracked paths under the write roots too (Review 06ff09f8 D2 scope), or the
@@ -78,7 +80,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task changed_file_under_an_output_root_is_still_refused_inside_the_slot(CancellationToken cancellationToken)
     {
         // red: the in-slot baseline drops write-root files, so the changed obj/ file passes.
@@ -96,7 +98,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task untracked_source_file_added_during_the_build_is_still_refused(CancellationToken cancellationToken)
     {
         // red: Settle treats a path absent from the in-slot baseline as covered by the ledger.
@@ -112,7 +114,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(120_000)]
+    [Timeout(60_000)]
     public Task non_output_file_changed_before_slot_release_is_refused()
     {
         // red: the ledger is not re-stamped after release, so ignored, untracked and tracked changes pass.
@@ -130,7 +132,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public async Task scheduler_stamps_non_output_files_before_the_slot_and_verifies_after_release(CancellationToken cancellationToken)
     {
         // red: the ledger is taken inside the lease (capture sees Held) or verified before release (f0002 passes).
@@ -156,7 +158,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public async Task file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch(CancellationToken cancellationToken)
     {
         // red (Review 06ff09f8 D1): A -> B while the build waits for its slot, then the build writes A back; the
@@ -185,7 +187,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
 
     [NativeLinuxOnly("the statx stamp (inode and ctime) is read on Linux only")]
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted()
     {
         // red: admission hashes each ledger entry again instead of the entries whose stat stamp changed.
@@ -209,7 +211,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted()
     {
         // red: an entry modified within the racy window is skipped on an equal stat stamp, although a second
@@ -237,7 +239,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public async Task portable_stat_rewrite_keeping_size_and_mtime_during_the_slot_wait_is_refused_before_launch(CancellationToken cancellationToken)
     {
         // red (Review 157c4013 D1): the portable stamp holds type, size and mtime only; B written with A's size and
@@ -262,7 +264,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public async Task rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch(CancellationToken cancellationToken)
     {
         // red: admission trusts a stamp that a timestamp-preserving rewrite leaves equal. On Linux the statx ctime
@@ -291,7 +293,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task stat_without_a_change_time_hashes_each_entry_at_admission()
     {
         // red: a stamp without a change time is trusted on equal identity, size and mtime, so A -> B keeping
@@ -312,7 +314,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission()
     {
         // red: the racy window looks at the mtime only, so an entry with an old mtime and a ctime in the same
@@ -333,7 +335,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode()
     {
         // Review 9f1c8a2e D1: a store through a shared memory mapping can change the bytes and leave the stat stamp
@@ -362,7 +364,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(90_000)]
     public async Task strict_admission_hash_in_the_manifest_refuses_the_build_before_launch(CancellationToken cancellationToken)
     {
         // red: build.admissionHash: strict does not reach admission, so a change the stat stamp does not show is
@@ -387,7 +389,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(120_000)]
+    [Timeout(60_000)]
     public Task ledger_entry_unreadable_after_release_is_refused_unreadable_not_tampered()
     {
         // red (CARD-1358): an entry whose after-release read is refused is printed TAMPERED with a restore command,
@@ -409,7 +411,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(120_000)]
+    [Timeout(60_000)]
     public Task tampered_entry_beside_an_unreadable_entry_is_still_refused_tampered()
     {
         // red (CARD-1358): the unreadable entry is printed TAMPERED with a restore command beside the real change.
@@ -433,7 +435,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public Task in_slot_baseline_entry_unreadable_at_settlement_is_refused_unreadable(CancellationToken cancellationToken)
     {
         // red (CARD-1358): the in-slot baseline reports an entry it could not re-read as TAMPERED.
@@ -450,7 +452,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
-    [Timeout(300_000)]
+    [Timeout(60_000)]
     public async Task scheduler_reports_an_unreadable_ledger_entry_as_unreadable(CancellationToken cancellationToken)
     {
         // red (CARD-1358): report.json says refused: tampered and build.log prints TAMPERED for an entry the
