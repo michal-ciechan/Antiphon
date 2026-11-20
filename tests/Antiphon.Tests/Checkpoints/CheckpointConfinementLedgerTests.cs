@@ -14,7 +14,11 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
 {
-    private const int IgnoredFiles = 2_000;
+    // Ignored node_modules files outside the write roots: enough that the ledger holds a large ignored tree and every
+    // per-entry check (stat stamp, admission hash, after-release verify) runs over many entries; the tests name up to
+    // f0015. The count is volume, not a threshold: the ledger code has none, and each check compares against it. Each
+    // file costs a write, an age, stats and hashes per run, which at 2,000 dominated this class.
+    private const int IgnoredFiles = 200;
     private static readonly string[] Arguments = ["build", "App/App.csproj", "--property:OutputPath=bin-probe/"];
     private static readonly string Sha = new('a', 40);
 
