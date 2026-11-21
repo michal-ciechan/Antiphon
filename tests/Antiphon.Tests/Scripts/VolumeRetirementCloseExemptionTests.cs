@@ -117,8 +117,14 @@ public sealed class VolumeRetirementCloseExemptionTests
         trap 'rm -rf -- "$root"' EXIT
         export SERVER2_ROOT="$root/server"
         C1609_RETIREMENT_FILE="$RETIREMENT"
-        eval "$(sed -n '/^c1609_load_retirement() {$/,/^}$/p; /^c1609_temp_retirement_clearable() {$/,/^}$/p' "$REMOTE")"
-        c1008_volume() { printf 'null\n'; }
+        source <(sed -n '/^c1008_volume() {$/,/^}$/p; /^c1609_load_retirement() {$/,/^}$/p; /^c1609_temp_retirement_clearable() {$/,/^}$/p' "$REMOTE")
+        docker() {
+            case "$*" in
+                'volume ls -q') ;;
+                'volume inspect antiphon-runner-temp_'*) printf 'no such volume\n' >&2; return 1 ;;
+                *) return 2 ;;
+            esac
+        }
 
         id=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         if [ "$MODE" = bad-name ]; then id=unexpected-directory; fi
@@ -140,7 +146,7 @@ public sealed class VolumeRetirementCloseExemptionTests
                 ln -s -- "$root/lifecycle.json" "$op/lifecycle.json" ;;
         esac
         [[ ! -e "$op/receipt.json" && ! -L "$op/receipt.json" ]]
-        declare -F c1609_load_retirement c1609_temp_retirement_clearable >/dev/null
+        declare -F c1008_volume c1609_load_retirement c1609_temp_retirement_clearable >/dev/null
         printf 'RECEIPT_ABSENT=1\n'
         code=0
         c1609_temp_retirement_clearable || code=$?

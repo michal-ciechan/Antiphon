@@ -69,6 +69,10 @@ function Test-C1008SafeAuditDiagnosis {
     if ([string]::IsNullOrEmpty($Diagnosis)) { return $false }
     if ($Diagnosis.IndexOf('@') -ge 0 -or $Diagnosis.IndexOf('://') -ge 0) { return $false }
     if ($Diagnosis -cmatch '^RecycleOriginMoved reason=withdrawn-ref repo=[A-Za-z0-9._/-]+ ref=refs/[A-Za-z0-9._/-]+ old=[0-9a-f]{40} new=([0-9a-f]{40}|deleted)$') { return $true }
+    if ($Diagnosis -cmatch '\ARecycleGitAuditUnknown audit check=worktree-status status=[0-9]+ repo=[A-Za-z0-9._/-]+ stderr=(?:redacted|missing-executable:([A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}))\z') {
+        # Match the basename redaction in c590-remote.sh's audit_status_stderr.
+        return [string]$Matches[1] -notmatch 'credential|token|secret|password|^(?:gh[pousr]_|github_pat_|glpat-|xox|sk-|akia|eyj)'
+    }
     return $Diagnosis -cmatch '^Recycle[A-Za-z0-9]+( audit check=[A-Za-z0-9_-]+ status=[0-9]* repo=[A-Za-z0-9._/-]+( reason=[A-Za-z0-9_-]+)?)?$'
 }
 
