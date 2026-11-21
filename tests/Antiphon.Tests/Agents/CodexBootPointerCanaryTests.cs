@@ -34,7 +34,7 @@ public sealed class CodexBootPointerCanaryTests
         var model = Environment.GetEnvironmentVariable("ANTIPHON_CODEX_CANARY_MODEL") ?? ModelAlias.Gpt62Sol;
         var sessionId = Guid.NewGuid();
         var root = Directory.CreateTempSubdirectory("antiphon-codex-boot-").FullName;
-        var evidence = Path.GetFullPath(Path.Combine(".antiphon", "evidence", "card-2046", sessionId.ToString("N")));
+        var evidence = Path.Combine(EvidenceRoot(), sessionId.ToString("N"));
         var queueLog = new RecordingLogger<SessionMessageQueueService>();
         var readyLog = new RecordingLogger<RunnerCodexAdapter>();
         var observations = new List<string>();
@@ -126,17 +126,26 @@ public sealed class CodexBootPointerCanaryTests
                         snapshots["typed"] = snapshot;
                 };
                 var queue = provider.GetRequiredService<SessionMessageQueueService>();
-                var delivery = await queue.EnqueueAsync(sessionId, pointer, MessageSendMode.WhenIdle, ct,
+                await queue.EnqueueAsync(sessionId, pointer, MessageSendMode.WhenIdle, ct,
                     origin: QueuedMessageOrigin.Delegation);
                 var actualWrites = client.BackendWrites.Select(write => write.Input).ToArray();
 
                 var milestones = PointerMilestones(queueLog);
                 milestones.ShouldContain("write-return", "the production pointer path must write the formatted brief pointer");
                 milestones.ShouldContain("whole-composer", "the production pointer path must recognize whole consumption before Enter");
-                milestones.Where(m => m is "write-start" or "whole-composer" or "enter")
-                    .ShouldBe(["write-start", "whole-composer", "enter"]);
+                milestones.Where(m => m is "write-start" or "whole-composer" or "enter" or "complete-receipt")
+                    .ShouldBe(["write-start", "whole-composer", "enter", "complete-receipt"]);
                 actualWrites.SkipWhile(input => input != expectedWrite).ShouldBe([expectedWrite, "\r"]);
-                delivery.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+
+                // WhenIdle returns a queue snapshot. Its receipt belongs to the durable attempt.
+                await using var receiptScope = provider.CreateAsyncScope();
+                var receiptDb = receiptScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var row = await receiptDb.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(message => message.AgentSessionId == sessionId, ct);
+                row.Status.ShouldBe(QueuedMessageStatus.Sent);
+                row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                row.LastDeliveryGeneration.ShouldBe(generation);
+                row.DeliveryAttempts.ShouldBe(1);
                 var transcript = await client.GetTranscriptAsync(sessionId, ct);
                 transcript.Entries.Where(entry => entry.Kind == TranscriptKinds.UserPrompt)
                     .ShouldHaveSingleItem().Text.ShouldBe(pointer);
@@ -183,6 +192,11 @@ public sealed class CodexBootPointerCanaryTests
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<ISessionRunnerClient>(client);
         services.AddSingleton(queueLog);
         services.AddSingleton<AgentSessionRuntime>();
@@ -194,6 +208,17 @@ public sealed class CodexBootPointerCanaryTests
     private static string[] PointerMilestones(RecordingLogger<SessionMessageQueueService> logger) =>
         logger.Entries.Where(entry => entry.State.ContainsKey("Milestone"))
             .Select(entry => (string)entry.State["Milestone"]!).ToArray();
+
+    private static string EvidenceRoot()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var git = Path.Combine(dir.FullName, ".git");
+            if (File.Exists(git) || Directory.Exists(git))
+                return Path.Combine(dir.FullName, ".antiphon", "evidence", "card-2046");
+        }
+        return Path.GetFullPath(Path.Combine(".antiphon", "evidence", "card-2046"));
+    }
 
     private static bool MatchesTurn(RecordedRequest request, string pointer, string model)
     {
