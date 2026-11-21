@@ -228,6 +228,17 @@ public static class CodexStartupScreen
         return end >= 0 && IsModelEffortCwdFooter(lines[end]);
     }
 
+    /// <summary>
+    /// Codex 0.170.0 draws this under the model/effort/cwd footer.
+    /// 0.160.0 kept the warning chip on the footer, which stayed the last line.
+    /// </summary>
+    internal static bool IsAgentShortcutsRow(string line)
+    {
+        var t = line.Trim();
+        return t.Contains("for agents", StringComparison.Ordinal)
+            && t.Contains("for shortcuts", StringComparison.Ordinal);
+    }
+
     private static bool TryReadBottomComposer(
         string[] lines, out string composerContent, out string footer, out string composerLine)
     {
@@ -240,6 +251,18 @@ public static class CodexStartupScreen
             end--;
         if (end < 0)
             return false;
+
+        // Codex 0.170.0 draws an agents/shortcuts row under the model footer.
+        // Step back to that footer. A 0.160 footer keeps the warning chip on the
+        // model line, which does not match and stays the last line.
+        if (IsAgentShortcutsRow(lines[end]))
+        {
+            end--;
+            while (end >= 0 && lines[end].Length == 0)
+                end--;
+            if (end < 0)
+                return false;
+        }
 
         footer = lines[end];
         var composerIdx = end - 1;
