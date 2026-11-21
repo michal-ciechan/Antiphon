@@ -24,5 +24,6 @@ The canary launches one CLI and clones from the test-owned Postgres fixture. Che
 | CP-8 | final | CP-1 | c2046-main-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-9 | final | CP-4 | c2046-pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-10 | final | `tests/Antiphon.SessionRunner.Tests -> bin-c2046-replay-runner/` | c2046-runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 3 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-11 | final | CP-4 | c2046-startup | `/*/*/CodexStartupReadinessTests/*` | V-4 | 32 passed, 0 failed | 32 | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 
 R-2 uses a fresh master fetch and merge-tree. R-3 is the one manual canary run with historical classifier files restored in a scratch copy. R-4 uses an absent executable override on the exact canary method and checks the skip and rc selection. The tool and index driver preparation builds are outside the verification rows. Restart: none.
