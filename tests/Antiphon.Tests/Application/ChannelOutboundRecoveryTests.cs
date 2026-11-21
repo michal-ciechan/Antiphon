@@ -34,7 +34,8 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChannelOutboundRecoveryTests
 {
-    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test starts a probe.
+    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test starts a probe. A run of
+    // only this class's probe-free tests on a fresh build pays the one-off generation (about 25 s) too.
     [Before(Class)]
     public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
 

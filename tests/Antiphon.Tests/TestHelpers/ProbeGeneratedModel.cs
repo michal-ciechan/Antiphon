@@ -18,7 +18,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// path and the probes build the model themselves, as before (slower, not different), and
 /// ChannelOutboundProbeModelTests fails. Callers ask before a test's own deadline starts (the Before(Class) of each
 /// class that starts probes: the C519 classes and ChannelOutboundRecoveryTests); the result is shared by every caller
-/// in the process.
+/// in the process. ChannelOutboundDeliveryTests' one restart probe is left on the runtime model: generating for it
+/// alone would cost more than it saves.
 /// </summary>
 internal static class ProbeGeneratedModel
 {
@@ -47,7 +48,12 @@ internal static class ProbeGeneratedModel
     /// </summary>
     public static void AddTo(string configPath)
     {
-        if (!Generated.IsValueCreated || !Generated.Value.IsCompletedSuccessfully) return;
+        if (!Generated.IsValueCreated || !Generated.Value.IsCompletedSuccessfully)
+        {
+            // A caller without the Before(Class): said, so the slower probes are not silent.
+            Console.WriteLine(Label + " not ready for " + Path.GetFileName(configPath) + "; the probe builds the model");
+            return;
+        }
         if (Generated.Value.Result.Path is not { } path) return;
         var config = JsonNode.Parse(File.ReadAllText(configPath))!.AsObject();
         config["CompiledModelPath"] = path;
