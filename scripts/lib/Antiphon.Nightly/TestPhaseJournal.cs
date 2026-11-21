@@ -2,8 +2,8 @@
 // environment, the unsafe-directory check, the commit barrier and fault seams, the refused and open contexts, the
 // journal root, seed rows, header and cache, envelope text, the generation prefix and metadata, empty and seed
 // generations, the projected document, gap memory and existing-generation import; with the executed-chunk settlement
-// (ConvertTo-TestPhaseExecutedChunk) and the header update they need. The publication itself (open, commit, append,
-// gaps, projection and recovery) is still PowerShell and works on the context these return.
+// (ConvertTo-TestPhaseExecutedChunk) and the header update they need. The publication that works on the context these
+// return (open, commit, append, gaps, projection and recovery) is TestPhasePublication.cs (S08).
 //
 // Plain C#: JSON documents are read as ConvertFrom-Json reads them (NightlyJson.ParseText with dates); a document
 // that is not one strict JSON object reads as unreadable. Bytes written (envelopes, metadata, pointer, seed cache,
@@ -64,7 +64,14 @@ namespace Antiphon.Nightly
         public string WriterEnvironment { get; set; } = "";
         public bool NeedsRecovery { get; set; }
         public bool RescanAttempted { get; set; }
+        /// <summary>The gap records not yet committed (TestPhasePendingGap), in order.</summary>
         public List<object> PendingGaps { get; set; } = new List<object>();
+        /// <summary>Diagnostics (the cost witnesses read them): outcome rows this context's appends settled.</summary>
+        public int SettledRows { get; set; }
+        /// <summary>Diagnostics: flat projections (groups-executed.json) this context wrote.</summary>
+        public int ProjectionWrites { get; set; }
+        /// <summary>Diagnostics: the prefix re-reads after a failed publication (TestPhasePublication.PrefixRescan).</summary>
+        public int PrefixRescans { get; set; }
     }
 
     /// <summary>One settled seed row: the settled chunk document and its suite and chunk.</summary>
@@ -220,10 +227,12 @@ namespace Antiphon.Nightly
         /// Wait-TestPhaseCommitBarrier: when the barrier (a test seam: Stage, Signal, Release) names this stage, writes
         /// the stage to Signal and waits for the Release file. False when the release does not come within 120 s
         /// (the caller throws commit-barrier-timeout); true otherwise, and at once for no barrier or another stage.
+        /// An in-process seam may be a Func&lt;string, bool&gt; instead: it is asked at every stage and answers the same.
         /// </summary>
         public static bool WaitCommitBarrier(object barrier, string stage)
         {
             if (barrier == null) return true;
+            if (barrier is Func<string, bool> wait) return wait(stage ?? "");
             if (!PsValue.Eq(SeamText(barrier, "Stage"), stage ?? "", true)) return true;
             var signal = SeamText(barrier, "Signal");
             var release = SeamText(barrier, "Release");

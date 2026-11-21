@@ -2,15 +2,16 @@ using System.Globalization;
 using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
-using static Antiphon.Tests.TestHelpers.JournalPublicationStandIn;
+using static Antiphon.Tests.TestHelpers.JournalFixtures;
 
 namespace Antiphon.Tests.TestHelpers;
 
-// CARD-1514 M1. Publication witnesses on the compiled journal head (Antiphon.Nightly/TestPhaseJournal.cs), in-process
-// (W2-nightly S07; these were the v1-v4, zone-map and zone-effective cases of ManifestPublicationHarness.ps1). The
-// publication around the head is JournalPublicationStandIn until S08 ports it. The harness ran every case under the
-// invariant culture; so do these. NotInParallel: the cases move the process zone (TZ, Linux) and count serialised bytes
-// on the process-wide TestPhaseJson.Measure.
+// CARD-1514 M1. Publication witnesses on the compiled journal (Antiphon.Nightly/TestPhaseJournal.cs and
+// TestPhasePublication.cs), in-process (W2-nightly S07 and S08; these were the v1-v4, zone-map and zone-effective cases
+// of ManifestPublicationHarness.ps1). The cost counters are the production context's own (SettledRows, ProjectionWrites)
+// and the TRX hashes of the chunk documents (JournalFixtures.FreshFromTrx, Write-TestPhaseExecutedManifest's half until
+// S09). The harness ran every case under the invariant culture; so do these. NotInParallel: the cases move the process
+// zone (TZ, Linux) and count serialised bytes on the process-wide TestPhaseJson.Measure.
 [Category("Integration")]
 [NotInParallel]
 public sealed class RcManifestJournalTests
@@ -48,16 +49,13 @@ public sealed class RcManifestJournalTests
             Directory.CreateDirectory(root);
             var ctx = Open(root, "run-v2", "1", "antiphon", "unknown");
             ctx.Refused.ShouldBeFalse(ctx.Reason);
-            var counters = new Counters();
+            var counters = new Counters(ctx);
             long bytes;
             try
             {
                 StartCounting(counters);
                 for (var i = 0; i < count; i++)
-                {
-                    counters.PublishedChunk = "c" + i.ToString("00", CultureInfo.InvariantCulture);
-                    Publish(ctx, root, trx, "antiphon", counters.PublishedChunk, "run-v2", "1", 1.0, 0, false, false, counters);
-                }
+                    PublishCounted(ctx, root, trx, "c" + i.ToString("00", CultureInfo.InvariantCulture), "run-v2", 1.0, counters);
             }
             finally { bytes = StopCounting(counters); }
             Complete(ctx);
@@ -247,6 +245,33 @@ public sealed class RcManifestJournalTests
 
     private sealed record Measured(int PriorRows, long Bytes, bool HashSame, int FlatWrites, int HashCount);
 
+    // What the cases count during a publication, from the production context (the harness's function wrappers counted
+    // the same): rows settled beyond each published chunk's own (prior rows), projections written (flat writes), and
+    // TRX hashes.
+    private sealed class Counters(TestPhaseJournalContext ctx)
+    {
+        public bool Counting;
+        public readonly TestPhaseJournalContext Context = ctx;
+        public int SettledBefore;
+        public int WritesBefore;
+        public int SettledAfter;
+        public int WritesAfter;
+        public int OwnRows;
+        public readonly Hashes Hashes = new();
+        // Read between StartCounting and StopCounting (what the publications did, not a later projection).
+        public int PriorRows => SettledAfter - SettledBefore - OwnRows;
+        public int FlatWrites => WritesAfter - WritesBefore;
+        public int HashCount => Hashes.Count;
+    }
+
+    // Publish-MpChunk into the open context, counted: the chunk's own outcome rows are not prior rows.
+    private static void PublishCounted(TestPhaseJournalContext ctx, string root, string trx, string chunk, string runId, double wall, Counters counters)
+    {
+        var fresh = FreshFromTrx(root, trx, "antiphon", chunk, runId, "1", wall, 0, false, false, counters.Hashes);
+        counters.OwnRows += PsValue.AsArray(fresh["outcomes"]).Count(o => o is not null);
+        TestPhasePublication.PublishChunk(ctx, root, fresh, "antiphon", chunk, runId, "1", Scope()).ShouldBeTrue("publish " + chunk);
+    }
+
     // Measure-MpPublish: a legacy prefix imported at open (uncounted), then one publication counted.
     private static Measured MeasurePublish(string work, string label, int prefixChunks, string trx, int wideOutcomes = 0, int wideChunks = 0)
     {
@@ -261,12 +286,12 @@ public sealed class RcManifestJournalTests
         var before = Sha(flat);
         var ctx = Open(root, "run-v1", "1", "antiphon", "unknown");
         ctx.Refused.ShouldBeFalse("open-refused " + ctx.Reason);
-        var counters = new Counters { PublishedChunk = "live-1" };
+        var counters = new Counters(ctx);
         long bytes;
         try
         {
             StartCounting(counters);
-            Publish(ctx, root, trx, "antiphon", "live-1", "run-v1", "1", 1.25, 0, false, false, counters);
+            PublishCounted(ctx, root, trx, "live-1", "run-v1", 1.25, counters);
         }
         finally { bytes = StopCounting(counters); }
         var after = Sha(flat);
@@ -278,6 +303,8 @@ public sealed class RcManifestJournalTests
     private static void StartCounting(Counters counters)
     {
         TestPhaseJson.MeasuredBytes = 0;
+        counters.SettledBefore = counters.Context.SettledRows;
+        counters.WritesBefore = counters.Context.ProjectionWrites;
         counters.Counting = true;
         TestPhaseJson.Measure = true;
     }
@@ -285,6 +312,8 @@ public sealed class RcManifestJournalTests
     private static long StopCounting(Counters counters)
     {
         TestPhaseJson.Measure = false;
+        counters.SettledAfter = counters.Context.SettledRows;
+        counters.WritesAfter = counters.Context.ProjectionWrites;
         counters.Counting = false;
         return TestPhaseJson.MeasuredBytes;
     }
@@ -446,22 +475,6 @@ public sealed class RcManifestJournalTests
     }
 
     // ---- zones and culture ----
-
-    // Initialize-MpCulture: every case ran under the invariant culture.
-    private static Task Invariant(Action body)
-    {
-        var previous = CultureInfo.CurrentCulture;
-        var previousUi = CultureInfo.CurrentUICulture;
-        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
-        CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
-        try { body(); }
-        finally
-        {
-            CultureInfo.CurrentCulture = previous;
-            CultureInfo.CurrentUICulture = previousUi;
-        }
-        return Task.CompletedTask;
-    }
 
     // The harness ran each zone in a child with TZ set. In-process the zone is the process's: Linux reads TZ (the cached
     // zone is cleared before and after); Windows has the machine zone only. Assert-MpOffset then refuses a zone whose

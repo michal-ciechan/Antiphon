@@ -20873,6 +20873,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+      "classes": [
+        "RcManifestIntegrationTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
       "classes": [
         "RcInputOwnersMapTests"
@@ -25156,6 +25162,7 @@
         "RcManifestIntegrationTests",
         "RcManifestJournalTests",
         "RcManifestRecoveryTests",
+        "RcManifestScaleTests",
         "ReleaseAuthorityTests",
         "TestPhaseSummaryTests",
         "TestPhaseSupervisorTests",
@@ -25885,6 +25892,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/JournalFixtures.cs",
+      "classes": [
+        "RcManifestIntegrationTests",
+        "RcManifestJournalTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/JumpingClock.cs",
       "classes": [
         "TaskParkPublicationTests"
@@ -26170,13 +26184,6 @@
         "SessionRuntimeActionTests",
         "SpecialistQualificationTests",
         "TerminalRunnerSeatReleaseTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/TestHelpers/ManifestPublicationFixture.cs",
-      "classes": [
-        "RcManifestIntegrationTests",
-        "RcManifestRecoveryTests"
       ]
     },
     {

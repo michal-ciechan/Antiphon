@@ -1108,7 +1108,8 @@ function Invoke-AntiphonNightlyTests {
     $publicationSource = [string]$Sha
     if ([string]::IsNullOrWhiteSpace($publicationSource)) { $publicationSource = 'unknown' }
     try {
-        $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite '' -Source $publicationSource
+        $publicationContext = [Antiphon.Nightly.TestPhasePublication]::Open($LogRoot, $TimingRoot, $invocationId, ([string]$Attempt), '', $publicationSource, '', $false, $false, (Get-TestPhasePublicationScope))
+        if (-not $publicationContext.Refused) { $script:TestPhaseExecutedContext = $publicationContext }
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
     }
@@ -1365,7 +1366,7 @@ function Invoke-AntiphonNightlyTests {
             $publicationTerminal = 'failed-run'
         }
         try {
-            Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal $publicationTerminal | Out-Null
+            [void][Antiphon.Nightly.TestPhasePublication]::CompleteProjection($publicationContext, $publicationTerminal, (Get-TestPhasePublicationScope))
         } catch {
             Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
         }
@@ -1452,7 +1453,8 @@ function Invoke-AntiphonNightlyTests {
     }
     } finally {
         if ($null -ne $publicationContext) {
-            Close-TestPhaseExecutedContext -Context $publicationContext
+            [Antiphon.Nightly.TestPhasePublication]::Close($publicationContext)
+            if ($publicationContext.Closed -and $null -ne $script:TestPhaseExecutedContext -and [string]$script:TestPhaseExecutedContext.Id -eq [string]$publicationContext.Id) { $script:TestPhaseExecutedContext = $null }
         }
     }
 }

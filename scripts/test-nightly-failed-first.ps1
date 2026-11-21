@@ -765,7 +765,7 @@ function Invoke-FFPreparedArm {
     }
     $armPrepareSeconds=$armWatch.Elapsed.TotalSeconds
     $armExecuteWatch=[Diagnostics.Stopwatch]::StartNew()
-    $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha -InvocationId $invocationId
+    $publicationContext = [Antiphon.Nightly.TestPhasePublication]::Open($LogRoot, $TimingRoot, $invocationId, '1', '', $Sha, $invocationId, $false, $false, (Get-TestPhasePublicationScope))
     if ($publicationContext.Refused) { throw ('context-refused:'+ $publicationContext.Reason) }
     $script:TestPhaseExecutedContext = $publicationContext
     $schedule = New-NightlyDispatchSchedule -PreparedSuites $states -PriorityMembers $Members -HistoryDigest ('d'*64) -RunId $invocationId -Attempt '1'
@@ -775,8 +775,9 @@ function Invoke-FFPreparedArm {
     catch { $errorText=(Get-NightlyRefusalText $_); $coverageComplete=$false; $overallFailed=$true; $reasons += $errorText }
     finally {
         $terminal='success'; if ($overallFailed -or -not $testsPassed) { $terminal='failed-run' }
-        Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal $terminal | Out-Null
-        Close-TestPhaseExecutedContext -Context $publicationContext
+        [void][Antiphon.Nightly.TestPhasePublication]::CompleteProjection($publicationContext, $terminal, (Get-TestPhasePublicationScope))
+        [Antiphon.Nightly.TestPhasePublication]::Close($publicationContext)
+        if ($publicationContext.Closed) { $script:TestPhaseExecutedContext = $null }
         $script:TestPhaseCommitFault=$null
     }
     $armExecuteSeconds=$armExecuteWatch.Elapsed.TotalSeconds
@@ -946,14 +947,14 @@ function Invoke-FFPreparationArm {
         }
     }
     if($WriteFault){[void][IO.Directory]::CreateDirectory((Join-Path $LogRoot 'dispatch-schedule.json'));[void][IO.Directory]::CreateDirectory((Join-Path $LogRoot 'dispatch-schedule-write-failed'))}
-    $publicationContext=Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha
+    $publicationContext=[Antiphon.Nightly.TestPhasePublication]::Open($LogRoot, $TimingRoot, $invocationId, '1', '', $Sha, '', $false, $false, (Get-TestPhasePublicationScope))
     $script:TestPhaseExecutedContext=$publicationContext
     $args=@{DispatchSuites=$ids}
     if($HistoryKind -ceq 'nonempty'){$args.DispatchPriorityMembers=@([pscustomobject]@{suite='antiphon';chunks=@('all-group-1')});$args.DispatchHistoryDigest='d'*64}
     if($HistoryKind -ceq 'empty'){$args.DispatchPriorityMembers=@();$args.DispatchUnresolved=@()}
     $errorText=''
     try{$null = . Invoke-NightlyDispatchCoordinator @args}catch{$errorText=(Get-NightlyRefusalText $_);$coverageComplete=$false}
-    finally{Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal 'failed-run'|Out-Null;Close-TestPhaseExecutedContext -Context $publicationContext}
+    finally{[void][Antiphon.Nightly.TestPhasePublication]::CompleteProjection($publicationContext, 'failed-run', (Get-TestPhasePublicationScope));[Antiphon.Nightly.TestPhasePublication]::Close($publicationContext);if($publicationContext.Closed){$script:TestPhaseExecutedContext=$null}}
     $schedule=$null;$path=Join-Path $LogRoot 'dispatch-schedule.json'
     if([IO.File]::Exists($path)){$schedule=[IO.File]::ReadAllText($path)|ConvertFrom-Json}
     $errorKind=$errorText
@@ -1503,7 +1504,7 @@ function Test-FFHeartbeatLiveness([string]$BindingDirectory) {
         foreach($file in @('groups-planned.json','groups-planned-index.json','groups-planned-antiphon.json','active-chunk.json')) {
             [IO.File]::Copy((Join-Path $BindingDirectory $file),(Join-Path $timing $file),$false)
         }
-        $context=Open-TestPhaseExecutedContext -LogRoot $timing -TimingRoot $timing -RunId 'heartbeat-run' -Attempt '2' -Suite '' -Source ('a'*40)
+        $context=[Antiphon.Nightly.TestPhasePublication]::Open($timing, $timing, 'heartbeat-run', '2', '', ('a'*40), '', $false, $false, (Get-TestPhasePublicationScope))
         try {
             $journal=Join-Path $timing 'groups-executed.journal'
             $pointerPath=Join-Path $journal 'current.json'
@@ -1544,7 +1545,7 @@ function Test-FFHeartbeatLiveness([string]$BindingDirectory) {
             Write-Host ('LIVENESS '+$variant+' expected='+$expected+' actual='+$(if($null -eq $cost){'unknown'}else{[string]$cost}))
             $script:FFOperations.Add([ordered]@{kind='liveness';variant=$variant;expected=$expected;actual=$cost;passed=$matches})
             if(-not $matches){$ok=$false}
-        } finally {Close-TestPhaseExecutedContext $context}
+        } finally {[Antiphon.Nightly.TestPhasePublication]::Close($context)}
     }
     # Unknown is not death evidence and cannot classify missing rows as unfinished.
     $entries=@([pscustomobject]@{suite='A';chunk='1'},[pscustomobject]@{suite='A';chunk='2'})
@@ -1584,7 +1585,7 @@ function Test-JournalCustodySurvivesInterleaving {
     # Existing M1/M2 accessor must refuse corruption instead of manufacturing completion.
     $first=$records[0].FullName;$bytes=[IO.File]::ReadAllText($first)
     [IO.File]::WriteAllText($first,'{')
-    $read=Read-TestPhaseExecutedPrefix -LogRoot $a.Root -TimingRoot (Join-Path $a.Root 'timing')
+    $read=[Antiphon.Nightly.TestPhasePublication]::ReadExecutedPrefix($a.Root, (Join-Path $a.Root 'timing'), [string]$script:QualificationTimingRoot)
     Assert-FF ($read.Refused -or $read.Unresolved -or -not $read.PublicationComplete) 'custody'
     [IO.File]::WriteAllText($first,$bytes)
     Assert-FF ($a.Projection.suite -ceq $a.Trace.Launches[0].suite -and (@($a.Summary.suites|ForEach-Object {$_.id+'/'+$_.chunk})-join ',') -ceq ($keys-join ',') -and $a.Summary.suiteTimeline.Count -eq 2 -and [IO.File]::Exists((Join-Path $a.Root 'timing/summary.json'))) 'fieldPolicies'

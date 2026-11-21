@@ -143,13 +143,191 @@ public sealed class AstraFixesBTests
         queue.GetType().GetProperty("BeforeWrite", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(queue, hook);
     }
 
+    // In-process (W2-nightly S08; it was the JournalPublish case of scripts/test-astra-fixes-b.ps1) on the production
+    // publication (TestPhasePublication) under the deferred evidence writes of a nightly run. The killed child is a
+    // publication thread held inside its record's queued write and never waited for: what is on disk when it is
+    // abandoned is what the killed process left. NotInParallel: the evidence file system is process-wide.
     [Test]
-    public Task JournalPublish(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-astra-fixes-b.ps1", "AB", nameof(JournalPublish), 6,
-            ["AB JournalPublish.ack-waits-for-disk", "AB JournalPublish.held-write-not-acked",
-             "AB JournalPublish.throw-does-not-ack", "AB JournalPublish.close-holds-lock",
-             "AB JournalPublish.unrelated-releases-lock", "AB JournalPublish.kill-keeps-acked-record"],
-            ScriptHarnessOptions.Default with { ExecutionBudget = TimeSpan.FromSeconds(180) }, cancellationToken);
+    [NotInParallel]
+    [Timeout(180_000)]
+    public void JournalPublish(CancellationToken cancellationToken)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "astra-b-" + Guid.NewGuid().ToString("n"));
+        var held = new List<TestPhaseJournalContext>();
+        var mode = "";
+        var snapshotLast = -1;
+        var snapshotDisk = -1;
+        var snapshotSeen = false;
+        TestPhaseJournalContext? pausing = null;
+        var pauseGeneration = "";
+        var entered = new ManualResetEventSlim(false);
+        var killRelease = new ManualResetEventSlim(false);
+        Thread? killed = null;
+        // Set-AstraBeforeWrite's modes: the queued write throws, or waits (kill), or pauses and snapshots the context.
+        void Hook(string path)
+        {
+            if (mode == "throw") throw new IOException("astra-before-write");
+            if (mode == "kill")
+            {
+                entered.Set();
+                killRelease.Wait(20_000);
+                return;
+            }
+            if (mode == "pause")
+            {
+                Thread.Sleep(2000);
+                snapshotLast = pausing!.LastCommitted;
+                snapshotDisk = File.Exists(Path.Combine(pauseGeneration, "00000001.json")) ? 1 : 0;
+                snapshotSeen = true;
+            }
+        }
+        try
+        {
+            EvidenceFiles.EnableWriteBehind();
+            SetBeforeWrite(Hook);
+
+            var pause = OpenAstra(Path.Combine(root, "pause"));
+            held.Add(pause);
+            pausing = pause;
+            pauseGeneration = GenerationDir(pause);
+            mode = "pause";
+            var paused = TestPhasePublication.AddExecutedChunk(pause, AstraFresh(), "antiphon", "chunk-1", "run", "1", new TestPhasePublicationScope());
+            var diskNow = DiskRecords(pauseGeneration);
+            var wait = Stopwatch.StartNew();
+            while (!snapshotSeen && wait.ElapsedMilliseconds < 5000) Thread.Sleep(50);
+            mode = "";
+            (paused && diskNow >= 1).ShouldBeTrue("AB JournalPublish.ack-waits-for-disk acked=" + paused + " diskNow=" + diskNow + " snapDisk=" + snapshotDisk);
+            (snapshotSeen && snapshotLast == 0).ShouldBeTrue("AB JournalPublish.held-write-not-acked seen=" + snapshotSeen + " last=" + snapshotLast);
+
+            var thrown = OpenAstra(Path.Combine(root, "throw"));
+            held.Add(thrown);
+            var throwGeneration = GenerationDir(thrown);
+            var beforeLast = thrown.LastCommitted;
+            mode = "throw";
+            var acked = TestPhasePublication.AddExecutedChunk(thrown, AstraFresh(), "antiphon", "chunk-1", "run", "1", new TestPhasePublicationScope());
+            var throwDisk = DiskRecords(throwGeneration);
+            mode = "";
+            var visible = FailureVisible();
+            (!acked && thrown.LastCommitted == beforeLast && throwDisk == 0 && visible.Visible).ShouldBeTrue(
+                "AB JournalPublish.throw-does-not-ack acked=" + acked + " last=" + thrown.LastCommitted + " disk=" + throwDisk + " " + visible.Detail);
+
+            var locked = OpenAstra(Path.Combine(root, "lock"));
+            held.Add(locked);
+            var lockedJournal = TestPhaseJournal.JournalRoot(locked.TimingRoot);
+            mode = "throw";
+            EvidenceFiles.WriteAllText(Path.Combine(lockedJournal, "held-failure.json"), "held");
+            TestPhasePublication.Close(locked);
+            var reacquired = CanLock(Path.Combine(lockedJournal, "writer.lock"));
+            mode = "";
+            var lockVisible = FailureVisible();
+            (!reacquired && lockVisible.Visible).ShouldBeTrue("AB JournalPublish.close-holds-lock reacquired=" + reacquired + " " + lockVisible.Detail);
+
+            var unrelatedDir = Path.Combine(root, "unrelated");
+            var unrelated = OpenAstra(unrelatedDir);
+            held.Add(unrelated);
+            mode = "throw";
+            EvidenceFiles.WriteAllText(Path.Combine(unrelatedDir, "outside.json"), "outside");
+            TestPhasePublication.Close(unrelated);
+            var unrelatedFree = CanLock(Path.Combine(TestPhaseJournal.JournalRoot(unrelated.TimingRoot), "writer.lock"));
+            var unrelatedVerdict = EvidenceFiles.DeferredWriteVerdict();
+            var unrelatedReasons = string.Join(" | ", unrelatedVerdict.Reasons);
+            var unrelatedFailed = !unrelatedVerdict.CoverageComplete && !unrelatedVerdict.TestsPassed && unrelatedReasons.Contains("outside.json");
+            mode = "";
+            var again = TestPhasePublication.Open(Path.Combine(unrelatedDir, "log"), unrelated.TimingRoot, "run", "1", "antiphon", new string('b', 40), "again",
+                false, false, new TestPhasePublicationScope());
+            if (again.Lock is not null) held.Add(again);
+            var againOpen = !again.Refused;
+            (unrelatedFree && unrelatedFailed && againOpen).ShouldBeTrue("AB JournalPublish.unrelated-releases-lock free=" + unrelatedFree + " failed=" + unrelatedFailed
+                + " again=" + againOpen + " reason=" + again.Reason + " " + unrelatedReasons);
+
+            // Invoke-AstraJournalKillChild: the record's write is held in the queue; the child must not ack before it lands.
+            var kill = OpenAstra(Path.Combine(root, "kill", "work"));
+            held.Add(kill);
+            var killGeneration = GenerationDir(kill);
+            var killAcked = false;
+            var childError = "";
+            mode = "kill";
+            killed = new Thread(() =>
+            {
+                try { killAcked = TestPhasePublication.AddExecutedChunk(kill, AstraFresh(), "antiphon", "chunk-1", "run", "1", new TestPhasePublicationScope()); }
+                catch (Exception ex) { childError = ex.ToString(); }
+            }) { IsBackground = true, Name = "astra-kill-child" };
+            killed.Start();
+            entered.Wait(90_000, cancellationToken);
+            var ackWatch = Stopwatch.StartNew();
+            while (!Volatile.Read(ref killAcked) && ackWatch.ElapsedMilliseconds < 1500) Thread.Sleep(50);
+            var disk = DiskRecords(killGeneration);
+            var wasEntered = entered.IsSet;
+            var wasAcked = Volatile.Read(ref killAcked);
+            (wasEntered && !(wasAcked && disk == 0)).ShouldBeTrue("AB JournalPublish.kill-keeps-acked-record entered=" + wasEntered + " acked=" + wasAcked + " disk=" + disk + " " + childError);
+        }
+        finally
+        {
+            mode = "";
+            killRelease.Set();
+            killed?.Join(30_000);
+            SetBeforeWrite(null);
+            foreach (var ctx in held)
+            {
+                try { ctx.Lock?.Dispose(); } catch (IOException) { }
+                ctx.Lock = null;
+            }
+            EvidenceFiles.DisableWriteBehind();
+            try { Directory.Delete(root, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    // Open-AstraContext: a writer of its own log and timing roots; its queued metadata lands before the case acts.
+    private static TestPhaseJournalContext OpenAstra(string dir)
+    {
+        var log = Path.Combine(dir, "log");
+        var timing = Path.Combine(dir, "timing");
+        Directory.CreateDirectory(log);
+        Directory.CreateDirectory(timing);
+        var ctx = TestPhasePublication.Open(log, timing, "run", "1", "antiphon", new string('a', 40), "run", false, false, new TestPhasePublicationScope());
+        if (ctx.Refused) throw new InvalidOperationException("context-refused " + ctx.Reason);
+        EvidenceFiles.Flush();
+        return ctx;
+    }
+
+    // New-AstraFresh.
+    private static System.Collections.Specialized.OrderedDictionary AstraFresh() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "chunk", "chunk-1" }, { "runId", "run" }, { "attempt", "1" }, { "suite", "antiphon" }, { "hostWallSeconds", 0 }, { "trxMissing", true },
+        { "passedCount", 0 }, { "outcomes", Array.Empty<object>() }, { "trx", "" }, { "trxDigest", "" }, { "exitCode", 0 }, { "coverageComplete", false },
+        { "testsPassed", false },
+    };
+
+    private static string GenerationDir(TestPhaseJournalContext ctx) => Path.Combine(TestPhaseJournal.JournalRoot(ctx.TimingRoot), ctx.Generation);
+
+    // Get-AstraDiskRecords: the records on disk (not the queue).
+    private static int DiskRecords(string generationDir)
+    {
+        var loaded = new List<object>();
+        TestPhaseJournalRead.ReadPrefix(generationDir, 1, false, loaded);
+        return loaded.Count;
+    }
+
+    private static bool CanLock(string path)
+    {
+        try
+        {
+            using var probe = File.Open(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            return true;
+        }
+        catch (IOException) { return false; }
+    }
+
+    // Test-AstraFailureVisible: a failed deferred write is visible to a peek or, failing that, to a flush.
+    private static (bool Visible, string Detail) FailureVisible()
+    {
+        var peek = EvidenceFiles.PeekFailures();
+        var detail = "peek=" + string.Join(" | ", peek);
+        if (peek.Any(p => !string.IsNullOrWhiteSpace(p))) return (true, detail);
+        var flushed = EvidenceFiles.Flush();
+        detail += " flush=" + string.Join(" | ", flushed);
+        return (flushed.Any(f => !string.IsNullOrWhiteSpace(f)), detail);
+    }
 
     [Test]
     public Task StaleCore(CancellationToken cancellationToken) =>
