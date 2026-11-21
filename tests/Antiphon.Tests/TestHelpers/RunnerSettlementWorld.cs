@@ -74,16 +74,34 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public static async Task<RunnerSettlementWorld> CreateAsync(
         AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false,
         bool controlledSyncClock = false, bool mirrorPublish = false, bool syncDebt = true,
-        IReadOnlyDictionary<string, string>? initialFiles = null)
+        IReadOnlyDictionary<string, string>? initialFiles = null, CancellationToken ct = default)
     {
-        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch, initialFiles: initialFiles), fenced, controlledSyncClock,
+        ct.ThrowIfCancellationRequested();
+        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch, initialFiles: initialFiles, ct: ct), fenced, controlledSyncClock,
             mirrorPublish, syncDebt);
-        world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        world.BuildServices();
 
-        await using var db = world.CreateContext();
+        try
+        {
+            await world.InitializeAsync(role, profiled, ct);
+            return world;
+        }
+        catch
+        {
+            await world.DisposeAsync();
+            throw;
+        }
+    }
+
+    private async Task InitializeAsync(AgentTaskRole role, bool profiled, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        ct.ThrowIfCancellationRequested();
+        BuildServices();
+
+        await using var db = CreateContext();
         var now = DateTime.UtcNow;
-        foreach (var (id, name) in new[] { (world.CallerSessionId, "caller"), (world.SessionId, "delegate") })
+        foreach (var (id, name) in new[] { (CallerSessionId, "caller"), (SessionId, "delegate") })
         {
             db.AgentSessions.Add(new AgentSession
             {
@@ -91,7 +109,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
                 DefinitionName = name,
                 AgentKind = AgentKind.ClaudeCode,
                 Status = SessionStatus.Running,
-                Cwd = world.Git.Desktop,
+                Cwd = Git.Desktop,
                 Cols = 120, Rows = 30,
                 CreatedAt = now.AddHours(-1),
                 StartedAt = now.AddHours(-1),
@@ -99,7 +117,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             });
         }
 
-        var shape = world.Git.Task;
+        var shape = Git.Task;
         db.AgentTasks.Add(new AgentTask
         {
             Id = shape.Id,
@@ -121,16 +139,15 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             ProgressBaselineJson = shape.ProgressBaselineJson,
             VerificationProfileVersion = profiled ? 1 : null,
             VerificationRound = profiled ? VerificationRound.Final : null,
-            ParentSessionId = world.CallerSessionId,
+            ParentSessionId = CallerSessionId,
             ReplyTo = AgentTaskReplyTo.Session,
             Status = AgentTaskStatus.Working,
-            AgentSessionId = world.SessionId,
+            AgentSessionId = SessionId,
             CreatedAt = now.AddMinutes(-30),
             DispatchedAt = now.AddMinutes(-20),
         });
-        await db.SaveChangesAsync();
-        await world.ReloadAsync();
-        return world;
+        await db.SaveChangesAsync(ct);
+        await ReloadAsync(ct);
     }
 
     /// <summary>Continue the actual producer row through settlement; the dispatch fixture retains ownership.</summary>
@@ -326,8 +343,9 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     }
 
     /// <summary>A real pushed Code ref and its captured endpoint, authorized by a follow-up Review.</summary>
-    public async Task<Guid> AddReviewSubjectAsync(string sha, bool followUp = true)
+    public async Task<Guid> AddReviewSubjectAsync(string sha, bool followUp = true, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var id = Guid.NewGuid();
         var branch = "feat/subject-" + id.ToString("N")[..8];
         await Git.RunAsync(Git.Desktop, "push", "origin", sha + ":refs/heads/" + branch);
@@ -346,14 +364,14 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             ProgressBaselineJson = TaskProgressJson.SerializeBaseline(subjectBaseline),
             Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow,
         });
-        var review = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        var review = await db.AgentTasks.SingleAsync(t => t.Id == TaskId, ct);
         review.Role = AgentTaskRole.Review;
         review.Stage = OrchestrationStage.Review;
         review.VerificationProfileVersion = 1;
         review.VerificationRound = VerificationRound.Final;
         if (followUp) review.FollowUpOfTaskId = id;
-        await db.SaveChangesAsync();
-        await ReloadAsync();
+        await db.SaveChangesAsync(ct);
+        await ReloadAsync(ct);
         return id;
     }
 
@@ -370,17 +388,18 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     /// The owning prompt, the report and a TurnEnd, then the real reply service. With
     /// <paramref name="closingVerdict"/> false the report carries no verdict token (unmarked).
     /// </summary>
-    public async Task SettleAsync(string report, string? prompt = null, bool closingVerdict = true)
+    public async Task SettleAsync(string report, string? prompt = null, bool closingVerdict = true,
+        CancellationToken ct = default)
     {
         await TurnSeeding.SeedTurnAsync(
-            CreateContext, SessionId, prompt ?? DelegationReportFormatter.TaskMarker(TaskId), report, closingVerdict);
-        await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(SessionId, CancellationToken.None);
-        await ReloadAsync();
+            CreateContext, SessionId, prompt ?? DelegationReportFormatter.TaskMarker(TaskId), report, closingVerdict, ct);
+        await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(SessionId, ct);
+        await ReloadAsync(ct);
     }
 
     /// <summary>The owning prompt, the marked report and a TurnEnd, left for a sweep to hand off.</summary>
-    public Task SeedReportAsync(string report) =>
-        TurnSeeding.SeedTurnAsync(CreateContext, SessionId, DelegationReportFormatter.TaskMarker(TaskId), report);
+    public Task SeedReportAsync(string report, CancellationToken ct = default) =>
+        TurnSeeding.SeedTurnAsync(CreateContext, SessionId, DelegationReportFormatter.TaskMarker(TaskId), report, ct: ct);
 
     /// <summary>
     /// A second, local ReadOnly task on its own delegate session with its marked report already in
@@ -525,12 +544,12 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     }
 
     /// <summary>The CARD-0544 D-9 completion obligation(s) committed for this task.</summary>
-    public async Task<List<AgentTaskLandNotification>> ObligationsAsync()
+    public async Task<List<AgentTaskLandNotification>> ObligationsAsync(CancellationToken ct = default)
     {
         await using var db = CreateContext();
         return await db.AgentTaskLandNotifications.AsNoTracking()
             .Where(n => n.TaskId == TaskId && n.Kind == LandNotificationKind.TaskCompletion)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
     public async Task<SessionQueuedMessage?> QueuedForAsync(Guid landNotificationId)
@@ -550,18 +569,18 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
-    public async Task ReloadAsync()
+    public async Task ReloadAsync(CancellationToken ct = default)
     {
         await using var db = CreateContext();
-        Task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+        Task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId, ct);
     }
 
     public CompletionProgressEvidence? Evidence() => TaskProgressJson.TryReadEvidence(Task.CompletionProgressEvidenceJson);
 
-    public async Task<List<AgentTaskEvent>> EventsAsync()
+    public async Task<List<AgentTaskEvent>> EventsAsync(CancellationToken ct = default)
     {
         await using var db = CreateContext();
-        return await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId).ToListAsync();
+        return await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId).ToListAsync(ct);
     }
 
     public async Task<int> NoProgressIncidentsAsync()

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -1154,8 +1155,7 @@ public sealed class RunnerSettlementSyncTests
     /// </summary>
     internal sealed class SyncWorld : IAsyncDisposable
     {
-        // Setup Git is bounded (timeout, kill, drained output) but not journaled: LandingGit's child
-        // journal reads StartTime of an already-reaped fast child on Linux (a pre-existing race).
+        // Setup Git uses private repositories and a separate, unjournaled child path.
 
         public string Root { get; }
         public string Origin => Path.Combine(Root, "origin.git");
@@ -1167,23 +1167,27 @@ public sealed class RunnerSettlementSyncTests
         public string Branch => (_cardBranch ? "feat/card-1213-code-" : "feat/card-task-") + TaskId.ToString("N")[..8];
         public string FullRef => "refs/heads/" + Branch;
         public string Baseline { get; private set; } = "";
-        public RepositoryMutationLease Leases { get; } = new(new LandingGit());
+        public RepositoryMutationLease Leases { get; } = new(new SettlementFixtureGit());
         public RecordingGit Git { get; }
         public AgentTask Task { get; private set; } = new();
         private ProgressBaselineSnapshot _snapshot = null!;
         private bool _runnerCloned;
+        private readonly CancellationToken _testCancellation;
 
-        private SyncWorld()
+        private SyncWorld(CancellationToken ct)
         {
             Root = Path.Combine(Path.GetTempPath(), "c657-" + Guid.NewGuid().ToString("N")[..12]);
             Git = new RecordingGit(Leases);
+            _testCancellation = ct;
         }
 
         public static async Task<SyncWorld> CreateAsync(
             bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false, bool cardBranch = false,
-            IReadOnlyDictionary<string, string>? initialFiles = null, string? immutableSeedOrigin = null)
+            IReadOnlyDictionary<string, string>? initialFiles = null, string? immutableSeedOrigin = null,
+            CancellationToken ct = default)
         {
-            var world = new SyncWorld { _cardBranch = cardBranch };
+            ct.ThrowIfCancellationRequested();
+            var world = new SyncWorld(ct) { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
             if (immutableSeedOrigin is not null)
             {
@@ -1234,13 +1238,13 @@ public sealed class RunnerSettlementSyncTests
             await world.RunAsync(world.Desktop, "worktree", "add", "-b", world.Branch, world.Worktree, "master");
 
             // The dispatcher's own capture, before remote preparation pushes the branch.
-            var progress = new TaskProgressGit(world.Leases);
-            var repo = await progress.CanonicalDirectoryAsync(world.Desktop, CancellationToken.None);
-            var common = await progress.CommonDirectoryAsync(repo, CancellationToken.None);
-            var worktree = await progress.CanonicalDirectoryAsync(world.Worktree, CancellationToken.None);
-            var head = await progress.RevParseCommitAsync(worktree, "HEAD", CancellationToken.None);
+            var progress = new SettlementFixtureGit(world.Leases);
+            var repo = await progress.CanonicalDirectoryAsync(world.Desktop, ct);
+            var common = await progress.CommonDirectoryAsync(repo, ct);
+            var worktree = await progress.CanonicalDirectoryAsync(world.Worktree, ct);
+            var head = await progress.RevParseCommitAsync(worktree, "HEAD", ct);
             world.Baseline = head.Sha!;
-            var remote = await progress.ObserveExactRefAsync(repo, world.FullRef, null, world.TaskId, CancellationToken.None);
+            var remote = await progress.ObserveExactRefAsync(repo, world.FullRef, null, world.TaskId, ct);
             remote.EndpointFingerprint.ShouldNotBeNull();
             world._snapshot = new ProgressBaselineSnapshot(1, DateTime.UtcNow, DateTime.UtcNow,
                 new ProgressSourceBaseline(repo, common, world.TaskId, worktree, world.FullRef, world.Baseline,
@@ -1370,39 +1374,63 @@ public sealed class RunnerSettlementSyncTests
         public async Task<int> TryRunAsync(string directory, params string[] arguments) =>
             (await ExecAsync(directory, arguments)).ExitCode;
 
-        private static async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
+        private async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
         {
-            var start = new System.Diagnostics.ProcessStartInfo("git")
+            var start = new ProcessStartInfo("git")
             {
                 WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
             };
             start.Environment["GIT_TERMINAL_PROMPT"] = "0";
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            return await ExecAsync(start, TimeSpan.FromSeconds(60));
+            return await ExecAsync(start, SettlementFixtureGit.CommandBudget, ct: _testCancellation);
         }
 
         internal static async Task<LandingGitResult> ExecAsync(ProcessStartInfo start, TimeSpan timeout,
-            Action<Process>? started = null)
+            Action<Process>? started = null, CancellationToken ct = default)
         {
-            using var process = Process.Start(start)
-                ?? throw new IOException("git_start_failed");
+            ct.ThrowIfCancellationRequested();
+            Process child;
+            using (TestTiming.BeginProcess(Path.GetFileName(start.FileName), start.ArgumentList.Count, "settlement fixture"))
+                child = Process.Start(start) ?? throw new IOException("git_start_failed");
+            using var process = child;
             started?.Invoke(process);
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            using var budget = new CancellationTokenSource(timeout);
+            if (start.RedirectStandardInput) process.StandardInput.Close();
+            using var stdout = process.StandardOutput;
+            using var stderr = process.StandardError;
+            var output = stdout.ReadToEndAsync();
+            var error = stderr.ReadToEndAsync();
+            using var wait = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "settlement fixture");
+            var completed = System.Threading.Tasks.Task.WhenAll(process.WaitForExitAsync(), output, error);
             try
             {
-                await process.WaitForExitAsync(budget.Token);
+                await completed.WaitAsync(timeout, ct);
             }
-            catch (OperationCanceledException)
+            catch (Exception deadline) when (deadline is TimeoutException
+                || deadline is OperationCanceledException && ct.IsCancellationRequested)
             {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync(CancellationToken.None);
-                await System.Threading.Tasks.Task.WhenAll(output, error);
-                throw new TimeoutException("git " + string.Join(' ', start.ArgumentList));
+                Exception cleanupFailure = deadline;
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+                {
+                    cleanupFailure = ex;
+                }
+
+                try { await completed.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (Exception ex) when (ex is TimeoutException or IOException)
+                {
+                    cleanupFailure = ex;
+                    // Closing the readers after the grace can fault a pending read.
+                    _ = completed.ContinueWith(static task => { _ = task.Exception; },
+                        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+                if (deadline is OperationCanceledException) throw;
+                throw new TimeoutException("git " + string.Join(' ', start.ArgumentList), cleanupFailure);
             }
-            await System.Threading.Tasks.Task.WhenAll(output, error);
             return new LandingGitResult(process.ExitCode, await output, process.ExitCode == 0 ? "" : await error);
         }
 
@@ -1445,12 +1473,17 @@ public sealed class RunnerSettlementSyncTests
         }
     }
 
-    /// <summary>
-    /// The production Git I/O with a command trace and three controlled faults: a block that only
-    /// ends on cancellation, and one failed command right after a successful merge.
-    /// </summary>
-    internal class SettlementFixtureGit(IRepositoryMutationLease? leases = null) : TaskProgressGit(leases);
+    /// <summary>Production Git operations with the scratch settlement fixture's command deadline.</summary>
+    internal class SettlementFixtureGit(IRepositoryMutationLease? leases = null) : TaskProgressGit(leases)
+    {
+        internal static readonly TimeSpan CommandBudget = TimeSpan.FromSeconds(60);
+        protected override bool RequireOutputDrainWithinBudget => true;
 
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
+            base.RunAsync(repository, arguments, new LandingGitRunOptions(CommandBudget), ct);
+    }
+
+    /// <summary>Fixture Git I/O with a command trace and controlled faults.</summary>
     internal sealed class RecordingGit(IRepositoryMutationLease? leases) : SettlementFixtureGit(leases)
     {
         private readonly ConcurrentQueue<string> _commands = new();

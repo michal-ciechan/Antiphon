@@ -110,6 +110,10 @@ public class LandingGit : ILandingGit
     /// <summary>Test seam for the one call that creates the git child.</summary>
     protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
 
+    /// <summary>Scratch-repository callers may fail the invocation if its output does not reach EOF
+    /// within the command budget. A successful production mutation waits for its full output.</summary>
+    protected virtual bool RequireOutputDrainWithinBudget => false;
+
     /// <summary>CARD-1436: the git processes the index-lock census inspects. The host list by default;
     /// a test fixture narrows it to its own children.</summary>
     protected virtual GitIndexLock.IProcessSource GitProcesses => GitIndexLock.HostProcessSource.Instance;
@@ -360,10 +364,8 @@ public class LandingGit : ILandingGit
                     if (started is not null && identified) await started(process.Id, startTicks, ct);
                 }
                 await process.WaitForExitAsync(budget.Token);
-                // A normal exit waits for EOF with no second deadline. The budget bounds the kill
-                // path only: a grandchild that keeps a pipe open after success must not become
-                // git_timeout, and the journal stays until those pipes close.
-                await Task.WhenAll(output, error);
+                var drained = Task.WhenAll(output, error);
+                await (RequireOutputDrainWithinBudget ? drained.WaitAsync(budget.Token) : drained);
             }
             catch
             {

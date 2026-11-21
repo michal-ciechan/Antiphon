@@ -135,7 +135,10 @@ internal class TestDbOperations
     {
         TestDbFixtureLifecycle.ValidateDatabaseName(databaseName);
         using (TestTiming.BeginPhase(TestPhaseKind.DbCreate, "queue"))
-            await cloneLock.WaitAsync().ConfigureAwait(false);
+        {
+            if (!await cloneLock.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false))
+                throw new TimeoutException($"Test PostgreSQL clone {databaseName} could not acquire a clone slot in 60 seconds.");
+        }
         try
         {
             using var clone = TestTiming.BeginPhase(TestPhaseKind.DbCreate, "clone");

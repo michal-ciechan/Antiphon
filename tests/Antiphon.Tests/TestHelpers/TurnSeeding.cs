@@ -13,13 +13,14 @@ internal static class TurnSeeding
         Guid sessionId,
         string prompt,
         string? assistantText,
-        bool closingVerdict = true)
+        bool closingVerdict = true,
+        CancellationToken ct = default)
     {
         assistantText = ApplyClosingVerdict(prompt, assistantText, closingVerdict);
         await using var db = dbFactory();
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
-            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
 
         db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
         if (assistantText is not null)
@@ -31,7 +32,7 @@ internal static class TurnSeeding
         var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
         end.StopReason = TranscriptKinds.StopReasons.EndTurn;
         db.TranscriptEntries.Add(end);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
     }
 
     public static string? ApplyClosingVerdict(string prompt, string? assistantText, bool closingVerdict)
