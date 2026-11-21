@@ -1,4 +1,4 @@
-using System.Reflection;
+using ReflectionAssembly = System.Reflection.Assembly;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -7,14 +7,14 @@ internal static class RcPortPowerShellAssembly
     internal const string Name = "System.Management.Automation";
     private const string Dll = Name + ".dll";
 
-    internal static Assembly Load()
+    internal static ReflectionAssembly Load()
     {
         var windows = OperatingSystem.IsWindows();
         if (windows)
         {
             // The Windows desktop can run pwsh 7.6 on .NET 10, while this test host uses .NET 9.
             // Prefer the compatible runtime selected by the test project's package reference.
-            try { return Assembly.Load(Name); }
+            try { return ReflectionAssembly.Load(Name); }
             catch (FileNotFoundException) { }
         }
 
@@ -22,7 +22,7 @@ internal static class RcPortPowerShellAssembly
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
         var path = Resolve(Environment.GetEnvironmentVariable("PSHOME"), searchDirectories, windows,
             File.Exists, ResolveExecutableLink);
-        return Assembly.LoadFrom(Path.GetFullPath(path));
+        return ReflectionAssembly.LoadFrom(Path.GetFullPath(path));
     }
 
     internal static string Resolve(string? psHome, IEnumerable<string> searchDirectories, bool windows,
