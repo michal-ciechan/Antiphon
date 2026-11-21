@@ -22,16 +22,20 @@ whose run.lock was released or replaced without completedAt: read last-run.json;
 state-superseded: last-run.json now names a later run and no copy proves completion, so the
 run may have finished: read its LogRoot run directory before any relaunch).
 Writes nothing and never stops a process or clears a lock. ASCII-only, Windows PowerShell 5.1 safe.
+For a task-directory copy, pass -CheckoutRoot to load the observer library from the checkout.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$TaskRoot,
     [Parameter(Mandatory = $true)][string]$StateRoot,
     [ValidateRange(1, 120)][double]$HeartbeatStaleMinutes = 5,
-    [switch]$PassThru
+    [switch]$PassThru,
+    [string]$CheckoutRoot
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../lib/qualification-supervisor.ps1')
+if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
+$CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
+. (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor.ps1')
 $observation = Get-QualificationSupervision -TaskRoot $TaskRoot -StateRoot $StateRoot -StaleMinutes $HeartbeatStaleMinutes
 if ($PassThru) { $observation } else { $observation | ConvertTo-Json -Compress }
 switch ($observation.classification) {

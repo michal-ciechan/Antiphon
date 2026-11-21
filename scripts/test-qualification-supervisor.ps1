@@ -423,14 +423,10 @@ try {
     }
     $copiedStarter = Join-Path $e2eTask 'start-supervisor.ps1'
     $copiedObserver = Join-Path $e2eTask 'observe.ps1'
-    # Exercise the old invocation on the red commit to expose the missing-library error.
-    $starterCheckout = @()
-    if ((Get-Command $copiedStarter).Parameters.ContainsKey('CheckoutRoot')) { $starterCheckout = @('-CheckoutRoot', $root) }
-    $observerCheckout = @()
-    if ((Get-Command $copiedObserver).Parameters.ContainsKey('CheckoutRoot')) { $observerCheckout = @('-CheckoutRoot', $root) }
+    $checkoutArguments = @('-CheckoutRoot', $root)
     $wrapperArgs = @('-NoProfile', '-NonInteractive', '-File', $copiedStarter, '-TaskRoot', $e2eTask, '-LaunchScript', $fake,
         '-LogRoot', $e2eLogs, '-StateRoot', $e2eState, '-RunId', 'c1667e2e', '-PollSeconds', '1', '-ProgressMinutes', '1')
-    $wrapperArgs += $starterCheckout
+    $wrapperArgs += $checkoutArguments
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
@@ -486,7 +482,7 @@ try {
     $console = ''
     if (Test-Path -LiteralPath (Join-Path $e2eTask 'commission-console.log')) { $console = [string](Get-Content -LiteralPath (Join-Path $e2eTask 'commission-console.log') -Raw) }
     Assert-C1667 ($console.Contains('fake launch done')) 'launch child output goes to its own commission-console.log' $console
-    $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState }) -Script $copiedObserver -CheckoutArguments $observerCheckout
+    $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState }) -Script $copiedObserver -CheckoutArguments $checkoutArguments
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.supervisor -ceq 'absent' -and $o.Json.commissionExit -ceq '7') `
         'observe reads the real supervisor identity and commission-exit of the finished run' $o.Text
     $child = $null

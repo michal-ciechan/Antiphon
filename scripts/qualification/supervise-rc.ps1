@@ -14,6 +14,7 @@ TaskRoot\own-last-run.json (a copy with completedAt is never replaced by one wit
 observe.ps1 can credit the run after the next run overwrites the shared last-run.json.
 The supervisor never stops, signals, or restarts a process and never clears a lock. Its death
 does not end the run: observe.ps1 reads last-run.json completedAt as the end signal.
+The starter supplies -CheckoutRoot when launching this script from the task-directory copy.
 ASCII-only, Windows PowerShell 5.1 safe.
 #>
 [CmdletBinding()]
@@ -27,11 +28,14 @@ param(
     [ValidateRange(1, 120)][int]$ProgressMinutes = 10,
     [ValidateRange(1, 600)][double]$HangMinutes = 20,
     [ValidateSet('new-console', 'setsid', 'none')][string]$Detach = 'none',
-    [string]$PowerShellPath
+    [string]$PowerShellPath,
+    [string]$CheckoutRoot
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../lib/qualification-supervisor.ps1')
-. (Join-Path $PSScriptRoot '../lib/qualification-supervisor-heartbeat.ps1')
+if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
+$CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
+. (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor.ps1')
+. (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor-heartbeat.ps1')
 $log = Join-Path $TaskRoot 'supervisor.log'
 $heartbeat = Join-Path $TaskRoot 'supervisor-heartbeat.json'
 # Copy our run's last-run.json into TaskRoot; a failed copy never ends the supervisor.

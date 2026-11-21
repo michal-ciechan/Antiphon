@@ -571,7 +571,7 @@ function Invoke-C545ResultLineRun {
         '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-RunId', $runId,
         '-CoordinationRoot', $fx.Coordination)
     if ($Rc) {
-        $argList += @('-Profile', 'rc', '-Trigger', 'rc', '-Ref', 'rc/2026-11-30', '-ExpectedSha', $sha)
+        $argList += @('-Profile', 'rc', '-Trigger', 'rc', '-Ref', 'rc/2026-11-30', '-ExpectedSha', $sha, '-WhatIf')
     } else {
         $argList += @('-Trigger', 'scheduled', '-Ref', 'master')
     }
@@ -623,7 +623,7 @@ function Test-C545_ResultLine {
     $refusal = Invoke-C545ResultLineRun -Row 'refusal' -UtcNow '2026-09-17T23:35:00Z' -CheckoutRoot 'C:\src\Antiphon'
     # CARD-0599 D-2/D-7: the envelope now carries lane identity (profile, candidateId,
     # creditKind) so an RC result can never be read back as a master nightly result.
-    $expected = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
+    $expected = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":"","refusal":"shared-tree"}'
     Assert-C487 -Cond ($refusal.ExitCode -eq 3 -and $refusal.Last -ceq $expected) -Name 'C545 ResultLine refusal last line is the JSON record' -Detail ('exit={0} last={1}' -f $refusal.ExitCode, $refusal.Last)
 
     $red = Invoke-C545ResultLineRun -Row 'test-red' -UtcNow '2026-09-17T23:35:00Z' -TestExit 1 -TestsPassed $false
@@ -656,9 +656,10 @@ function Test-C2044_RcReleaseRootRefusal {
     }
     $release = Join-Path $ResultsDirectory 'rc-releases'
     $explicit = Invoke-C545ResultLineRun -Row 'explicit' -ReleaseRoot $release @arguments
-    Assert-C487 -Cond ($explicit.Record.nativeRunId -ceq $explicit.RunId -and $explicit.State.profile -ceq 'rc' -and
-        $explicit.Record.testsPassed -and (Test-Path -LiteralPath (Join-Path $release "candidates/$($explicit.State.candidateId)/attempts/$($explicit.RunId)/selection.json"))) `
-        -Name 'C2044 explicit ReleaseRoot reaches the test result' -Detail $explicit.Last
+    Assert-C487 -Cond ($explicit.ExitCode -eq 0 -and $explicit.Record.exitCode -eq 0 -and
+        $explicit.Record.nativeRunId -ceq $explicit.RunId -and $explicit.State.profile -ceq 'rc' -and
+        (Test-Path -LiteralPath (Join-Path $release "candidates/$($explicit.State.candidateId)/attempts/$($explicit.RunId)/selection.json"))) `
+        -Name 'C2044 explicit ReleaseRoot creates the selection in the supplied root' -Detail $explicit.Last
 }
 
 function Write-C1386Seams {

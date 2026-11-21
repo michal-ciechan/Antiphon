@@ -214,7 +214,7 @@ pwsh -NoProfile -File scripts/workspace-slots.ps1 cold-reset -AllRunners -Reason
 
 HEAD must print the pin. `cold-reset` does not wait for leased slots. It is a no-op until a runner has workspace slots enabled. Record the printed request ids.
 
-Copy the repository set `scripts/qualification/` into a new `C:\Antiphon\releases\task-<id>\`. Do not use a private copy. Write `launch-record.json` there:
+Copy the selected checkout's `scripts/qualification/` set into a new `C:\Antiphon\releases\task-<id>\`. Do not use a private copy. Write `launch-record.json` there:
 
 ```json
 {
@@ -227,6 +227,7 @@ Copy the repository set `scripts/qualification/` into a new `C:\Antiphon\release
     "-ExpectedSha", "493bee0ee3af2052575bc7a26e9a313669b2fc2d",
     "-CandidateId", "rc-2026-11-30-493bee0ee3af",
     "-CheckoutRoot", "C:\\Antiphon\\releases\\checkout-18c3d990",
+    "-ReleaseRoot", "C:\\Antiphon\\releases",
     "-StateRoot", "C:\\Antiphon\\releases\\state-<id>",
     "-LogRoot", "C:\\Antiphon\\releases\\candidates\\rc-2026-11-30-493bee0ee3af\\logs",
     "-RunId", "<fresh-run-id>",
@@ -238,18 +239,19 @@ Copy the repository set `scripts/qualification/` into a new `C:\Antiphon\release
 }
 ```
 
-Preflight, then the supervisor. Start the starter with `pwsh` through `Win32_Process` Create so it leaves the caller job. `powershell.exe` 5.1 launches nothing.
+Preflight, then run the copied starter and observer with the launch record's `checkoutRoot` as `-CheckoutRoot`. The starter passes that path to the copied supervisor. For a pin that predates `-CheckoutRoot` support, run the starter and observer from the checkout and omit the switch. Start the starter with `pwsh` through `Win32_Process` Create so it leaves the caller job. `powershell.exe` 5.1 launches nothing.
 
 ```powershell
 pwsh -NoProfile -File C:\Antiphon\releases\task-<id>\preflight.ps1 -CheckoutRoot C:\Antiphon\releases\checkout-18c3d990
-pwsh -NoProfile -File C:\Antiphon\releases\task-<id>\start-supervisor.ps1 -TaskRoot C:\Antiphon\releases\task-<id> -LaunchScript C:\Antiphon\releases\task-<id>\launch-rc.ps1 -LogRoot C:\Antiphon\releases\candidates\rc-2026-11-30-493bee0ee3af\logs -StateRoot C:\Antiphon\releases\state-<id> -RunId <fresh-run-id>
+pwsh -NoProfile -File C:\Antiphon\releases\task-<id>\start-supervisor.ps1 -CheckoutRoot C:\Antiphon\releases\checkout-18c3d990 -TaskRoot C:\Antiphon\releases\task-<id> -LaunchScript C:\Antiphon\releases\task-<id>\launch-rc.ps1 -LogRoot C:\Antiphon\releases\candidates\rc-2026-11-30-493bee0ee3af\logs -StateRoot C:\Antiphon\releases\state-<id> -RunId <fresh-run-id>
 ```
 
-Verify: `preflight: core.longpaths true` (exit 0). `start-supervisor.json` and `supervisor-identity.json` exist. `observe.ps1 -TaskRoot` credits that run id. `launch-rc.ps1` then refuses exit 2 on HEAD mismatch or `longpaths-not-enabled`, and exit 3 if `run.lock` is live. `-StateRoot` and `-LogRoot` in `nightlyArguments` are the same paths passed to `start-supervisor.ps1`. `launch-rc.ps1` reads `run.lock` from the nightly `-StateRoot`, and it falls back to `C:\Antiphon\nightly` when that argument is omitted. Leave `-CoordinationRoot` unset so the run takes the real lock at `C:\Antiphon\verification\native-run.lock`. Leave `-ReleaseRoot` unset so it stays `C:\Antiphon\releases`.
+Preflight prints `preflight: core.longpaths true` and exits 0. After start, `start-supervisor.json` and `supervisor-identity.json` exist and the observer below credits that run id. `launch-rc.ps1` refuses with exit 2 on HEAD mismatch or `longpaths-not-enabled`, and exit 3 if `run.lock` is live. `-StateRoot` and `-LogRoot` in `nightlyArguments` are the same paths passed to `start-supervisor.ps1`. `launch-rc.ps1` reads `run.lock` from the nightly `-StateRoot`, and it falls back to `C:\Antiphon\nightly` when that argument is omitted. Leave `-CoordinationRoot` unset so the run takes the real lock at `C:\Antiphon\verification\native-run.lock`. Pass `-ReleaseRoot` explicitly as shown. Missing or blank values cause the rc run to exit 3 with `rc-release-root-required` in the final JSON's `refusal` field.
 
-Watchers, after the identity file exists, each as a bounded monitor, re-armed about every 30 minutes. They do not stop the run.
+Run the observer after the identity file exists. Re-arm each bounded watcher about every 30 minutes.
 
 ```powershell
+pwsh -NoProfile -File C:\Antiphon\releases\task-<id>\observe.ps1 -CheckoutRoot C:\Antiphon\releases\checkout-18c3d990 -TaskRoot C:\Antiphon\releases\task-<id> -StateRoot C:\Antiphon\releases\state-<id>
 pwsh -NoProfile -File scripts/orchestration/watch-qual.ps1 -LogDir C:\Antiphon\releases\candidates\rc-2026-11-30-493bee0ee3af\logs\<run> -StateFile <owned-scratch>\qual.seen.txt -Heartbeat C:\Antiphon\releases\task-<id>\supervisor-heartbeat.json
 pwsh -NoProfile -File scripts/orchestration/watch-tasks.ps1 -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f -StateFile <owned-scratch>\tasks.json
 pwsh -NoProfile -File scripts/orchestration/watch-master.ps1 -From 9abaaa88f84735cfde849a5e070bbeb7de715046 -Repository C:\src\Antiphon

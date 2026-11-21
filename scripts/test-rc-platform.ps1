@@ -387,8 +387,8 @@ function Test-C1323_PlatformExecution {
     $unknownSeams = Write-C1323ExecutionSeams $fx 'unknown'
     $unknown = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/unknown" -Profile rc -Sha $fx.Sha -SeamsPath $unknownSeams
     $refusalRecord = ConvertTo-Json (ConvertTo-NightlyResultRecord $unknown) -Compress
-    $legacyRefusal = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
-    Assert-C1323 ($unknown.ExitCode -eq 3 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log") -and $refusalRecord -ceq $legacyRefusal) 'unknown-platform-launches-nothing'
+    $expectedRefusal = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":"","refusal":"unsupported-host-platform"}'
+    Assert-C1323 ($unknown.ExitCode -eq 3 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log") -and $refusalRecord -ceq $expectedRefusal) 'unknown-platform-launches-nothing'
     Assert-C1323 ($linux.coverageScope -ceq 'PlatformDiagnostic' -and $linux.reasons -contains 'windows-rc-obligations-outstanding') 'diagnostic-return-value'
 }
 

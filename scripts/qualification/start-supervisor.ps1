@@ -14,6 +14,7 @@ Refuses when TaskRoot already has a supervisor identity, or when StateRoot's las
 run.lock, or TaskRoot's own-last-run.json copy, already names RunId (a reused run id could credit
 an earlier run). To leave a caller's Job Object too, start this script itself through
 Win32_Process Create (docs: antiphon-rc-qualification skill).
+For a task-directory copy, pass -CheckoutRoot so both scripts load the checkout libraries.
 ASCII-only, Windows PowerShell 5.1 safe.
 #>
 [CmdletBinding()]
@@ -27,10 +28,13 @@ param(
     [ValidateRange(1, 120)][int]$ProgressMinutes = 10,
     [ValidateRange(1, 600)][double]$HangMinutes = 20,
     [ValidateRange(5, 600)][int]$IdentityTimeoutSeconds = 60,
-    [string]$PowerShellPath
+    [string]$PowerShellPath,
+    [string]$CheckoutRoot
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../lib/qualification-supervisor.ps1')
+if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
+$CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
+. (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor.ps1')
 $supervisor = Join-Path $PSScriptRoot 'supervise-rc.ps1'
 $identityPath = Join-Path $TaskRoot 'supervisor-identity.json'
 $platform = Get-QualificationHostPlatform
@@ -49,7 +53,8 @@ $detach = 'setsid'
 if ($platform -ceq 'Windows') { $detach = 'new-console' }
 $arguments = @('-NoProfile', '-NonInteractive', '-File', $supervisor, '-TaskRoot', $TaskRoot, '-LaunchScript', $LaunchScript,
     '-LogRoot', $LogRoot, '-StateRoot', $StateRoot, '-RunId', $RunId, '-PollSeconds', [string]$PollSeconds, '-ProgressMinutes', [string]$ProgressMinutes,
-    '-HangMinutes', $HangMinutes.ToString([Globalization.CultureInfo]::InvariantCulture), '-Detach', $detach, '-PowerShellPath', $PowerShellPath)
+    '-HangMinutes', $HangMinutes.ToString([Globalization.CultureInfo]::InvariantCulture), '-Detach', $detach, '-PowerShellPath', $PowerShellPath,
+    '-CheckoutRoot', $CheckoutRoot)
 $start = New-QualificationDetachedStartParameters -FilePath $PowerShellPath -ArgumentList $arguments -Platform $platform `
     -StandardOutput (Join-Path $TaskRoot 'supervisor-stdout.log') -StandardError (Join-Path $TaskRoot 'supervisor-stderr.log')
 $started = Start-Process @start
