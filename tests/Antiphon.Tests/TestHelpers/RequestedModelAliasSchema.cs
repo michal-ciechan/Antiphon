@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -11,11 +12,23 @@ namespace Antiphon.Tests.TestHelpers;
 /// present. This interceptor adds that empty column on the test connection and rewrites the later
 /// Up to <c>IF NOT EXISTS</c>. It does not insert a history row and it does not change the shipped
 /// migration. <see cref="MigrationTestDatabase"/> drops the empty column again before a tip rewind.
+/// A later command that already sees the column does not ALTER again: <c>ADD COLUMN IF NOT EXISTS</c>
+/// still takes <c>ACCESS EXCLUSIVE</c> until the surrounding transaction commits.
 /// </summary>
 internal static class RequestedModelAliasSchema
 {
     public const string Column = "RequestedModelAlias";
     public const string MigrationId = "20261120091515_AddRequestedModelAlias";
+
+    private static readonly ConcurrentDictionary<string, byte> ReadyDatabases = new(StringComparer.Ordinal);
+
+    private const string ColumnVisibleSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'AgentTasks'
+              AND column_name = 'RequestedModelAlias')
+        """;
 
     public static IInterceptor Interceptor { get; } = new AliasInterceptor();
 
@@ -25,6 +38,31 @@ internal static class RequestedModelAliasSchema
         text.Contains("information_schema", StringComparison.OrdinalIgnoreCase)
         || text.Contains("DROP COLUMN", StringComparison.OrdinalIgnoreCase)
         || text.Contains("DROP TABLE", StringComparison.OrdinalIgnoreCase);
+
+    private static void ForgetIfSchemaDropped(string text, DbConnection? connection)
+    {
+        if (connection?.Database is not { Length: > 0 } database)
+            return;
+        var dropsColumn = text.Contains("DROP COLUMN", StringComparison.OrdinalIgnoreCase)
+            && text.Contains(Column, StringComparison.Ordinal);
+        var dropsTable = text.Contains("DROP TABLE", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("AgentTasks", StringComparison.Ordinal);
+        if (dropsColumn || dropsTable)
+            ReadyDatabases.TryRemove(database, out _);
+    }
+
+    private static bool KnownReady(DbConnection connection) =>
+        connection.Database is { Length: > 0 } database && ReadyDatabases.ContainsKey(database);
+
+    // An open transaction can see a column this transaction just added. Remembering that
+    // would let another session skip the add before the commit, and then fail with 42703.
+    private static void RememberIfCommitted(DbCommand command)
+    {
+        if (command.Transaction is not null)
+            return;
+        if (command.Connection?.Database is { Length: > 0 } database)
+            ReadyDatabases[database] = 1;
+    }
 
     private static string RewriteAdd(string text)
     {
@@ -50,12 +88,24 @@ internal static class RequestedModelAliasSchema
     private static void Prepare(DbCommand command)
     {
         var text = command.CommandText;
-        if (string.IsNullOrEmpty(text) || !Mentions(text) || LeaveAlone(text))
+        if (string.IsNullOrEmpty(text))
+            return;
+        ForgetIfSchemaDropped(text, command.Connection);
+        if (!Mentions(text) || LeaveAlone(text))
             return;
         text = RewriteAdd(text);
         command.CommandText = text;
-        if (IsColumnAdd(text) || command.Connection is null)
+        if (IsColumnAdd(text) || command.Connection is null || KnownReady(command.Connection))
             return;
+        using var visible = command.Connection.CreateCommand();
+        visible.Transaction = command.Transaction;
+        visible.CommandTimeout = 30;
+        visible.CommandText = ColumnVisibleSql;
+        if (visible.ExecuteScalar() is true)
+        {
+            RememberIfCommitted(command);
+            return;
+        }
         using var check = command.Connection.CreateCommand();
         check.Transaction = command.Transaction;
         check.CommandTimeout = 30;
@@ -71,17 +121,30 @@ internal static class RequestedModelAliasSchema
         add.CommandTimeout = 30;
         add.CommandText = """ALTER TABLE "AgentTasks" ADD COLUMN IF NOT EXISTS "RequestedModelAlias" character varying(80)""";
         add.ExecuteNonQuery();
+        RememberIfCommitted(command);
     }
 
     private static async Task PrepareAsync(DbCommand command, CancellationToken cancellationToken)
     {
         var text = command.CommandText;
-        if (string.IsNullOrEmpty(text) || !Mentions(text) || LeaveAlone(text))
+        if (string.IsNullOrEmpty(text))
+            return;
+        ForgetIfSchemaDropped(text, command.Connection);
+        if (!Mentions(text) || LeaveAlone(text))
             return;
         text = RewriteAdd(text);
         command.CommandText = text;
-        if (IsColumnAdd(text) || command.Connection is null)
+        if (IsColumnAdd(text) || command.Connection is null || KnownReady(command.Connection))
             return;
+        await using var visible = command.Connection.CreateCommand();
+        visible.Transaction = command.Transaction;
+        visible.CommandTimeout = 30;
+        visible.CommandText = ColumnVisibleSql;
+        if (await visible.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true)
+        {
+            RememberIfCommitted(command);
+            return;
+        }
         await using var check = command.Connection.CreateCommand();
         check.Transaction = command.Transaction;
         check.CommandTimeout = 30;
@@ -97,6 +160,7 @@ internal static class RequestedModelAliasSchema
         add.CommandTimeout = 30;
         add.CommandText = """ALTER TABLE "AgentTasks" ADD COLUMN IF NOT EXISTS "RequestedModelAlias" character varying(80)""";
         await add.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        RememberIfCommitted(command);
     }
 
     private sealed class AliasInterceptor : DbCommandInterceptor
