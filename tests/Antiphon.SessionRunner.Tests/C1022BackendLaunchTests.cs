@@ -25,6 +25,28 @@ public partial class C1022BackendLaunchTests
     [Test]
     public Task Declared_modern_overrides_inherited_inbox() => LaunchAsync("modern", "inbox", true);
 
+    [Test]
+    public void Unknown_build_is_rejected_when_deploy_identity_is_required()
+    {
+        var runnerPath = typeof(SessionRunnerRuntime).Assembly.Location;
+        var version = FileVersionInfo.GetVersionInfo(runnerPath).ProductVersion.ShouldNotBeNull();
+        version.ShouldEndWith("+unknown");
+        Should.Throw<ShouldAssertException>(() => DescribeBuild(runnerPath, version, requireDeployStamp: true))
+            .Message.ShouldContain("deployed build must report a commit SHA");
+    }
+
+    [Test]
+    public void Different_assemblies_with_the_same_unstamped_version_are_rejected()
+    {
+        var runnerPath = typeof(SessionRunnerRuntime).Assembly.Location;
+        var otherPath = typeof(C1022BackendLaunchTests).Assembly.Location;
+        var version = FileVersionInfo.GetVersionInfo(runnerPath).ProductVersion.ShouldNotBeNull();
+        version.ShouldEndWith("+unknown");
+        FileVersionInfo.GetVersionInfo(otherPath).ProductVersion.ShouldBe(version);
+        Should.Throw<ShouldAssertException>(() => DescribeBuild(otherPath, version, runnerPath))
+            .Message.ShouldContain("loaded host differs from the runner output");
+    }
+
     private static async Task LaunchAsync(string? configured, string? ambient, bool direct)
     {
         if (!OperatingSystem.IsWindows()) throw new SkipTestException("Windows native modern host proof");
@@ -122,7 +144,8 @@ public partial class C1022BackendLaunchTests
         }
     }
 
-    private static object DescribeBuild(string path, string expectedStamp)
+    private static object DescribeBuild(string path, string expectedStamp, string? expectedPath = null,
+        bool requireDeployStamp = false)
     {
         var version = FileVersionInfo.GetVersionInfo(path).ProductVersion;
         version.ShouldNotBeNull().ShouldBe(expectedStamp, customMessage: "loaded host/runner build stamp");
