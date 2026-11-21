@@ -1244,18 +1244,18 @@
     },
     {
       "path": "server/Application/Services/SessionRuntimeActionCoordinator.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
         "ChannelInboundRecoveryTests",
         "ChannelOutboundRetentionTests",
         "ChannelPromptCorrelationTests",
+        "CodexBootPointerCanaryTests",
         "CodexCliObservationGapTests",
         "CompactionRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
-        "GrokRulesCompactionRecoveryTests",
-        "PostLandMutationDeliveryTests"
+        "GrokRulesCompactionRecoveryTests"
       ]
     },
     {
@@ -5398,7 +5398,6 @@
         "AgentTaskCheckSweepTests",
         "C0747QueueRowExpiryTests",
         "ChannelOutboundRecoveryTests",
-        "CodexBootPointerCanaryTests",
         "DeliveryUnverifiedDiagnosticTests",
         "ExpectationHoldReleaseEndpointTests",
         "ImpactedClassesSelectorTests",
@@ -11228,6 +11227,7 @@
         "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetentionTests",
+        "CodexBootPointerCanaryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokDelegateEndToEndTests",
         "MatrixChildReceiptTests",
@@ -12703,6 +12703,7 @@
         "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetentionTests",
+        "CodexBootPointerCanaryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokDelegateEndToEndTests",
         "SessionRunnerEventPumpTests",
@@ -15565,6 +15566,7 @@
         "AgentTaskMidTurnRefineTests",
         "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
+        "CodexBootPointerCanaryTests",
         "SessionRunnerEventPumpTests"
       ]
     },
@@ -15582,6 +15584,7 @@
         "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetentionTests",
+        "CodexBootPointerCanaryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokDelegateEndToEndTests",
         "SessionRunnerEventPumpTests",
