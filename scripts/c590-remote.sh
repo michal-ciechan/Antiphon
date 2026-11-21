@@ -9915,17 +9915,18 @@ c1609_temp_retirement_clearable() {
         file="$dir/receipt.json"
         c1609_lifecycle_valid "$dir/lifecycle.json" || return 1
         jq -e '.complete==true and all(.children[];.joined==true)' "$dir/lifecycle.json" >/dev/null || return 1
-        local pid ticks current
+        local pid ticks current exempt=0
         pid="$(jq -r .owner.pid "$dir/lifecycle.json")"; ticks="$(jq -r .owner.startTicks "$dir/lifecycle.json")"
         if [ -e "/proc/$pid" ]; then
             current="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$pid/stat")" || return 1
             if [ "$current" = "$ticks" ]; then c1609_clear_reason=TempRetirementOwnerActive; return 1; fi
         fi
-        if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-            jq -e '.readyPublished==false' "$dir/lifecycle.json" >/dev/null || return 1
-            [ ! -e "$dir/closure.json" ] && [ ! -L "$dir/closure.json" ] &&
-                [ ! -e "$dir/close-pending.json" ] && [ ! -L "$dir/close-pending.json" ] || return 1
+        c1609_receiptless_preview_exempt "$dir" || exempt=$?
+        if [ "$exempt" = 0 ]; then
             continue
+        fi
+        if [ "$exempt" != 1 ]; then
+            return 1
         fi
         c1609_read_canonical "$file" >/dev/null && c1609_close_receipt_valid "$file" || return 1
         if [ -e "$dir/closure.json" ] || [ -L "$dir/closure.json" ]; then

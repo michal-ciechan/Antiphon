@@ -1234,6 +1234,33 @@ c1609_closure_valid() {
     [ "$(sha256sum "$dir/lifecycle.json" | cut -d' ' -f1)" = "$(jq -r .lifecycleDigest "$file")" ]
 }
 
+# Receipt present: return 1 and leave c1609_clear_reason alone. Receipt-less and
+# exempt: return 0. Receipt-less and not exempt: return 2. A live owner sets
+# c1609_clear_reason; every other refusal keeps the caller's reason.
+c1609_receiptless_preview_exempt() {
+    local dir="$1"
+    local C1008_OPERATION="${dir##*/}"
+    local file="$dir/receipt.json" pid ticks current
+    if [ -e "$file" ] || [ -L "$file" ]; then
+        return 1
+    fi
+    c1609_lifecycle_valid "$dir/lifecycle.json" || return 2
+    jq -e '.complete==true and all(.children[];.joined==true)' "$dir/lifecycle.json" >/dev/null || return 2
+    pid="$(jq -r .owner.pid "$dir/lifecycle.json")"
+    ticks="$(jq -r .owner.startTicks "$dir/lifecycle.json")"
+    if [ -e "/proc/$pid" ]; then
+        current="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$pid/stat")" || return 2
+        if [ "$current" = "$ticks" ]; then
+            c1609_clear_reason=TempRetirementOwnerActive
+            return 2
+        fi
+    fi
+    jq -e '.readyPublished==false' "$dir/lifecycle.json" >/dev/null || return 2
+    [ ! -e "$dir/closure.json" ] && [ ! -L "$dir/closure.json" ] &&
+        [ ! -e "$dir/close-pending.json" ] && [ ! -L "$dir/close-pending.json" ] || return 2
+    return 0
+}
+
 # Caller holds the same FD-8/FD-9 locks as supported writers through every read,
 # fsync and the final reply. This transition has no delete or drain primitive.
 c1609_close_host() {
@@ -1280,6 +1307,14 @@ c1609_close_host() {
     for entry in "$SERVER2_ROOT/retirement"/*; do
         [ -e "$entry" ] || { [ ! -L "$entry" ] || return 2; continue; }
         [[ "${entry##*/}" =~ ^c1008[0-9a-f]{32}$ ]] && c1609_custody "$entry" dir || return 2
+        local exempt=0
+        c1609_receiptless_preview_exempt "$entry" || exempt=$?
+        if [ "$exempt" = 0 ]; then
+            continue
+        fi
+        if [ "$exempt" != 1 ]; then
+            c1609_close_fail "${c1609_clear_reason:-JournalUnknown}" || return 2
+        fi
         c1609_read_canonical "$entry/receipt.json" >/dev/null || return 2
         (local C1008_OPERATION="${entry##*/}"; c1609_close_receipt_valid "$entry/receipt.json") || return 2
     done

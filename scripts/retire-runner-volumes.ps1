@@ -59,6 +59,17 @@ function Get-CloseAuthority {
 }
 
 
+function Get-CloseRemoteReason([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $found = [regex]::Matches($Text, '(?m)^TempRetirementCloseRefused:\s*(.+?)\s*$')
+    if ($found.Count -eq 0) { return $null }
+    $reason = $found[$found.Count - 1].Groups[1].Value.Trim()
+    if ($reason.Length -gt 160) { $reason = $reason.Substring(0, 160).Trim() }
+    if ($reason -cnotmatch '^[A-Za-z][A-Za-z0-9._: -]{0,159}$') { return $null }
+    return $reason
+}
+
+
 function Invoke-Server2Bash([string]$Script, [int]$TimeoutMs = 30000) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'ssh'
@@ -77,9 +88,11 @@ function Invoke-Server2Bash([string]$Script, [int]$TimeoutMs = 30000) {
         $stderr = $proc.StandardError.ReadToEndAsync()
         if (-not $proc.WaitForExit($TimeoutMs)) { $proc.Kill($true); $proc.WaitForExit(); Fail-Close 'JournalUnknown' }
         $text = $stdout.GetAwaiter().GetResult()
-        [void]$stderr.GetAwaiter().GetResult()
-        if ($proc.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($text)) { Fail-Close 'JournalUnknown' }
-        return $text
+        $err = $stderr.GetAwaiter().GetResult()
+        if ($proc.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($text)) { return $text }
+        $remote = Get-CloseRemoteReason $err
+        if ($proc.ExitCode -ne 0 -and $remote) { Fail-Close $remote }
+        Fail-Close 'JournalUnknown'
     }
     finally { $proc.Dispose() }
 }
