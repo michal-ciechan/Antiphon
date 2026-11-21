@@ -360,6 +360,34 @@ namespace Antiphon.Nightly
             catch (GiveUp) { return false; }
         }
 
+        private static readonly JsonWriterOptions CompactOptions = new JsonWriterOptions
+        {
+            Indented = false,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            MaxDepth = 1024,
+        };
+
+        /// <summary>
+        /// W2-nightly S12: the value's compact JSON text as WriteFile writes it (ConvertTo-Json -Compress for the comparisons
+        /// that used it), or null for a value it cannot write.
+        /// </summary>
+        public static string Text(object value, int maxDepth)
+        {
+            try
+            {
+                using (var stream = new MemoryStream())
+                {
+                    using (var writer = new Utf8JsonWriter(stream, CompactOptions))
+                    {
+                        WriteValue(writer, value, 0, maxDepth);
+                        writer.Flush();
+                    }
+                    return Encoding.UTF8.GetString(stream.ToArray());
+                }
+            }
+            catch (GiveUp) { return null; }
+        }
+
         private static void WriteValue(Utf8JsonWriter writer, object value, int depth, int maxDepth)
         {
             if (value == null || (PsRuntime.Loaded && PsFields.IsAutomationNull(value))) { writer.WriteNullValue(); return; }

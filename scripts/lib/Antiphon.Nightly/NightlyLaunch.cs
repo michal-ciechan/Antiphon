@@ -75,6 +75,40 @@ namespace Antiphon.Nightly
 
         /// <summary>Owned custody under the native owner: its whole observation (timings, descendants, hang capture); null otherwise.</summary>
         public NativeProcessResult Owner { get; set; }
+
+        /// <summary>
+        /// W2-nightly S12: the object a delegate launcher answered with (a fixture's StartProcess record), whose fields are
+        /// read by name as the chunk runner read them; null for the native owner and for a launcher answering with this.
+        /// </summary>
+        public object Record { get; set; }
+
+        /// <summary>
+        /// What a launch observed, as a reader of it sees it: the native owner's observation, else the launcher's record,
+        /// else this result itself (the object Invoke-NightlyOwnedProcess returned to its caller).
+        /// </summary>
+        public object Observed => (object)Owner ?? Record ?? this;
+
+        /// <summary>
+        /// A launcher's record read as a result (Invoke-NightlyOwnedProcess over the StartProcess seam): ExitCode (absent:
+        /// 1), TimedOut, Pid, ChildrenExited, LogText and CleanupComplete (absent: null) by name, the record kept as Record.
+        /// </summary>
+        public static NightlyLaunchResult FromRecord(object record)
+        {
+            if (record is NightlyLaunchResult result) return result;
+            var exitCode = PsValue.Prop(record, "ExitCode");
+            var pid = PsValue.Prop(record, "Pid");
+            var cleanup = PsValue.Prop(record, "CleanupComplete");
+            return new NightlyLaunchResult
+            {
+                ExitCode = exitCode == null ? 1 : PsOps.ToInt(exitCode),
+                TimedOut = PsValue.IsTrue(PsValue.Prop(record, "TimedOut")),
+                Pid = pid == null ? 0 : PsOps.ToInt(pid),
+                ChildrenExited = PsValue.IsTrue(PsValue.Prop(record, "ChildrenExited")),
+                LogText = PsValue.Str(PsValue.Prop(record, "LogText")),
+                CleanupComplete = cleanup == null ? (bool?)null : PsValue.IsTrue(cleanup),
+                Record = record,
+            };
+        }
     }
 
     /// <summary>Starts children for a run.</summary>

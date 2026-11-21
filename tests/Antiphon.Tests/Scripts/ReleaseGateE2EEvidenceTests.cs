@@ -74,12 +74,36 @@ public sealed class ReleaseGateE2EEvidenceTests
         "C599 EnvironmentIsolation an unrelated variable survives",
         "C599 EnvironmentIsolation the broker opt-in IS set for messaging");
 
+    /// <summary>
+    /// The executor rows of C599_ExecutionArtifacts, in-process since W2-nightly S12 (they read nightly-tests-impl.ps1's
+    /// text; the chunk runner is NightlyChunkRunner now): run one native chunk and watch it wait, refuse and record.
+    /// </summary>
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public Task C599_ExecutionArtifacts() => RunCaseAsync("C599_ExecutionArtifacts", 3,
-        "C599 ExecutionArtifacts the executor waits for owned cleanup",
-        "C599 ExecutionArtifacts an unjoined owned child is an error",
-        "C599 ExecutionArtifacts the suite row records the expanded census");
+    [NotInParallel("QualificationTimingTests")]
+    public void C599_ExecutionArtifacts()
+    {
+        var rows = new NightlyCaseRows();
+        using (var world = new NightlyChunkWorld(prefix: "c599-artifacts"))
+        {
+            var waited = new List<NightlyLaunchResult>();
+            world.Launcher.Cleanup = result => { waited.Add(result); return true; };
+            var outcome = NightlyChunkRunner.Run(world.Context(), world.Suite(), NightlyChunkWorld.Chunk());
+            rows.Check(outcome.Error == null && waited.Count == 1 && world.Launcher.Launches.Count == 1, "C599 ExecutionArtifacts the executor waits for owned cleanup",
+                outcome.Error?.Message ?? "waited=" + waited.Count);
+            var row = outcome.Row;
+            rows.Check(row != null && row.Contains("requiredUidCount") && row.Contains("excludedUidCount") && row.Contains("censusDigest") && row.Contains("exclusions"),
+                "C599 ExecutionArtifacts the suite row records the expanded census", row == null ? "no row" : string.Join(",", row.Keys.Cast<object>()));
+        }
+        using (var held = new NightlyChunkWorld(prefix: "c599-artifacts"))
+        {
+            held.Launcher.Cleanup = _ => false;
+            var outcome = NightlyChunkRunner.Run(held.Context(), held.Suite(), NightlyChunkWorld.Chunk());
+            rows.Check(outcome.Error?.Message == "owned-child still running" && outcome.Row == null, "C599 ExecutionArtifacts an unjoined owned child is an error",
+                outcome.Error?.Message ?? "accepted");
+        }
+        rows.ShouldAllPass(3, "C599 ExecutionArtifacts the executor waits for owned cleanup", "C599 ExecutionArtifacts an unjoined owned child is an error",
+            "C599 ExecutionArtifacts the suite row records the expanded census");
+    }
 
     /// <summary>The argv rows of C599_ExecutionArtifacts (NightlyTestsPlan.NativeExecutionArguments).</summary>
     [Test]

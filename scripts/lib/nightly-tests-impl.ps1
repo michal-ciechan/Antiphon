@@ -58,132 +58,71 @@ function Get-NightlyToolchainPreflight {
 # launch, the execution platform and the run outcome are Antiphon.Nightly/NightlyTestsPlan.cs. The cost file path and
 # the table read from it stay here: the planned manifest (TestPhaseManifests.WritePlanned) is given both, and a fixture
 # seam may replace either.
-# Once total ran and request execute stop are on disk, a leftover tree is killed after this grace instead of the
-# full launch watchdog. Unmeasured placeholder: chunk logs record execution-stop-to-exit-seconds; set this near 2x
-# that p95 (docs/test-performance-standards.md). 60000 matches NightlyCompletionGrace.DefaultMilliseconds.
-$script:NightlyCompletionGraceMilliseconds = 60000
 $script:NightlyClassCostPath = Join-Path $PSScriptRoot 'nightly-class-costs.json'
 $script:NightlyClassCostTable = $null
-function Add-NightlyOwnerObservation {
-    param($Verdict, $Run)
-    if ($null -eq $Verdict -or $null -eq $Run) { return }
-    $map = @(
-        @('RootStartedAtUtc', 'rootStartedAtUtc'),
-        @('rootStartedAtUtc', 'rootStartedAtUtc'),
-        @('RootExitedAtUtc', 'rootExitedAtUtc'),
-        @('rootExitedAtUtc', 'rootExitedAtUtc'),
-        @('JobEmptyObserved', 'jobEmpty'),
-        @('jobEmpty', 'jobEmpty'),
-        @('DrainMilliseconds', 'drainMilliseconds'),
-        @('drainMilliseconds', 'drainMilliseconds'),
-        @('ExecutionMilliseconds', 'executionMilliseconds'),
-        @('executionMilliseconds', 'executionMilliseconds'),
-        @('LaunchMilliseconds', 'launchMilliseconds'),
-        @('launchMilliseconds', 'launchMilliseconds'),
-        @('CleanupMilliseconds', 'cleanupMilliseconds'),
-        @('cleanupMilliseconds', 'cleanupMilliseconds'),
-        @('ChildrenExited', 'childrenExited'),
-        @('childrenExited', 'childrenExited'),
-        @('OutputDrained', 'outputDrained'),
-        @('outputDrained', 'outputDrained'),
-        @('RemainingProcessCount', 'remainingProcessCount'),
-        @('remainingProcessCount', 'remainingProcessCount'),
-        @('MissedDescendantPids', 'missedDescendantPids'),
-        @('missedDescendantPids', 'missedDescendantPids'),
-        @('DescendantIdentities', 'descendantIdentities'),
-        @('descendantIdentities', 'descendantIdentities'),
-        @('DescendantImages', 'descendantImages'),
-        @('descendantImages', 'descendantImages'),
-        @('DescendantExitedAtUtc', 'descendantExitedAtUtc'),
-        @('descendantExitedAtUtc', 'descendantExitedAtUtc'),
-        @('Descendants', 'descendants'),
-        @('descendants', 'descendants')
-    )
-    # The indexer is the same case-insensitive member lookup as -contains over the names, without listing them.
-    $runProperties = $Run.PSObject.Properties
-    $verdictProperties = $Verdict.PSObject.Properties
-    foreach ($pair in $map) {
-        if ($null -eq $runProperties[$pair[0]]) { continue }
-        if ($null -ne $verdictProperties[$pair[1]]) { continue }
-        $verdictProperties.Add([System.Management.Automation.PSNoteProperty]::new($pair[1], $Run.($pair[0])))
-    }
-}
 
-function New-NightlyChunkDirectory([string]$Path) {
-    # New-Item -ItemType Directory -Force without the cmdlet's cost: creates the directory and its parents. As the
-    # cmdlet did, it says nothing when a file is in the way, and reports any other failure without stopping the
-    # chunk (unless errors stop the caller).
-    try { [void][System.IO.Directory]::CreateDirectory($Path) } catch {
-        $failure = $_
-        $blocked = $Path
-        try {
-            while (-not [string]::IsNullOrEmpty($blocked) -and -not [System.IO.File]::Exists($blocked)) { $blocked = [System.IO.Path]::GetDirectoryName($blocked) }
-        } catch { $blocked = '' }
-        if ([string]::IsNullOrEmpty($blocked)) { Write-Error -ErrorRecord $failure }
-    }
-}
-
+# W2-nightly S12: the chunk runner, the owned launch, the observation verdict, the measured phases and the completion
+# grace are Antiphon.Nightly/NightlyChunkRunner.cs. These wrappers stay for the still-PowerShell callers (the
+# prerequisite builds, the e2e install, the discovery producer, the suite preparation and the test drivers).
 function Write-NightlyMeasuredPhase {
-    param(
-        [string]$LogRoot,
-        [string]$Name,
-        $StartedAt,
-        $Seconds
-    )
-    if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Name)) { return }
-    if ($null -eq $StartedAt -or $null -eq $Seconds) { return }
-    if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
-    try {
-        $started = [datetime]$StartedAt
-        $ended = $started.AddSeconds([double]$Seconds)
-        [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $Name, $started.ToString('o'), $ended.ToString('o'), ([double]$Seconds))
-    } catch { }
+    param([string]$LogRoot, [string]$Name, $StartedAt, $Seconds)
+    if ([string]::IsNullOrWhiteSpace($LogRoot)) { return }
+    [Antiphon.Nightly.NightlyChunkRunner]::WriteMeasuredPhase($LogRoot, (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $Name, $StartedAt, $Seconds)
 }
 
 function Write-NightlyPrerequisitePhases {
-    param(
-        [string]$LogRoot,
-        $NpmCiStarted,
-        $NpmCiSeconds,
-        $NpmBuildStarted,
-        $NpmBuildSeconds,
-        $LintStarted,
-        $LintSeconds,
-        $DotnetStarted,
-        $DotnetSeconds
-    )
-    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-ci' -StartedAt $NpmCiStarted -Seconds $NpmCiSeconds
-    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-build' -StartedAt $NpmBuildStarted -Seconds $NpmBuildSeconds
-    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'lint' -StartedAt $LintStarted -Seconds $LintSeconds
-    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'dotnet-build' -StartedAt $DotnetStarted -Seconds $DotnetSeconds
+    param([string]$LogRoot, $NpmCiStarted, $NpmCiSeconds, $NpmBuildStarted, $NpmBuildSeconds, $LintStarted, $LintSeconds, $DotnetStarted, $DotnetSeconds)
+    if ([string]::IsNullOrWhiteSpace($LogRoot)) { return }
+    [Antiphon.Nightly.NightlyChunkRunner]::WritePrerequisitePhases($LogRoot, (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $NpmCiStarted, $NpmCiSeconds,
+        $NpmBuildStarted, $NpmBuildSeconds, $LintStarted, $LintSeconds, $DotnetStarted, $DotnetSeconds)
 }
 
 function Publish-NightlyChunkObservation {
-    param(
-        $Run,
-        [string]$LogRoot,
-        [string]$TrxPath,
-        [string]$Suite,
-        [string]$Chunk,
-        [string]$RunId,
-        [string]$Attempt,
-        [double]$HostWallSeconds = 0,
-        $CoverageComplete = $false,
-        $TestsPassed = $false
-    )
-    $exitCode = 0
-    if ($null -ne $Run -and $Run.PSObject.Properties.Name -contains 'ExitCode' -and $null -ne $Run.ExitCode) { $exitCode = [int]$Run.ExitCode }
-    $coverage = $false
-    $passed = $false
-    if ($null -ne $CoverageComplete) { $coverage = [bool]$CoverageComplete }
-    if ($null -ne $TestsPassed) { $passed = [bool]$TestsPassed }
-    $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$exitCode; coverageComplete = [bool]$coverage; testsPassed = [bool]$passed }
-    Add-NightlyOwnerObservation -Verdict $phaseVerdict -Run $Run
+    param($Run, [string]$LogRoot, [string]$TrxPath, [string]$Suite, [string]$Chunk, [string]$RunId, [string]$Attempt,
+        [double]$HostWallSeconds = 0, $CoverageComplete = $false, $TestsPassed = $false)
+    $phaseVerdict = [Antiphon.Nightly.NightlyChunkRunner]::ObservationVerdict($Run, $CoverageComplete, $TestsPassed)
     # The executed manifest: compiled (TestPhaseManifests.WriteExecuted), into the bound writer context when there is one.
     [void][Antiphon.Nightly.TestPhaseManifests]::WriteExecuted($phaseVerdict, $LogRoot, $TrxPath, $Suite, $Chunk, $RunId, $Attempt, $HostWallSeconds, $script:TestPhaseExecutedContext, (Get-TestPhasePublicationScope))
     return $phaseVerdict
 }
 
+# The NightlyHost of an owned launch or a chunk, from the seams: the UtcNow seam is its clock, the TracePath seam its
+# trace, and the StartProcess, WaitCleanup and NativeActiveCount seams its launcher (DelegateLauncher reads the record
+# the StartProcess seam answers). Without them OwnedLauncher starts the child under native custody. Either lands the
+# queued evidence writes first: a child reads the disk.
+function Get-NightlyRunHost {
+    $seams = $script:NightlySeams
+    $clock = $null
+    if ($seams -and $seams.UtcNow) { $clock = [Antiphon.Nightly.DelegateTimeProvider]::new([Func[datetime]]{ Get-NightlyUtcNow }) }
+    $trace = $null
+    if ($seams -and $seams.TracePath) {
+        $trace = [Antiphon.Nightly.AppendingTraceWriter]::new($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath([string]$seams.TracePath))
+    }
+    if ($seams -and $seams.StartProcess) {
+        $start = [Func[Antiphon.Nightly.NightlyLaunch, object]]{
+            param($Launch)
+            Sync-NightlyDeferredEvidenceWrites
+            $seamEnvironment = $null
+            if ($null -ne $Launch.Environment) {
+                $seamEnvironment = @{}
+                foreach ($pair in $Launch.Environment.GetEnumerator()) { $seamEnvironment[$pair.Key] = $pair.Value }
+            }
+            return $script:NightlySeams.StartProcess.Invoke($Launch.FileName, [string[]]@($Launch.Arguments), $Launch.WorkingDirectory, $Launch.TimeoutMilliseconds, $seamEnvironment)
+        }
+        $wait = $null
+        if ($seams.WaitCleanup) { $wait = [Func[object, bool]]{ param($Record) [bool]$script:NightlySeams.WaitCleanup.Invoke($Record) } }
+        $active = $null
+        if ($seams.NativeActiveCount) { $active = [Func[int]]{ [int]$script:NightlySeams.NativeActiveCount.Invoke() } }
+        $launcher = [Antiphon.Nightly.DelegateLauncher]::new($start, $wait, $active, [Console]::Error)
+    } else {
+        $driverScript = Join-Path $PSScriptRoot 'build-driver-environment.ps1'
+        $prepare = { param($StartInfo) . $driverScript; Set-AntiphonBuildDriverEnvironment -StartInfo $StartInfo }.GetNewClosure()
+        $launcher = [Antiphon.Nightly.OwnedLauncher]::new([Action]{ Sync-NightlyDeferredEvidenceWrites }, [Action[Diagnostics.ProcessStartInfo]]$prepare)
+    }
+    return [Antiphon.Nightly.NightlyHost]::Create($clock, $launcher, [Console]::Out, [Console]::Error, $trace, $null, $null, $null)
+}
+
+# Invoke-NightlyOwnedProcess: what the launch observed (the native owner's result, or the StartProcess seam's record).
 function Invoke-NightlyOwnedProcess {
     param(
         [string]$FilePath,
@@ -197,51 +136,10 @@ function Invoke-NightlyOwnedProcess {
         [string]$HangCapturePath = '',
         [int]$ExecutionGraceMilliseconds = 0
     )
-    Write-NightlyTrace -Kind 'proc' -Message ($FilePath + ' ' + (($ArgumentList) -join ' '))
-    # A child (or the seam standing in for one) reads the disk: queued evidence writes land first.
-    Sync-NightlyDeferredEvidenceWrites
-    if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
-        $r = $script:NightlySeams.StartProcess.Invoke($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-        if ($LogPath -and $r.LogText) {
-            Set-Content -LiteralPath $LogPath -Value ([string]$r.LogText) -Encoding UTF8
-        }
-        return $r
-    }
-    # Import only at the actual launch boundary. The controlled-I/O seam above
-    # remains portable, and cannot earn native custody credit.
-    . (Join-Path $PSScriptRoot 'nightly-owned-process.ps1')
-    $hooks = $null
-    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        $hooks = New-Object Antiphon.Nightly.NativeProcessHooks
-        if (-not [string]::IsNullOrWhiteSpace($TrxPath)) { $hooks.TrxPath = $TrxPath }
-        if (-not [string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { $hooks.DiagnosticDirectory = $DiagnosticDirectory }
-        if (-not [string]::IsNullOrWhiteSpace($HangCapturePath)) { $hooks.HangCapturePath = $HangCapturePath }
-        if ($ExecutionGraceMilliseconds -gt 0) { $hooks.ExecutionGraceMilliseconds = $ExecutionGraceMilliseconds }
-    }
-    $owner = Start-NightlyNativeOwner -FilePath $FilePath -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
-        -Environment $Environment -LogPath $LogPath -Hooks $hooks
-    return $owner.Completion.GetAwaiter().GetResult()
-}
-
-function Wait-NightlyOwnedCleanup {
-    param($RunResult)
-    if ($script:NightlySeams -and $script:NightlySeams.WaitCleanup) {
-        return [bool]$script:NightlySeams.WaitCleanup.Invoke($RunResult)
-    }
-    # Retain pre-existing controlled-I/O decision fixtures. Their synthetic
-    # ChildrenExited bit cannot establish native custody or qualification.
-    if ($script:NightlySeams -and $script:NightlySeams.StartProcess -and $null -eq $RunResult.CleanupComplete) {
-        return [bool]$RunResult.ChildrenExited
-    }
-    return [bool]$RunResult.CleanupComplete
-}
-
-function Get-NightlyNativeActiveCount {
-    if ($script:NightlySeams -and $script:NightlySeams.NativeActiveCount) {
-        return [int]$script:NightlySeams.NativeActiveCount.Invoke()
-    }
-    return 0
+    $launch = [Antiphon.Nightly.NightlyChunkRunner]::OwnedLaunch($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment, $LogPath,
+        $TrxPath, $DiagnosticDirectory, $HangCapturePath, $ExecutionGraceMilliseconds)
+    try { $result = (Get-NightlyRunHost).Launch($launch) } catch { throw (Get-NightlyRefusalText $_) }
+    return $result.Observed
 }
 
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
@@ -433,394 +331,31 @@ function Prepare-NightlySuiteExecution {
     return [pscustomobject]@{ id=$suiteId; chunks=@($chunks); nodes=@($suiteDiscoveryNodes); exclusions=@($profileExclusions); Variables=$executionVariables; Completed=$false }
 }
 
+# W2-nightly S12: Antiphon.Nightly/NightlyChunkRunner.cs runs the chunk. Dot-sourced into the executor's scope, this hands
+# it that scope's run state and the suite's, applies the outcome back to both, then throws the chunk's failure, if any.
 function Invoke-NightlyScheduledChunk {
     param($ExecutionSuiteState, $ExecutionChunk)
-    # Set-Variable's local-scope set (the caller's scope: this runs dot-sourced) without the cmdlet's cost.
-    $executionVariableSet = $ExecutionContext.SessionState.PSVariable
-    foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
-        $executionVariableSet.Set($executionName, $ExecutionSuiteState.Variables[$executionName])
-    }
-    $chunk = $ExecutionChunk
-    $chunkTestsPassed=$true
-    $chunkCoverageComplete=$true
-    $exitTolerated = $false
-    $recordNativeChunk = $false
-    try {
-    $chunkIndex++
-    $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
-    $queueWatch = [Diagnostics.Stopwatch]::StartNew()
-    $logPath = Join-Path $LogRoot ('{0}-{1}-tests.log' -f $suiteId, $chunk.id)
-    $trxPath = Join-Path $LogRoot ('{0}-{1}.trx' -f $suiteId, $chunk.id)
-    $jsonPath = Join-Path $LogRoot ('{0}-{1}.json' -f $suiteId, $chunk.id)
-    $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
-    Remove-TestPhaseVariables -Environment $envMap
-    $envMap['C487_INVOCATION'] = $invocationId
-    $envMap['C487_RUN_DIR'] = $LogRoot
-
-    if ($isNative) {
-        if ($activeNative -gt 0) {
-            throw 'native overlap'
-        }
-        $activeNative++
-        $cur = Get-NightlyNativeActiveCount
-        if ($cur -gt $nativeActiveMax) { $nativeActiveMax = $cur }
-        if ($activeNative -gt $nativeActiveMax) { $nativeActiveMax = $activeNative }
-    }
-
-    $run = $null
-    $execDiagDir = ''
-    $queueWatch.Stop()
-    $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
-    $resolvedDiscovery = [Antiphon.Nightly.NightlyTestsPlan]::ChunkDiscoverySeconds([double]$suiteDiscoverySeconds, $null, $false)
-    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-    $heartbeatTrx = ''
-    if ($isNative) { $heartbeatTrx = $trxPath }
-    [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'run'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
-    $runWatch = [Diagnostics.Stopwatch]::StartNew()
-    if ($suiteId -eq 'client') {
-        $wrapper = Join-Path $RepoRoot (Join-Path 'scripts' 'test-client.ps1')
-        $args = @('-NoProfile', '-NoLogo', '-File', $wrapper, '-JsonResultPath', $jsonPath)
-        try {
-            $run = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $args -WorkingDirectory $RepoRoot `
-                -TimeoutMilliseconds 1200000 -Environment $envMap -LogPath $logPath
-        } catch {
-            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
-            throw
-        }
-    } elseif ($suiteId -eq 'scripts') {
-        $census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($policy.Object))
-        $scriptFail = $false
-        foreach ($row in $census) {
-            $disp = [string]$row.disposition
-            if ($disp -ne 'unattended') { continue }
-            if ([bool]$row.wildcard) { throw 'wildcard script execution refused' }
-            $scriptPath = Join-Path $RepoRoot (([string]$row.path) -replace '/', '\')
-            $sargs = @('-NoProfile', '-NonInteractive', '-File', $scriptPath)
-            if ($row.arguments) { foreach ($a in @($row.arguments)) { $sargs += [string]$a } }
-            try {
-                $sr = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $sargs -WorkingDirectory $RepoRoot `
-                    -TimeoutMilliseconds 600000 -Environment $envMap -LogPath (Join-Path $LogRoot ('script-{0}.log' -f $row.id))
-            } catch {
-                [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
-                throw
-            }
-            if ($sr.ExitCode -ne 0) { $scriptFail = $true }
-        }
-        $run = [pscustomobject]@{ ExitCode = $(if ($scriptFail) { 1 } else { 0 }); TimedOut = $false; ChildrenExited = $true }
-    } else {
-        if ($null -eq $suiteHost) {
-            $exeName = [string]$suite.assembly
-            if ([string]::IsNullOrWhiteSpace($exeName)) { $exeName = $label }
-            $suiteHost = [Antiphon.Nightly.NightlyTestsPlan]::TestHost($RepoRoot, $exeName)
-        }
-        $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
-        New-NightlyChunkDirectory $execDiagDir
-        $chunkClasses = @()
-        if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
-        $groupFilter = ''
-        if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $groupFilter = [string]$chunk.groupFilter }
-        $methodFilter = ''
-        if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $methodFilter = [string]$chunk.methodFilter }
-        $nativeArgs = @()
-        if ($suiteHost.Prefix) {
-            foreach ($prefixArg in @($suiteHost.Prefix)) {
-                if (-not [string]::IsNullOrWhiteSpace([string]$prefixArg)) { $nativeArgs += [string]$prefixArg }
-            }
-        }
-        try { $nativeArgs += @([Antiphon.Nightly.NightlyTestsPlan]::NativeExecutionArguments($trxPath, $execDiagDir, [string[]]@($chunkClasses), ([string]$chunk.exactFilter), $groupFilter, $methodFilter)) }
-        catch { throw (Get-NightlyRefusalText $_) }
-        $phaseEnv = @{}
-        foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
-        Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
-        $plannedSeconds = $null
-        if ($null -ne $chunk.PSObject.Properties['seconds'] -and $null -ne $chunk.seconds) {
-            $plannedSeconds = $chunk.seconds
-        }
-        $costBasis = 'default'
-        if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
-            $costBasis = [string]$chunk.costBasis
-        }
-        $admission = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteId, $plannedSeconds, $costBasis, '', $null, $null, $policy.Object)
-        if (-not $admission.Admitted) {
-            throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
-        }
-        [void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt))
-        # S6b shadow: join the build seal before the timed launch. A refusal stays unproven and does not change the verdict.
-        [void](Get-NightlyRcRunEvidence).Launch($RcEvidenceRoot, $LogRoot, [string]$suiteId, [string]$chunk.id, [IO.Path]::GetDirectoryName([string]$suiteHost.AssemblyPath), [string[]]@($nativeArgs), '', $RepoRoot, [string]$Sha)
-        $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
-        try {
-            $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
-                -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
-                -Environment $phaseEnv -LogPath $logPath `
-                -TrxPath $trxPath -DiagnosticDirectory $execDiagDir `
-                -HangCapturePath ($logPath + '.hang.txt') `
-                -ExecutionGraceMilliseconds ([int]$script:NightlyCompletionGraceMilliseconds)
-        } catch {
-            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
-            throw
-        }
-        $phaseWatch.Stop()
-        $recordNativeChunk = $true
-        try {
-            [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
-        } catch {
-            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
-        }
-    }
-    $runWatch.Stop()
-    $runWallSeconds = [math]::Round($runWatch.Elapsed.TotalSeconds, 3)
-
-    $cleaned = Wait-NightlyOwnedCleanup -RunResult $run
-    if ($isNative) {
-        $activeNative--
-        if (-not $cleaned) { throw 'owned-child still running' }
-    }
-
-    if (Test-NightlyPathExists $logPath) {
-        $stamp = 'C487_INVOCATION=' + $invocationId
-        $rawLog = [System.IO.File]::ReadAllText($logPath)
-        if ($rawLog -notmatch [regex]::Escape($invocationId)) {
-            [System.IO.File]::WriteAllText($logPath, ($stamp + [Environment]::NewLine + $rawLog))
-        }
-    } else {
-        # Set-Content -Encoding UTF8 (pwsh 7: no BOM, one line): a failure is reported and the chunk goes on.
-        try { [System.IO.File]::WriteAllText($logPath, ('C487_INVOCATION=' + $invocationId + [Environment]::NewLine)) } catch { Write-Error -ErrorRecord $_ }
-    }
-    $fresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($logPath, $LogRoot, $startedAt, $invocationId)
-    $row = [ordered]@{
-        id = $suiteId
-        chunk = [string]$chunk.id
-        name = $label
-        log = $logPath
-        exitCode = $run.ExitCode
-        timedOut = [bool]$run.TimedOut
-        skipped = $false
-        result = $(if ($run.TimedOut) { 'TIMEOUT' } elseif ($run.ExitCode -ne 0) { 'FAIL' } else { 'pass' })
-    }
-    if (-not $fresh.Ok) {
-        $chunkTestsPassed=$false
-        $chunkCoverageComplete=$false
-        $coverageComplete = $false
-        $testsPassed = $false
-        $overallFailed = $true
-        $row.detail = $fresh.Reason
-        $reasons += $fresh.Reason
-    }
-    if ($isNative) {
-        $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
-        if ($profileDiscovery) {
-            $discPath = $profileDiscoveryPath
-            if ($chunk.exactFilter -or (($chunk.PSObject.Properties.Name -contains 'methodFilter') -and $chunk.methodFilter)) {
-                # The full discovery remains the suite union authority;
-                # the leaf verdict checks just this chunk's method expansions.
-                $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
-                $leaf = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($chunk.nodes, $profileDiscovery.assemblyHash)
-                [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($discPath, $leaf)
-            }
-        }
-        if ((Test-NightlyPathExists $trxPath) -and -not (Test-NightlyPathExists $discPath)) {
-            try {
-                $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
-                $discLog = Join-Path $LogRoot ('{0}-{1}-discovery.log' -f $suiteId, $chunk.id)
-                $chunkDiscWatch = [Diagnostics.Stopwatch]::StartNew()
-                [void](Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $discPath `
-                    -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
-                    -Environment $envMap)
-                $chunkDiscWatch.Stop()
-                $resolvedDiscovery = [Antiphon.Nightly.NightlyTestsPlan]::ChunkDiscoverySeconds([double]$suiteDiscoverySeconds, $chunkDiscWatch.Elapsed.TotalSeconds, $true)
-                $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-                [void](Get-NightlyRcRunEvidence).DiscoveryOnce($RcEvidenceRoot, $LogRoot, [string]$suiteId, $discPath)
-            } catch {
-                $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
-            }
-        }
-        $required = @()
-        if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
-        $execDiagPath = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
-        $nativeVerdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trxPath, $discPath, $execDiagPath, $LogRoot, $startedAt, ([int]$run.ExitCode), $Sha, $Sha, $GitRef, $GitRef, $policyHash, $policyHash, $required, $profileExclusions, [bool]($profileAware), $suiteDiscoveryIndex, $platform, $expectedSkipRoster)
-        if ($nativeVerdict.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$nativeVerdict.processExitTolerated) {
-            $exitTolerated = $true
-            $row.processExitTolerated = $true
-        }
-        if ($nativeVerdict.PSObject.Properties.Name -contains 'toleratedSkips') {
-            foreach ($toleratedSkip in @($nativeVerdict.toleratedSkips)) {
-                if ($null -eq $toleratedSkip) { continue }
-                $toleratedSkipRows += ,$toleratedSkip
-            }
-        }
-        if ($nativeVerdict.PSObject.Properties.Name -contains 'warnings') {
-            foreach ($skipWarning in @($nativeVerdict.warnings)) {
-                $skipWarningText = [string]$skipWarning
-                if ([string]::IsNullOrWhiteSpace($skipWarningText)) { continue }
-                if ($expectedSkipWarnings -notcontains $skipWarningText) { $expectedSkipWarnings += $skipWarningText }
-            }
-        }
-        if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
-            $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
-        }
-        if ($nativeVerdict.terminalNodes) {
-            # One concatenation per chunk, not one array copy per terminal node (19,000 in the main suite).
-            $suiteTerminalNodes = @($suiteTerminalNodes) + @($nativeVerdict.terminalNodes)
-        }
-        $row.trx = $trxPath
-        $row.evidenceReasons = @($nativeVerdict.reasons)
-        $census = if ($suiteCensus) { $suiteCensus } else { $nativeVerdict.census }
-        if ($census) {
-            # D-5: expanded-UID accounting is manifest evidence; record both
-            # counts and the digest, plus every exclusion with its reason.
-            $row.requiredUidCount = [int]$census.RequiredCount
-            $row.excludedUidCount = [int]$census.ExcludedCount
-            $row.censusDigest = [string]$census.Digest
-            $row.exclusions = @($census.Excluded)
-        }
-        if (-not [bool]$nativeVerdict.coverageComplete) {
-            $chunkCoverageComplete=$false
-            $coverageComplete = $false
-            $row.coverageComplete = $false
-            foreach ($ev in @($nativeVerdict.reasons)) { $reasons += $ev }
-        }
-        if (-not [bool]$nativeVerdict.testsPassed) {
-            $chunkTestsPassed=$false
-            $testsPassed = $false
-            $overallFailed = $true
-            $row.result = 'FAIL'
-        } elseif ($exitTolerated -and [bool]$nativeVerdict.coverageComplete) {
-            $row.result = 'pass'
-        }
-    }
-    $rcEvidence = Get-NightlyRcRunEvidence
-    if ($recordNativeChunk -and $rcEvidence.Recording) {
-        # The shadow parse of this launch, bound to the native verdict and the log freshness above.
-        $chunkRecord = [Antiphon.Nightly.RcChunkOutcome]::Read($run.ExitCode, [bool]$run.OutputDrainTimedOut, $trxPath, $rcSkipRoster, [string]$platform)
-        if ($isNative) {
-            $chunkRecord = [Antiphon.Nightly.RcChunkOutcome]::Bind($chunkRecord, $nativeVerdict.testsPassed, $nativeVerdict.coverageComplete, [string[]]@($nativeVerdict.reasons), $fresh.Ok, [string]$fresh.Reason)
-        }
-        [void]$rcEvidence.ChunkRevision($RcEvidenceRoot, $LogRoot, [string]$suiteId, [string]$chunk.id, $chunkRecord.Outcome, $chunkRecord.Reason, $false)
-    }
-    if ($suiteId -eq 'client') {
-        if (-not (Test-Path -LiteralPath $jsonPath)) {
-            $chunkTestsPassed=$false
-            $chunkCoverageComplete=$false
-            $coverageComplete = $false
-            $testsPassed = $false
-            $overallFailed = $true
-            $reasons += 'missing-client-json'
-            $row.coverageComplete = $false
-        }
-    }
-    $completedHang = $false
-    if ($run.TimedOut) {
-        $overallFailed = $true
-        $finished = $false
-        $childText = ''
-        $rootPid = 0
-        if ($null -ne $run.PSObject.Properties['Pid'] -and $null -ne $run.Pid) { $rootPid = [int]$run.Pid }
-        if ($isNative) {
-            $hangDiag = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
-            try { $finished = [bool]([Antiphon.Nightly.NightlyWatchdog]::ExecutionFinished($trxPath, $hangDiag)) } catch { $finished = $false }
-            $identities = @()
-            $images = @()
-            if ($null -ne $run.PSObject.Properties['DescendantIdentities']) { $identities = @($run.DescendantIdentities) }
-            if ($null -ne $run.PSObject.Properties['DescendantImages']) { $images = @($run.DescendantImages) }
-            $childText = [string]([Antiphon.Nightly.NightlyWatchdog]::HangChildren($identities, $images, $rootPid))
-            if ($null -ne $run.PSObject.Properties['CompletedButHung'] -and [bool]$run.CompletedButHung) { $finished = $true }
-        }
-        $resolvedHang = [Antiphon.Nightly.NightlyWatchdog]::CompletedHang($true, $finished, $suiteId, $childText)
-        $completedHang = [bool]$resolvedHang.CompletedButHung
-        $timeoutDisposition = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition((Test-Path -LiteralPath $trxPath), $false, [bool]($completedHang))
-        $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
-        $testsPassed = [bool]$timeoutDisposition.TestsPassed
-        if ($completedHang) {
-            $row.result = 'FAIL'
-            $row.evidenceReasons = @(@($row.evidenceReasons) | Where-Object { [string]$_ -notmatch '^process-exit-' })
-            $killReason = 'process-exit-' + [string][int]$run.ExitCode
-            $keptReasons = New-Object System.Collections.Generic.List[string]
-            $droppedKill = $false
-            for ($reasonIndex = @($reasons).Count - 1; $reasonIndex -ge 0; $reasonIndex--) {
-                $reasonText = [string]$reasons[$reasonIndex]
-                if (-not $droppedKill -and $reasonText -eq $killReason) { $droppedKill = $true; continue }
-                $keptReasons.Insert(0, $reasonText)
-            }
-            $reasons = @($keptReasons.ToArray())
-            $reasons += [string]$resolvedHang.Reason
-            $capturePath = ''
-            if ($null -ne $run.PSObject.Properties['HangCapturePath'] -and -not [string]::IsNullOrWhiteSpace([string]$run.HangCapturePath)) {
-                $capturePath = [string]$run.HangCapturePath
-            }
-            if ([string]::IsNullOrWhiteSpace($capturePath) -or -not (Test-Path -LiteralPath $capturePath)) {
-                $capturePath = $logPath + '.hang.txt'
-                if (-not (Test-Path -LiteralPath $capturePath)) {
-                    [Antiphon.Nightly.NightlyWatchdog]::WriteHangCapture($capturePath, $suiteId, $childText, $rootPid)
-                }
-            }
-            $row.hangCapture = $capturePath
-            # TESTS, not TIMEOUT, so publicationTerminal is failed-run.
-            $harnessHangReason = 'completed-but-hung'
-            $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
-        } else {
-            $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TIMEOUT')
-            $reasons += ('timeout {0}' -f $suiteId)
-        }
-    } elseif ($run.ExitCode -ne 0 -and -not $exitTolerated) {
-        $overallFailed = $true
-        $testsPassed = $false
-        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
-    } elseif (-not $chunkTestsPassed -or -not $chunkCoverageComplete) {
-        $overallFailed = $true
-        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
-    }
-    $timingPhase = 'complete'
-    $timingWhy = ''
-    $timingTrx = ''
-    if ($isNative) { $timingTrx = $trxPath }
-    if ($run.TimedOut) {
-        $timingPhase = 'timeout'
-        $timingWhy = 'timeout'
-    } elseif ($isNative -and -not (Test-NightlyPathExists $trxPath)) {
-        $timingWhy = 'missing-trx'
-    } elseif ($suiteId -eq 'client' -and -not (Test-Path -LiteralPath $jsonPath)) {
-        $timingWhy = 'missing-client-json'
-    } elseif ($suiteId -eq 'client') {
-        $timingWhy = 'no-trx:client'
-    } elseif ($suiteId -eq 'scripts' -and [int]$run.ExitCode -ne 0) {
-        $timingWhy = 'script-failed'
-    } elseif ($suiteId -eq 'scripts') {
-        $timingWhy = 'no-trx:scripts'
-    }
-    if ($completedHang) {
-        $timingWhy = 'completed-but-hung'
-    }
-    $timingUpdate = @{
-        LogRoot = $LogRoot
-        TimingRoot = $TimingRoot
-        Suite = $suiteId
-        Chunk = [string]$chunk.id
-        LastPhase = $timingPhase
-        Why = $timingWhy
-        RunWallSeconds = $runWallSeconds
-        DiscoverySeconds = $chunkDiscoverySeconds
-        BuildSeconds = $qualificationBuildSeconds
-        QueueWaitSeconds = $queueWaitSeconds
-        TrxPath = $timingTrx
-        RunId = $invocationId
-        Attempt = [string]$Attempt
-        Terminal = $true
-    }
-    if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
-    [Antiphon.Nightly.QualificationTiming]::Update($timingUpdate, (Get-NightlyUtcNow))
-    $suiteResults += $row
-    } finally {
-        if($isNative){[void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -State Idle)}
-        # Get-Variable -ValueOnly -ErrorAction SilentlyContinue without the cmdlet's cost (as at suite start).
-        foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
-            $executionVariable = $executionVariableSet.Get($executionName)
-            if ($null -eq $executionVariable) { $ExecutionSuiteState.Variables[$executionName] = [System.Management.Automation.Internal.AutomationNull]::Value }
-            else { $ExecutionSuiteState.Variables[$executionName] = $executionVariable.Value }
-        }
-        # The same nodes as @($suiteDiscoveryNodes); the array itself when it is one, not a copy per chunk.
-        if ($suiteDiscoveryNodes -is [object[]]) { $ExecutionSuiteState.nodes = $suiteDiscoveryNodes }
-        else { $ExecutionSuiteState.nodes = @($suiteDiscoveryNodes) }
-    }
+    $chunkScope = @{ NightlyTestsOutcome = $script:NightlyTestsOutcome; Host = (Get-NightlyRunHost); RcEvidence = (Get-NightlyRcRunEvidence)
+        PhaseTimingDirectory = (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot) }
+    foreach ($chunkName in [Antiphon.Nightly.NightlyChunkContext]::ScopeNames) { $chunkScope[$chunkName] = $ExecutionContext.SessionState.PSVariable.GetValue($chunkName) }
+    $chunkContext = [Antiphon.Nightly.NightlyChunkContext]::FromScope($chunkScope)
+    # The executed manifest is compiled (TestPhaseManifests.WriteExecuted, W2-nightly S09), into the bound writer context.
+    $chunkContext.PublishObservation = [Action[Antiphon.Nightly.NightlyExecutedObservation]]{ param($Seen)
+        [void][Antiphon.Nightly.TestPhaseManifests]::WriteExecuted($Seen.Verdict, $Seen.LogRoot, $Seen.TrxPath, $Seen.Suite, $Seen.Chunk, $Seen.RunId, $Seen.Attempt,
+            $Seen.HostWallSeconds, $script:TestPhaseExecutedContext, (Get-TestPhasePublicationScope)) }
+    $chunkContext.ActiveChunk = [Action[Antiphon.Nightly.NightlyActiveChunk]]{ param($Active)
+        [void](Write-QualificationActiveChunkIdentity -Directory $Active.Directory -SuiteId $Active.Suite -ChunkId $Active.Chunk -RunId $Active.RunId -Attempt $Active.Attempt -State $Active.State) }
+    $chunkContext.ProduceDiscovery = [Action[Antiphon.Nightly.NightlyDiscoveryRequest]]{ param($Ask)
+        [void](Invoke-NightlyProduceDiscovery -ExePath $Ask.ExePath -ArgumentPrefix @($Ask.ArgumentPrefix) -AssemblyPath $Ask.AssemblyPath -OutputPath $Ask.OutputPath `
+            -DiagnosticDirectory $Ask.DiagnosticDirectory -LogPath $Ask.LogPath -WorkingDirectory $Ask.WorkingDirectory -Environment $Ask.Environment) }
+    $chunkSuite = [Antiphon.Nightly.NightlySuiteState]::FromVariables($ExecutionSuiteState.Variables)
+    $chunkOutcome = [Antiphon.Nightly.NightlyChunkRunner]::Run($chunkContext, $chunkSuite, $ExecutionChunk)
+    $chunkSuite.WriteVariables($ExecutionSuiteState.Variables)
+    $ExecutionSuiteState.nodes = $chunkSuite.DiscoveryNodes
+    foreach ($chunkEntry in $chunkOutcome.Scope.GetEnumerator()) { $ExecutionContext.SessionState.PSVariable.Set($chunkEntry.Key, $chunkEntry.Value) }
+    $script:NightlyTestsOutcome = $chunkOutcome.TestsOutcome
+    if ($null -ne $chunkOutcome.Row) { $suiteResults += $chunkOutcome.Row }
+    if ($null -ne $chunkOutcome.Error) { throw $chunkOutcome.Error }
 }
 
 function Complete-NightlySuiteExecution {
@@ -862,63 +397,17 @@ function Complete-NightlySuiteExecution {
     $CompletionSuiteState.Completed = $true
 }
 
-# CARD-2005. The run calls this to finish summary.json: D-5 keeps each suite's exclusion
-# list once, dispatchProgress points at summary.suites, and Write-NightlyJsonFile streams
-# the document. A full run's summary is tens of MB. There is no second writer.
+# CARD-2005. The run calls this to finish summary.json, the one writer (Antiphon.Nightly/NightlyRunSummary.cs since
+# W2-nightly S12): D-5 keeps each suite's exclusion list once, dispatchProgress points at summary.suites, and the core
+# streams the document (a full run's summary is tens of MB). The phase summary it runs when the phase plan exists is
+# the compiled TestPhaseRunSummary (W2-nightly S09).
 function Write-NightlyRunSummary {
-    param(
-        $summary,
-        $suiteResults,
-        $dispatchSchedule,
-        [string]$Sha,
-        $completedAt,
-        [string]$summaryPath,
-        [string]$LogRoot
-    )
-    # D-5: every chunk row records its suite's exclusions, and with one census per suite the lists are the
-    # same - most of a full run's summary. Each suite's list is kept once, in suiteExclusions[<suite id>], and
-    # dropped from its rows only when every row's list is identical; rows keep their counts and censusDigest.
-    $suiteExclusions=[ordered]@{}
-    foreach($exclusionGroup in @($suiteResults | Where-Object { $_.Contains('exclusions') } | Group-Object { [string]$_['id'] })){
-        # The element-by-element reference check runs in the core (ExclusionDedupe.cs): every row of a full
-        # run carries the same few hundred objects, so the interpreted loop was most of this pass.
-        Assert-NightlyCoreAvailable 'D5ExclusionDedupe'
-        $groupRows=@($exclusionGroup.Group)
-        $firstList=@($groupRows[0]['exclusions'])
-        $firstText=$null
-        $sameList=$true
-        foreach($groupRow in $groupRows){
-            $list=@($groupRow['exclusions'])
-            if($list.Count -ne $firstList.Count){ $sameList=$false; break }
-            if([Antiphon.Nightly.ExclusionDedupe]::SameElementReferences($list,$firstList)){ continue }
-            if($null -eq $firstText){ $firstText=ConvertTo-Json -InputObject $firstList -Depth 8 -Compress }
-            if((ConvertTo-Json -InputObject $list -Depth 8 -Compress) -cne $firstText){ $sameList=$false; break }
-        }
-        if($sameList){
-            $suiteExclusions[$exclusionGroup.Name]=$firstList
-            foreach($groupRow in $groupRows){ $groupRow.Remove('exclusions') }
-        }
-    }
-    if($suiteExclusions.Count -gt 0){ $summary.suiteExclusions=$suiteExclusions }
-    # Bound by the exported summary digest. This diagnostic snapshot can order a
-    # later complete attempt; it never supplies pass credit or skips a launch.
-    if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
-        # The snapshot's chunk rows are not written a second time (CARD-2005): they are summary.suites' rows that
-        # have a chunk, and the reader rebuilds them (PriorFailureHistory.SummaryDispatchProgress in the core).
-        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suitesFromSummary=$true}
-    }
+    param($summary, $suiteResults, $dispatchSchedule, [string]$Sha, $completedAt, [string]$summaryPath, [string]$LogRoot)
+    $phaseSummary = [Action[string]]{ param($Root) [void][Antiphon.Nightly.TestPhaseRunSummary]::Run($Root, 50, (Get-TestPhasePublicationScope)) }
     try {
-        $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-        $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
-        $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
-        if ((Test-NightlyEvidencePath $phasePlanned) -or (Test-NightlyEvidencePath $phaseIndex)) {
-            [Antiphon.Nightly.TestPhaseRunSummary]::Run($LogRoot, 50, (Get-TestPhasePublicationScope))
-        }
-    } catch {
-        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
-    }
-    # Streamed by the core (Write-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB.
-    Write-NightlyJsonFile -Path $summaryPath -Value $summary -Depth 8
+        [Antiphon.Nightly.NightlyRunSummary]::Write($summary, @($suiteResults), $dispatchSchedule, $Sha, $completedAt, $summaryPath, $LogRoot,
+            (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $phaseSummary)
+    } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Invoke-AntiphonNightlyTests {

@@ -128,6 +128,79 @@ public sealed class NightlyDiscoveryParserTests
         "C1044 compatibility duplicate refuses", "C1044 missing type refuses", "C1044 missing method refuses",
         "C1044 garbage refuses", "C1044 header only refuses");
 
+    /// <summary>W2-nightly S12, in-process: qualified bare names only; a shared short name must not assign the other namespace.</summary>
+    [Test]
+    public void C1391_ClassMatch()
+    {
+        const string appSuffix = "Antiphon.Tests.Application.Widget(Factory)";
+        const string agentsSuffix = "Antiphon.Tests.Agents.Widget(Factory)";
+        const string requiredApp = "Antiphon.Tests.Application.Widget";
+        const string requiredAgents = "Antiphon.Tests.Agents.Widget";
+        var sameNs = NightlyCensus.ClassAssigned(appSuffix, "", [requiredApp]);
+        var otherNs = NightlyCensus.ClassAssigned(agentsSuffix, "", [requiredApp]);
+        var unqualified = NightlyCensus.ClassAssigned(appSuffix, "", ["Widget"]);
+        var present = NightlyChunkVerdict.RequiredClassesPresent([new PlainObject(("ClassName", appSuffix))], [requiredApp, requiredAgents]);
+        var missing = NightlyDiagnosticCases.Items(present, "Missing").Select(PsValue.Str).ToArray();
+        var presentOk = NightlyDiagnosticCases.B(present, "Ok");
+        var ok = !otherNs && !unqualified && sameNs && !presentOk && missing.Contains(requiredAgents, StringComparer.Ordinal) && !missing.Contains(requiredApp, StringComparer.Ordinal);
+        var rows = new NightlyCaseRows();
+        rows.Check(ok, "C1391 class match uses the qualified bare name",
+            "sameNs=" + sameNs + " otherNs=" + otherNs + " unqualified=" + unqualified + " ok=" + presentOk + " missing=" + string.Join(",", missing));
+        rows.ShouldAllPass(1);
+    }
+
+    /// <summary>W2-nightly S12, in-process: records on one line split, and a truncated record cannot borrow the next one's fields.</summary>
+    [Test]
+    public void C1391_SplicedRecord()
+    {
+        using var fixture = NightlyFixture.Create("c1391");
+        var first = NightlyDiagnosticCases.DiscoveryRecord("uid-a", "Alpha", "One");
+        var second = NightlyDiagnosticCases.DiscoveryRecord("uid-b", "Beta", "Two");
+        var discovery = NightlyDiagnosticCases.Parse(fixture.Root, "c1391-two-discovery", NightlyDiagnosticCases.Header + first + second, "discovery");
+        var discoveryOk = discovery.Error == "" && discovery.Nodes.Length == 2
+            && discovery.Nodes.Count(n => Str(n, "Uid") == "uid-a" && Str(n, "Type") == "Alpha") == 1 && discovery.Nodes.Count(n => Str(n, "Uid") == "uid-b" && Str(n, "Type") == "Beta") == 1;
+        var passedA = first.Replace("DiscoveredTestNodeStateProperty", "PassedTestNodeStateProperty");
+        var passedB = second.Replace("DiscoveredTestNodeStateProperty", "PassedTestNodeStateProperty");
+        var exec = NightlyDiagnosticCases.Parse(fixture.Root, "c1391-two-passed", NightlyDiagnosticCases.Header + passedA + passedB);
+        var execOk = exec.Error == "" && exec.Nodes.Length == 2
+            && exec.Nodes.Count(n => Str(n, "Uid") == "uid-a" && Str(n, "Outcome") == "Passed") == 1 && exec.Nodes.Count(n => Str(n, "Uid") == "uid-b" && Str(n, "Outcome") == "Passed") == 1;
+        const string truncated = "TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = truncated }";
+        var spliced = NightlyDiagnosticCases.Parse(fixture.Root, "c1391-splice", NightlyDiagnosticCases.Header + truncated + first, "discovery");
+        var borrowed = spliced.Nodes.Count(n => Str(n, "Uid") == "truncated" || Str(n, "Type") == "Alpha");
+        var spliceOk = System.Text.RegularExpressions.Regex.IsMatch(spliced.Error, "truncated diagnostic record|malformed discovery record", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            && spliced.Nodes.Length == 0 && borrowed == 0;
+        var rows = new NightlyCaseRows();
+        rows.Check(discoveryOk && execOk && spliceOk, "C1391 same-line records split and a truncated splice does not borrow",
+            "discovery=" + discoveryOk + " discErr=" + discovery.Error + " nodes=" + discovery.Nodes.Length + " exec=" + execOk + " execErr=" + exec.Error + " execNodes=" + exec.Nodes.Length
+            + " splice=" + spliceOk + " spliceErr=" + spliced.Error + " spliceNodes=" + spliced.Nodes.Length);
+        rows.ShouldAllPass(1);
+    }
+
+    /// <summary>W2-nightly S12, in-process: an unbalanced or bare-comma TypeName refuses; balanced fixture and generic names parse.</summary>
+    [Test]
+    public void C1391_OddTypeName()
+    {
+        using var fixture = NightlyFixture.Create("c1391");
+        var rows = new NightlyCaseRows();
+        void Rejects(string name, string text, string pattern)
+        {
+            var path = NightlyDiagnosticCases.WriteDiagnostic(fixture.Root, name.Replace(' ', '-'), text);
+            var error = NightlyDiagnosticCases.Refusal(() => NightlyDiagnosticLog.Read(path, "discovery"));
+            rows.Check(System.Text.RegularExpressions.Regex.IsMatch(error, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase), "C1044 " + name, error);
+        }
+        Rejects("C1391 unbalanced X(Fac refuses", NightlyDiagnosticCases.StateText(NightlyDiagnosticCases.DiscoveryRecord("odd-open", "X(Fac", "Runs")), "truncated diagnostic record");
+        Rejects("C1391 lone comma refuses", NightlyDiagnosticCases.StateText(NightlyDiagnosticCases.DiscoveryRecord("odd-comma", ",", "Runs")), "truncated diagnostic record");
+        const string balanced = "X(Fac)";
+        const string generic = "Outer+Inner`1(FactoryA, FactoryB)";
+        var parsed = NightlyDiagnosticCases.Parse(fixture.Root, "c1391-odd-balanced", NightlyDiagnosticCases.StateText(
+            NightlyDiagnosticCases.DiscoveryRecord("balanced-uid", balanced, "Runs"), NightlyDiagnosticCases.DiscoveryRecord("generic-uid", generic, "Runs")), "discovery");
+        var balancedNode = parsed.Nodes.Where(n => Str(n, "Uid") == "balanced-uid").ToArray();
+        var genericNode = parsed.Nodes.Where(n => Str(n, "Uid") == "generic-uid").ToArray();
+        rows.Check(parsed.Nodes.Length == 2 && balancedNode.Length == 1 && Str(balancedNode[0], "Type") == balanced && genericNode.Length == 1 && Str(genericNode[0], "Type") == generic,
+            "C1391 balanced fixture TypeName still parses", parsed.Error);
+        rows.ShouldAllPass(3, "C1044 C1391 unbalanced X(Fac refuses", "C1044 C1391 lone comma refuses", "C1391 balanced fixture TypeName still parses");
+    }
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1044", caseName, expectedRows, requiredRows);
 

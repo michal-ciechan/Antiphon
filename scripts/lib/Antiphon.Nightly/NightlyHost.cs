@@ -130,6 +130,29 @@ namespace Antiphon.Nightly
             };
         }
 
+        /// <summary>
+        /// W2-nightly S12: a host from its parts, for a caller outside C# (the still-PowerShell executor builds one from its
+        /// seams for each chunk and owned launch: nightly-tests-impl.ps1 Get-NightlyRunHost). A null clock is
+        /// TimeProvider.System, a null git NightlyNativeGit.Run, a null process table or probe the production one, a null
+        /// writer TextWriter.Null. The launcher is required.
+        /// </summary>
+        public static NightlyHost Create(TimeProvider clock, INightlyLauncher launcher, TextWriter output, TextWriter error, TextWriter trace,
+            NightlyGit git, INightlyProcessTable processes, INightlyHostProbe probe)
+        {
+            if (launcher == null) throw new ArgumentNullException(nameof(launcher));
+            return new NightlyHost
+            {
+                Clock = clock ?? TimeProvider.System,
+                Git = git ?? NightlyNativeGit.Run,
+                Launcher = launcher,
+                Processes = processes ?? new NightlyProcessTable(),
+                Probe = probe ?? new NightlyHostProbe(),
+                Out = output ?? TextWriter.Null,
+                Error = error ?? TextWriter.Null,
+                Trace = trace ?? TextWriter.Null,
+            };
+        }
+
         /// <summary>The clock's now as a UTC DateTime (Get-NightlyUtcNow).</summary>
         public DateTime UtcNow => Clock.GetUtcNow().UtcDateTime;
 

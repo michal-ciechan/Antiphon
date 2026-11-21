@@ -154,15 +154,17 @@ public sealed class RcRunEvidenceTests
         Contract(nameof(InterruptedWriterLeavesNotRun));
     }
 
-    // The call sites the two still-PowerShell impl scripts use.
+    // The call sites the two still-PowerShell impl scripts use, and the chunk runner (W2-nightly S12: the launch, the
+    // chunk record and its shadow parse moved there from nightly-tests-impl.ps1).
     private const string TestsImpl = "scripts/lib/nightly-tests-impl.ps1";
     private const string RunImpl = "scripts/lib/nightly-run-impl.ps1";
+    private const string ChunkRunner = "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs";
     private const string BuildCall = "(Get-NightlyRcRunEvidence).Build(";
     private const string DiscoveryCall = "(Get-NightlyRcRunEvidence).DiscoveryOnce(";
-    private const string LaunchCall = "(Get-NightlyRcRunEvidence).Launch(";
-    private const string RevisionCall = "$rcEvidence.ChunkRevision(";
-    private const string ReadCall = "[Antiphon.Nightly.RcChunkOutcome]::Read(";
-    private const string BindCall = "[Antiphon.Nightly.RcChunkOutcome]::Bind(";
+    private const string LaunchCall = "c.RcEvidence?.Launch(";
+    private const string RevisionCall = "c.RcEvidence.ChunkRevision(";
+    private const string ReadCall = "RcChunkOutcome.Read(";
+    private const string BindCall = "RcChunkOutcome.Bind(";
 
     [Test, Timeout(60_000)]
     public void OneBuildAndDiscoveryPerSuite()
@@ -187,8 +189,9 @@ public sealed class RcRunEvidenceTests
         Note(other.Suite == "client" && other.EffectiveMode == "Full" && !other.GateCredit, "other-suite-one-build");
         var testsImpl = ReadSource(TestsImpl);
         var runImpl = ReadSource(RunImpl);
+        var chunkRunner = ReadSource(ChunkRunner);
         Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && testsImpl.Contains(DiscoveryCall, StringComparison.Ordinal)
-            && testsImpl.Contains(LaunchCall, StringComparison.Ordinal) && testsImpl.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
+            && chunkRunner.Contains(LaunchCall, StringComparison.Ordinal) && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
         Note(runImpl.Contains("$rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("$rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
         Note(!testsImpl.Contains("publish-release.ps1", StringComparison.OrdinalIgnoreCase) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");
         Contract(nameof(OneBuildAndDiscoveryPerSuite));
@@ -551,7 +554,7 @@ public sealed class RcRunEvidenceTests
         var stored = rec.ChunkRevision(ev, "", "server", "c1", failed.Outcome, failed.Reason, false);
         var body = JsonNode.Parse(File.ReadAllText(Path.Combine(ev, "revisions", "1", "revision.json")))!;
         Note(stored.Sequence == 1 && (string?)body["outcome"] == "Failed" && (string?)body["reason"] == "exit-2" && body["gateCredit"]?.GetValue<bool>() == false, "reason-is-stored");
-        Note(ReadSource(TestsImpl).Contains(ReadCall, StringComparison.Ordinal), "chunk-outcome-is-wired");
+        Note(ReadSource(ChunkRunner).Contains(ReadCall, StringComparison.Ordinal), "chunk-outcome-is-wired");
         Contract(nameof(ChunkOutcomeNeedsResults));
     }
 
@@ -682,12 +685,12 @@ public sealed class RcRunEvidenceTests
         Note(closed.Outcome == "NotRun" && closed.Reason == "results-unreadable", "unreadable-real shadow=" + closed.Outcome);
         var half = RcChunkOutcome.Bind(Shadow(passFx.Trx), true, true, [], null, null!);
         Note(half.Outcome == "NotRun", "unreadable-fresh shadow=" + half.Outcome);
-        var testsImpl = ReadSource(TestsImpl);
-        var verdictAt = testsImpl.IndexOf("NightlyChunkVerdict]::NativeSuiteVerdict(", StringComparison.Ordinal);
-        var freshAt = testsImpl.IndexOf("NightlyChunkVerdict]::Fresh(", StringComparison.Ordinal);
-        var bindAt = testsImpl.LastIndexOf(BindCall, StringComparison.Ordinal);
+        var chunkRunner = ReadSource(ChunkRunner);
+        var verdictAt = chunkRunner.IndexOf("NightlyChunkVerdict.NativeSuiteVerdict(", StringComparison.Ordinal);
+        var freshAt = chunkRunner.IndexOf("NightlyChunkVerdict.Freshness(", StringComparison.Ordinal);
+        var bindAt = chunkRunner.LastIndexOf(BindCall, StringComparison.Ordinal);
         Note(verdictAt >= 0 && freshAt >= 0 && bindAt > verdictAt && bindAt > freshAt, "recorded-after-real-check bind=" + bindAt);
-        Note(Count(testsImpl, ".ChunkRevision(") == 1 && testsImpl.Contains(RevisionCall, StringComparison.Ordinal), "one-chunk-record");
+        Note(Count(chunkRunner, ".ChunkRevision(") == 1 && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "one-chunk-record");
         var evidence = ReadSource("scripts/lib/Antiphon.Nightly/RcRunEvidence.cs");
         var idle = Off().Read("", "");
         Note(evidence.Contains("public string EffectiveMode => \"Full\";", StringComparison.Ordinal) && evidence.Contains("public bool GateCredit => false;", StringComparison.Ordinal)
@@ -786,9 +789,9 @@ public sealed class RcRunEvidenceTests
         Console.WriteLine(FormattableString.Invariant(
             $"A6 fixtureLaunchMs={fixtureMs} sampleFiles=4 sampleBytes={sampleBytes} fullMs={fullMs} stampMs={stampMs} wideFiles=280 wideLaunchMs={wideMs} extrapolatedFull1289={Math.Round(fullMs * scale * launches, 1)} extrapolatedStamp1289={Math.Round(wideMs * launches, 1)}"));
         Note(bulkLaunch.Joined && wideLaunch.Joined && stampMs < fullMs, "stamp-cheaper-than-full-read");
-        var testsImpl = ReadSource(TestsImpl);
-        var launchAt = testsImpl.IndexOf(LaunchCall, StringComparison.Ordinal);
-        var watchAt = testsImpl.IndexOf("$phaseWatch = [Diagnostics.Stopwatch]::StartNew()", StringComparison.Ordinal);
+        var chunkRunner = ReadSource(ChunkRunner);
+        var launchAt = chunkRunner.IndexOf(LaunchCall, StringComparison.Ordinal);
+        var watchAt = chunkRunner.IndexOf("var phaseStart = host.Clock.GetTimestamp();", StringComparison.Ordinal);
         Note(launchAt >= 0 && watchAt > launchAt, "launch-evidence-outside-phase");
         Contract(nameof(LaunchStampIsCheaper));
     }

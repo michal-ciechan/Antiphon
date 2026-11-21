@@ -200,10 +200,11 @@ try {
             $hasCal = $policy.Object.PSObject.Properties.Name -contains 'watchdogCalibration'
             $out.policyUntouched = ((-not $hasCal) -and [int]$policy.Object.watchdogs.antiphon -eq 3600000 -and [int]$policy.Object.watchdogs.e2e -eq 7200000)
             if (-not $out.policyUntouched) { Add-Problem 'policy-watchdog-changed' }
-            $impl = [IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+            # W2-nightly S12: the chunk runner, its admission and its timeout disposition are NightlyChunkRunner.cs.
+            $impl = [IO.File]::ReadAllText((Join-Path $lib (Join-Path 'Antiphon.Nightly' 'NightlyChunkRunner.cs')))
             $refuseAt = $impl.IndexOf('watchdog-admission-refused')
-            $timeoutAt = $impl.IndexOf('admission.WatchdogMilliseconds')
-            $out.wired = ($refuseAt -ge 0 -and $timeoutAt -gt $refuseAt -and $impl.Contains('NightlyWatchdog]::TimeoutDisposition('))
+            $timeoutAt = $impl.IndexOf('PsValue.Prop(admission, "WatchdogMilliseconds")')
+            $out.wired = ($refuseAt -ge 0 -and $timeoutAt -gt $refuseAt -and $impl.Contains('NightlyWatchdog.TimeoutDisposition('))
             if (-not $out.wired) { Add-Problem 'watchdog-not-paired' }
 
             function New-Walls([int]$Count, [double]$Wall, [string]$Outcome) {

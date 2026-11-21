@@ -2163,9 +2163,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 56,
+      "classes": 55,
       "reason": "cap",
-      "owed": 31,
+      "owed": 30,
       "first": [
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
@@ -3965,6 +3965,12 @@
       "path": "scripts/lib/Antiphon.Nightly/DispatchSchedule.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs",
+      "classes": [
+        "RcRunEvidenceTests"
       ]
     },
     {
@@ -24763,6 +24769,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeTestHost.cs",
       "classes": [
+        "NightlyChunkRunnerTests",
         "NightlyTestHelpersTests"
       ]
     },
@@ -24774,13 +24781,31 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyChunkWorld.cs",
+      "classes": [
+        "NightlyChunkRunnerTests",
+        "ReleaseGateE2EEvidenceTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyDiagnosticCases.cs",
+      "classes": [
+        "NightlyDiscoveryParserTests",
+        "NightlyExecutionDiagnosticTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
         "ClassCostMeasurementTests",
+        "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
+        "NightlyExecutionDiagnosticTests",
         "NightlyHealthTests",
         "NightlyHostTests",
+        "NightlyPrerequisiteTests",
+        "NightlySummaryWitnessTests",
         "NightlyTestHelpersTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
@@ -24801,7 +24826,10 @@
       "classes": [
         "C1514LandingSplitBudgetTests",
         "ClassCostMeasurementTests",
+        "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
+        "NightlyExecutionDiagnosticTests",
+        "NightlyPrerequisiteTests",
         "NightlyTestsPlanTests",
         "RcRosterRepairTests",
         "ReleaseGateE2EEvidenceTests",
@@ -24811,6 +24839,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
+        "NightlyChunkRunnerTests",
         "NightlyNativeOwnershipTests",
         "NightlyTestHelpersTests"
       ]
@@ -25290,6 +25319,8 @@
         "ExpectedDurationSyncTests",
         "NativeLinuxPolicyExecutionTests",
         "NightlyPolicyTests",
+        "NightlyPrerequisiteTests",
+        "NightlySummaryWitnessTests",
         "RcFullTimingContractTests",
         "RcFullWatchdogHarnessTests",
         "RcFullWatchdogTests",

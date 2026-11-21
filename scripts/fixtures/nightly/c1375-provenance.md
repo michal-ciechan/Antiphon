@@ -1,6 +1,8 @@
 # CARD-1375 real producer capture provenance
 
 Captured 2026-10-20 on Linux. These are curated parser inputs, not whole run logs.
+The selected bytes (base64, length and SHA-256 per range) are the `c1375` entries of `d13-diagnostic-records.json`
+(they were `c1375-diagnostic-records.ps1` until W2-nightly S12 moved the D13 cases in-process).
 Raw diagnostics, TRX and receipts remain ignored under `.antiphon/c1375-evidence/`.
 Encoding: native UTF-8; selected diagnostic lines preserve LF, including final LF.
 TRX selects exact Results and TestDefinitions sections; the harness adds only an XML root.

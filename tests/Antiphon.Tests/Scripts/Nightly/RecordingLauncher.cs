@@ -35,12 +35,17 @@ public sealed class RecordingLauncher : INightlyLauncher
     public static NightlyLaunchResult Passed() =>
         new() { ExitCode = 0, TimedOut = false, Pid = 2, ChildrenExited = true, LogText = FakeTestHost.InvocationLog };
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Records the launch and answers it. As the StartProcess seam path did (Invoke-NightlyOwnedProcess, now
+    /// DelegateLauncher), the answer's LogText becomes the launch's log when it names one.
+    /// </summary>
     public NightlyLaunchResult Run(NightlyLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
         lock (_gate) _launches.Add(launch);
-        return _behaviour?.Invoke(launch) ?? Passed();
+        var result = _behaviour?.Invoke(launch) ?? Passed();
+        DelegateLauncher.WriteLog(launch.LogPath, result.LogText);
+        return result;
     }
 
     /// <inheritdoc />

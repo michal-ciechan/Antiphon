@@ -2108,15 +2108,6 @@ function Test-C599_EnvironmentIsolation {
     Assert-C487 -Cond ([string]$messagingEnv['ANTIPHON_BROKER_TESTS'] -eq '1') -Name 'C599 EnvironmentIsolation the broker opt-in IS set for messaging'
 }
 
-function Test-C599_ExecutionArtifacts {
-    # W2-nightly S11: the native argv is NightlyTestsPlan.NativeExecutionArguments; its rows are
-    # ReleaseGateE2EEvidenceTests.C599_ExecutionArtifactsArgv, in-process.
-    $impl = Get-Content -LiteralPath (Join-Path $lib 'nightly-tests-impl.ps1') -Raw
-    Assert-C487 -Cond ($impl -match 'Wait-NightlyOwnedCleanup') -Name 'C599 ExecutionArtifacts the executor waits for owned cleanup'
-    Assert-C487 -Cond ($impl -match 'owned-child still running') -Name 'C599 ExecutionArtifacts an unjoined owned child is an error'
-    Assert-C487 -Cond ($impl -match 'requiredUidCount' -and $impl -match 'censusDigest') -Name 'C599 ExecutionArtifacts the suite row records the expanded census'
-}
-
 # ================================================= CARD-0599 D-15 authority (B1) ===
 
 function Test-C599B_MissingDiscovery {
