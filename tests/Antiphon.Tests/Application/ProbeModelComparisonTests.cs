@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Application;
 // ProbeModelComparison decides whether the channel-outbound probes may use a generated compiled model instead of the
 // model AppDbContext builds (ProbeModelGenerator publishes one only when it finds no difference). These pin that it
 // finds each kind of model difference a probe's database work could notice, and none between two builds of one model.
+[Category("Unit")]
 public sealed class ProbeModelComparisonTests
 {
     private static readonly Dictionary<string, Action<ModelBuilder>> Changes = new(StringComparer.Ordinal)
@@ -30,6 +31,11 @@ public sealed class ProbeModelComparisonTests
         // A provider annotation the runtime model keeps. Design-time-only ones (a column comment) never reach a
         // runtime model, so no probe can see them.
         ["provider-annotation"] = b => b.Entity<Child>().Property(c => c.Id).UseIdentityAlwaysColumn(),
+        // Element-level differences of a primitive collection, which the model text cannot show (ElementType).
+        ["element-converter"] = b => b.Entity<Child>().PrimitiveCollection(c => c.Tags)
+            .ElementType(e => e.HasConversion<string>()),
+        ["element-nullability"] = b => b.Entity<Child>().PrimitiveCollection(c => c.Labels)
+            .ElementType(e => e.IsRequired(false)),
     };
 
     [Test]
@@ -52,6 +58,8 @@ public sealed class ProbeModelComparisonTests
     [Arguments("value-generation")]
     [Arguments("concurrency")]
     [Arguments("provider-annotation")]
+    [Arguments("element-converter")]
+    [Arguments("element-nullability")]
     public void Each_kind_of_model_difference_is_found(string change) =>
         ProbeModelComparison.Differences(Model(_ => { }), Model(Changes[change])).ShouldNotBeEmpty(change);
 
@@ -92,6 +100,7 @@ public sealed class ProbeModelComparisonTests
         public string Name { get; set; } = "";
         public ChildKind Kind { get; set; }
         public Guid[] Tags { get; set; } = [];
+        public string[] Labels { get; set; } = [];
     }
 
     private enum ChildKind { First, Second }

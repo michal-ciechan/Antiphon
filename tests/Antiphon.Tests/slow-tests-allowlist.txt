@@ -362,6 +362,8 @@ Antiphon.Tests.Application.CodexCliObservationGapTests
 Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests
 # CARD-0519 S12: real queue, isolated broker, converter launch and gateway handoff matrices.
 Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests
+# CARD-0519 S12: the channel-outbound probe generates and verifies its compiled AppDbContext model (a 20-30 s child).
+Antiphon.Tests.Application.ChannelOutboundProbeModelTests
 # CARD-1065: real Git publication, isolated PostgreSQL and local/remote park custody boundaries.
 Antiphon.Tests.Application.TaskParkPublicationTests
 # CARD-1065 S4c: isolated PostgreSQL, owned Git children and loopback HTTP/WebSocket proof transport.

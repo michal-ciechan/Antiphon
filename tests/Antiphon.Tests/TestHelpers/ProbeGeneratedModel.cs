@@ -3,6 +3,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -21,7 +22,12 @@ internal static class ProbeGeneratedModel
 {
     public const string Label = "C519_PROBE_MODEL";
     private const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
-    private static readonly TimeSpan GenerateBound = TimeSpan.FromSeconds(300);
+    // Measured 20-27 s on the HP laptop (4 runs): about 3x, for a loaded host, and well inside TUnit's 5-minute hook
+    // timeout, so a stuck generation ends as "unavailable" (probes build the model) rather than failing the class.
+    // Provisional (R5): a small sample.
+    private static readonly TimeSpan GenerateBound = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromHours(1);
+    private static readonly Regex CacheEntry = new(@"^[0-9a-f]{16}(\.tmp-[0-9a-f]{32})?$", RegexOptions.CultureInvariant);
     private static readonly Lazy<Task<Result>> Generated = new(GenerateAsync);
 
     internal sealed record Result(string? Path, string Detail);
@@ -42,6 +48,8 @@ internal static class ProbeGeneratedModel
             var published = Path.Combine(root, key);
             var dll = Path.Combine(published, AssemblyName + ".dll");
             if (File.Exists(dll)) return Report(new(dll, "reused key=" + key), watch);
+            Directory.CreateDirectory(root);
+            Prune(root, key);
             var work = Path.Combine(root, key + ".tmp-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(work);
             try
@@ -61,7 +69,7 @@ internal static class ProbeGeneratedModel
             }
             finally
             {
-                if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+                TryDelete(new DirectoryInfo(work));
             }
         }
         catch (Exception ex)
@@ -75,6 +83,35 @@ internal static class ProbeGeneratedModel
         Console.WriteLine(Label + (result.Path is null ? " unavailable " : " ready ") + "ms=" + watch.ElapsedMilliseconds
             + " " + result.Detail.ReplaceLineEndings(" | ").Trim());
         return result;
+    }
+
+    // Earlier builds' models, and work directories a killed test process left, once an hour old (a work directory of
+    // another process generating this same build is younger, and is kept). Only this cache's own entry names.
+    private static void Prune(string root, string key)
+    {
+        foreach (var entry in new DirectoryInfo(root).EnumerateDirectories())
+        {
+            if (entry.Name == key || !CacheEntry.IsMatch(entry.Name)) continue;
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+            if (DateTime.UtcNow - entry.LastWriteTimeUtc < StaleAfter) continue;
+            if (!string.Equals(Path.GetFullPath(entry.FullName), Path.Combine(root, entry.Name), StringComparison.Ordinal)) continue;
+            TryDelete(entry);
+        }
+    }
+
+    // Best effort: a file another process still holds leaves the entry for a later prune.
+    private static void TryDelete(DirectoryInfo directory)
+    {
+        try
+        {
+            if (directory.Exists) directory.Delete(recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     // The probe, its model assemblies and the provider: a rebuild of any of them is a new key, so a cached model is
@@ -114,9 +151,24 @@ internal static class ProbeGeneratedModel
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            await process.WaitForExitAsync();
-            return (-1, "timed out after " + GenerateBound.TotalSeconds + " s " + await stderr);
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (Exception)
+            {
+                // Already gone, or part of the tree could not be killed: the bounded wait below decides.
+            }
+            using var exited = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try
+            {
+                await process.WaitForExitAsync(exited.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            // Its output is not awaited: a child that has not exited still holds the pipes.
+            return (-1, "timed out after " + GenerateBound.TotalSeconds + " s");
         }
         return (process.ExitCode, ((await stdout) + (await stderr)).Trim());
     }

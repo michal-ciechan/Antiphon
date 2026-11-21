@@ -15,7 +15,9 @@ internal static class ProbeModelComparison
 {
     // EF 9's compiled model does not carry a primitive collection's element type (an Npgsql array such as
     // SessionRuntimeAction.LateConfirmedChannelMessageIds): the runtime model prints it, a compiled one never does.
-    // The property's type mapping (the array mapping, which carries the element mapping) is compared in Mappings.
+    // Mappings compares what the provider uses for the elements instead: the array mapping's element mapping (its
+    // type, store type, converter and comparer) and the elements' nullability, which a compiled model can only match
+    // for elements that can never be null (ElementNullability).
     private static readonly Regex ElementType =
         new(@"^[ \t]*ElementType: [^\n]*\n| Element type: [^\n]*", RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
@@ -47,9 +49,30 @@ internal static class ProbeModelComparison
                     + " provider=" + property.GetProviderClrType()?.FullName
                     + " comparer=" + property.GetValueComparer().GetType().FullName
                     + " key-comparer=" + property.GetKeyValueComparer().GetType().FullName
-                    + " provider-comparer=" + property.GetProviderValueComparer().GetType().FullName);
+                    + " provider-comparer=" + property.GetProviderValueComparer().GetType().FullName
+                    + Element(property, mapping));
             }
         return string.Join('\n', lines);
+    }
+
+    private static string Element(IReadOnlyProperty property, CoreTypeMapping mapping)
+    {
+        var element = mapping.ElementTypeMapping;
+        if (element is null && property.GetElementType() is null) return "";
+        return " element-mapping=" + element?.GetType().FullName
+            + " element-store=" + (element as RelationalTypeMapping)?.StoreType
+            + " element-converter=" + element?.Converter?.GetType().FullName
+            + " element-comparer=" + element?.Comparer.GetType().FullName
+            + " element-nullable=" + ElementNullability(property, element);
+    }
+
+    // "never" for elements of a non-nullable value type, whichever model; otherwise the configured nullability, and
+    // "unknown" in a model without the element type (a compiled one), so such a collection always differs.
+    private static string ElementNullability(IReadOnlyProperty property, CoreTypeMapping? element)
+    {
+        var type = property.GetElementType()?.ClrType ?? element?.ClrType;
+        if (type is { IsValueType: true } && Nullable.GetUnderlyingType(type) is null) return "never";
+        return property.GetElementType() is { } known ? known.IsNullable.ToString() : "unknown";
     }
 
     private static void Compare(string part, string expected, string actual, List<string> differences, int limit)

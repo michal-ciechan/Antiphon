@@ -22,14 +22,30 @@ internal static class ProbeModel
     }
 
     public static DbContextOptionsBuilder WithProbeModel(this DbContextOptionsBuilder builder) =>
-        _path is null ? builder : builder.UseModel(Model());
+        Model() is { } model ? builder.UseModel(model) : builder;
 
     public static IModel Load(Assembly generated) =>
         (IModel)generated.GetType(ProbeModelGenerator.Namespace + ".AppDbContextModel", throwOnError: true)!
             .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
 
-    private static IModel Model()
+    // A model that does not load (its dll removed or damaged after the parent checked it) is reported once, and the
+    // probe then builds the model itself.
+    private static IModel? Model()
     {
-        lock (Gate) return _model ??= Load(Assembly.LoadFrom(_path!));
+        lock (Gate)
+        {
+            if (_model is not null || _path is null) return _model;
+            try
+            {
+                return _model = Load(Assembly.LoadFrom(_path));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("probe model " + _path + " not loaded (" + ex.GetType().Name + ": " + ex.Message
+                    + "); building the model");
+                _path = null;
+                return null;
+            }
+        }
     }
 }
