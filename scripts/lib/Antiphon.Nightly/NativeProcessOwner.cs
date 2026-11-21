@@ -1,4 +1,7 @@
-// CARD-1039 S1n-a. Windows native owner; loaded by PowerShell 7 with Add-Type.
+// CARD-1039 S1n-a. Windows native owner, compiled into the nightly core since W2-nightly S04 (it was
+// scripts/lib/nightly-owned-process.cs, added with Add-Type). nightly-owned-process.ps1 (Start-NightlyNativeOwner)
+// and OwnedLauncher (NightlyLaunch.cs) start it; NightlyNativeOwnershipTests drives it in-process. Windows only:
+// Start refuses another host before any native call. ASCII only.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;

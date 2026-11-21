@@ -2,13 +2,18 @@
 // NightlyLaunch is one child process; NightlyHost.Launcher runs it. WatchedLauncher is the production launcher for
 // Watched custody (the hops), the twin of Start-NightlyProcess (nightly-common.ps1) as Invoke-NightlyWatchedCommand
 // calls it: Start-Process -NoNewWindow -Wait -PassThru, so the child shares this console, stdin, stdout and stderr, and
-// the call returns its exit code once it has exited. Owned custody (a private job, the log and the drain of
-// nightly-owned-process.cs) is another launcher. Tests record launches with RecordingLauncher
-// (tests/Antiphon.Tests/Scripts/Nightly). Plain C#: no PowerShell types. ASCII only.
+// the call returns its exit code once it has exited. W2-nightly S04: OwnedLauncher runs Owned custody (a private job,
+// the log and the drain of NativeProcessOwner), the twin of Invoke-NightlyOwnedProcess over Start-NightlyNativeOwner.
+// Tests record launches with RecordingLauncher (tests/Antiphon.Tests/Scripts/Nightly). Plain C#: no PowerShell types.
+// ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Antiphon.Nightly
 {
@@ -25,8 +30,10 @@ namespace Antiphon.Nightly
     /// <summary>
     /// One child process. Environment null: the child inherits this process's environment. Otherwise the child's
     /// environment is exactly Environment, and a name whose value is null or empty is left out (Start-NightlyProcess's
-    /// swap). TimeoutMilliseconds 0 or less: wait for the exit, as every hop does today. LogPath is Owned custody's
-    /// output log; a Watched child writes to this process's own streams.
+    /// swap). TimeoutMilliseconds 0 or less: wait for the exit, as every hop does today (Owned custody needs a positive
+    /// one). LogPath is Owned custody's output log; a Watched child writes to this process's own streams. Hooks are Owned
+    /// custody's NativeProcessHooks (the TRX and diagnostic of the completion grace, the hang capture path, the test
+    /// barriers); null takes the defaults. A Watched launch ignores them.
     /// </summary>
     public sealed record NightlyLaunch(
         string FileName,
@@ -35,13 +42,14 @@ namespace Antiphon.Nightly
         int TimeoutMilliseconds = 0,
         IReadOnlyDictionary<string, string> Environment = null,
         string LogPath = null,
-        NightlyCustody Custody = NightlyCustody.Watched)
+        NightlyCustody Custody = NightlyCustody.Watched,
+        NativeProcessHooks Hooks = null)
     {
         /// <summary>FileName and the arguments, space separated: the text of the exec trace line (Invoke-NightlyWatchedCommand's Write-NightlyTrace).</summary>
         public string CommandText => FileName + " " + string.Join(" ", Arguments ?? Array.Empty<string>());
     }
 
-    /// <summary>What a launch observed. Owned custody fills ChildrenExited and LogText; a Watched launch leaves them unset.</summary>
+    /// <summary>What a launch observed. Owned custody fills ChildrenExited, CleanupComplete and Owner (a fake fills LogText); a Watched launch leaves them unset.</summary>
     public sealed class NightlyLaunchResult
     {
         /// <summary>The child's exit code; 1 when it timed out.</summary>
@@ -58,6 +66,15 @@ namespace Antiphon.Nightly
 
         /// <summary>Owned custody: the child's logged output (a fake launcher's stand-in for the log file).</summary>
         public string LogText { get; set; } = "";
+
+        /// <summary>
+        /// Owned custody: every descendant exited and the output drained (NativeProcessResult.CleanupComplete); null when
+        /// the launcher did not observe it (a fake standing in for the child, as the controlled-I/O seam did).
+        /// </summary>
+        public bool? CleanupComplete { get; set; }
+
+        /// <summary>Owned custody under the native owner: its whole observation (timings, descendants, hang capture); null otherwise.</summary>
+        public NativeProcessResult Owner { get; set; }
     }
 
     /// <summary>Starts children for a run.</summary>
@@ -97,7 +114,7 @@ namespace Antiphon.Nightly
         {
             if (launch == null) throw new ArgumentNullException(nameof(launch));
             if (launch.Custody != NightlyCustody.Watched)
-                throw new NotSupportedException("WatchedLauncher runs Watched custody only; Owned custody needs the native owner launcher.");
+                throw new NotSupportedException("WatchedLauncher runs Watched custody only; Owned custody runs on OwnedLauncher.");
             if (!string.IsNullOrEmpty(launch.LogPath))
                 throw new NotSupportedException("A Watched child writes to this process's own streams; LogPath is Owned custody's.");
             _beforeStart?.Invoke();
@@ -144,6 +161,151 @@ namespace Antiphon.Nightly
                 if (string.IsNullOrEmpty(pair.Key) || string.IsNullOrEmpty(pair.Value)) continue;
                 start.Environment[pair.Key] = pair.Value;
             }
+        }
+    }
+
+    /// <summary>
+    /// The production launcher for Owned custody: Invoke-NightlyOwnedProcess (nightly-tests-impl.ps1) over
+    /// Start-NightlyNativeOwner and New-NightlyChildStartInfo (nightly-owned-process.ps1), without their seams. The child
+    /// runs under NativeProcessOwner: created suspended, assigned to a private kill-on-close job that forbids breakaway, then
+    /// resumed; its stdout and stderr drain into LogPath; the call returns once the root and every descendant have exited
+    /// (or the timeout or the completion grace killed the job) and the output has drained. Windows only.
+    /// </summary>
+    public sealed class OwnedLauncher : INightlyLauncher
+    {
+        private static readonly Regex WindowsApps = new Regex(@"(?i)[\\/]WindowsApps[\\/]");
+        private readonly Action _beforeStart;
+        private readonly Action<ProcessStartInfo> _prepareChild;
+        private int _active;
+
+        /// <summary>
+        /// beforeStart runs before every start (Sync-NightlyDeferredEvidenceWrites: a child reads the disk). prepareChild
+        /// adjusts the child's start information before its environment block is taken (Set-AntiphonBuildDriverEnvironment;
+        /// the caller supplies BuildDriverEnvironment, which is not part of the core). Null: nothing.
+        /// </summary>
+        public OwnedLauncher(Action beforeStart = null, Action<ProcessStartInfo> prepareChild = null)
+        {
+            _beforeStart = beforeStart;
+            _prepareChild = prepareChild;
+        }
+
+        /// <summary>
+        /// Invoke-NightlyOwnedProcess: Start, then wait for the owner's verdict. The result carries the whole observation
+        /// as Owner and its CleanupComplete (every descendant exited and the output drained). A positive
+        /// TimeoutMilliseconds is required (NativeProcessOwner refuses another).
+        /// </summary>
+        public NightlyLaunchResult Run(NightlyLaunch launch)
+        {
+            Interlocked.Increment(ref _active);
+            try
+            {
+                var observation = Start(launch).Completion.GetAwaiter().GetResult();
+                return new NightlyLaunchResult
+                {
+                    ExitCode = observation.ExitCode,
+                    TimedOut = observation.TimedOut,
+                    Pid = observation.Pid,
+                    ChildrenExited = observation.ChildrenExited,
+                    CleanupComplete = observation.CleanupComplete,
+                    Owner = observation,
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _active);
+            }
+        }
+
+        /// <summary>
+        /// Start-NightlyNativeOwner: refuses Watched custody and a host other than Windows, runs beforeStart, resolves
+        /// FileName as an application (ResolveExecutable), builds the child's start information (ChildStartInfo), lets
+        /// prepareChild adjust it, and starts the native owner with that environment block and launch.Hooks (null: the
+        /// defaults). Returns the running owner; its Completion is the verdict.
+        /// </summary>
+        public NativeProcessOwner Start(NightlyLaunch launch)
+        {
+            if (launch == null) throw new ArgumentNullException(nameof(launch));
+            if (launch.Custody != NightlyCustody.Owned)
+                throw new NotSupportedException("OwnedLauncher runs Owned custody only; a Watched hop runs on WatchedLauncher.");
+            _beforeStart?.Invoke();
+            if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Nightly native custody requires Windows.");
+            var executable = ResolveExecutable(launch.FileName);
+            var arguments = (launch.Arguments ?? Array.Empty<string>()).Select(argument => argument ?? "").ToArray();
+            var start = ChildStartInfo(executable, arguments, launch.WorkingDirectory, launch.Environment);
+            _prepareChild?.Invoke(start);
+            var entries = start.Environment.Select(pair => pair.Key + "=" + pair.Value).ToArray();
+            return NativeProcessOwner.Start(executable, arguments, launch.WorkingDirectory, launch.TimeoutMilliseconds, launch.LogPath, entries, launch.Hooks);
+        }
+
+        /// <summary>Wait-NightlyOwnedCleanup without seams: the owner observed every descendant exit and the output drain.</summary>
+        public bool WaitCleanup(NightlyLaunchResult result) => result?.CleanupComplete == true;
+
+        /// <summary>The Run calls of this launcher still waiting on their owner.</summary>
+        public int NativeActiveCount => Volatile.Read(ref _active);
+
+        /// <summary>
+        /// New-NightlyChildStartInfo: FileName and the arguments as separate argv entries, WorkingDirectory when it is not
+        /// blank; with an environment map the child's environment is exactly the map (a null value is empty, which the
+        /// native owner leaves out of the block), without one this process's.
+        /// </summary>
+        public static ProcessStartInfo ChildStartInfo(string fileName, IReadOnlyList<string> arguments, string workingDirectory, IReadOnlyDictionary<string, string> environment)
+        {
+            var start = new ProcessStartInfo();
+            if (!string.IsNullOrWhiteSpace(fileName)) start.FileName = fileName;
+            foreach (var argument in arguments ?? Array.Empty<string>()) start.ArgumentList.Add(argument ?? "");
+            if (!string.IsNullOrWhiteSpace(workingDirectory)) start.WorkingDirectory = workingDirectory;
+            if (environment != null)
+            {
+                start.Environment.Clear();
+                foreach (var pair in environment) start.Environment[pair.Key] = pair.Value ?? "";
+            }
+            return start;
+        }
+
+        /// <summary>
+        /// Start-NightlyNativeOwner's executable: the application FindApplication names; a packaged PowerShell (pwsh.exe
+        /// under a WindowsApps directory, which can launch unpackaged children outside the private job) becomes Program
+        /// Files\PowerShell\7\pwsh.exe, which must exist.
+        /// </summary>
+        public static string ResolveExecutable(string fileName)
+        {
+            var executable = FindApplication(fileName) ?? throw new FileNotFoundException("The term '" + fileName + "' is not recognized as the name of an application.", fileName);
+            if (string.Equals(Path.GetFileName(executable), "pwsh.exe", StringComparison.OrdinalIgnoreCase) && WindowsApps.IsMatch(executable))
+            {
+                executable = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
+                if (!File.Exists(executable)) throw new InvalidOperationException("Native process custody requires unpackaged PowerShell 7 in Program Files\\PowerShell\\7.");
+            }
+            return executable;
+        }
+
+        /// <summary>
+        /// Get-Command -CommandType Application's first answer: a name with a directory is that file (or that file with a
+        /// PATHEXT extension); a bare name is looked up in each PATH directory in order, as given and then with each
+        /// PATHEXT extension. Null when there is none.
+        /// </summary>
+        public static string FindApplication(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var extensions = (System.Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            IEnumerable<string> Candidates(string path)
+            {
+                if (Path.HasExtension(path)) yield return path;
+                foreach (var extension in extensions) yield return path + extension;
+            }
+            if (Path.IsPathRooted(name) || name.IndexOfAny(new[] { '\\', '/' }) >= 0)
+                return Candidates(Path.GetFullPath(name)).FirstOrDefault(File.Exists);
+            foreach (var directory in (System.Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+            {
+                var trimmed = directory.Trim().Trim('"');
+                if (trimmed.Length == 0) continue;
+                string root;
+                try { root = Path.GetFullPath(trimmed); }
+                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is PathTooLongException) { continue; }
+                var found = Candidates(Path.Combine(root, name)).FirstOrDefault(File.Exists);
+                if (found != null) return found;
+            }
+            return null;
         }
     }
 }

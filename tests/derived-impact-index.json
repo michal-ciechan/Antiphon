@@ -24646,6 +24646,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
+        "NightlyNativeOwnershipTests",
         "NightlyTestHelpersTests"
       ]
     },

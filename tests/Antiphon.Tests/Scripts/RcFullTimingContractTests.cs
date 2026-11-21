@@ -3,6 +3,9 @@ using System.Text;
 using System.Text.Json;
 using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -258,20 +261,65 @@ public sealed class RcFullTimingContractTests
         spent.ShouldBeLessThanOrEqualTo(5000, "aggregate re-read exceeded the shared budget");
     }
 
+    // W2-nightly S04: the witness (OwnerExitWitness) and C1039_DescendantExit are C# in NightlyNativeOwnershipTests.cs (the
+    // driver scripts/test-nightly-native.ps1 and test-rc-speed-os-witness.ps1 are gone); their shape is read with Roslyn.
     [Test]
-    [Timeout(60_000)]
-    public async Task NativeOwnerExitWitnessIsUnconditional(CancellationToken cancellationToken)
+    public void NativeOwnerExitWitnessIsUnconditional()
     {
-        var root = FreshRoot();
-        var observed = await Run(OwnerWitnessShapeScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("declared").GetBoolean().ShouldBeTrue("Invoke-RcWindowsOwnerExitWitness was not declared");
-        observed.GetProperty("assertsImages").GetBoolean().ShouldBeTrue("DescendantImages was not asserted");
-        observed.GetProperty("assertsRootExit").GetBoolean().ShouldBeTrue("RootExitedAtUtc was not asserted");
-        observed.GetProperty("assertsMissed").GetBoolean().ShouldBeTrue("MissedDescendantPids was not asserted");
-        observed.GetProperty("assertsJobEmpty").GetBoolean().ShouldBeTrue("JobEmptyObserved was not asserted");
-        observed.GetProperty("caseCalls").GetBoolean().ShouldBeTrue("C1039_DescendantExit does not call the witness");
-        observed.GetProperty("caseUnconditional").GetBoolean().ShouldBeTrue("owner witness call is nested under a conditional");
+        var path = Path.Combine(C1514Support.RepoRoot(), "tests", "Antiphon.Tests", "Scripts", "NightlyNativeOwnershipTests.cs");
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(path));
+        tree.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).Select(item => item.ToString()).ShouldBeEmpty("witness-parse-failed");
+        var root = tree.GetRoot();
+        var witness = root.DescendantNodes().OfType<MethodDeclarationSyntax>().SingleOrDefault(method => method.Identifier.Text == "OwnerExitWitness");
+        witness.ShouldNotBeNull("OwnerExitWitness was not declared");
+        var start = witness.DescendantNodes().OfType<InvocationExpressionSyntax>().FirstOrDefault(call =>
+            call.Expression is MemberAccessExpressionSyntax member && member.Name.Identifier.Text == "Start" && member.Expression.ToString() == "NativeProcessOwner");
+        (start is not null && Reachable(start, witness)).ShouldBeTrue("OwnerExitWitness was not declared");
+        var throws = witness.DescendantNodes().Where(node => node is ThrowStatementSyntax or ThrowExpressionSyntax).ToArray();
+        var members = witness.DescendantNodes().OfType<MemberAccessExpressionSyntax>().ToArray();
+        bool Asserts(string needle, string member) =>
+            throws.Any(item => item.ToString().Contains(needle, StringComparison.Ordinal) && Reachable(item, witness))
+            && members.Any(item => item.Name.Identifier.Text == member && Reachable(item, witness));
+        Asserts("descendant image survives process exit", "DescendantImages").ShouldBeTrue("DescendantImages was not asserted");
+        Asserts("root exit time missing", "RootExitedAtUtc").ShouldBeTrue("RootExitedAtUtc was not asserted");
+        Asserts("missed descendant pids missing", "MissedDescendantPids").ShouldBeTrue("MissedDescendantPids was not asserted");
+        Asserts("job empty not observed", "JobEmptyObserved").ShouldBeTrue("JobEmptyObserved was not asserted");
+        var testCase = root.DescendantNodes().OfType<MethodDeclarationSyntax>().SingleOrDefault(method => method.Identifier.Text == "C1039_DescendantExit");
+        testCase.ShouldNotBeNull("C1039_DescendantExit does not call the witness");
+        var calls = testCase.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression is IdentifierNameSyntax name && name.Identifier.Text == "OwnerExitWitness").ToArray();
+        calls.ShouldNotBeEmpty("C1039_DescendantExit does not call the witness");
+        calls.Any(call => Unconditional(call, testCase)).ShouldBeTrue("owner witness call is nested under a conditional");
+    }
+
+    // Test-ReachableAst: not inside the body of an if whose condition is false or false && ... before stop.
+    private static bool Reachable(SyntaxNode node, SyntaxNode stop)
+    {
+        for (var cursor = node.Parent; cursor is not null && cursor != stop; cursor = cursor.Parent)
+        {
+            if (cursor is IfStatementSyntax branch && branch.Statement.Span.Contains(node.Span) && Disabled(branch.Condition)) return false;
+        }
+        return true;
+    }
+
+    private static bool Disabled(ExpressionSyntax condition)
+    {
+        while (condition is ParenthesizedExpressionSyntax parenthesized) condition = parenthesized.Expression;
+        if (condition.IsKind(SyntaxKind.FalseLiteralExpression)) return true;
+        return condition is BinaryExpressionSyntax binary && binary.IsKind(SyntaxKind.LogicalAndExpression) && Disabled(binary.Left);
+    }
+
+    // Test-DirectCaseCall: nothing between the call and its test method decides whether it runs.
+    private static bool Unconditional(SyntaxNode node, SyntaxNode stop)
+    {
+        for (var cursor = node.Parent; cursor is not null && cursor != stop; cursor = cursor.Parent)
+        {
+            if (cursor is IfStatementSyntax or ElseClauseSyntax or ConditionalExpressionSyntax or SwitchStatementSyntax or SwitchExpressionSyntax
+                or WhileStatementSyntax or ForStatementSyntax or ForEachStatementSyntax or DoStatementSyntax or CatchClauseSyntax) return false;
+            if (cursor is BinaryExpressionSyntax binary && (binary.IsKind(SyntaxKind.LogicalAndExpression) || binary.IsKind(SyntaxKind.LogicalOrExpression)
+                || binary.IsKind(SyntaxKind.CoalesceExpression))) return false;
+        }
+        return true;
     }
 
     private static string[] Uids(JsonElement observed, string name)
@@ -1157,148 +1205,6 @@ public sealed class RcFullTimingContractTests
             absentPresent = [bool]$absentPresent
             emptyPresent = [bool]$emptyPresent
             setCopied = [bool]$setCopied
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
-        """;
-
-    private const string OwnerWitnessShapeScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $problems = New-Object System.Collections.Generic.List[string]
-        $declared = $false
-        $assertsImages = $false
-        $assertsRootExit = $false
-        $assertsMissed = $false
-        $assertsJobEmpty = $false
-        $caseCalls = $false
-        $caseUnconditional = $false
-        function Test-DisabledCondition([System.Management.Automation.Language.Ast]$Condition) {
-            $expr = $Condition
-            if ($expr -is [System.Management.Automation.Language.PipelineAst]) {
-                if (@($expr.PipelineElements).Count -ne 1) { return $false }
-                $element = $expr.PipelineElements[0]
-                if ($element -isnot [System.Management.Automation.Language.CommandExpressionAst]) { return $false }
-                $expr = $element.Expression
-            }
-            if ($expr -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                return ($expr.VariablePath.UserPath -eq 'false')
-            }
-            if ($expr -is [System.Management.Automation.Language.BinaryExpressionAst] -and [string]$expr.Operator -eq 'And') {
-                $left = $expr.Left
-                if ($left -is [System.Management.Automation.Language.VariableExpressionAst] -and $left.VariablePath.UserPath -eq 'false') { return $true }
-            }
-            return $false
-        }
-        function Test-ReachableAst([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Stop) {
-            $cursor = $Node.Parent
-            while ($null -ne $cursor -and $cursor -ne $Stop) {
-                if ($cursor -is [System.Management.Automation.Language.IfStatementAst]) {
-                    foreach ($clause in $cursor.Clauses) {
-                        $body = $clause.Item2
-                        $inside = $false
-                        $walk = $Node
-                        while ($null -ne $walk) {
-                            if ($walk -eq $body) { $inside = $true; break }
-                            $walk = $walk.Parent
-                        }
-                        if ($inside -and (Test-DisabledCondition $clause.Item1)) { return $false }
-                    }
-                }
-                $cursor = $cursor.Parent
-            }
-            return $true
-        }
-        function Test-DirectCaseCall([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Block) {
-            $cursor = $Node
-            while ($null -ne $cursor -and $cursor -ne $Block) {
-                if ($cursor -is [System.Management.Automation.Language.IfStatementAst]) { return $false }
-                $cursor = $cursor.Parent
-            }
-            return ($cursor -eq $Block)
-        }
-        try {
-            $witnessPath = Join-Path $repo 'scripts/test-rc-speed-os-witness.ps1'
-            $nativePath = Join-Path $repo 'scripts/test-nightly-native.ps1'
-            $witness = [IO.File]::ReadAllText($witnessPath)
-            $native = [IO.File]::ReadAllText($nativePath)
-            $parseErrors = $null
-            $witnessAst = [System.Management.Automation.Language.Parser]::ParseInput($witness, [ref]$null, [ref]$parseErrors)
-            if (@($parseErrors).Count -gt 0) { $problems.Add('witness-parse-failed') }
-            $fn = $null
-            if ($null -ne $witnessAst) {
-                $fn = $witnessAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RcWindowsOwnerExitWitness' }, $false)
-            }
-            if ($null -eq $fn) { $problems.Add('function-missing') }
-            else {
-                $start = $fn.Find({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and $n.Expression.TypeName.FullName -eq 'Antiphon.Nightly.NativeProcessOwner' -and $n.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Member.Value -eq 'Start' }, $true)
-                $declared = ($null -ne $start) -and (Test-ReachableAst $start $fn)
-                if (-not $declared) { $problems.Add('start-missing') }
-                $needles = @{ images = 'descendant image survives process exit'; root = 'root exit time missing'; missed = 'missed descendant pids missing'; job = 'job empty not observed' }
-                $members = @{ images = 'DescendantImages'; root = 'RootExitedAtUtc'; missed = 'MissedDescendantPids'; job = 'JobEmptyObserved' }
-                $throws = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.ThrowStatementAst] }, $true))
-                $memberNodes = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true))
-                foreach ($key in @('images', 'root', 'missed', 'job')) {
-                    $throwOk = $false
-                    foreach ($one in $throws) {
-                        if ($one.Extent.Text.IndexOf([string]$needles[$key], [StringComparison]::Ordinal) -ge 0 -and (Test-ReachableAst $one $fn)) { $throwOk = $true }
-                    }
-                    $memberOk = $false
-                    foreach ($one in $memberNodes) {
-                        $name = ''
-                        if ($one.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $name = [string]$one.Member.Value }
-                        if ($name -eq [string]$members[$key] -and (Test-ReachableAst $one $fn)) { $memberOk = $true }
-                    }
-                    $ok = $throwOk -and $memberOk
-                    if ($key -eq 'images') { $assertsImages = $ok; if (-not $ok) { $problems.Add('images-missing') } }
-                    if ($key -eq 'root') { $assertsRootExit = $ok; if (-not $ok) { $problems.Add('root-exit-missing') } }
-                    if ($key -eq 'missed') { $assertsMissed = $ok; if (-not $ok) { $problems.Add('missed-pids-missing') } }
-                    if ($key -eq 'job') { $assertsJobEmpty = $ok; if (-not $ok) { $problems.Add('job-empty-missing') } }
-                }
-            }
-            $nativeErrors = $null
-            $nativeAst = [System.Management.Automation.Language.Parser]::ParseInput($native, [ref]$null, [ref]$nativeErrors)
-            if (@($nativeErrors).Count -gt 0) { $problems.Add('native-parse-failed') }
-            $caseBlock = $null
-            if ($null -ne $nativeAst) {
-                $switches = @($nativeAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
-                foreach ($switchNode in $switches) {
-                    foreach ($clause in $switchNode.Clauses) {
-                        $cond = $clause.Item1
-                        if ($cond -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $cond.Value -eq 'C1039_DescendantExit') {
-                            $caseBlock = $clause.Item2
-                        }
-                    }
-                }
-            }
-            if ($null -eq $caseBlock) { $problems.Add('case-missing') }
-            else {
-                $calls = @($caseBlock.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-RcWindowsOwnerExitWitness' }, $true))
-                $caseCalls = @($calls).Count -gt 0
-                $direct = $false
-                foreach ($call in @($calls)) {
-                    if (Test-DirectCaseCall $call $caseBlock) { $direct = $true }
-                }
-                $caseUnconditional = $caseCalls -and $direct
-                if (-not $caseCalls) { $problems.Add('case-does-not-call-witness') }
-                if (-not $direct) { $problems.Add('case-still-conditional') }
-            }
-        } catch {
-            $problems.Add(('shape-threw ' + [string]$_.Exception.Message))
-        }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            declared = [bool]$declared
-            assertsImages = [bool]$assertsImages
-            assertsRootExit = [bool]$assertsRootExit
-            assertsMissed = [bool]$assertsMissed
-            assertsJobEmpty = [bool]$assertsJobEmpty
-            caseCalls = [bool]$caseCalls
-            caseUnconditional = [bool]$caseUnconditional
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;

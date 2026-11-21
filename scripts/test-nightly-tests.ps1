@@ -2731,17 +2731,17 @@ function Test-C1698_SummaryJsonRecordsToolchain {
 }
 
 function Test-Group4NativeTrxReader {
-    # Loads scripts/lib/nightly-owned-process.cs with Add-Type and calls the
-    # real ExecutionEvidenceFinished. A closing-tag search returns false for
-    # every completed TRX, so the positives below are red at 89fd55cef.
+    # Calls the real ExecutionEvidenceFinished of the native owner, compiled into the nightly
+    # core since W2-nightly S04 (scripts/lib/Antiphon.Nightly/NativeProcessOwner.cs). A closing-tag
+    # search returns false for every completed TRX, so the positives below are red at 89fd55cef.
     $root = Join-Path $ResultsDirectory 'group4-native-trx-reader'
     New-Item -ItemType Directory -Path $root -Force | Out-Null
-    $ownerPath = Join-Path $lib 'nightly-owned-process.cs'
+    $ownerPath = Join-Path $lib (Join-Path 'Antiphon.Nightly' 'NativeProcessOwner.cs')
     $loadError = ''
-    try { Add-Type -Path $ownerPath -ErrorAction Stop } catch {
-        if (-not ('Antiphon.Nightly.NativeProcessOwner' -as [type])) { $loadError = $_.Exception.Message }
-    }
-    Assert-C487 -Cond ([string]::IsNullOrEmpty($loadError)) -Name 'group4 native owner compiles under Add-Type' -Detail $loadError
+    $loaded = 'Antiphon.Nightly.NativeProcessOwner' -as [type]
+    if ($null -eq $loaded) { $loadError = 'NativeProcessOwner is not in the loaded core' }
+    elseif ($loaded.Assembly.GetName().Name -ne 'Antiphon.Nightly') { $loadError = 'NativeProcessOwner comes from ' + $loaded.Assembly.GetName().Name }
+    Assert-C487 -Cond ([string]::IsNullOrEmpty($loadError)) -Name 'group4 native owner is part of the compiled core' -Detail $loadError
     $type = $null
     try { $type = [Antiphon.Nightly.NativeProcessOwner] } catch { $type = $null }
     $find = {
@@ -2994,9 +2994,7 @@ function Test-Group4CompletedHang {
     Assert-C487 -Cond $captureOk -Name 'group4 powershell hang capture names the tree and skips handle names' -Detail $captureError
 
     $graceLoad = ''
-    try { Add-Type -Path (Join-Path $lib 'nightly-owned-process.cs') -ErrorAction Stop } catch {
-        if (-not ('Antiphon.Nightly.NightlyCompletionGrace' -as [type])) { $graceLoad = $_.Exception.Message }
-    }
+    if (-not ('Antiphon.Nightly.NightlyCompletionGrace' -as [type])) { $graceLoad = 'NightlyCompletionGrace is not in the loaded core' }
     $sleep = $null
     $grace = $null
     $graceError = $graceLoad
@@ -3030,7 +3028,7 @@ function Test-Group4CompletedHang {
     if ($null -ne $openGrace) { $openDetail = 'elapsed=' + $openGrace.ElapsedMilliseconds + ' hung=' + $openGrace.CompletedButHung }
     Assert-C487 -Cond $openOk -Name 'group4 unfinished run still uses the launch watchdog' -Detail $openDetail
 
-    $ownerPath = Join-Path $lib 'nightly-owned-process.cs'
+    $ownerPath = Join-Path $lib (Join-Path 'Antiphon.Nightly' 'NativeProcessOwner.cs')
     $implPath = Join-Path $lib 'nightly-tests-impl.ps1'
     $ownerText = [System.IO.File]::ReadAllText($ownerPath)
     $implText = [System.IO.File]::ReadAllText($implPath)

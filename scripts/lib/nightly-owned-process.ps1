@@ -1,10 +1,14 @@
 #requires -Version 7.0
 # CARD-1039: the production Windows launch/wait/job/drain boundary.
-# CARD-1514: Linux can dot-source this file. Add-Type stays on Win32NT.
+# CARD-1514: Linux can dot-source this file. The native owner is loaded on Win32NT only.
+# W2-nightly S04: NativeProcessOwner and NativeProcessHooks are compiled into the nightly core
+# (Antiphon.Nightly/NativeProcessOwner.cs; OwnedLauncher there is the C# twin of these two
+# functions). A caller that has not loaded the core loads it here; there is no Add-Type copy.
 # Do not use $IsWindows: it is undefined on Windows PowerShell 5.1.
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     if (-not ('Antiphon.Nightly.NativeProcessOwner' -as [type])) {
-        Add-Type -Path (Join-Path $PSScriptRoot 'nightly-owned-process.cs')
+        . (Join-Path $PSScriptRoot 'nightly-core.ps1')
+        Assert-NightlyCoreAvailable 'nightly-owned-process'
     }
 }
 
@@ -34,7 +38,7 @@ function Start-NightlyNativeOwner {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory,
           [int]$TimeoutMilliseconds, [hashtable]$Environment, [string]$LogPath,
           $Hooks = $null)
-    # NativeProcessHooks is Add-Type'd only on Win32NT. A typed parameter is
+    # NativeProcessHooks is loaded only on Win32NT. A typed parameter is
     # resolved before this body and would hide the Linux refusal below.
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Nightly native custody requires Windows.' }
     $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1

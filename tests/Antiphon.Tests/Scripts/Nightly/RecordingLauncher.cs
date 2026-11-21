@@ -25,7 +25,7 @@ public sealed class RecordingLauncher : INightlyLauncher
     /// <summary>The C487 trace of the launches: "EXEC &lt;file&gt; &lt;arguments joined by spaces&gt;".</summary>
     public IReadOnlyList<string> Lines => Launches.Select(launch => "EXEC " + launch.CommandText).ToArray();
 
-    /// <summary>The WaitCleanup answer; null answers ChildrenExited (Wait-NightlyOwnedCleanup over a seam result).</summary>
+    /// <summary>The WaitCleanup answer; null answers CleanupComplete, or ChildrenExited when the result has none (Wait-NightlyOwnedCleanup over a seam result).</summary>
     public Func<NightlyLaunchResult, bool>? Cleanup { get; set; }
 
     /// <summary>The NativeActiveCount answer (the NativeActiveCount seam).</summary>
@@ -44,5 +44,5 @@ public sealed class RecordingLauncher : INightlyLauncher
     }
 
     /// <inheritdoc />
-    public bool WaitCleanup(NightlyLaunchResult result) => Cleanup?.Invoke(result) ?? result.ChildrenExited;
+    public bool WaitCleanup(NightlyLaunchResult result) => Cleanup?.Invoke(result) ?? result.CleanupComplete ?? result.ChildrenExited;
 }
