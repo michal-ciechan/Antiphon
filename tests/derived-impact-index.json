@@ -20639,6 +20639,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.ChannelOutbound.Probe/ProbeModelComparison.cs",
+      "classes": [
+        "ProbeModelComparisonTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj",
       "classes": [
         "HostCleanupCheckpointExtractionTests"
@@ -26294,6 +26300,14 @@
       "path": "tests/Antiphon.Tests/TestHelpers/PostLandMutationDeliveryWorker.cs",
       "classes": [
         "PostLandMutationDeliveryTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/ProbeGeneratedModel.cs",
+      "classes": [
+        "ChannelOutboundProbeModelTests",
+        "ChannelOutboundUnifiedCrashTests",
+        "ChannelOutboundUnifiedTransportTests"
       ]
     },
     {
