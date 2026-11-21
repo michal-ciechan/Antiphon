@@ -24,7 +24,8 @@ namespace Antiphon.Nightly
     /// <summary>
     /// The inputs a publication call reads from PowerShell's script scope: $script:QualificationTimingRoot, the
     /// host's $PSVersionTable.PSEdition and .PSVersion (the writer environment) and the commit seams
-    /// $script:TestPhaseCommitBarrier and $script:TestPhaseCommitFault (null in production).
+    /// $script:TestPhaseCommitBarrier and $script:TestPhaseCommitFault (null in production). The manifests and the
+    /// summary (TestPhaseManifests.cs, TestPhaseRunSummary.cs) read the same scope and its two read clocks.
     /// </summary>
     public sealed class TestPhasePublicationScope
     {
@@ -51,6 +52,16 @@ namespace Antiphon.Nightly
         /// HostVersion when the context opens. A test's in-process writer standing in for another host names its.
         /// </summary>
         public string WriterEnvironment { get; set; } = "";
+        /// <summary>
+        /// The TRX read clock of the manifests and the summary ($script:TestPhaseTrxReadWatch): null (production) is a
+        /// stopwatch started for each TRX; a test's stopped stopwatch never reaches the 200 ms deadline.
+        /// </summary>
+        public Stopwatch TrxReadWatch { get; set; }
+        /// <summary>
+        /// The summary's shared re-read clock ($script:TestPhaseSummaryReReadWatch): a Stopwatch or an ITestPhaseWatch;
+        /// null (production) is a new stopwatch for each summary.
+        /// </summary>
+        public object SummaryReReadWatch { get; set; }
 
         internal string Writer() =>
             string.IsNullOrWhiteSpace(WriterEnvironment) ? TestPhaseJournal.WriterEnvironment(HostEdition, HostVersion) : WriterEnvironment;

@@ -29,6 +29,19 @@ function Assert-FF([bool]$Ok, [string]$Name, [string]$Detail = '') {
     $script:FFLastAssertionAt=$now
     Assert-C487 $Ok ('FF ' + $Case + '.' + $Name) $Detail
 }
+# Write-TestPhasePlannedManifest's parameters into the compiled planned manifest (TestPhaseManifests.WritePlanned, W2-nightly
+# S09), priced with nightly-tests-impl's class-cost path and table, at this script's timing root.
+function Write-FFPlannedManifest {
+    param([string]$LogRoot, [string]$RunId, [string]$Attempt, [string]$Suite, [string]$SourceDigest, [string]$AssemblyDigest, [string]$PolicyDigest,
+        [string]$CostFileDigest, [string]$AssemblyId, $Groups, $DiscoveryNodes, $ProfileExclusions, $DiscoveryIndex = $null, [string]$DiscoveryPath = '')
+    $request = [Antiphon.Nightly.TestPhasePlannedRequest]::new()
+    $request.LogRoot = $LogRoot; $request.RunId = $RunId; $request.Attempt = $Attempt; $request.Suite = $Suite; $request.SourceDigest = $SourceDigest
+    $request.AssemblyDigest = $AssemblyDigest; $request.PolicyDigest = $PolicyDigest; $request.CostFileDigest = $CostFileDigest; $request.AssemblyId = $AssemblyId
+    $request.Groups = $Groups; $request.DiscoveryNodes = $DiscoveryNodes; $request.ProfileExclusions = $ProfileExclusions
+    $request.DiscoveryIndex = $DiscoveryIndex; $request.DiscoveryPath = $DiscoveryPath
+    $request.ClassCostPath = [string]$script:NightlyClassCostPath; $request.ClassCostTable = $script:NightlyClassCostTable
+    return [Antiphon.Nightly.TestPhaseManifests]::WritePlanned($request, (Get-TestPhasePublicationScope))
+}
 function New-FFNode([string]$Class, [string]$Method = 'Run', [string]$Uid = '') {
     $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($Class)
     $dot = $bare.LastIndexOf('.')
@@ -743,7 +756,7 @@ function Invoke-FFPreparedArm {
         }
         $states += [pscustomobject]@{id=$s.id;nodes=$s.nodes;chunks=$s.chunks;exclusions=$s.exclusions;Variables=$variables;Completed=$false}
         if ($s.PSObject.Properties.Name -notcontains 'SharedPlannedText') {
-            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions -DiscoveryIndex $index -DiscoveryPath $discPath)
+            [void](Write-FFPlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions -DiscoveryIndex $index -DiscoveryPath $discPath)
             $s | Add-Member -NotePropertyName SharedPlannedText -NotePropertyValue ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))))
         } else {
             # Both arms consume the same once-published immutable plans; only
@@ -752,7 +765,7 @@ function Invoke-FFPreparedArm {
             [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $TimingRoot $planFile), $s.SharedPlannedText)
             [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $TimingRoot 'groups-planned.json'), $s.SharedPlannedText)
             $sharedPlan=$s.SharedPlannedText|ConvertFrom-Json
-            Update-TestPhasePlannedIndex -Directory $TimingRoot -Suite $s.id -FileName $planFile -RunId $invocationId -Attempt '1' -AssemblyId $s.id -SourceDigest $Sha -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyDigest 'fixture' -Filters @($sharedPlan.groups.filter)
+            [Antiphon.Nightly.TestPhaseManifests]::UpdatePlannedIndex($TimingRoot, [string]$s.id, $planFile, $invocationId, '1', [string]$s.id, $Sha, $policyHash, 'fixture', 'fixture', @($sharedPlan.groups.filter))
         }
         $plannedBytes[$s.id] = [IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json')))
         $plannedDoc = $plannedBytes[$s.id] | ConvertFrom-Json
@@ -781,7 +794,7 @@ function Invoke-FFPreparedArm {
         $script:TestPhaseCommitFault=$null
     }
     $armExecuteSeconds=$armExecuteWatch.Elapsed.TotalSeconds
-    if ($Fixture.PSObject.Properties.Name -notcontains 'replay') { Invoke-TestPhaseRunSummary -RunDirectory $LogRoot }
+    if ($Fixture.PSObject.Properties.Name -notcontains 'replay') { [Antiphon.Nightly.TestPhaseRunSummary]::Run($LogRoot, 50, (Get-TestPhasePublicationScope)) }
     $timing = [Antiphon.Nightly.QualificationTiming]::Report($LogRoot, $TimingRoot)
     $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
     $plansStable = $true
@@ -1020,7 +1033,7 @@ function Test-FFPlannedGoldenBytes {
     $script:QualificationTimingRoot=Join-Path $root 'golden-actual'
     $nodes=@([pscustomobject]@{Uid='CaseUid';ClassName='Fixture.ManifestTests';Type='ManifestTests';Namespace='Fixture';Method='Run';Categories=@()})
     $group=[pscustomobject]@{id='one';classes=@('Fixture.ManifestTests');nodes=@([pscustomobject]@{Uid='caseuid'});seconds=12.5;groupFilter='/*/Fixture/ManifestTests/*'}
-    [void](Write-TestPhasePlannedManifest -LogRoot $root -RunId 'golden' -Attempt '1' -Suite 'antiphon' -SourceDigest 'source' -AssemblyDigest 'assembly' -PolicyDigest 'policy' -CostFileDigest 'cost' -AssemblyId 'fixture' -Groups @($group) -DiscoveryNodes $nodes -ProfileExclusions @())
+    [void](Write-FFPlannedManifest -LogRoot $root -RunId 'golden' -Attempt '1' -Suite 'antiphon' -SourceDigest 'source' -AssemblyDigest 'assembly' -PolicyDigest 'policy' -CostFileDigest 'cost' -AssemblyId 'fixture' -Groups @($group) -DiscoveryNodes $nodes -ProfileExclusions @())
     $expected=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'fixtures/nightly/c1514-failed-first-planned.json'))
     $actual=[IO.File]::ReadAllBytes((Join-Path $script:QualificationTimingRoot 'groups-planned-antiphon.json'))
     Assert-FF ([Convert]::ToBase64String($expected) -ceq [Convert]::ToBase64String($actual)) 'originalManifestBytes'
@@ -1433,7 +1446,7 @@ function Test-FFHeartbeatBindings {
     foreach($sid in @('antiphon','session-runner')){
         $seconds=1800;if($sid -ceq 'session-runner'){$seconds=60}
         $groups=@([pscustomobject]@{id='all-group-3';classes=@('Fixture.Cost');seconds=$seconds},[pscustomobject]@{id='all-group-4';classes=@('Fixture.Short');seconds=120})
-        [void](Write-TestPhasePlannedManifest -LogRoot $dir -RunId 'heartbeat-run' -Attempt '2' -Suite $sid -SourceDigest ('a'*40) -AssemblyDigest ('d'*64) -PolicyDigest ('b'*64) -CostFileDigest ('c'*64) -AssemblyId $sid -Groups $groups -DiscoveryNodes @())
+        [void](Write-FFPlannedManifest -LogRoot $dir -RunId 'heartbeat-run' -Attempt '2' -Suite $sid -SourceDigest ('a'*40) -AssemblyDigest ('d'*64) -PolicyDigest ('b'*64) -CostFileDigest ('c'*64) -AssemblyId $sid -Groups $groups -DiscoveryNodes @())
     }
     $timing=Join-Path $dir 'timing';$path=Join-Path $timing 'groups-planned.json'
     $collision=$true

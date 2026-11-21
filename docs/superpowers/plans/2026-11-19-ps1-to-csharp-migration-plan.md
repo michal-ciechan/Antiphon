@@ -297,7 +297,7 @@ Each decision is stated as a default that the operator or Review may overturn.
     `install-cleanup-task.ps1`.
   - `bootstrap-check.ps1`, documented as `powershell.exe -File`.
   - Agents with no `pwsh` on PATH.
-  - `C1514NativeProbe` in tests runs `powershell.exe -File scripts/summarize-test-phases.ps1`.
+  - `C1514NativeProbe` in tests ran `powershell.exe -File scripts/summarize-test-phases.ps1` (gone in W2-nightly S09: the probe is in-process C#).
 
 ### 1.3 Who calls them (summary; per file in Appendix A)
 
@@ -1100,7 +1100,7 @@ can over-count; Appendix B gives the commands.
 | `scripts/start-apphost.ps1` | 3 | bootstrap/restart/autostart | ps 0 / test.cs 1 / docs 0 | yes (1) |  | unstated | KEEP (sec. 6) |
 | `scripts/start-windows-phone-home-runner.ps1` | 91 | deploy/server2/postgres | ps 1 / test.cs 0 / docs 9 | no |  | 7 only | W2-deploy |
 | `scripts/status-snapshot.ps1` | 192 | orchestrator tool | ps 1 / test.cs 3 / docs 9 / C#:1 | yes (3) |  | 5.1 named | S1 |
-| `scripts/summarize-test-phases.ps1` | 53 | nightly/selection | ps 1 / test.cs 2 / docs 5 | yes (2) |  | 5.1 named | W2-nightly |
+| `scripts/summarize-test-phases.ps1` | 53 | nightly/selection | ps 1 / test.cs 2 / docs 5 | yes (2) |  | 5.1 named | W2-nightly; deleted in W2-nightly S09 (`antiphon-scripts summarize-test-phases`) |
 | `scripts/summarize-test-trace.ps1` | 86 | nightly/selection | ps 0 / test.cs 1 / docs 1 | yes (1) |  | 7 only | W2-nightly |
 | `scripts/task-commit.ps1` | 70 | land/selection/orchestrator support | ps 0 / test.cs 2 / docs 3 / C#:2 | yes (2) |  | 5.1 named | W2-land |
 | `scripts/test-apphost-alert-sinks.ps1` | 108 | harness for kept script | ps 0 / test.cs 0 / docs 2 | no |  | 5.1 named | KEEP-T |

@@ -394,22 +394,9 @@ public sealed class NightlyCoreGoldenTests
 
     // ---- Evidence records: density guard, journal envelope, owner observation (Test-NCEvidenceRecordsMatchFallback). ----
 
-    /// <summary>Write-TestPhaseOwnerObservation into a timing directory: naming, the existing-file refusal and the write.</summary>
-    private static void OwnerObservation(object? verdict, string timing, string suite, string chunk, string runId, string attempt)
-    {
-        try
-        {
-            var doc = TestPhaseRecords.OwnerDocument(verdict, suite, chunk, runId, attempt);
-            if (doc == null) return;
-            var path = Path.Combine(timing, "owner-" + suite + "-" + chunk + "-" + PsValue.Str(doc["runId"]) + "-" + PsValue.Str(doc["attempt"]) + ".json");
-            if (PsValue.Str(PsValue.Prop(TestPhaseFiles.PathIdentity(path), "Kind")) == "regular") return;
-            File.WriteAllText(path, TestPhaseJson.Text(doc, 0), new UTF8Encoding(false));
-        }
-        catch (Exception)
-        {
-            // Owner stamps are diagnostic: a failure does not change the verdict.
-        }
-    }
+    /// <summary>Write-TestPhaseOwnerObservation into a timing directory (the production TestPhaseManifests.WriteOwnerObservation, S09).</summary>
+    private static void OwnerObservation(object? verdict, string timing, string suite, string chunk, string runId, string attempt) =>
+        TestPhaseManifests.WriteOwnerObservation(verdict, "", suite, chunk, runId, attempt, new TestPhasePublicationScope(timing, "Core", "in-process", null, null));
 
     [Test]
     public void Evidence_records_match_the_golden()
@@ -1564,73 +1551,29 @@ public sealed class NightlyCoreGoldenTests
 
     // ---- The planned manifest partition and the census digest order (Test-NCPlannedManifestMatchesFallback). ----
 
-    /// <summary>Get-TestPhaseClassBasisMap: class -> basis from scripts/lib/nightly-class-costs.json.</summary>
-    private static Hashtable ClassBasisMap()
-    {
-        var map = Table();
-        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "nightly-class-costs.json")));
-        if (doc.RootElement.TryGetProperty("classes", out var classes))
-            foreach (var row in classes.EnumerateObject())
-                map[row.Name] = row.Value.TryGetProperty("basis", out var basis) && basis.ValueKind == JsonValueKind.String ? basis.GetString() : "";
-        return map;
-    }
-
     /// <summary>
-    /// Write-TestPhasePlannedManifest's document text (groups-planned-&lt;suite&gt;.json): each group's planned ids (its
-    /// carried nodes, else the view's required UIDs of its classes), pricing basis, filter and seconds, and the
-    /// compiled duplicate / missing / extra partition against the view's required UIDs.
+    /// Write-TestPhasePlannedManifest's document text (groups-planned-&lt;suite&gt;.json), from the production
+    /// TestPhaseManifests.WritePlanned (S09) priced with scripts/lib/nightly-class-costs.json: each group's planned ids (its
+    /// carried nodes, else the view's required UIDs of its classes), pricing basis, filter and seconds, and the compiled
+    /// duplicate / missing / extra partition against the view's required UIDs.
     /// </summary>
     private static string PlannedManifest(object[] groups, object[] nodes, object[] exclusions)
     {
-        var allPlanned = new List<string>();
-        var entry = Obj(("Document", Obj(("Nodes", nodes))), ("InProgress", Array.Empty<object>()), ("Views", new Dictionary<string, object>(StringComparer.Ordinal)));
-        var view = NightlyDiscoveryIndex.View(entry, exclusions, true);
-        var basisMap = ClassBasisMap();
-        var costTable = ClassCostTable();
-        var groupRows = new List<object>();
-        foreach (var group in groups)
+        var timing = Path.Combine(Path.GetTempPath(), "nc-planned-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            var ids = new List<string>();
-            var names = PsValue.PropertyNames(group);
-            bool Has(string name) => names.Contains(name, StringComparer.OrdinalIgnoreCase);
-            var carried = Has("nodes") && PsValue.Prop(group, "nodes") != null ? PsValue.AsArray(PsValue.Prop(group, "nodes")) : [];
-            if (carried.Length > 0)
+            TestPhaseManifests.WritePlanned(new TestPhasePlannedRequest
             {
-                foreach (var node in carried)
-                {
-                    var uid = PsValue.Str(PsValue.Prop(node, "Uid"));
-                    if (!string.IsNullOrWhiteSpace(uid)) ids.Add(uid);
-                }
-            }
-            else
-            {
-                var classes = PsValue.AsArray(PsValue.Prop(group, "classes")).Select(PsValue.Str).ToArray();
-                PlannedManifestCheck.AddStrings(ids, NightlyDiscoveryIndex.RequiredUids(view, classes));
-            }
-            allPlanned.AddRange(ids);
-            var bases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var className in PsValue.AsArray(PsValue.Prop(group, "classes")))
-            {
-                var key = PsValue.Str(className);
-                bases.Add(basisMap.ContainsKey(key) ? PsValue.Str(basisMap[key]) : costTable.ContainsKey(key) ? "measured" : "model");
-            }
-            var pricing = bases.Count == 1 ? bases.First() : bases.Count > 1 ? "mixed" : "model";
-            var filter = "";
-            if (Has("exactFilter") && !string.IsNullOrWhiteSpace(PsValue.Str(PsValue.Prop(group, "exactFilter")))) filter = PsValue.Str(PsValue.Prop(group, "exactFilter"));
-            else if (Has("groupFilter")) filter = PsValue.Str(PsValue.Prop(group, "groupFilter"));
-            object seconds = 0;
-            if (Has("seconds") && PsValue.Prop(group, "seconds") != null) seconds = PsValue.Double(PsValue.Prop(group, "seconds"));
-            groupRows.Add(Ordered(("chunk", PsValue.Str(PsValue.Prop(group, "id"))), ("classes", PsValue.AsArray(PsValue.Prop(group, "classes")).Select(c => (object)PsValue.Str(c)).ToArray()),
-                ("filter", filter), ("plannedTestIds", ids.ToArray()), ("plannedSeconds", seconds), ("pricingBasis", pricing), ("sharedManifestOrder", true)));
+                LogRoot = timing, RunId = "r", Attempt = "1", Suite = "antiphon", SourceDigest = "s", AssemblyDigest = "a", PolicyDigest = "p",
+                CostFileDigest = "c", AssemblyId = "x", Groups = groups, DiscoveryNodes = nodes, ProfileExclusions = exclusions,
+                ClassCostPath = CostFilePath, ClassCostTable = ClassCostTable(),
+            }, new TestPhasePublicationScope(timing, "Core", "in-process", null, null));
+            return File.ReadAllText(Path.Combine(timing, "groups-planned-antiphon.json"));
         }
-        var partition = PlannedManifestCheck.Check(allPlanned, PsValue.AsArray(PsValue.Prop(view, "RequiredUids")));
-        var missing = (object[])PsValue.Prop(partition, "Missing")!;
-        var extra = (object[])PsValue.Prop(partition, "Extra")!;
-        var manifest = Ordered(("version", 1), ("runId", "r"), ("attempt", "1"), ("suite", "antiphon"), ("sourceDigest", "s"), ("assemblyDigest", "a"),
-            ("policyDigest", "p"), ("costFileDigest", "c"), ("assembly", "x"),
-            ("requiredPartitionExact", !(bool)PsValue.Prop(partition, "Duplicate")! && missing.Length == 0 && extra.Length == 0),
-            ("missingIds", missing), ("extraIds", extra), ("groups", groupRows.ToArray()));
-        return TestPhaseJson.Text(manifest, 0);
+        finally
+        {
+            if (Directory.Exists(timing)) Directory.Delete(timing, recursive: true);
+        }
     }
 
     [Test]

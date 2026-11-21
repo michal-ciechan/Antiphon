@@ -1,8 +1,12 @@
 #requires -Version 5.1
 # Qualification supervisor heartbeat. Detection only: this file never stops a process.
 # ASCII-only library, not an autostart script. Dot-source it from the supervisor.
-if (-not (Get-Command Invoke-TestPhaseRunSummary -ErrorAction SilentlyContinue)) {
-    . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+# The evidence it reads is compiled (Antiphon.Nightly); it needs the nightly helpers and the path identity only.
+if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'nightly-common.ps1')
+}
+if (-not (Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'test-phase-paths.ps1')
 }
 
 function Get-QualificationHeartbeatField {

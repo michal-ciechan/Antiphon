@@ -1,11 +1,15 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
+// CARD-1514 summary witnesses. The summary is the production summarize-test-phases command (TestPhaseRunSummary.Summarize),
+// in-process since W2-nightly S09 (scripts/summarize-test-phases.ps1 is gone); the cases still start real children (the
+// staged timing probe, and pwsh for the parse and token scans of the remaining scripts).
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TestPhaseSummaryTests
@@ -36,7 +40,7 @@ public sealed class TestPhaseSummaryTests
         }
 
         var before = Fingerprint(root);
-        var ran = await Summarize(root, cancellationToken);
+        var ran = Summarize(root);
         ran.ExitCode.ShouldBe(0, ran.Text);
         before.ShouldBe(Fingerprint(root));
         var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "timing", "summary.json"))).RootElement;
@@ -110,7 +114,7 @@ public sealed class TestPhaseSummaryTests
         {
             writer.BeginCase("live-case", "Live", "Read", [], 0);
             writer.EndCase("live-case", "Passed", C1514Support.Ms(1));
-            var liveRun = await Summarize(live, cancellationToken);
+            var liveRun = Summarize(live);
             liveRun.ExitCode.ShouldBe(0, liveRun.Text);
             var liveSummary = Path.Combine(liveTiming, "summary.json");
             File.Exists(liveSummary).ShouldBeTrue("live-writer-summary-readable");
@@ -123,7 +127,7 @@ public sealed class TestPhaseSummaryTests
             C1514Support.Complete(writer.ShardPath!, "after-read").GetProperty("outcome").GetString().ShouldBe("Passed");
         }
         await C1514NativeProbe.VerifyAsync(cancellationToken);
-        foreach (var relative in new[] { "scripts/lib/test-phase-evidence.ps1", "scripts/lib/test-phase-paths.ps1", "scripts/summarize-test-phases.ps1" })
+        foreach (var relative in new[] { "scripts/lib/test-phase-evidence.ps1", "scripts/lib/test-phase-paths.ps1" })
         {
             var path = Path.Combine(C1514Support.RepoRoot(), relative);
             var text = File.ReadAllText(path);
@@ -142,7 +146,7 @@ public sealed class TestPhaseSummaryTests
             $ErrorActionPreference = 'Stop'
             $tokens = $null
             $errors = $null
-            foreach ($rel in @('scripts/lib/test-phase-evidence.ps1','scripts/lib/test-phase-paths.ps1','scripts/summarize-test-phases.ps1')) {
+            foreach ($rel in @('scripts/lib/test-phase-evidence.ps1','scripts/lib/test-phase-paths.ps1')) {
                 [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $args[0] $rel), [ref]$tokens, [ref]$errors)
                 if ($errors -and $errors.Count -gt 0) { throw $errors[0].ToString() }
             }
@@ -153,7 +157,7 @@ public sealed class TestPhaseSummaryTests
         parsed.Text.ShouldContain("PARSE_OK");
 
         var absent = C1514Support.FreshRoot();
-        var absentRun = await Summarize(absent, cancellationToken);
+        var absentRun = Summarize(absent);
         absentRun.ExitCode.ShouldBe(0, absentRun.Text);
         File.Exists(Path.Combine(absent, "timing", "summary.json")).ShouldBeFalse();
 
@@ -163,7 +167,7 @@ public sealed class TestPhaseSummaryTests
             "{\"version\":1,\"runId\":\"run-a\",\"assembly\":\"asm1\"}", cancellationToken);
         WriteLiteral(root, "trx-only");
         var inputs = Fingerprint(root);
-        var first = await Summarize(root, cancellationToken);
+        var first = Summarize(root);
         first.ExitCode.ShouldBe(0, first.Text);
         var summary = File.ReadAllBytes(Path.Combine(root, "timing", "summary.json"));
         var csv = File.ReadAllBytes(Path.Combine(root, "timing", "tests.csv"));
@@ -171,7 +175,7 @@ public sealed class TestPhaseSummaryTests
         summary.Length.ShouldBeGreaterThan(0);
         csv.Length.ShouldBeGreaterThan(0);
         markdown.Length.ShouldBeGreaterThan(0);
-        var second = await Summarize(root, cancellationToken);
+        var second = Summarize(root);
         second.ExitCode.ShouldBe(0, second.Text);
         File.ReadAllBytes(Path.Combine(root, "timing", "summary.json")).ShouldBe(summary);
         File.ReadAllBytes(Path.Combine(root, "timing", "tests.csv")).ShouldBe(csv);
@@ -248,7 +252,7 @@ public sealed class TestPhaseSummaryTests
 
         $root = $args[0]
         $found = $false
-        foreach ($rel in @('scripts/lib/test-phase-evidence.ps1', 'scripts/lib/test-phase-paths.ps1', 'scripts/summarize-test-phases.ps1')) {
+        foreach ($rel in @('scripts/lib/test-phase-evidence.ps1', 'scripts/lib/test-phase-paths.ps1')) {
             $path = Join-Path $root $rel
             $tokens = $null
             $errors = $null
@@ -347,10 +351,13 @@ public sealed class TestPhaseSummaryTests
         return sb.ToString();
     }
 
-    private static async Task<(int ExitCode, string Text)> Summarize(string root, CancellationToken cancellationToken)
+    // antiphon-scripts summarize-test-phases --run-directory root --top 50, in-process: its exit and its output.
+    private static (int ExitCode, string Text) Summarize(string root)
     {
-        var script = Path.Combine(C1514Support.RepoRoot(), "scripts", "summarize-test-phases.ps1");
-        return await C1514Support.RunProcess(Pwsh(script, "-RunDirectory", root, "-Top", "50"), cancellationToken);
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exit = TestPhaseRunSummary.Summarize(new TestPhaseSummarizeOptions { RunDirectory = root, Top = 50 }, JournalFixtures.Scope(), output, error);
+        return (exit, output + Environment.NewLine + error);
     }
 
     private static ProcessStartInfo Pwsh(string script, params string[] args)

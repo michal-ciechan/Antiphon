@@ -9,11 +9,10 @@ namespace Antiphon.Tests.TestHelpers;
 // CARD-1514 M1. Crash, corruption, lock and live-reader witnesses, in-process on the production publication
 // (W2-nightly S08; these were the v5-v8 cases of ManifestPublicationHarness.ps1, whose writers ran in child pwsh
 // processes). A killed writer is a publication stopped for good at its commit barrier (an in-process barrier seam that
-// never answers), with writer.lock released as the dying process would release it; the summary is the still-PowerShell
-// production entry (scripts/summarize-test-phases.ps1). A missing barrier or successor is an assertion failure.
+// never answers), with writer.lock released as the dying process would release it; the summary is the production
+// summarize-test-phases command, in-process (W2-nightly S09). A missing barrier or successor is an assertion failure.
 // NotInParallel: the evidence file system and the cultures are process-wide.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel]
 public sealed class RcManifestRecoveryTests
 {
@@ -54,7 +53,7 @@ public sealed class RcManifestRecoveryTests
 
     [Test]
     [Timeout(180_000)]
-    public Task CommittedCorruptionCannotFallBack(CancellationToken cancellationToken) => InvariantAsync(async () =>
+    public Task CommittedCorruptionCannotFallBack(CancellationToken cancellationToken) => Invariant(() =>
     {
         var work = C1514Support.FreshRoot();
         SuccessorPrefixes(work);
@@ -83,7 +82,7 @@ public sealed class RcManifestRecoveryTests
         File.Exists(statePath).ShouldBeTrue("publication-state-missing-after-corruption");
         using (var state = JsonDocument.Parse(File.ReadAllText(statePath)))
             state.RootElement.GetProperty("publicationComplete").GetBoolean().ShouldBeFalse("publicationComplete-not-false");
-        await Summarize(root, cancellationToken);
+        Summarize(root);
         using var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "timing", "summary.json")));
         summary.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse("summary-complete-despite-corruption");
         summary.RootElement.GetProperty("quality").EnumerateArray().Any(t => t.GetString() == "publication-corruption")
@@ -121,7 +120,7 @@ public sealed class RcManifestRecoveryTests
 
     [Test]
     [Timeout(120_000)]
-    public Task LiveReaderSeesOnlyWholeRecords(CancellationToken cancellationToken) => InvariantAsync(async () =>
+    public Task LiveReaderSeesOnlyWholeRecords(CancellationToken cancellationToken) => Invariant(() =>
     {
         var work = C1514Support.FreshRoot();
         var childWork = Path.Combine(work, "held");
@@ -136,7 +135,7 @@ public sealed class RcManifestRecoveryTests
             WriteText(Path.Combine(childWork, "timing", "groups-planned.json"), "{\"version\":1,\"runId\":\"run-v5\",\"attempt\":\"1\",\"suite\":\"antiphon\",\"assembly\":\"Antiphon.Tests\",\"groups\":[]}");
             var current = Path.Combine(childWork, "timing", "groups-executed.journal", "current.json");
             var before = Sha(current);
-            await Summarize(childWork, cancellationToken);
+            Summarize(childWork);
             Sha(current).ShouldBe(before, "summary-mutated-writer-state");
         }
         finally { killed.Kill(); }

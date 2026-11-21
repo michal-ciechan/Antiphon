@@ -12,7 +12,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 // CARD-1514 S1. Portable contracts for the rc timing instrumentation.
-// Native Windows owner proof is CP-2 and is not discharged here.
+// Native Windows owner proof is CP-2 and is not discharged here. The manifests, the summary and the phase-timing
+// variables are the production C# (W2-nightly S09), called in-process; the owner, setup and call-site cases still run
+// the still-PowerShell nightly-tests executor (scripts/lib/nightly-tests-impl.ps1) in a pwsh child.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFullTimingContractTests
@@ -46,25 +48,72 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("attempt2Preserved").GetBoolean().ShouldBeTrue("rerun overwrote the first owner observation");
     }
 
+    // W2-nightly S09: the planned manifests, launch completion and the run summary are the production C#
+    // (TestPhaseManifests, TestPhaseRunSummary), called in-process.
     [Test]
     [Timeout(60_000)]
-    public async Task PlansRetainEverySuite(CancellationToken cancellationToken)
+    public Task PlansRetainEverySuite(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(PlansScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("indexSuites").GetInt32().ShouldBe(2, "old singleton overwrite");
-        Uids(observed, "antiphonUids").ShouldBe(new[] { "uid-antiphon" });
-        Uids(observed, "e2eUids").ShouldBe(new[] { "uid-e2e" });
-        observed.GetProperty("antiphonAssembly").GetString().ShouldBe("Antiphon.Tests");
-        observed.GetProperty("e2eAssembly").GetString().ShouldBe("Antiphon.E2E");
-        observed.GetProperty("antiphonSource").GetString().ShouldBe("src", "index dropped source digest");
-        observed.GetProperty("e2eSource").GetString().ShouldBe("src", "index dropped source digest");
-        observed.GetProperty("stale").GetBoolean().ShouldBeFalse("stale-input-not-joined");
-        observed.GetProperty("antiphonJoined").GetBoolean().ShouldBeTrue("cross-suite plan was stale");
-        observed.GetProperty("e2eJoined").GetBoolean().ShouldBeTrue("cross-suite plan was stale");
-        SuiteOf(observed, "antiphon-case").ShouldBe("antiphon");
-        SuiteOf(observed, "e2e-case").ShouldBe("e2e");
+        var work = FreshRoot();
+        var timing = Path.Combine(work, "timing");
+        var scope = JournalFixtures.Scope();
+        var costPath = Path.Combine(C1514Support.RepoRoot(), "scripts", "lib", "nightly-class-costs.json");
+        void Plan(string suite, string assembly, string className, string uid)
+        {
+            var type = className.Split('.')[^1];
+            object node = new PlainObject(("ClassName", className), ("Type", type), ("Method", "One"), ("Uid", uid), ("State", "NotStarted"),
+                ("Categories", Array.Empty<object>()), ("Excluded", false));
+            object group = new PlainObject(("id", "all-group-1"), ("classes", new object[] { type }), ("seconds", 3), ("exactFilter", ""));
+            TestPhaseManifests.WritePlanned(new TestPhasePlannedRequest
+            {
+                LogRoot = work, RunId = "run-1", Attempt = "1", Suite = suite, SourceDigest = "src", AssemblyDigest = "asm", PolicyDigest = "pol",
+                CostFileDigest = "cost", AssemblyId = assembly, Groups = new[] { group }, DiscoveryNodes = new[] { node }, ProfileExclusions = Array.Empty<object>(),
+                ClassCostPath = costPath,
+            }, scope);
+        }
+        Plan("antiphon", "Antiphon.Tests", "Antiphon.Tests.Scripts.RcAntiphonSampleTests", "uid-antiphon");
+        Plan("e2e", "Antiphon.E2E", "Antiphon.Tests.E2E.RcE2ESampleTests", "uid-e2e");
+        void Case(string suite, string id)
+        {
+            var assembly = suite == "e2e" ? "Antiphon.E2E" : "Antiphon.Tests";
+            File.WriteAllText(Path.Combine(timing, "cases-" + suite + "-n1.jsonl"), Header(suite, assembly) + "\n" + CompleteLine(id, "Passed", 1) + "\n");
+            var trx = Path.Combine(work, suite + ".trx");
+            File.WriteAllText(trx, Trx(TrxRow(id, "Passed", "C1514_NATIVE body " + id)));
+            var verdict = new PlainObject(("ExitCode", 0), ("coverageComplete", true), ("testsPassed", true));
+            TestPhaseManifests.CompleteLaunch(verdict, work, trx, suite, "all-group-1", "run-1", "1", 1, null, scope).ShouldBeSameAs(verdict);
+        }
+        Case("antiphon", "antiphon-case");
+        Case("e2e", "e2e-case");
+        TestPhaseRunSummary.Run(work, 20, scope);
+
+        string[] Planned(string name)
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(timing, name)));
+            return doc.RootElement.GetProperty("groups").EnumerateArray().SelectMany(g => g.GetProperty("plannedTestIds").EnumerateArray()).Select(i => i.GetString() ?? "").ToArray();
+        }
+        Planned("groups-planned-antiphon.json").ShouldBe(new[] { "uid-antiphon" });
+        Planned("groups-planned-e2e.json").ShouldBe(new[] { "uid-e2e" });
+        using (var index = JsonDocument.Parse(File.ReadAllText(Path.Combine(timing, "groups-planned-index.json"))))
+        {
+            var suites = index.RootElement.GetProperty("suites").EnumerateArray().ToList();
+            suites.Count.ShouldBe(2, "old singleton overwrite");
+            foreach (var (suite, assembly) in new[] { ("antiphon", "Antiphon.Tests"), ("e2e", "Antiphon.E2E") })
+            {
+                var row = suites.Single(r => r.GetProperty("suite").GetString() == suite);
+                row.GetProperty("assembly").GetString().ShouldBe(assembly);
+                row.GetProperty("sourceDigest").GetString().ShouldBe("src", "index dropped source digest");
+            }
+        }
+        using var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(timing, "summary.json")));
+        summary.RootElement.GetProperty("quality").EnumerateArray().Select(q => q.GetString()).ShouldNotContain("stale-input-not-joined");
+        var tests = summary.RootElement.GetProperty("tests").EnumerateArray().ToList();
+        foreach (var (id, suite) in new[] { ("antiphon-case", "antiphon"), ("e2e-case", "e2e") })
+        {
+            var row = tests.Single(t => t.GetProperty("testId").GetString() == id);
+            row.GetProperty("suite").GetString().ShouldBe(suite);
+            row.GetProperty("joined").GetBoolean().ShouldBeTrue("cross-suite plan was stale");
+        }
+        return Task.CompletedTask;
     }
 
     // W2-nightly S03: the host-stats library is the compiled QualificationHostStats (still not wired), called in-process.
@@ -179,16 +228,25 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("supplementalIsMarker").GetBoolean().ShouldBeTrue("supplemental discovery was not the marker");
     }
 
+    // W2-nightly S09: Enable-TestPhaseExecutionEnvironment is TestPhaseEnvironment.Enable, called in-process with the
+    // inherited root (this process's ANTIPHON_TEST_PHASE_ROOT in production) as an argument.
     [Test]
-    [Timeout(60_000)]
-    public async Task PhaseRootAbsentEmptyAndSet(CancellationToken cancellationToken)
+    public void PhaseRootAbsentEmptyAndSet()
     {
-        var root = FreshRoot();
-        var observed = await Run(PhaseRootScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("absentPresent").GetBoolean().ShouldBeFalse("absent phase root was copied");
-        observed.GetProperty("emptyPresent").GetBoolean().ShouldBeFalse("empty phase root was copied");
-        observed.GetProperty("setCopied").GetBoolean().ShouldBeTrue("set phase root was not copied");
+        var work = FreshRoot();
+        var absent = new System.Collections.Hashtable(StringComparer.OrdinalIgnoreCase) { ["ANTIPHON_TEST_PHASE_ROOT"] = "stale" };
+        TestPhaseEnvironment.Enable(absent, work, "run-1", "g", "1", "antiphon", "local", "", null!);
+        absent.ContainsKey("ANTIPHON_TEST_PHASE_ROOT").ShouldBeFalse("absent phase root was copied");
+        var empty = new System.Collections.Hashtable(StringComparer.OrdinalIgnoreCase) { ["ANTIPHON_TEST_PHASE_ROOT"] = "stale" };
+        TestPhaseEnvironment.Enable(empty, work, "run-1", "g", "1", "antiphon", "local", "   ", "");
+        empty.ContainsKey("ANTIPHON_TEST_PHASE_ROOT").ShouldBeFalse("empty phase root was copied");
+        var setRoot = Path.Combine(work, "phase-root");
+        var set = new System.Collections.Hashtable(StringComparer.OrdinalIgnoreCase);
+        TestPhaseEnvironment.Enable(set, work, "run-1", "g", "1", "antiphon", "local", "", setRoot).ShouldBeSameAs(set);
+        set["ANTIPHON_TEST_PHASE_ROOT"].ShouldBe(setRoot, "set phase root was not copied");
+        set["ANTIPHON_TEST_PHASE_RUN_ID"].ShouldBe("run-1", "set phase root was not copied");
+        var made = TestPhaseEnvironment.Enable(null!, work, "run-1", "g", "1", "antiphon", "rc", "", "");
+        made["ANTIPHON_TEST_PHASE_ROOT"].ShouldBe(Path.Combine(work, "timing"), "qualification default root");
     }
 
     // W2-nightly S11: the production chunk discovery is NightlyTestsPlan.ChunkDiscoverySeconds, called in-process.
@@ -228,40 +286,117 @@ public sealed class RcFullTimingContractTests
 
     [Test]
     [Timeout(90_000)]
-    public async Task CountsAndJoinsPreserveEvidence(CancellationToken cancellationToken)
+    public Task CountsAndJoinsPreserveEvidence(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(CountsScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("earlyPresent").GetBoolean().ShouldBeTrue("completed rows retained");
-        observed.GetProperty("latePresent").GetBoolean().ShouldBeTrue("completed rows past the inline bound were dropped");
-        observed.GetProperty("torn").GetBoolean().ShouldBeTrue("torn input incomplete");
-        observed.GetProperty("complete").GetBoolean().ShouldBeFalse("torn input incomplete");
-        observed.GetProperty("sharedCount").GetInt32().ShouldBe(2, "same chunk id across suites collapsed");
-        Suites(observed, "sharedSuites").OrderBy(item => item, StringComparer.Ordinal).ShouldBe(new[] { "antiphon", "e2e" });
-        observed.GetProperty("orphanOutcome").GetString().ShouldBe("unknown", "missing is unknown");
-        observed.GetProperty("orphanIncomplete").GetBoolean().ShouldBeTrue("no false pass");
-        observed.GetProperty("orphanCountsKnown").GetBoolean().ShouldBeFalse("no false zero");
-        observed.GetProperty("duplicateJoined").GetBoolean().ShouldBeFalse("duplicate native markers");
-        observed.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
-        observed.GetProperty("summaryAggregationMilliseconds").GetInt32().ShouldBeGreaterThanOrEqualTo(0);
-        observed.GetProperty("summaryAggregationMilliseconds").GetInt32().ShouldBeLessThanOrEqualTo(5000);
+        var work = FreshRoot();
+        var timing = Path.Combine(work, "timing");
+        Directory.CreateDirectory(timing);
+        var scope = JournalFixtures.Scope();
+        var sb = new StringBuilder();
+        sb.Append(Header("antiphon", "Antiphon.Tests")).Append('\n');
+        sb.Append(CompleteLine("early-case", "Passed", 4)).Append('\n');
+        sb.Append(CompleteLine("shared-case", "Passed", 4)).Append('\n');
+        var pad = CompleteLine("pad-case", "Passed", 4);
+        while (sb.Length < 270000) sb.Append(pad).Append('\n');
+        sb.Append(CompleteLine("late-case", "Passed", 4)).Append('\n');
+        sb.Append("{\"recordKind\":\"comp");
+        File.WriteAllText(Path.Combine(timing, "cases-antiphon-n1.jsonl"), sb.ToString());
+        File.WriteAllText(Path.Combine(timing, "cases-e2e-n1.jsonl"), Header("e2e", "Antiphon.Tests") + "\n" + CompleteLine("shared-case", "Failed", 4) + "\n");
+        File.WriteAllText(Path.Combine(work, "antiphon.trx"), Trx(TrxRow("early-guid", "Passed", "C1514_NATIVE body early-case") + TrxRow("shared-guid", "Passed", "C1514_NATIVE body shared-case")
+            + TrxRow("late-guid", "Passed", "C1514_NATIVE body late-case") + TrxRow("dup-a", "Passed", "C1514_NATIVE body shared-case")
+            + TrxRow("dup-b", "Failed", "C1514_NATIVE one shared-case\nC1514_NATIVE two shared-case")));
+        File.WriteAllText(Path.Combine(work, "e2e.trx"), Trx(TrxRow("e2e-guid", "Failed", "C1514_NATIVE body shared-case")));
+        File.WriteAllText(Path.Combine(work, "orphan.trx"), Trx(TrxRow("orphan-guid", "Passed", "no-phase")));
+        foreach (var (suite, trx, exit, passed) in new[] { ("antiphon", "antiphon.trx", 0, true), ("e2e", "e2e.trx", 1, false), ("scripts", "orphan.trx", 0, true) })
+            TestPhaseManifests.WriteExecuted(new PlainObject(("ExitCode", exit), ("coverageComplete", true), ("testsPassed", passed)), work, Path.Combine(work, trx),
+                suite, "all-group-1", "run-1", "1", 1, null, scope).ShouldBeTrue("publish " + suite);
+        File.WriteAllText(Path.Combine(timing, "groups-planned.json"), "{\"version\":1,\"runId\":\"run-1\",\"attempt\":\"1\",\"suite\":\"antiphon\",\"assembly\":\"Antiphon.Tests\",\"groups\":[]}");
+        TestPhaseRunSummary.Run(work, 20, scope);
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(timing, "summary.json")));
+        var summary = doc.RootElement;
+        var tests = summary.GetProperty("tests").EnumerateArray().ToList();
+        var ids = tests.Select(t => t.GetProperty("testId").GetString()).ToList();
+        ids.ShouldContain("early-case", "completed rows retained");
+        ids.ShouldContain("late-case", "completed rows past the inline bound were dropped");
+        var quality = summary.GetProperty("quality").EnumerateArray().Select(q => q.GetString()).ToList();
+        (quality.Contains("torn-tail") || summary.GetProperty("tornLines").GetInt32() > 0).ShouldBeTrue("torn input incomplete");
+        summary.GetProperty("complete").GetBoolean().ShouldBeFalse("torn input incomplete");
+        var shared = tests.Where(t => t.GetProperty("testId").GetString() == "shared-case").ToList();
+        shared.Count.ShouldBe(2, "same chunk id across suites collapsed");
+        shared.Select(t => t.GetProperty("suite").GetString()).Order(StringComparer.Ordinal).ShouldBe(new[] { "antiphon", "e2e" });
+        shared.Any(t => t.GetProperty("outcome").GetString() == "Passed" && !t.GetProperty("incomplete").GetBoolean()).ShouldBeFalse("duplicate native markers");
+        var orphan = tests.Single(t => t.GetProperty("testId").GetString() == "orphan-guid");
+        orphan.GetProperty("outcome").GetString().ShouldBe("unknown", "missing is unknown");
+        orphan.GetProperty("incomplete").GetBoolean().ShouldBeTrue("no false pass");
+        orphan.GetProperty("countsKnown").GetBoolean().ShouldBeFalse("no false zero");
+        summary.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
+        var spent = summary.GetProperty("summaryAggregationMilliseconds").GetInt32();
+        spent.ShouldBeGreaterThanOrEqualTo(0);
+        spent.ShouldBeLessThanOrEqualTo(5000);
+        return Task.CompletedTask;
     }
 
     [Test]
     [Timeout(90_000)]
-    public async Task SummaryReReadSharesOneBudget(CancellationToken cancellationToken)
+    public Task SummaryReReadSharesOneBudget(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(BudgetScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("firstLate").GetBoolean().ShouldBeTrue("first over-budget shard was not re-read");
-        observed.GetProperty("secondLate").GetBoolean().ShouldBeFalse("second shard was re-read after the shared budget was exhausted");
-        observed.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
-        var spent = observed.GetProperty("summaryAggregationMilliseconds").GetInt32();
+        var work = FreshRoot();
+        var timing = Path.Combine(work, "timing");
+        Directory.CreateDirectory(timing);
+        void OverBudgetShard(string name, string suite, string earlyId, string lateId)
+        {
+            var sb = new StringBuilder();
+            sb.Append(Header(suite, "Antiphon.Tests")).Append('\n');
+            sb.Append(CompleteLine(earlyId, "Passed", 1)).Append('\n');
+            var pad = CompleteLine("pad-case", "Passed", 1);
+            while (sb.Length < 270000) sb.Append(pad).Append('\n');
+            sb.Append(CompleteLine(lateId, "Passed", 1)).Append('\n');
+            File.WriteAllText(Path.Combine(timing, name), sb.ToString());
+        }
+        OverBudgetShard("cases-a-budget.jsonl", "antiphon", "early-a", "late-a");
+        OverBudgetShard("cases-b-budget.jsonl", "e2e", "early-b", "late-b");
+        File.WriteAllText(Path.Combine(timing, "groups-planned.json"), "{\"version\":1,\"runId\":\"run-1\",\"attempt\":\"1\",\"suite\":\"antiphon\",\"assembly\":\"Antiphon.Tests\",\"groups\":[]}");
+        File.WriteAllText(Path.Combine(timing, "groups-planned-e2e.json"), "{\"version\":1,\"runId\":\"run-1\",\"attempt\":\"1\",\"suite\":\"e2e\",\"assembly\":\"Antiphon.E2E\",\"groups\":[]}");
+        // The summary's re-read budget runs on this clock: a full re-read spends all of it.
+        var scope = JournalFixtures.Scope();
+        scope.SummaryReReadWatch = new SpentOnFullRead();
+        TestPhaseRunSummary.Run(work, 20, scope);
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(timing, "summary.json")));
+        var ids = doc.RootElement.GetProperty("tests").EnumerateArray().Select(t => t.GetProperty("testId").GetString()).ToList();
+        ids.ShouldContain("late-a", "first over-budget shard was not re-read");
+        ids.ShouldNotContain("late-b", "second shard was re-read after the shared budget was exhausted");
+        doc.RootElement.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
+        var spent = doc.RootElement.GetProperty("summaryAggregationMilliseconds").GetInt32();
         spent.ShouldBeGreaterThan(0, "aggregate re-read recorded no time");
         spent.ShouldBeLessThanOrEqualTo(5000, "aggregate re-read exceeded the shared budget");
+        return Task.CompletedTask;
     }
+
+    // A read-budget clock that a full re-read spends at once.
+    private sealed class SpentOnFullRead : ITestPhaseWatch
+    {
+        public long ElapsedMilliseconds { get; private set; }
+        public bool IsRunning { get; private set; }
+        public void Start() => IsRunning = true;
+        public void Stop() => IsRunning = false;
+        public void OnFullRead() => ElapsedMilliseconds = 5000;
+    }
+
+    private static string Header(string suite, string assembly) =>
+        "{\"recordKind\":\"header\",\"version\":1,\"pid\":1,\"nonce\":\"n1\",\"frequencyHz\":10000000,\"epochUtc\":\"2026-10-29T00:00:00.0000000Z\",\"runId\":\"run-1\",\"groupId\":\"all-group-1\",\"attempt\":\"1\",\"suite\":\""
+        + suite + "\",\"assembly\":\"" + assembly + "\"}";
+
+    private static string CompleteLine(string id, string outcome, int db) =>
+        "{\"recordKind\":\"complete\",\"testId\":\"" + id + "\",\"className\":\"C\",\"method\":\"M\",\"args\":[],\"startOffsetMs\":0,\"endOffsetMs\":1,\"outcome\":\"" + outcome
+        + "\",\"phases\":[],\"processes\":[],\"exclusive\":{\"db\":" + db.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        + ",\"host\":0,\"process\":0,\"fs\":0,\"network\":0,\"fixture\":0},\"overlapMs\":0,\"remainderMs\":0,\"childUnionMs\":0,\"droppedPhaseCount\":0,\"shared\":false,\"incomplete\":false}";
+
+    private static string Trx(string body) => "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><Results>" + body + "</Results></TestRun>";
+
+    private static string TrxRow(string id, string outcome, string stdout) =>
+        "<UnitTestResult testId=\"" + id + "\" testName=\"" + id + "\" outcome=\"" + outcome + "\"><Output><StdOut>" + stdout + "</StdOut></Output></UnitTestResult>";
 
     // W2-nightly S04: the witness (OwnerExitWitness) and C1039_DescendantExit are C# in NightlyNativeOwnershipTests.cs (the
     // driver scripts/test-nightly-native.ps1 and test-rc-speed-os-witness.ps1 are gone); their shape is read with Roslyn.
@@ -322,33 +457,6 @@ public sealed class RcFullTimingContractTests
                 || binary.IsKind(SyntaxKind.CoalesceExpression))) return false;
         }
         return true;
-    }
-
-    private static string[] Uids(JsonElement observed, string name)
-    {
-        var values = new List<string>();
-        foreach (var item in observed.GetProperty(name).EnumerateArray())
-            values.Add(item.GetString() ?? "");
-        return values.ToArray();
-    }
-
-    private static string SuiteOf(JsonElement observed, string testId)
-    {
-        foreach (var row in observed.GetProperty("rows").EnumerateArray())
-        {
-            if (row.GetProperty("testId").GetString() == testId)
-                return row.GetProperty("suite").GetString() ?? "";
-        }
-
-        throw new InvalidOperationException("missing summary row " + testId);
-    }
-
-    private static List<string> Suites(JsonElement observed, string name)
-    {
-        var values = new List<string>();
-        foreach (var item in observed.GetProperty(name).EnumerateArray())
-            values.Add(item.GetString() ?? "");
-        return values;
     }
 
     private static string FreshRoot()
@@ -534,135 +642,6 @@ public sealed class RcFullTimingContractTests
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
         """;
 
-    private const string PlansScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-coverage.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        function New-RcNode([string]$uid, [string]$className) {
-            $type = $className.Split('.')[-1]
-            return [pscustomobject]@{
-                ClassName = $className
-                Type = $type
-                Method = 'One'
-                Uid = $uid
-                State = 'NotStarted'
-                Categories = @()
-                Excluded = $false
-            }
-        }
-        function New-RcGroup([string]$className) {
-            $type = $className.Split('.')[-1]
-            return [pscustomobject]@{ id = 'all-group-1'; classes = @($type); seconds = 3; exactFilter = '' }
-        }
-        $antiphonClass = 'Antiphon.Tests.Scripts.RcAntiphonSampleTests'
-        $e2eClass = 'Antiphon.Tests.E2E.RcE2ESampleTests'
-        $common = @{
-            LogRoot = $work; RunId = 'run-1'; Attempt = '1'
-            SourceDigest = 'src'; AssemblyDigest = 'asm'; PolicyDigest = 'pol'; CostFileDigest = 'cost'
-            ProfileExclusions = @()
-        }
-        [void](Write-TestPhasePlannedManifest @common -Suite 'antiphon' -AssemblyId 'Antiphon.Tests' -Groups @(New-RcGroup $antiphonClass) -DiscoveryNodes @(New-RcNode 'uid-antiphon' $antiphonClass))
-        [void](Write-TestPhasePlannedManifest @common -Suite 'e2e' -AssemblyId 'Antiphon.E2E' -Groups @(New-RcGroup $e2eClass) -DiscoveryNodes @(New-RcNode 'uid-e2e' $e2eClass))
-        function Write-RcCase([string]$suite, [string]$id) {
-            $timing = Join-Path $work 'timing'
-            $assembly = 'Antiphon.Tests'
-            if ($suite -eq 'e2e') { $assembly = 'Antiphon.E2E' }
-            $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"' + $suite + '","assembly":"' + $assembly + '"}'
-            $complete = '{"recordKind":"complete","testId":"' + $id + '","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"Passed","phases":[],"processes":[],"exclusive":{"db":1,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
-            [IO.File]::WriteAllText((Join-Path $timing ('cases-' + $suite + '-n1.jsonl')), ($header + "`n" + $complete + "`n"))
-            $trxPath = Join-Path $work ($suite + '.trx')
-            $trx = '<?xml version="1.0" encoding="utf-8"?><TestRun><Results><UnitTestResult testId="' + $id + '" testName="' + $id + '" outcome="Passed"><Output><StdOut>C1514_NATIVE body ' + $id + '</StdOut></Output></UnitTestResult></Results></TestRun>'
-            [IO.File]::WriteAllText($trxPath, $trx)
-            $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
-            [void](Complete-TestPhaseLaunch -Verdict $verdict -LogRoot $work -TrxPath $trxPath -Suite $suite -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1)
-        }
-        Write-RcCase 'antiphon' 'antiphon-case'
-        Write-RcCase 'e2e' 'e2e-case'
-        Invoke-TestPhaseRunSummary -RunDirectory $work -Top 20
-        $timing = Join-Path $work 'timing'
-        function Read-Uids([string]$name) {
-            $path = Join-Path $timing $name
-            if (-not (Test-Path -LiteralPath $path)) { return @() }
-            $doc = [IO.File]::ReadAllText($path) | ConvertFrom-Json
-            $ids = New-Object System.Collections.Generic.List[string]
-            foreach ($group in @($doc.groups)) {
-                foreach ($id in @($group.plannedTestIds)) { $ids.Add([string]$id) }
-            }
-            return @($ids.ToArray())
-        }
-        $indexCount = 0
-        $antiphonAssembly = ''
-        $e2eAssembly = ''
-        $antiphonSource = ''
-        $e2eSource = ''
-        $indexPath = Join-Path $timing 'groups-planned-index.json'
-        if (Test-Path -LiteralPath $indexPath) {
-            $index = [IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
-            if ($index.PSObject.Properties.Name -contains 'suites') {
-                $indexCount = @($index.suites).Count
-                foreach ($row in @($index.suites)) {
-                    $suiteName = [string]$row.suite
-                    $asm = ''
-                    $source = ''
-                    if ($row.PSObject.Properties.Name -contains 'assembly') { $asm = [string]$row.assembly }
-                    if ($row.PSObject.Properties.Name -contains 'sourceDigest') { $source = [string]$row.sourceDigest }
-                    if ($suiteName -eq 'antiphon') { $antiphonAssembly = $asm; $antiphonSource = $source }
-                    if ($suiteName -eq 'e2e') { $e2eAssembly = $asm; $e2eSource = $source }
-                }
-            }
-        }
-        $rows = New-Object System.Collections.Generic.List[object]
-        $antiphonJoined = $false
-        $e2eJoined = $false
-        $stale = $false
-        $summaryPath = Join-Path $timing 'summary.json'
-        if (Test-Path -LiteralPath $summaryPath) {
-            $summary = [IO.File]::ReadAllText($summaryPath) | ConvertFrom-Json
-            if ($summary.PSObject.Properties.Name -contains 'quality') {
-                foreach ($flag in @($summary.quality)) {
-                    if ([string]$flag -eq 'stale-input-not-joined') { $stale = $true }
-                }
-            }
-            foreach ($test in @($summary.tests)) {
-                $suite = ''
-                if ($test.PSObject.Properties.Name -contains 'suite') { $suite = [string]$test.suite }
-                $joined = $false
-                if ($test.PSObject.Properties.Name -contains 'joined') { $joined = [bool]$test.joined }
-                $rows.Add([ordered]@{ testId = [string]$test.testId; suite = $suite })
-                if ([string]$test.testId -eq 'antiphon-case' -and $joined -and $suite -eq 'antiphon') { $antiphonJoined = $true }
-                if ([string]$test.testId -eq 'e2e-case' -and $joined -and $suite -eq 'e2e') { $e2eJoined = $true }
-            }
-        }
-        $problems = New-Object System.Collections.Generic.List[string]
-        if (-not $antiphonJoined -or $stale) { $problems.Add('cross-suite-stale-not-joined') }
-        if (-not $e2eJoined) { $problems.Add('e2e-not-joined') }
-        if ($antiphonSource -ne 'src' -or $e2eSource -ne 'src') { $problems.Add('index-digest-missing') }
-        if ($antiphonAssembly -ne 'Antiphon.Tests' -or $e2eAssembly -ne 'Antiphon.E2E') { $problems.Add('index-assembly-mismatch') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            indexSuites = [int]$indexCount
-            antiphonUids = @(Read-Uids 'groups-planned-antiphon.json')
-            e2eUids = @(Read-Uids 'groups-planned-e2e.json')
-            antiphonAssembly = [string]$antiphonAssembly
-            e2eAssembly = [string]$e2eAssembly
-            antiphonSource = [string]$antiphonSource
-            e2eSource = [string]$e2eSource
-            stale = [bool]$stale
-            antiphonJoined = [bool]$antiphonJoined
-            e2eJoined = [bool]$e2eJoined
-            rows = @($rows.ToArray())
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
-        """;
-
     private const string SetupScript = """
         $ErrorActionPreference = 'Stop'
         $repo = $args[0]
@@ -732,192 +711,6 @@ public sealed class RcFullTimingContractTests
             stampOverlapped = [bool]$stampOverlapped
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 4))
-        """;
-
-    private const string CountsScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        $timing = Join-Path $work 'timing'
-        New-Item -ItemType Directory -Path $timing -Force | Out-Null
-        $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"SUITE","assembly":"Antiphon.Tests"}'
-        function Complete-Line([string]$id, [string]$outcome) {
-            return '{"recordKind":"complete","testId":"' + $id + '","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"' + $outcome + '","phases":[],"processes":[],"exclusive":{"db":4,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
-        }
-        $sb = New-Object System.Text.StringBuilder
-        [void]$sb.Append(($header.Replace('SUITE', 'antiphon') + "`n"))
-        [void]$sb.Append((Complete-Line 'early-case' 'Passed') + "`n")
-        [void]$sb.Append((Complete-Line 'shared-case' 'Passed') + "`n")
-        $pad = Complete-Line 'pad-case' 'Passed'
-        while ($sb.Length -lt 270000) { [void]$sb.Append($pad + "`n") }
-        [void]$sb.Append((Complete-Line 'late-case' 'Passed') + "`n")
-        [void]$sb.Append('{"recordKind":"comp')
-        [IO.File]::WriteAllText((Join-Path $timing 'cases-antiphon-n1.jsonl'), $sb.ToString())
-        $e2e = $header.Replace('SUITE', 'e2e') + "`n" + (Complete-Line 'shared-case' 'Failed') + "`n"
-        [IO.File]::WriteAllText((Join-Path $timing 'cases-e2e-n1.jsonl'), $e2e)
-        function Write-Trx([string]$name, [string]$body) {
-            $xml = '<?xml version="1.0" encoding="utf-8"?><TestRun><Results>' + $body + '</Results></TestRun>'
-            [IO.File]::WriteAllText((Join-Path $work $name), $xml)
-        }
-        function Row([string]$id, [string]$outcome, [string]$stdout) {
-            return '<UnitTestResult testId="' + $id + '" testName="' + $id + '" outcome="' + $outcome + '"><Output><StdOut>' + $stdout + '</StdOut></Output></UnitTestResult>'
-        }
-        Write-Trx 'antiphon.trx' ((Row 'early-guid' 'Passed' 'C1514_NATIVE body early-case') + (Row 'shared-guid' 'Passed' 'C1514_NATIVE body shared-case') + (Row 'late-guid' 'Passed' 'C1514_NATIVE body late-case') + (Row 'dup-a' 'Passed' 'C1514_NATIVE body shared-case') + (Row 'dup-b' 'Failed' 'C1514_NATIVE one shared-case' + "`n" + 'C1514_NATIVE two shared-case'))
-        Write-Trx 'e2e.trx' (Row 'e2e-guid' 'Failed' 'C1514_NATIVE body shared-case')
-        Write-Trx 'orphan.trx' (Row 'orphan-guid' 'Passed' 'no-phase')
-        $antiphonVerdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
-        $e2eVerdict = [pscustomobject]@{ ExitCode = 1; coverageComplete = $true; testsPassed = $false }
-        $orphanVerdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
-        [void](Write-TestPhaseExecutedManifest -Verdict $antiphonVerdict -LogRoot $work -TrxPath (Join-Path $work 'antiphon.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1)
-        [void](Write-TestPhaseExecutedManifest -Verdict $e2eVerdict -LogRoot $work -TrxPath (Join-Path $work 'e2e.trx') -Suite 'e2e' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1)
-        [void](Write-TestPhaseExecutedManifest -Verdict $orphanVerdict -LogRoot $work -TrxPath (Join-Path $work 'orphan.trx') -Suite 'scripts' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1)
-        [IO.File]::WriteAllText((Join-Path $timing 'groups-planned.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}')
-        Invoke-TestPhaseRunSummary -RunDirectory $work -Top 20
-        $summary = [IO.File]::ReadAllText((Join-Path $timing 'summary.json')) | ConvertFrom-Json
-        $early = $false
-        $late = $false
-        $shared = New-Object System.Collections.Generic.List[string]
-        $orphanOutcome = ''
-        $orphanIncomplete = $false
-        $orphanKnown = $true
-        $duplicateJoined = $false
-        foreach ($test in @($summary.tests)) {
-            $id = [string]$test.testId
-            $suite = ''
-            if ($test.PSObject.Properties.Name -contains 'suite') { $suite = [string]$test.suite }
-            if ($id -eq 'early-case') { $early = $true }
-            if ($id -eq 'late-case') { $late = $true }
-            if ($id -eq 'shared-case') { $shared.Add($suite) }
-            if ($id -eq 'orphan-guid') {
-                $orphanOutcome = [string]$test.outcome
-                $orphanIncomplete = [bool]$test.incomplete
-                if ($test.PSObject.Properties.Name -contains 'countsKnown') { $orphanKnown = [bool]$test.countsKnown }
-            }
-            if ($id -eq 'shared-case' -and [string]$test.outcome -eq 'Passed' -and -not [bool]$test.incomplete) { $duplicateJoined = $true }
-        }
-        $quality = @($summary.quality | ForEach-Object { [string]$_ })
-        $torn = ($quality -contains 'torn-tail') -or ([int]$summary.tornLines -gt 0)
-        $budget = -1
-        $spent = -1
-        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationBudgetMilliseconds' -and $null -ne $summary.summaryAggregationBudgetMilliseconds) {
-            $budget = [int]$summary.summaryAggregationBudgetMilliseconds
-        }
-        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationMilliseconds' -and $null -ne $summary.summaryAggregationMilliseconds) {
-            $spent = [int]$summary.summaryAggregationMilliseconds
-        }
-        $problems = New-Object System.Collections.Generic.List[string]
-        if ($budget -ne 5000) { $problems.Add(('summary-budget=' + [string]$budget)) }
-        if ($spent -lt 0 -or $spent -gt $budget) { $problems.Add(('summary-spent=' + [string]$spent)) }
-        if (-not $early) { $problems.Add('early-missing') }
-        if (-not $late) { $problems.Add('late rows dropped') }
-        if (-not $torn) { $problems.Add('torn-missing') }
-        if ([bool]$summary.complete) { $problems.Add('torn-marked-complete') }
-        if ([int]$shared.Count -ne 2) { $problems.Add(('shared-count=' + [string]$shared.Count)) }
-        $suiteNames = @($shared.ToArray() | Sort-Object)
-        if (($suiteNames -join ',') -ne 'antiphon,e2e') { $problems.Add(('shared-suites=' + ($suiteNames -join ','))) }
-        if ($orphanOutcome -ne 'unknown') { $problems.Add(('orphan-outcome=' + $orphanOutcome)) }
-        if (-not $orphanIncomplete) { $problems.Add('orphan-not-incomplete') }
-        if ($orphanKnown) { $problems.Add('orphan-counts-known') }
-        if ($duplicateJoined) { $problems.Add('duplicate-joined') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            earlyPresent = [bool]$early
-            latePresent = [bool]$late
-            torn = [bool]$torn
-            complete = [bool]$summary.complete
-            sharedCount = [int]$shared.Count
-            sharedSuites = @($shared.ToArray())
-            orphanOutcome = [string]$orphanOutcome
-            orphanIncomplete = [bool]$orphanIncomplete
-            orphanCountsKnown = [bool]$orphanKnown
-            duplicateJoined = [bool]$duplicateJoined
-            summaryAggregationBudgetMilliseconds = [int]$budget
-            summaryAggregationMilliseconds = [int]$spent
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
-        """;
-
-    private const string BudgetScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        $timing = Join-Path $work 'timing'
-        New-Item -ItemType Directory -Path $timing -Force | Out-Null
-        $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"SUITE","assembly":"Antiphon.Tests"}'
-        function Complete-Line([string]$id, [string]$outcome) {
-            return '{"recordKind":"complete","testId":"' + $id + '","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"' + $outcome + '","phases":[],"processes":[],"exclusive":{"db":1,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
-        }
-        function Write-OverBudgetShard([string]$name, [string]$suite, [string]$earlyId, [string]$lateId) {
-            $sb = New-Object System.Text.StringBuilder
-            [void]$sb.Append(($header.Replace('SUITE', $suite) + "`n"))
-            [void]$sb.Append((Complete-Line $earlyId 'Passed') + "`n")
-            $pad = Complete-Line 'pad-case' 'Passed'
-            while ($sb.Length -lt 270000) { [void]$sb.Append($pad + "`n") }
-            [void]$sb.Append((Complete-Line $lateId 'Passed') + "`n")
-            [IO.File]::WriteAllText((Join-Path $timing $name), $sb.ToString())
-        }
-        Write-OverBudgetShard 'cases-a-budget.jsonl' 'antiphon' 'early-a' 'late-a'
-        Write-OverBudgetShard 'cases-b-budget.jsonl' 'e2e' 'early-b' 'late-b'
-        # The summary's re-read budget runs on this clock: a full re-read spends all of it.
-        Add-Type -TypeDefinition @'
-        public sealed class BudgetScriptWatch : Antiphon.Nightly.ITestPhaseWatch {
-            private long elapsed;
-            private bool running;
-            public long ElapsedMilliseconds { get { return elapsed; } }
-            public bool IsRunning { get { return running; } }
-            public void Start() { running = true; }
-            public void Stop() { running = false; }
-            public void OnFullRead() { elapsed = 5000; }
-        }
-        '@ -ReferencedAssemblies @([Antiphon.Nightly.ITestPhaseWatch].Assembly.Location) -IgnoreWarnings
-        $script:TestPhaseSummaryReReadWatch = [BudgetScriptWatch]::new()
-        [IO.File]::WriteAllText((Join-Path $timing 'groups-planned.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}')
-        [IO.File]::WriteAllText((Join-Path $timing 'groups-planned-e2e.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"e2e","assembly":"Antiphon.E2E","groups":[]}')
-        Invoke-TestPhaseRunSummary -RunDirectory $work -Top 20
-        $summary = [IO.File]::ReadAllText((Join-Path $timing 'summary.json')) | ConvertFrom-Json
-        $firstLate = $false
-        $secondLate = $false
-        foreach ($test in @($summary.tests)) {
-            $id = [string]$test.testId
-            if ($id -eq 'late-a') { $firstLate = $true }
-            if ($id -eq 'late-b') { $secondLate = $true }
-        }
-        $budget = -1
-        $spent = -1
-        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationBudgetMilliseconds' -and $null -ne $summary.summaryAggregationBudgetMilliseconds) {
-            $budget = [int]$summary.summaryAggregationBudgetMilliseconds
-        }
-        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationMilliseconds' -and $null -ne $summary.summaryAggregationMilliseconds) {
-            $spent = [int]$summary.summaryAggregationMilliseconds
-        }
-        $problems = New-Object System.Collections.Generic.List[string]
-        if (-not $firstLate) { $problems.Add('first-shard-not-reread') }
-        if ($secondLate) { $problems.Add('second-shard-reread') }
-        if ($spent -le 0) { $problems.Add(('summary-spent-zero=' + [string]$spent)) }
-        if ($budget -ne 5000) { $problems.Add(('summary-budget=' + [string]$budget)) }
-        if ($spent -gt 5000) { $problems.Add(('summary-spent-over=' + [string]$spent)) }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            firstLate = [bool]$firstLate
-            secondLate = [bool]$secondLate
-            summaryAggregationBudgetMilliseconds = [int]$budget
-            summaryAggregationMilliseconds = [int]$spent
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
 
     private const string CallSiteScript = """
@@ -1120,57 +913,6 @@ public sealed class RcFullTimingContractTests
             successPlanningPresent = [bool]$successPlanningPresent
             successPlanningSeconds = [double]$successPlanningSeconds
             supplementalIsMarker = [bool]$supplementalIsMarker
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
-        """;
-
-    private const string PhaseRootScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        $saved = [Environment]::GetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT')
-        $problems = New-Object System.Collections.Generic.List[string]
-        $absentPresent = $true
-        $emptyPresent = $true
-        $setCopied = $false
-        try {
-            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $null)
-            $absent = @{}
-            $absent['ANTIPHON_TEST_PHASE_ROOT'] = 'stale'
-            $null = Enable-TestPhaseExecutionEnvironment -Environment $absent -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot ''
-            $absentPresent = $absent.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')
-            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', '')
-            $empty = @{}
-            $empty['ANTIPHON_TEST_PHASE_ROOT'] = 'stale'
-            $null = Enable-TestPhaseExecutionEnvironment -Environment $empty -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot '   '
-            $emptyPresent = $empty.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')
-            $setRoot = Join-Path $work 'phase-root'
-            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $setRoot)
-            $set = @{}
-            $null = Enable-TestPhaseExecutionEnvironment -Environment $set -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot ''
-            $setValue = ''
-            if ($set.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')) { $setValue = [string]$set['ANTIPHON_TEST_PHASE_ROOT'] }
-            $setCopied = ($setValue -eq $setRoot) -and ([string]$set['ANTIPHON_TEST_PHASE_RUN_ID'] -eq 'run-1')
-        } catch {
-            $problems.Add('phase-root-threw')
-        } finally {
-            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $saved)
-        }
-        if ($absentPresent) { $problems.Add('absent-key-copied') }
-        if ($emptyPresent) { $problems.Add('empty-key-copied') }
-        if (-not $setCopied) { $problems.Add('set-value-not-copied') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            absentPresent = [bool]$absentPresent
-            emptyPresent = [bool]$emptyPresent
-            setCopied = [bool]$setCopied
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;

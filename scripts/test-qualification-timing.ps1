@@ -488,8 +488,10 @@ Assert-Check ([bool]('Antiphon.Nightly.QualificationTiming' -as [type])) 'chunk-
 # Windows PowerShell 5.1 compiles every Add-Type here-string with the legacy
 # csc (.NET Framework, C# 5). This host has no powershell.exe, so the Linux
 # witness is the source scan. The desktop row below is pending native.
-# test-phase-evidence.ps1 compiles its stream readers and Linux identity from these files there.
+# test-phase-paths.ps1 (release-cut.ps1's timing root under 5.1) compiles the Linux identity from these files there;
+# the evidence itself is compiled (W2-nightly S07-S09) and test-phase-evidence.ps1 compiles nothing.
 $ps51Paths = @(
+    (Join-Path $lib 'test-phase-paths.ps1'),
     (Join-Path $lib 'test-phase-evidence.ps1'),
     (Join-Path $lib 'Antiphon.Nightly/TestPhaseStreamReaders.cs'),
     (Join-Path $lib 'Antiphon.Nightly/TestPhaseLinuxIdentity.cs'),
@@ -510,16 +512,16 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
 param([string]$Lib)
 $ErrorActionPreference = "Stop"
 . $Lib
-if (-not ("Antiphon.TestPhase.TrxTimingScanner" -as [type])) { exit 2 }
-if (-not ("Antiphon.TestPhase.JsonlTimingScanner" -as [type])) { exit 3 }
+if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) { exit 2 }
+if (-not (Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue)) { exit 3 }
 exit 0
 '@ | Set-Content -LiteralPath $ps51Child -Encoding ascii
-        & $ps51Exe -NoProfile -File $ps51Child (Join-Path $lib 'test-phase-evidence.ps1')
+        & $ps51Exe -NoProfile -File $ps51Child (Join-Path $lib 'test-phase-paths.ps1')
         Assert-Check ($LASTEXITCODE -eq 0) 'ps51-powershell-exe-load-pending-native'
         Remove-Item -LiteralPath $ps51Root -Recurse -Force -ErrorAction SilentlyContinue
     }
 } else {
-    Write-Host 'SKIP ps51-powershell-exe-load-pending-native pending-native: desktop lane loads scripts/lib/test-phase-evidence.ps1 under powershell.exe; blank TimingRoot release-cut.ps1 is the production caller (-WhatIf skips that load)'
+    Write-Host 'SKIP ps51-powershell-exe-load-pending-native pending-native: desktop lane loads scripts/lib/test-phase-paths.ps1 under powershell.exe; blank TimingRoot release-cut.ps1 is the production caller (-WhatIf skips that load)'
 }
 
 if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) -and
@@ -1314,7 +1316,7 @@ try {
     $realJournal = $linkJournal.Replace('g-link', 'g-real').Replace('link-case', 'real-case').Replace('fix-link', 'fix-real')
     [IO.File]::WriteAllText((Join-Path $realDir 'cases-42-link1.jsonl'), $realJournal + "`n")
     $planned = [pscustomobject]@{ version = 1; runId = 'run-link'; assembly = 'Antiphon.Tests' }
-    $summary = ConvertTo-TestPhaseSummaryRows -Planned $planned -RunDirectory $linkLog
+    $summary = [Antiphon.Nightly.TestPhaseRunSummary]::Rows($planned, $linkLog, (Get-TestPhasePublicationScope))
     $sawLink = $false
     $sawReal = $false
     foreach ($row in @($summary.Tests)) {

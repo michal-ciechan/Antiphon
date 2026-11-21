@@ -1,25 +1,65 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Shouldly;
 
 namespace Antiphon.Tests.TestHelpers;
 
+/// <summary>
+/// CARD-1514 actual run: the staged timing probe discovered and run under native custody (OwnedLauncher, the twin of
+/// Invoke-NightlyOwnedProcess), its planned manifest, launch completion and run summary from the production C#
+/// (TestPhaseManifests, TestPhaseRunSummary), in-process since W2-nightly S09. Windows only (native custody).
+/// </summary>
 internal static class C1514NativeProbe
 {
-    internal static async Task VerifyAsync(CancellationToken cancellationToken)
+    private const string Filter = "/*/*/(TimingProbeTests*|TimingPlainProbeTests*|TimingAsyncProbeTests*)/*";
+
+    internal static Task VerifyAsync(CancellationToken cancellationToken)
     {
-        var root = C1514Support.FreshRoot();
-        Console.WriteLine("C1514_ACTUAL_RUN " + root);
-        var script = Path.Combine(root, "native.ps1");
-        await File.WriteAllTextAsync(script, Script, cancellationToken);
-        var start = new ProcessStartInfo("pwsh");
-        foreach (var arg in new[] { "-NoProfile", "-File", script, C1514Support.RepoRoot(), root, C1514Support.StagedProbe() })
-            start.ArgumentList.Add(arg);
-        var ran = await C1514Support.RunProcess(start, cancellationToken);
-        ran.ExitCode.ShouldBe(0, ran.Text);
+        var work = C1514Support.FreshRoot();
+        Console.WriteLine("C1514_ACTUAL_RUN " + work);
+        var probe = C1514Support.StagedProbe();
+        File.Exists(probe).ShouldBeTrue("timing probe must be staged by the parent build");
+        var scope = JournalFixtures.Scope();
+        var launcher = new OwnedLauncher();
+        var environment = NightlyPolicy.SafeChildEnvironment(null!, "probe", null!);
+        TestPhaseEnvironment.Remove(environment);
+
+        var diag = Path.Combine(work, "discovery");
+        Directory.CreateDirectory(diag);
+        var discovery = launcher.Run(new NightlyLaunch("dotnet", [probe, "--list-tests", "--no-progress", "--no-ansi", "--diagnostic", "--diagnostic-output-directory", diag],
+            work, 30000, Map(environment), Path.Combine(work, "discovery.log"), NightlyCustody.Owned));
+        (discovery.ExitCode == 0 && !discovery.TimedOut).ShouldBeTrue("probe discovery failed: " + Log(work, "discovery.log"));
+        var parsed = NightlyDiagnosticLog.Read(NightlyDiagnosticLog.Latest(diag), "discovery");
+        var nodes = PsValue.AsArray(PsValue.Prop(parsed, "Nodes"));
+        nodes.Length.ShouldBe(9, "probe discovery count");
+        object[] classes = ["TimingProbeTests", "TimingPlainProbeTests", "TimingAsyncProbeTests"];
+        object[] groups = [new PlainObject(("id", "probe"), ("classes", classes), ("nodes", nodes), ("exactFilter", Filter), ("seconds", 1))];
+        TestPhaseManifests.WritePlanned(new TestPhasePlannedRequest
+        {
+            LogRoot = work, RunId = "run-native", Attempt = "1", Suite = "probe", SourceDigest = "c1514-native-probe",
+            AssemblyDigest = NightlyClassNames.FileSha256(probe), AssemblyId = "Antiphon.TestTiming.Probe", Groups = groups, DiscoveryNodes = nodes,
+            ProfileExclusions = Array.Empty<object>(),
+        }, scope);
+
+        TestPhaseEnvironment.Enable(environment, work, "run-native", "probe", "1", "probe", "rc", Path.Combine(work, "timing"), "");
+        var wall = Stopwatch.StartNew();
+        var run = launcher.Run(new NightlyLaunch("dotnet", [probe, "--treenode-filter", Filter, "--report-trx", "--report-trx-filename", "probe.trx", "--results-directory", work],
+            work, 30000, Map(environment), Path.Combine(work, "probe.log"), NightlyCustody.Owned));
+        wall.Stop();
+        (!run.TimedOut && run.ChildrenExited).ShouldBeTrue("probe custody failed: " + Log(work, "probe.log"));
+        TestPhaseManifests.CompleteLaunch(new PlainObject(("ExitCode", run.ExitCode)), work, Path.Combine(work, "probe.trx"), "probe", "probe", "run-native", "1",
+            wall.Elapsed.TotalSeconds, null, scope);
+        TestPhaseRunSummary.Run(work, 50, scope);
+
         foreach (var name in new[] { "groups-planned.json", "groups-executed.json", "summary.json", "tests.csv", "summary.md" })
-            File.Exists(Path.Combine(root, "timing", name)).ShouldBeTrue("actual-run-five-artifacts: " + name);
-        using var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "timing", "summary.json")));
+            File.Exists(Path.Combine(work, "timing", name)).ShouldBeTrue("actual-run-five-artifacts: " + name);
+        // The command over the same run directory writes the same summary.
+        var before = File.ReadAllText(Path.Combine(work, "timing", "summary.json"));
+        JournalFixtures.Summarize(work);
+        File.ReadAllText(Path.Combine(work, "timing", "summary.json")).ShouldBe(before, "rerun summary differs");
+        using var summary = JsonDocument.Parse(before);
         summary.RootElement.GetProperty("complete").GetBoolean().ShouldBeTrue("actual-run-complete");
         var tests = summary.RootElement.GetProperty("tests");
         tests.GetArrayLength().ShouldBe(9, "actual-run-exact-roster");
@@ -29,52 +69,53 @@ internal static class C1514NativeProbe
             row.GetProperty("duration").GetString().ShouldNotBeNullOrWhiteSpace("actual-run-duration");
             row.GetProperty("groupId").GetString().ShouldBe("probe", "actual-run-group");
         }
+        // Import-Csv's view of tests.csv: nine rows, each with a duration, the group and joined True.
+        var lines = File.ReadAllLines(Path.Combine(work, "timing", "tests.csv")).Where(line => line.Length > 0).ToList();
+        var header = Cells(lines[0]);
+        var rows = lines.Skip(1).Select(Cells).ToList();
+        rows.Count.ShouldBe(9, "actual CSV count");
+        foreach (var cells in rows)
+        {
+            cells[header.IndexOf("duration")].ShouldNotBeNullOrWhiteSpace("actual CSV duration");
+            cells[header.IndexOf("groupId")].ShouldBe("probe", "actual CSV group");
+            cells[header.IndexOf("joined")].ShouldBe("True", "actual CSV join");
+        }
+        return Task.CompletedTask;
     }
 
-    private const string Script = """
-        $ErrorActionPreference = 'Stop'
-        $repo, $work, $probe = $args
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-        . (Join-Path $lib 'nightly-coverage.ps1')
-        . (Join-Path $lib 'nightly-tests-impl.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        . (Join-Path $lib 'nightly-owned-process.ps1')
-        $environment = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment(([pscustomobject]@{}), 'probe', $null)
-        Remove-TestPhaseVariables -Environment $environment
-        $diag = Join-Path $work 'discovery'
-        New-Item -ItemType Directory -Path $diag | Out-Null
-        $discovery = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @($probe,'--list-tests','--no-progress','--no-ansi','--diagnostic','--diagnostic-output-directory',$diag) -WorkingDirectory $work -TimeoutMilliseconds 30000 -Environment $environment -LogPath (Join-Path $work 'discovery.log')
-        if ($discovery.ExitCode -ne 0 -or $discovery.TimedOut) { throw 'probe discovery failed' }
-        $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($diag), 'discovery')
-        $nodes = @($parsed.Nodes)
-        if ($nodes.Count -ne 9) { throw ('probe discovery count: ' + $nodes.Count) }
-        $classes = @('TimingProbeTests','TimingPlainProbeTests','TimingAsyncProbeTests')
-        $groups = @([pscustomobject]@{ id='probe'; classes=$classes; nodes=$nodes; exactFilter='/*/*/(TimingProbeTests*|TimingPlainProbeTests*|TimingAsyncProbeTests*)/*'; seconds=1 })
-        $sha = (& git -C $repo rev-parse HEAD).Trim()
-        [void](Write-TestPhasePlannedManifest -LogRoot $work -RunId 'run-native' -Attempt '1' -Suite 'probe' -SourceDigest $sha -AssemblyDigest (Get-NightlyFileSha256 -Path $probe) -AssemblyId 'Antiphon.TestTiming.Probe' -Groups $groups -DiscoveryNodes $nodes -ProfileExclusions @())
-        $environment['ANTIPHON_TEST_PHASE_ROOT'] = Join-Path $work 'timing'
-        $environment['ANTIPHON_TEST_PHASE_RUN_ID'] = 'run-native'
-        $environment['ANTIPHON_TEST_PHASE_GROUP_ID'] = 'probe'
-        $environment['ANTIPHON_TEST_PHASE_ATTEMPT'] = '1'
-        $environment['ANTIPHON_TEST_PHASE_SUITE'] = 'probe'
-        $wall = [Diagnostics.Stopwatch]::StartNew()
-        $run = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @($probe,'--treenode-filter',$groups[0].exactFilter,'--report-trx','--report-trx-filename','probe.trx','--results-directory',$work) -WorkingDirectory $work -TimeoutMilliseconds 30000 -Environment $environment -LogPath (Join-Path $work 'probe.log')
-        $wall.Stop()
-        if ($run.TimedOut -or -not $run.ChildrenExited) { throw 'probe custody failed' }
-        [void](Complete-TestPhaseLaunch -Verdict ([pscustomobject]@{ ExitCode=$run.ExitCode }) -LogRoot $work -TrxPath (Join-Path $work 'probe.trx') -Suite 'probe' -Chunk 'probe' -RunId 'run-native' -Attempt '1' -HostWallSeconds $wall.Elapsed.TotalSeconds)
-        Invoke-TestPhaseRunSummary -RunDirectory $work
-        if ($env:OS -eq 'Windows_NT') {
-            $before = [IO.File]::ReadAllText((Join-Path $work 'timing/summary.json'))
-            & powershell.exe -NoProfile -File (Join-Path $repo 'scripts/summarize-test-phases.ps1') -RunDirectory $work
-            if ($LASTEXITCODE -ne 0) { throw 'PS51 summary failed' }
-            if ($before -ne [IO.File]::ReadAllText((Join-Path $work 'timing/summary.json'))) { throw 'PS51 summary differs' }
+    private static Dictionary<string, string> Map(System.Collections.IDictionary environment)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry pair in environment) map[(string)pair.Key] = pair.Value?.ToString() ?? "";
+        return map;
+    }
+
+    private static string Log(string work, string name)
+    {
+        var path = Path.Combine(work, name);
+        return File.Exists(path) ? File.ReadAllText(path) : "";
+    }
+
+    // One CSV line's cells (quoted, quotes doubled).
+    private static List<string> Cells(string line)
+    {
+        var cells = new List<string>();
+        var cell = new StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (quoted)
+            {
+                if (c == '"' && i + 1 < line.Length && line[i + 1] == '"') { cell.Append('"'); i++; }
+                else if (c == '"') quoted = false;
+                else cell.Append(c);
+            }
+            else if (c == '"') quoted = true;
+            else if (c == ',') { cells.Add(cell.ToString()); cell.Clear(); }
+            else cell.Append(c);
         }
-        $csv = @(Import-Csv -LiteralPath (Join-Path $work 'timing/tests.csv'))
-        if ($csv.Count -ne 9) { throw ('actual CSV count: ' + $csv.Count) }
-        foreach ($row in $csv) {
-            if (-not $row.duration -or $row.groupId -ne 'probe' -or $row.joined -ne 'True') { throw 'actual CSV duration/group/join missing' }
-        }
-        """;
+        cells.Add(cell.ToString());
+        return cells;
+    }
 }

@@ -11,9 +11,10 @@ using static Antiphon.Tests.TestHelpers.JournalFixtures;
 namespace Antiphon.Tests.TestHelpers;
 
 // CARD-1514 M2. Real qualification publication and recovery (W2-nightly S08; these were the v9-v14 cases of
-// ManifestPublicationHarness.ps1). The publication is the production C# (TestPhasePublication), in-process where a case
-// drives it directly; the qualification loop and the summary are still PowerShell, so the cases start their production
-// entries (scripts/nightly-tests.ps1 with a seams file, as the harness passed one; scripts/summarize-test-phases.ps1).
+// ManifestPublicationHarness.ps1). The publication, the executed manifest and the summary are the production C#
+// (TestPhasePublication, TestPhaseManifests, TestPhaseRunSummary: the summarize-test-phases command in-process, S09), in-process
+// where a case drives them directly; the qualification loop is still PowerShell, so the cases start its production entry
+// (scripts/nightly-tests.ps1 with a seams file, as the harness passed one).
 // The harness ran the loop without deferred evidence writes; so do these (ANTIPHON_NIGHTLY_DEFERRED_WRITES=off).
 // NotInParallel: the evidence file system and the cultures are process-wide.
 [Category("Integration")]
@@ -49,19 +50,19 @@ public sealed class RcManifestIntegrationTests
 
     [Test]
     [Timeout(300_000)]
-    public Task ExplicitSummaryAndLegacyCallerStayCompatible(CancellationToken cancellationToken) => InvariantAsync(async () =>
+    public Task ExplicitSummaryAndLegacyCallerStayCompatible(CancellationToken cancellationToken) => Invariant(() =>
     {
         var work = C1514Support.FreshRoot();
-        // The summarizer's own host resumes a generation only of its own writer environment: these in-process writers
-        // stand in for that host (the harness wrote them in the summarizer's process).
-        var scope = Scope(writer: await EntryWriter(work, cancellationToken));
-        await SeededSummaryLabels(work, scope, cancellationToken);
+        // The summarizer resumes a generation only of its own writer environment: these writers and the summarizer share
+        // one scope (the harness wrote them in the summarizer's process).
+        var scope = Scope();
+        SeededSummaryLabels(work, scope);
 
         var legacy = Path.Combine(work, "legacy");
         WriteText(Path.Combine(legacy, "timing", "groups-planned.json"), Planned("run-v10", "antiphon"));
         WriteText(Path.Combine(legacy, "timing", "groups-executed.json"), "{\"version\":1,\"runId\":\"run-v10\",\"attempt\":\"1\",\"suite\":\"antiphon\",\"manufacturedPassed\":false,\"chunks\":[{\"chunk\":\"c1\",\"runId\":\"run-v10\",\"attempt\":\"1\",\"suite\":\"antiphon\",\"hostWallSeconds\":1,\"trxMissing\":true,\"manufacturedPassed\":false,\"passedCount\":0,\"outcomes\":[],\"trx\":\"one.trx\",\"trxDigest\":\"\",\"exitCode\":0,\"coverageComplete\":false,\"testsPassed\":false}]}");
         WriteDefinedTrx(Path.Combine(legacy, "one.trx"), "Fixture.One", "Passed");
-        await Summarize(legacy, cancellationToken);
+        Summarize(legacy, scope: scope);
         using (var legacySummary = JsonDocument.Parse(File.ReadAllText(Path.Combine(legacy, "timing", "summary.json"))))
         {
             legacySummary.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse("legacy-complete-without-state");
@@ -90,7 +91,7 @@ public sealed class RcManifestIntegrationTests
         var flat = Path.Combine(journal, "timing", "groups-executed.json");
         if (File.Exists(flat)) File.Delete(flat);
         WriteText(Path.Combine(journal, "timing", "groups-planned.json"), Planned("run-v10", "antiphon"));
-        await Summarize(journal, cancellationToken);
+        Summarize(journal, scope: scope);
         using (var joined = JsonDocument.Parse(File.ReadAllText(Path.Combine(journal, "timing", "summary.json"))))
         {
             var tests = joined.RootElement.GetProperty("tests").EnumerateArray().ToList();
@@ -98,10 +99,10 @@ public sealed class RcManifestIntegrationTests
                 && tests.Count(t => Text(t, "groupId") == "c-alpha" && Text(t, "suite") == "other") == 1).ShouldBeTrue("journal-only-lost-cross-suite-join");
         }
         File.Exists(flat).ShouldBeFalse("summary-rewrote-projection");
-        // Get-Help -Parameter RecoverExecutedManifest: the entry declares the switch.
-        Regex.IsMatch(File.ReadAllText(Path.Combine(C1514Support.RepoRoot(), "scripts", "summarize-test-phases.ps1")), @"\[switch\]\$RecoverExecutedManifest")
-            .ShouldBeTrue("recovery-switch-absent");
-        await Summarize(journal, cancellationToken, recover: true);
+        // The command declares the recovery switch (antiphon-scripts summarize-test-phases --recover-executed-manifest).
+        File.ReadAllText(Path.Combine(C1514Support.RepoRoot(), "scripts", "lib", "Antiphon.Scripts", "SummarizeTestPhasesCommand.cs"))
+            .ShouldContain("\"--recover-executed-manifest\"", Case.Sensitive, "recovery-switch-absent");
+        Summarize(journal, recover: true, scope: scope);
         File.Exists(flat).ShouldBeTrue("recovery-did-not-project");
         Directory.GetDirectories(Path.Combine(journal, "timing", "groups-executed.journal")).Any(d => File.Exists(Path.Combine(d, "seal.json")))
             .ShouldBeFalse("recovery-invented-seal");
@@ -114,7 +115,7 @@ public sealed class RcManifestIntegrationTests
         WriteDefinedTrx(extTrx, "Fixture.External", "Passed");
         Publish(extCtx, externalLog, extTrx, "external-suite", "external-chunk", "external", "1", 1, 0, false, false, external);
         Close(extCtx);
-        var lines = await Summarize(externalLog, cancellationToken, recover: true, timingRoot: externalTiming);
+        var lines = Summarize(externalLog, recover: true, timingRoot: externalTiming, scope: scope);
         Regex.IsMatch(lines, "publication generation=.+ sequence=1").ShouldBeTrue("external-timing-progress-absent " + lines);
         File.Exists(Path.Combine(externalTiming, "groups-executed.json")).ShouldBeTrue("external-timing-recovery-absent");
         File.Exists(Path.Combine(externalLog, "timing", "groups-executed.json")).ShouldBeFalse("external-timing-recovery-wrong-root");
@@ -236,7 +237,7 @@ public sealed class RcManifestIntegrationTests
 
     // ---- v10: seeded summary labels (Assert-MpSeededSummaryLabels) ----
 
-    private static async Task SeededSummaryLabels(string work, TestPhasePublicationScope scope, CancellationToken cancellationToken)
+    private static void SeededSummaryLabels(string work, TestPhasePublicationScope scope)
     {
         foreach (var mode in new[] { "legacy", "successor" })
         {
@@ -259,7 +260,7 @@ public sealed class RcManifestIntegrationTests
             Publish(ctx, root, trxB, "suite-b", "chunk-b", "labels", "1", 2, 0, false, false, scope);
             Complete(ctx, "", scope);
             Close(ctx);
-            await Summarize(root, cancellationToken);
+            Summarize(root, scope: scope);
             using (var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "timing", "summary.json"))))
             {
                 var tests = summary.RootElement.GetProperty("tests").EnumerateArray().ToList();

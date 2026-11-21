@@ -56,7 +56,8 @@ function Get-NightlyToolchainPreflight {
 # W2-nightly S11: the launch prices (NightlyLaunchPrices, CARD-1410), the class-cost table, the launch groups and plans,
 # native classification, the E2E prerequisites, the test host, the chunk discovery seconds, the native argv, the npm
 # launch, the execution platform and the run outcome are Antiphon.Nightly/NightlyTestsPlan.cs. The cost file path and
-# the table read from it stay here: test-phase-evidence.ps1 reads both, and a fixture seam may replace either.
+# the table read from it stay here: the planned manifest (TestPhaseManifests.WritePlanned) is given both, and a fixture
+# seam may replace either.
 # Once total ran and request execute stop are on disk, a leftover tree is killed after this grace instead of the
 # full launch watchdog. Unmeasured placeholder: chunk logs record execution-stop-to-exit-seconds; set this near 2x
 # that p95 (docs/test-performance-standards.md). 60000 matches NightlyCompletionGrace.DefaultMilliseconds.
@@ -178,7 +179,8 @@ function Publish-NightlyChunkObservation {
     if ($null -ne $TestsPassed) { $passed = [bool]$TestsPassed }
     $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$exitCode; coverageComplete = [bool]$coverage; testsPassed = [bool]$passed }
     Add-NightlyOwnerObservation -Verdict $phaseVerdict -Run $Run
-    Write-TestPhaseExecutedManifest -Verdict $phaseVerdict -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
+    # The executed manifest: compiled (TestPhaseManifests.WriteExecuted), into the bound writer context when there is one.
+    [void][Antiphon.Nightly.TestPhaseManifests]::WriteExecuted($phaseVerdict, $LogRoot, $TrxPath, $Suite, $Chunk, $RunId, $Attempt, $HostWallSeconds, $script:TestPhaseExecutedContext, (Get-TestPhasePublicationScope))
     return $phaseVerdict
 }
 
@@ -404,7 +406,15 @@ function Prepare-NightlySuiteExecution {
             if (-not [string]::IsNullOrWhiteSpace([string]$script:NightlyClassCostPath) -and (Test-Path -LiteralPath $script:NightlyClassCostPath)) {
                 $phaseCostDigest = Get-NightlyFileSha256 -Path $script:NightlyClassCostPath
             }
-            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite $suiteId -SourceDigest ([string]$Sha) -AssemblyDigest $phaseAssemblyDigest -PolicyDigest ([string]$policyHash) -CostFileDigest $phaseCostDigest -AssemblyId $phaseAssembly -Groups $chunks -DiscoveryNodes $phaseNodes -ProfileExclusions $profileExclusions -DiscoveryIndex $suiteDiscoveryIndex -DiscoveryPath $profileDiscoveryPath)
+            # The planned manifest: compiled (TestPhaseManifests.WritePlanned), priced with this file's cost path and table.
+            $phasePlan = [Antiphon.Nightly.TestPhasePlannedRequest]::new()
+            $phasePlan.LogRoot = $LogRoot; $phasePlan.RunId = [string]$invocationId; $phasePlan.Attempt = [string]$Attempt; $phasePlan.Suite = [string]$suiteId
+            $phasePlan.SourceDigest = [string]$Sha; $phasePlan.AssemblyDigest = [string]$phaseAssemblyDigest; $phasePlan.PolicyDigest = [string]$policyHash
+            $phasePlan.CostFileDigest = [string]$phaseCostDigest; $phasePlan.AssemblyId = [string]$phaseAssembly
+            $phasePlan.Groups = $chunks; $phasePlan.DiscoveryNodes = $phaseNodes; $phasePlan.ProfileExclusions = $profileExclusions
+            $phasePlan.DiscoveryIndex = $suiteDiscoveryIndex; $phasePlan.DiscoveryPath = [string]$profileDiscoveryPath
+            $phasePlan.ClassCostPath = [string]$script:NightlyClassCostPath; $phasePlan.ClassCostTable = $script:NightlyClassCostTable
+            [void][Antiphon.Nightly.TestPhaseManifests]::WritePlanned($phasePlan, (Get-TestPhasePublicationScope))
         } catch {
             Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
         }
@@ -902,7 +912,7 @@ function Write-NightlyRunSummary {
         $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
         $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
         if ((Test-NightlyEvidencePath $phasePlanned) -or (Test-NightlyEvidencePath $phaseIndex)) {
-            Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
+            [Antiphon.Nightly.TestPhaseRunSummary]::Run($LogRoot, 50, (Get-TestPhasePublicationScope))
         }
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'

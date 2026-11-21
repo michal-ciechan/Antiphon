@@ -10,9 +10,10 @@ namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
 /// The executed-journal witnesses' fixtures (W2-nightly S08; they were ManifestPublicationHarness.ps1's helpers). The
-/// publication itself is the production C# (Antiphon.Nightly/TestPhasePublication.cs); what is here builds inputs, reads
-/// outputs, keeps the pinned pre-journal writer as the byte oracle, and starts the still-PowerShell production entries
-/// (scripts/summarize-test-phases.ps1, scripts/nightly-tests.ps1).
+/// publication, the executed manifest and the summary are the production C# (Antiphon.Nightly/TestPhasePublication.cs,
+/// TestPhaseManifests.cs, TestPhaseRunSummary.cs; S09 moved the last two in); what is here builds inputs, reads outputs,
+/// keeps the pinned pre-journal writer as the byte oracle, and starts the still-PowerShell production entry
+/// (scripts/nightly-tests.ps1).
 /// </summary>
 internal static class JournalFixtures
 {
@@ -56,50 +57,35 @@ internal static class JournalFixtures
     }
 
     /// <summary>
-    /// Publish-NightlyChunkObservation (Publish-MpChunk): the chunk from its TRX as Write-TestPhaseExecutedManifest builds
-    /// it (that half moves in S09), published by the production TestPhasePublication.PublishChunk into the bound context,
-    /// else one it opens, projects and closes. A null exit code, coverage and pass is the null verdict.
+    /// Publish-NightlyChunkObservation (Publish-MpChunk): the production executed manifest (TestPhaseManifests.WriteExecuted):
+    /// the chunk from its TRX published into the bound context, else one it opens, projects and closes. A null exit code,
+    /// coverage and pass is the null verdict. hashes counts the TRX hashes (one per regular TRX).
     /// </summary>
     internal static bool Publish(TestPhaseJournalContext? bound, string logRoot, string trxPath, string suite, string chunk, string runId,
         string attempt, double hostWallSeconds, object? exitCode, object? coverageComplete, object? testsPassed,
         TestPhasePublicationScope? scope = null, Hashes? hashes = null)
     {
-        var fresh = FreshFromTrx(logRoot, trxPath, suite, chunk, runId, attempt, hostWallSeconds, exitCode, coverageComplete, testsPassed, hashes);
-        return TestPhasePublication.PublishChunk(bound, logRoot, fresh, suite, chunk, runId, attempt, scope ?? Scope());
+        if (hashes is not null && TestPhaseFiles.Kind(trxPath, out _) == "regular") hashes.Count++;
+        return TestPhaseManifests.WriteExecuted(Verdict(exitCode, coverageComplete, testsPassed), logRoot, trxPath, suite, chunk, runId, attempt,
+            hostWallSeconds, bound, scope ?? Scope());
     }
 
-    /// <summary>Write-TestPhaseExecutedManifest's fresh chunk: the TRX outcome rows, their passed count and digest.</summary>
+    /// <summary>The verdict a chunk publication reads (ExitCode, coverageComplete, testsPassed); null when all three are null.</summary>
+    internal static PlainObject? Verdict(object? exitCode, object? coverageComplete, object? testsPassed) =>
+        exitCode is null && coverageComplete is null && testsPassed is null
+            ? null
+            : new PlainObject(("ExitCode", exitCode), ("coverageComplete", coverageComplete), ("testsPassed", testsPassed));
+
+    /// <summary>
+    /// Write-TestPhaseExecutedManifest's fresh chunk (the production TestPhaseManifests.FreshChunk): the TRX outcome rows,
+    /// their passed count and digest. hashes counts the TRX hashes (one per regular TRX).
+    /// </summary>
     internal static OrderedDictionary FreshFromTrx(string logRoot, string trxPath, string suite, string chunk, string runId, string attempt,
         double hostWallSeconds, object? exitCode, object? coverageComplete, object? testsPassed, Hashes? hashes)
     {
-        var rows = TrxRows(trxPath);
-        var trxMissing = TestPhaseFiles.Kind(trxPath, out _) != "regular";
-        var outcomeRows = TestPhaseSummary.OutcomeRows(rows, "TestId", "Outcome", false);
-        var passed = TestPhaseSummary.PassedCount(outcomeRows);
-        var digest = "";
-        if (!trxMissing)
-        {
-            if (hashes is not null) hashes.Count++;
-            try { digest = NightlyClassNames.FileSha256(trxPath); } catch (IOException) { digest = ""; }
-        }
-        return TestPhaseJournal.FreshChunk(chunk, runId, attempt, suite, hostWallSeconds, trxMissing, passed, outcomeRows,
-            TestPhaseText.RelativePath(logRoot, trxPath), digest, exitCode, coverageComplete, testsPassed);
-    }
-
-    /// <summary>Read-TestPhaseTrxRows: the complete TRX's timing rows, or none.</summary>
-    internal static object[] TrxRows(string trxPath)
-    {
-        if (TestPhaseFiles.Kind(trxPath, out _) != "regular") return [];
-        var opened = TestPhaseFiles.OpenReadStream(trxPath);
-        if (opened.Refused || opened.Stream is null) return [];
-        try
-        {
-            var read = Antiphon.TestPhase.TrxTimingScanner.Read(opened.Stream, Stopwatch.StartNew(), 200, 262144, 16384);
-            if (read is null || !read.Complete) return [];
-            return NightlyTrx.TimingRows(read, trxPath);
-        }
-        catch (Exception) { return []; }
-        finally { opened.Stream.Dispose(); }
+        if (hashes is not null && TestPhaseFiles.Kind(trxPath, out _) == "regular") hashes.Count++;
+        return TestPhaseManifests.FreshChunk(Verdict(exitCode, coverageComplete, testsPassed), logRoot, trxPath, suite, chunk, runId, attempt,
+            hostWallSeconds, Scope());
     }
 
     /// <summary>
@@ -287,30 +273,18 @@ internal static class JournalFixtures
         return C1514Support.RunProcess(start, cancellationToken);
     }
 
-    /// <summary>scripts/summarize-test-phases.ps1 -RunDirectory dir -Top 5 (Invoke-TestPhaseRunSummary and the progress line).</summary>
-    internal static async Task<string> Summarize(string runDirectory, CancellationToken cancellationToken, bool recover = false, string timingRoot = "")
-    {
-        var arguments = new List<string> { "-RunDirectory", runDirectory, "-Top", "5" };
-        if (recover) arguments.Add("-RecoverExecutedManifest");
-        if (!string.IsNullOrWhiteSpace(timingRoot)) arguments.AddRange(["-TimingRoot", timingRoot]);
-        var ran = await RunEntry("summarize-test-phases.ps1", arguments, cancellationToken);
-        if (ran.ExitCode != 0) throw new InvalidOperationException("summarize-test-phases exit=" + ran.ExitCode + " " + ran.Text);
-        return ran.Text;
-    }
-
     /// <summary>
-    /// The writer environment of a pwsh that runs the production entries: the metadata a recovery writes when it opens an
-    /// empty journal (so an in-process writer can stand in for that host and be resumed by it).
+    /// summarize-test-phases --run-directory dir --top 5 [--recover-executed-manifest] [--timing-root dir], in-process on the
+    /// given scope (default: this host's): its progress line, if any. A failed summary (exit 1) throws.
     /// </summary>
-    internal static async Task<string> EntryWriter(string work, CancellationToken cancellationToken)
+    internal static string Summarize(string runDirectory, bool recover = false, string timingRoot = "", TestPhasePublicationScope? scope = null)
     {
-        var probe = Path.Combine(work, "writer-probe");
-        Directory.CreateDirectory(probe);
-        await Summarize(probe, cancellationToken, recover: true);
-        var generation = CurrentGeneration(Path.Combine(probe, "timing"));
-        var meta = Path.Combine(probe, "timing", "groups-executed.journal", generation, "metadata.json");
-        using var doc = JsonDocument.Parse(File.ReadAllText(meta));
-        return doc.RootElement.GetProperty("writerEnvironment").GetString() ?? throw new InvalidOperationException("writer-probe-empty");
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var options = new TestPhaseSummarizeOptions { RunDirectory = runDirectory, Top = 5, RecoverExecutedManifest = recover, TimingRoot = timingRoot };
+        var exit = TestPhaseRunSummary.Summarize(options, scope ?? Scope(), output, error);
+        if (exit != 0) throw new InvalidOperationException("summarize-test-phases exit=" + exit + " " + error);
+        return output.ToString();
     }
 
     // ---- culture ----

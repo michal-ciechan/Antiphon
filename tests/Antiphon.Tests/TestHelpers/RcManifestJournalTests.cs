@@ -9,8 +9,8 @@ namespace Antiphon.Tests.TestHelpers;
 // CARD-1514 M1. Publication witnesses on the compiled journal (Antiphon.Nightly/TestPhaseJournal.cs and
 // TestPhasePublication.cs), in-process (W2-nightly S07 and S08; these were the v1-v4, zone-map and zone-effective cases
 // of ManifestPublicationHarness.ps1). The cost counters are the production context's own (SettledRows, ProjectionWrites)
-// and the TRX hashes of the chunk documents (JournalFixtures.FreshFromTrx, Write-TestPhaseExecutedManifest's half until
-// S09). The harness ran every case under the invariant culture; so do these. NotInParallel: the cases move the process
+// and the TRX hashes of the chunk documents (JournalFixtures.FreshFromTrx over the production
+// TestPhaseManifests.FreshChunk, S09). The harness ran every case under the invariant culture; so do these. NotInParallel: the cases move the process
 // zone (TZ, Linux) and count serialised bytes on the process-wide TestPhaseJson.Measure.
 [Category("Integration")]
 [NotInParallel]
