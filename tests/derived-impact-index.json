@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 343,
+      "classes": 344,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 127,
+      "classes": 131,
       "reason": "cap",
-      "owed": 102,
+      "owed": 106,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 138,
+      "classes": 139,
       "reason": "cap",
-      "owed": 113,
+      "owed": 114,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -17413,6 +17413,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.IO.WriteBehind/AtomicRename.cs",
+      "classes": [
+        "WriteBehindFileSystemTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.IO.WriteBehind/WriteBehindFileSystem.cs",
       "classes": [
         "WriteBehindFileSystemTests"
@@ -24630,17 +24636,33 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/LoopbackHttpStub.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "NightlyHealthTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
         "ClassCostMeasurementTests",
         "NightlyDiscoveryParserTests",
+        "NightlyHealthTests",
         "NightlyHostTests",
         "NightlyTestHelpersTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
         "TestTimingsTwinTests",
         "ToolchainFloorTwinTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyHealthTests.cs",
+      "classes": [
+        "C1744G2PlacementTests",
+        "HostTopConsumerTests",
+        "TaskPlatformPlacementTests"
       ]
     },
     {

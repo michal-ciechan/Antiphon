@@ -34,6 +34,8 @@ namespace Antiphon.Scripts
             [EvidenceCommand.Diff] = EvidenceCommand.Run,
             [EvidenceCommand.Deletion] = EvidenceCommand.Run,
             [NightlyProbeCommand.Name] = NightlyProbeCommand.Run,
+            // The nightly readiness evaluator answers every input itself: exit 0 healthy, 1 unhealthy, 2 usage.
+            [NightlyHealthCommand.Name] = NightlyHealthCommand.Run,
             // The release selection answers exactly or hands back NotHandled (exit 10).
             ["select-release"] = SelectRelease,
         };
@@ -58,7 +60,7 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage);
             return Usage;
         }
 

@@ -9,7 +9,10 @@ Checked-in script and schedule payloads for:
   Windows-side local readiness evaluator (`scripts/nightly-health.ps1`). It reads
   `C:\Antiphon\nightly\readiness-config.json` and folds the independent watchdog's snapshot into
   `last-monitor.json`. Running on the desktop is correct: if Windows is down the server that consumes
-  readiness is down too, and if Windmill is down readiness goes stale and fails closed.
+  readiness is down too, and if Windmill is down readiness goes stale and fails closed. Since W2-nightly S05
+  the script is a Windows PowerShell 5.1 launcher over the C# evaluator (`antiphon-scripts nightly-health`,
+  built warm from the checkout into `bin-launcher/`); the wrapper's command line is unchanged, and a CLI that
+  cannot be built or started exits 9 and leaves `last-monitor.json` to go stale.
 
 The former Windmill health-monitor definition was deleted by CARD-0545 (D-9). It was never registered,
 could not run from a worker outside the Windows host (it depended on `host.docker.internal`), evaluated

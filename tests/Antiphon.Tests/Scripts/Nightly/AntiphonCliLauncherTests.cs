@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -208,5 +210,142 @@ public sealed class AntiphonCliLauncherTests
         changed.Exit.ShouldBe(0, changed.Stderr);
         Directory.GetDirectories(launcherRoot, "run-*").Length.ShouldBe(2);
         File.Exists(Path.Combine(changed.Echo().GetProperty("baseDirectory").GetString()!, "extra.txt")).ShouldBeTrue();
+    }
+
+    // ---- W2-nightly S05: scripts/nightly-health.ps1, the launcher Windmill's readiness job runs ----
+
+    private static readonly string[] HealthEnvironment =
+    [
+        "WINDMILL_BASE_URL", "WINDMILL_TOKEN", "WINDMILL_TOKEN_FILE", "WINDMILL_WORKSPACE", "ANTIPHON_NIGHTLY_WINDMILL_SCRIPT",
+        "ANTIPHON_NIGHTLY_REPOSITORY_PATH", "ANTIPHON_NIGHTLY_PROJECT_ID",
+    ];
+
+    /// <summary>A temporary checkout root holding scripts/nightly-health.ps1 beside scripts/lib/antiphon-cli.ps1.</summary>
+    private static NightlyFixture HealthCheckout()
+    {
+        var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-health.ps1"), fixture.PathOf("scripts", "nightly-health.ps1"));
+        return fixture;
+    }
+
+    /// <summary>Runs a script with -File as Windmill does, with the staged CLI and no machine Windmill settings.</summary>
+    private static Task<LauncherRun> RunScript(NightlyFixture fixture, string script, string[] arguments, IReadOnlyDictionary<string, string> environment)
+    {
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = fixture.Root,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script }.Concat(arguments))
+            start.ArgumentList.Add(argument);
+        foreach (var name in HealthEnvironment) start.Environment.Remove(name);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
+        return Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+    }
+
+    /// <summary>A state root with today's scheduled run (green or red) and a readiness config naming the watchdog.</summary>
+    private static string HealthState(NightlyFixture fixture, string name, string today, bool green, string watchdogUrl, string repository)
+    {
+        var root = fixture.PathOf(name);
+        var completed = DateTime.UtcNow.AddMinutes(-5).ToString("o");
+        NightlyFixture.WriteJson(Path.Combine(root, "last-run.json"), new
+        {
+            runId = "launcher-run", sha = "sha-launcher", @ref = "master", trigger = "scheduled", phase = "final", policyHash = "p", localDueDate = today,
+            coverageComplete = true, testsPassed = green, reportDelivered = true, completedAt = completed, lastActivityAt = completed,
+        });
+        NightlyFixture.WriteJson(Path.Combine(root, "readiness-config.json"), new
+        {
+            expectedScriptHash = "a", expectedPolicyHash = "p", watchdogSnapshotUrl = watchdogUrl, watchdogInstanceId = "wd-launcher",
+            repositoryPath = repository, projectId = "c5450000-0000-4000-8000-0000000000bb",
+        });
+        return root;
+    }
+
+    /// <summary>last-monitor.json without RecordedAt (each run records its own instant).</summary>
+    private static string Monitor(string root)
+    {
+        var record = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "last-monitor.json")))!.AsObject();
+        record.Remove("RecordedAt").ShouldBeTrue();
+        return record.ToJsonString();
+    }
+
+    [Test]
+    public async Task Nightly_health_launcher_matches_the_evaluator_for_a_healthy_and_an_unhealthy_state()
+    {
+        using var fixture = HealthCheckout();
+        const string schedule = "u/lndcobra/antiphon_nightly_tests";
+        var today = NightlyLondon.DateText(NightlyLondon.ToLocal(DateTime.UtcNow));
+        var list = new JsonArray { new JsonObject { ["id"] = "job-today", ["type"] = "CompletedJob", ["success"] = true, ["schedule_path"] = schedule } };
+        using var windmill = LoopbackHttpStub.Start(
+            ("scripts/get/p/" + schedule, """{"hash":"a","tag":"desktop","path":"u/lndcobra/antiphon_nightly_tests"}"""),
+            ("schedules/get/" + schedule, """{"enabled":true,"paused":false,"tag":"desktop","args":{}}"""),
+            ("jobs/list", list.ToJsonString()),
+            ("get_result/job-today", new JsonObject { ["nativeRunId"] = "launcher-run", ["sha"] = "sha-launcher", ["localDueDate"] = today }.ToJsonString()));
+        var snapshot = new JsonObject
+        {
+            ["schemaVersion"] = 1, ["instanceId"] = "wd-launcher", ["namespace"] = "mc", ["heartbeatAt"] = DateTime.UtcNow.ToString("o"), ["openOutages"] = new JsonArray(),
+        };
+        using var watchdog = LoopbackHttpStub.Start(("snapshot.json", snapshot.ToJsonString()));
+        var environment = new Dictionary<string, string> { ["WINDMILL_BASE_URL"] = windmill.BaseUrl, ["WINDMILL_TOKEN"] = "launcher-token" };
+        var repository = fixture.PathOf("repo");
+        var entry = fixture.PathOf("scripts", "nightly-health.ps1");
+
+        foreach (var (name, green, exit) in new[] { ("healthy", true, 0), ("unhealthy", false, 1) })
+        {
+            var launched = HealthState(fixture, name + "-launched", today, green, watchdog.BaseUrl + "/snapshot.json", repository);
+            var inProcess = HealthState(fixture, name + "-in-process", today, green, watchdog.BaseUrl + "/snapshot.json", repository);
+
+            // The Windmill command line: -RepositoryPath and -ReadinessConfigPath (here also -StateRoot, a fixture).
+            var run = await RunScript(fixture, entry, ["-StateRoot", launched, "-RepositoryPath", repository, "-ReadinessConfigPath", Path.Combine(launched, "readiness-config.json")],
+                environment);
+            var error = new StringWriter();
+            var expected = NightlyHealth.Run(
+                new NightlyHealthOptions { StateRoot = inProcess, RepositoryPath = repository, ReadinessConfigPath = Path.Combine(inProcess, "readiness-config.json") },
+                NightlyHealthSeams.Production(variable => environment.GetValueOrDefault(variable)!, error));
+
+            expected.ExitCode.ShouldBe(exit, string.Join(",", expected.Health.Reasons));
+            run.Exit.ShouldBe(exit, run.Stderr);
+            run.Stdout.ShouldBeEmpty("the evaluator prints nothing to stdout");
+            run.Stderr.Trim().ShouldBe(error.ToString().Trim());
+            Monitor(launched).ShouldBe(Monitor(inProcess));
+        }
+    }
+
+    [Test]
+    public async Task Nightly_health_launcher_passthru_reads_the_record_back_and_a_seams_path_refuses()
+    {
+        using var fixture = HealthCheckout();
+        var entry = fixture.PathOf("scripts", "nightly-health.ps1");
+        var state = fixture.PathOf("state");
+        File.WriteAllText(fixture.PathOf("passthru.ps1"), """
+            param([string]$Entry, [string]$StateRoot)
+            $r = & $Entry -StateRoot $StateRoot -PassThru
+            [Console]::Out.WriteLine((@($r.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
+            [Console]::Out.WriteLine([string]$r.ExitCode + '|' + [string]$r.Health.Healthy + '|' + (@($r.Health.Reasons) -join ',') + '|' + [string]$r.Receipt + '|' + [string]$r.Identity.ScriptHash)
+            $s = & $Entry -StateRoot $StateRoot -SeamsPath 'seams.ps1' -PassThru
+            [Console]::Out.WriteLine([string]$s.ExitCode + '|' + [string]$s.Refusal)
+            """);
+
+        var passThru = await RunScript(fixture, fixture.PathOf("passthru.ps1"), ["-Entry", entry, "-StateRoot", state], new Dictionary<string, string>());
+
+        passThru.Exit.ShouldBe(0, passThru.Stderr);
+        var lines = passThru.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines.Length.ShouldBe(3, passThru.Stdout);
+        lines[0].ShouldBe("ExitCode,Health,Notification,Receipt,RecordedAt,Identity");
+        // No Windmill credentials and no watchdog URL: unhealthy, nothing sent, the reasons in the evaluator's order.
+        lines[1].ShouldStartWith("1|False|missing-script,missing-schedule,");
+        lines[1].ShouldEndWith(",unauthorized-destination,watchdog-unreachable|False|");
+        lines[2].ShouldBe("3|seams-path-unsupported");
+        File.Exists(Path.Combine(state, "last-monitor.json")).ShouldBeTrue();
+
+        var refusedRoot = fixture.PathOf("refused");
+        var refused = await RunScript(fixture, entry, ["-StateRoot", refusedRoot, "-SeamsPath", "seams.ps1"], new Dictionary<string, string>());
+        refused.Exit.ShouldBe(3, refused.Stderr);
+        refused.Stdout.Trim().ShouldBeEmpty();
+        refused.Stderr.Trim().ShouldBe("nightly-health: seams-path-unsupported");
+        Directory.Exists(refusedRoot).ShouldBeFalse("a refusal evaluates nothing and writes nothing");
     }
 }

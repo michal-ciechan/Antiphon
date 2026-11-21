@@ -140,6 +140,15 @@ snapshot (10 s bound) and adds `watchdog-unreachable`, `watchdog-stale` (older t
 requires the qualification receipt's `watchdogInstanceId` and its ordinal equality with the monitor identity,
 so a replaced or unqualified watchdog cannot inherit readiness.
 
+Since W2-nightly S05 the evaluator is C# (`scripts/lib/Antiphon.Nightly/NightlyHealth.cs`, `NightlyHealthWindmill.cs`,
+`NightlyHealthNotifications.cs`), run as `antiphon-scripts nightly-health`. `scripts/nightly-health.ps1` is a Windows
+PowerShell 5.1 launcher over it (`scripts/lib/antiphon-cli.ps1`): the Windmill command line, the parameters and the
+exit code (0 healthy, 1 unhealthy) are unchanged, and it prints nothing to stdout. Each tick does a warm build of the
+checkout's `scripts/lib/Antiphon.Scripts` into `bin-launcher/` (a no-op when nothing changed) and runs from a copy. A
+build or start failure exits 9 with one stderr line and writes no `last-monitor.json`, so the monitor goes stale and
+readiness fails closed. `-SeamsPath` refuses with exit 3 (`seams-path-unsupported`); the evaluator's cases run
+in-process in `NightlyHealthTests`.
+
 ## Custody
 
 | Reference | Where | Custodian |

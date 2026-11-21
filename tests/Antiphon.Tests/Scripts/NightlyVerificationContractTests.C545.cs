@@ -601,37 +601,8 @@ public sealed partial class NightlyVerificationContractTests
         "C545 ResultLine green flags equal last-run.json",
         "C545 ResultLine no-report reportDelivered false and no green file");
 
-    [Test]
-    public Task C545_JobResultFetch() => RunHarnessCaseAsync("test-nightly-health.ps1", "C545", "C545_JobResultFetch", 13,
-        "C545 JobResultFetch c6 stays unknown beyond the cap",
-        "C545 JobResultFetch c3 unfetchable is unknown",
-        "C545 JobResultFetch no production Windmill notification sink",
-        "C545 JobResultFetch requests are list then c1..c5 in order");
-
-    [Test]
-    public Task C545_WatchdogFresh() => RunHarnessCaseAsync("test-nightly-health.ps1", "C545", "C545_WatchdogFresh", 8,
-        "C545 WatchdogFresh age 20:00 fresh",
-        "C545 WatchdogFresh real HTTP snapshot read",
-        "C545 WatchdogFresh evaluator healthy with a fresh watchdog",
-        "C545 WatchdogFresh readiness-config supplies every value");
-
-    [Test]
-    public Task C545_WatchdogStale() => RunHarnessCaseAsync("test-nightly-health.ps1", "C545", "C545_WatchdogStale", 13,
-        "C545 WatchdogStale age 20:01 stale",
-        "C545 WatchdogStale unreachable",
-        "C545 WatchdogStale malformed not-json",
-        "C545 WatchdogStale malformed missing-heartbeat",
-        "C545 WatchdogStale malformed schema-2",
-        "C545 WatchdogStale malformed empty-instance",
-        "C545 WatchdogStale namespace mc/qual mismatch",
-        "C545 WatchdogStale instance wd-2 mismatch",
-        "C545 WatchdogStale open outage unhealthy");
-
-    [Test]
-    public Task C545_ReadinessRouting() => RunHarnessCaseAsync("test-nightly-health.ps1", "C545", "C545_ReadinessRouting", 6,
-        "C545 ReadinessRouting readiness definition is desktop bash",
-        "C545 ReadinessRouting retired health definition is absent",
-        "C545 ReadinessRouting G116 monitor routing still rejects desktop");
+    // C545_JobResultFetch, C545_WatchdogFresh, C545_WatchdogStale and C545_ReadinessRouting run in-process in
+    // Nightly.NightlyHealthTests (W2-nightly S05 deleted scripts/test-nightly-health.ps1).
 
     [Test]
     public Task C545_DeployRefusesWithoutProfile() => RunHarnessCaseAsync("test-deploy-nightly-watchdog.ps1", "C545", "C545_DeployRefusesWithoutProfile", 7,

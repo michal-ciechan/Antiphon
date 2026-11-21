@@ -1669,14 +1669,17 @@ minutes, `-ReadinessConfigPath C:\Antiphon\nightly\readiness-config.json`); it f
 the watchdog snapshot into `Health` (`watchdog-unreachable`, `watchdog-stale` beyond
 20:00, `watchdog-malformed`, `watchdog-identity-mismatch`, `watchdog-outage-open`) and
 records `Identity.WatchdogInstanceId`/`WatchdogHeartbeatAt`; the server reader requires
-the receipt's `watchdogInstanceId` to equal it. Its PowerShell notification ledger
-remains only as harness-guarded logic: the production Windmill notification sink is
-removed.
+the receipt's `watchdogInstanceId` to equal it. Its notification ledger
+(`NightlyHealthNotifications.cs`) remains only as test-guarded logic: the production
+notification sink is null. Since W2-nightly S05 the evaluator is C#
+(`scripts/lib/Antiphon.Nightly/NightlyHealth*.cs`, `antiphon-scripts nightly-health`) and
+`scripts/nightly-health.ps1` is its 5.1 launcher (warm build into `bin-launcher/`; exit 9
+when the CLI cannot be built or started, leaving `last-monitor.json` to go stale).
 
-CARD-0544 D-6 readiness (`Test-NightlyMonitorHealth`): `ReadyForDeferral` is
+CARD-0544 D-6 readiness (`NightlyHealth.Evaluate`): `ReadyForDeferral` is
 health plus a valid **scheduled** green for the London due date, never the age of
 `completedAt`. A green is a scheduled Windmill job whose result names the native
-run and due date (jobs/list rows map through `ConvertFrom-NightlyWindmillJob`:
+run and due date (jobs/list rows map through `NightlyHealthWindmill.ConvertJob`:
 queued/running/success/failed/unknown; string booleans or a missing result are
 unknown) and whose native state (`last-run.json` or `last-complete-green.json`) is
 that run, `trigger=scheduled`, master, coverage complete, tests passed and report
@@ -1734,9 +1737,10 @@ incomplete, never a skip. See [release gates](release-gates.md). Per-project Slo
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
 a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 `scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
-`scripts/test-nightly-health.ps1` (`-Case C487_GNNN`, `-Case C544_<Name>` or `-Case C545_<Name>`, `-ResultsDirectory <fresh>`),
-`scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). `NightlyVerificationContractTests` runs each C544/C545
-harness case and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;
+`scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). The readiness evaluator's cases (C487_G099-G126,
+C544_*, C545_JobResultFetch/WatchdogFresh/WatchdogStale/ReadinessRouting) run in-process in `NightlyHealthTests`
+(W2-nightly S05 deleted `scripts/test-nightly-health.ps1`). `NightlyVerificationContractTests` runs the remaining C545
+harness cases and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;
 `NightlyWatchdogCoreTests` covers the watchdog core (clock, evaluator, ledger, body, snapshot, transport, reader).
 
 Expected duration is one seconds number on the class-cost row. The roster beside PlatformTaxonomy is a projection of that file.
