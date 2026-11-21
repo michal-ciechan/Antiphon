@@ -232,44 +232,8 @@ function Test-EpsVerdict {
     $digestOk = ($digest.Length -eq 64 -and $digest -ceq $digestAgain -and @($toleratedIds).Count -eq 1 -and [string]$toleratedIds[0] -ceq $cleanup -and $toleratedClass -ceq 'platform')
     Assert-C487 -Cond $digestOk -Name 'EPS tolerated-list-and-digest' -Detail ('digest=' + $digest + ' ids=' + ($toleratedIds -join ',') + ' class=' + $toleratedClass)
 
-    $summaryPath = Join-Path $ResultsDirectory 'summary.json'
-    $summaryDigest = 'a' * 64
-    $summaryJson = @{
-        startedAt = '2026-11-10T00:00:00Z'
-        succeeded = $false
-        outcome = 'TESTS'
-        sha = 'abc'
-        gitRef = 'rc/test'
-        profile = 'rc'
-        durationSeconds = 1
-        builds = @()
-        suites = @(
-            @{ id = 'antiphon'; name = 'antiphon chunk-a'; result = 'pass'; exitCode = 8; processExitTolerated = $true; skipped = $false; failed = 0 }
-            @{ id = 'antiphon'; name = 'antiphon chunk-b'; result = 'FAIL'; exitCode = 1; skipped = $false; failed = 2 }
-        )
-        expectedSkipRosterDigest = $summaryDigest
-        toleratedSkips = @(@{ identity = $cleanup; reasonClass = 'platform' })
-    } | ConvertTo-Json -Depth 6
-    [System.IO.File]::WriteAllText($summaryPath, $summaryJson)
-    $shim = {
-        param($Method, $Uri, $Headers, $Body)
-        if ($Uri -match '/api/boards$') { return [pscustomobject]@{ id = 'board-1'; name = 'Antiphon' } }
-        if ($Uri -match '/columns') { return @() }
-        if ($Uri -match '/api/cards') { return [pscustomobject]@{ cards = @(); truncated = $false } }
-        return $null
-    }
-    $title = ''
-    $body = ''
-    $reportError = ''
-    try {
-        $report = & (Join-Path $here 'nightly-report.ps1') -Summary $summaryPath -DryRun -PassThru -HttpShim $shim -Board 'Antiphon' -Api 'http://nightly.test'
-        $title = [string]$report.Title
-        $body = [string]$report.Body
-    } catch {
-        $reportError = $_.Exception.Message
-    }
-    $titleOk = ($title -match '2 failed' -and $title -notmatch 'exit 8' -and $body.Contains($summaryDigest) -and $body.Contains($cleanup) -and $body.Contains('Tolerated skips'))
-    Assert-C487 -Cond $titleOk -Name 'EPS title-omits-tolerated-exit' -Detail ($(if ($reportError) { $reportError } else { $title + ' | ' + $body.Substring(0, [Math]::Min(400, $body.Length)) }))
+    # W2-nightly S06: the report row (EPS title-omits-tolerated-exit) runs in-process with the C# report:
+    # ExpectedPlatformSkipRosterTests.Report_title_omits_the_tolerated_exit.
 
     # W2-nightly S13: suite completion (the stale-roster warnings) is Antiphon.Nightly/NightlySuiteRunner.cs.
     $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'Antiphon.Nightly/NightlySuiteRunner.cs'))
@@ -282,7 +246,7 @@ function Test-EpsVerdict {
 
 $expected = 0
 switch -Exact ($Case) {
-    'Verdict' { Test-EpsVerdict; $expected = 24 }
+    'Verdict' { Test-EpsVerdict; $expected = 23 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $expected

@@ -153,15 +153,16 @@ $NightlySeams.StartProcess = {
             ($args.Count -eq 4 -and $args[2] -ceq 'run' -and $args[3] -in @('build', 'lint'))
     }
     if ($leaf -cin $script:C1336SuiteExecutables) { $allowed = $true }
+    # W2-nightly S06: the report hop is the compiled CLI (antiphon-scripts nightly-report --summary <path>).
+    if ($FilePath -ceq 'antiphon-scripts' -and $args.Count -ge 3 -and $args[0] -ceq 'nightly-report' -and $args[1] -ceq '--summary') {
+        [IO.File]::WriteAllText(($args[2] + '.report-receipt'), 'inert local report I/O')
+        $allowed = $true
+    }
     if ($leaf -in @('pwsh', 'pwsh.exe') -and $fileIndex -ge 0) {
         $target = [IO.Path]::GetFileName(([string]$args[$fileIndex + 1] -replace '\\', '/'))
         $policy = Get-Content (Join-Path $WorkingDirectory 'tests/test-execution-policy.json') -Raw | ConvertFrom-Json
         $allowedScripts = @($policy.scriptCensus | Where-Object disposition -CEQ 'unattended' | ForEach-Object { [IO.Path]::GetFileName($_.path) })
-        $allowed = $target -in ($allowedScripts + @('test-client.ps1', 'nightly-report.ps1'))
-        if ($target -ceq 'nightly-report.ps1') {
-            $summaryIndex = [array]::IndexOf($args, '-Summary')
-            [IO.File]::WriteAllText(($args[$summaryIndex + 1] + '.report-receipt'), 'inert local report I/O')
-        }
+        $allowed = $target -in ($allowedScripts + @('test-client.ps1'))
     }
     if (-not $allowed) { throw ('Unexpected fixture process: ' + $FilePath + ' ' + ($args -join ' ')) }
     return $script:C1336NativeIo.Invoke($FilePath, $args, $WorkingDirectory, $TimeoutMilliseconds, $Environment)

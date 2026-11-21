@@ -1,16 +1,18 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.E2E.Fixtures;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.E2E;
 
 /// <summary>
-/// CARD-0599 R-4, delivery half (DL-2). The production <c>scripts/nightly-report.ps1</c> is run
-/// against a REAL isolated Program and database - not a fake HTTP shim - and the verdict is a
+/// CARD-0599 R-4, delivery half (DL-2). The production report (Antiphon.Nightly <c>NightlyReport</c>,
+/// the code behind <c>antiphon-scripts nightly-report</c> since W2-nightly S06) is run in-process over
+/// its production HTTP transport against a REAL isolated Program and database - not a fake HTTP shim -
+/// and the verdict is a
 /// recipient-side GET that finds the whole persisted card. A request the API accepted is not a
 /// receipt; only the stored row read back through the API is.
 ///
@@ -104,7 +106,7 @@ public class ReleaseGateReportDeliveryTests
     {
         var summary = WriteSummary("rc-red-recovery", succeeded: false, profile: "rc");
 
-        // Recipient unavailable: point the script at a dead port on this host.
+        // Recipient unavailable: point the report at a dead port on this host.
         var dead = await RunReportAsync(summary, apiOverride: "http://127.0.0.1:9");
         dead.ExitCode.ShouldNotBe(0, $"C599 G-recovery: a dead API is not a delivered report\n{dead.Output}");
         (await ListCardsAsync()).Count.ShouldBe(0, "C599 G-recovery: a failed delivery persisted nothing");
@@ -175,23 +177,34 @@ public class ReleaseGateReportDeliveryTests
 
     private async Task<(int ExitCode, string Output)> RunReportAsync(string summaryPath, string? apiOverride = null)
     {
-        var script = Path.Combine(RepositoryRoot(), "scripts", "nightly-report.ps1");
-        var startInfo = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-NonInteractive", "-File", script,
-                     "-Summary", summaryPath,
-                     "-Board", _boardName,
-                     "-Api", apiOverride ?? _app.BaseAddress,
-                 })
-            startInfo.ArgumentList.Add(arg);
+        // The production transport against the real recipient; the one 60 s retry waits on an instant clock.
+        var output = new StringWriter();
+        var options = new NightlyReportOptions { Summary = summaryPath, Board = _boardName, Api = apiOverride ?? _app.BaseAddress };
+        var seams = new NightlyReportSeams
+        {
+            Clock = new InstantClock(), Http = NightlyReport.HttpTransport(), Environment = _ => null!, Out = output, Error = output,
+        };
+        var result = await Task.Run(() => NightlyReport.Run(options, seams)).WaitAsync(TimeSpan.FromSeconds(120));
+        return (result.ExitCode, output.ToString());
+    }
 
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+    /// <summary>A host clock whose waits fire at once (the report's retry wait).</summary>
+    private sealed class InstantClock : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            callback(state);
+            return new Fired();
+        }
+
+        private sealed class Fired : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     /// <summary>Recipient-side read: what the API actually stored, never the script's own claim.</summary>
@@ -223,12 +236,4 @@ public class ReleaseGateReportDeliveryTests
         card.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty;
 
     private static Guid Id(JsonElement card) => card.GetProperty("id").GetGuid();
-
-    private static string RepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
-            dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("Could not locate Antiphon.sln");
-    }
 }

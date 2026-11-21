@@ -61,7 +61,7 @@ public sealed class NightlyScriptsTests
     {
         foreach (var name in new[]
                  {
-                     "nightly-tests.ps1", "nightly-run.ps1", "nightly-report.ps1", "nightly-health.ps1",
+                     "nightly-tests.ps1", "nightly-run.ps1", "nightly-health.ps1",
                      "test-nightly-run.ps1", "test-nightly-tests.ps1",
                      "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
                      Path.Combine("lib", "nightly-common.ps1"),
@@ -73,6 +73,9 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealthWindmill.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealthNotifications.cs"),
                      Path.Combine("lib", "antiphon-cli.ps1"),
+                     // W2-nightly S06: the nightly report's C# and its command.
+                     Path.Combine("lib", "Antiphon.Nightly", "NightlyReport.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "NightlyReportCommand.cs"),
                      Path.Combine("lib", "c487-harness.ps1"),
                      // CARD-1698: the toolchain floor library and the restart entry points that load it.
                      Path.Combine("lib", "toolchain-floor.ps1"),

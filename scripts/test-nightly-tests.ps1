@@ -516,7 +516,6 @@ $script:C487ScriptCensusInventory = @(
     'test-deploy-nightly-watchdog scripts/test-deploy-nightly-watchdog.ps1',
     'test-duration-tripwire scripts/test-duration-tripwire.ps1',
     'test-hooks scripts/test-hooks.ps1',
-    'test-nightly-report scripts/test-nightly-report.ps1',
     'test-reap-zombie-agents scripts/test-reap-zombie-agents.ps1',
     'test-stage-value-report scripts/test-stage-value-report.ps1',
     'test-rc-roster-repairs scripts/test-rc-roster-repairs.ps1',

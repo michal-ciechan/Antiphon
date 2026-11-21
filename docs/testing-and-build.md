@@ -1736,8 +1736,10 @@ real Playwright/bundle prerequisites - a missing browser or stale bundle is red 
 incomplete, never a skip. See [release gates](release-gates.md). Per-project Slow registries are
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
 a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
-`scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
-`scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). The readiness evaluator's cases (C487_G099-G126,
+`scripts/test-nightly-tests.ps1`,
+`scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). The run card's cases (T1-T10, C487_G077-G104) run
+in-process in `NightlyReportTests` (W2-nightly S06 deleted `scripts/nightly-report.ps1` and
+`scripts/test-nightly-report.ps1`; the report is `antiphon-scripts nightly-report`). The readiness evaluator's cases (C487_G099-G126,
 C544_*, C545_JobResultFetch/WatchdogFresh/WatchdogStale/ReadinessRouting) run in-process in `NightlyHealthTests`
 (W2-nightly S05 deleted `scripts/test-nightly-health.ps1`). `NightlyVerificationContractTests` runs the remaining C545
 harness cases and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;

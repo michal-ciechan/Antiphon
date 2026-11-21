@@ -733,7 +733,7 @@ function Test-C1698_RunLibraryLoadFailure {
         foreach ($d in @('scripts/lib', 'docker')) { New-Item -ItemType Directory -Path (Join-Path $copy $d) -Force | Out-Null }
         # The harness, the entry scripts the fixture clone copies, and the whole library directory.
         # [IO.File]::Copy: per-file Copy-Item over the library costs tens of seconds on Linux.
-        foreach ($n in @('test-nightly-run.ps1', 'nightly-run.ps1', 'nightly-tests.ps1', 'nightly-report.ps1')) {
+        foreach ($n in @('test-nightly-run.ps1', 'nightly-run.ps1', 'nightly-tests.ps1')) {
             [IO.File]::Copy((Join-Path $here $n), (Join-Path $copy (Join-Path 'scripts' $n)))
         }
         foreach ($f in [IO.Directory]::GetFiles($lib)) { [IO.File]::Copy($f, (Join-Path (Join-Path $copy 'scripts') (Join-Path 'lib' ([IO.Path]::GetFileName($f))))) }

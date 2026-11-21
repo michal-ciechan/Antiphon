@@ -18,7 +18,7 @@
     Forwarded to nightly-tests.ps1. Default comes from tests/test-execution-policy.json.
 
 .PARAMETER NoReport
-    Skip nightly-report.ps1 (still writes last-run.json). Cannot claim delivery
+    Skip the report (antiphon-scripts nightly-report; still writes last-run.json). Cannot claim delivery
     or advance last-complete-green.json.
 
 .PARAMETER NoSync

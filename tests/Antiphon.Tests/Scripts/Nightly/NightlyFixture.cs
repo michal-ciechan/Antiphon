@@ -77,7 +77,7 @@ public sealed class NightlyFixture : IDisposable
     /// <summary>
     /// New-C487OwnedClone: Root/checkout with a .git directory whose config sets core.longpaths and the origin url and
     /// whose HEAD names master, and the .antiphon-nightly-owned marker (origin, kind nightly-clone). With copyScripts
-    /// it also copies scripts/nightly-run.ps1, nightly-tests.ps1, nightly-report.ps1 and scripts/lib (without bin/ and
+    /// it also copies scripts/nightly-run.ps1, nightly-tests.ps1 and scripts/lib (without bin/ and
     /// obj/), and the src/Antiphon.IO.WriteBehind sources the core builds against, from this checkout. Returns the clone.
     /// </summary>
     public string NewOwnedClone(string origin = DefaultOrigin, bool copyScripts = false)
@@ -92,7 +92,7 @@ public sealed class NightlyFixture : IDisposable
         var source = DelegateScriptRunner.RepoRoot;
         var scripts = Path.Combine(clone, "scripts");
         Directory.CreateDirectory(scripts);
-        foreach (var entry in new[] { "nightly-run.ps1", "nightly-tests.ps1", "nightly-report.ps1" })
+        foreach (var entry in new[] { "nightly-run.ps1", "nightly-tests.ps1" })
             File.Copy(Path.Combine(source, "scripts", entry), Path.Combine(scripts, entry), true);
         CopyTree(Path.Combine(source, "scripts", "lib"), Path.Combine(scripts, "lib"));
         var writeBehind = Path.Combine(clone, "src", "Antiphon.IO.WriteBehind");

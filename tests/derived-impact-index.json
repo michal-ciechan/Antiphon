@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 132,
+      "classes": 129,
       "reason": "cap",
-      "owed": 107,
+      "owed": 104,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -1506,9 +1506,9 @@
     },
     {
       "path": "server/Domain/Entities/Board.cs",
-      "classes": 146,
+      "classes": 147,
       "reason": "cap",
-      "owed": 121,
+      "owed": 122,
       "first": [
         "AgentTaskProjectScopeTests",
         "ApiKeyEnvResolverTests",
@@ -2072,9 +2072,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 141,
+      "classes": 142,
       "reason": "cap",
-      "owed": 116,
+      "owed": 117,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -24875,7 +24875,8 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/LoopbackHttpStub.cs",
       "classes": [
         "AntiphonCliLauncherTests",
-        "NightlyHealthTests"
+        "NightlyHealthTests",
+        "NightlyReportTests"
       ]
     },
     {
@@ -24897,6 +24898,7 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "ClassCostMeasurementTests",
+        "ExpectedPlatformSkipRosterTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -24904,6 +24906,7 @@
         "NightlyHostTests",
         "NightlyLockFormatTests",
         "NightlyPrerequisiteTests",
+        "NightlyReportTests",
         "NightlySummaryWitnessTests",
         "NightlyTestHelpersTests",
         "NightlyTestsPlanTests",
@@ -24912,14 +24915,6 @@
         "ReleaseGateRunTests",
         "TestTimingsTwinTests",
         "ToolchainFloorTwinTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyHealthTests.cs",
-      "classes": [
-        "C1744G2PlacementTests",
-        "HostTopConsumerTests",
-        "TaskPlatformPlacementTests"
       ]
     },
     {
@@ -24945,6 +24940,15 @@
         "RcRosterRepairTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGatePlatformTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyReportTests.cs",
+      "classes": [
+        "CardListSearchScriptTests",
+        "DelegationScratchCallerTests",
+        "ExpectedPlatformSkipRosterTests",
+        "RegisteredCallerScriptTests"
       ]
     },
     {
@@ -25438,7 +25442,6 @@
         "NativeLinuxPolicyExecutionTests",
         "NightlyPolicyTests",
         "NightlyPrerequisiteTests",
-        "NightlySummaryWitnessTests",
         "RcFullTimingContractTests",
         "RcFullWatchdogHarnessTests",
         "RcFullWatchdogTests",

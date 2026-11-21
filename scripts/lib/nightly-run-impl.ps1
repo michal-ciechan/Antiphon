@@ -133,6 +133,30 @@ function Invoke-NightlyWatchedCommand {
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $false; Pid = $(if ($proc) { $proc.Id } else { 0 }) }
 }
 
+function Invoke-NightlyReportHop {
+    # W2-nightly S06: the report is compiled (antiphon-scripts nightly-report, Antiphon.Nightly/NightlyReport.cs), run
+    # through this checkout's launcher (antiphon-cli.ps1: a warm build, run from a copy) in the working directory given.
+    # The StartProcess seam replaces that process start as it does every other hop's (FilePath antiphon-scripts).
+    # Returns the report's exit code; the CLI unavailable (the launcher's 9) is 3, as a dead API is. No fallback.
+    param([string]$SummaryPath, [string]$PreviousSummary = '', [string]$WorkingDirectory)
+    $arguments = @('--summary', $SummaryPath)
+    if (-not [string]::IsNullOrWhiteSpace($PreviousSummary)) { $arguments += @('--previous-summary', $PreviousSummary) }
+    if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
+        $run = Invoke-NightlyWatchedCommand -FilePath 'antiphon-scripts' -ArgumentList (@('nightly-report') + $arguments) -WorkingDirectory $WorkingDirectory
+        $code = $run.ExitCode
+        if ($null -eq $code) { return 3 }
+        $code = [int]$code
+    } else {
+        Write-NightlyTrace -Kind 'exec' -Message ('antiphon-scripts nightly-report ' + ($arguments -join ' '))
+        if (-not (Get-Command Invoke-AntiphonCli -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'antiphon-cli.ps1') }
+        Push-Location -LiteralPath $WorkingDirectory
+        try { $code = [int](Invoke-AntiphonCli -Command 'nightly-report' -Arguments $arguments) }
+        finally { Pop-Location }
+    }
+    if ($code -eq 9) { return 3 }
+    return $code
+}
+
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
 
 function Invoke-AntiphonNightlyRunCore {
@@ -717,10 +741,6 @@ function Invoke-AntiphonNightlyRunCore {
         $reportExit = 0
         if (-not $NoReport) {
             $phase = 'report'
-            $reportScript = Join-Path $CheckoutRoot (Join-Path 'scripts' 'nightly-report.ps1')
-            if (-not (Test-Path -LiteralPath $reportScript)) {
-                $reportScript = Join-Path $PSScriptRoot '..\nightly-report.ps1'
-            }
             $prevSummary = ''
             if (Test-Path -LiteralPath $paths.LastGreen) {
                 try {
@@ -730,19 +750,9 @@ function Invoke-AntiphonNightlyRunCore {
                     }
                 } catch { }
             }
-            $reportArgs = @(
-                '-NoProfile', '-NonInteractive', '-File', $reportScript,
-                '-Summary', $summaryPath
-            )
-            if ($prevSummary) {
-                $reportArgs += '-PreviousSummary'
-                $reportArgs += $prevSummary
-            }
-            Write-NightlyRunLine ('running {0}' -f $reportScript)
+            Write-NightlyRunLine 'running antiphon-scripts nightly-report'
             try {
-                $rep = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $reportArgs -WorkingDirectory $CheckoutRoot
-                $reportExit = [int]$rep.ExitCode
-                if ($null -eq $reportExit) { $reportExit = 3 }
+                $reportExit = Invoke-NightlyReportHop -SummaryPath $summaryPath -PreviousSummary $prevSummary -WorkingDirectory $CheckoutRoot
             } catch {
                 $reportExit = 3
                 Write-NightlyRunLine ('REPORTING: {0}' -f $_.Exception.Message)

@@ -192,7 +192,7 @@
     },
     {
       "partition": "",
-      "pattern": "^(tests/test-(execution|selection)-policy\\.json|scripts/(lib/)?(nightly[^/]*|release[^/]*|test-selection|test-timings)\\.ps1|scripts/(select-test-rosters|test-test-selection|test-timing-report|run-checkpoint|build-slot|publish-release)\\.ps1|tools/Antiphon\\.Checkpoints/.*|AGENTS\\.md|CLAUDE\\.md|docs/(testing-and-build|release-gates|orchestration-loop)\\.md)$",
+      "pattern": "^(tests/test-(execution|selection)-policy\\.json|scripts/(lib/)?(nightly[^/]*|release[^/]*|test-selection|test-timings)\\.ps1|scripts/(select-test-rosters|test-test-selection|test-timing-report|run-checkpoint|build-slot|publish-release)\\.ps1|tools/Antiphon\\.Checkpoints/.*|scripts/lib/Antiphon\\.(Nightly|Scripts)/.*|AGENTS\\.md|CLAUDE\\.md|docs/(testing-and-build|release-gates|orchestration-loop)\\.md)$",
       "sets": [],
       "full": true,
       "id": "P-AUTHORITY",
@@ -3073,9 +3073,6 @@
           "script": "scripts/test-hooks.ps1"
         },
         {
-          "script": "scripts/test-nightly-report.ps1"
-        },
-        {
           "script": "scripts/test-reap-zombie-agents.ps1"
         },
         {
@@ -3618,7 +3615,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "6f7a46a74b18c1269d9b99f4ab12d9f060f0fc2139f20f5c05ca47c73512c64d",
+  "catalogHash": "d1305115cead0120dbcbc3405452854b7e75d4bd39307c23c040d3776398180c",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

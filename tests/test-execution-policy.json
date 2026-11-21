@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "11897a91e82799521012ed5f457d8500549dba2fb50694ecca61e08b8fc57f2a",
+  "policyHash": "a4b5c2852d4a5c4504c9ddc10f4041ab332b5fdbd65b7a2c313fa6d77d726083",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -2023,12 +2023,6 @@
       "wildcard": false
     },
     {
-      "id": "test-nightly-report",
-      "path": "scripts/test-nightly-report.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
       "id": "test-reap-zombie-agents",
       "path": "scripts/test-reap-zombie-agents.ps1",
       "disposition": "unattended",
@@ -2216,7 +2210,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "6f7a46a74b18c1269d9b99f4ab12d9f060f0fc2139f20f5c05ca47c73512c64d",
+    "hash": "d1305115cead0120dbcbc3405452854b7e75d4bd39307c23c040d3776398180c",
     "path": "tests/test-selection-policy.json"
   }
 }

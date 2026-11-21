@@ -37,6 +37,8 @@ namespace Antiphon.Scripts
             [NightlyProbeCommand.Name] = NightlyProbeCommand.Run,
             // The nightly readiness evaluator answers every input itself: exit 0 healthy, 1 unhealthy, 2 usage.
             [NightlyHealthCommand.Name] = NightlyHealthCommand.Run,
+            // The nightly run card answers every input itself: exit 0 done, 1 summary missing or unreadable, 2 usage, 3 board unreachable.
+            [NightlyReportCommand.Name] = NightlyReportCommand.Run,
             // The phase-timing summary answers every input itself: exit 0 written, 1 failed (one stderr line), 2 usage.
             [SummarizeTestPhasesCommand.Name] = SummarizeTestPhasesCommand.Run,
             // The release selection answers exactly or hands back NotHandled (exit 10).
@@ -63,7 +65,7 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage);
             return Usage;
         }
 

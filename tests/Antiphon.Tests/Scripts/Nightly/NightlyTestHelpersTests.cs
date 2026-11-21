@@ -47,7 +47,7 @@ public sealed class NightlyTestHelpersTests
         using var fixture = NightlyFixture.Create();
         var clone = fixture.NewOwnedClone(copyScripts: true);
 
-        foreach (var entry in new[] { "nightly-run.ps1", "nightly-tests.ps1", "nightly-report.ps1" })
+        foreach (var entry in new[] { "nightly-run.ps1", "nightly-tests.ps1" })
             File.Exists(Path.Combine(clone, "scripts", entry)).ShouldBeTrue(entry);
         File.Exists(Path.Combine(clone, "scripts", "lib", "nightly-common.ps1")).ShouldBeTrue();
         File.Exists(Path.Combine(clone, "scripts", "lib", "Antiphon.Nightly", "Antiphon.Nightly.csproj")).ShouldBeTrue();

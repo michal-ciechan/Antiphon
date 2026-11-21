@@ -995,7 +995,7 @@ function New-C599RunFx {
         [void](Invoke-C599RealGit $seed @('config', 'core.autocrlf', 'false'))
         Copy-Item -LiteralPath $lib -Destination (Join-Path $seed 'scripts/lib') -Recurse
         Copy-C487NightlyCoreDependency -Root $seed
-        foreach ($file in @('nightly-run.ps1', 'nightly-tests.ps1', 'nightly-report.ps1', 'select-test-rosters.ps1')) {
+        foreach ($file in @('nightly-run.ps1', 'nightly-tests.ps1', 'select-test-rosters.ps1')) {
             Copy-Item -LiteralPath (Join-Path $here $file) -Destination (Join-Path $seed ('scripts/' + $file))
         }
         foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json')) {

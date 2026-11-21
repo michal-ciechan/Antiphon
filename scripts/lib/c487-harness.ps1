@@ -77,7 +77,6 @@ function New-C487OwnedClone {
     New-Item -ItemType Directory -Path $scripts -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-run.ps1') -Destination (Join-Path $scripts 'nightly-run.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-tests.ps1') -Destination (Join-Path $scripts 'nightly-tests.ps1') -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-report.ps1') -Destination (Join-Path $scripts 'nightly-report.ps1') -Force
     Copy-Item -LiteralPath $PSScriptRoot -Destination (Join-Path $scripts 'lib') -Recurse -Force
     Copy-C487NightlyCoreDependency -Root $clone
     return $clone

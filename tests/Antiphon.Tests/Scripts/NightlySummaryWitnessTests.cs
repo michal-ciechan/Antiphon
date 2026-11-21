@@ -1,5 +1,4 @@
 using System.Collections.Specialized;
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -16,8 +15,8 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-2005. The production summary writer streams a 1,274-row document, keeps each suite's exclusion list once, and
 /// never converts the whole chunk list to text. Since W2-nightly S12 the writer is NightlyRunSummary (the run's
 /// Write-NightlyRunSummary is a wrapper over it) and the witness runs in-process (it was scripts/test-nightly-summary-witness.ps1
-/// under a 768 MiB DOTNET_GCHeapHardLimit): the bound is the writer's own allocation. The report still reads the summary
-/// through the production entry scripts/nightly-report.ps1 (PowerShell until W2-nightly S06).
+/// under a 768 MiB DOTNET_GCHeapHardLimit): the bound is the writer's own allocation. The report reads the summary
+/// in-process too (NightlyReport since W2-nightly S06).
 /// </summary>
 [Category("Integration")]
 public sealed class NightlySummaryWitnessTests
@@ -44,9 +43,7 @@ public sealed class NightlySummaryWitnessTests
     }
 
     [Test]
-    [Timeout(180_000)]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C2005_SummaryWriterStreamsWithinABoundedHeap(CancellationToken cancellationToken)
+    public void C2005_SummaryWriterStreamsWithinABoundedHeap()
     {
         var shape = new (string Id, int Rows, int Exclusions)[]
         {
@@ -115,24 +112,27 @@ public sealed class NightlySummaryWitnessTests
         progress.GetProperty("liveness").GetString().ShouldBe("closed");
         Console.WriteLine("WROTE bytes=" + new FileInfo(summaryPath).Length + " suites=1274 allocated=" + allocated);
 
-        // The report reads the streamed summary (nightly-report.ps1, the production entry, with its HTTP shim).
-        var report = Path.Combine(Repo, "scripts", "nightly-report.ps1").Replace("'", "''");
-        var command = "$shim = { param($Method, $Uri, $Headers, $Body)\n"
-            + "  if ($Uri -like '*/api/boards/*/columns') { return [pscustomobject]@{ id = 'col'; name = 'Done'; isTerminal = $true; columnOrder = 1 } }\n"
-            + "  if ($Uri -like '*/api/boards') { return [pscustomobject]@{ id = '8988ca03-7414-47ad-b0b6-51556c701703'; name = 'Antiphon' } }\n"
-            + "  if ($Uri -like '*/api/cards*') { return [pscustomobject]@{ cards = @(); truncated = $false } }\n"
-            + "  throw ('unexpected ' + $Uri) }\n"
-            + "$r = & '" + report + "' -Summary '" + summaryPath.Replace("'", "''") + "' -PassThru -DryRun -HttpShim $shim -Board 'Antiphon' -Api 'http://nightly.test'\n"
-            + "[Console]::Out.WriteLine('REPORT exit=' + $r.ExitCode + ' action=' + $r.Action + ' title=' + $r.Title)";
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Repo };
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(argument);
-        start.Environment["DOTNET_GCHeapHardLimit"] = "0x30000000";
-        var ran = await C1514Support.RunProcess(start, cancellationToken);
-        var line = Regex.Match(ran.Text, "REPORT exit=(\\S*) action=(\\S*) title=(.*)");
-        line.Success.ShouldBeTrue(ran.Text);
-        line.Groups[1].Value.ShouldBe("0", ran.Text);
-        line.Groups[2].Value.ShouldBe("none", ran.Text);
-        line.Groups[3].Value.StartsWith("Nightly green", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(ran.Text);
+        // The report reads the streamed summary (NightlyReport, the code behind antiphon-scripts nightly-report since
+        // W2-nightly S06) in-process over a fake board; its reading allocates within the old witness's 768 MiB process bound.
+        var calls = new List<string>();
+        NightlyReportHttpResponse Board(string method, string uri, IReadOnlyDictionary<string, string> headers, string? body)
+        {
+            calls.Add(method + " " + uri);
+            if (uri.EndsWith("/columns", StringComparison.Ordinal)) return new(200, "[{\"id\":\"col\",\"name\":\"Done\",\"isTerminal\":true,\"columnOrder\":1}]");
+            if (uri.EndsWith("/api/boards", StringComparison.Ordinal)) return new(200, "[{\"id\":\"8988ca03-7414-47ad-b0b6-51556c701703\",\"name\":\"Antiphon\"}]");
+            if (uri.Contains("/api/cards", StringComparison.Ordinal)) return new(200, "{\"cards\":[],\"truncated\":false}");
+            throw new InvalidOperationException("unexpected " + uri);
+        }
+        var output = new StringWriter();
+        var reportBefore = GC.GetAllocatedBytesForCurrentThread();
+        var report = NightlyReport.Run(new NightlyReportOptions { Summary = summaryPath, DryRun = true, Board = "Antiphon", Api = "http://nightly.test" },
+            new NightlyReportSeams { Clock = TimeProvider.System, Http = Board, Environment = _ => null!, Out = output, Error = output });
+        var reportAllocated = GC.GetAllocatedBytesForCurrentThread() - reportBefore;
+        report.ExitCode.ShouldBe(0, output.ToString());
+        report.Action.ShouldBe("none", output.ToString());
+        report.Title.StartsWith("Nightly green", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(report.Title);
+        reportAllocated.ShouldBeLessThan(768L * 1024 * 1024, "report allocated " + reportAllocated + " bytes");
+        calls.ShouldNotBeEmpty();
         File.Exists(Path.Combine(dir, "card.md")).ShouldBeFalse("report wrote card.md");
     }
 

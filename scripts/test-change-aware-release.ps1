@@ -155,7 +155,7 @@ function Test-C1313_ModeCredit {
         if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj')) { $suiteNames += 'git-in-process' }
         $scriptNames = @('test-apphost-graceful-stop','test-apphost-lock-age','test-apphost-main-worktree-guard','test-apphost-probe-class',
             'test-cleanup-claude-sessions','test-cleanup-codex-test-residue','test-client-mode','test-deploy-am-service','test-deploy-nightly-watchdog',
-            'test-hooks','test-nightly-report','test-reap-zombie-agents','test-stage-value-report')
+            'test-hooks','test-reap-zombie-agents','test-stage-value-report')
         $observedAll = (Same-Set $execution.Selected $suiteNames) -and
             @($scriptNames | Where-Object {$trace -notmatch ([regex]::Escape($_ + '.ps1'))}).Count -eq 0
         $native = Invoke-FxRoster $record $discovery ('native-' + $mode)
