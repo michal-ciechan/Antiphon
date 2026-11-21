@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 340,
+      "classes": 341,
       "reason": "allowlist"
     },
     {
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 135,
+      "classes": 136,
       "reason": "cap",
-      "owed": 110,
+      "owed": 111,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -24613,6 +24613,38 @@
       "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyMatcherParityTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
+      "classes": [
+        "NightlyTestHelpersTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
+      "classes": [
+        "NightlyTestHelpersTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeTestHost.cs",
+      "classes": [
+        "NightlyTestHelpersTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "NightlyHostTests",
+        "NightlyTestHelpersTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
+      "classes": [
+        "NightlyTestHelpersTests"
       ]
     },
     {

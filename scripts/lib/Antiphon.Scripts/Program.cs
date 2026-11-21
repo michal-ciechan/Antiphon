@@ -1,7 +1,10 @@
 // antiphon-scripts <command> [arguments]. Exit 0: handled (the command wrote its answer). Exit 10 (NotHandled):
 // the input is outside what this command answers exactly, nothing the caller relies on was written, and the
 // caller runs its PowerShell path. Exit 2: usage. The reason for NotHandled goes to stderr, one line.
+// Exit 9 is reserved for the launchers (scripts/antiphon, scripts/antiphon.cmd, scripts/lib/antiphon-cli.ps1): the
+// CLI could not be built or started.
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Antiphon.Checkpoints;
 
@@ -13,28 +16,65 @@ namespace Antiphon.Scripts
         public const int Usage = 2;
         public const int NotHandled = 10;
 
+        // The commands by name (ordinal). A handler gets the whole argv, the name included, and answers with the exit
+        // code. An unknown name, or no name, prints the usage line and exits 2.
+        private static readonly IReadOnlyDictionary<string, Func<string[], int>> Commands = new Dictionary<string, Func<string[], int>>(StringComparer.Ordinal)
+        {
+            // The evidence scan answers every input itself (exit 0 or 2) and never hands back NotHandled.
+            ["live-lane-evidence"] = LiveLaneEvidenceCommand,
+            // The rc ledger commands answer every input themselves: exit 0 done, 1 refused (one stderr line), 2 usage.
+            ["rc-ledger-stamp"] = RcLedgerStamp,
+            ["rc-ledger-import"] = RcLedgerCommand,
+            ["rc-ledger-plan"] = RcLedgerCommand,
+            ["rc-ledger-status"] = RcLedgerCommand,
+            ["rc-input-census"] = RcLedgerCommand,
+            // The post-land early warning answers every input itself: exit 0/1 outcome, 2 refused or usage, 3 not Linux.
+            [PostLandCommand.Name] = PostLandCommand.Run,
+            // The evidence policy answers every input itself: exit 0 compliant, 1 violations, 2 unverifiable or usage.
+            [EvidenceCommand.Diff] = EvidenceCommand.Run,
+            [EvidenceCommand.Deletion] = EvidenceCommand.Run,
+            [NightlyProbeCommand.Name] = NightlyProbeCommand.Run,
+            // The release selection answers exactly or hands back NotHandled (exit 10).
+            ["select-release"] = SelectRelease,
+        };
+
         public static int Main(string[] args)
         {
             // One process answers one request: the filter/textconv driver settings are asked of git once.
             CheckpointProcessRunner.DriverSettingsCacheMilliseconds = 60000;
-            // The evidence scan answers every input itself (exit 0 or 2) and never hands back NotHandled.
-            if ((args.Length == 2 || args.Length == 3) && args[0] == "live-lane-evidence"
-                && Array.IndexOf(LiveLaneEvidence.Cases, args[1]) >= 0)
-                return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
-            // The rc ledger commands answer every input themselves: exit 0 done, 1 refused (one stderr line), 2 usage.
-            if (args.Length >= 1 && args[0] == "rc-ledger-stamp") return RcLedgerStamp(args);
-            if (args.Length >= 1 && (args[0] == "rc-ledger-import" || args[0] == "rc-ledger-plan" || args[0] == "rc-ledger-status" || args[0] == "rc-input-census")) return RcLedgerCommand(args);
-            // The post-land early warning answers every input itself: exit 0/1 outcome, 2 refused or usage, 3 not Linux.
-            if (args.Length >= 1 && args[0] == PostLandCommand.Name) return PostLandCommand.Run(args);
-            // The evidence policy answers every input itself: exit 0 compliant, 1 violations, 2 unverifiable or usage.
-            if (args.Length >= 1 && (args[0] == EvidenceCommand.Diff || args[0] == EvidenceCommand.Deletion)) return EvidenceCommand.Run(args);
-            if (args.Length >= 1 && args[0] == NightlyProbeCommand.Name) return NightlyProbeCommand.Run(args);
+            if (args.Length == 0 || !Commands.TryGetValue(args[0], out var command)) return WriteUsage();
             try
             {
-                if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
-                Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage);
+                return command(args);
+            }
+            catch (Antiphon.Nightly.NightlyUsageException e)
+            {
+                // A command that parses its flags with NightlyArgs: the reason and the command, one line.
+                Console.Error.WriteLine("usage: antiphon-scripts " + args[0] + ": " + e.Message);
                 return Usage;
+            }
+        }
+
+        private static int WriteUsage()
+        {
+            Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
+                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage);
+            return Usage;
+        }
+
+        private static int LiveLaneEvidenceCommand(string[] args)
+        {
+            if ((args.Length == 2 || args.Length == 3) && Array.IndexOf(LiveLaneEvidence.Cases, args[1]) >= 0)
+                return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
+            return WriteUsage();
+        }
+
+        private static int SelectRelease(string[] args)
+        {
+            if (args.Length != 3 && args.Length != 4) return WriteUsage();
+            try
+            {
+                return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
             }
             catch (NotHandledException e)
             {

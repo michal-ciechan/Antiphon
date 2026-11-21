@@ -14,7 +14,7 @@ public sealed class BuildOutputNestingTests
     [
         "nightly-owned-child", "custody-child", "script-harness-host", "channel-outbound-probe",
         "checkpoint-lifecycle-host", "checkpoint-filter-host", "checkpoint-repeat-host", "timing-probe",
-        "fakeclaude", "fakegrok", "fake-native-claude", "fake-native-grok", "ptyhost-native",
+        "fakeclaude", "fakegrok", "fake-native-claude", "fake-native-grok", "ptyhost-native", "antiphon-scripts",
     ];
 
     // Measured 2026-10-14 on server2: 1,468 files for a relative OutputPath build, 2,228 for the
@@ -39,6 +39,7 @@ public sealed class BuildOutputNestingTests
     [Arguments("timing-probe", "Antiphon.TestTiming.Probe")]
     [Arguments("fakeclaude", "fakeclaude")]
     [Arguments("fakegrok", "fakegrok")]
+    [Arguments("antiphon-scripts", "Antiphon.Scripts")]
     public void Own_output_stages_helper_program(string folder, string assembly)
     {
         var dir = Path.Combine(AppContext.BaseDirectory, folder);

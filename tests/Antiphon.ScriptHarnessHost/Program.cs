@@ -8,6 +8,8 @@ var cacheProbe = Environment.GetEnvironmentVariable(Antiphon.Hosting.PwshPrivate
 if (!string.IsNullOrWhiteSpace(cacheProbe))
     return Antiphon.Hosting.PwshPrivateCache.CompleteProbe(cacheProbe);
 
+if (args.Length >= 1 && args[0] == "cli-echo")
+    return CliEcho(args);
 if (args.Length >= 5 && args[0] == "post-land-slot")
     return PostLandSlot(args);
 if (args.Length >= 3 && args[0] == "fixture-child")
@@ -239,6 +241,41 @@ static int PostLandSlot(string[] args)
         File.SetLastWriteTimeUtc(destination, DateTime.UtcNow);
     }
     return int.Parse(args[4], CultureInfo.InvariantCulture);
+}
+
+// The argv and environment observer of AntiphonCliLauncherTests and NightlyHostTests: cli-echo [arguments...]. It
+// prints one JSON line: the arguments after "cli-echo", the working and base directories, the pid, and the values of
+// the variables CLI_ECHO_ENV names (comma separated; null when unset). With "--result-file <path>" among the
+// arguments it also writes that line to the path (resultFileExisted: a file was already there). CLI_ECHO_HOLD then
+// waits, at most 60 s, until that file exists. CLI_ECHO_EXIT is the exit code (0 when unset).
+static int CliEcho(string[] args)
+{
+    var arguments = args.Skip(1).ToArray();
+    string? resultFile = null;
+    for (var i = 0; i + 1 < arguments.Length; i++)
+        if (arguments[i] == "--result-file") resultFile = arguments[i + 1];
+    var environment = new SortedDictionary<string, string?>(StringComparer.Ordinal);
+    foreach (var name in (Environment.GetEnvironmentVariable("CLI_ECHO_ENV") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        environment[name] = Environment.GetEnvironmentVariable(name);
+    var line = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+    {
+        ["arguments"] = arguments,
+        ["workingDirectory"] = Directory.GetCurrentDirectory(),
+        ["baseDirectory"] = AppContext.BaseDirectory,
+        ["pid"] = Environment.ProcessId,
+        ["environment"] = environment,
+        ["resultFileExisted"] = resultFile != null && File.Exists(resultFile),
+    });
+    if (resultFile != null) File.WriteAllText(resultFile, line);
+    Console.WriteLine(line);
+    Console.Out.Flush();
+    var hold = Environment.GetEnvironmentVariable("CLI_ECHO_HOLD");
+    if (!string.IsNullOrEmpty(hold))
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (!File.Exists(hold) && DateTime.UtcNow < deadline) Thread.Sleep(20);
+    }
+    return int.TryParse(Environment.GetEnvironmentVariable("CLI_ECHO_EXIT"), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code) ? code : 0;
 }
 
 static void PublishIdentity(string directory, string name)
