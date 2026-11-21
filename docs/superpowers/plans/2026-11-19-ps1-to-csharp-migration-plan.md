@@ -66,6 +66,8 @@ existed at `38efdbde6c65ba1eed378868dd8b7cb47703c222` and does not hold that lan
   `{"outcome":"passed","Outcome":"failed"}`, `"Provenance":"unverified"` beside
   `"provenance":"verified"`, and evidence-level `"Results"` beside `"results"`
   stay valid carries. Reject a case variant of any known name, at every level.
+  **Decided 2026-11-21 (owner): not enforced.** Each record has one canonical key spelling, read exactly; a writer
+  that emits another spelling has the bug (docs/agent-steering-log.md, 2026-11-21).
 - **A-2 Duplicate JSON keys.** Where: the caller's parse layer.
   `"provenanceFailure":true,"provenanceFailure":false`, a duplicate `outcome`,
   or a duplicate `results` reaches the library as the last value. Refuse
@@ -74,6 +76,8 @@ existed at `38efdbde6c65ba1eed378868dd8b7cb47703c222` and does not hold that lan
   A BOM-prefixed `provenanceFailure` key, or one with a trailing space, holding
   true is ignored, and a missing flag counts as clean. Reject unknown keys on
   result rows.
+  **Decided 2026-11-21 (owner): not enforced,** for the same reason as A-1: a key with an extra character is a
+  different key, and writing it is the writer's bug.
 - **A-4 ISO-8601 ids coerced to DateTime.** An ISO-8601 chunk id becomes a
   DateTime, so a clean row fails closed as missing-outcome. Read ids as strings.
 - **A-5 Unwitnessed count checks.** Where: `$ids.Count -eq 0` and

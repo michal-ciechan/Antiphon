@@ -389,6 +389,29 @@ call it in-process, make its entry script a CLI subcommand, and delete the ps1 f
 
 ---
 
+## 2026-11-21 - Readers trust one canonical key spelling; a misspelled key is the writer's bug
+
+**What the agent did:** It recommended enforcing review advisories A-1 and A-3 in the compiled rc shadow sample:
+rejecting result rows with a case variant of a known key (`"outcome":"passed"` beside `"Outcome":"failed"`) or
+a near-miss key (a BOM-prefixed or trailing-space `provenanceFailure`), and editing those rows of the recorded
+golden corpus to the strict outcome.
+
+**Why the agent picked it:** The advisories called these fail-open holes, and the 2026-11-20 operator direction
+said strict types should remove that class of hole.
+
+**What the owner preferred:** "We should not be worrying about having a key with some random character that is a
+different key outright. So it's the fault of the writer. Same with lowercase and uppercase. We should agree on
+one, and if something writes to the other one, that's not our problem, that is the writer's problem."
+
+**Principle:** Each record has one agreed key spelling. A reader matches that spelling exactly and does not police
+other spellings: a key with different case or an extra character is a different key, and producing it is a bug in
+the writer. Defensive code for malformed writers adds cost without making the reader more correct.
+
+**Candidate guidance:** "Do not add case-variant, BOM or near-miss key detection to readers of our own records.
+Read the one canonical key exactly; fix the writer if it writes anything else."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
