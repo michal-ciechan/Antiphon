@@ -26,6 +26,22 @@ internal static class RcPortCorpus
     static readonly object Gate = new object();
     static JsonArray cases;
 
+    // Golden cases where the plain-value port answers differently from the recorded PowerShell result, by owner
+    // decision: readers match one canonical key spelling exactly (docs/agent-steering-log.md, 2026-11-21). The replay
+    // asserts the plain answer for the named expect keys; the golden stays as the old libraries recorded it.
+    // contract-keys-entry (CARD-2010 A-4): Get-RcFullField read $Object.Keys, which a contract key named Keys shadows,
+    // so PowerShell saw every real contract field as unknown and "extra" as a field name. The plain reader reads the
+    // real key collection: the fields are known and Keys is one unknown key. Both fail closed (trust not granted, carries
+    // invalidated); only the reason text differs.
+    static readonly Dictionary<string, Dictionary<string, string>> PlainShapeAnswers = new(StringComparer.Ordinal)
+    {
+        ["contract-keys-entry"] = new(StringComparer.Ordinal)
+        {
+            ["reason"] = "contract-current-unknown:Keys",
+            ["reasons"] = "contract-current-unknown:Keys",
+        },
+    };
+
     public static void RequireShadow() => Require(ShadowType);
 
     public static void RequireDirty() => Require(DirtyType);
@@ -77,7 +93,17 @@ internal static class RcPortCorpus
         var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         if (Str(root, "format") != "antiphon-rc-port-golden-v1")
             throw new InvalidOperationException("golden format");
-        cases = root["cases"]!.AsArray();
+        var loaded = root["cases"]!.AsArray();
+        // A plain-shape answer names a recorded case and a recorded expect key, or the mark has gone stale.
+        foreach (var (id, answers) in PlainShapeAnswers)
+        {
+            var row = loaded.Select(n => n!.AsObject()).FirstOrDefault(r => Str(r, "id") == id)
+                ?? throw new InvalidOperationException("plain-shape answer for a case the golden lacks: " + id);
+            foreach (var key in answers.Keys)
+                if (!row["expect"]!.AsObject().ContainsKey(key))
+                    throw new InvalidOperationException("plain-shape answer for an expect key the golden lacks: " + id + "." + key);
+        }
+        cases = loaded;
         return cases;
     }
 
@@ -86,6 +112,11 @@ internal static class RcPortCorpus
         var op = Str(row, "op");
         var input = row["input"]!.AsObject();
         var expect = row["expect"]!.AsObject();
+        if (PlainShapeAnswers.TryGetValue(Str(row, "id"), out var answers))
+        {
+            expect = expect.DeepClone().AsObject();
+            foreach (var (key, value) in answers) expect[key] = value;
+        }
         switch (op)
         {
             case "proposal": ReplayProposal(input, expect); return;

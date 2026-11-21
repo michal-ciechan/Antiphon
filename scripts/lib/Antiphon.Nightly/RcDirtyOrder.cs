@@ -1,32 +1,46 @@
 // CARD-1836 S6a compiled dirty launch order. Shadow only: effectiveMode stays Full and gateCredit stays false.
 // Containment is ancestor, otherwise one exact cherry-pick trailer line. No trust transition.
+// Results serialize with the pre-port camelCase names (CARD-2010 A-2), whatever options the writer passes.
 #nullable disable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
     public sealed class RcDirtyLaunchItem
     {
+        [JsonPropertyName("key")]
         public string Key { get; set; }
+        [JsonPropertyName("band")]
         public string Band { get; set; }
+        [JsonPropertyName("disposition")]
         public string Disposition { get; set; }
     }
 
     public sealed class RcDirtyLaunchOrder
     {
+        [JsonPropertyName("format")]
         public string Format { get; set; }
+        [JsonPropertyName("launch")]
         public RcDirtyLaunchItem[] Launch { get; set; }
+        [JsonPropertyName("omitted")]
         public string[] Omitted { get; set; }
+        [JsonPropertyName("gateCredit")]
         public bool GateCredit { get; set; }
+        [JsonPropertyName("effectiveMode")]
         public string EffectiveMode { get; set; }
+        [JsonPropertyName("trustTransition")]
         public bool TrustTransition { get; set; }
+        [JsonPropertyName("shadow")]
         public bool Shadow { get; set; }
+        [JsonPropertyName("activation")]
         public string Activation { get; set; }
+        [JsonPropertyName("candidateSha")]
         public string CandidateSha { get; set; }
     }
 

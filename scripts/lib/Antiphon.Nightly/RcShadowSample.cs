@@ -1,8 +1,8 @@
 // CARD-1836 S8b compiled shadow sample. Shadow only: effectiveMode stays Full and gateCredit stays false.
 // Behaviour matches the pre-port PowerShell golden (card-1836-s6c-rc-port-golden.json). No trust record is written.
+// Results serialize with the pre-port camelCase names (CARD-2010 A-2), whatever options the writer passes.
 #nullable disable
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,54 +11,90 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
     public sealed class RcShadowFailure
     {
+        [JsonPropertyName("kind")]
         public string Kind { get; set; }
+        [JsonPropertyName("chunkId")]
         public string ChunkId { get; set; }
     }
 
     public sealed class RcShadowProposal
     {
+        [JsonPropertyName("format")]
         public string Format { get; set; }
+        [JsonPropertyName("effectiveMode")]
         public string EffectiveMode { get; set; }
+        [JsonPropertyName("gateCredit")]
         public bool GateCredit { get; set; }
+        [JsonPropertyName("bindingState")]
         public string BindingState { get; set; }
+        [JsonPropertyName("incrementalValidation")]
         public string IncrementalValidation { get; set; }
+        [JsonPropertyName("trustGranted")]
         public bool TrustGranted { get; set; }
+        [JsonPropertyName("trustRecordWritten")]
         public bool TrustRecordWritten { get; set; }
+        [JsonPropertyName("pilotClaim")]
         public bool PilotClaim { get; set; }
+        [JsonPropertyName("launched")]
         public bool Launched { get; set; }
+        [JsonPropertyName("expandedToFull")]
         public bool ExpandedToFull { get; set; }
+        [JsonPropertyName("carriesInvalidated")]
         public bool CarriesInvalidated { get; set; }
+        [JsonPropertyName("sample")]
         public string Sample { get; set; }
+        [JsonPropertyName("shadowPilot")]
         public bool ShadowPilot { get; set; }
+        [JsonPropertyName("seed")]
         public string Seed { get; set; }
+        [JsonPropertyName("n")]
         public int N { get; set; }
+        [JsonPropertyName("cchunk")]
         public int Cchunk { get; set; }
+        [JsonPropertyName("stratumCount")]
         public int StratumCount { get; set; }
+        [JsonPropertyName("selected")]
         public string[] Selected { get; set; }
+        [JsonPropertyName("expectedSkipOnly")]
         public string[] ExpectedSkipOnly { get; set; }
     }
 
     public sealed class RcShadowTrust
     {
+        [JsonPropertyName("trustGranted")]
         public bool TrustGranted { get; set; }
+        [JsonPropertyName("incrementalValidation")]
         public string IncrementalValidation { get; set; }
+        [JsonPropertyName("effectiveMode")]
         public string EffectiveMode { get; set; }
+        [JsonPropertyName("gateCredit")]
         public bool GateCredit { get; set; }
+        [JsonPropertyName("reason")]
         public string Reason { get; set; }
+        [JsonPropertyName("reasons")]
         public string[] Reasons { get; set; }
+        [JsonPropertyName("observedPilots")]
         public int ObservedPilots { get; set; }
+        [JsonPropertyName("requiredPilots")]
         public int RequiredPilots { get; set; }
+        [JsonPropertyName("carriesInvalidated")]
         public bool CarriesInvalidated { get; set; }
+        [JsonPropertyName("invalidatedCarries")]
         public string[] InvalidatedCarries { get; set; }
+        [JsonPropertyName("preservedSampleFailure")]
         public object PreservedSampleFailure { get; set; }
+        [JsonPropertyName("expandedToFull")]
         public bool ExpandedToFull { get; set; }
+        [JsonPropertyName("trustRecordWritten")]
         public bool TrustRecordWritten { get; set; }
+        [JsonPropertyName("shadowPilot")]
         public bool ShadowPilot { get; set; }
     }
 
@@ -287,13 +323,15 @@ namespace Antiphon.Nightly
             };
         }
 
+        // Each contract field is read by its one canonical key. A key named Keys is one more unknown key: the PowerShell
+        // libraries' $Object.Keys shadowing (golden case contract-keys-entry) is not reproduced (owner decision 2026-11-21).
         static IEnumerable<string> ContractReasons(object current, object baseline)
         {
             var reasons = new List<string>();
             foreach (var field in ContractFields)
             {
-                var currentValue = ContractField(current, field);
-                var baselineValue = ContractField(baseline, field);
+                var currentValue = RcPort.Field(current, field);
+                var baselineValue = RcPort.Field(baseline, field);
                 var currentKnown = ContractValue(field, currentValue);
                 var baselineKnown = ContractValue(field, baselineValue);
                 if (!currentKnown) reasons.Add("contract-current-unknown:" + field);
@@ -308,72 +346,10 @@ namespace Antiphon.Nightly
 
         static void Extra(List<string> reasons, string side, object contract)
         {
-            foreach (var field in ContractNames(contract))
+            foreach (var field in RcPort.Names(contract))
             {
                 if (!ContractFieldSet.Contains(field)) reasons.Add("contract-" + side + "-unknown:" + field);
             }
-        }
-
-        // Get-RcFullField reads $Object.Keys, which a key named Keys shadows.
-        // A shadowed string enumerates as characters, so no contract field matches.
-        // The real indexer is used only when that enumeration yields the field name.
-        static object ContractField(object source, string name)
-        {
-            source = RcPort.See(source);
-            if (source is IDictionary dictionary && TryShadowedKeys(dictionary, out var shadowed))
-            {
-                foreach (var key in EnumerateShadow(shadowed, true))
-                {
-                    if (key is string text && string.Equals(text, name, StringComparison.Ordinal))
-                        return RcPort.See(dictionary[text]);
-                }
-                return null;
-            }
-            return RcPort.Field(source, name);
-        }
-
-        // Get-RcFullFieldNames is @($Object.Keys). @() does not unroll a string.
-        static List<string> ContractNames(object source)
-        {
-            source = RcPort.See(source);
-            if (source is IDictionary dictionary && TryShadowedKeys(dictionary, out var shadowed))
-            {
-                var names = new List<string>();
-                foreach (var key in EnumerateShadow(shadowed, false))
-                {
-                    if (key is string text) names.Add(text);
-                }
-                return names;
-            }
-            return RcPort.Names(source);
-        }
-
-        static bool TryShadowedKeys(IDictionary dictionary, out object shadowed)
-        {
-            shadowed = null;
-            if (!dictionary.Contains("Keys")) return false;
-            shadowed = dictionary["Keys"];
-            return true;
-        }
-
-        static IEnumerable EnumerateShadow(object shadowed, bool unrollString)
-        {
-            if (shadowed is string text)
-            {
-                if (!unrollString)
-                {
-                    yield return text;
-                    yield break;
-                }
-                foreach (var character in text) yield return character.ToString();
-                yield break;
-            }
-            if (shadowed is IEnumerable list)
-            {
-                foreach (var item in list) yield return item;
-                yield break;
-            }
-            yield return shadowed;
         }
 
         static bool ContractValue(string field, object value)

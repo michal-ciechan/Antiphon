@@ -13,26 +13,8 @@ namespace Antiphon.Nightly
     {
         public static void Throw(string message) => throw new InvalidOperationException(message);
 
-        // PowerShell member access sees through PSObject. A PSCustomObject stays wrapped:
-        // its notes are the properties the old scripts read.
-        public static object See(object value)
-        {
-            for (var depth = 0; depth < 8 && value != null; depth++)
-            {
-                var type = value.GetType();
-                if (type.FullName != "System.Management.Automation.PSObject") return value;
-                var property = type.GetProperty("BaseObject");
-                var baseObject = property == null ? null : property.GetValue(value);
-                if (baseObject == null || ReferenceEquals(baseObject, value)) return value;
-                if (baseObject.GetType().FullName == "System.Management.Automation.PSCustomObject") return value;
-                value = baseObject;
-            }
-            return value;
-        }
-
         public static bool IsDictionary(object value)
         {
-            value = See(value);
             if (value == null || value is System.Dynamic.ExpandoObject) return false;
             if (value is IDictionary) return true;
             foreach (var iface in value.GetType().GetInterfaces())
@@ -44,15 +26,14 @@ namespace Antiphon.Nightly
 
         public static object Field(object source, string name)
         {
-            source = See(source);
             if (source == null) return null;
             if (IsDictionary(source))
             {
                 TryDictionary(source, name, true, out var value);
-                return See(value);
+                return value;
             }
             var property = source.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
-            return See(property == null ? null : property.GetValue(source));
+            return property == null ? null : property.GetValue(source);
         }
 
         public static bool HasKey(object source, string name) =>
@@ -60,7 +41,6 @@ namespace Antiphon.Nightly
 
         public static List<string> Names(object source)
         {
-            source = See(source);
             var names = new List<string>();
             if (source is IDictionary dictionary && IsDictionary(source))
             {
@@ -90,7 +70,6 @@ namespace Antiphon.Nightly
         /// </summary>
         public static bool Empty(object value)
         {
-            value = See(value);
             if (value == null) return true;
             if (value is string text) return string.IsNullOrWhiteSpace(text);
             if (IsDictionary(value)) return false;
@@ -105,7 +84,6 @@ namespace Antiphon.Nightly
 
         public static List<object> Unwrap(object value)
         {
-            value = See(value);
             var items = new List<object>();
             if (value == null)
             {
@@ -119,7 +97,7 @@ namespace Antiphon.Nightly
             }
             if (value is IEnumerable enumerable)
             {
-                foreach (var item in enumerable) items.Add(See(item));
+                foreach (var item in enumerable) items.Add(item);
                 return items;
             }
             items.Add(value);

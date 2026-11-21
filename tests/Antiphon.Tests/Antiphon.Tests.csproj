@@ -33,10 +33,6 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.20" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.21" />
     <PackageReference Include="System.Management" Version="9.0.21" />
-    <!-- The RC corpus needs real PowerShell objects in the net9.0 host. Match the Linux pwsh
-         runtime version on Windows, where installed pwsh 7.6 targets .NET 10. -->
-    <PackageReference Include="System.Management.Automation" Version="7.5.4"
-                      Condition="'$(OS)' == 'Windows_NT'" PrivateAssets="all" />
     <PackageReference Include="Testcontainers.Redpanda" Version="4.14.0" />
   </ItemGroup>
 

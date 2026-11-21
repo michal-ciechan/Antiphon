@@ -1,46 +1,39 @@
-using System.Diagnostics;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using System.Globalization;
+using System.Text.Json;
+using Antiphon.Nightly;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// CARD-2010 A-2. ConvertTo-Json of a wrapper result stays camelCase.
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+/// <summary>
+/// CARD-2010 A-2, in-process (moved from scripts/test-rc-port-casing.ps1): the shadow proposal, the trust decision and
+/// the dirty launch order serialize with the pre-port camelCase names, whatever serializer options the writer uses.
+/// Shadow only: effectiveMode stays Full and gateCredit stays false.
+/// </summary>
+[Category("Unit")]
 public sealed class RcPortWrapperCasingTests
 {
-    [Test]
-    [Timeout(540_000)]
-    public async Task WrapperJsonStaysCamelCase()
+    private static void AssertCamelCase(string label, object value)
     {
-        var root = DelegateScriptRunner.RepoRoot;
-        var script = Path.Combine(root, "scripts", "test-rc-port-casing.ps1");
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = root,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(520));
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            throw new TimeoutException("scripts/test-rc-port-casing.ps1 did not finish within 520s");
-        }
-        var output = await stdout + await stderr;
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException("casing exit " + process.ExitCode + " " + output);
+        var json = JsonSerializer.Serialize(value);
+        json.Contains("\"effectiveMode\"", StringComparison.Ordinal).ShouldBeTrue(label + " missing effectiveMode: " + json);
+        json.Contains("\"EffectiveMode\"", StringComparison.Ordinal).ShouldBeFalse(label + " has EffectiveMode: " + json);
+        json.Contains("\"gateCredit\":false", StringComparison.Ordinal).ShouldBeTrue(label + " gateCredit: " + json);
+        json.Contains("\"effectiveMode\":\"Full\"", StringComparison.Ordinal).ShouldBeTrue(label + " effectiveMode: " + json);
+    }
+
+    [Test]
+    public void WrapperJsonStaysCamelCase()
+    {
+        var seed = string.Concat(Enumerable.Repeat("ab", 32));
+        var chunk = new Dictionary<string, object> { ["id"] = "c1", ["suite"] = "alpha", ["boundary"] = "north", ["completelyCarryable"] = true };
+        AssertCamelCase("proposal", RcShadowSample.Proposal(new object[] { chunk }, seed, "", RcInputFixtureRepository.SourceRoot));
+
+        var utcNow = DateTimeOffset.Parse("2026-11-13T12:00:00.0000000+00:00", CultureInfo.InvariantCulture);
+        AssertCamelCase("trust", RcShadowSample.Trust(null, null, null, null, utcNow, Array.Empty<object>(), Array.Empty<object>(), null, false, null, "", "", ""));
+
+        var obligations = new object[] { new Dictionary<string, object> { ["key"] = "dirty", ["disposition"] = "Dirty" } };
+        AssertCamelCase("dirty", RcDirtyOrder.Launch(obligations, Array.Empty<object>(), Array.Empty<object>(), "", "candidate-not-in-history"));
     }
 }
