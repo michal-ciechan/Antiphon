@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Antiphon.Tests.Scripts;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -39,7 +40,7 @@ public sealed class SourceRevisionStampContractTests
     }
 
     [Test]
-    [Arguments("dev-aspire.ps1", "-Label apphost-build -- dotnet build -p:SourceRevisionId=$sourceRevision")]
+    [Arguments("dev-aspire.ps1", "-Label apphost-build -- dotnet build `\"-p:SourceRevisionId=$sourceRevision`\"")]
     [Arguments("scripts/run-daemon.ps1", "$buildArgs += \"-p:SourceRevisionId=$sourceRevision\"")]
     [Arguments("scripts/start-windows-phone-home-runner.ps1", "dotnet build $project -nologo -v:q \"-p:SourceRevisionId=$sourceRevision\"")]
     [Arguments("dev-start.ps1", "dotnet run -p:SourceRevisionId=$sourceRevision")]
