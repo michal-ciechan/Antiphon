@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 347,
+      "classes": 348,
       "reason": "allowlist"
     },
     {
@@ -2072,9 +2072,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 140,
+      "classes": 141,
       "reason": "cap",
-      "owed": 115,
+      "owed": 116,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2163,18 +2163,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 55,
+      "classes": 53,
       "reason": "cap",
-      "owed": 30,
+      "owed": 28,
       "first": [
-        "ClaudeEffortFixtureTraceTests",
-        "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "LongPathsCheckoutScriptTests"
+        "LongPathsCheckoutScriptTests",
+        "MechanicalPcRehearsalTests",
+        "NightlyDiscoveryParserTests"
       ]
     },
     {
@@ -4246,12 +4246,6 @@
       "path": "scripts/start-windows-phone-home-runner.ps1",
       "classes": [
         "SourceRevisionStampContractTests"
-      ]
-    },
-    {
-      "path": "scripts/summarize-test-phases.ps1",
-      "classes": [
-        "TestPhaseSummaryTests"
       ]
     },
     {
@@ -24763,7 +24757,9 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
-        "NightlyTestHelpersTests"
+        "NightlyReclaimRaceTests",
+        "NightlyTestHelpersTests",
+        "ReleaseGateRunTests"
       ]
     },
     {
@@ -24804,11 +24800,13 @@
         "NightlyExecutionDiagnosticTests",
         "NightlyHealthTests",
         "NightlyHostTests",
+        "NightlyLockFormatTests",
         "NightlyPrerequisiteTests",
         "NightlySummaryWitnessTests",
         "NightlyTestHelpersTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
+        "ReleaseGateRunTests",
         "TestTimingsTwinTests",
         "ToolchainFloorTwinTests"
       ]
@@ -24819,6 +24817,14 @@
         "C1744G2PlacementTests",
         "HostTopConsumerTests",
         "TaskPlatformPlacementTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyLockFixture.cs",
+      "classes": [
+        "NightlyDeadOwnerLockTests",
+        "NightlyLockFormatTests",
+        "NightlyReclaimRaceTests"
       ]
     },
     {
@@ -25014,9 +25020,9 @@
         "C599SnapshotTests",
         "ChangeAwareReleaseTests",
         "CheckpointOwnedOutputScriptTests",
-        "NightlyDeadOwnerLockTests",
+        "ClaudeEffortFixtureTraceTests",
+        "ExpectedPlatformSkipRosterTests",
         "NightlyPrerequisiteTests",
-        "NightlyReclaimRaceTests",
         "NightlyScriptsTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
@@ -25074,6 +25080,7 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcessFixture.cs",
       "classes": [
         "DirectoryLinkFixtureWindowsTests",
+        "NightlyLockFormatTests",
         "PosixHarnessToolTests",
         "RcQualificationStatusTests",
         "RunnerProbePowerShellFixtureTests",
@@ -26060,8 +26067,11 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/JournalFixtures.cs",
       "classes": [
+        "RcFullTimingContractTests",
         "RcManifestIntegrationTests",
-        "RcManifestJournalTests"
+        "RcManifestJournalTests",
+        "TestPhaseSummaryTests",
+        "TestPhaseSupervisorTests"
       ]
     },
     {
