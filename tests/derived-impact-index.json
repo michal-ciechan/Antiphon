@@ -2088,44 +2088,45 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
+        "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 87,
+      "classes": 88,
       "reason": "cap",
-      "owed": 62,
+      "owed": 63,
       "first": [
+        "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
-        "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests"
+        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 90,
+      "classes": 91,
       "reason": "cap",
-      "owed": 65,
+      "owed": 66,
       "first": [
+        "CheckpointIndexPathsTests",
         "CheckpointInheritedFileTests",
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
-        "CheckpointOrFilterTests",
-        "CheckpointOutputConfinementTests"
+        "CheckpointOrFilterTests"
       ]
     },
     {
@@ -2226,18 +2227,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 50,
+      "classes": 51,
       "reason": "cap",
-      "owed": 25,
+      "owed": 26,
       "first": [
+        "CheckpointRecoveryLinuxTests",
         "CheckpointRecoveryWindowsTests",
         "CheckpointScriptReaderDeadlineTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
         "CheckpointShapeConflictTests",
         "CheckpointSlotExecutorTests",
-        "CheckpointSourceGitBoundsTests",
-        "CheckpointSourceStateTests"
+        "CheckpointSourceGitBoundsTests"
       ]
     },
     {
@@ -24001,6 +24002,7 @@
         "CheckpointAdmissionContractTests",
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointIndexPathsTests",
@@ -24017,7 +24019,6 @@
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
-        "CheckpointTypeCacheTests",
         "DirectoryLinkFixtureTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
@@ -24125,6 +24126,7 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
@@ -24136,7 +24138,6 @@
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
-        "CheckpointManifestTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -24155,13 +24156,13 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
         "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
-        "CheckpointIndexPathsTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -25268,6 +25269,7 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
@@ -25282,8 +25284,7 @@
         "CheckpointOwnedOutputTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests",
-        "CheckpointRecoveryLinuxTests"
+        "CheckpointRecoveryFixtureTests"
       ]
     },
     {
