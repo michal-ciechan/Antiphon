@@ -51,7 +51,7 @@ internal static class UnifiedRecoveryProbe
         services.AddLogging(logging => logging.AddProvider(new ProbeLog()));
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(config.ConnectionString);
+            o.UseNpgsql(config.ConnectionString).WithProbeModel();
             if (config.FailPublishCommit) o.AddInterceptors(new OutcomeRefusal(config));
         });
         var clock = new ProbeClock(config.ClockOffsetSeconds);

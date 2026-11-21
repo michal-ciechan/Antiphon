@@ -59,6 +59,8 @@
              Link="TestHelpers\FakeHerdrTransport.cs" />
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestHelpers\HerdrTestProcess.cs" />
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestHelpers\ReadOnlyDirectory.cs" />
+    <!-- The probe's model comparison, pinned by ProbeModelComparisonTests. -->
+    <Compile Include="..\Antiphon.ChannelOutbound.Probe\ProbeModelComparison.cs" Link="TestHelpers\ProbeModelComparison.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\TestHelpers\PhoneHomeTestWebSocket.cs"
              Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
     <Compile Include="..\Shared\TestTiming.cs" Link="TestHelpers\TestTiming.cs" />

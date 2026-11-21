@@ -42,6 +42,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
     // replacement, fail-fast, bounds and the CARD-1934 timed start).
     private static Task<RedpandaContainer> SharedBrokerAsync() => SharedRedpandaBroker.C519.GetAsync();
 
+    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
+    [Before(Class)]
+    public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
+
     // Disposed once both C519 classes have finished (else after the assembly), never by one class alone.
     [After(Class)]
     public static Task SharedBrokerClassFinishedAsync() => SharedRedpandaBroker.C519.ClassFinishedAsync(nameof(ChannelOutboundUnifiedTransportTests));

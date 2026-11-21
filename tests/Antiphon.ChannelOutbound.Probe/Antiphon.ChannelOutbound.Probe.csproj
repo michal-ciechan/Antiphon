@@ -4,9 +4,14 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The design-time and Roslyn packages below ship satellite resources for every culture; English only. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.20" />
+    <!-- ProbeModelGenerator: scaffolds and compiles AppDbContext's compiled model from this build. Private, so its
+         Roslyn 4.8 pins never reach Antiphon.Tests (which stages this probe and uses Roslyn 5.x itself). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.20" PrivateAssets="all" />
     <ProjectReference Include="../../server/Antiphon.Server.csproj" />
   </ItemGroup>
 </Project>

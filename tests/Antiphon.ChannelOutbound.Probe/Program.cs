@@ -18,13 +18,15 @@ using Microsoft.Extensions.Options;
 
 // The parent owns the database and directory. No production configuration or
 // external runner is loaded by this crash probe.
+if (args is ["--generate-model", var modelDir]) return ProbeModelGenerator.Run(modelDir);
 if (args.Length != 1 || !File.Exists(args[0])) return 2;
 var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync(args[0]));
 if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;
+ProbeModel.Use(config.CompiledModelPath);
 try
 {
     if (config.Mode == "unified") return await UnifiedRecoveryProbe.RunAsync(config);
-    var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString);
+    var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString).WithProbeModel();
     if (config.FailPublishCommit)
         options.AddInterceptors(new RefusingCommitInterceptor(
             Path.Combine(Path.GetDirectoryName(config.MarkerPath)!, "commit-injected")));
@@ -58,7 +60,7 @@ try
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(config.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(config.ConnectionString).WithProbeModel());
         services.AddSingleton<IEventBus, ProbeEventBus>();
         services.AddSingleton<TimeProvider>(clock);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -180,7 +182,7 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null,
     string? WorkerExe = null, string? WorkerHome = null, string? WorkerGate = null,
     string? LaunchSpecPath = null, string? ExpectedSourceSha = null, string? StallPoint = null,
-    int DeadlineSeconds = 30);
+    int DeadlineSeconds = 30, string? CompiledModelPath = null);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {
@@ -256,7 +258,7 @@ internal sealed class UnifiedDispatchBoundary(ProbeConfig config) : LandDelivery
     public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
     {
         if (config.Barrier != "conversion-dispatched" || boundary != "dispatch-warning-claim-committed") return;
-        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString).Options);
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString).WithProbeModel().Options);
         if (!await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.OutboundDeliveryId == config.DeliveryId, ct)) return;
         await UnifiedRecoveryProbe.WriteMarkerAsync(config, "conversion-dispatched", config.DeliveryId, ct);
         await Task.Delay(Timeout.InfiniteTimeSpan, ct);
@@ -286,7 +288,7 @@ internal sealed class ProbeDispatchBoundary(string connectionString, string mark
         if (barrier != "conversion-dispatched" || boundary != "dispatch-warning-claim-committed")
             return;
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(connectionString).Options);
+            .UseNpgsql(connectionString).WithProbeModel().Options);
         if (!await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.OutboundDeliveryId == deliveryId, ct))
             return;
         await using (var stream = new FileStream(markerPath, FileMode.CreateNew,

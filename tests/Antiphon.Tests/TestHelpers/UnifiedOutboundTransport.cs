@@ -199,6 +199,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var config = marker + ".config";
         var source = typeof(UnifiedOutboundTransport).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+').Last();
+        // The compiled model this probe build generated (ProbeGeneratedModel), or none: the probe then builds it.
+        var model = await ProbeGeneratedModel.PathAsync();
         await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new
         {
             ConnectionString = Schema.ConnectionString, StoreRoot, DeliveryId = deliveryId ?? H.SessionId,
@@ -206,7 +208,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             ClockOffsetSeconds = offset, Mode = mode, BootstrapServers = Bootstrap, Topic,
             FailPublishCommit = refuseOutcome, ExpectedSourceSha = source,
             ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot, StallPoint = stallPoint,
-            DeadlineSeconds = (int)ProbeDeadline.TotalSeconds,
+            DeadlineSeconds = (int)ProbeDeadline.TotalSeconds, CompiledModelPath = model,
         }));
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
