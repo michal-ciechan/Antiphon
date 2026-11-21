@@ -15,6 +15,7 @@ function Get-UnstampedPowerShellBuild([string]$Text) {
 $decoys = [ordered]@{
     comment = 'dotnet build server # -p:SourceRevisionId=$sourceRevision'
     quoted = 'Invoke-Expression "dotnet publish server"'
+    forwarded = '& "./build-slot.ps1" -Label fixture -- dotnet build -p:SourceRevisionId=$sourceRevision'
     logged = 'dotnet pack server; Write-Host "-p:SourceRevisionId=$sourceRevision"'
     splat = '$buildArgs = @("build", "server"); if ($false) { $buildArgs += "-p:SourceRevisionId=$sourceRevision" }; dotnet @buildArgs'
 }
