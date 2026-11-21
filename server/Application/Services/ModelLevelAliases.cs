@@ -19,9 +19,9 @@ namespace Antiphon.Server.Application.Services;
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
 /// (<c>gpt-6.2-astra</c> / <c>gpt-6.2-sol</c> / <c>gpt-6.2-sol</c> / <c>gpt-5.6-luna</c>) and needs
 /// deliberate catalog bumps. Both 6.2 models have floor 0.169.1. The explicit <c>gpt-6-astra</c>
-/// alias has a documented floor of 0.153.4. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1. CARD-0959 reports runner
-/// CLI observations and retains floor metadata as data only; it does not enforce compatibility
-/// or require a fleet upgrade.</para>
+/// alias has a documented floor of 0.153.4. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1.
+/// CARD-0959 reports runner CLI observations and treats floor metadata as data only.
+/// It does not enforce compatibility or require a fleet upgrade.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
@@ -46,10 +46,9 @@ public static class ModelLevelAliases
             return null;
 
         var model = actualModel.Trim();
-        if (string.Equals(model, CodexSol.ModelId, StringComparison.OrdinalIgnoreCase))
-            return CodexSol.MinimumCliVersion;
-        if (string.Equals(model, CodexFrontier.ModelId, StringComparison.OrdinalIgnoreCase))
-            return CodexFrontier.MinimumCliVersion;
+        if (string.Equals(model, ModelAlias.Gpt62Sol, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(model, ModelAlias.Gpt62Astra, StringComparison.OrdinalIgnoreCase))
+            return Codex62Floor;
         if (string.Equals(model, ModelAlias.Gpt61Sol, StringComparison.OrdinalIgnoreCase))
             return Codex61SolFloor;
         return null;
