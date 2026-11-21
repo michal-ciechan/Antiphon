@@ -5,6 +5,23 @@
   "maximumStaleness": 0,
   "kinds": [
     {
+      "id": "codex-real-cli-boot",
+      "globs": [
+        "docker/session-runner-grok/Dockerfile",
+        "docker/session-runner-grok/**/codex*",
+        "server/Application/Services/CodexLaunchArgs.cs",
+        "server/Application/Services/SessionMessageQueueService*.cs",
+        "server/Infrastructure/Agents/SessionRunner/RunnerCodexAdapter.cs",
+        "src/Antiphon.Agents.Pty/CodexStartupReadiness.cs",
+        "src/Antiphon.Agents.Pty/CodexPointerComposerEvidence.cs",
+        "src/Antiphon.FakeLlmApi/RealCliStubEnv.cs",
+        "tests/Antiphon.Tests/Agents/CodexBootPointerCanaryTests.cs"
+      ],
+      "methods": [
+        "CodexBootPointerCanaryTests/Real_Codex_consumes_and_submits_the_boot_pointer"
+      ]
+    },
+    {
       "id": "dispatcher-ref-only-composition",
       "globs": [
         "server/Application/Services/AgentTaskDispatcher*.cs",

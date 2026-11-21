@@ -37,8 +37,9 @@ first real screen of the new CLI.
 3. **Tests first.** Commit the red test, then the fix. Readiness and composer classes
    (`CodexStartupReadinessTests`, `CodexV0160StartupTests`, `CodexAccountBootstrapTests`,
    `CodexReadyTrackerTests`, `CodexReadyWaitTests`) on the measured captures; alias, ladder and
-   image-contract classes; the real-CLI `C1521` on the desktop with
-   `ANTIPHON_REAL_CLI_STUB_TESTS=1` and `ANTIPHON_CODEX_EXE`. Checkpoint tool or build-slot gate.
+   image-contract classes. Run the real-CLI boot pointer canary against the candidate image
+   binary using the command in [Step 2](../../../docs/cli-upgrade.md#step-2-run-the-tests-first).
+   Checkpoint tool or build-slot gate.
 4. **Land, then rc.** Reviewed to master, then ported or cut onto the rc. The classifier and the
    ladder run in the server; the image carries only the CLI.
 5. **Image before AppHost.** Staged server2 phases one at a time, smoke `codex --version` as uid
@@ -54,8 +55,8 @@ first real screen of the new CLI.
 
 - A screen you derived by editing another capture is not evidence. Say "derived" in the test
   comment and get the measured one before calling the reader fixed.
-- A skipped real-CLI run is not a pass. On Linux `RealCliStubGate` skips every real-CLI canary
-  (`Real-CLI stub-proxy canaries require Windows`). Report it as not run until CARD-2046 lands.
+- Require one passed boot pointer canary in the fresh candidate-image TRX. Record the
+  version, model slug and screen evidence path before rollout.
 - When a canary fails, read before you restart: incidents (`GET /api/agents/<agentId>/incidents`),
   runner log `Phone-home Launch` then `KillGeneration`, then the buffer replayed at 120x30. Each
   0.170 failure was diagnosable read-only from those three.

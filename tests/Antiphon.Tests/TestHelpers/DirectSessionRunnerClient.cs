@@ -19,6 +19,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private SessionRunnerRuntime _runtime;
     private readonly TestOwnedPtyHost _ownedHosts;
     internal Action? OnDisposeCore { get; set; }
+    internal Action<SessionRunnerSnapshotDto>? SnapshotObserved { get; set; }
     private readonly Antiphon.SessionRunner.SessionRunnerSettings _runnerSettings;
     private readonly HerdrClient? _herdrClient;
     private readonly IProcessLivenessProbe? _processLiveness;
@@ -354,7 +355,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     {
         ct.ThrowIfCancellationRequested();
         var snapshot = await _runtime.GetSnapshotAsync(sessionId, ct);
-        return new SessionRunnerSnapshotDto(
+        var result = new SessionRunnerSnapshotDto(
             snapshot.SessionId,
             snapshot.RawOutput,
             snapshot.RenderedScreen,
@@ -362,6 +363,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             snapshot.StartedAt,
             snapshot.AcceptedStartedAt,
             snapshot.Dialog);
+        SnapshotObserved?.Invoke(result);
+        return result;
     }
 
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
