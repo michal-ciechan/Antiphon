@@ -935,6 +935,56 @@ public sealed partial class AgentTaskLandPublicationTests
         cleanup.ShouldAllBe(scope => scope == LandInspectionScope.Full);
     }
 
+    // A push that already exited 0 stays pending when the confirming read fails. The next run
+    // observes that destination and does not push again.
+    [Test]
+    [Timeout(180_000)]
+    public async Task PushExitZeroWithFailedObservationStaysResumable(CancellationToken ct)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var pushed = false;
+        h.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (args.Count > 0 && args[0] == "push")
+            {
+                pushed = true;
+                return Task.FromResult<LandingGitResult?>(null);
+            }
+            if (pushed && args.Count > 0 && args[0] == "ls-remote")
+                return Task.FromResult<LandingGitResult?>(new LandingGitResult(128, "", "git_exit_128"));
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        (await h.RunAsync(ct)).ShouldBe(LandRunResult.Complete);
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.PushExitCode.ShouldBe(0);
+        op.Phase.ShouldBe(LandPhase.PushStarted);
+        op.Publication.ShouldNotBe(LandPublicationOutcome.Refused);
+        op.RemoteConfirmedAt.ShouldBeNull();
+        op.VerifiedSourceSha.ShouldNotBeNull();
+        await using (var db = h.CreateContext())
+        {
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId, ct);
+            request.IsPending.ShouldBeTrue();
+            request.State.ShouldBe(LandRequestState.Queued);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Type == AgentTaskEventType.LandRefused, ct)).ShouldBe(0);
+        }
+        var pushes = h.Fixture.Git.Trace.Count(a => a.Length > 0 && a[0] == "push");
+        pushes.ShouldBe(1);
+        h.Fixture.Git.BeforeCommand = null;
+        (await h.RunAsync(ct)).ShouldBe(LandRunResult.Complete);
+        h.Fixture.Git.Trace.Count(a => a.Length > 0 && a[0] == "push").ShouldBe(pushes);
+        op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Phase.ShouldBe(LandPhase.Complete);
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.PushExitCode.ShouldBe(0);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim()
+            .ShouldBe(op.VerifiedSourceSha);
+    }
+
     // A real local push exits 0 while a pre-push grandchild holds the inherited stdout past the
     // pipe bound. The land must confirm that destination and settle, not refuse the request.
     [Test]

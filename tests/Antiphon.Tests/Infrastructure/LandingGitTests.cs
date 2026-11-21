@@ -1047,6 +1047,102 @@ public sealed class LandingGitTests
         result.Succeeded.ShouldBeTrue();
     }
 
+    // The timer can win WhenAny while EOF arrives before the single sample. That sample is Closed.
+    [Test]
+    public async Task TimerWinThenEofBeforeTheSampleIsClosed()
+    {
+        var drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var verdict = await LandingGit.DrainPipesAsync(drain.Task, TimeSpan.Zero, () => drain.TrySetResult());
+        verdict.ShouldBe(LandingGit.PipeDrainVerdict.Closed);
+    }
+
+    // Exit 0 and a nonzero exit are copied before a witness disposes the handle.
+    [Test]
+    public async Task ExitIsCapturedBeforeTheProcessIsDisposed(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-capture");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var zero = new DisposeAfterCaptureGit { Code = 0, Forced = LandingGit.PipeDrainVerdict.Closed };
+        var closed = await zero.RunAsync(repo.Path, ["push", "origin", "master"], GitCommandEffect.Mutation,
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        closed.ExitCode.ShouldBe(0);
+        closed.ProcessExitedAtUtc.ShouldNotBeNull();
+        closed.Diagnostic.ShouldBe("");
+
+        var failed = new DisposeAfterCaptureGit { Code = 3, Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var kept = await failed.RunAsync(repo.Path, ["cherry-pick", "--abort"], GitCommandEffect.Mutation,
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        kept.ExitCode.ShouldBe(3);
+        kept.ProcessExitedAtUtc.ShouldNotBeNull();
+        kept.PipeDrainIncomplete.ShouldBeTrue();
+        kept.Diagnostic.ShouldBe("git_exit_3");
+
+        var read = new DisposeAfterCaptureGit { Code = 0, Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var thrown = await Should.ThrowAsync<GitPipeTimeoutException>(() =>
+            read.RunAsync(repo.Path, ["ls-remote", "push"], GitCommandEffect.Read,
+                new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct));
+        thrown.ExitCode.ShouldBe(0);
+        thrown.Message.ShouldBe("git_pipe_timeout");
+        thrown.ProcessExitedAtUtc.ShouldNotBeNull();
+    }
+
+    // An explicit read stays a read when an operand is named push.
+    [Test]
+    public async Task CallSiteReadThrowsWhenTheOperandIsPush(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-operand");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new DisposeAfterCaptureGit { Code = 0, Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var thrown = await Should.ThrowAsync<GitPipeTimeoutException>(() =>
+            git.RunAsync(repo.Path, ["ls-remote", "--refs", "push"], GitCommandEffect.Read,
+                new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct));
+        thrown.ExitCode.ShouldBe(0);
+        thrown.Message.ShouldBe("git_pipe_timeout");
+    }
+
+    // cherry-pick --abort is a mutation the operand scan missed. The stand-in exit is the result.
+    [Test]
+    public async Task CallSiteMutationKeepsAMissingVerbExit(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-missed");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new DisposeAfterCaptureGit { Code = 4, Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var result = await git.RunAsync(repo.Path, ["worktree", "lock", "--reason", "antiphon-land", repo.Path],
+            GitCommandEffect.Mutation, new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        result.ExitCode.ShouldBe(4);
+        result.PipeDrainIncomplete.ShouldBeTrue();
+        result.Diagnostic.ShouldBe("git_exit_4");
+        result.ProcessExitedAtUtc.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task EffectOfDoesNotTreatOperandsAsVerbs()
+    {
+        LandingGit.EffectOf(["ls-remote", "push"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["-c", "rebase.autoStash=false", "status", "--porcelain"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["symbolic-ref", "-q", "HEAD"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["symbolic-ref", "HEAD", "refs/heads/main"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["worktree", "list", "--porcelain"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["worktree", "lock", "--reason", "x", "path"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["worktree", "prune"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["worktree", "add", "path", "main"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["branch"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["branch", "--", "name", "refs/heads/main"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["branch", "-D", "gone"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["cherry-pick", "--abort"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["cherry-pick", "--quit"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["revert", "--abort"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["clean", "-fdx"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["fetch", "origin"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["config", "--get", "user.name"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["config", "user.name", "Ada"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["remote", "get-url", "origin"]).ShouldBe(GitCommandEffect.Read);
+        LandingGit.EffectOf(["gc", "--prune=now"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.EffectOf(["rebase", "--abort"]).ShouldBe(GitCommandEffect.Mutation);
+        LandingGit.IsMutating(["ls-remote", "push"]).ShouldBeFalse();
+        LandingGit.IsMutating(["cherry-pick", "--abort"]).ShouldBeTrue();
+    }
+
     private static bool HolderAlive(int pid)
     {
         try
@@ -1944,6 +2040,43 @@ public sealed class LandingGitTests
             if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
                 return base.StartProcess(start);
             return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
+    }
+
+    /// <summary>Every command is a stand-in with a chosen exit. The exit handle is disposed before the result is built.</summary>
+    private sealed class DisposeAfterCaptureGit : LandingGit
+    {
+        public int Code { get; init; }
+        public LandingGit.PipeDrainVerdict Forced { get; init; }
+        private bool _used;
+
+        internal override Task<LandingGit.PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
+        {
+            if (!_used)
+            {
+                _used = true;
+                return Task.FromResult(Forced);
+            }
+            return base.AwaitPipeDrainAsync(drain, bound, runBudget);
+        }
+
+        protected override void RelinquishExitHandle(Process process) => process.Dispose();
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            var standIn = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh")
+            {
+                WorkingDirectory = start.WorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+            standIn.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+            standIn.ArgumentList.Add("exit " + Code.ToString(CultureInfo.InvariantCulture));
+            return Process.Start(standIn);
         }
     }
 

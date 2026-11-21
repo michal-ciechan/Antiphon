@@ -15,4 +15,6 @@ public sealed record LandingGitResult(int ExitCode, string Output, string Diagno
     /// <summary>Stdout and stderr did not reach EOF before the post-exit pipe bound. Output is empty.
     /// ExitCode is the process exit and remains the caller's verdict.</summary>
     public bool PipeDrainIncomplete { get; init; }
+    /// <summary>UTC time captured with <see cref="ExitCode"/> before any drain, abandon, or dispose.</summary>
+    public DateTime? ProcessExitedAtUtc { get; init; }
 }

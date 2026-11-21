@@ -28,8 +28,16 @@ public sealed record LandSourceInspection(LandSourceSnapshot? Snapshot, string? 
 public sealed class GitPipeTimeoutException : Exception
 {
     public int ExitCode { get; }
+    /// <summary>UTC time captured with <see cref="ExitCode"/> before the process handle was released.</summary>
+    public DateTime? ProcessExitedAtUtc { get; }
 
-    public GitPipeTimeoutException(int exitCode) : base("git_pipe_timeout") => ExitCode = exitCode;
+    public GitPipeTimeoutException(int exitCode) : this(exitCode, null) { }
+
+    public GitPipeTimeoutException(int exitCode, DateTime? processExitedAtUtc) : base("git_pipe_timeout")
+    {
+        ExitCode = exitCode;
+        ProcessExitedAtUtc = processExitedAtUtc;
+    }
 }
 
 public sealed class LandingGitCommandException : IOException

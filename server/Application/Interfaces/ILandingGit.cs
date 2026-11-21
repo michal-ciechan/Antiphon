@@ -14,6 +14,13 @@ public static class RepositoryChildPurposes
     public const string RemotePrepPush = "remote-prep-push";
 }
 
+/// <summary>Whether the caller is writing. Operands are not verbs. There is no zero value and no default argument.</summary>
+public enum GitCommandEffect
+{
+    Read = 1,
+    Mutation = 2,
+}
+
 /// <summary>Typed, shell-free I/O for the landing protocol. Errors are never absence.</summary>
 public interface ILandingGit
 {
@@ -22,8 +29,21 @@ public interface ILandingGit
     /// <summary>CARD-1076 D-1. Forwards to the three-argument overload so existing fakes keep working.</summary>
     Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct)
         => RunAsync(repository, arguments, ct);
+
+    /// <summary>
+    /// The caller names the effect. There is no four-argument form: it would be ambiguous with
+    /// <see cref="LandingGitRunOptions"/> at target-typed <c>new</c> call sites. Fakes keep the options body.
+    /// </summary>
+    Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, GitCommandEffect effect,
+        LandingGitRunOptions options, CancellationToken ct)
+        => RunAsync(repository, arguments, options, ct);
+
     Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
+
+    Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, GitCommandEffect effect,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        => RunOwnedAsync(repository, arguments, started, ct);
     Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);
     Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct);
     Task<string> CommonDirectoryAsync(string repository, CancellationToken ct);
