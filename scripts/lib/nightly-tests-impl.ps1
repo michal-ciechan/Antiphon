@@ -1821,7 +1821,7 @@ function Invoke-AntiphonNightlyTests {
     if (@($expectedSkipRoster).Count -gt 0) {
         $expectedSkipRosterDigest = [string]([Antiphon.Nightly.NightlyChunkVerdict]::RosterDigest($expectedSkipRoster))
     }
-    $evidenceWriteVerdict = Merge-NightlyDeferredEvidenceVerdict -Reasons $reasons
+    $evidenceWriteVerdict = [Antiphon.Nightly.EvidenceFiles]::MergeDeferredWriteVerdict(@($reasons))
     $reasons = @($evidenceWriteVerdict.reasons)
     if (-not $evidenceWriteVerdict.coverageComplete) {
         $coverageComplete = $false

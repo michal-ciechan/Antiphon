@@ -909,12 +909,19 @@ public sealed class RcFullTimingContractTests
         }
         Write-OverBudgetShard 'cases-a-budget.jsonl' 'antiphon' 'early-a' 'late-a'
         Write-OverBudgetShard 'cases-b-budget.jsonl' 'e2e' 'early-b' 'late-b'
-        $script:TestPhaseSummaryReReadWatch = New-Object psobject
-        $script:TestPhaseSummaryReReadWatch | Add-Member NoteProperty ElapsedMilliseconds 0
-        $script:TestPhaseSummaryReReadWatch | Add-Member NoteProperty IsRunning $false
-        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod Start { $this.IsRunning = $true }
-        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod Stop { $this.IsRunning = $false }
-        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod OnFullRead { $this.ElapsedMilliseconds = 5000 }
+        # The summary's re-read budget runs on this clock: a full re-read spends all of it.
+        Add-Type -TypeDefinition @'
+        public sealed class BudgetScriptWatch : Antiphon.Nightly.ITestPhaseWatch {
+            private long elapsed;
+            private bool running;
+            public long ElapsedMilliseconds { get { return elapsed; } }
+            public bool IsRunning { get { return running; } }
+            public void Start() { running = true; }
+            public void Stop() { running = false; }
+            public void OnFullRead() { elapsed = 5000; }
+        }
+        '@ -ReferencedAssemblies @([Antiphon.Nightly.ITestPhaseWatch].Assembly.Location) -IgnoreWarnings
+        $script:TestPhaseSummaryReReadWatch = [BudgetScriptWatch]::new()
         [IO.File]::WriteAllText((Join-Path $timing 'groups-planned.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}')
         [IO.File]::WriteAllText((Join-Path $timing 'groups-planned-e2e.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"e2e","assembly":"Antiphon.E2E","groups":[]}')
         Invoke-TestPhaseRunSummary -RunDirectory $work -Top 20

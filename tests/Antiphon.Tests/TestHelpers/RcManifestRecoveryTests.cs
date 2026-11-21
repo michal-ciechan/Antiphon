@@ -44,4 +44,15 @@ public sealed class RcManifestRecoveryTests
         var result = await ManifestPublicationFixture.Run(cancellationToken, "v8", root);
         result.Ok.ShouldBeTrue(result.Reason);
     }
+
+    // The harness's own child-process witness (moved here from RcManifestJournalTests in W2-nightly S07, with the cases
+    // whose children it protects): a successor's redirected output is drained, so a full pipe cannot stall it.
+    [Test]
+    [Timeout(90_000)]
+    public async Task SuccessorWaitDrainsRedirectedOutput(CancellationToken cancellationToken)
+    {
+        var root = C1514Support.FreshRoot();
+        var result = await ManifestPublicationFixture.Run(cancellationToken, "successor-drain", root);
+        result.Ok.ShouldBeTrue(result.Reason);
+    }
 }

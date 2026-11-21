@@ -72,29 +72,6 @@ function Enable-TestPhaseExecutionEnvironment {
     return $Environment
 }
 
-function Write-TestPhaseTextAtomic {
-    # During a nightly run every write is queued on the evidence file system (nightly-core.ps1). -Deferred is
-    # kept for callers written before that.
-    param([string]$Path, [string]$Text, [switch]$Deferred)
-    if (Submit-NightlyDeferredEvidenceWrite $Path $Text $true) { return }
-    $identity = Get-TestPhasePathIdentity -Path $Path
-    if ($identity.Kind -eq 'unsupported' -or $identity.Kind -eq 'unreadable') { return }
-    $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-NightlyPathExists $dir)) {
-        [void][System.IO.Directory]::CreateDirectory($dir)
-    }
-    $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($tmp, $Text, $utf8)
-    if ($identity.Kind -eq 'regular') {
-        $bak = $Path + '.bak'
-        [System.IO.File]::Replace($tmp, $Path, $bak)
-        Remove-NightlyFileQuietly $bak
-    } else {
-        [System.IO.File]::Move($tmp, $Path)
-    }
-}
-
 function Get-TestPhaseClassBasisMap {
     $map = @{}
     $path = [string]$script:NightlyClassCostPath
@@ -151,7 +128,7 @@ function Read-TestPhaseTrxRows {
     $identity = Get-TestPhasePathIdentity -Path $Path
     if ($identity.Kind -ne 'regular') { return $none }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $none }
-    $opened = Open-TestPhaseReadStream -Path $Path
+    $opened = [Antiphon.Nightly.TestPhaseFiles]::OpenReadStream($Path)
     if ($opened.Refused -or $null -eq $opened.Stream) { return $none }
     try {
         $read = [Antiphon.TestPhase.TrxTimingScanner]::Read($opened.Stream, $Watch, $DeadlineMilliseconds, 262144, 16384)
@@ -177,232 +154,9 @@ function Initialize-TestPhaseStreamReaders {
 
 Initialize-TestPhaseStreamReaders
 
-function Read-TestPhaseStreamBytes {
-    param($Stream, [int]$MaxBytes, [int]$DeadlineMilliseconds, $Watch)
-    $buffer = New-Object byte[] 8192
-    $ms = New-Object System.IO.MemoryStream
-    $complete = $true
-    while ($ms.Length -lt $MaxBytes) {
-        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $complete = $false; break }
-        $room = $MaxBytes - [int]$ms.Length
-        $want = 8192
-        if ($want -gt $room) { $want = $room }
-        $count = $Stream.Read($buffer, 0, $want)
-        if ($count -le 0) { break }
-        $ms.Write($buffer, 0, $count)
-    }
-    if ($complete -and $ms.Length -ge $MaxBytes) {
-        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
-            $complete = $false
-        } else {
-            $extra = $Stream.Read($buffer, 0, 1)
-            if ($extra -gt 0) { $complete = $false }
-        }
-    }
-    return [pscustomobject]@{ Bytes = $ms.ToArray(); Complete = [bool]$complete; Refused = $false; Kind = 'regular' }
-}
-
-function Open-TestPhaseReadStream {
-    param([string]$Path)
-    $refused = [pscustomobject]@{ Stream = $null; Refused = $true; Kind = 'unreadable' }
-    $stream = $null
-    $handle = $null
-    $fd = -1
-    $owned = $true
-    Sync-NightlyDeferredEvidenceWrites $Path
-    try {
-        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-            $share = [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete)
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
-        } else {
-            # O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW. A FIFO open returns
-            # immediately; fstat then refuses anything that is not a regular file.
-            Initialize-TestPhaseLinuxIdentity
-            $fd = [Antiphon.TestPhase.FileIdentity]::Open($Path, 657408)
-            if ($fd -lt 0) { return $refused }
-            $stat = New-Object Antiphon.TestPhase.LinuxStat
-            $code = [Antiphon.TestPhase.FileIdentity]::FStat($fd, [ref]$stat)
-            if ($code -ne 0) { return $refused }
-            $kind = ([uint32]$stat.Mode) -band 61440
-            if ($kind -ne 32768) {
-                return [pscustomobject]@{ Stream = $null; Refused = $true; Kind = 'unsupported' }
-            }
-            $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle ([IntPtr]$fd, $true)
-            $fd = -1
-            $stream = New-Object System.IO.FileStream ($handle, [IO.FileAccess]::Read, 8192, $false)
-            $handle = $null
-        }
-        $owned = $false
-        return [pscustomobject]@{ Stream = $stream; Refused = $false; Kind = 'regular' }
-    } catch {
-        return $refused
-    } finally {
-        if ($owned) {
-            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
-            elseif ($null -ne $handle) { try { $handle.Dispose() } catch { } }
-            elseif ($fd -ge 0) { try { [void][Antiphon.TestPhase.FileIdentity]::Close($fd) } catch { } }
-        }
-    }
-}
-
-function Read-TestPhaseBoundedBytes {
-    param(
-        [string]$Path,
-        [int]$MaxBytes = 262144,
-        [int]$DeadlineMilliseconds = 200,
-        $Watch = $null
-    )
-    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
-    $refused = [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'unreadable' }
-    if ($MaxBytes -lt 1) { $MaxBytes = 1 }
-    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
-    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
-    # A failed deferred write is a refusal on every host. The failure stays stored for the run summary.
-    if ($script:NightlyDeferEvidenceWrites) {
-        [Antiphon.Nightly.EvidenceFiles]::Wait($Path)
-        if ([Antiphon.Nightly.EvidenceFiles]::PathFailed($Path)) {
-            return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'deferred-write-failed' }
-        }
-    }
-    # Compiled for a real stopwatch; a scripted one (tests drive the budget through it) stays here.
-    if ($Watch -is [Diagnostics.Stopwatch] -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Read-TestPhaseBoundedBytes' }
-        return [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($Path, $MaxBytes, $DeadlineMilliseconds, $Watch)
-    }
-    $identity = Get-TestPhasePathIdentity -Path $Path
-    if ($identity.Kind -ne 'regular') {
-        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = [string]$identity.Kind }
-    }
-    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
-        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'budget' }
-    }
-    $opened = Open-TestPhaseReadStream -Path $Path
-    if ($opened.Refused -or $null -eq $opened.Stream) {
-        $kind = [string]$opened.Kind
-        if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'unreadable' }
-        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = $kind }
-    }
-    try {
-        return (Read-TestPhaseStreamBytes -Stream $opened.Stream -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch)
-    } catch {
-        return $refused
-    } finally {
-        try { $opened.Stream.Dispose() } catch { }
-    }
-}
-
-function ConvertTo-TestPhaseJsonlRecords {
-    param($Read, [int]$MaxLines = 4000, [int]$DeadlineMilliseconds = 200, $Watch = $null)
-    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
-    $records = New-Object System.Collections.Generic.List[object]
-    $torn = 0
-    $malformed = 0
-    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
-    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
-    if ($null -eq $Read -or [bool]$Read.Refused -or $null -eq $Read.Bytes) {
-        return [pscustomobject]@{ Records = @(); Torn = 1; Malformed = 0; Complete = $false }
-    }
-    $complete = [bool]$Read.Complete
-    if (-not $complete) { $torn = 1 }
-    $text = [Text.Encoding]::UTF8.GetString($Read.Bytes)
-    if ((-not $complete) -and (-not $text.EndsWith("`n"))) {
-        $cut = $text.LastIndexOf([char]10)
-        if ($cut -lt 0) { $text = '' }
-        else { $text = $text.Substring(0, $cut + 1) }
-    }
-    if ($MaxLines -lt 1) { $MaxLines = 1 }
-    $parts = $text.Split([string[]]@("`n"), [System.StringSplitOptions]::None)
-    $limit = $parts.Length
-    if ($limit -gt 0 -and $text.EndsWith("`n")) { $limit = $limit - 1 }
-    $lines = 0
-    for ($i = 0; $i -lt $limit; $i++) {
-        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $complete = $false; $torn = 1; break }
-        if ($lines -ge $MaxLines) { $complete = $false; $torn = 1; break }
-        $line = $parts[$i].TrimEnd("`r")
-        $lines++
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        $parsed = $null
-        $ok = $true
-        try { $parsed = $line | ConvertFrom-Json } catch { $ok = $false }
-        if ($ok -and $null -ne $parsed -and -not [string]::IsNullOrWhiteSpace([string]$parsed.recordKind)) {
-            $records.Add($parsed)
-            continue
-        }
-        $lastContent = $true
-        for ($j = $i + 1; $j -lt $limit; $j++) {
-            if (-not [string]::IsNullOrWhiteSpace($parts[$j].TrimEnd("`r"))) { $lastContent = $false; break }
-        }
-        if ($lastContent) { $torn++ } else { $malformed++ }
-    }
-    if ($lines -ge $MaxLines) { $complete = $false; if ($torn -lt 1) { $torn = 1 } }
-    return [pscustomobject]@{ Records = @($records.ToArray()); Torn = $torn; Malformed = $malformed; Complete = [bool]$complete }
-}
-
-function Read-TestPhaseJsonlFile {
-    param([string]$Path)
-    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $watch
-    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $watch
-    return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
-}
-
-# A6 stated aggregate. The former per-shard 5000 ms ceiling is now the whole
-# summary re-read budget, so 387 shards cannot delay the receipt by about 32 minutes.
-# The 200 ms / 262144 inline bound stays on its own watch. The measured cost is recorded.
-function Get-TestPhaseSummaryBudgetMilliseconds { return 5000 }
-
-function Read-TestPhaseJsonlForSummary {
-    param([string]$Path, $BudgetState = $null)
-    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
-    $inline = [Diagnostics.Stopwatch]::StartNew()
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $inline
-    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $inline
-    if (-not [bool]$parsed.Complete) {
-        $watch = $null
-        $deadline = Get-TestPhaseSummaryBudgetMilliseconds
-        $maxBytes = 8388608
-        if ($null -ne $BudgetState) {
-            $watch = $BudgetState.Watch
-            if ($null -ne $BudgetState.Milliseconds) { $deadline = [int]$BudgetState.Milliseconds }
-            if ($null -ne $BudgetState.BytesRemaining) { $maxBytes = [int]$BudgetState.BytesRemaining }
-        }
-        if ($null -eq $watch) { $watch = New-Object System.Diagnostics.Stopwatch }
-        if ($maxBytes -gt 0 -and $watch.ElapsedMilliseconds -lt $deadline) {
-            if (-not $watch.IsRunning) { $watch.Start() }
-            try {
-                $full = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $maxBytes -DeadlineMilliseconds $deadline -Watch $watch
-                $parsed = ConvertTo-TestPhaseJsonlRecords -Read $full -MaxLines 20000 -DeadlineMilliseconds $deadline -Watch $watch
-                if ($null -ne $BudgetState -and $null -ne $full -and $null -ne $full.Bytes) {
-                    $left = [int]$BudgetState.BytesRemaining - [int]$full.Bytes.Length
-                    if ($left -lt 0) { $left = 0 }
-                    $BudgetState.BytesRemaining = $left
-                }
-            } finally {
-                if ($watch.IsRunning) { $watch.Stop() }
-            }
-            if ($null -ne $BudgetState -and $null -ne $BudgetState.Watch -and $BudgetState.Watch.PSObject.Methods.Name -contains 'OnFullRead') {
-                $BudgetState.Watch.OnFullRead()
-            }
-        }
-    }
-    return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
-}
-
-function Read-TestPhaseJsonlBounded {
-    param(
-        [string]$Path,
-        [int]$MaxBytes = 262144,
-        [int]$MaxLines = 4000,
-        [int]$DeadlineMilliseconds = 200,
-        $Watch = $null
-    )
-    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
-    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
-    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines $MaxLines -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
-    return [pscustomobject]@{ Records = @($parsed.Records); Complete = [bool]$parsed.Complete; Path = $Path }
-}
+# The bounded byte and JSONL readers are compiled (Antiphon.Nightly/TestPhaseFiles.cs: TestPhaseFiles.ReadBoundedBytes,
+# OpenReadStream; TestPhaseReads.JsonlBounded, JsonlForSummary, Records). The whole-summary re-read budget is
+# TestPhaseFiles.SummaryBudgetMilliseconds (A6).
 
 function Write-TestPhasePlannedManifest {
     param(
@@ -507,11 +261,11 @@ function Write-TestPhasePlannedManifest {
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
     $text = [Antiphon.Nightly.TestPhaseJson]::Text($manifest, 0)
     $path = Join-Path $dir 'groups-planned.json'
-    Write-TestPhaseTextAtomic -Path $path -Text $text
+    [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($path, $text)
     # Keep the singleton for existing readers. Also retain every allowlisted suite.
     if ($Suite -match '^[a-z0-9][a-z0-9-]{0,40}$') {
         $suiteFile = 'groups-planned-' + $Suite + '.json'
-        Write-TestPhaseTextAtomic -Path (Join-Path $dir $suiteFile) -Text $text
+        [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $dir $suiteFile), $text)
         $filters = New-Object System.Collections.Generic.List[string]
         foreach ($plannedRow in @($groupRows)) {
             if ($null -eq $plannedRow) { continue }
@@ -538,652 +292,10 @@ function Write-TestPhaseFailureMarker {
     }
 }
 
-function ConvertTo-TestPhaseExecutedChunk {
-    param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
-    Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseExecutedChunk'
-    # One {testId, outcome} row per test (TestPhaseSummary.OutcomeRows).
-    $priorOutcomes = New-Object System.Collections.Generic.List[object]
-    if ($null -ne $Outcomes) {
-        $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Outcomes), 'testId', 'outcome', $true))
-    }
-    $chunkId = $Chunk
-    $run = $RunId
-    $attempt = $Attempt
-    $suite = $Suite
-    $wall = $HostWallSeconds
-    $missing = $TrxMissing
-    $passed = $PassedCount
-    $trx = $Trx
-    $digest = $TrxDigest
-    $exitCode = $ExitCode
-    $coverage = $CoverageComplete
-    $tests = $TestsPassed
-    if ($null -ne $Item) {
-        if ($Item.PSObject.Properties.Name -contains 'chunk') { $chunkId = [string]$Item.chunk }
-        if ($Item.PSObject.Properties.Name -contains 'runId') { $run = [string]$Item.runId }
-        if ($Item.PSObject.Properties.Name -contains 'attempt') { $attempt = [string]$Item.attempt }
-        if ($Item.PSObject.Properties.Name -contains 'suite') { $suite = [string]$Item.suite }
-        if ($Item.PSObject.Properties.Name -contains 'hostWallSeconds' -and $null -ne $Item.hostWallSeconds) { $wall = [double]$Item.hostWallSeconds }
-        if ($Item.PSObject.Properties.Name -contains 'trxMissing') { $missing = [bool]$Item.trxMissing }
-        if ($Item.PSObject.Properties.Name -contains 'passedCount' -and $null -ne $Item.passedCount) { $passed = [int]$Item.passedCount }
-        if ($Item.PSObject.Properties.Name -contains 'trx') { $trx = [string]$Item.trx }
-        if ($Item.PSObject.Properties.Name -contains 'trxDigest') { $digest = [string]$Item.trxDigest }
-        if ($Item.PSObject.Properties.Name -contains 'exitCode') { $exitCode = $Item.exitCode }
-        if ($Item.PSObject.Properties.Name -contains 'coverageComplete') { $coverage = $Item.coverageComplete }
-        if ($Item.PSObject.Properties.Name -contains 'testsPassed') { $tests = $Item.testsPassed }
-        $priorOutcomes = New-Object System.Collections.Generic.List[object]
-        if ($Item.PSObject.Properties.Name -contains 'outcomes' -and $null -ne $Item.outcomes) {
-            $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Item.outcomes), 'testId', 'outcome', $true))
-        }
-    }
-    return [ordered]@{
-        chunk = [string]$chunkId
-        runId = [string]$run
-        attempt = [string]$attempt
-        suite = [string]$suite
-        hostWallSeconds = $wall
-        trxMissing = [bool]$missing
-        manufacturedPassed = $false
-        passedCount = $passed
-        outcomes = @($priorOutcomes.ToArray())
-        trx = [string]$trx
-        trxDigest = [string]$digest
-        exitCode = $exitCode
-        coverageComplete = $coverage
-        testsPassed = $tests
-    }
-}
-
-function Find-TestPhaseTimeZoneById {
-    param([string]$Id)
-    if ($null -ne $script:TestPhaseTimeZoneFinder) {
-        $found = & $script:TestPhaseTimeZoneFinder $Id
-        if ($found -is [System.TimeZoneInfo]) { return $found }
-        return $null
-    }
-    try { return [System.TimeZoneInfo]::FindSystemTimeZoneById([string]$Id) } catch { return $null }
-}
-
-function Test-TestPhaseTimeZoneMethod {
-    param([string]$Name)
-    foreach ($method in @([System.TimeZoneInfo].GetMethods())) {
-        if ([string]$method.Name -eq $Name) { return $true }
-    }
-    return $false
-}
-
-function ConvertTo-TestPhaseWindowsTimeZoneId {
-    param([string]$IanaId)
-    if (-not (Test-TestPhaseTimeZoneMethod -Name 'TryConvertIanaIdToWindowsId')) { return '' }
-    $windows = ''
-    $ok = $false
-    try { $ok = [System.TimeZoneInfo]::TryConvertIanaIdToWindowsId([string]$IanaId, [ref]$windows) } catch { return '' }
-    if ($ok) { return [string]$windows }
-    return ''
-}
-
-function ConvertTo-TestPhaseIanaTimeZoneId {
-    param([string]$WindowsId)
-    if (-not (Test-TestPhaseTimeZoneMethod -Name 'TryConvertWindowsIdToIanaId')) { return '' }
-    $iana = ''
-    $ok = $false
-    try { $ok = [System.TimeZoneInfo]::TryConvertWindowsIdToIanaId([string]$WindowsId, [ref]$iana) } catch { return '' }
-    if ($ok) { return [string]$iana }
-    return ''
-}
-
-function Resolve-TestPhaseTimeZone {
-    param([string]$Id)
-    if ([string]::IsNullOrWhiteSpace($Id)) { return [System.TimeZoneInfo]::Local }
-    $direct = Find-TestPhaseTimeZoneById -Id $Id
-    if ($direct -is [System.TimeZoneInfo]) { return $direct }
-    $windows = ConvertTo-TestPhaseWindowsTimeZoneId -IanaId $Id
-    if (-not [string]::IsNullOrWhiteSpace($windows)) {
-        $mapped = Find-TestPhaseTimeZoneById -Id $windows
-        if ($mapped -is [System.TimeZoneInfo]) { return $mapped }
-    }
-    $iana = ConvertTo-TestPhaseIanaTimeZoneId -WindowsId $Id
-    if (-not [string]::IsNullOrWhiteSpace($iana)) {
-        $mapped = Find-TestPhaseTimeZoneById -Id $iana
-        if ($mapped -is [System.TimeZoneInfo]) { return $mapped }
-    }
-    return $null
-}
-
-function Get-TestPhasePinnedTimeZone {
-    $requested = ''
-    try { $requested = [string][Environment]::GetEnvironmentVariable('TZ') } catch { $requested = '' }
-    if ([string]::IsNullOrWhiteSpace($requested)) { return [System.TimeZoneInfo]::Local }
-    $resolved = Resolve-TestPhaseTimeZone -Id $requested
-    if ($resolved -is [System.TimeZoneInfo]) { return $resolved }
-    return [System.TimeZoneInfo]::Local
-}
-
-function Get-TestPhaseWriterEnvironment {
-    $edition = 'Desktop'
-    try { if ($PSVersionTable.PSEdition) { $edition = [string]$PSVersionTable.PSEdition } } catch { }
-    $framework = ''
-    try { $framework = [string][System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription } catch { $framework = [string][Environment]::Version }
-    $culture = ''
-    $ui = ''
-    try { $culture = [string][System.Threading.Thread]::CurrentThread.CurrentCulture.Name } catch { }
-    try { $ui = [string][System.Threading.Thread]::CurrentThread.CurrentUICulture.Name } catch { }
-    $tz = [System.TimeZoneInfo]::Local
-    $offset = $tz.GetUtcOffset([datetime]::Now)
-    $sign = '+'
-    if ($offset.Ticks -lt 0) { $sign = '-' }
-    $off = $sign + ([math]::Abs($offset.Hours)).ToString('00') + ':' + ([math]::Abs($offset.Minutes)).ToString('00')
-    return ($edition + '|' + [string]$PSVersionTable.PSVersion + '|' + $framework + '|' + $culture + '|' + $ui + '|' + [string]$tz.Id + '|' + $off)
-}
-
-function Test-TestPhaseUnsafeDirectory {
-    param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $true }
-    $item = Get-Item -LiteralPath $Path -Force
-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $true }
-    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return $false }
-    Initialize-TestPhaseLinuxIdentity
-    if (-not ('Antiphon.TestPhase.FileIdentity' -as [type])) { return $true }
-    $stat = New-Object Antiphon.TestPhase.LinuxStat
-    $code = [Antiphon.TestPhase.FileIdentity]::LStat($Path, [ref]$stat)
-    if ($code -ne 0) { return $true }
-    $kind = ([uint32]$stat.Mode) -band 61440
-    if ($kind -eq 16384) { return $false }
-    return $true
-}
-
-function Wait-TestPhaseCommitBarrier {
-    param([string]$Stage)
-    $barrier = $script:TestPhaseCommitBarrier
-    if ($null -eq $barrier) { return }
-    $name = ''
-    if ($barrier.PSObject.Properties.Name -contains 'Stage') { $name = [string]$barrier.Stage }
-    if ($name -ne $Stage) { return }
-    $signal = ''
-    $release = ''
-    if ($barrier.PSObject.Properties.Name -contains 'Signal') { $signal = [string]$barrier.Signal }
-    if ($barrier.PSObject.Properties.Name -contains 'Release') { $release = [string]$barrier.Release }
-    if (-not [string]::IsNullOrWhiteSpace($signal)) {
-        $utf8 = New-Object System.Text.UTF8Encoding $false
-        $parent = Split-Path -Parent $signal
-        if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-        [System.IO.File]::WriteAllText($signal, $Stage, $utf8)
-    }
-    if ([string]::IsNullOrWhiteSpace($release)) { return }
-    $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not [System.IO.File]::Exists($release)) {
-        if ($watch.ElapsedMilliseconds -gt 120000) { throw 'commit-barrier-timeout' }
-        Start-Sleep -Milliseconds 20
-    }
-}
-
-function Test-TestPhaseCommitFault {
-    param([string]$Stage)
-    $fault = $script:TestPhaseCommitFault
-    if ($null -eq $fault) { return $false }
-    $name = ''
-    if ($fault.PSObject.Properties.Name -contains 'Stage') { $name = [string]$fault.Stage }
-    if ($name -ne $Stage) { return $false }
-    $remaining = 0
-    if ($fault.PSObject.Properties.Name -contains 'Remaining') { $remaining = [int]$fault.Remaining }
-    if ($remaining -le 0) { return $false }
-    $fault.Remaining = $remaining - 1
-    return $true
-}
-
-function New-TestPhaseRefusedContext {
-    param([string]$Reason)
-    return [pscustomobject]@{
-        Refused = $true
-        Reason = [string]$Reason
-        Closed = $true
-        Id = [guid]::NewGuid().ToString('n')
-        Lock = $null
-        TimingRoot = ''
-        Generation = ''
-        LogRoot = ''
-        RunId = ''
-        Attempt = ''
-        Suite = ''
-        Source = ''
-        InvocationId = ''
-        HasSeed = $false
-        HeaderReady = $false
-        HeaderRun = ''
-        HeaderAttempt = ''
-        HeaderSuite = ''
-        HeaderAttemptSeen = $false
-        Records = (New-Object System.Collections.Generic.List[object])
-        SeedRows = (New-Object System.Collections.Generic.List[object])
-        SeedPath = ''
-        LastCommitted = 0
-        NextSequence = 1
-        Unresolved = $false
-        CorruptionReason = ''
-        Gaps = (New-Object System.Collections.Generic.List[string])
-        ProjectOnly = $false
-        WriterEnvironment = ''
-        NeedsRecovery = $false
-        RescanAttempted = $false
-        PendingGaps = (New-Object System.Collections.Generic.List[object])
-    }
-}
-
-function New-TestPhaseOpenContext {
-    param([string]$TimingRoot, [string]$LogRoot, [string]$RunId, [string]$Attempt, [string]$Suite, [string]$Source, [string]$InvocationId, $Lock)
-    $ctx = New-TestPhaseRefusedContext -Reason ''
-    $ctx.Refused = $false
-    $ctx.Closed = $false
-    $ctx.Lock = $Lock
-    $ctx.TimingRoot = $TimingRoot
-    $ctx.LogRoot = $LogRoot
-    $ctx.RunId = $RunId
-    $ctx.Attempt = $Attempt
-    $ctx.Suite = $Suite
-    $ctx.Source = $Source
-    $ctx.InvocationId = $InvocationId
-    $ctx.WriterEnvironment = Get-TestPhaseWriterEnvironment
-    return $ctx
-}
-
-function Resolve-TestPhaseExecutedTimingRoot {
-    param([string]$LogRoot, [string]$TimingRoot)
-    $selected = ''
-    if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { $selected = $TimingRoot }
-    elseif (-not [string]::IsNullOrWhiteSpace([string]$script:QualificationTimingRoot)) { $selected = [string]$script:QualificationTimingRoot }
-    elseif (-not [string]::IsNullOrWhiteSpace($LogRoot)) { $selected = (Join-Path $LogRoot 'timing') }
-    if ([string]::IsNullOrWhiteSpace($selected)) { return '' }
-    return [System.IO.Path]::GetFullPath($selected)
-}
-
-function Get-TestPhaseJournalRoot {
-    param([string]$TimingRoot)
-    return (Join-Path $TimingRoot 'groups-executed.journal')
-}
-
-function Read-TestPhaseJsonFile {
-    param([string]$Path)
-    if (-not (Test-NightlyEvidencePath $Path)) { return $null }
-    try { return ((Read-NightlyEvidenceText $Path) | ConvertFrom-Json) } catch { return $null }
-}
-
-# Test-Path -LiteralPath for the per-chunk directory checks: a drive-qualified path (X:\...) is answered by
-# .NET (the same answer for a file, a directory, a link and a missing path, without the cmdlet's per-call
-# cost); any other form (relative, provider-qualified, UNC, empty) is still the cmdlet's to resolve or refuse,
-# and so is a path .NET does not find that ends in a separator (the cmdlet finds a file named that way) or
-# holds a NUL (the cmdlet throws).
-function Test-TestPhasePathExists {
-    param([string]$Path)
-    if ($null -ne $Path -and $Path.Length -ge 3 -and [char]::IsLetter($Path[0]) -and $Path[1] -eq [char]58 -and ($Path[2] -eq [char]92 -or $Path[2] -eq [char]47)) {
-        if ([System.IO.Directory]::Exists($Path) -or [System.IO.File]::Exists($Path)) { return $true }
-        $last = $Path[$Path.Length - 1]
-        if ($last -ne [char]92 -and $last -ne [char]47 -and $Path.IndexOf([char]0) -lt 0) { return $false }
-    }
-    return (Test-Path -LiteralPath $Path)
-}
-
-function Write-TestPhaseDirectory {
-    param([string]$Path)
-    if (-not (Test-TestPhasePathExists $Path)) {
-        New-Item -ItemType Directory -Path $Path -Force | Out-Null
-    }
-}
-
-function Copy-TestPhaseBytes {
-    param([string]$Source, [string]$Destination)
-    Write-TestPhaseDirectory -Path (Split-Path -Parent $Destination)
-    Sync-NightlyDeferredEvidenceWrites
-    [System.IO.File]::Copy($Source, $Destination, $true)
-}
-
-function Save-TestPhaseMalformedLegacy {
-    param([string]$TimingRoot, [string]$Generation)
-    $flat = Join-Path $TimingRoot 'groups-executed.json'
-    if (-not (Test-NightlyEvidencePath $flat)) { return }
-    $dest = Join-Path (Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $TimingRoot) 'predecessors') $Generation) 'groups-executed.json'
-    if (Test-NightlyEvidencePath $dest) { return }
-    Copy-TestPhaseBytes -Source $flat -Destination $dest
-}
-
-function Import-TestPhaseSeedRows {
-    param($Parsed)
-    $rows = New-Object System.Collections.Generic.List[object]
-    $prior = @()
-    if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'chunks' -and $null -ne $Parsed.chunks) { $prior = @($Parsed.chunks) }
-    elseif ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'chunk') { $prior = @($Parsed) }
-    foreach ($item in $prior) {
-        if ($null -eq $item) { continue }
-        $settled = ConvertTo-TestPhaseExecutedChunk -Item $item
-        $rows.Add([pscustomobject]@{
-            SettledJson = ([Antiphon.Nightly.TestPhaseJson]::Text($settled, 0))
-            SettledSuite = [string]$settled.suite
-            SettledChunk = [string]$settled.chunk
-        })
-    }
-    $run = ''
-    $attempt = ''
-    $suite = ''
-    $attemptSeen = $false
-    if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'runId') { $run = [string]$Parsed.runId }
-    if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'attempt') {
-        $attempt = [string]$Parsed.attempt
-        $attemptSeen = $true
-    }
-    if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'suite') { $suite = [string]$Parsed.suite }
-    return [pscustomobject]@{ Rows = $rows; Run = $run; Attempt = $attempt; Suite = $suite; AttemptSeen = $attemptSeen }
-}
-
-function Set-TestPhaseSeedHeader {
-    param($Context, $Cache)
-    $Context.HeaderReady = $true
-    $Context.HeaderRun = [string]$Cache.Run
-    $Context.HeaderAttempt = [string]$Cache.Attempt
-    $Context.HeaderSuite = [string]$Cache.Suite
-    $Context.HeaderAttemptSeen = [bool]$Cache.AttemptSeen
-    $Context.SeedRows = $Cache.Rows
-    $Context.HasSeed = $true
-}
-
-function Write-TestPhaseSeedCache {
-    param($Context)
-    if (-not $Context.HasSeed) { return }
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
-    Write-TestPhaseDirectory -Path $genDir
-    $lines = New-Object System.Collections.Generic.List[string]
-    $flag = '0'
-    if ($Context.HeaderAttemptSeen) { $flag = '1' }
-    $lines.Add('H' + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderRun))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderAttempt))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$Context.HeaderSuite))) + "`t" + $flag)
-    foreach ($row in $Context.SeedRows) {
-        $lines.Add(([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$row.SettledSuite))) + "`t" + ([Antiphon.Nightly.TestPhaseText]::ToB64(([string]$row.SettledChunk))) + "`t" + [string]$row.SettledJson)
-    }
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    Write-NightlyEvidenceLines (Join-Path $genDir 'seed-cache.txt') $lines.ToArray()
-}
-
-function Read-TestPhaseSeedCache {
-    param($Context, [string]$Generation)
-    $path = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Generation) 'seed-cache.txt'
-    if (-not (Test-NightlyEvidencePath $path)) { return $false }
-    $lines = @(Read-NightlyEvidenceLines $path)
-    if ($lines.Count -lt 1) { return $false }
-    $header = [string]$lines[0]
-    if (-not $header.StartsWith('H' + "`t")) { return $false }
-    $parts = $header.Split([char]9)
-    if ($parts.Length -lt 5) { return $false }
-    $rows = New-Object System.Collections.Generic.List[object]
-    for ($i = 1; $i -lt $lines.Count; $i++) {
-        $line = [string]$lines[$i]
-        if ([string]::IsNullOrEmpty($line)) { continue }
-        $first = $line.IndexOf([char]9)
-        if ($first -lt 0) { return $false }
-        $second = $line.IndexOf([char]9, $first + 1)
-        if ($second -lt 0) { return $false }
-        $rows.Add([pscustomobject]@{
-            SettledJson = $line.Substring($second + 1)
-            SettledSuite = ([Antiphon.Nightly.TestPhaseText]::FromB64($line.Substring(0, $first)))
-            SettledChunk = ([Antiphon.Nightly.TestPhaseText]::FromB64($line.Substring($first + 1, $second - $first - 1)))
-        })
-    }
-    $Context.HeaderReady = $true
-    $Context.HeaderRun = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[1])))
-    $Context.HeaderAttempt = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[2])))
-    $Context.HeaderSuite = ([Antiphon.Nightly.TestPhaseText]::FromB64(([string]$parts[3])))
-    $Context.HeaderAttemptSeen = ([string]$parts[4] -eq '1')
-    $Context.SeedRows = $rows
-    $Context.HasSeed = $true
-    $Context.SeedPath = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Generation) 'seed.json'
-    return $true
-}
-
-function New-TestPhaseEnvelopeText {
-    param(
-        [string]$Kind,
-        [int]$Sequence,
-        [string]$PublicationId,
-        $Context,
-        [string]$Reason,
-        [string]$Suite,
-        [string]$Chunk,
-        [string]$SettledSuite,
-        [string]$SettledChunk,
-        [string]$HeaderRun,
-        [string]$HeaderAttempt,
-        [string]$HeaderSuite,
-        [string]$FreshJson,
-        [string]$SettledJson
-    )
-    # The journal envelope with its own SHA-256 in "digest" (TestPhaseRecords.Envelope).
-    Assert-NightlyCoreAvailable 'New-TestPhaseEnvelopeText'
-    return [Antiphon.Nightly.TestPhaseRecords]::Envelope($Kind, $Sequence, $PublicationId, [string]$Context.Generation, [string]$Context.TimingRoot,
-        $Reason, $Suite, $Chunk, $SettledSuite, $SettledChunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, $FreshJson, $SettledJson, [string]$Context.WriterEnvironment)
-}
-
-function Read-TestPhaseGenerationPrefix {
-    param([string]$GenerationDir)
-    # Every record is re-read from disk and its digest re-checked in the core (TestPhaseJournalRead.ReadPrefix),
-    # which reads the prefix up to the first missing record or the first break (unreadable-record, bad-digest,
-    # malformed-record, sequence-mismatch). Only our own writer produces these records.
-    Assert-NightlyCoreAvailable 'Read-TestPhaseGenerationPrefix'
-    $loaded = New-Object System.Collections.Generic.List[object]
-    $step = [Antiphon.Nightly.TestPhaseJournalRead]::ReadPrefix($GenerationDir, 1, [bool]$script:NightlyDeferEvidenceWrites, $loaded)
-    $last = 0
-    if ($loaded.Count -gt 0) { $last = [int]$loaded[$loaded.Count - 1].Sequence }
-    return [pscustomobject]@{
-        Records = $loaded
-        NextSequence = $step.Expected
-        Corrupt = [bool]$step.Corrupt
-        Reason = [string]$step.Reason
-        LastSequence = $last
-    }
-}
-
-function Write-TestPhaseGenerationMetadata {
-    param($Context, [string]$ParentGeneration, [string]$SeedDigest)
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
-    Write-TestPhaseDirectory -Path $genDir
-    $meta = [ordered]@{
-        version = 1
-        generation = [string]$Context.Generation
-        runId = [string]$Context.RunId
-        attempt = [string]$Context.Attempt
-        suite = [string]$Context.Suite
-        source = [string]$Context.Source
-        invocationId = [string]$Context.InvocationId
-        writerEnvironment = [string]$Context.WriterEnvironment
-        seedDigest = [string]$SeedDigest
-        parentGeneration = [string]$ParentGeneration
-        unresolved = [bool]$Context.Unresolved
-        corruptionReason = [string]$Context.CorruptionReason
-    }
-    $path = Join-Path $genDir 'metadata.json'
-    Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($meta, 0))
-    $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($path)
-    $pointer = [ordered]@{
-        version = 1
-        timingRoot = [string]$Context.TimingRoot
-        generation = [string]$Context.Generation
-        metadataDigest = [string]$digest
-    }
-    $current = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) 'current.json'
-    Write-TestPhaseTextAtomic -Path $current -Text ([Antiphon.Nightly.TestPhaseJson]::Text($pointer, 0))
-}
-
-function Initialize-TestPhaseEmptyGeneration {
-    param($Context, [string]$ParentGeneration)
-    $Context.Generation = [guid]::NewGuid().ToString('n')
-    $Context.HasSeed = $false
-    $Context.SeedPath = ''
-    $Context.SeedRows = New-Object System.Collections.Generic.List[object]
-    $Context.Records = New-Object System.Collections.Generic.List[object]
-    $Context.LastCommitted = 0
-    $Context.NextSequence = 1
-    $Context.HeaderReady = $false
-    Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $ParentGeneration -SeedDigest ''
-}
-
-function Initialize-TestPhaseSeedGeneration {
-    param($Context, [string]$LegacyPath, [string]$ParentGeneration, [bool]$Malformed)
-    $Context.Generation = [guid]::NewGuid().ToString('n')
-    $Context.Records = New-Object System.Collections.Generic.List[object]
-    $Context.LastCommitted = 0
-    $Context.NextSequence = 1
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
-    Write-TestPhaseDirectory -Path $genDir
-    if ($Malformed) {
-        $Context.Unresolved = $true
-        if ([string]::IsNullOrWhiteSpace($Context.CorruptionReason)) { $Context.CorruptionReason = 'malformed-legacy' }
-        Save-TestPhaseMalformedLegacy -TimingRoot $Context.TimingRoot -Generation $Context.Generation
-        $Context.HasSeed = $false
-        $Context.HeaderReady = $false
-        Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $ParentGeneration -SeedDigest ''
-        return
-    }
-    $seedPath = Join-Path $genDir 'seed.json'
-    Copy-TestPhaseBytes -Source $LegacyPath -Destination $seedPath
-    $Context.SeedPath = $seedPath
-    $Context.HasSeed = $true
-    $parsed = Read-TestPhaseJsonFile -Path $LegacyPath
-    $cache = Import-TestPhaseSeedRows -Parsed $parsed
-    Set-TestPhaseSeedHeader -Context $Context -Cache $cache
-    Write-TestPhaseSeedCache -Context $Context
-    $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($seedPath)
-    Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $ParentGeneration -SeedDigest $digest
-}
-
-function Get-TestPhaseProjectedDocument {
-    param($Context)
-    $reduced = [Antiphon.Nightly.TestPhaseJournalRead]::Reduce($Context)
-    if ($reduced.ChunkCount -eq 0) {
-        if ($Context.HasSeed -and -not [string]::IsNullOrWhiteSpace([string]$Context.SeedPath) -and (Test-NightlyEvidencePath $Context.SeedPath)) {
-            return (Read-NightlyEvidenceText ([string]$Context.SeedPath))
-        }
-        return $null
-    }
-    $parts = New-Object System.Collections.Generic.List[string]
-    for ($i = 0; $i -lt $reduced.Entries.Count; $i++) {
-        if ($i -eq ($reduced.Entries.Count - 1)) { $parts.Add([string]$reduced.Entries[$i].Fresh) }
-        else { $parts.Add([string]$reduced.Entries[$i].Json) }
-    }
-    $run = [Antiphon.Nightly.TestPhaseJson]::String(([string]$reduced.HeaderRun))
-    $attempt = [Antiphon.Nightly.TestPhaseJson]::String(([string]$reduced.HeaderAttempt))
-    $suite = [Antiphon.Nightly.TestPhaseJson]::String(([string]$reduced.HeaderSuite))
-    return '{"version":1,"runId":' + $run + ',"attempt":' + $attempt + ',"suite":' + $suite + ',"manufacturedPassed":false,"chunks":[' + ($parts.ToArray() -join ',') + ']}'
-}
-
-function Import-TestPhaseGapMemory {
-    param($Context, $Records)
-    foreach ($rec in $Records) {
-        if ($null -eq $rec) { continue }
-        if ([string]$rec.Kind -eq 'gap') {
-            if (-not $Context.Gaps.Contains('publication-gap')) { [void]$Context.Gaps.Add('publication-gap') }
-        }
-    }
-}
-
-function Import-TestPhaseExistingGeneration {
-    param($Context, [string]$Generation, [bool]$ProjectOnly, [bool]$Recover)
-    $journal = Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot
-    $genDir = Join-Path $journal $Generation
-    $meta = Read-TestPhaseJsonFile -Path (Join-Path $genDir 'metadata.json')
-    if ($null -eq $meta) {
-        $Context.Unresolved = $true
-        $Context.CorruptionReason = 'metadata-unreadable'
-        Initialize-TestPhaseEmptyGeneration -Context $Context -ParentGeneration $Generation
-        return
-    }
-    $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
-    $same = ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.runId), ([string]$Context.RunId))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.attempt), ([string]$Context.Attempt))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.source), ([string]$Context.Source))) -and ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$meta.writerEnvironment), ([string]$Context.WriterEnvironment)))
-    $sealed = Test-NightlyEvidencePath (Join-Path $genDir 'seal.json')
-    $resumeSealed = [bool]$Recover -and $sealed -and -not $prefix.Corrupt -and $same
-    if ($ProjectOnly) {
-        $Context.Generation = $Generation
-        $Context.Records = $prefix.Records
-        $Context.LastCommitted = $prefix.LastSequence
-        $Context.NextSequence = $prefix.NextSequence
-        $Context.Unresolved = [bool]$meta.unresolved -or $prefix.Corrupt
-        $Context.CorruptionReason = [string]$meta.corruptionReason
-        if ($prefix.Corrupt -and [string]::IsNullOrWhiteSpace($Context.CorruptionReason)) { $Context.CorruptionReason = $prefix.Reason }
-        [void](Read-TestPhaseSeedCache -Context $Context -Generation $Generation)
-        Import-TestPhaseGapMemory -Context $Context -Records $prefix.Records
-        return
-    }
-    if (($prefix.Corrupt -or -not $same -or $sealed) -and -not $resumeSealed) {
-        $snapshot = New-TestPhaseRefusedContext -Reason ''
-        $snapshot.Refused = $false
-        $snapshot.TimingRoot = $Context.TimingRoot
-        $snapshot.Generation = $Generation
-        $snapshot.Records = $prefix.Records
-        $snapshot.WriterEnvironment = [string]$Context.WriterEnvironment
-        [void](Read-TestPhaseSeedCache -Context $snapshot -Generation $Generation)
-        $parentText = Get-TestPhaseProjectedDocument -Context $snapshot
-        $reduced = [Antiphon.Nightly.TestPhaseJournalRead]::Reduce($snapshot)
-        $Context.Unresolved = [bool]$meta.unresolved -or $prefix.Corrupt
-        if ($prefix.Corrupt) { $Context.CorruptionReason = $prefix.Reason }
-        elseif ([bool]$meta.unresolved) { $Context.CorruptionReason = [string]$meta.corruptionReason }
-        else { $Context.CorruptionReason = '' }
-        if ([string]::IsNullOrWhiteSpace($parentText)) {
-            Initialize-TestPhaseEmptyGeneration -Context $Context -ParentGeneration $Generation
-            return
-        }
-        $Context.Generation = [guid]::NewGuid().ToString('n')
-        $genNew = Join-Path $journal $Context.Generation
-        Write-TestPhaseDirectory -Path $genNew
-        $newSeed = Join-Path $genNew 'seed.json'
-        $utf8 = New-Object System.Text.UTF8Encoding $false
-        Write-NightlyEvidenceText $newSeed $parentText
-        $Context.SeedPath = $newSeed
-        $Context.HasSeed = $true
-        $Context.Records = New-Object System.Collections.Generic.List[object]
-        $Context.LastCommitted = 0
-        $Context.NextSequence = 1
-        $rows = New-Object System.Collections.Generic.List[object]
-        for ($i = 0; $i -lt $reduced.Entries.Count; $i++) {
-            $emitted = [string]$reduced.Entries[$i].Json
-            if ($i -eq ($reduced.Entries.Count - 1)) { $emitted = [string]$reduced.Entries[$i].Fresh }
-            $rows.Add([pscustomobject]@{
-                SettledJson = $emitted
-                SettledSuite = [string]$reduced.Entries[$i].Suite
-                SettledChunk = [string]$reduced.Entries[$i].Chunk
-            })
-        }
-        $Context.SeedRows = $rows
-        $Context.HeaderReady = $true
-        $Context.HeaderRun = [string]$reduced.HeaderRun
-        $Context.HeaderAttempt = [string]$reduced.HeaderAttempt
-        $Context.HeaderSuite = [string]$reduced.HeaderSuite
-        $Context.HeaderAttemptSeen = $true
-        Write-TestPhaseSeedCache -Context $Context
-        $header = [pscustomobject]@{ Run = [string]$Context.HeaderRun; Attempt = [string]$Context.HeaderAttempt; Suite = [string]$Context.HeaderSuite }
-        Update-TestPhaseContextHeader -Context $Context -Header $header
-        Write-TestPhaseGenerationMetadata -Context $Context -ParentGeneration $Generation -SeedDigest ([Antiphon.Nightly.TestPhaseText]::Sha256File($newSeed))
-        return
-    }
-    $Context.Generation = $Generation
-    $Context.Records = $prefix.Records
-    $Context.LastCommitted = $prefix.LastSequence
-    $Context.NextSequence = $prefix.NextSequence
-    $Context.Unresolved = [bool]$meta.unresolved
-    $Context.CorruptionReason = [string]$meta.corruptionReason
-    [void](Read-TestPhaseSeedCache -Context $Context -Generation $Generation)
-    Import-TestPhaseGapMemory -Context $Context -Records $prefix.Records
-    if ($prefix.Records.Count -gt 0) {
-        $last = $null
-        foreach ($rec in $prefix.Records) {
-            if ($rec.Kind -eq 'chunk') { $last = $rec }
-        }
-        if ($null -ne $last) {
-            $mini = [ordered]@{ runId = [string]$last.HeaderRun; attempt = [string]$last.HeaderAttempt; suite = [string]$last.HeaderSuite }
-            $settled = ([Antiphon.Nightly.TestPhaseJson]::Text($mini, 0)) | ConvertFrom-Json
-            $Context.HeaderReady = $true
-            $Context.HeaderRun = [string]$settled.runId
-            $Context.HeaderAttempt = [string]$settled.attempt
-            $Context.HeaderSuite = [string]$settled.suite
-            $Context.HeaderAttemptSeen = $true
-        }
-    }
-}
+# The executed chunk (TestPhaseJournal.FreshChunk / SettledChunk) and the journal head (time zones, the writer
+# environment, the unsafe-directory check, the commit seams, contexts, roots, seed rows and cache, envelopes, the
+# generation prefix and metadata, empty and seed generations, the projection, gap memory and existing-generation
+# import) are compiled: Antiphon.Nightly/TestPhaseJournal.cs. The publication below works on its context.
 
 function Open-TestPhaseExecutedContext {
     param(
@@ -1198,49 +310,49 @@ function Open-TestPhaseExecutedContext {
         [switch]$Recover
     )
     if ([string]::IsNullOrWhiteSpace($Source)) { $Source = 'unknown' }
-    $timing = Resolve-TestPhaseExecutedTimingRoot -LogRoot $LogRoot -TimingRoot $TimingRoot
-    if ([string]::IsNullOrWhiteSpace($timing)) { return (New-TestPhaseRefusedContext -Reason 'timing-root-missing') }
+    $timing = [Antiphon.Nightly.TestPhaseJournal]::ExecutedTimingRoot($LogRoot, $TimingRoot, [string]$script:QualificationTimingRoot)
+    if ([string]::IsNullOrWhiteSpace($timing)) { return ([Antiphon.Nightly.TestPhaseJournal]::RefusedContext('timing-root-missing')) }
     $probe = $timing
     if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { $probe = $TimingRoot }
     elseif (-not [string]::IsNullOrWhiteSpace([string]$script:QualificationTimingRoot)) { $probe = [string]$script:QualificationTimingRoot }
     elseif (-not [string]::IsNullOrWhiteSpace($LogRoot)) { $probe = (Join-Path $LogRoot 'timing') }
-    if (Test-TestPhaseUnsafeDirectory -Path $probe) { return (New-TestPhaseRefusedContext -Reason 'unsafe-root') }
-    if (Test-NightlyEvidencePath $timing 'Leaf') { return (New-TestPhaseRefusedContext -Reason 'timing-root-is-file') }
-    Write-TestPhaseDirectory -Path $timing
-    $journal = Get-TestPhaseJournalRoot -TimingRoot $timing
-    Write-TestPhaseDirectory -Path $journal
+    if ([Antiphon.Nightly.TestPhaseJournal]::UnsafeDirectory($probe)) { return ([Antiphon.Nightly.TestPhaseJournal]::RefusedContext('unsafe-root')) }
+    if (Test-NightlyEvidencePath $timing 'Leaf') { return ([Antiphon.Nightly.TestPhaseJournal]::RefusedContext('timing-root-is-file')) }
+    [Antiphon.Nightly.TestPhaseJournal]::WriteDirectory($timing)
+    $journal = [Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)
+    [Antiphon.Nightly.TestPhaseJournal]::WriteDirectory($journal)
     $lockPath = Join-Path $journal 'writer.lock'
     $lock = $null
     try {
         $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
     } catch {
-        return (New-TestPhaseRefusedContext -Reason 'writer-lock-held')
+        return ([Antiphon.Nightly.TestPhaseJournal]::RefusedContext('writer-lock-held'))
     }
-    $ctx = New-TestPhaseOpenContext -TimingRoot $timing -LogRoot $LogRoot -RunId $RunId -Attempt $Attempt -Suite $Suite -Source $Source -InvocationId $InvocationId -Lock $lock
+    $writer = [Antiphon.Nightly.TestPhaseJournal]::WriterEnvironment([string]$PSVersionTable.PSEdition, [string]$PSVersionTable.PSVersion)
+    $ctx = [Antiphon.Nightly.TestPhaseJournal]::OpenContext($timing, $LogRoot, $RunId, $Attempt, $Suite, $Source, $InvocationId, $lock, $writer)
     $ctx.ProjectOnly = [bool]$ProjectOnly
     $currentPath = Join-Path $journal 'current.json'
-    $current = Read-TestPhaseJsonFile -Path $currentPath
+    $current = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile($currentPath)
     if ($null -eq $current) {
         $flat = Join-Path $timing 'groups-executed.json'
         if ((Get-TestPhasePathIdentity -Path $flat).Kind -eq 'regular') {
-            $parsed = Read-TestPhaseJsonFile -Path $flat
+            $parsed = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile($flat)
             $valid = $false
             if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'version' -and [int]$parsed.version -eq 1) {
                 if (($parsed.PSObject.Properties.Name -contains 'chunks') -or ($parsed.PSObject.Properties.Name -contains 'chunk')) { $valid = $true }
             }
-            if ($valid) { Initialize-TestPhaseSeedGeneration -Context $ctx -LegacyPath $flat -ParentGeneration '' -Malformed $false }
-            else { Initialize-TestPhaseSeedGeneration -Context $ctx -LegacyPath $flat -ParentGeneration '' -Malformed $true }
+            [Antiphon.Nightly.TestPhaseJournal]::InitializeSeedGeneration($ctx, $flat, '', (-not $valid))
         } else {
-            Initialize-TestPhaseEmptyGeneration -Context $ctx -ParentGeneration ''
+            [Antiphon.Nightly.TestPhaseJournal]::InitializeEmptyGeneration($ctx, '')
         }
     } else {
         $bound = ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.timingRoot), ([string]$timing))) -and (-not [string]::IsNullOrWhiteSpace([string]$current.generation))
         if (-not $bound) {
             $ctx.Unresolved = $true
             $ctx.CorruptionReason = 'pointer-binding'
-            Initialize-TestPhaseEmptyGeneration -Context $ctx -ParentGeneration ([string]$current.generation)
+            [Antiphon.Nightly.TestPhaseJournal]::InitializeEmptyGeneration($ctx, [string]$current.generation)
         } else {
-            Import-TestPhaseExistingGeneration -Context $ctx -Generation ([string]$current.generation) -ProjectOnly:([bool]$ProjectOnly) -Recover:([bool]$Recover)
+            [Antiphon.Nightly.TestPhaseJournal]::ImportExistingGeneration($ctx, [string]$current.generation, [bool]$ProjectOnly, [bool]$Recover)
         }
     }
     if (-not $ProjectOnly) { $script:TestPhaseExecutedContext = $ctx }
@@ -1250,7 +362,7 @@ function Open-TestPhaseExecutedContext {
 function Test-TestPhaseJournalWriteFailure {
     param($Context, [string[]]$Failures)
     $journal = ''
-    try { $journal = [IO.Path]::GetFullPath((Get-TestPhaseJournalRoot -TimingRoot ([string]$Context.TimingRoot))) } catch { return $true }
+    try { $journal = [IO.Path]::GetFullPath(([Antiphon.Nightly.TestPhaseJournal]::JournalRoot([string]$Context.TimingRoot))) } catch { return $true }
     if ([string]::IsNullOrWhiteSpace($journal)) { return $true }
     $prefix = $journal.TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
     foreach ($item in @($Failures)) {
@@ -1305,21 +417,10 @@ function Get-TestPhaseNextHeader {
     return [pscustomobject]@{ Run = $run; Attempt = $attempt; Suite = $suite }
 }
 
-function Update-TestPhaseContextHeader {
-    param($Context, $Header)
-    $mini = [ordered]@{ runId = [string]$Header.Run; attempt = [string]$Header.Attempt; suite = [string]$Header.Suite }
-    $settled = ([Antiphon.Nightly.TestPhaseJson]::Text($mini, 0)) | ConvertFrom-Json
-    $Context.HeaderReady = $true
-    $Context.HeaderRun = [string]$settled.runId
-    $Context.HeaderAttempt = [string]$settled.attempt
-    $Context.HeaderSuite = [string]$settled.suite
-    $Context.HeaderAttemptSeen = $true
-}
-
 function Write-TestPhaseCommitFile {
     param([string]$FinalPath, [string]$Text)
     $dir = Split-Path -Parent $FinalPath
-    Write-TestPhaseDirectory -Path $dir
+    [Antiphon.Nightly.TestPhaseJournal]::WriteDirectory($dir)
     # During a nightly run with no commit seam set, the record is queued on the evidence file system
     # (nightly-core.ps1): the same refusal when it exists and the same read-back, without a temporary file
     # and rename per record. The seams drive the on-disk steps below.
@@ -1332,27 +433,27 @@ function Write-TestPhaseCommitFile {
         if ($onDisk -ne $Text) { throw 'commit-unreadable' }
         return
     }
-    Wait-TestPhaseCommitBarrier -Stage 'BeforeTempComplete'
-    if (Test-TestPhaseCommitFault -Stage 'CreateTemp') { throw 'commit-fault-temp' }
+    if (-not [Antiphon.Nightly.TestPhaseJournal]::WaitCommitBarrier($script:TestPhaseCommitBarrier, 'BeforeTempComplete')) { throw 'commit-barrier-timeout' }
+    if ([Antiphon.Nightly.TestPhaseJournal]::CommitFault($script:TestPhaseCommitFault, 'CreateTemp')) { throw 'commit-fault-temp' }
     $tmp = Join-Path $dir ('.' + [guid]::NewGuid().ToString('n') + '.tmp')
     $stream = $null
     try {
         $stream = [System.IO.File]::Open($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($Text)
         $stream.Write($bytes, 0, $bytes.Length)
-        if (Test-TestPhaseCommitFault -Stage 'Flush') { throw 'commit-fault-flush' }
+        if ([Antiphon.Nightly.TestPhaseJournal]::CommitFault($script:TestPhaseCommitFault, 'Flush')) { throw 'commit-fault-flush' }
         # Flushed to the operating system, not forced to the disk: after a crash the latest record may be
         # missing or empty, which the prefix reader reports as a shorter prefix or as corruption.
         $stream.Flush()
         $stream.Dispose()
         $stream = $null
-        Wait-TestPhaseCommitBarrier -Stage 'AfterFlushBeforeRename'
-        if (Test-TestPhaseCommitFault -Stage 'Rename') { throw 'commit-fault-rename' }
+        if (-not [Antiphon.Nightly.TestPhaseJournal]::WaitCommitBarrier($script:TestPhaseCommitBarrier, 'AfterFlushBeforeRename')) { throw 'commit-barrier-timeout' }
+        if ([Antiphon.Nightly.TestPhaseJournal]::CommitFault($script:TestPhaseCommitFault, 'Rename')) { throw 'commit-fault-rename' }
         if ([System.IO.File]::Exists($FinalPath)) { throw 'commit-exists' }
         [System.IO.File]::Move($tmp, $FinalPath)
         $tmp = ''
-        Wait-TestPhaseCommitBarrier -Stage 'AfterRenameBeforeAck'
-        if (Test-TestPhaseCommitFault -Stage 'Acknowledge') { throw 'commit-fault-ack' }
+        if (-not [Antiphon.Nightly.TestPhaseJournal]::WaitCommitBarrier($script:TestPhaseCommitBarrier, 'AfterRenameBeforeAck')) { throw 'commit-barrier-timeout' }
+        if ([Antiphon.Nightly.TestPhaseJournal]::CommitFault($script:TestPhaseCommitFault, 'Acknowledge')) { throw 'commit-fault-ack' }
         $readBack = [System.IO.File]::ReadAllText($FinalPath)
         if ($readBack -ne $Text) { throw 'commit-unreadable' }
     } catch {
@@ -1366,7 +467,7 @@ function Write-TestPhaseCommitFile {
 
 function Add-TestPhaseJournalEnvelope {
     param($Context, [string]$Text, [string]$PublicationId, [int]$Sequence)
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
+    $genDir = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) $Context.Generation
     $final = Join-Path $genDir ($Sequence.ToString('00000000') + '.json')
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $attempt = 0
@@ -1395,12 +496,12 @@ function Invoke-TestPhasePrefixRescan {
     if (-not $Context.NeedsRecovery) { return }
     if ($Context.RescanAttempted) { return }
     $Context.RescanAttempted = $true
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
-    $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
+    $genDir = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) $Context.Generation
+    $prefix = [Antiphon.Nightly.TestPhaseJournal]::ReadGenerationPrefix($genDir)
     $Context.Records = $prefix.Records
     $Context.LastCommitted = $prefix.LastSequence
     $Context.NextSequence = $prefix.NextSequence
-    Import-TestPhaseGapMemory -Context $Context -Records $prefix.Records
+    [Antiphon.Nightly.TestPhaseJournal]::ImportGapMemory($Context, $prefix.Records)
     if ($prefix.Corrupt) {
         $Context.Unresolved = $true
         if ([string]::IsNullOrWhiteSpace([string]$Context.CorruptionReason)) { $Context.CorruptionReason = [string]$prefix.Reason }
@@ -1427,9 +528,9 @@ function Add-TestPhaseGapRecord {
     if ([string]::IsNullOrWhiteSpace($HeaderSuite)) { $HeaderSuite = [string]$Suite }
     if ([string]::IsNullOrWhiteSpace($PublicationId)) { $PublicationId = [guid]::NewGuid().ToString('n') }
     $sequence = [int]$Context.NextSequence
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
+    $genDir = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) $Context.Generation
     $final = Join-Path $genDir ($sequence.ToString('00000000') + '.json')
-    $envelope = New-TestPhaseEnvelopeText -Kind 'gap' -Sequence $sequence -PublicationId $PublicationId -Context $Context -Reason $Reason -Suite $Suite -Chunk $Chunk -SettledSuite $Suite -SettledChunk $Chunk -HeaderRun $HeaderRun -HeaderAttempt $HeaderAttempt -HeaderSuite $HeaderSuite -FreshJson '' -SettledJson ''
+    $envelope = [Antiphon.Nightly.TestPhaseJournal]::EnvelopeText('gap', $sequence, $PublicationId, $Context, $Reason, $Suite, $Chunk, $Suite, $Chunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, '', '')
     $ok = Add-TestPhaseJournalEnvelope -Context $Context -Text $envelope -PublicationId $PublicationId -Sequence $sequence
     if (-not $ok) {
         $already = $false
@@ -1489,7 +590,7 @@ function Add-TestPhaseExecutedChunk {
     param($Context, $Fresh, [string]$Suite, [string]$Chunk, [string]$RunId, [string]$Attempt)
     if ($Context.Closed -or $Context.Refused) { throw 'context-closed' }
     Invoke-TestPhasePrefixRescan -Context $Context
-    $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) 'current.json')
+    $current = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile((Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) 'current.json'))
     if ($null -eq $current -or -not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.generation), ([string]$Context.Generation)))) { throw 'stale-context' }
     if ($null -ne $Context.PendingGaps -and $Context.PendingGaps.Count -gt 0) {
         $drained = Submit-TestPhasePendingGaps -Context $Context
@@ -1501,18 +602,18 @@ function Add-TestPhaseExecutedChunk {
     $header = Get-TestPhaseNextHeader -Context $Context -RunId $RunId -Attempt $Attempt -Suite $Suite
     $freshJson = [Antiphon.Nightly.TestPhaseJson]::Text($Fresh, 0)
     $parsed = $freshJson | ConvertFrom-Json
-    $settled = ConvertTo-TestPhaseExecutedChunk -Item $parsed
+    $settled = [Antiphon.Nightly.TestPhaseJournal]::SettledChunk($parsed)
     $settledJson = [Antiphon.Nightly.TestPhaseJson]::Text($settled, 0)
     $publicationId = [guid]::NewGuid().ToString('n')
     $sequence = [int]$Context.NextSequence
-    $envelope = New-TestPhaseEnvelopeText -Kind 'chunk' -Sequence $sequence -PublicationId $publicationId -Context $Context -Reason '' -Suite $Suite -Chunk $Chunk -SettledSuite ([string]$settled.suite) -SettledChunk ([string]$settled.chunk) -HeaderRun ([string]$header.Run) -HeaderAttempt ([string]$header.Attempt) -HeaderSuite ([string]$header.Suite) -FreshJson $freshJson -SettledJson $settledJson
+    $envelope = [Antiphon.Nightly.TestPhaseJournal]::EnvelopeText('chunk', $sequence, $publicationId, $Context, '', $Suite, $Chunk, [string]$settled.suite, [string]$settled.chunk, [string]$header.Run, [string]$header.Attempt, [string]$header.Suite, $freshJson, $settledJson)
     $ok = Add-TestPhaseJournalEnvelope -Context $Context -Text $envelope -PublicationId $publicationId -Sequence $sequence
     if (-not $ok) {
         Write-TestPhaseFailureMarker -RunDirectory $Context.LogRoot -Code 'phase-summary-failed'
         Add-TestPhaseGapRecord -Context $Context -Reason ([string]$Context.Reason) -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HeaderRun ([string]$header.Run) -HeaderAttempt ([string]$header.Attempt) -HeaderSuite ([string]$header.Suite) | Out-Null
         return $false
     }
-    Wait-TestPhaseCommitBarrier -Stage 'AfterAckBeforeProjection'
+    if (-not [Antiphon.Nightly.TestPhaseJournal]::WaitCommitBarrier($script:TestPhaseCommitBarrier, 'AfterAckBeforeProjection')) { throw 'commit-barrier-timeout' }
     $Context.Records.Add([pscustomobject]@{
         Kind = 'chunk'
         Sequence = $sequence
@@ -1531,7 +632,7 @@ function Add-TestPhaseExecutedChunk {
     $Context.NextSequence = $sequence + 1
     $Context.NeedsRecovery = $false
     $Context.RescanAttempted = $false
-    Update-TestPhaseContextHeader -Context $Context -Header $header
+    [Antiphon.Nightly.TestPhaseJournal]::UpdateContextHeader($Context, [string]$header.Run, [string]$header.Attempt, [string]$header.Suite)
     return $true
 }
 
@@ -1567,7 +668,7 @@ function Write-TestPhasePublicationState {
     param($Context, [string]$ProjectionText)
     $text = Get-TestPhasePublicationStateText -Context $Context -ProjectionText $ProjectionText
     $path = Join-Path $Context.TimingRoot 'groups-executed.state.json'
-    Write-TestPhaseTextAtomic -Path $path -Text $text
+    [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($path, $text)
     return ([Antiphon.Nightly.TestPhaseText]::Sha256File($path))
 }
 
@@ -1583,12 +684,12 @@ function Complete-TestPhaseExecutedProjection {
         if ($null -ne $Context.PendingGaps -and $Context.PendingGaps.Count -gt 0) {
             Submit-TestPhasePendingGaps -Context $Context | Out-Null
         }
-        $text = Get-TestPhaseProjectedDocument -Context $Context
+        $text = [Antiphon.Nightly.TestPhaseJournal]::ProjectedDocument($Context)
         $terminalSet = -not [string]::IsNullOrWhiteSpace($Terminal)
         if ($null -eq $text -and -not $Context.Unresolved -and $Context.Gaps.Count -eq 0 -and -not $terminalSet) { return $Context }
         if ($null -ne $text) {
             $flat = Join-Path $Context.TimingRoot 'groups-executed.json'
-            Write-TestPhaseTextAtomic -Path $flat -Text $text
+            [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($flat, $text)
         }
         $stateDigest = Write-TestPhasePublicationState -Context $Context -ProjectionText $text
         if ($terminalSet) {
@@ -1602,8 +703,8 @@ function Complete-TestPhaseExecutedProjection {
                 projectionDigest = [string]$projectionDigest
                 stateDigest = [string]$stateDigest
             }
-            $sealPath = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation) 'seal.json'
-            Write-TestPhaseTextAtomic -Path $sealPath -Text ([Antiphon.Nightly.TestPhaseJson]::Text($seal, 0))
+            $sealPath = Join-Path (Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) $Context.Generation) 'seal.json'
+            [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($sealPath, ([Antiphon.Nightly.TestPhaseJson]::Text($seal, 0)))
         }
         return $Context
     } finally {
@@ -1613,7 +714,7 @@ function Complete-TestPhaseExecutedProjection {
 
 function Read-TestPhaseExecutedPrefix {
     param([string]$LogRoot, [string]$TimingRoot)
-    $timing = Resolve-TestPhaseExecutedTimingRoot -LogRoot $LogRoot -TimingRoot $TimingRoot
+    $timing = [Antiphon.Nightly.TestPhaseJournal]::ExecutedTimingRoot($LogRoot, $TimingRoot, [string]$script:QualificationTimingRoot)
     $empty = [pscustomobject]@{
         Generation = ''
         LastSequence = 0
@@ -1628,10 +729,10 @@ function Read-TestPhaseExecutedPrefix {
         Terminal = ''
     }
     if ([string]::IsNullOrWhiteSpace($timing)) { $empty.Refused = $true; $empty.Reason = 'timing-root-missing'; return $empty }
-    $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json')
+    $current = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile((Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) 'current.json'))
     if ($null -eq $current) { return $empty }
-    $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation)
-    $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
+    $genDir = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) ([string]$current.generation)
+    $prefix = [Antiphon.Nightly.TestPhaseJournal]::ReadGenerationPrefix($genDir)
     $kind = 'none'
     if ($prefix.Records.Count -gt 0) { $kind = [string]$prefix.Records[$prefix.Records.Count - 1].Kind }
     $ids = New-Object System.Collections.Generic.List[string]
@@ -1641,7 +742,7 @@ function Read-TestPhaseExecutedPrefix {
     $quality = New-Object System.Collections.Generic.List[string]
     if ($prefix.Corrupt) { $quality.Add('publication-corruption') }
     $terminal = ''
-    $seal = Read-TestPhaseJsonFile -Path (Join-Path $genDir 'seal.json')
+    $seal = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile((Join-Path $genDir 'seal.json'))
     if ($null -ne $seal -and $seal.PSObject.Properties.Name -contains 'terminal') { $terminal = [string]$seal.terminal }
     return [pscustomobject]@{
         Generation = [string]$current.generation
@@ -1660,15 +761,15 @@ function Read-TestPhaseExecutedPrefix {
 
 function Invoke-TestPhaseExecutedRecovery {
     param([string]$LogRoot, [string]$TimingRoot, [string]$RunId, [string]$Attempt, [string]$Suite, [string]$Source)
-    $timing = Resolve-TestPhaseExecutedTimingRoot -LogRoot $LogRoot -TimingRoot $TimingRoot
+    $timing = [Antiphon.Nightly.TestPhaseJournal]::ExecutedTimingRoot($LogRoot, $TimingRoot, [string]$script:QualificationTimingRoot)
     $run = [string]$RunId
     $att = [string]$Attempt
     $src = [string]$Source
     if (-not [string]::IsNullOrWhiteSpace($timing)) {
-        $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json')
+        $current = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile((Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) 'current.json'))
         if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.generation)) {
-            $metaPath = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation)) 'metadata.json'
-            $meta = Read-TestPhaseJsonFile -Path $metaPath
+            $metaPath = Join-Path (Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) ([string]$current.generation)) 'metadata.json'
+            $meta = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile($metaPath)
             if ($null -ne $meta) {
                 if ([string]::IsNullOrWhiteSpace($run)) { $run = [string]$meta.runId }
                 if ([string]::IsNullOrWhiteSpace($att)) { $att = [string]$meta.attempt }
@@ -1680,10 +781,10 @@ function Invoke-TestPhaseExecutedRecovery {
     $ctx = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $run -Attempt $att -Suite $Suite -Source $src -Recover
     if ($null -eq $ctx -or $ctx.Refused) { return $ctx }
     try {
-        $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $ctx.TimingRoot) $ctx.Generation
-        $seal = Read-TestPhaseJsonFile -Path (Join-Path $genDir 'seal.json')
+        $genDir = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($ctx.TimingRoot)) $ctx.Generation
+        $seal = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile((Join-Path $genDir 'seal.json'))
         if ($null -ne $seal -and -not $ctx.Unresolved) {
-            $preview = Get-TestPhaseProjectedDocument -Context $ctx
+            $preview = [Antiphon.Nightly.TestPhaseJournal]::ProjectedDocument($ctx)
             $projectionDigest = ''
             if ($null -ne $preview) { $projectionDigest = [Antiphon.Nightly.TestPhaseRecords]::Sha256Text($preview) }
             $stateText = Get-TestPhasePublicationStateText -Context $ctx -ProjectionText $preview
@@ -1700,82 +801,6 @@ function Invoke-TestPhaseExecutedRecovery {
     } finally {
         Close-TestPhaseExecutedContext -Context $ctx
     }
-}
-
-function Add-TestPhaseDeferredEvidenceToken {
-    param($Tokens)
-    if ($null -eq $Tokens) { return }
-    try {
-        if (-not ('Antiphon.Nightly.EvidenceFiles' -as [type])) { return }
-        $pending = @([Antiphon.Nightly.EvidenceFiles]::PeekFailures())
-        $any = $false
-        foreach ($item in $pending) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $any = $true; break }
-        }
-        if ($any -and -not $Tokens.Contains('deferred-evidence-write-failed')) {
-            [void]$Tokens.Add('deferred-evidence-write-failed')
-        }
-    } catch { }
-}
-
-function Get-TestPhasePublicationQuality {
-    param([string]$RunDirectory, $KnownPrefix)
-    $tokens = New-Object System.Collections.Generic.List[string]
-    try {
-        $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
-        $flat = Join-Path $timing 'groups-executed.json'
-        $currentPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json'
-        $hasFlat = (Get-TestPhasePathIdentity -Path $flat).Kind -eq 'regular'
-        $hasJournal = (Get-TestPhasePathIdentity -Path $currentPath).Kind -eq 'regular'
-        if (-not $hasFlat -and -not $hasJournal) {
-            Add-TestPhaseDeferredEvidenceToken $tokens
-            return @($tokens.ToArray())
-        }
-        $statePath = Join-Path $timing 'groups-executed.state.json'
-        if ((Get-TestPhasePathIdentity -Path $statePath).Kind -ne 'regular') {
-            $tokens.Add('publication-state-missing')
-            Add-TestPhaseDeferredEvidenceToken $tokens
-            return @($tokens.ToArray())
-        }
-        $state = Read-TestPhaseJsonFile -Path $statePath
-        if ($null -eq $state) {
-            $tokens.Add('publication-state-mismatch')
-            Add-TestPhaseDeferredEvidenceToken $tokens
-            return @($tokens.ToArray())
-        }
-        $mismatch = $false
-        if ($hasJournal) {
-            $current = Read-TestPhaseJsonFile -Path $currentPath
-            if ($null -eq $current -or -not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$current.generation), ([string]$state.generation)))) { $mismatch = $true }
-            else {
-                $prefix = $KnownPrefix
-                if ($null -eq $prefix) {
-                    $prefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
-                }
-                if ([int]$state.sequence -ne [int]$prefix.LastSequence) { $mismatch = $true }
-                if ([bool]$prefix.Corrupt -and -not $tokens.Contains('publication-corruption')) { $tokens.Add('publication-corruption') }
-            }
-        }
-        $rootFull = ''
-        try { $rootFull = [System.IO.Path]::GetFullPath($timing) } catch { $rootFull = $timing }
-        if (-not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$state.root), ([string]$rootFull)))) { $mismatch = $true }
-        if ($hasFlat) {
-            $digest = [Antiphon.Nightly.TestPhaseText]::Sha256File($flat)
-            if (-not ([Antiphon.Nightly.TestPhaseText]::OrdinalEqual(([string]$state.projectionDigest), ([string]$digest)))) { $mismatch = $true }
-        }
-        if ($mismatch) { $tokens.Add('publication-state-mismatch') }
-        if ($state.PSObject.Properties.Name -contains 'quality' -and $null -ne $state.quality) {
-            foreach ($token in @($state.quality)) {
-                $text = [string]$token
-                if ([string]::IsNullOrWhiteSpace($text)) { continue }
-                if (-not $tokens.Contains($text)) { $tokens.Add($text) }
-            }
-        }
-    } catch {
-        if (-not $tokens.Contains('publication-state-mismatch')) { $tokens.Add('publication-state-mismatch') }
-    }
-    Add-TestPhaseDeferredEvidenceToken $tokens
-    return @($tokens.ToArray())
 }
 
 function Write-TestPhaseExecutedManifest {
@@ -1815,7 +840,7 @@ function Write-TestPhaseExecutedManifest {
         if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
         if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
     }
-    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomeRows) -Trx ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $fresh = [Antiphon.Nightly.TestPhaseJournal]::FreshChunk($Chunk, $RunId, $Attempt, $Suite, $HostWallSeconds, $trxMissing, [int]$passed, @($outcomeRows), ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)), $digest, $exitCode, $coverageComplete, $testsPassed)
     $persistent = $false
     $bound = $null
     if ($null -ne $script:TestPhaseExecutedContext) {
@@ -1898,11 +923,7 @@ function ConvertTo-TestPhaseSummaryRows {
     $malformed = 0
     $watch = New-Object System.Diagnostics.Stopwatch
     if ($null -ne $script:TestPhaseSummaryReReadWatch) { $watch = $script:TestPhaseSummaryReReadWatch }
-    $budget = [pscustomobject]@{
-        Watch = $watch
-        Milliseconds = [int](Get-TestPhaseSummaryBudgetMilliseconds)
-        BytesRemaining = 8388608
-    }
+    $budget = [Antiphon.Nightly.TestPhaseReadBudget]::For($watch, [Antiphon.Nightly.TestPhaseFiles]::SummaryBudgetMilliseconds, 8388608)
     $plannedDocs = @(Read-TestPhasePlannedDocuments -RunDirectory $RunDirectory)
     $shards = @()
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
@@ -1925,7 +946,7 @@ function ConvertTo-TestPhaseSummaryRows {
     $fixtures = @()
     $seenComplete = @{}
     foreach ($shard in $shards) {
-        $parsed = Read-TestPhaseJsonlForSummary -Path $shard.FullName -BudgetState $budget
+        $parsed = [Antiphon.Nightly.TestPhaseReads]::JsonlForSummary($shard.FullName, $budget)
         $torn += [int]$parsed.Torn
         $malformed += [int]$parsed.Malformed
         $header = $null
@@ -1978,20 +999,20 @@ function ConvertTo-TestPhaseSummaryRows {
     $trxGroups = @{}
     $trxSuites = @{}
     $journalPrefix = $null
-    $currentPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json'
+    $currentPath = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) 'current.json'
     $hasJournal = (Get-TestPhasePathIdentity -Path $currentPath).Kind -eq 'regular'
     if ($hasJournal) {
-        $current = Read-TestPhaseJsonFile -Path $currentPath
+        $current = [Antiphon.Nightly.TestPhaseJournal]::ReadJsonFile($currentPath)
         if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.generation)) {
-            $journalPrefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
+            $journalPrefix = [Antiphon.Nightly.TestPhaseJournal]::ReadGenerationPrefix((Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) ([string]$current.generation)))
             # Use the validated seed and retained records, including predecessor rows.
             # This read-only context never acquires writer ownership or projects files.
-            $snapshot = New-TestPhaseRefusedContext -Reason ''
+            $snapshot = [Antiphon.Nightly.TestPhaseJournal]::RefusedContext('')
             $snapshot.Refused = $false
             $snapshot.TimingRoot = $timing
             $snapshot.Generation = [string]$current.generation
             $snapshot.Records = $journalPrefix.Records
-            [void](Read-TestPhaseSeedCache -Context $snapshot -Generation ([string]$current.generation))
+            [void][Antiphon.Nightly.TestPhaseJournal]::ReadSeedCache($snapshot, [string]$current.generation)
             $reduced = [Antiphon.Nightly.TestPhaseJournalRead]::Reduce($snapshot)
             for ($entryIndex = 0; $entryIndex -lt $reduced.Entries.Count; $entryIndex++) {
                 $entry = $reduced.Entries[$entryIndex]
@@ -2161,7 +1182,7 @@ function ConvertTo-TestPhaseSummaryRows {
             fixture = $(if ($ex) { [long]$ex.fixture } else { 0 })
         }
     }
-    foreach ($token in @(Get-TestPhasePublicationQuality -RunDirectory $RunDirectory -KnownPrefix $journalPrefix)) {
+    foreach ($token in @([Antiphon.Nightly.TestPhaseJournal]::PublicationQuality($RunDirectory, [string]$script:QualificationTimingRoot, $journalPrefix))) {
         if (-not $quality.Contains([string]$token)) { $quality.Add([string]$token) }
     }
     $complete = $quality.Count -eq 0
@@ -2190,7 +1211,7 @@ function Write-TestPhaseSummaryFiles {
     }
     # @($Report.Tests | Sort-Object { [string]$_.testId })
     $orderedTests = [Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId($Report.Tests)
-    $aggregationBudget = Get-TestPhaseSummaryBudgetMilliseconds
+    $aggregationBudget = [Antiphon.Nightly.TestPhaseFiles]::SummaryBudgetMilliseconds
     $aggregationSpent = 0
     if ($null -ne $Report -and $Report.PSObject.Properties.Name -contains 'SummaryAggregationBudgetMilliseconds' -and $null -ne $Report.SummaryAggregationBudgetMilliseconds) {
         $aggregationBudget = [int]$Report.SummaryAggregationBudgetMilliseconds
@@ -2213,7 +1234,7 @@ function Write-TestPhaseSummaryFiles {
     # recursive serializer calls for a complete native roster. Authority writers
     # retain their original canonical serializer and exact bytes.
     # ConvertTo-Json -InputObject $summary -Depth 50 -Compress
-    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text ([Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($summary))
+    [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $timing 'summary.json'), ([Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($summary)))
 
     $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]
@@ -2276,7 +1297,7 @@ function Write-TestPhaseOwnerObservation {
         $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
         $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + [string]$doc['runId'] + '-' + [string]$doc['attempt'] + '.json')
         if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') { return }
-        Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0))
+        [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($path, ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0)))
     } catch {
         # Owner stamps are diagnostic. A write failure must not change the verdict.
     }
@@ -2355,7 +1376,7 @@ function Update-TestPhasePlannedIndex {
         attempt = [string]$Attempt
         suites = @($kept.ToArray())
     }
-    Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0))
+    [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($path, ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0)))
 }
 
 function Read-TestPhasePlannedDocuments {
@@ -2399,7 +1420,7 @@ function Initialize-TestPhaseReadWarmup {
         $path = Join-Path $dir 'cases-0-warm.jsonl'
         $bytes = New-Object byte[] 262145
         [IO.File]::WriteAllBytes($path, $bytes)
-        $null = Read-TestPhaseJsonlBounded -Path $path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+        $null = [Antiphon.Nightly.TestPhaseReads]::JsonlBounded($path, 262144, 4000, 200, [Diagnostics.Stopwatch]::StartNew())
         $trx = Join-Path $dir 'warm.trx'
         [System.IO.File]::WriteAllText($trx, '<TestRun><Results><UnitTestResult testName="warm" duration="00:00:01" outcome="Passed" /></Results></TestRun>')
         $null = Read-TestPhaseTrxRows -Path $trx

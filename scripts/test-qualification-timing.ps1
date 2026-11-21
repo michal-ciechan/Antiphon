@@ -699,7 +699,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$read = [Antiphon.Nightly.TestPhaseReads]::JsonlBounded($Path, 262144, 4000, 200, [Diagnostics.Stopwatch]::StartNew())
 $sw.Stop()
 $peak = [Diagnostics.Process]::GetCurrentProcess().PeakWorkingSet64
 $payload = [ordered]@{
@@ -738,16 +738,9 @@ param([string]$Path, [string]$Result, [string]$Timing, [string]$Lib)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
-$script:fifoOpenCalls = 0
-$fifoOpen = ${function:Open-TestPhaseReadStream}
-function Open-TestPhaseReadStream {
-    param([string]$Path)
-    $script:fifoOpenCalls++
-    & $fifoOpen @PSBoundParameters
-}
 $timingReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$read = [Antiphon.Nightly.TestPhaseReads]::JsonlBounded($Path, 262144, 4000, 200, [Diagnostics.Stopwatch]::StartNew())
 $readSeconds = $sw.Elapsed.TotalSeconds
 $sums = [Antiphon.Nightly.QualificationTiming]::PhaseSums($Timing, 'g1', 'run-fifo', 'antiphon', '1')
 $sw.Stop()
@@ -760,7 +753,7 @@ $payload = [ordered]@{
     count = @($read.Records).Count
     waitNull = [bool]$waitNull
     readSeconds = $readSeconds
-    openCalls = $script:fifoOpenCalls + $timingReads.Opens.Count
+    openCalls = $timingReads.Opens.Count
     listCalls = $timingReads.Listings.Count
     listedEntries = [int]($timingReads.ListedEntries | Measure-Object -Sum).Sum
     listedFolder = $listedFolder
@@ -796,7 +789,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$read = [Antiphon.Nightly.TestPhaseReads]::JsonlBounded($Path, 262144, 4000, 200, [Diagnostics.Stopwatch]::StartNew())
 $side = [Antiphon.Nightly.QualificationTiming]::ReadSidecar($Path)
 $sw.Stop()
 $payload = [ordered]@{
@@ -866,12 +859,6 @@ $script:launchWitnessReached = $false
 $script:launchWitnessFifoOpens = 0
 $script:launchWitnessSidecar = Join-Path $LogRoot 'antiphon-all.timing.json'
 $null = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
-$launchOpen = ${function:Open-TestPhaseReadStream}
-function Open-TestPhaseReadStream {
-    param([string]$Path)
-    if (-not $script:launchWitnessReached -and $Path -eq (Join-Path $LogRoot 'antiphon-all.timing.json')) { $script:launchWitnessFifoOpens++ }
-    & $launchOpen @PSBoundParameters
-}
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $script:launchWitnessWatch = $sw
 $result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $LogRoot -TimingRoot (Join-Path $LogRoot 'timing') -Suites @('antiphon') -Profile 'nightly' -Sha 'd3fd72f941abda0fd6026f5e564d66ac410bdf47' -RunId 'fifo-launch' -Trigger 'manual' -SeamsPath $Seam -AllowSharedTree

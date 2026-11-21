@@ -26142,7 +26142,6 @@
       "path": "tests/Antiphon.Tests/TestHelpers/ManifestPublicationFixture.cs",
       "classes": [
         "RcManifestIntegrationTests",
-        "RcManifestJournalTests",
         "RcManifestRecoveryTests"
       ]
     },

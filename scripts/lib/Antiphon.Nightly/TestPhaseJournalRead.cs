@@ -5,19 +5,55 @@
 // written). Each envelope is read with a strict reader that answers only when ConvertFrom-Json would give the same
 // values for the fields read here (plain strings, a whole-number sequence). Only our own writer produces these
 // files, so anything else is a break (malformed-record), and a chunk document it cannot read is skipped as an
-// unparseable one was.
+// unparseable one was. Plain C# (W2-nightly S07): records are TestPhaseJournalRecord, the reduction a
+// TestPhaseReduction; a record the still-PowerShell publication adds (a custom object) is read as PowerShell reads it.
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.Nightly
 {
+    /// <summary>One journal record as the prefix reader (or a publication) holds it.</summary>
+    public sealed class TestPhaseJournalRecord
+    {
+        public string Kind { get; set; } = "";
+        public int Sequence { get; set; }
+        public string FreshJson { get; set; } = "";
+        public string SettledJson { get; set; } = "";
+        public string FreshSuite { get; set; } = "";
+        public string FreshChunk { get; set; } = "";
+        public string SettledSuite { get; set; } = "";
+        public string SettledChunk { get; set; } = "";
+        public string HeaderRun { get; set; } = "";
+        public string HeaderAttempt { get; set; } = "";
+        public string HeaderSuite { get; set; } = "";
+        public string PublicationId { get; set; } = "";
+    }
+
+    /// <summary>One entry of the reduced chunk list: the settled and the fresh document, and its settled keys.</summary>
+    public sealed class TestPhaseReducedEntry
+    {
+        public string Json { get; set; } = "";
+        public string Fresh { get; set; } = "";
+        public string Suite { get; set; } = "";
+        public string Chunk { get; set; } = "";
+    }
+
+    /// <summary>Get-TestPhaseReduction's result.</summary>
+    public sealed class TestPhaseReduction
+    {
+        public List<TestPhaseReducedEntry> Entries { get; set; } = new List<TestPhaseReducedEntry>();
+        public int ChunkCount { get; set; }
+        public string HeaderRun { get; set; } = "";
+        public string HeaderAttempt { get; set; } = "";
+        public string HeaderSuite { get; set; } = "";
+    }
+
     public static class TestPhaseJournalRead
     {
         /// <summary>Where ReadPrefix stopped: the sequence of the first missing record, or of the record that
@@ -65,7 +101,7 @@ namespace Antiphon.Nightly
                     return step;
                 }
                 var fields = TopFields(text, EnvelopeFields);
-                PSObject record = null;
+                TestPhaseJournalRecord record = null;
                 int sequence = 0;
                 if (fields == null || !TryRecord(fields, out record, out sequence))
                 {
@@ -98,12 +134,12 @@ namespace Antiphon.Nightly
                 foreach (var b in hash) sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
                 actual = sb.ToString();
             }
-            return LanguagePrimitives.Equals(actual, hex, true, CultureInfo.InvariantCulture);
+            return PsValue.Eq(actual, hex, true);
         }
 
         // The record object over the captured envelope fields; false for an envelope our writer does not produce
         // (a missing or non-whole sequence, a non-string field, invalid base64).
-        private static bool TryRecord(Dictionary<string, object> fields, out PSObject record, out int sequence)
+        private static bool TryRecord(Dictionary<string, object> fields, out TestPhaseJournalRecord record, out int sequence)
         {
             record = null;
             sequence = 0;
@@ -117,19 +153,12 @@ namespace Antiphon.Nightly
                 || !Key(fields, "freshRun", out run) || !Key(fields, "freshAttempt", out attempt)
                 || !Key(fields, "freshHeaderSuite", out headerSuite))
                 return false;
-            record = new PSObject();
-            record.Properties.Add(new PSNoteProperty("Kind", kind));
-            record.Properties.Add(new PSNoteProperty("Sequence", sequence));
-            record.Properties.Add(new PSNoteProperty("FreshJson", fresh));
-            record.Properties.Add(new PSNoteProperty("SettledJson", settled));
-            record.Properties.Add(new PSNoteProperty("FreshSuite", freshSuite));
-            record.Properties.Add(new PSNoteProperty("FreshChunk", freshChunk));
-            record.Properties.Add(new PSNoteProperty("SettledSuite", settledSuite));
-            record.Properties.Add(new PSNoteProperty("SettledChunk", settledChunk));
-            record.Properties.Add(new PSNoteProperty("HeaderRun", run));
-            record.Properties.Add(new PSNoteProperty("HeaderAttempt", attempt));
-            record.Properties.Add(new PSNoteProperty("HeaderSuite", headerSuite));
-            record.Properties.Add(new PSNoteProperty("PublicationId", publication));
+            record = new TestPhaseJournalRecord
+            {
+                Kind = kind, Sequence = sequence, FreshJson = fresh, SettledJson = settled, FreshSuite = freshSuite,
+                FreshChunk = freshChunk, SettledSuite = settledSuite, SettledChunk = settledChunk, HeaderRun = run,
+                HeaderAttempt = attempt, HeaderSuite = headerSuite, PublicationId = publication,
+            };
             return true;
         }
 
@@ -293,87 +322,104 @@ namespace Antiphon.Nightly
         /// Suite and Chunk equal its FreshSuite and FreshChunk (each compared on its own, invariant culture ignoring
         /// case), in the same order; with the chunk count and the last chunk's (or the context's) header.
         /// </summary>
-        public static PSObject Reduce(object context)
+        public static TestPhaseReduction Reduce(TestPhaseJournalContext context)
         {
-            var entries = new List<PSObject>();
+            var entries = new List<TestPhaseReducedEntry>();
             var alive = new List<bool>();
             var byKey = new Dictionary<KeyValuePair<string, string>, List<int>>(new PairComparer());
-            void Append(PSObject entry, string suite, string chunk)
+            void Append(TestPhaseReducedEntry entry)
             {
-                var key = new KeyValuePair<string, string>(suite, chunk);
+                var key = new KeyValuePair<string, string>(entry.Suite, entry.Chunk);
                 if (!byKey.TryGetValue(key, out var at)) byKey[key] = at = new List<int>();
                 at.Add(entries.Count);
                 entries.Add(entry);
                 alive.Add(true);
             }
 
-            if (LanguagePrimitives.IsTrue(PsValue.Prop(context, "HasSeed")))
+            if (context.HasSeed)
             {
-                foreach (var row in Each(PsValue.Prop(context, "SeedRows")))
+                foreach (var row in Each(context.SeedRows))
                 {
-                    var json = PsValue.Str(PsValue.Prop(row, "SettledJson"));
-                    var suite = PsValue.Str(PsValue.Prop(row, "SettledSuite"));
-                    var chunk = PsValue.Str(PsValue.Prop(row, "SettledChunk"));
-                    Append(Entry(json, json, suite, chunk), suite, chunk);
+                    var json = Field(row, "SettledJson");
+                    Append(new TestPhaseReducedEntry { Json = json, Fresh = json, Suite = Field(row, "SettledSuite"), Chunk = Field(row, "SettledChunk") });
                 }
             }
             var chunkCount = 0;
             object last = null;
-            foreach (var rec in Each(PsValue.Prop(context, "Records")))
+            foreach (var rec in Each(context.Records))
             {
                 if (rec == null) continue;
-                if (!LanguagePrimitives.Equals(PsValue.Str(PsValue.Prop(rec, "Kind")), "chunk", true, CultureInfo.InvariantCulture)) continue;
+                if (!PsValue.Eq(Field(rec, "Kind"), "chunk", true)) continue;
                 chunkCount++;
-                var fresh = new KeyValuePair<string, string>(PsValue.Str(PsValue.Prop(rec, "FreshSuite")), PsValue.Str(PsValue.Prop(rec, "FreshChunk")));
+                var fresh = new KeyValuePair<string, string>(Field(rec, "FreshSuite"), Field(rec, "FreshChunk"));
                 if (byKey.TryGetValue(fresh, out var earlier))
                 {
                     foreach (var i in earlier) alive[i] = false;
                     byKey.Remove(fresh);
                 }
-                var suite = PsValue.Str(PsValue.Prop(rec, "SettledSuite"));
-                var chunk = PsValue.Str(PsValue.Prop(rec, "SettledChunk"));
-                Append(Entry(PsValue.Str(PsValue.Prop(rec, "SettledJson")), PsValue.Str(PsValue.Prop(rec, "FreshJson")), suite, chunk), suite, chunk);
+                Append(new TestPhaseReducedEntry
+                {
+                    Json = Field(rec, "SettledJson"), Fresh = Field(rec, "FreshJson"), Suite = Field(rec, "SettledSuite"), Chunk = Field(rec, "SettledChunk"),
+                });
                 last = rec;
             }
-            var list = new ArrayList();
-            for (var i = 0; i < entries.Count; i++) if (alive[i]) list.Add(entries[i]);
-            string headerRun = "", headerAttempt = "", headerSuite = "";
+            var result = new TestPhaseReduction { ChunkCount = chunkCount };
+            for (var i = 0; i < entries.Count; i++) if (alive[i]) result.Entries.Add(entries[i]);
             if (last != null)
             {
-                headerRun = PsValue.Str(PsValue.Prop(last, "HeaderRun"));
-                headerAttempt = PsValue.Str(PsValue.Prop(last, "HeaderAttempt"));
-                headerSuite = PsValue.Str(PsValue.Prop(last, "HeaderSuite"));
+                result.HeaderRun = Field(last, "HeaderRun");
+                result.HeaderAttempt = Field(last, "HeaderAttempt");
+                result.HeaderSuite = Field(last, "HeaderSuite");
             }
-            else if (LanguagePrimitives.IsTrue(PsValue.Prop(context, "HeaderReady")))
+            else if (context.HeaderReady)
             {
-                headerRun = PsValue.Str(PsValue.Prop(context, "HeaderRun"));
-                headerAttempt = PsValue.Str(PsValue.Prop(context, "HeaderAttempt"));
-                headerSuite = PsValue.Str(PsValue.Prop(context, "HeaderSuite"));
+                result.HeaderRun = context.HeaderRun ?? "";
+                result.HeaderAttempt = context.HeaderAttempt ?? "";
+                result.HeaderSuite = context.HeaderSuite ?? "";
             }
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Entries", list));
-            result.Properties.Add(new PSNoteProperty("ChunkCount", chunkCount));
-            result.Properties.Add(new PSNoteProperty("HeaderRun", headerRun));
-            result.Properties.Add(new PSNoteProperty("HeaderAttempt", headerAttempt));
-            result.Properties.Add(new PSNoteProperty("HeaderSuite", headerSuite));
             return result;
         }
 
-        private static PSObject Entry(string json, string fresh, string suite, string chunk)
+        /// <summary>
+        /// [string]$o.Name of a journal record or seed row: the typed records directly; a custom object the
+        /// still-PowerShell publication built, as PowerShell reads it.
+        /// </summary>
+        internal static string Field(object o, string name)
         {
-            var entry = new PSObject();
-            entry.Properties.Add(new PSNoteProperty("Json", json));
-            entry.Properties.Add(new PSNoteProperty("Fresh", fresh));
-            entry.Properties.Add(new PSNoteProperty("Suite", suite));
-            entry.Properties.Add(new PSNoteProperty("Chunk", chunk));
-            return entry;
+            if (o is TestPhaseJournalRecord r)
+            {
+                switch (name)
+                {
+                    case "Kind": return r.Kind ?? "";
+                    case "FreshJson": return r.FreshJson ?? "";
+                    case "SettledJson": return r.SettledJson ?? "";
+                    case "FreshSuite": return r.FreshSuite ?? "";
+                    case "FreshChunk": return r.FreshChunk ?? "";
+                    case "SettledSuite": return r.SettledSuite ?? "";
+                    case "SettledChunk": return r.SettledChunk ?? "";
+                    case "HeaderRun": return r.HeaderRun ?? "";
+                    case "HeaderAttempt": return r.HeaderAttempt ?? "";
+                    case "HeaderSuite": return r.HeaderSuite ?? "";
+                    case "PublicationId": return r.PublicationId ?? "";
+                }
+            }
+            if (o is TestPhaseSeedRow row)
+            {
+                switch (name)
+                {
+                    case "SettledJson": return row.SettledJson ?? "";
+                    case "SettledSuite": return row.SettledSuite ?? "";
+                    case "SettledChunk": return row.SettledChunk ?? "";
+                }
+            }
+            return PsValue.Str(PsValue.Prop(o, name));
         }
 
         // foreach ($x in $o): nothing for null, one item for a scalar, string or dictionary.
         private static IEnumerable<object> Each(object o)
         {
             if (o == null) yield break;
-            var baseObject = o is PSObject ps ? ps.BaseObject : o;
+            var baseObject = PsValue.BaseObject(o);
             if (baseObject is string || baseObject is IDictionary || !(baseObject is IEnumerable enumerable))
             {
                 yield return o;

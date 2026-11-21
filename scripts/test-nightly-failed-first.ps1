@@ -749,8 +749,8 @@ function Invoke-FFPreparedArm {
             # Both arms consume the same once-published immutable plans; only
             # mutable execution/journal/sidecar state has a fresh root.
             $planFile='groups-planned-'+$s.id+'.json'
-            Write-TestPhaseTextAtomic -Path (Join-Path $TimingRoot $planFile) -Text $s.SharedPlannedText
-            Write-TestPhaseTextAtomic -Path (Join-Path $TimingRoot 'groups-planned.json') -Text $s.SharedPlannedText
+            [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $TimingRoot $planFile), $s.SharedPlannedText)
+            [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic((Join-Path $TimingRoot 'groups-planned.json'), $s.SharedPlannedText)
             $sharedPlan=$s.SharedPlannedText|ConvertFrom-Json
             Update-TestPhasePlannedIndex -Directory $TimingRoot -Suite $s.id -FileName $planFile -RunId $invocationId -Attempt '1' -AssemblyId $s.id -SourceDigest $Sha -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyDigest 'fixture' -Filters @($sharedPlan.groups.filter)
         }
@@ -1514,7 +1514,7 @@ function Test-FFHeartbeatLiveness([string]$BindingDirectory) {
             $recordChunk='other-chunk';if($variant -ceq 'settled'){$recordChunk='all-group-3'}
             $sequence=1;if($variant -ceq 'gap'){$sequence=2}
             if($variant -cin @('valid-prefix','gap','settled')) {
-                $envelope=New-TestPhaseEnvelopeText -Kind 'chunk' -Sequence $sequence -PublicationId ([guid]::NewGuid().ToString('n')) -Context $context -Reason '' -Suite 'antiphon' -Chunk $recordChunk -SettledSuite '' -SettledChunk '' -HeaderRun 'heartbeat-run' -HeaderAttempt '2' -HeaderSuite 'antiphon' -FreshJson '{}' -SettledJson ''
+                $envelope=[Antiphon.Nightly.TestPhaseJournal]::EnvelopeText('chunk',$sequence,([guid]::NewGuid().ToString('n')),$context,'','antiphon',$recordChunk,'','','heartbeat-run','2','antiphon','{}','')
                 [IO.File]::WriteAllText((Join-Path $generation ($sequence.ToString('00000000')+'.json')),$envelope)
             }
             switch($variant) {

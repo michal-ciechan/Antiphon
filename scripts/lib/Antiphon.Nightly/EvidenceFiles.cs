@@ -203,6 +203,46 @@ namespace Antiphon.Nightly
             return described.ToArray();
         }
 
+        /// <summary>
+        /// Get-NightlyDeferredEvidenceWriteVerdict: the deferred writes that failed, as run-summary reasons
+        /// ("deferred-evidence-write-failed: " + the failure); coverageComplete and testsPassed are false when any
+        /// failed. Queued writes land first: a peek alone can report complete while a failing write is still queued.
+        /// </summary>
+        public static NightlyEvidenceWriteVerdict DeferredWriteVerdict()
+        {
+            try { Flush(); } catch (Exception) { }
+            var reasons = new List<string>();
+            foreach (string text in PeekFailures())
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                reasons.Add("deferred-evidence-write-failed: " + text);
+            }
+            var complete = reasons.Count == 0;
+            return new NightlyEvidenceWriteVerdict { CoverageComplete = complete, TestsPassed = complete, Reasons = reasons.ToArray() };
+        }
+
+        /// <summary>
+        /// Merge-NightlyDeferredEvidenceVerdict: the run's reasons (blank and repeated ones dropped, order kept) with the
+        /// deferred-write reasons after them; a failed write makes coverageComplete and testsPassed false.
+        /// </summary>
+        public static NightlyEvidenceWriteVerdict MergeDeferredWriteVerdict(object reasons)
+        {
+            var verdict = DeferredWriteVerdict();
+            var merged = new List<string>();
+            foreach (var reason in PsValue.AsArray(reasons))
+            {
+                var text = PsValue.Str(reason);
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                if (!merged.Contains(text)) merged.Add(text);
+            }
+            foreach (var text in verdict.Reasons)
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                if (!merged.Contains(text)) merged.Add(text);
+            }
+            return new NightlyEvidenceWriteVerdict { CoverageComplete = verdict.CoverageComplete, TestsPassed = verdict.TestsPassed, Reasons = merged.ToArray() };
+        }
+
         // ---- Reads and checks: queued content first --------------------------------------------------------
 
         /// <summary>Test-Path -LiteralPath: a file (queued or on disk) or a directory.</summary>
@@ -296,5 +336,13 @@ namespace Antiphon.Nightly
             System.IO.File.WriteAllText(temp, text ?? string.Empty, Utf8NoBom);
             System.IO.File.Move(temp, full, true);
         }
+    }
+
+    /// <summary>The deferred evidence writes' part of a run verdict (EvidenceFiles.DeferredWriteVerdict).</summary>
+    public sealed class NightlyEvidenceWriteVerdict
+    {
+        public bool CoverageComplete { get; set; }
+        public bool TestsPassed { get; set; }
+        public string[] Reasons { get; set; } = new string[0];
     }
 }

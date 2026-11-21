@@ -41,12 +41,12 @@ if ($RecoverExecutedManifest) {
 }
 $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
 $flat = Join-Path $timing 'groups-executed.json'
-$current = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json'
+$current = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($timing)) 'current.json'
 $hasFlat = (Get-TestPhasePathIdentity -Path $flat).Kind -eq 'regular'
 $hasJournal = (Get-TestPhasePathIdentity -Path $current).Kind -eq 'regular'
 if ($hasFlat -or $hasJournal) {
     $progress = Read-TestPhaseExecutedPrefix -LogRoot $RunDirectory
-    $quality = @(Get-TestPhasePublicationQuality -RunDirectory $RunDirectory)
+    $quality = @([Antiphon.Nightly.TestPhaseJournal]::PublicationQuality($RunDirectory, [string]$script:QualificationTimingRoot, $null))
     $qualityText = (@($quality) -join ',')
     Write-Output ('publication generation=' + [string]$progress.Generation + ' sequence=' + [string]$progress.LastSequence + ' recordKind=' + [string]$progress.RecordKind + ' quality=' + $qualityText)
 }

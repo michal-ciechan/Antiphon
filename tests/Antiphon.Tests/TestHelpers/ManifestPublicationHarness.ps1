@@ -1,5 +1,6 @@
 #requires -Version 5.1
 # CARD-1514 portable witness harness. Test-only. Not a product script.
+# The journal cases (v1-v4, zone-map, zone-effective) run in-process: RcManifestJournalTests.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Case,
@@ -28,22 +29,6 @@ function Initialize-MpCulture {
     $script:QualificationTimingRoot = $null
     [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::InvariantCulture
     [System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
-}
-
-function Assert-MpOffset {
-    $raw = [Environment]::GetEnvironmentVariable('MP_EXPECT_OFFSET')
-    if ([string]::IsNullOrWhiteSpace($raw)) { return }
-    $expect = [int]$raw
-    # Dates in the projection follow the process zone. A TZ id that resolved
-    # but did not move Local is not the zone under test.
-    $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
-    $tz = [System.TimeZoneInfo]::Local
-    $got = [int]$tz.GetUtcOffset($moment).TotalMinutes
-    if ($got -ne $expect) {
-        $requested = ''
-        try { $requested = [string][Environment]::GetEnvironmentVariable('TZ') } catch { $requested = '' }
-        Fail-Mp ("zone-not-applicable requested=" + $requested + " expected=" + $expect + " actual=" + $got + " id=" + [string]$tz.Id)
-    }
 }
 
 function Get-MpSha {
@@ -111,57 +96,6 @@ function Write-MpLegacyPrefix {
     [System.IO.File]::WriteAllText($Path, $sb.ToString(), $utf8)
 }
 
-function Install-MpCounters {
-    if ($script:MpCountersInstalled) { return }
-    $script:MpCountersInstalled = $true
-    $script:MpChunkBlock = ${function:ConvertTo-TestPhaseExecutedChunk}
-    $script:MpAtomicBlock = ${function:Write-TestPhaseTextAtomic}
-    $script:MpHashBlock = ${function:Get-NightlyFileSha256}
-    $script:MpPriorRows = 0
-    $script:MpPriorChunks = 0
-    # The serialised JSON is counted in the core (TestPhaseJson.Measure): every Text call, as the
-    # PowerShell function this harness used to wrap counted its outermost calls.
-    [Antiphon.Nightly.TestPhaseJson]::MeasuredBytes = 0
-    $script:MpFlatWrites = 0
-    $script:MpHashCount = 0
-    $script:MpCountPrior = $false
-    [Antiphon.Nightly.TestPhaseJson]::Measure = $false
-    Set-Item -Path 'function:ConvertTo-TestPhaseExecutedChunk' -Value {
-        param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
-        if ($null -ne $Item -and $script:MpCountPrior) {
-            $itemChunk = ''
-            if ($Item.PSObject.Properties.Name -contains 'chunk') { $itemChunk = [string]$Item.chunk }
-            if ($itemChunk -ne [string]$script:MpPublishedChunk) {
-                $n = 0
-                if ($Item.PSObject.Properties.Name -contains 'outcomes' -and $null -ne $Item.outcomes) { $n = @($Item.outcomes).Count }
-                $script:MpPriorRows += $n
-                $script:MpPriorChunks += 1
-            }
-        }
-        & $script:MpChunkBlock @PSBoundParameters
-    }
-    Set-Item -Path 'function:Write-TestPhaseTextAtomic' -Value {
-        param([string]$Path, [string]$Text)
-        if ($Path -like '*groups-executed.json') { $script:MpFlatWrites++ }
-        & $script:MpAtomicBlock -Path $Path -Text $Text
-    }
-    Set-Item -Path 'function:Get-NightlyFileSha256' -Value {
-        param([string]$Path)
-        $script:MpHashCount++
-        & $script:MpHashBlock -Path $Path
-    }
-}
-
-function Reset-MpCounters {
-    $script:MpPriorRows = 0
-    $script:MpPriorChunks = 0
-    [Antiphon.Nightly.TestPhaseJson]::MeasuredBytes = 0
-    $script:MpFlatWrites = 0
-    $script:MpHashCount = 0
-    $script:MpCountPrior = $true
-    [Antiphon.Nightly.TestPhaseJson]::Measure = $true
-}
-
 function Open-MpContext {
     param([string]$LogRoot, [string]$RunId, [string]$Attempt, [string]$Suite, [string]$Source)
     if (-not (Get-Command Open-TestPhaseExecutedContext -ErrorAction SilentlyContinue)) { return $null }
@@ -215,7 +149,7 @@ function Invoke-LegacyExecutedManifest {
         if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
         if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
     }
-    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomes.ToArray()) -Trx ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $fresh = [Antiphon.Nightly.TestPhaseJournal]::FreshChunk($Chunk, $RunId, $Attempt, $Suite, $HostWallSeconds, $trxMissing, $passed, @($outcomes.ToArray()), ([Antiphon.Nightly.TestPhaseText]::RelativePath($LogRoot, $TrxPath)), $digest, $exitCode, $coverageComplete, $testsPassed)
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
     $path = Join-Path $dir 'groups-executed.json'
     $kept = New-Object System.Collections.Generic.List[object]
@@ -234,7 +168,7 @@ function Invoke-LegacyExecutedManifest {
             if ($null -eq $item) { continue }
             $same = ([string]$item.chunk -eq [string]$Chunk) -and ([string]$item.suite -eq [string]$Suite)
             if ($same) { continue }
-            $kept.Add((ConvertTo-TestPhaseExecutedChunk -Item $item))
+            $kept.Add(([Antiphon.Nightly.TestPhaseJournal]::SettledChunk($item)))
         }
     }
     $kept.Add($fresh)
@@ -246,7 +180,7 @@ function Invoke-LegacyExecutedManifest {
         manufacturedPassed = $false
         chunks = @($kept.ToArray())
     }
-    Write-TestPhaseTextAtomic -Path $path -Text ([Antiphon.Nightly.TestPhaseJson]::Text($manifest, 0))
+    [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($path, ([Antiphon.Nightly.TestPhaseJson]::Text($manifest, 0)))
 }
 
 function Publish-MpChunk {
@@ -270,173 +204,6 @@ function Publish-MpChunk {
     }
     $run = [pscustomobject]@{ ExitCode = $ExitCode }
     $null = Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds -CoverageComplete $Coverage -TestsPassed $Passed
-}
-
-function Measure-MpPublish {
-    param([string]$Label, [int]$PrefixChunks, [string]$TrxPath, [int]$WideOutcomes = 0, [int]$WideChunks = 0)
-    $root = Join-Path $Work $Label
-    New-Item -ItemType Directory -Path $root -Force | Out-Null
-    $script:QualificationTimingRoot = $null
-    $timing = Join-Path $root 'timing'
-    $flat = Join-Path $timing 'groups-executed.json'
-    if ($PrefixChunks -gt 0) {
-        if ($WideChunks -gt 0) {
-            Write-MpLegacyPrefix -Path $flat -Chunks $PrefixChunks -OutcomesPerChunk 89 -WideOutcomes $WideOutcomes -WideChunks $WideChunks
-        } else {
-            Write-MpLegacyPrefix -Path $flat -Chunks $PrefixChunks -OutcomesPerChunk 1
-        }
-    }
-    $before = Get-MpSha -Path $flat
-    # Prefix import is separately charged setup. Recursive counter wrappers add
-    # substantial interpreter work to that import and are needed only while
-    # observing the following steady-state publication.
-    $originals = @{
-        'ConvertTo-TestPhaseExecutedChunk' = $script:MpChunkBlock
-        'Write-TestPhaseTextAtomic' = $script:MpAtomicBlock
-        'Get-NightlyFileSha256' = $script:MpHashBlock
-    }
-    $counters = @{}
-    $initialization = [System.Diagnostics.Stopwatch]::StartNew()
-    try {
-        foreach ($name in $originals.Keys) {
-            $path = 'function:' + $name
-            $counters[$name] = (Get-Item -LiteralPath $path).ScriptBlock
-            Set-Item -LiteralPath $path -Value $originals[$name]
-        }
-        $ctx = Open-MpContext -LogRoot $root -RunId 'run-v1' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
-    } finally {
-        foreach ($name in $counters.Keys) { Set-Item -LiteralPath ('function:' + $name) -Value $counters[$name] }
-        $initialization.Stop()
-    }
-    if ($null -ne $ctx -and $ctx.Refused) { Fail-Mp ("open-refused " + [string]$ctx.Reason) }
-    Reset-MpCounters
-    $publication = [System.Diagnostics.Stopwatch]::StartNew()
-    Publish-MpChunk -LogRoot $root -TrxPath $TrxPath -Suite 'antiphon' -Chunk 'live-1' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
-    $publication.Stop()
-    $after = Get-MpSha -Path $flat
-    $hashSame = ($PrefixChunks -eq 0) -or ($before -eq $after -and $before -ne '')
-    $measured = [pscustomobject]@{
-        PriorRows = [int]$script:MpPriorRows
-        Bytes = [int][Antiphon.Nightly.TestPhaseJson]::MeasuredBytes
-        HashSame = [bool]$hashSame
-        FlatWrites = [int]$script:MpFlatWrites
-        HashCount = [int]$script:MpHashCount
-        InitializationSeconds = $initialization.Elapsed.TotalSeconds
-        PublicationSeconds = $publication.Elapsed.TotalSeconds
-    }
-    [System.IO.File]::WriteAllText((Join-Path $root 'publication-measure.json'), ($measured | ConvertTo-Json -Compress))
-    Close-MpContext -Context $ctx
-    $script:QualificationTimingRoot = $null
-    return $measured
-}
-
-function Test-MpSettledJournal {
-    param([string]$Timing)
-    $root = Join-Path $Timing 'groups-executed.journal'
-    if (-not (Test-Path -LiteralPath $root)) { return 'settled-keys-absent: no-journal' }
-    $hit = $false
-    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.json' -ErrorAction SilentlyContinue)
-    foreach ($file in $files) {
-        if ($file.Name -notmatch '^[0-9]{8}\.json$') { continue }
-        $text = [System.IO.File]::ReadAllText($file.FullName)
-        if ($text.Contains('"settledRowJson"') -and $text.Contains('"settledSuiteKey"') -and $text.Contains('"settledChunkKey"')) {
-            $hit = $true
-            break
-        }
-    }
-    if (-not $hit) { return 'settled-keys-absent' }
-    $currentPath = Join-Path $root 'current.json'
-    if (-not (Test-Path -LiteralPath $currentPath)) { return 'settled-keys-absent: no-current' }
-    $current = [System.IO.File]::ReadAllText($currentPath) | ConvertFrom-Json
-    $generation = [string]$current.generation
-    $flat = Join-Path $Timing 'groups-executed.json'
-    if ((Test-Path -LiteralPath $flat) -and -not [string]::IsNullOrWhiteSpace($generation)) {
-        $flatText = [System.IO.File]::ReadAllText($flat)
-        if ($flatText.Contains($generation)) { return 'generation-leaked-into-v1' }
-    }
-    return ''
-}
-
-function Test-MpFixedPoint {
-    param([string]$Timing)
-    $root = Join-Path $Timing 'groups-executed.journal'
-    if (-not (Test-Path -LiteralPath $root)) { return '' }
-    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.json' -ErrorAction SilentlyContinue)
-    foreach ($file in $files) {
-        if ($file.Name -notmatch '^[0-9]{8}\.json$') { continue }
-        $envelope = [System.IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
-        if ($envelope.PSObject.Properties.Name -notcontains 'settledRowJson') { continue }
-        if ([string]::IsNullOrWhiteSpace([string]$envelope.settledRowJson)) { continue }
-        $parsed = [string]$envelope.settledRowJson | ConvertFrom-Json
-        $again = ConvertTo-TestPhaseExecutedChunk -Item $parsed
-        $againText = [Antiphon.Nightly.TestPhaseJson]::Text($again, 0)
-        if ($againText -ne [string]$envelope.settledRowJson) {
-            return ('settlement-not-fixed-point ' + $file.Name)
-        }
-    }
-    return ''
-}
-
-function Invoke-MpCorpus {
-    param([string]$LogRoot, [bool]$Oracle)
-    $trxDir = Join-Path $LogRoot 'trx'
-    New-Item -ItemType Directory -Path $trxDir -Force | Out-Null
-    $one = Join-Path $trxDir 'one.trx'
-    $many = Join-Path $trxDir 'many.trx'
-    $bad = Join-Path $trxDir 'bad.trx'
-    $uni = 'id-' + [char]0x00E9 + '-slash\'
-    New-MpTrx -Path $one -Rows @((New-MpResultRow -Id 'one-pass' -Outcome 'Passed'))
-    New-MpTrx -Path $many -Rows @(
-        (New-MpResultRow -Id 'many-pass' -Outcome 'Passed'),
-        (New-MpResultRow -Id 'many-fail' -Outcome 'Failed'),
-        (New-MpResultRow -Id 'many-skip' -Outcome 'NotExecuted'),
-        (New-MpResultRow -Id $uni -Outcome 'Passed')
-    )
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($bad, 'not-trx', $utf8)
-    $missing = Join-Path $trxDir 'missing.trx'
-    $soft = 'a' + [char]0x00AD + 'b'
-    $composed = 'pre' + [char]0x00E9
-    $decomposed = 'pre' + [char]0x0065 + [char]0x0301
-    $date = '2026-10-30T03:02:00+05:00'
-    $third = [double]1 / [double]3
-    $steps = @(
-        @{ Trx = $one; Suite = $date; Chunk = 'c-date'; Run = $date; Attempt = '2026-10-30T03:02:00Z'; Wall = $third; Null = $false; Exit = 0; Cov = $false; Pass = $false },
-        @{ Trx = $missing; Suite = 'antiphon'; Chunk = 'c-miss'; Run = 'run-v3'; Attempt = '1'; Wall = 0; Null = $true; Exit = 0; Cov = $false; Pass = $false },
-        @{ Trx = $bad; Suite = 'antiphon'; Chunk = 'c-bad'; Run = 'run-v3'; Attempt = '1'; Wall = -0.0; Null = $false; Exit = 1; Cov = $false; Pass = $false },
-        @{ Trx = $many; Suite = 'suite "q" \'; Chunk = 'c-many'; Run = 'run-v3'; Attempt = '1'; Wall = 1.2345678901234567; Null = $false; Exit = 0; Cov = $true; Pass = $false },
-        @{ Trx = $one; Suite = $soft; Chunk = 'k-soft'; Run = 'run-v3'; Attempt = '2'; Wall = 1; Null = $false; Exit = 0; Cov = $false; Pass = $true },
-        @{ Trx = $many; Suite = 'ab'; Chunk = 'k-soft'; Run = 'run-v3'; Attempt = '9'; Wall = 2; Null = $false; Exit = 2; Cov = $false; Pass = $false },
-        @{ Trx = $one; Suite = $composed; Chunk = 'k-accent'; Run = 'run-v3'; Attempt = '1'; Wall = 1; Null = $false; Exit = 0; Cov = $false; Pass = $false },
-        @{ Trx = $one; Suite = $decomposed; Chunk = 'k-accent'; Run = 'run-v3'; Attempt = '1'; Wall = 4; Null = $false; Exit = 0; Cov = $false; Pass = $false },
-        @{ Trx = $one; Suite = 'Antiphon'; Chunk = 'CaseChunk'; Run = 'run-v3'; Attempt = '1'; Wall = 1; Null = $false; Exit = 0; Cov = $false; Pass = $false },
-        @{ Trx = $many; Suite = 'antiphon'; Chunk = 'casechunk'; Run = 'run-v3'; Attempt = '1'; Wall = 5; Null = $false; Exit = 0; Cov = $false; Pass = $true }
-    )
-    foreach ($step in $steps) {
-        if ($Oracle) {
-            $verdict = $null
-            if (-not $step.Null) {
-                $verdict = [pscustomobject]@{ ExitCode = [int]$step.Exit; coverageComplete = [bool]$step.Cov; testsPassed = [bool]$step.Pass }
-            }
-            Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $LogRoot -TrxPath $step.Trx -Suite $step.Suite -Chunk $step.Chunk -RunId $step.Run -Attempt $step.Attempt -HostWallSeconds ([double]$step.Wall)
-        } else {
-            Publish-MpChunk -LogRoot $LogRoot -TrxPath $step.Trx -Suite $step.Suite -Chunk $step.Chunk -RunId $step.Run -Attempt $step.Attempt -HostWallSeconds ([double]$step.Wall) -Coverage ([bool]$step.Cov) -Passed ([bool]$step.Pass) -ExitCode ([int]$step.Exit) -NullVerdict ([bool]$step.Null)
-        }
-    }
-}
-
-function Invoke-MpTurkish {
-    param([string]$LogRoot, [bool]$Oracle)
-    $trx = Join-Path $LogRoot 'trx/tr.trx'
-    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'tr-one' -Outcome 'Passed'))
-    foreach ($suite in @('I', 'i')) {
-        if ($Oracle) {
-            $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $false; testsPassed = $false }
-            Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $LogRoot -TrxPath $trx -Suite $suite -Chunk 'tr-chunk' -RunId 'run-tr' -Attempt '1' -HostWallSeconds 1
-        } else {
-            Publish-MpChunk -LogRoot $LogRoot -TrxPath $trx -Suite $suite -Chunk 'tr-chunk' -RunId 'run-tr' -Attempt '1' -HostWallSeconds 1
-        }
-    }
 }
 
 function Start-MpCase {
@@ -503,237 +270,6 @@ function Read-MpChunkIds {
     return @($ids.ToArray())
 }
 
-function Invoke-V1 {
-    Install-MpCounters
-    $trx = Join-Path $Work 'one.trx'
-    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'live' -Outcome 'Passed'))
-    $zero = Measure-MpPublish -Label 'p0' -PrefixChunks 0 -TrxPath $trx
-    if ($zero.PriorRows -ne 0) { Fail-Mp ("prefix0 prior-rows=" + $zero.PriorRows) }
-    $probe = Measure-MpPublish -Label 'p2' -PrefixChunks 2 -TrxPath $trx
-    if ($probe.PriorRows -ne 0 -or -not $probe.HashSame -or $probe.Bytes -ne $zero.Bytes) {
-        Fail-Mp ("prior-rows-or-cumulative-bytes prefix2 prior=" + $probe.PriorRows + " bytes=" + $probe.Bytes + " base=" + $zero.Bytes + " hashSame=" + $probe.HashSame)
-    }
-    $wide240 = Measure-MpPublish -Label 'p240' -PrefixChunks 240 -TrxPath $trx -WideOutcomes 90 -WideChunks 152
-    if ($wide240.PriorRows -ne 0 -or -not $wide240.HashSame -or $wide240.Bytes -ne $zero.Bytes) {
-        Fail-Mp ("prefix240 prior=" + $wide240.PriorRows + " bytes=" + $wide240.Bytes + " hashSame=" + $wide240.HashSame)
-    }
-    $wide480 = Measure-MpPublish -Label 'p480' -PrefixChunks 480 -TrxPath $trx -WideOutcomes 90 -WideChunks 304
-    if ($wide480.PriorRows -ne 0 -or -not $wide480.HashSame -or $wide480.Bytes -ne $zero.Bytes) {
-        Fail-Mp ("prefix480 prior=" + $wide480.PriorRows + " bytes=" + $wide480.Bytes + " hashSame=" + $wide480.HashSame)
-    }
-    Write-MpResult -Ok $true -Reason 'v1'
-}
-
-function Invoke-V2 {
-    Install-MpCounters
-    $trx = Join-Path $Work 'one.trx'
-    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'n' -Outcome 'Passed'))
-    $totals = @{}
-    foreach ($count in @(16, 32)) {
-        $root = Join-Path $Work ("n" + $count)
-        New-Item -ItemType Directory -Path $root -Force | Out-Null
-        $script:QualificationTimingRoot = $null
-        $ctx = Open-MpContext -LogRoot $root -RunId 'run-v2' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
-        Reset-MpCounters
-        for ($i = 0; $i -lt $count; $i++) {
-            Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk ("c" + $i.ToString('00')) -RunId 'run-v2' -Attempt '1' -HostWallSeconds 1.0
-        }
-        $duringWrites = [int]$script:MpFlatWrites
-        $duringPrior = [int]$script:MpPriorRows
-        $duringBytes = [int][Antiphon.Nightly.TestPhaseJson]::MeasuredBytes
-        $duringHash = [int]$script:MpHashCount
-        if ($null -ne $ctx -and -not $ctx.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
-            Complete-TestPhaseExecutedProjection -Context $ctx
-        }
-        $flat = Join-Path (Join-Path $root 'timing') 'groups-executed.json'
-        $ids = @(Read-MpChunkIds -Path $flat)
-        Close-MpContext -Context $ctx
-        $script:QualificationTimingRoot = $null
-        if ($duringPrior -ne 0 -or $duringWrites -ne 0 -or $duringHash -ne $count -or $ids.Count -ne $count) {
-            Fail-Mp ("linear-bound n=" + $count + " prior=" + $duringPrior + " flatWrites=" + $duringWrites + " hashes=" + $duringHash + " chunks=" + $ids.Count + " bytes=" + $duringBytes)
-        }
-        $totals[[string]$count] = $duringBytes
-    }
-    $ratio = 99.0
-    if ([int]$totals['16'] -gt 0) { $ratio = [double]$totals['32'] / [double]$totals['16'] }
-    if ($ratio -ge 2.6) { Fail-Mp ("quadratic-bytes ratio=" + $ratio) }
-    Write-MpResult -Ok $true -Reason 'v2'
-}
-
-function Invoke-V3Write {
-    Assert-MpOffset
-    $script:QualificationTimingRoot = $null
-    $oracle = Join-Path $Work 'oracle'
-    $prod = Join-Path $Work 'prod'
-    New-Item -ItemType Directory -Path $oracle -Force | Out-Null
-    New-Item -ItemType Directory -Path $prod -Force | Out-Null
-    Invoke-MpCorpus -LogRoot $oracle -Oracle $true
-    $ctx = Open-MpContext -LogRoot $prod -RunId '2026-10-30T03:02:00+05:00' -Attempt '2026-10-30T03:02:00Z' -Suite '2026-10-30T03:02:00+05:00' -Source 'unknown'
-    Invoke-MpCorpus -LogRoot $prod -Oracle $false
-    if ($null -ne $ctx -and -not $ctx.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
-        Complete-TestPhaseExecutedProjection -Context $ctx
-        Close-MpContext -Context $ctx
-    }
-    $script:QualificationTimingRoot = $null
-    $left = Join-Path $oracle 'timing/groups-executed.json'
-    $right = Join-Path $prod 'timing/groups-executed.json'
-    if ((Get-MpSha $left) -ne (Get-MpSha $right)) { Fail-Mp 'legacy-bytes-differ' }
-    $settled = Test-MpSettledJournal -Timing (Join-Path $prod 'timing')
-    if ($settled) { Fail-Mp $settled }
-    $fixed = Test-MpFixedPoint -Timing (Join-Path $prod 'timing')
-    if ($fixed) { Fail-Mp $fixed }
-    $prev = [System.Threading.Thread]::CurrentThread.CurrentCulture
-    $prevUi = [System.Threading.Thread]::CurrentThread.CurrentUICulture
-    $tr = [System.Globalization.CultureInfo]::GetCultureInfo('tr-TR')
-    [System.Threading.Thread]::CurrentThread.CurrentCulture = $tr
-    [System.Threading.Thread]::CurrentThread.CurrentUICulture = $tr
-    try {
-        $oracleTr = Join-Path $Work 'oracle-tr'
-        $prodTr = Join-Path $Work 'prod-tr'
-        $script:QualificationTimingRoot = $null
-        Invoke-MpTurkish -LogRoot $oracleTr -Oracle $true
-        $ctxTr = Open-MpContext -LogRoot $prodTr -RunId 'run-tr' -Attempt '1' -Suite 'I' -Source 'unknown'
-        Invoke-MpTurkish -LogRoot $prodTr -Oracle $false
-        if ($null -ne $ctxTr -and -not $ctxTr.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
-            Complete-TestPhaseExecutedProjection -Context $ctxTr
-            Close-MpContext -Context $ctxTr
-        }
-        $script:QualificationTimingRoot = $null
-        if ((Get-MpSha (Join-Path $oracleTr 'timing/groups-executed.json')) -ne (Get-MpSha (Join-Path $prodTr 'timing/groups-executed.json'))) {
-            Fail-Mp 'tr-TR-i-replacement-bytes-differ'
-        }
-        $ids = @(Read-MpChunkIds -Path (Join-Path $prodTr 'timing/groups-executed.json'))
-        if ($ids.Count -ne 1) { Fail-Mp ("tr-TR-i-count=" + $ids.Count) }
-    } finally {
-        [System.Threading.Thread]::CurrentThread.CurrentCulture = $prev
-        [System.Threading.Thread]::CurrentThread.CurrentUICulture = $prevUi
-    }
-    Write-MpResult -Ok $true -Reason 'v3-write'
-}
-
-function Invoke-V3Reduce {
-    Assert-MpOffset
-    $source = [Environment]::GetEnvironmentVariable('MP_SOURCE')
-    $expected = [Environment]::GetEnvironmentVariable('MP_EXPECTED')
-    if ([string]::IsNullOrWhiteSpace($source) -or -not (Test-Path -LiteralPath $source)) { Fail-Mp 'reduce-source-missing' }
-    if (-not (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) { Fail-Mp 'projection-api-absent' }
-    # Project the writer directory in place. Copying the journal would stale-bind current.json.
-    $flat = Join-Path $source 'groups-executed.json'
-    $state = Join-Path $source 'groups-executed.state.json'
-    if (Test-Path -LiteralPath $flat) { Remove-Item -LiteralPath $flat -Force }
-    if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Force }
-    $logRoot = Split-Path -Parent $source
-    $script:QualificationTimingRoot = $null
-    Complete-TestPhaseExecutedProjection -LogRoot $logRoot
-    if ((Get-MpSha $flat) -ne (Get-MpSha $expected)) { Fail-Mp 'reducer-timezone-bytes-differ' }
-    $again = Get-MpSha $flat
-    Complete-TestPhaseExecutedProjection -LogRoot $logRoot
-    if ((Get-MpSha $flat) -ne $again) { Fail-Mp 'projection-not-stable' }
-    Write-MpResult -Ok $true -Reason 'v3-reduce'
-}
-
-function Invoke-V4 {
-    $script:QualificationTimingRoot = $null
-    $oracle = Join-Path $Work 'oracle'
-    $prod = Join-Path $Work 'prod'
-    $trx = Join-Path $Work 'one.trx'
-    $bad = Join-Path $Work 'bad.trx'
-    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 's' -Outcome 'Passed'), (New-MpResultRow -Id 'f' -Outcome 'Failed'))
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($bad, '{', $utf8)
-    $single = '{"version":1,"runId":"","attempt":"","suite":"","manufacturedPassed":false,"chunk":"legacy-1","hostWallSeconds":1,"trxMissing":true,"passedCount":0,"outcomes":[],"trx":"","trxDigest":"","exitCode":null,"coverageComplete":null,"testsPassed":null}'
-    foreach ($root in @($oracle, $prod)) {
-        New-Item -ItemType Directory -Path (Join-Path $root 'timing') -Force | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path $root 'timing/groups-executed.json'), $single, $utf8)
-    }
-    $ctx = Open-MpContext -LogRoot $prod -RunId 'run-v4' -Attempt '1' -Suite 'antiphon' -Source 'src-a'
-    for ($i = 0; $i -lt 64; $i++) {
-        $suite = 'antiphon'
-        if (($i % 2) -eq 1) { $suite = 'e2e' }
-        $chunk = 'g' + ($i % 7)
-        $trxPath = $trx
-        if (($i % 11) -eq 0) { $trxPath = (Join-Path $Work 'missing.trx') }
-        if (($i % 13) -eq 0) { $trxPath = $bad }
-        $attempt = [string](1 + ($i % 3))
-        $verdict = [pscustomobject]@{ ExitCode = ($i % 4); coverageComplete = (($i % 5) -eq 0); testsPassed = (($i % 4) -eq 0) }
-        Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $trxPath -Suite $suite -Chunk $chunk -RunId 'run-v4' -Attempt $attempt -HostWallSeconds (1.0 + $i)
-        Publish-MpChunk -LogRoot $prod -TrxPath $trxPath -Suite $suite -Chunk $chunk -RunId 'run-v4' -Attempt $attempt -HostWallSeconds (1.0 + $i) -Coverage $verdict.coverageComplete -Passed $verdict.testsPassed -ExitCode ([int]$verdict.ExitCode)
-    }
-    if ($null -ne $ctx -and -not $ctx.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
-        Complete-TestPhaseExecutedProjection -Context $ctx -Terminal 'success' | Out-Null
-        Close-MpContext -Context $ctx
-    }
-    $script:QualificationTimingRoot = $null
-    if ((Get-MpSha (Join-Path $oracle 'timing/groups-executed.json')) -ne (Get-MpSha (Join-Path $prod 'timing/groups-executed.json'))) {
-        Fail-Mp 'legacy-seed-bytes-differ'
-    }
-    $settled = Test-MpSettledJournal -Timing (Join-Path $prod 'timing')
-    if ($settled) { Fail-Mp $settled }
-    $childWork = Join-Path $Work 'successor'
-    $child = Start-MpCase -CaseName 'v4-successor' -ChildWork $childWork -Env @{ MP_SOURCE = (Join-Path $prod 'timing'); MP_RUN = 'run-v4'; MP_ATTEMPT = '1'; MP_SOURCE_ID = 'src-a' }
-    if (-not $child.WaitForExit(60000)) { Stop-MpProcess $child; Fail-Mp 'successor-timeout' }
-    $childResult = Join-Path $childWork 'result.json'
-    if (-not (Test-Path -LiteralPath $childResult)) { Fail-Mp 'successor-no-result' }
-    $parsed = [System.IO.File]::ReadAllText($childResult) | ConvertFrom-Json
-    if (-not [bool]$parsed.ok) { Fail-Mp ("successor " + [string]$parsed.reason) }
-    Write-MpResult -Ok $true -Reason 'v4'
-}
-
-function Invoke-ZoneEffective {
-    $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
-    $local = [System.TimeZoneInfo]::Local
-    $localOff = [int]$local.GetUtcOffset($moment).TotalMinutes
-    $pinned = Get-TestPhasePinnedTimeZone
-    $pinnedOff = [int]$pinned.GetUtcOffset($moment).TotalMinutes
-    if ($pinnedOff -eq $localOff -and [string]$pinned.Id -eq [string]$local.Id) {
-        Fail-Mp ('zone-effective-not-applicable local=' + [string]$local.Id + ' offset=' + $localOff)
-    }
-    $writer = Get-TestPhaseWriterEnvironment
-    $nowOff = $local.GetUtcOffset([datetime]::Now)
-    $sign = '+'
-    if ($nowOff.Ticks -lt 0) { $sign = '-' }
-    $off = $sign + ([math]::Abs($nowOff.Hours)).ToString('00') + ':' + ([math]::Abs($nowOff.Minutes)).ToString('00')
-    $suffix = '|' + [string]$local.Id + '|' + $off
-    if (-not $writer.EndsWith($suffix, [System.StringComparison]::Ordinal)) {
-        Fail-Mp ('zone-effective-writer=' + $writer + ' expected-suffix=' + $suffix)
-    }
-    # Same check v3-write uses. A pinned Windows id must not count as in effect.
-    [Environment]::SetEnvironmentVariable('MP_EXPECT_OFFSET', [string]$pinnedOff)
-    Assert-MpOffset
-    Fail-Mp ('zone-effective-pinned-accepted pinned=' + [string]$pinned.Id + ' offset=' + $pinnedOff + ' local=' + [string]$local.Id + ' offset=' + $localOff)
-}
-
-function Invoke-ZoneMap {
-    $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
-    $script:TestPhaseTimeZoneFinder = {
-        param($Id)
-        if ([string]$Id -match '/') { return $null }
-        try { return [System.TimeZoneInfo]::FindSystemTimeZoneById([string]$Id) } catch { return $null }
-    }
-    try {
-        $zone = Resolve-TestPhaseTimeZone -Id 'Asia/Kolkata'
-        if ($zone -isnot [System.TimeZoneInfo]) { Fail-Mp 'windows-shaped-iana-unmapped' }
-        if ([string]$zone.Id -ne 'India Standard Time') { Fail-Mp ('windows-shaped-id=' + [string]$zone.Id) }
-        $got = [int]$zone.GetUtcOffset($moment).TotalMinutes
-        if ($got -ne 330) { Fail-Mp ('windows-shaped-offset=' + $got) }
-        $ny = Resolve-TestPhaseTimeZone -Id 'America/New_York'
-        if ($ny -isnot [System.TimeZoneInfo] -or [string]$ny.Id -ne 'Eastern Standard Time') {
-            Fail-Mp ('windows-shaped-new-york=' + [string]$ny.Id)
-        }
-        $nyOff = [int]$ny.GetUtcOffset($moment).TotalMinutes
-        if ($nyOff -ne -240) { Fail-Mp ('windows-shaped-new-york-offset=' + $nyOff) }
-        $utc = Resolve-TestPhaseTimeZone -Id 'UTC'
-        if ($utc -isnot [System.TimeZoneInfo]) { Fail-Mp 'windows-shaped-utc-missing' }
-        if ([int]$utc.GetUtcOffset($moment).TotalMinutes -ne 0) { Fail-Mp 'windows-shaped-utc-offset' }
-    } finally {
-        $script:TestPhaseTimeZoneFinder = $null
-    }
-    $real = Resolve-TestPhaseTimeZone -Id 'Asia/Kolkata'
-    if ($real -isnot [System.TimeZoneInfo]) { Fail-Mp 'real-kolkata-unresolved' }
-    if ([int]$real.GetUtcOffset($moment).TotalMinutes -ne 330) { Fail-Mp ('real-kolkata-offset=' + [int]$real.GetUtcOffset($moment).TotalMinutes) }
-    Write-MpResult -Ok $true -Reason 'zone-map'
-}
-
 function Invoke-SuccessorDrainChild {
     Write-Output ([string]::new('x', 200000))
     Write-MpResult -Ok $true -Reason 'successor-drain-child'
@@ -752,25 +288,6 @@ function Invoke-SuccessorDrain {
     $parsed = [System.IO.File]::ReadAllText($childResult) | ConvertFrom-Json
     if (-not [bool]$parsed.ok) { Fail-Mp ('successor-drain ' + [string]$parsed.reason) }
     Write-MpResult -Ok $true -Reason 'successor-drain'
-}
-
-function Invoke-V4Successor {
-    $timing = [Environment]::GetEnvironmentVariable('MP_SOURCE')
-    if ([string]::IsNullOrWhiteSpace($timing) -or -not (Test-Path -LiteralPath $timing)) { Fail-Mp 'successor-source-missing' }
-    $logRoot = Split-Path -Parent $timing
-    $ctx = Open-MpContext -LogRoot $logRoot -RunId ([Environment]::GetEnvironmentVariable('MP_RUN')) -Attempt ([Environment]::GetEnvironmentVariable('MP_ATTEMPT')) -Suite 'antiphon' -Source ([Environment]::GetEnvironmentVariable('MP_SOURCE_ID'))
-    if ($null -eq $ctx) { Fail-Mp 'successor-api-absent' }
-    if ($ctx.Refused) { Fail-Mp ("successor-refused " + [string]$ctx.Reason) }
-    $trx = Join-Path $Work 'one.trx'
-    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'next' -Outcome 'Passed'))
-    Publish-MpChunk -LogRoot $logRoot -TrxPath $trx -Suite 'antiphon' -Chunk 'g0' -RunId 'run-v4' -Attempt '1' -HostWallSeconds 3
-    if (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue) {
-        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
-    }
-    Close-MpContext -Context $ctx
-    $gens = @(Get-ChildItem -LiteralPath (Join-Path $timing 'groups-executed.journal') -Directory)
-    if ($gens.Count -lt 2) { Fail-Mp ("successor-generations=" + $gens.Count) }
-    Write-MpResult -Ok $true -Reason 'v4-successor'
 }
 
 function Invoke-V5Child {
@@ -847,7 +364,7 @@ function Assert-MpSuccessorPrefixes {
         for ($i = 1; $i -le 3; $i++) {
             Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk ('kept-' + $i) -RunId 'prefix' -Attempt '1' -HostWallSeconds $i
         }
-        $expected = Get-TestPhaseProjectedDocument -Context $ctx
+        $expected = [Antiphon.Nightly.TestPhaseJournal]::ProjectedDocument($ctx)
         $utf8 = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText((Join-Path $root 'expected.json'), $expected, $utf8)
         $parent = [string]$ctx.Generation
@@ -1245,7 +762,7 @@ function Invoke-MpQualification {
     if ($PublicationMode -eq 'none') {
         Set-Item function:Open-TestPhaseExecutedContext -Value {
             param($LogRoot, $TimingRoot, $RunId, $Attempt, $Suite, $Source, $InvocationId, [switch]$ProjectOnly, [switch]$Recover)
-            return (New-TestPhaseRefusedContext -Reason 'witness-no-journal')
+            return ([Antiphon.Nightly.TestPhaseJournal]::RefusedContext('witness-no-journal'))
         }
     } elseif ($PublicationMode -eq 'missing-state') {
         Set-Item function:Complete-TestPhaseExecutedProjection -Value {
@@ -1552,12 +1069,13 @@ Write-Output ("gaps=" + $gaps + " chunk=" + $chunk)
 }
 
 function Invoke-V11 {
-    $orig = ${function:Read-TestPhaseGenerationPrefix}
+    $orig = ${function:Invoke-TestPhasePrefixRescan}
     $script:MpPrefixReads = 0
-    Set-Item -Path 'function:Read-TestPhaseGenerationPrefix' -Value {
-        param([string]$GenerationDir)
-        if ($script:MpPrefixReads -ge 0 -and $env:MP_COUNT_PREFIX -eq '1') { $script:MpPrefixReads++ }
-        & $orig -GenerationDir $GenerationDir
+    # The prefix is read in the compiled journal: count the rescans that read it (one per recovery).
+    Set-Item -Path 'function:Invoke-TestPhasePrefixRescan' -Value {
+        param($Context)
+        if ($script:MpPrefixReads -ge 0 -and $env:MP_COUNT_PREFIX -eq '1' -and $Context.NeedsRecovery -and -not $Context.RescanAttempted) { $script:MpPrefixReads++ }
+        & $orig -Context $Context
     }
     try {
         $classes = @()
@@ -1584,7 +1102,7 @@ function Invoke-V11 {
         if (@($summary.quality) -notcontains 'publication-gap') { Fail-Mp 'outage-summary-missing-gap' }
         if ([int]$run.Result.testsPassed -and [bool]$run.Result.coverageComplete) { } else { Fail-Mp 'publication-fault-changed-verdict' }
     } finally {
-        Set-Item -Path 'function:Read-TestPhaseGenerationPrefix' -Value $orig
+        Set-Item -Path 'function:Invoke-TestPhasePrefixRescan' -Value $orig
         Remove-Item Env:MP_COUNT_PREFIX -ErrorAction SilentlyContinue
     }
     Assert-MpMatrix
@@ -1639,7 +1157,7 @@ function Invoke-V12 {
                 if (Test-Path -LiteralPath (Join-Path $run.Timing 'groups-executed.journal/current.json')) { Fail-Mp 'held-writer-did-not-refuse' }
                 if (-not (Test-Path -LiteralPath (Join-Path $run.Timing 'phase-summary-failed'))) { Fail-Mp 'held-writer-marker-absent' }
             } elseif ($publication -ne 'clean') {
-                $quality = Get-TestPhasePublicationQuality -RunDirectory $run.Log
+                $quality = [Antiphon.Nightly.TestPhaseJournal]::PublicationQuality($run.Log, [string]$script:QualificationTimingRoot, $null)
                 $token = 'publication-' + $publication
                 if ($publication -eq 'torn') { $token = 'publication-corruption' }
                 if ($publication -eq 'missing-state') { $token = 'publication-state-missing' }
@@ -1873,14 +1391,6 @@ try {
     . (Join-Path $lib 'nightly-tests-impl.ps1')
     Initialize-MpCulture
     switch ($Case) {
-        'v1' { Invoke-V1 }
-        'v2' { Invoke-V2 }
-        'v3-write' { Invoke-V3Write }
-        'v3-reduce' { Invoke-V3Reduce }
-        'v4' { Invoke-V4 }
-        'v4-successor' { Invoke-V4Successor }
-        'zone-effective' { Invoke-ZoneEffective }
-        'zone-map' { Invoke-ZoneMap }
         'successor-drain' { Invoke-SuccessorDrain }
         'successor-drain-child' { Invoke-SuccessorDrainChild }
         'v5' { Invoke-V5 }

@@ -1,7 +1,7 @@
 #requires -Version 5.1
 # Qualification supervisor heartbeat. Detection only: this file never stops a process.
 # ASCII-only library, not an autostart script. Dot-source it from the supervisor.
-if (-not (Get-Command Read-TestPhaseGenerationPrefix -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command Invoke-TestPhaseRunSummary -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
 }
 
@@ -115,7 +115,7 @@ function Assert-QualificationJournalUnsettled {
         $envelope=Read-QualificationPlanJson $files[$i]
         if($envelope.version -ne 1 -or $envelope.root -cne $Directory){throw 'journal-record-binding'}
     }
-    $prefix=Read-TestPhaseGenerationPrefix -GenerationDir $generation
+    $prefix=[Antiphon.Nightly.TestPhaseJournal]::ReadGenerationPrefix($generation)
     if($prefix.Corrupt -or $prefix.LastSequence -ne $files.Count){throw 'journal-unavailable'}
     foreach($record in $prefix.Records){
         if($record.Kind -cne 'chunk' -or $record.HeaderRun -cne $Active.runId -or $record.HeaderAttempt -cne $Active.attempt){throw 'journal-identity'}

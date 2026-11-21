@@ -1,6 +1,6 @@
 #requires -Version 7.0
-# Astra audit witnesses for discarded flush failures, journal acknowledgement before
-# publication, and an older loaded core. ASCII-only. The cases fail on the assigned base.
+# Astra audit witnesses for journal acknowledgement before publication and an older loaded
+# core (the discarded-flush-failure witnesses run in-process: AstraFixesBTests.FlushFailure). ASCII-only. The cases fail on the assigned base.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
 
@@ -43,7 +43,7 @@ function Open-AstraContext {
 
 function Get-AstraGenerationDir {
     param($Context)
-    return (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation)
+    return (Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($Context.TimingRoot)) $Context.Generation)
 }
 
 function Get-AstraDiskRecords {
@@ -153,144 +153,7 @@ function Test-AstraFailureVisible {
     return [pscustomobject]@{ Visible = $visible; Detail = $detail }
 }
 
-function Test-AstraFlushFailure {
-    $root = New-AstraResultsRoot
-    $blocked = Join-Path $root 'flush-block'
-    New-Item -ItemType Directory -Path $blocked -Force | Out-Null
-    $file1 = Join-Path $blocked 'one.json'
-    $file2 = Join-Path $blocked 'two.json'
-    $old = '{"sequence":1,"publicationComplete":true}'
-    $new = '{"sequence":2,"publicationComplete":false}'
-    [IO.File]::WriteAllText($file1, $old)
-    [IO.File]::WriteAllText($file2, $old)
-    $done = @{}
-    try {
-        Enable-NightlyDeferredEvidenceWrites
-        # Fail both queued writes via the same IOException seam as the journal case.
-        Set-AstraBeforeWrite -Mode 'throw'
-        [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file1, $new, $false)
-        [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file2, $new, $false)
-        $watch = [Diagnostics.Stopwatch]::StartNew()
-        $ready = $false
-        while ($watch.ElapsedMilliseconds -lt 8000) {
-            $pending1 = [Antiphon.Nightly.EvidenceFiles]::PendingLength($file1)
-            $pending2 = [Antiphon.Nightly.EvidenceFiles]::PendingLength($file2)
-            if ($pending1 -lt 0 -and $pending2 -lt 0) { $ready = $true; break }
-            Start-Sleep -Milliseconds 50
-        }
-        if (-not $ready) { throw 'setup: replacement stayed queued' }
-        if ([IO.File]::ReadAllText($file1) -ne $old -or [IO.File]::ReadAllText($file2) -ne $old) {
-            throw 'setup: replacement landed despite the injected write failure'
-        }
-        $read = [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($file1, 4096, 5000, [Diagnostics.Stopwatch]::StartNew())
-        $staleComplete = ([bool]$read.Complete -and -not [bool]$read.Refused)
-        Assert-C487 (-not $staleComplete) 'AB FlushFailure.not-complete-stale' ('Complete=' + $read.Complete + ' Refused=' + $read.Refused + ' Kind=' + $read.Kind)
-        $done['not-complete-stale'] = $true
-        $refused = ([bool]$read.Refused -and [string]$read.Kind -eq 'deferred-write-failed' -and -not [bool]$read.Complete)
-        Assert-C487 $refused 'AB FlushFailure.refused' ('Complete=' + $read.Complete + ' Refused=' + $read.Refused + ' Kind=' + $read.Kind)
-        $done['refused'] = $true
-        $one = @([Antiphon.Nightly.EvidenceFiles]::Flush($file1))
-        $oneText = [string]($one -join ' | ')
-        $pathKeeps = ($oneText.Contains('one.json') -and -not $oneText.Contains('two.json'))
-        Assert-C487 $pathKeeps 'AB FlushFailure.path-keeps-other' $oneText
-        $done['path-keeps-other'] = $true
-        $afterFlush = [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($file1, 4096, 5000, [Diagnostics.Stopwatch]::StartNew())
-        $pathStillFailed = [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1)
-        $stillRefused = ($pathStillFailed -and [bool]$afterFlush.Refused -and -not [bool]$afterFlush.Complete -and [string]$afterFlush.Kind -eq 'deferred-write-failed')
-        Assert-C487 $stillRefused 'AB FlushFailure.path-still-failed' ('PathFailed=' + $pathStillFailed + ' Complete=' + $afterFlush.Complete + ' Refused=' + $afterFlush.Refused + ' Kind=' + $afterFlush.Kind)
-        $done['path-still-failed'] = $true
-        $rest = @([Antiphon.Nightly.EvidenceFiles]::Flush())
-        $restText = [string]($rest -join ' | ')
-        Assert-C487 $restText.Contains('two.json') 'AB FlushFailure.later-flush-keeps-other' $restText
-        $done['later-flush-keeps-other'] = $true
-        $verdictOk = $false
-        $verdictDetail = ''
-        try {
-            $verdict = Get-NightlyDeferredEvidenceWriteVerdict
-            $reasonText = [string](@($verdict.reasons) -join ' | ')
-            $verdictOk = ((-not [bool]$verdict.coverageComplete) -and (-not [bool]$verdict.testsPassed) -and $reasonText.Contains('deferred-evidence-write-failed:'))
-            $verdictDetail = ('coverage=' + $verdict.coverageComplete + ' tests=' + $verdict.testsPassed + ' reasons=' + $reasonText)
-        } catch {
-            $verdictDetail = $_.Exception.Message
-        }
-        Assert-C487 $verdictOk 'AB FlushFailure.verdict' $verdictDetail
-        $done['verdict'] = $true
-        Clear-AstraBeforeWrite
-        $retryText = '{"sequence":3,"publicationComplete":true}'
-        [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file1, $retryText, $false)
-        $retryWatch = [Diagnostics.Stopwatch]::StartNew()
-        $retryReady = $false
-        while ($retryWatch.ElapsedMilliseconds -lt 8000) {
-            if ([Antiphon.Nightly.EvidenceFiles]::PendingLength($file1) -lt 0) { $retryReady = $true; break }
-            Start-Sleep -Milliseconds 50
-        }
-        if (-not $retryReady) { throw 'setup: retry stayed queued' }
-        if ([IO.File]::ReadAllText($file1) -ne $retryText) { throw 'setup: retry did not land' }
-        $retryReported = @([Antiphon.Nightly.EvidenceFiles]::Flush($file1) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-        $retryVerdict = Get-NightlyDeferredEvidenceWriteVerdict
-        $retryReasons = [string](@($retryVerdict.reasons) -join ' | ')
-        $retryKept = ($retryReported.Count -eq 0 -and [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1) -and -not [bool]$retryVerdict.coverageComplete -and -not [bool]$retryVerdict.testsPassed -and $retryReasons.Contains('one.json'))
-        Assert-C487 $retryKept 'AB FlushFailure.retry-keeps-failed' ('reported=' + $retryReported.Count + ' pathFailed=' + [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1) + ' coverage=' + $retryVerdict.coverageComplete + ' reasons=' + $retryReasons)
-        $done['retry-keeps-failed'] = $true
-        $quality = @(Get-TestPhasePublicationQuality -RunDirectory $root)
-        $qualityOk = @($quality | Where-Object { [string]$_ -eq 'deferred-evidence-write-failed' }).Count -gt 0
-        Assert-C487 $qualityOk 'AB FlushFailure.phase-quality-token' ('tokens=' + ($quality -join ','))
-        $done['phase-quality-token'] = $true
-        $summaryOk = $false
-        $summaryDetail = ''
-        try {
-            $merged = Merge-NightlyDeferredEvidenceVerdict -Reasons @('kept-reason')
-            $mergedReasons = [string](@($merged.reasons) -join ' | ')
-            $summaryOk = ($mergedReasons.Contains('kept-reason') -and $mergedReasons.Contains('deferred-evidence-write-failed:') -and -not [bool]$merged.coverageComplete -and -not [bool]$merged.testsPassed)
-            $summaryDetail = ('coverage=' + $merged.coverageComplete + ' tests=' + $merged.testsPassed + ' reasons=' + $mergedReasons)
-        } catch {
-            $summaryDetail = $_.Exception.Message
-        }
-        Assert-C487 $summaryOk 'AB FlushFailure.summary-calls-verdict' $summaryDetail
-        $done['summary-calls-verdict'] = $true
-    } catch {
-        $detail = $_.Exception.Message
-        foreach ($name in @('not-complete-stale','refused','path-keeps-other','path-still-failed','later-flush-keeps-other','verdict','retry-keeps-failed','phase-quality-token','summary-calls-verdict')) {
-            if (-not $done[$name]) { Assert-C487 $false ('AB FlushFailure.' + $name) $detail }
-        }
-    } finally {
-        Clear-AstraBeforeWrite
-        if ($script:NightlyDeferEvidenceWrites) {
-            try { Disable-NightlyDeferredEvidenceWrites } catch { }
-        }
-    }
-    Test-AstraVerdictFlushes
-}
-
-function Test-AstraVerdictFlushes {
-    $root = New-AstraResultsRoot
-    $dir = Join-Path $root 'inflight'
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    $target = Join-Path $dir 'late.json'
-    $ok = $false
-    $detail = ''
-    try {
-        Enable-NightlyDeferredEvidenceWrites
-        Set-AstraBeforeWrite -Mode 'delay-throw' -SleepMs 2000
-        [Antiphon.Nightly.EvidenceFiles]::WriteAllText($target, 'late')
-        $verdict = Get-NightlyDeferredEvidenceWriteVerdict
-        $reasons = [string](@($verdict.reasons) -join ' | ')
-        $ok = ((-not [bool]$verdict.coverageComplete) -and (-not [bool]$verdict.testsPassed) -and $reasons.Contains('deferred-evidence-write-failed:'))
-        $detail = ('coverage=' + $verdict.coverageComplete + ' tests=' + $verdict.testsPassed + ' reasons=' + $reasons)
-        $wait = [Diagnostics.Stopwatch]::StartNew()
-        while ($wait.ElapsedMilliseconds -lt 8000 -and [Antiphon.Nightly.EvidenceFiles]::PendingLength($target) -ge 0) {
-            Start-Sleep -Milliseconds 50
-        }
-    } catch {
-        $detail = $_.Exception.Message
-    } finally {
-        Clear-AstraBeforeWrite
-        if ($script:NightlyDeferEvidenceWrites) {
-            try { Disable-NightlyDeferredEvidenceWrites } catch { }
-        }
-    }
-    Assert-C487 $ok 'AB FlushFailure.verdict-flushes' $detail
-}
+# FlushFailure (and its verdict-flushes row) runs in-process: AstraFixesBTests.FlushFailure.
 
 function Test-AstraJournalPublish {
     $root = New-AstraResultsRoot
@@ -330,11 +193,11 @@ function Test-AstraJournalPublish {
         $lockDir = Join-Path $root 'lock'
         $locked = Open-AstraContext $lockDir
         $held += $locked
-        $lockedJournal = Get-TestPhaseJournalRoot -TimingRoot $locked.TimingRoot
+        $lockedJournal = [Antiphon.Nightly.TestPhaseJournal]::JournalRoot($locked.TimingRoot)
         Set-AstraBeforeWrite -Mode 'throw'
         [Antiphon.Nightly.EvidenceFiles]::WriteAllText((Join-Path $lockedJournal 'held-failure.json'), 'held')
         Close-TestPhaseExecutedContext -Context $locked
-        $lockPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $locked.TimingRoot) 'writer.lock'
+        $lockPath = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($locked.TimingRoot)) 'writer.lock'
         $reacquired = $false
         $probe = $null
         try {
@@ -357,7 +220,7 @@ function Test-AstraJournalPublish {
         Set-AstraBeforeWrite -Mode 'throw'
         [Antiphon.Nightly.EvidenceFiles]::WriteAllText((Join-Path $unrelatedDir 'outside.json'), 'outside')
         Close-TestPhaseExecutedContext -Context $unrelated
-        $unrelatedLock = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $unrelated.TimingRoot) 'writer.lock'
+        $unrelatedLock = Join-Path ([Antiphon.Nightly.TestPhaseJournal]::JournalRoot($unrelated.TimingRoot)) 'writer.lock'
         $unrelatedProbe = $null
         $unrelatedFree = $false
         try {
@@ -546,11 +409,6 @@ function Test-AstraCheckoutIdentity {
 }
 
 switch ($Case) {
-    'FlushFailure' {
-        . (Join-Path $PSScriptRoot 'lib/test-phase-evidence.ps1')
-        . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
-        Test-AstraFlushFailure
-    }
     'JournalPublish' {
         . (Join-Path $PSScriptRoot 'lib/test-phase-evidence.ps1')
         . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
@@ -576,8 +434,7 @@ switch ($Case) {
     default { throw ('unknown case ' + $Case) }
 }
 $expected = 0
-if ($Case -eq 'FlushFailure') { $expected = 10 }
-elseif ($Case -eq 'JournalPublish') { $expected = 6 }
+if ($Case -eq 'JournalPublish') { $expected = 6 }
 elseif ($Case -eq 'StaleCore') { $expected = 5 }
 elseif ($Case -eq 'CompleteCorePath') { $expected = 4 }
 elseif ($Case -eq 'CheckoutIdentity') { $expected = 2 }
