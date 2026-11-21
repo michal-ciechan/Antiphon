@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 341,
+      "classes": 342,
       "reason": "allowlist"
     },
     {
@@ -2072,9 +2072,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 135,
+      "classes": 136,
       "reason": "cap",
-      "owed": 110,
+      "owed": 111,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -3548,6 +3548,7 @@
       "classes": [
         "DockerStackDocumentationTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
@@ -3591,6 +3592,7 @@
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
@@ -3612,6 +3614,7 @@
         "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
@@ -4092,6 +4095,7 @@
     {
       "path": "scripts/retire-runner-volumes.ps1",
       "classes": [
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementWrapperTests"
       ]
     },
@@ -24815,6 +24819,7 @@
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
