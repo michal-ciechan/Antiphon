@@ -19,6 +19,7 @@ if ([string]::IsNullOrWhiteSpace($env:TEMP)) {
     else { $env:TEMP = '/tmp' }
 }
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
+$script:C1698CheckoutSha = '0123456789abcdef0123456789abcdef01234567'
 
 function New-C1698Source([string]$Git, [string]$Sdks = '10.0.204 [/fake/sdk]') {
     $g = $Git; $s = $Sdks
@@ -133,7 +134,14 @@ function Invoke-C1698Entry([string]$Root, [string]$Entry, [string]$GitVersion, [
     foreach ($a in $EntryArgs) { $argText += (' ' + $a) }
     $text = @"
 `$ErrorActionPreference = 'Continue'
-function git { 'git version $GitVersion' }
+function git {
+    if (`$args.Count -eq 4 -and `$args[0] -ceq '-C' -and `$args[1] -ceq `$PSScriptRoot -and
+            `$args[2] -ceq 'rev-parse' -and `$args[3] -ceq 'HEAD') {
+        '$script:C1698CheckoutSha'
+        return
+    }
+    if (`$args.Count -eq 1 -and `$args[0] -ceq '--version') { 'git version $GitVersion' }
+}
 function dotnet {
     `$a = `$args -join ' '
     if (`$a -eq '--list-sdks') { '10.0.204 [/fake/sdk]'; return }
@@ -163,7 +171,7 @@ function Test-C1698_RestartServerUnchanged {
     Assert-C487 -Cond ($below.Output.Contains($warn)) -Name 'C1698 RestartServer prints the warning' -Detail $below.Output
     Assert-C487 -Cond (-not $at.Output.Contains('WARNING:')) -Name 'C1698 RestartServer prints none at the floor' -Detail $at.Output
     Assert-C487 -Cond ($below.Exit -eq 0 -and $at.Exit -eq 0 -and $below.Output.Contains('Server restarted.')) -Name 'C1698 RestartServer exit 0 with a warning' -Detail ('below=' + $below.Exit + ' at=' + $at.Exit)
-    $expected = @('build *', 'run --project * antiphon-server start --endpoint https://localhost:22025')
+    $expected = @("build * -p:SourceRevisionId=$script:C1698CheckoutSha", 'run --project * antiphon-server start --endpoint https://localhost:22025')
     $lines = @($below.Calls -split "`r?`n")
     $shape = $lines.Count -eq 3 -and $lines[0] -like 'run --project * antiphon-server stop --endpoint https://localhost:22025' -and $lines[1] -like $expected[0] -and $lines[2] -like $expected[1]
     Assert-C487 -Cond ($shape -and $below.Calls -eq $at.Calls) -Name 'C1698 RestartServer same stop build start with a warning' -Detail ($below.Calls + ' || ' + $at.Calls)
@@ -230,7 +238,7 @@ function Test-C1698_RestartServerLibraryLoadFailure {
         # The calls carry the private root in the server project path; the rest is identical.
         $lines = @($r.Calls.Replace($root, '<root>') -split "`r?`n")
         $shape = $lines.Count -eq 3 -and $lines[0] -like 'run --project * antiphon-server stop --endpoint https://localhost:22025' -and
-            $lines[1] -like 'build *' -and $lines[2] -like 'run --project * antiphon-server start --endpoint https://localhost:22025'
+            $lines[1] -like "build * -p:SourceRevisionId=$script:C1698CheckoutSha" -and $lines[2] -like 'run --project * antiphon-server start --endpoint https://localhost:22025'
         $ok = $r.Exit -eq 0 -and $r.Output.Contains('Server restarted.') -and $r.Output.Contains('WARNING: the toolchain floor check failed') -and
             $shape -and $r.Calls.Replace($root, '<root>') -eq $at.Calls.Replace($normal, '<root>')
         Assert-C487 -Cond $ok -Name ('C1698 RestartServer survives a library that fails to load: ' + $b.Name) -Detail ('exit=' + $r.Exit + ' calls=' + $r.Calls + ' || ' + $at.Calls + ' || ' + $r.Output)
