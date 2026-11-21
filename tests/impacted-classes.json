@@ -139,6 +139,17 @@
       ]
     },
     {
+      "id": "checkpoint-tool-project-contract",
+      "globs": [
+        "tools/Antiphon.Checkpoints/*.csproj",
+        "src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj",
+        "src/Antiphon.GitInProcess/Antiphon.GitInProcess.csproj"
+      ],
+      "classes": [
+        "CheckpointToolProjectContractTests"
+      ]
+    },
+    {
       "id": "land-notification",
       "globs": [
         "server/Application/Services/AgentTaskLandNotification*.cs",
