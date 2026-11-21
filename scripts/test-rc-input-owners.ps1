@@ -620,6 +620,107 @@ class MultiLineArgumentsE2EProbeTests {
         Note (SameSet $s $ids) "e2e-generic-rename-selects-all:$(& $shown $s)"
         Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-generic-rename-stays-shadow'
     }
+    'VerbatimStringRenameSelectsSuites' {
+        # A method renamed after @" $@" and @$ " strings, a raw """ string and an
+        # interpolated raw string must select. A later body edit must defer, so
+        # the selection is the parsed identity and not an incomplete file.
+        # A comma-list [Test, Arguments(...)] row is part of that identity.
+        function Rio-Verbatim([string]$Method, [string]$Body) {
+            $text=@'
+class VerbatimRenameE2EProbeTests {
+    [Test] void First() {
+        string name = "n";
+        var pattern = @"^Session 1 - ";
+        var quoted = @"say ""hi""";
+        var interp = $@"C:\src\{name.Replace(" ", "-")}";
+        var swapped = @$"pre {name} post";
+        var raw = """
+            hello
+            """;
+        var rawInterp = $$$"""
+            {{{suffix}}}
+            Work on {{ issue.title }}.
+            """;
+    }
+    [Test] void METHOD() { int x = BODY; }
+}
+'@
+            return $text.Replace('METHOD',$Method).Replace('BODY',$Body)
+        }
+        function Rio-Comma([string]$Extra, [string]$Body) {
+            $text=@'
+class CommaArgumentsE2EProbeTests {
+    [Test, Arguments(1)EXTRA] void RowMethod() { int x = BODY; }
+}
+'@
+            return $text.Replace('EXTRA',$Extra).Replace('BODY',$Body)
+        }
+        $file='tests/Antiphon.E2E/VerbatimRenameProbeTests.cs'
+        Put $file (Rio-Verbatim 'OriginalMethod' '1')
+        $baseline=Commit
+        Put $file (Rio-Verbatim 'RenamedMethod' '1')
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-verbatim-rename-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-verbatim-rename-stays-shadow'
+        $baseline=Git @('rev-parse','HEAD')
+        Put $file (Rio-Verbatim 'RenamedMethod' '2')
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "e2e-verbatim-body-still-defers:$(& $shown $s)"
+        $comma='tests/Antiphon.E2E/CommaArgumentsProbeTests.cs'
+        Put $comma (Rio-Comma '' '1')
+        $baseline=Commit
+        Put $comma (Rio-Comma ', Arguments(2)' '1')
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-comma-arguments-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-comma-arguments-stays-shadow'
+        $baseline=Git @('rev-parse','HEAD')
+        Put $comma (Rio-Comma ', Arguments(2)' '2')
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "e2e-comma-arguments-body-still-defers:$(& $shown $s)"
+    }
+    'FailClosedOnlySelectsSuites' {
+        # [Test] on a property is not a method. A body edit of the real method
+        # keeps the same identity map, so only the incomplete-file rule selects.
+        function Rio-FailClosed([string]$Body) {
+            $text=@'
+class FailClosedE2EProbeTests {
+    [Test] public int NotAMethod => 1;
+    [Test] void RealMethod() { int x = BODY; }
+}
+'@
+            return $text.Replace('BODY',$Body)
+        }
+        $file='tests/Antiphon.E2E/FailClosedProbeTests.cs'
+        Put $file (Rio-FailClosed '1')
+        $baseline=Commit
+        Put $file (Rio-FailClosed '2')
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-fail-closed-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-fail-closed-stays-shadow'
+    }
+    'RealE2EParseMatchesRegex' {
+        # Independent of the scanner's own counters: comment-stripped [Test
+        # and Arguments( counts, compared with what the parser matched.
+        $tree=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+        $e2eRoot=Join-Path $tree 'tests/Antiphon.E2E'
+        $testRegex=[regex]'\[Test(?![A-Za-z0-9_])'
+        $files=@(Get-ChildItem -LiteralPath $e2eRoot -Filter *.cs -Recurse -File | Sort-Object -Property FullName)
+        Note ($files.Count -gt 0) 'e2e-tree-empty'
+        $rootFull=[IO.Path]::GetFullPath($tree)
+        foreach ($f in $files) {
+            $text=[IO.File]::ReadAllText($f.FullName)
+            $parse=Get-RcTestIdentityParse $text
+            $stripped=Get-RcCommentStrippedText $text
+            $tests=$testRegex.Matches($stripped).Count
+            $full=[IO.Path]::GetFullPath($f.FullName)
+            $rel=$full.Substring($rootFull.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+            Note ($parse.matched -eq $tests) "e2e-test-count:${rel}:matched=$($parse.matched):regex=$tests"
+            Note (-not (Test-RcTestIdentityIncomplete $parse)) "e2e-incomplete:${rel}:tests=$($parse.testAttributes)/$($parse.matched):args=$($parse.argumentOpeners)/$($parse.capturedArguments)"
+        }
+    }
     'OwnerLiteralPathsFailClosed' {
         # Every literal owner path, exceptPaths prefix and owner-glob prefix
         # must exist. Renaming the canary, the E2E directory or tests/Shared

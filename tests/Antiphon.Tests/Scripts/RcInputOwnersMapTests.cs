@@ -43,6 +43,12 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(90_000)] public Task E2EAddedTestSelectsSuites(CancellationToken token) => Run(nameof(E2EAddedTestSelectsSuites), token);
     // A net-zero rename, a moved test and an added [Arguments] row must select. The [Test] count does not.
     [Test, Timeout(90_000)] public Task E2EIdentityChangeSelectsSuites(CancellationToken token) => Run(nameof(E2EIdentityChangeSelectsSuites), token);
+    // A rename after a C# verbatim string must select. A later body edit of that method must defer.
+    [Test, Timeout(90_000)] public Task VerbatimStringRenameSelectsSuites(CancellationToken token) => Run(nameof(VerbatimStringRenameSelectsSuites), token);
+    // An unparsed [Test] makes a body edit select. The identity map itself does not change.
+    [Test, Timeout(90_000)] public Task FailClosedOnlySelectsSuites(CancellationToken token) => Run(nameof(FailClosedOnlySelectsSuites), token);
+    // Every E2E file's parsed tests match an independent [Test] count, and none is incomplete.
+    [Test, Timeout(120_000)] public Task RealE2EParseMatchesRegex(CancellationToken token) => Run(nameof(RealE2EParseMatchesRegex), token);
     // A renamed literal owner path must fail closed. Absence of the census is that miss.
     [Test, Timeout(60_000)] public Task OwnerLiteralPathsFailClosed(CancellationToken token) => Run(nameof(OwnerLiteralPathsFailClosed), token);
     // The committed owner map is checked against this tree. Renaming the canary must fail that check.
