@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -1378,11 +1379,16 @@ public sealed class RunnerSettlementSyncTests
             };
             start.Environment["GIT_TERMINAL_PROMPT"] = "0";
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            using var process = System.Diagnostics.Process.Start(start)
+            return await ExecAsync(start, TimeSpan.FromSeconds(60));
+        }
+
+        internal static async Task<LandingGitResult> ExecAsync(ProcessStartInfo start, TimeSpan timeout)
+        {
+            using var process = Process.Start(start)
                 ?? throw new IOException("git_start_failed");
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
-            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using var budget = new CancellationTokenSource(timeout);
             try
             {
                 await process.WaitForExitAsync(budget.Token);
@@ -1392,7 +1398,7 @@ public sealed class RunnerSettlementSyncTests
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync(CancellationToken.None);
                 await System.Threading.Tasks.Task.WhenAll(output, error);
-                throw new TimeoutException("git " + string.Join(' ', arguments));
+                throw new TimeoutException("git " + string.Join(' ', start.ArgumentList));
             }
             await System.Threading.Tasks.Task.WhenAll(output, error);
             return new LandingGitResult(process.ExitCode, await output, process.ExitCode == 0 ? "" : await error);
@@ -1441,7 +1447,9 @@ public sealed class RunnerSettlementSyncTests
     /// The production Git I/O with a command trace and three controlled faults: a block that only
     /// ends on cancellation, and one failed command right after a successful merge.
     /// </summary>
-    internal sealed class RecordingGit(IRepositoryMutationLease? leases) : TaskProgressGit(leases)
+    internal class SettlementFixtureGit(IRepositoryMutationLease? leases = null) : TaskProgressGit(leases);
+
+    internal sealed class RecordingGit(IRepositoryMutationLease? leases) : SettlementFixtureGit(leases)
     {
         private readonly ConcurrentQueue<string> _commands = new();
         private readonly ConcurrentQueue<string> _directories = new();
