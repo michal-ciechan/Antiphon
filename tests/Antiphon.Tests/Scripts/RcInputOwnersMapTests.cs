@@ -568,8 +568,9 @@ public sealed class RcInputOwnersMapTests : IDisposable
     public void ExistingCsprojIsNotANewCsproj()
     {
         var baseline = seeded;
-        // new-csproj is only for a csproj nobody references that this commit adds.
-        const string path = "tools/Antiphon.NativeLinuxMigrationAudit/Antiphon.NativeLinuxMigrationAudit.csproj";
+        // new-csproj is only for a csproj nobody references that this commit adds. The fixture path names no tracked
+        // file of this repository, so the runtime-reader census does not read it as a reader of the real tree.
+        const string path = "tools/Antiphon.FixtureOnlyAudit/Antiphon.FixtureOnlyAudit.csproj";
         repo.Put(path, EmptyProject);
         baseline = repo.Commit();
         repo.Put(path, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><Fixture>1</Fixture></PropertyGroup></Project>");
