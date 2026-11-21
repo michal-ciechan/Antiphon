@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -105,7 +104,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         {
             NativeHardLink.Create(props, outside);
         }
-        catch (Exception ex) when (ex is Win32Exception or PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or PlatformNotSupportedException or IOException or UnauthorizedAccessException)
         {
             Skip.Test("hard links are unavailable on this volume (" + ex.GetType().Name + ")");
         }
