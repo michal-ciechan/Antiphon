@@ -100,8 +100,10 @@ function Note-RioSelectionParity([string]$name, $on, $off) {
 $sourceRoot=Split-Path -Parent $PSScriptRoot
 $sourceSha=(Invoke-TestSelectionGit $sourceRoot @('rev-parse','HEAD')).Stdout.Trim()
 if ($Case -ceq 'HistoricalSelectionSoundness') {
+    [void][IO.Directory]::CreateDirectory($ResultsDirectory)
     $corpusPath=Join-Path $sourceRoot 'tests/fixtures/incremental-selection-soundness.json'
     $corpus=Get-Content -LiteralPath $corpusPath -Raw | ConvertFrom-Json -AsHashtable
+    Note ($corpus.cases.Count -gt 0) 'soundness corpus contains no cases'
     $inventory=Read-RcInputInventory $sourceRoot $sourceSha $null -SkipUnresolvedBroadening
     # The historical fixture contains paths. Replay committed ownership before
     # the manifest examines the contents of the original before/after files.
