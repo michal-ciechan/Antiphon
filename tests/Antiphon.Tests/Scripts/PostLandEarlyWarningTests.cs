@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -10,8 +12,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1784 S1. The post-land script plans a Linux early-warning lane.
-/// Run mode starts the real script through <see cref="ProcessStartInfo"/>.
+/// CARD-1784 S1. The post-land early warning plans a Linux early-warning lane (antiphon-scripts post-land-early-warning,
+/// Antiphon.Nightly.PostLandEarlyWarning), called in-process: the entry, the detached lane (started by an in-process
+/// launcher, as the CLI's --child relaunch), the lock and the receipts. The impacted-classes selector stands in as a
+/// reader of the fixture's table; the "real slot" cases start a compiled fake build slot (script-harness-host).
+/// The seams are the CLI's POST_LAND_WARNING_* variables, read through PostLandSettings.FromEnvironment.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -28,7 +33,8 @@ public sealed class PostLandEarlyWarningTests
 
     private const string CheckpointsNamespace = "Antiphon.Tests.Checkpoints";
 
-    private const string WarningCulture = "en-GB";
+    // A desktop culture is in force while the core runs: startedAt and the budget are read invariantly.
+    private static readonly CultureInfo WarningCulture = CultureInfo.GetCultureInfo("en-GB");
 
     private static readonly Regex ClassLine = new(
         @"^public\s+(?:(?:sealed|static|partial|abstract)\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)\b",
@@ -102,6 +108,7 @@ public sealed class PostLandEarlyWarningTests
         });
         open.Shards.ShouldAllBe(shard => shard.GetProperty("kind").GetString() == "unit");
 
+        // A live owner (this test process, with no run id of the plan's) holds the lock.
         fixture.WriteLock(Environment.ProcessId);
         var busy = await fixture.PlanAsync(fixture.Paths("src/Widget.cs"));
         busy.Exit.ShouldBe(0, busy.Text);
@@ -200,10 +207,8 @@ public sealed class PostLandEarlyWarningTests
         var runnable = blocked.Paths("src/Code.cs");
 
         var linuxHost = OperatingSystem.IsLinux();
-        var absentStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
-        absentStart.Environment.Remove("POST_LAND_WARNING_PLATFORM");
-        absentStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        var absent = await blocked.WaitAsync(absentStart);
+        var absent = await blocked.RunAsync(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable,
+            env: new Dictionary<string, string> { ["POST_LAND_WARNING_SLOT_SHIM"] = shim });
         if (linuxHost)
         {
             absent.Exit.ShouldBe(2, absent.Text);
@@ -219,10 +224,8 @@ public sealed class PostLandEarlyWarningTests
 
         File.Exists(shim).ShouldBeFalse();
 
-        var emptyStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
-        emptyStart.Environment["POST_LAND_WARNING_PLATFORM"] = "";
-        emptyStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        var empty = await blocked.WaitAsync(emptyStart);
+        var empty = await blocked.RunAsync(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable,
+            env: new Dictionary<string, string> { ["POST_LAND_WARNING_PLATFORM"] = "", ["POST_LAND_WARNING_SLOT_SHIM"] = shim });
         if (linuxHost)
         {
             empty.Exit.ShouldBe(2, empty.Text);
@@ -238,15 +241,14 @@ public sealed class PostLandEarlyWarningTests
 
         File.Exists(shim).ShouldBeFalse();
 
-        var windowsStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('c', 40) + ".." + tip, fileList: runnable);
-        windowsStart.Environment["POST_LAND_WARNING_PLATFORM"] = "windows";
-        windowsStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        var windows = await blocked.WaitAsync(windowsStart);
+        var windows = await blocked.RunAsync(plan: false, range: new string('c', 40) + ".." + tip, fileList: runnable,
+            env: new Dictionary<string, string> { ["POST_LAND_WARNING_PLATFORM"] = "windows", ["POST_LAND_WARNING_SLOT_SHIM"] = shim });
         windows.Exit.ShouldBe(3, windows.Text);
         windows.Text.ShouldContain("refused=not-linux", Case.Sensitive);
         windows.Text.ShouldContain("run this lane on the Linux host", Case.Sensitive);
         File.Exists(shim).ShouldBeFalse();
         File.Exists(Path.Combine(blocked.ReceiptRoot, tip + ".json")).ShouldBeFalse();
+        blocked.LaneCount.ShouldBe(0);
     }
 
     [Test]
@@ -481,26 +483,15 @@ public sealed class PostLandEarlyWarningTests
             ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
             ["POST_LAND_WARNING_PLAN_DELAY_MS"] = "2000",
         };
-        var first = repo.StartPostLandEarlyWarning(plan: false, range: range, fileList: list);
-        var second = repo.StartPostLandEarlyWarning(plan: false, range: range, fileList: list);
-        foreach (var pair in env)
-        {
-            first.Environment[pair.Key] = pair.Value;
-            second.Environment[pair.Key] = pair.Value;
-        }
 
-        using var left = Process.Start(first) ?? throw new InvalidOperationException("first pwsh did not start");
-        using var right = Process.Start(second) ?? throw new InvalidOperationException("second pwsh did not start");
-        var leftOut = left.StandardOutput.ReadToEndAsync();
-        var leftErr = left.StandardError.ReadToEndAsync();
-        var rightOut = right.StandardOutput.ReadToEndAsync();
-        var rightErr = right.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-        await left.WaitForExitAsync(timeout.Token);
-        await right.WaitForExitAsync(timeout.Token);
-        var text = await leftOut + await leftErr + await rightOut + await rightErr;
-        left.ExitCode.ShouldBe(0, text);
-        right.ExitCode.ShouldBe(0, text);
+        // Two run-mode parents at once, each with its own run id and its own detached lane (same process: the lock
+        // owner is the pid and the run id).
+        var first = repo.RunAsync(plan: false, range: range, fileList: list, env: env);
+        var second = repo.RunAsync(plan: false, range: range, fileList: list, env: env);
+        var both = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(40));
+        var text = both[0].Text + both[1].Text;
+        both[0].Exit.ShouldBe(0, text);
+        both[1].Exit.ShouldBe(0, text);
         await repo.WaitUnlockedAsync(TimeSpan.FromSeconds(20));
         var states = Directory.EnumerateFiles(repo.ReceiptRoot, "lane-*.json")
             .Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("state").GetString() ?? "")
@@ -515,6 +506,12 @@ public sealed class PostLandEarlyWarningTests
     [Timeout(60_000)]
     public async Task Real_slot_exit_zero_runs_shards_and_completes()
     {
+        // POST_LAND_WARNING_SLOT_SCRIPT takes a non-.ps1 fake: a .dll runs under dotnet, any other path directly.
+        var helper = SlotHelper;
+        PostLandSettings.FromEnvironment(name => name == "POST_LAND_WARNING_SLOT_SCRIPT" ? helper : null, DelegateScriptRunner.RepoRoot)
+            .SlotCommand.ShouldBe(new[] { "dotnet", helper });
+        PostLandSettings.SlotCommandFor("/opt/fake-slot").ShouldBe(new[] { "/opt/fake-slot" });
+
         var ran = await RunRealSlotAsync(buildExit: 0, shardExit: 0, trxBody: Trx(("Synthetic.Ancient", "Ok", "Passed")));
         ran.Receipt.RootElement.GetProperty("state").GetString().ShouldBe("completed");
         ran.Receipt.RootElement.GetProperty("buildExit").GetInt32().ShouldBe(0);
@@ -522,6 +519,7 @@ public sealed class PostLandEarlyWarningTests
         shard.GetProperty("exit").GetInt32().ShouldBe(0);
         ran.Marker.ShouldContain("--no-build", Case.Sensitive);
         (ran.Receipt.RootElement.GetProperty("summaryLine").GetString() ?? "").ShouldNotContain("build=4", Case.Sensitive);
+        ran.SlotLog.ShouldContain("BUILD SLOT granted", Case.Sensitive);
     }
 
     [Test]
@@ -553,27 +551,20 @@ public sealed class PostLandEarlyWarningTests
     {
         using var fixture = Fixture.Create();
         fixture.WriteLockAt(DeadPid(), DateTime.UtcNow.AddHours(-1));
-        var lib = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "post-land-early-warning.ps1");
         var lockPath = Path.Combine(fixture.ReceiptRoot, "lock.json");
-        var leftOut = Path.Combine(fixture.ReceiptRoot, "reclaim-left.txt");
-        var rightOut = Path.Combine(fixture.ReceiptRoot, "reclaim-right.txt");
-        var left = StartReclaim(lib, lockPath, leftOut, 200);
-        var right = StartReclaim(lib, lockPath, rightOut, 800);
-        using var leftProcess = Process.Start(left) ?? throw new InvalidOperationException("left reclaim did not start");
-        using var rightProcess = Process.Start(right) ?? throw new InvalidOperationException("right reclaim did not start");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await leftProcess.WaitForExitAsync(timeout.Token);
-        await rightProcess.WaitForExitAsync(timeout.Token);
-        leftProcess.ExitCode.ShouldBe(0);
-        rightProcess.ExitCode.ShouldBe(0);
-        var leftText = await File.ReadAllTextAsync(leftOut);
-        var rightText = await File.ReadAllTextAsync(rightOut);
-        var acquired = new[] { leftText, rightText }.Count(text => text.StartsWith("acquired ", StringComparison.Ordinal));
-        acquired.ShouldBe(1, leftText + " | " + rightText);
-        var winner = leftText.StartsWith("acquired ", StringComparison.Ordinal) ? leftText : rightText;
-        var winnerPid = int.Parse(winner.Substring("acquired ".Length).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        const string leftRunId = "cccccccccccccccccccccccccccccccc";
+        const string rightRunId = "dddddddddddddddddddddddddddddddd";
+        // Two reclaimers of one stale lock, the second renaming it aside after the first has re-taken it.
+        var left = Task.Run(() => PostLandEarlyWarning.EnterLock(lockPath, leftRunId, reclaimDelayMs: 200));
+        var right = Task.Run(() => PostLandEarlyWarning.EnterLock(lockPath, rightRunId, reclaimDelayMs: 800));
+        var acquired = await Task.WhenAll(left, right).WaitAsync(TimeSpan.FromSeconds(20));
+        acquired.Count(won => won).ShouldBe(1, "left=" + acquired[0] + " right=" + acquired[1]);
+        var winner = acquired[0] ? leftRunId : rightRunId;
         var held = JsonDocument.Parse(await File.ReadAllTextAsync(lockPath));
-        held.RootElement.GetProperty("pid").GetInt32().ShouldBe(winnerPid);
+        held.RootElement.GetProperty("pid").GetInt32().ShouldBe(Environment.ProcessId);
+        held.RootElement.GetProperty("runId").GetString().ShouldBe(winner);
+        PostLandEarlyWarning.LockKind(lockPath, winner).ShouldBe("ours");
+        PostLandEarlyWarning.LockKind(lockPath, winner == leftRunId ? rightRunId : leftRunId).ShouldBe("busy");
     }
 
     [Test]
@@ -656,41 +647,17 @@ public sealed class PostLandEarlyWarningTests
         loop.ShouldContain(OrchestratorSentence, Case.Sensitive);
     }
 
+    private static string SlotHelper => Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
+
     private static int DeadPid()
     {
         for (var pid = 400000; pid < 420000; pid++)
         {
-            if (!Directory.Exists("/proc/" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+            if (!Directory.Exists("/proc/" + pid.ToString(CultureInfo.InvariantCulture)) && !PostLandEarlyWarning.IsPidAlive(pid))
                 return pid;
         }
 
         return 400000;
-    }
-
-    private static ProcessStartInfo StartReclaim(string lib, string lockPath, string outPath, int delayMs)
-    {
-        var script = Path.Combine(Path.GetDirectoryName(outPath)!, "reclaim-" + delayMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".ps1");
-        File.WriteAllText(
-            script,
-            "$ErrorActionPreference = 'Stop'\n"
-            + ". '" + lib + "'\n"
-            + "$ok = Enter-PostLandLock -Path '" + lockPath + "' -RunId 'cccccccccccccccccccccccccccccccc'\n"
-            + "if ($ok) { [IO.File]::WriteAllText('" + outPath + "', 'acquired ' + [string]$PID) }\n"
-            + "else { [IO.File]::WriteAllText('" + outPath + "', 'refused ' + [string]$PID) }\n"
-            + "Start-Sleep -Milliseconds 2000\n");
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        start.Environment["POST_LAND_WARNING_RECLAIM_DELAY_MS"] = delayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        start.Environment["POST_LAND_WARNING_CULTURE"] = WarningCulture;
-        return start;
     }
 
     private static void ReleaseReadOnlyTree(string path)
@@ -707,57 +674,38 @@ public sealed class PostLandEarlyWarningTests
         var trxPath = Path.Combine(repo.ReceiptRoot, "stub-source.trx");
         await File.WriteAllTextAsync(trxPath, trxBody);
         var marker = Path.Combine(repo.ReceiptRoot, "slot-marker.txt");
-        var stub = Path.Combine(repo.ReceiptRoot, "stub-build-slot.ps1");
-        File.WriteAllText(stub, SlotStub(marker, trxPath, buildExit, shardExit));
+        File.Exists(SlotHelper).ShouldBeTrue(SlotHelper);
+        // The compiled fake slot: it records its arguments, copies the TRX for a --no-build command and exits.
+        var slot = new[]
+        {
+            "dotnet", SlotHelper, "post-land-slot", marker, trxPath,
+            buildExit.ToString(CultureInfo.InvariantCulture), shardExit.ToString(CultureInfo.InvariantCulture),
+        };
         var parent = repo.CommitParent(tip);
         var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
         {
             ["POST_LAND_WARNING_PLATFORM"] = "linux",
-            ["POST_LAND_WARNING_SLOT_SCRIPT"] = stub,
-        });
+        }, slot);
         run.Exit.ShouldBe(0, run.Text);
         var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
         var markerText = File.Exists(marker) ? await File.ReadAllTextAsync(marker) : "";
-        return new RealSlotRun(receipt, markerText);
-    }
-
-    private static string SlotStub(string marker, string trxSource, int buildExit, int shardExit)
-    {
-        return "$ErrorActionPreference = 'Continue'\n"
-            + "Write-Output 'BUILD SLOT granted'\n"
-            + "Write-Output 'Build succeeded.'\n"
-            + "$marker = '" + marker + "'\n"
-            + "$trxSource = '" + trxSource + "'\n"
-            + "$joined = [string]::Join([char]10, @($args))\n"
-            + "[IO.File]::AppendAllText($marker, $joined + [char]10)\n"
-            + "$results = ''\n"
-            + "$fileName = ''\n"
-            + "for ($i = 0; $i -lt $args.Count; $i++) {\n"
-            + "    if ([string]$args[$i] -eq '--results-directory' -and ($i + 1) -lt $args.Count) { $results = [string]$args[$i + 1] }\n"
-            + "    if ([string]$args[$i] -eq '--report-trx-filename' -and ($i + 1) -lt $args.Count) { $fileName = [string]$args[$i + 1] }\n"
-            + "}\n"
-            + "if ($joined.Contains('--no-build')) {\n"
-            + "    if (-not [string]::IsNullOrWhiteSpace($results) -and -not [string]::IsNullOrWhiteSpace($fileName)) {\n"
-            + "        $null = [IO.Directory]::CreateDirectory($results)\n"
-            + "        $dest = Join-Path $results $fileName\n"
-            + "        [IO.File]::Copy($trxSource, $dest, $true)\n"
-            + "        [IO.File]::SetLastWriteTimeUtc($dest, [datetime]::UtcNow)\n"
-            + "    }\n"
-            + "    exit " + shardExit.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n"
-            + "}\n"
-            + "exit " + buildExit.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n";
+        var slotLog = Path.Combine(repo.ReceiptRoot, tip, "slot.log");
+        var logText = File.Exists(slotLog) ? await File.ReadAllTextAsync(slotLog) : "";
+        return new RealSlotRun(receipt, markerText, logText);
     }
 
     private sealed class RealSlotRun
     {
-        internal RealSlotRun(JsonDocument receipt, string marker)
+        internal RealSlotRun(JsonDocument receipt, string marker, string slotLog)
         {
             Receipt = receipt;
             Marker = marker;
+            SlotLog = slotLog;
         }
 
         internal JsonDocument Receipt { get; }
         internal string Marker { get; }
+        internal string SlotLog { get; }
     }
 
     private static string Trx(params (string ClassName, string Method, string Outcome)[] rows)
@@ -897,9 +845,57 @@ public sealed class PostLandEarlyWarningTests
         return count;
     }
 
+    /// <summary>
+    /// The impacted-classes selector's contract over the fixture's table: every kind with a glob that matches a
+    /// changed path selects its classes (a "windows": "only" kind for the Windows lane alone), and the classes of
+    /// "required" or "only" kinds form one Windows treenode filter.
+    /// </summary>
+    private static PostLandSelection TableSelector(PostLandSelectorRequest request)
+    {
+        var selection = new PostLandSelection { Ok = true };
+        if (string.IsNullOrWhiteSpace(request.Table) || !File.Exists(request.Table))
+            return selection;
+        using var table = JsonDocument.Parse(File.ReadAllText(request.Table));
+        var classes = new SortedSet<string>(StringComparer.Ordinal);
+        var windows = new SortedSet<string>(StringComparer.Ordinal);
+        if (!table.RootElement.TryGetProperty("kinds", out var kinds))
+            return selection;
+        foreach (var kind in kinds.EnumerateArray())
+        {
+            var globs = Texts(kind, "globs").Select(Glob).ToArray();
+            if (!request.ChangedPaths.Any(path => globs.Any(glob => glob.IsMatch(path))))
+                continue;
+            var lane = kind.TryGetProperty("windows", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            foreach (var name in Texts(kind, "classes"))
+            {
+                if (lane != "only")
+                    classes.Add(name);
+                if (lane is "required" or "only")
+                    windows.Add(name);
+            }
+        }
+
+        selection.Classes.AddRange(classes);
+        if (windows.Count > 0)
+            selection.WindowsFilters.Add(PostLandEarlyWarning.ClassFilter(windows));
+        return selection;
+    }
+
+    private static IEnumerable<string> Texts(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!).ToArray()
+            : Array.Empty<string>();
+
+    private static Regex Glob(string glob) =>
+        new("^" + Regex.Escape(glob).Replace(@"\*\*", ".*").Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]") + "$", RegexOptions.CultureInvariant);
+
+    private static StreamWriter Appender(string path) =>
+        new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete), new UTF8Encoding(false)) { AutoFlush = true };
+
     private class Fixture : IDisposable
     {
         private readonly bool _deleteRepo;
+        private readonly List<Task<int>> _lanes = new();
 
         internal Fixture(string repo, string receiptRoot, bool deleteRepo)
         {
@@ -911,6 +907,15 @@ public sealed class PostLandEarlyWarningTests
 
         internal string Repo { get; }
         internal string ReceiptRoot { get; }
+
+        internal int LaneCount
+        {
+            get
+            {
+                lock (_lanes)
+                    return _lanes.Count;
+            }
+        }
 
         internal static Fixture Create()
         {
@@ -983,61 +988,71 @@ public sealed class PostLandEarlyWarningTests
             PlanAsync(fileList, new string('1', 40) + ".." + new string('2', 40));
 
         internal Task<PlanResult> PlanAsync(string fileList, string range, bool force = false) =>
-            WaitAsync(StartPostLandEarlyWarning(plan: true, range: range, fileList: fileList, force: force));
+            RunAsync(plan: true, range: range, fileList: fileList, force: force);
 
         internal Task<PlanResult> PlanRangeAsync(string range) =>
-            WaitAsync(StartPostLandEarlyWarning(plan: true, range: range, fileList: null));
+            RunAsync(plan: true, range: range, fileList: null);
 
-        internal ProcessStartInfo StartPostLandEarlyWarning(bool plan, string range, string? fileList, bool force = false)
+        /// <summary>
+        /// The seams as the CLI reads them (the POST_LAND_WARNING_* names), the selector over the fixture's table, and
+        /// an in-process launcher for the detached lane that writes the lane's logs as the CLI's --child does.
+        /// </summary>
+        internal PostLandSettings Settings(IReadOnlyDictionary<string, string>? env, IReadOnlyList<string>? slot)
         {
-            var start = new ProcessStartInfo("pwsh")
+            var settings = PostLandSettings.FromEnvironment(
+                name => env != null && env.TryGetValue(name, out var value) ? value : null,
+                DelegateScriptRunner.RepoRoot);
+            settings.Selector = TableSelector;
+            if (slot != null)
+                settings.SlotCommand = slot;
+            settings.LaunchChild = launch =>
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = Repo,
+                var lane = Task.Run(() =>
+                {
+                    CultureInfo.CurrentCulture = WarningCulture;
+                    using var stdout = Appender(launch.StdoutLog);
+                    using var stderr = Appender(launch.StderrLog);
+                    return PostLandEarlyWarning.Run(launch.Options, settings, stdout, stderr);
+                });
+                lock (_lanes)
+                    _lanes.Add(lane);
             };
-            start.ArgumentList.Add("-NoProfile");
-            start.ArgumentList.Add("-NonInteractive");
-            start.ArgumentList.Add("-File");
-            start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "post-land-early-warning.ps1"));
-            if (plan)
-                start.ArgumentList.Add("-Plan");
-            if (force)
-                start.ArgumentList.Add("-Force");
-            start.ArgumentList.Add("-Range");
-            start.ArgumentList.Add(range);
-            start.ArgumentList.Add("-Repo");
-            start.ArgumentList.Add(Repo);
-            start.ArgumentList.Add("-ReceiptRoot");
-            start.ArgumentList.Add(ReceiptRoot);
-            if (!string.IsNullOrEmpty(fileList))
-            {
-                start.ArgumentList.Add("-FileList");
-                start.ArgumentList.Add(fileList);
-            }
-
-            var table = Path.Combine(Repo, "tests", "impacted-classes.json");
-            if (File.Exists(table))
-            {
-                start.ArgumentList.Add("-Table");
-                start.ArgumentList.Add(table);
-            }
-
-            start.Environment["POST_LAND_WARNING_CULTURE"] = WarningCulture;
-            return start;
+            return settings;
         }
 
-        internal async Task<PlanResult> WaitAsync(ProcessStartInfo start)
+        /// <summary>antiphon-scripts post-land-early-warning in-process: the same options, -Table when the fixture has one.</summary>
+        internal Task<PlanResult> RunAsync(bool plan, string range, string? fileList, bool force = false,
+            IReadOnlyDictionary<string, string>? env = null, IReadOnlyList<string>? slot = null)
         {
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-            await process.WaitForExitAsync(timeout.Token);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-            return PlanResult.Parse(process.ExitCode, stdout, stderr);
+            var table = Path.Combine(Repo, "tests", "impacted-classes.json");
+            var options = new PostLandOptions
+            {
+                Plan = plan,
+                Force = force,
+                Range = range,
+                Repo = Repo,
+                ReceiptRoot = ReceiptRoot,
+                FileList = string.IsNullOrEmpty(fileList) ? null : fileList,
+                Table = File.Exists(table) ? table : null,
+            };
+            var settings = Settings(env, slot);
+            return Task.Run(() =>
+            {
+                CultureInfo.CurrentCulture = WarningCulture;
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
+                var exit = PostLandEarlyWarning.Run(options, settings, stdout, stderr);
+                return PlanResult.Parse(exit, stdout.ToString(), stderr.ToString());
+            });
+        }
+
+        /// <summary>Waits for every detached lane this fixture started; a lane that threw fails the test.</summary>
+        internal async Task WaitLanesAsync(TimeSpan budget)
+        {
+            Task<int>[] lanes;
+            lock (_lanes)
+                lanes = _lanes.ToArray();
+            await Task.WhenAll(lanes).WaitAsync(budget);
         }
 
         public void Dispose()
@@ -1097,16 +1112,12 @@ public sealed class PostLandEarlyWarningTests
             return shown.Trim();
         }
 
-        internal async Task<PlanResult> RunDetachedAsync(string range, string fileList, Dictionary<string, string> env)
-        {
-            var start = StartPostLandEarlyWarning(plan: false, range: range, fileList: fileList);
-            foreach (var pair in env)
-                start.Environment[pair.Key] = pair.Value;
-            return await WaitAsync(start);
-        }
+        internal Task<PlanResult> RunDetachedAsync(string range, string fileList, Dictionary<string, string> env, IReadOnlyList<string>? slot = null) =>
+            RunAsync(plan: false, range: range, fileList: fileList, env: env, slot: slot);
 
         internal async Task<JsonDocument> WaitReceiptAsync(string tip, TimeSpan budget)
         {
+            await WaitLanesAsync(budget);
             var path = Path.Combine(ReceiptRoot, tip + ".json");
             var lockPath = Path.Combine(ReceiptRoot, "lock.json");
             var deadline = DateTime.UtcNow + budget;
@@ -1122,6 +1133,7 @@ public sealed class PostLandEarlyWarningTests
 
         internal async Task WaitUnlockedAsync(TimeSpan budget)
         {
+            await WaitLanesAsync(budget);
             var lockPath = Path.Combine(ReceiptRoot, "lock.json");
             var deadline = DateTime.UtcNow + budget;
             while (DateTime.UtcNow < deadline)

@@ -24,11 +24,13 @@ namespace Antiphon.Scripts
             // The rc ledger commands answer every input themselves: exit 0 done, 1 refused (one stderr line), 2 usage.
             if (args.Length >= 1 && args[0] == "rc-ledger-stamp") return RcLedgerStamp(args);
             if (args.Length >= 1 && (args[0] == "rc-ledger-import" || args[0] == "rc-ledger-plan" || args[0] == "rc-ledger-status" || args[0] == "rc-input-census")) return RcLedgerCommand(args);
+            // The post-land early warning answers every input itself: exit 0/1 outcome, 2 refused or usage, 3 not Linux.
+            if (args.Length >= 1 && args[0] == PostLandCommand.Name) return PostLandCommand.Run(args);
             try
             {
                 if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
                 Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage);
+                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage);
                 return Usage;
             }
             catch (NotHandledException e)
@@ -52,7 +54,7 @@ namespace Antiphon.Scripts
             + " | rc-input-census [--repository <dir>] [--emit-rows] [--scan-only]";
 
         // --name value flags (and bare switches) into a map; a repeated, unknown or valueless flag is malformed.
-        private static System.Collections.Generic.Dictionary<string, string> Flags(string[] args, string[] valued, string[] switches)
+        internal static System.Collections.Generic.Dictionary<string, string> Flags(string[] args, string[] valued, string[] switches)
         {
             var flags = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
             for (var i = 1; i < args.Length; i++)

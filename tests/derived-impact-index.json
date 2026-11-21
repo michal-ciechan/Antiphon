@@ -27548,12 +27548,6 @@
       ]
     },
     {
-      "path": "tools/Antiphon.NativeLinuxMigrationAudit/Antiphon.NativeLinuxMigrationAudit.csproj",
-      "classes": [
-        "RcInputOwnersMapTests"
-      ]
-    },
-    {
       "path": "verify-dev-stack.ps1",
       "classes": [
         "VerifyDevStackSmokeTests"

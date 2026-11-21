@@ -8,6 +8,8 @@ var cacheProbe = Environment.GetEnvironmentVariable(Antiphon.Hosting.PwshPrivate
 if (!string.IsNullOrWhiteSpace(cacheProbe))
     return Antiphon.Hosting.PwshPrivateCache.CompleteProbe(cacheProbe);
 
+if (args.Length >= 5 && args[0] == "post-land-slot")
+    return PostLandSlot(args);
 if (args.Length >= 3 && args[0] == "fixture-child")
     return await FixtureChild(args[1], args[2]);
 if (args.Length >= 3 && args[0] == "fixture-grandchild")
@@ -172,6 +174,34 @@ static async Task<int> FixtureGrandchild(string directory, string heldStream)
     PublishIdentity(directory, "grandchild");
     await Task.Delay(TimeSpan.FromSeconds(20));
     return 0;
+}
+
+// A fake build slot for PostLandEarlyWarningTests: post-land-slot <marker> <trx> <build-exit> <shard-exit> -Label <label>
+// -- <command...>. It prints the slot's lines, appends its arguments to the marker, copies the TRX to a --no-build
+// command's --results-directory/--report-trx-filename, and exits with the shard or the build exit.
+static int PostLandSlot(string[] args)
+{
+    var marker = args[1];
+    var trxSource = args[2];
+    var rest = args.Skip(5).ToArray();
+    Console.WriteLine("BUILD SLOT granted");
+    Console.WriteLine("Build succeeded.");
+    File.AppendAllText(marker, string.Join("\n", rest) + "\n");
+    string results = "", fileName = "";
+    for (var i = 0; i + 1 < rest.Length; i++)
+    {
+        if (rest[i] == "--results-directory") results = rest[i + 1];
+        if (rest[i] == "--report-trx-filename") fileName = rest[i + 1];
+    }
+    if (!rest.Contains("--no-build")) return int.Parse(args[3], CultureInfo.InvariantCulture);
+    if (results.Length > 0 && fileName.Length > 0)
+    {
+        Directory.CreateDirectory(results);
+        var destination = Path.Combine(results, fileName);
+        File.Copy(trxSource, destination, true);
+        File.SetLastWriteTimeUtc(destination, DateTime.UtcNow);
+    }
+    return int.Parse(args[4], CultureInfo.InvariantCulture);
 }
 
 static void PublishIdentity(string directory, string name)
