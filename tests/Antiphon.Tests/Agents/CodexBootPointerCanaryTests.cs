@@ -37,14 +37,14 @@ public sealed class CodexBootPointerCanaryTests
         var evidence = Path.GetFullPath(Path.Combine(".antiphon", "evidence", "card-2046", sessionId.ToString("N")));
         var queueLog = new RecordingLogger<SessionMessageQueueService>();
         var readyLog = new RecordingLogger<RunnerCodexAdapter>();
-        var generations = new List<string>();
+        var observations = new List<string>();
         var snapshots = new Dictionary<string, SessionRunnerSnapshotDto>();
         string[] writes = [];
 
         try
         {
             var cwd = Directory.CreateDirectory(Path.Combine(root, "workspace")).FullName;
-            var task = new AgentTask { Id = Guid.NewGuid(), Role = AgentTaskRole.Code, Title = "Codex boot canary" };
+            var task = new AgentTask { Id = Guid.NewGuid(), Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, Title = "Codex boot canary" };
             var briefPath = $".antiphon/inbox/{task.Id:D}.md";
             Directory.CreateDirectory(Path.Combine(cwd, ".antiphon", "inbox"));
             var brief = "Reply with the local stub response. No files need changing.";
@@ -85,8 +85,8 @@ public sealed class CodexBootPointerCanaryTests
             await adapter.StartAsync(spec, ct);
             var started = await client.GetAsync(sessionId, ct);
             var backend = client.ActualBackend;
-            generations.Add($"model={model} backend={backend} generation={generation:o}");
-            started.Status.ShouldBe(SessionStatus.Running);
+            observations.Add($"model={model} backend={backend} generation={generation:o}");
+            started.Status.ShouldBe("Running");
             started.Backend.ShouldBe(SessionBackends.PtyHost);
             backend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty);
             try
@@ -123,14 +123,14 @@ public sealed class CodexBootPointerCanaryTests
                 var queue = provider.GetRequiredService<SessionMessageQueueService>();
                 var delivery = await queue.EnqueueAsync(sessionId, pointer, MessageSendMode.WhenIdle, ct,
                     origin: QueuedMessageOrigin.Delegation);
-                writes = client.BackendWrites.Select(write => write.Input).ToArray();
+                var actualWrites = client.BackendWrites.Select(write => write.Input).ToArray();
 
                 var milestones = PointerMilestones(queueLog);
                 milestones.ShouldContain("write-return", "the production pointer path must write the formatted brief pointer");
                 milestones.ShouldContain("whole-composer", "the production pointer path must recognize whole consumption before Enter");
                 milestones.Where(m => m is "write-start" or "whole-composer" or "enter")
                     .ShouldBe(["write-start", "whole-composer", "enter"]);
-                writes.SkipWhile(input => input != expectedWrite).ShouldBe([expectedWrite, "\r"]);
+                actualWrites.SkipWhile(input => input != expectedWrite).ShouldBe([expectedWrite, "\r"]);
                 delivery.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
                 var transcript = await client.GetTranscriptAsync(sessionId, ct);
                 transcript.Entries.Where(entry => entry.Kind == TranscriptKinds.UserPrompt)
@@ -144,11 +144,12 @@ public sealed class CodexBootPointerCanaryTests
                         $"the loopback stub must receive POST /v1/responses with the entire pointer and model={model}");
                     await Task.Delay(50, ct);
                 }
-                generations.Add($"responses model={model} whole-pointer=true");
+                observations.Add($"responses model={model} whole-pointer=true");
             }
             finally
             {
                 writes = client.BackendWrites.Select(write => write.Input).ToArray();
+                client.SnapshotObserved = null;
                 snapshots["last"] = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
             }
         }
@@ -161,7 +162,7 @@ public sealed class CodexBootPointerCanaryTests
                 await File.WriteAllTextAsync(Path.Combine(evidence, name + ".ansi.txt"), snapshot.RawOutput);
             }
             await File.WriteAllLinesAsync(Path.Combine(evidence, "milestones.txt"),
-                generations.Concat(readyLog.Entries.Select(entry => entry.Message))
+                observations.Concat(readyLog.Entries.Select(entry => entry.Message))
                     .Concat(PointerMilestones(queueLog)).Append($"backend-writes={writes.Length}"));
             Console.WriteLine($"CARD-2046 model={model} evidence={evidence}");
             RealCliStubBServerHarness.TryDelete(root);

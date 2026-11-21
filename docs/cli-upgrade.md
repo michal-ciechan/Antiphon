@@ -149,27 +149,30 @@ scripts/build-slot.ps1 -Label <what> -- <command>`); see
 2. **Alias and ladder tests** (`Antiphon.Tests`), when a slug or floor changes:
    `CodexGpt62LadderTests`, `ModelAliasTests`, `CodexDelegateDispatchTests`,
    `CodexCliObservationTests`, and `CodexRunnerImageContractTests` for the image pin.
-3. **Real-CLI boot tests** against the new binary. These are the only tests that type a real
-   pointer into the real TUI. Today they are `[Explicit]`, Windows-gated by
-   `RealCliStubGate.SkipIfNotEligible` (`tests/Antiphon.Tests/Agents/RealCliStubGate.cs`), and
-   excluded from the rc profile (owner CARD-0599), so server2 and the rc never run them. They use a
-   stub provider (`FakeLlmApi`, `RealCliStubEnv.ForCodex`) and a per-run home; they do not read a
-   shared `auth.json`. Run them on the **desktop**, method by method:
+3. **Real-CLI boot canary** against the candidate binary. Run this in an isolated Linux
+   image environment with the repository test prerequisites and test Postgres fixture. The
+   same method runs on Windows with the modern ConPTY redistributable. It is an ordinary
+   Integration test in the rc roster.
 
    ```powershell
-   $env:ANTIPHON_REAL_CLI_STUB_TESTS = '1'
-   $env:ANTIPHON_CODEX_EXE = '<path to the new codex.cmd or codex.exe>'
-   pwsh -NoProfile -File scripts/build-slot.ps1 -Label codex-<ver>-c1521 -- dotnet run --project tests/Antiphon.Tests -- --treenode-filter "/*/*/CodexBootWedgeProbeTests/C1521_Cold_pointer_records_write_consume_enter_and_receipt"
+   $env:ANTIPHON_CODEX_EXE = '<absolute path to the candidate codex binary>'
+   $env:ANTIPHON_LINUX_COMPILER_POLICY = '0'
+   if (-not (Test-Path -LiteralPath $env:ANTIPHON_CODEX_EXE -PathType Leaf)) { throw 'Candidate Codex CLI is missing' }
+   & $env:ANTIPHON_CODEX_EXE --version
+   if ($LASTEXITCODE -ne 0) { throw 'Candidate Codex CLI did not report its version' }
+   # Set ANTIPHON_CODEX_CANARY_MODEL to the candidate slug when changing the ladder.
+   pwsh -NoProfile -File scripts/build-slot.ps1 -Label codex-boot-pointer -- dotnet run --project tests/Antiphon.Tests -p:UseAppHost=false -- --treenode-filter "/*/*/CodexBootPointerCanaryTests/Real_Codex_consumes_and_submits_the_boot_pointer" --report-trx
+   if ($LASTEXITCODE -ne 0) { throw 'Codex boot pointer canary failed' }
    ```
 
-   `C1521` waits ready, types one boot-brief pointer, requires
-   `CodexPointerComposerEvidence.IsComplete`, sends Enter and requires one `UserPrompt` plus the
-   stub body. Also run `CodexRealCliStubProxyCanaryTests` (exec path; it never draws the TUI
-   footer, so it cannot catch a chrome change). On Linux the same command **skips** with `Real-CLI
-   stub-proxy canaries require Windows` (exit 8, zero tests ran); a skip is not a pass. Do not run
-   `P1` (30 iterations, one-hour timeout) or `P3` as an upgrade gate. CARD-2046 will add a
-   Linux-capable, non-Explicit Integration canary for the image binary; until it lands, the desktop
-   run above is the only real-CLI pointer check.
+   Require one passed method in the fresh TRX. Record the version, model and screen evidence
+   path printed by the test. The production ready gate opens, the production queue types
+   and consumes a formatted boot pointer before its separate Enter, and a matching
+   transcript prompt and loopback Responses API request confirm delivery. The stub seeds
+   synthetic metadata in a fresh home. On a host without Codex, the roster records
+   `Codex CLI unavailable (ANTIPHON_CODEX_EXE or PATH); boot pointer canary skipped`.
+   The pre-rollout command requires the candidate executable and a pass.
+
 
 ## Step 3. Land, then cut or fast-forward the rc
 
@@ -401,7 +404,7 @@ CLI upgrade <kind> <old> -> <new>, target slug(s) <slugs>, operator ask <date>
 [ ] 1  fixtures saved with the version in the name + provenance; any derived grid labelled derived
 [ ] 2  red test committed first; readiness+composer classes green on the measured captures (count: __)
 [ ] 2  alias/ladder/image-contract classes green (count: __)
-[ ] 2  desktop real-CLI C1521 run with ANTIPHON_REAL_CLI_STUB_TESTS=1 + ANTIPHON_CODEX_EXE (pass/skip: __)
+[ ] 2  candidate-image real-CLI boot pointer canary passed (version: __, model: __, TRX/screens: __)
 [ ] 3  Review clean; landed to master; rc ported/cut; rc tip __
 [ ] 4  server2: check-census, check-host-jq, cache prep, deploy-temp (id unchanged), smoke temp uid 1654 = codex-cli <new>,
        drain-old, redeploy-old (zero counters), smoke old + Both, drain-temp, retire-temp preview + apply
