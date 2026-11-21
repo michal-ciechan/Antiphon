@@ -69,7 +69,7 @@ public sealed class VolumeRetirementCloseExemptionTests
             if [ "$pending" = 1 ]; then printf '{}\n' > "$dir/close-pending.json"; fi
             sha256sum "$dir/lifecycle.json" | cut -d" " -f1 > "$dir/lifecycle.sha"
         }
-        write_sibling c1008bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb false 0 0
+        write_sibling c1008bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb false 0 0
         case "$MODE" in
             exempt) write_sibling c1008cccccccccccccccccccccccccccccccc false 0 0 ;;
             ready) write_sibling c1008cccccccccccccccccccccccccccccccc true 0 0 ;;
@@ -95,7 +95,7 @@ public sealed class VolumeRetirementCloseExemptionTests
             printf 'CLOSURE=absent\n'
         fi
         stable=1
-        for id in c1008bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb c1008cccccccccccccccccccccccccccccccc; do
+        for id in c1008bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb c1008cccccccccccccccccccccccccccccccc; do
             dir="$SERVER2_ROOT/retirement/$id"
             [ "$(sha256sum "$dir/lifecycle.json" | cut -d" " -f1)" = "$(cat "$dir/lifecycle.sha")" ] || stable=0
             [ ! -e "$dir/receipt.json" ] && [ ! -L "$dir/receipt.json" ] || stable=0
