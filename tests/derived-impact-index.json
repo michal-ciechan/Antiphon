@@ -63,34 +63,34 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 84,
+      "classes": 85,
       "reason": "cap",
-      "owed": 59,
+      "owed": 60,
       "first": [
+        "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
         "AgentTaskLandVerifierTests",
         "AgentTaskServiceIntegrationTests",
         "AgentTaskWorktreeBaseCreateTests",
         "AgentTaskWorktreeBaseResolverTests",
-        "AgentTaskWorktreeBaseSyncDebtTests",
-        "C0824DesktopLegacyReleasePolicyTests"
+        "AgentTaskWorktreeBaseSyncDebtTests"
       ]
     },
     {
       "path": ".gitignore",
-      "classes": 157,
+      "classes": 159,
       "reason": "cap",
-      "owed": 132,
+      "owed": 134,
       "first": [
+        "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "NightlyCoreGoldenTests",
-        "ReportBudgetWorkspacePortabilityTests",
-        "WorkspaceParkPublicationTests"
+        "ReportBudgetWorkspacePortabilityTests"
       ]
     },
     {
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 344,
+      "classes": 347,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 16,
+      "classes": 18,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 11,
+      "classes": 13,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 15,
+      "classes": 16,
       "reason": "allowlist"
     },
     {
@@ -291,34 +291,50 @@
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.Ceiling.cs",
-      "classes": 84,
+      "classes": 85,
       "reason": "cap",
-      "owed": 59,
+      "owed": 60,
       "first": [
+        "CodexDelegateDispatchTests",
         "DispatchConcurrencyAdmissionTests",
+        "MatrixDefaultComplexityCreateTests",
         "PinnedAgentKindTests",
         "TaskCeilingCreateBindingTests",
-        "MatrixDefaultComplexityCreateTests",
         "ModelAvailabilityManualTests",
         "WorktreeRetirementRaceTests",
+        "BlockedTaskParkDeliveryTests"
+      ]
+    },
+    {
+      "path": "server/Application/Dtos/AgentTaskDtos.Model.cs",
+      "classes": 82,
+      "reason": "cap",
+      "owed": 57,
+      "first": [
+        "ModelAvailabilityManualTests",
+        "RolePolicyInvalidValuesCreateTests",
+        "RunnerDefaultsWireTests",
+        "TaskCeilingCreateBindingTests",
+        "WorktreeRetirementRaceTests",
         "BlockedTaskParkDeliveryTests",
-        "C0824RefOnlyConsumerTests"
+        "C0824RefOnlyConsumerTests",
+        "C0824WorkspaceSlotServerTests"
       ]
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.cs",
-      "classes": 99,
+      "classes": 100,
       "reason": "cap",
-      "owed": 74,
+      "owed": 75,
       "first": [
         "WorktreeDefaultContinuationTests",
         "AdvisoryChangePolicyTests",
         "AgentTaskCheckScheduleTests",
         "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
         "DispatchConcurrencyAdmissionTests",
-        "PinnedAgentKindTests",
-        "BlockedTaskParkDeliveryTests",
-        "MatrixDefaultComplexityCreateTests"
+        "MatrixDefaultComplexityCreateTests",
+        "PinnedAgentKindTests"
       ]
     },
     {
@@ -439,18 +455,18 @@
     },
     {
       "path": "server/Application/Exceptions/ValidationException.cs",
-      "classes": 100,
+      "classes": 102,
       "reason": "cap",
-      "owed": 75,
+      "owed": 77,
       "first": [
+        "RoutingPinServiceTests",
         "StartRefAvailabilityTests",
         "WorktreeDefaultContinuationTests",
         "WorktreeStartRefDispatchTests",
         "AgentTaskCallerResolutionTests",
         "AgentTaskWorktreeBaseCreateTests",
         "ApiKeyStoreTests",
-        "BlockedTaskParkDeliveryTests",
-        "RepairSourceDispatchTests"
+        "BlockedTaskParkDeliveryTests"
       ]
     },
     {
@@ -471,9 +487,9 @@
     },
     {
       "path": "server/Application/Interfaces/ISessionRunnerDirectory.cs",
-      "classes": 48,
+      "classes": 49,
       "reason": "cap",
-      "owed": 23,
+      "owed": 24,
       "first": [
         "SeatOccupancySamplerTests",
         "C1514HostLoadHistoryTests",
@@ -711,18 +727,18 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandService.cs",
-      "classes": 34,
+      "classes": 36,
       "reason": "cap",
-      "owed": 9,
+      "owed": 11,
       "first": [
+        "C0824RefOnlyProducerLifecycleTests",
         "CheckpointSourceApprovalTests",
         "DispatchHeldAttentionTests",
         "LandRestartReplayTests",
         "RepositoryLeaseWaitersWiringTests",
         "RunnerTaskSettlementTests",
         "WorktreeResiduePublicationLaneTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -763,14 +779,14 @@
       "reason": "cap",
       "owed": 182,
       "first": [
+        "DefaultRunnerRerouteTests",
+        "HeldStandingAgentChainTests",
         "ModelAvailabilityManualTests",
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
         "AgentTaskCallerResolutionTests",
         "ChannelOutboundIsolatedTests",
-        "ComplexityCreateTests",
-        "DispatchConcurrencyAdmissionTests",
-        "HeldStandingAgentChainTests"
+        "ComplexityCreateTests"
       ]
     },
     {
@@ -1041,18 +1057,18 @@
     },
     {
       "path": "server/Application/Services/ModelAvailability.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "ModelAvailabilityCreateTests",
         "ModelAvailabilityManualTests",
         "ProviderQuotaRefusalAcceptanceTests",
         "AgentControlServiceIntegrationTests",
         "AgentSupervisionTests",
         "AgentTaskReplyIntegrationTests",
         "CapacityRecoveryRefusalTests",
-        "CapacityRecoveryTaskTests",
-        "ChannelBridgeTests"
+        "CapacityRecoveryTaskTests"
       ]
     },
     {
@@ -1372,14 +1388,14 @@
       "reason": "cap",
       "owed": 171,
       "first": [
+        "AgentTaskDeliveryWatchdogTests",
         "ChannelOutboundIsolatedTests",
         "CodexCliObservationTests",
-        "CodexDelegateDispatchTests",
+        "ComplexityDispatcherTests",
         "ContextCompactionSettingsTests",
         "GrokDelegateDispatchTests",
         "HerdrLaunchContextTitleTests",
-        "KanbanPersistenceTests",
-        "PoolProviderProjectionStampTests"
+        "KanbanPersistenceTests"
       ]
     },
     {
@@ -1416,18 +1432,18 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 427,
+      "classes": 428,
       "reason": "cap",
-      "owed": 402,
+      "owed": 403,
       "first": [
+        "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
         "DispatchHeldAttentionTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "SessionStatePinQueryTests",
         "TaskInputAttentionCostTests",
-        "TerminalRunnerSeatReleaseTests",
-        "AgentTaskCheckSweepTests"
+        "TerminalRunnerSeatReleaseTests"
       ]
     },
     {
@@ -1554,18 +1570,18 @@
     },
     {
       "path": "server/Domain/Entities/ModelAvailabilityHold.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
+        "DefaultRunnerPinTests",
         "DefaultRunnerRerouteTests",
         "DelegationCapabilityTests",
         "HeldModelEscalationTests",
         "HeldStandingAgentChainTests",
         "MatrixDefaultComplexityCreateTests",
         "ModelAvailabilityDispatcherTests",
-        "ModelAvailabilityHttpTests",
-        "PolicyRefreshServiceTests"
+        "ModelAvailabilityHttpTests"
       ]
     },
     {
@@ -1646,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 610,
+      "classes": 613,
       "reason": "cap",
-      "owed": 585,
+      "owed": 588,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1662,9 +1678,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 610,
+      "classes": 613,
       "reason": "cap",
-      "owed": 585,
+      "owed": 588,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,18 +1694,18 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
+        "LandNonCodeSkipTests",
         "RunnerSettlementSyncTests",
         "AgentTaskLandVerifierTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "RepairSourceDispatchTests",
         "RepositoryMutationLeaseDescribeTests",
         "RunnerAlarmDeliveryTests",
-        "RunnerStateAlarmExclusionTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "RunnerStateAlarmExclusionTests"
       ]
     },
     {
@@ -2056,9 +2072,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 139,
+      "classes": 140,
       "reason": "cap",
-      "owed": 114,
+      "owed": 115,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2072,44 +2088,45 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
+        "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 87,
+      "classes": 88,
       "reason": "cap",
-      "owed": 62,
+      "owed": 63,
       "first": [
+        "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
-        "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests"
+        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 90,
+      "classes": 91,
       "reason": "cap",
-      "owed": 65,
+      "owed": 66,
       "first": [
+        "CheckpointIndexPathsTests",
         "CheckpointInheritedFileTests",
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
-        "CheckpointOrFilterTests",
-        "CheckpointOutputConfinementTests"
+        "CheckpointOrFilterTests"
       ]
     },
     {
@@ -2130,18 +2147,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
         "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
-        "ZombieCensusPlatformTests",
-        "DirectoryBuildRspTests"
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -2210,18 +2227,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 50,
+      "classes": 51,
       "reason": "cap",
-      "owed": 25,
+      "owed": 26,
       "first": [
+        "CheckpointRecoveryLinuxTests",
         "CheckpointRecoveryWindowsTests",
         "CheckpointScriptReaderDeadlineTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
         "CheckpointShapeConflictTests",
         "CheckpointSlotExecutorTests",
-        "CheckpointSourceGitBoundsTests",
-        "CheckpointSourceStateTests"
+        "CheckpointSourceGitBoundsTests"
       ]
     },
     {
@@ -2341,8 +2358,8 @@
         "BoardProjectArchiveTests",
         "CardWorkTransitionServiceTests",
         "CodexCliObservationTests",
-        "ExternalTrackerSyncIdentifierTests",
-        "PipelineSpeedIntegrationTests"
+        "CodexDelegateDispatchTests",
+        "ExternalTrackerSyncIdentifierTests"
       ]
     },
     {
@@ -2367,9 +2384,9 @@
       "reason": "cap",
       "owed": 113,
       "first": [
+        "ChannelOutboundDispatchIntegrationTests",
         "ClaudeEffortByRoleDispatchTests",
         "ClosedCardSweepTests",
-        "CodexDelegateDispatchTests",
         "ComplexityDispatcherTests",
         "DefaultRunnerPinTests",
         "LaunchEnvLayersIntegrationTests",
@@ -2379,9 +2396,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/ScratchGitRepo.cs",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "AgentTaskServiceIntegrationTests",
         "CardFileGitFailureAcceptanceTests",
@@ -2395,18 +2412,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 526,
+      "classes": 528,
       "reason": "cap",
-      "owed": 501,
+      "owed": 503,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
         "AgentTaskLandMonitoringTests",
+        "AgentTaskPoolTests",
+        "ComplexityDispatcherTests",
         "DefaultRunnerRerouteTests",
         "AgentTaskCardBindingTests",
-        "PhoneHomeQueuedTurnTests",
-        "AgentTaskConcurrencyLimitTests",
-        "AgentTaskLandApprovalRequestTests"
+        "PhoneHomeQueuedTurnTests"
       ]
     }
   ],
@@ -2523,13 +2540,13 @@
         "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandCheckpointWorkerTests",
         "AgentTaskLandRecoveryTests",
-        "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskReplyIntegrationTests",
         "C0824RefOnlyConsumerTests",
         "CardTaskFileServiceTests",
         "CompletedCardWorkspaceRemovalTests",
         "InternalDecisionPolicyTests",
         "LandGraphEvaluationTests",
+        "LandNonCodeSkipTests",
         "LandRecoveryCheckoutTests",
         "LibGit2VsGitWorkingTreeVerdictTests",
         "ReleaseImpactEnvelopeTests",
@@ -2556,10 +2573,10 @@
         "CardFilePrivacyGitTests",
         "CardFilePrivacyOwnershipAcceptanceTests",
         "CardFilePrivacyOwnershipTests",
-        "CardFilePrivacyPersistenceTests",
         "CardFilePrivacySyncAcceptanceTests",
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
+        "CheckpointFixtureGitEnvironmentTests",
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
@@ -2608,7 +2625,8 @@
     {
       "path": "Antiphon.AppHost/Antiphon.AppHost.csproj",
       "classes": [
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -2673,7 +2691,8 @@
         "DockerStackContractTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
-        "ServerImagePushCredentialTests"
+        "ServerImagePushCredentialTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -2801,7 +2820,8 @@
       "path": "dev-aspire.ps1",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -3476,7 +3496,8 @@
       "path": "scripts/apphost-common.ps1",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -3559,6 +3580,7 @@
       "classes": [
         "DockerStackDocumentationTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
@@ -3602,6 +3624,7 @@
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
@@ -3623,6 +3646,7 @@
         "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
@@ -4000,7 +4024,8 @@
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
         "LandNonCodeSkipTests",
-        "ReleaseImpactEvaluationTests"
+        "ReleaseImpactEvaluationTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4021,7 +4046,8 @@
       "classes": [
         "ImpactedClassesSelectorTests",
         "ReleaseImpactScriptTests",
-        "SelectorLineEndingAttributeTests"
+        "SelectorLineEndingAttributeTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4039,7 +4065,8 @@
     {
       "path": "scripts/lib/nightly-tests-impl.ps1",
       "classes": [
-        "RcRunEvidenceTests"
+        "RcRunEvidenceTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4121,6 +4148,18 @@
       ]
     },
     {
+      "path": "scripts/regenerate-derived-impact-index.ps1",
+      "classes": [
+        "LandGeneratedArtifactTests"
+      ]
+    },
+    {
+      "path": "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj",
+      "classes": [
+        "LandGeneratedArtifactTests"
+      ]
+    },
+    {
       "path": "scripts/remove-review-scratch.ps1",
       "classes": [
         "OwnedTempLeakTests"
@@ -4131,7 +4170,8 @@
       "classes": [
         "DockerStackDocumentationTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4146,6 +4186,7 @@
     {
       "path": "scripts/retire-runner-volumes.ps1",
       "classes": [
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementWrapperTests"
       ]
     },
@@ -4153,6 +4194,12 @@
       "path": "scripts/run-checkpoint.ps1",
       "classes": [
         "CheckpointColdBuildTests"
+      ]
+    },
+    {
+      "path": "scripts/run-daemon.ps1",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4187,6 +4234,12 @@
       "classes": [
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/start-windows-phone-home-runner.ps1",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4544,16 +4597,19 @@
     {
       "path": "server/Application/Core/ModelAlias.cs",
       "classes": [
+        "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
         "CheckCompactionAutomaticRestartTests",
+        "CodexDelegateDispatchTests",
         "CodexGpt62LadderTests",
         "ComplexityDispatcherTests",
         "DelegationCapabilityTests",
         "HeldModelEscalationTests",
         "HeldStandingAgentChainTests",
         "HerdrSupervisionBackoffTests",
+        "MatrixDefaultComplexityCreateTests",
         "ModelAliasTests",
         "ModelAvailabilityCreateTests",
         "ModelAvailabilityTests",
@@ -4831,6 +4887,36 @@
         "RoutingPinCreateTests",
         "RunnerDefaultPlacementTests",
         "RunnerDefaultsWireTests",
+        "TaskPlatformPlacementTests",
+        "WorktreeDefaultAdmissionTests",
+        "WorktreeDefaultContinuationTests",
+        "WorktreeStartRefDispatchTests"
+      ]
+    },
+    {
+      "path": "server/Application/Dtos/AgentTaskDtos.Model.cs",
+      "classes": [
+        "AgentNamePinTests",
+        "AgentTaskAgentKindTests",
+        "AgentTaskCheckScheduleTests",
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskServiceIntegrationTests",
+        "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
+        "ComplexityCreateTests",
+        "DefaultRunnerCreateTests",
+        "DefaultRunnerPinTests",
+        "LaunchEnvLayersIntegrationTests",
+        "MatrixDefaultComplexityCreateTests",
+        "ModelAvailabilityCreateTests",
+        "MutationAdmissionTests",
+        "PinnedAgentKindTests",
+        "RemotePoolFollowUpAdmissionTests",
+        "RepairSourceDispatchTests",
+        "RolePolicyToolBundleDispatchTests",
+        "RoutingPinCandidateCreateTests",
+        "RoutingPinCreateTests",
+        "RunnerDefaultPlacementTests",
         "TaskPlatformPlacementTests",
         "WorktreeDefaultAdmissionTests",
         "WorktreeDefaultContinuationTests",
@@ -5761,6 +5847,7 @@
       "classes": [
         "AgentControlServiceIntegrationTests",
         "CapacityRecoveryRefusalTests",
+        "CodexDelegateDispatchTests",
         "ComplexityCreateTests",
         "ComplexityDispatcherTests",
         "DelegationCapabilityTests",
@@ -5929,6 +6016,7 @@
         "BlockedTaskParkReplyAdmissionTests",
         "CardCorrectionIntegrationTests",
         "CardReorderIntegrationTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainServiceTests",
         "DelegationCapabilityTests",
         "DispatchConcurrencySettingsTests",
@@ -5940,7 +6028,6 @@
         "PlanCatalogServiceTests",
         "ProviderEndpointProjectionTests",
         "RoutingPinCandidateTests",
-        "RoutingPinServiceTests",
         "WorkflowEngineParsingTests"
       ]
     },
@@ -7002,8 +7089,8 @@
         "AgentTaskLandVerificationEvidenceTests",
         "AgentTaskLandingStateTests",
         "AgentTaskWorktreeLockOutcomeTests",
-        "C0824RefOnlyProducerLifecycleTests",
         "DelegationWorktreeTests",
+        "LandGeneratedArtifactTests",
         "LandMergeWriterTests",
         "LandRequestWriteDiagnosticTests",
         "LandVerificationBuildSlotTests",
@@ -7157,8 +7244,8 @@
         "CapacityRecoveryRefusalTests",
         "ChannelOutboundDeadlineTests",
         "ChannelOutboundDeliveryTests",
+        "CodexDelegateDispatchTests",
         "DefaultRunnerPinTests",
-        "DefaultRunnerRerouteTests",
         "DelegationCapabilityTests",
         "LaunchEnvLayersIntegrationTests",
         "ModelAvailabilityCreateTests",
@@ -7189,6 +7276,7 @@
         "AgentTuiLaunchResolverTests",
         "ApiKeyLaunchPathTests",
         "CardSpawnModelArgumentTests",
+        "CodexCliObservationTests",
         "LaunchEnvLayersIntegrationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
@@ -7203,6 +7291,7 @@
         "AgentTaskStandingAgentDispatchTests",
         "AgentTuiLaunchResolverTests",
         "ApiKeyLaunchPathTests",
+        "CodexCliObservationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
         "RolePolicyToolBundleDispatchTests"
@@ -7242,6 +7331,7 @@
         "AgentTuiProfileImporterBackfillTests",
         "AgentTuiProfileServiceTests",
         "ApiKeyLaunchPathTests",
+        "CodexCliObservationTests",
         "ExpectationObservationAdapterTests",
         "ExpectationWatchdogJobTests",
         "PinnedCodexProfileDispatchLaunchTests",
@@ -8818,6 +8908,12 @@
       ]
     },
     {
+      "path": "server/Application/Services/DerivedImpactIndexRegen.cs",
+      "classes": [
+        "LandGeneratedArtifactTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/DesktopLaunchMemoryAdmission.cs",
       "classes": [
         "DesktopLaunchMemoryAdmissionTests"
@@ -9694,6 +9790,12 @@
       ]
     },
     {
+      "path": "server/Application/Services/LandVerificationPolicy.cs",
+      "classes": [
+        "LandNonCodeSkipTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/LandingVerifier.cs",
       "classes": [
         "AgentTaskLandRemoteSourceRetentionDTests",
@@ -9757,6 +9859,7 @@
         "ApiErrorRecoveryServiceTests",
         "ChannelOutboundDeadlineTests",
         "CodexCliObservationTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainRaceTests",
         "ComplexityChainRoleTests",
         "ComplexityChainServiceTests",
@@ -9771,7 +9874,6 @@
         "HeldStandingAgentChainTests",
         "MatrixDefaultComplexityCreateTests",
         "MatrixDefaultComplexityRoutingTests",
-        "ModelAvailabilityCreateTests",
         "ModelAvailabilityTests",
         "OrchestratorInstructionsRefreshTests",
         "RequiredSingleCandidateRefusalTests",
@@ -9791,6 +9893,7 @@
         "CodexCliObservationTests",
         "CodexDelegateDispatchTests",
         "CodexGpt62LadderTests",
+        "ComplexityDispatcherTests",
         "ComplexityRoutingComposeTests",
         "DelegationSequencingE2ETests",
         "InstructionBundleTests",
@@ -12948,7 +13051,6 @@
         "AgentBundleAttachmentTests",
         "AgentControlServiceIntegrationTests",
         "AgentTaskCardBindingTests",
-        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTuiLaunchResolverTests",
@@ -12960,6 +13062,7 @@
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundPolicyTests",
         "ChannelOutboundRecoveryTests",
+        "CodexDelegateDispatchTests",
         "CodexPhoneHomeProjectionTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrPlacementSettingsTests",
@@ -13144,7 +13247,6 @@
     {
       "path": "server/Domain/Entities/AgentTask.cs",
       "classes": [
-        "AgentTaskAutoTitleTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskConcurrencyLimitTests",
         "AgentTaskDeliveryWatchdogTests",
@@ -13158,6 +13260,7 @@
         "C0824RefOnlyIdentityTests",
         "CapacityAdmissionLifecycleTests",
         "CheckNoteDeliveryHandoffTests",
+        "ComplexityDispatcherTests",
         "DataRetentionServiceTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DispatchBaseNotificationTests",
@@ -14141,12 +14244,12 @@
         "ChannelInboundRecoveryTests",
         "ChannelOutboundDeadlineTests",
         "CheckCompactionAutomaticRestartTests",
+        "CodexDelegateDispatchTests",
         "ComplexityChainServiceTests",
         "ComplexityCreateTests",
         "ComplexityDispatcherTests",
         "ComplexityEffectiveHttpTests",
         "ComplexityRoutingWalkTests",
-        "DefaultRunnerPinTests",
         "HerdrSupervisionBackoffTests",
         "ModelAvailabilityCreateTests",
         "ModelAvailabilityManualTests",
@@ -14820,6 +14923,12 @@
         "InstructionFragmentTests",
         "MutationRoleContractTests",
         "SpecialistRoleContractTests"
+      ]
+    },
+    {
+      "path": "server/Domain/GitObjectId.cs",
+      "classes": [
+        "LandNonCodeSkipTests"
       ]
     },
     {
@@ -20607,6 +20716,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.ChannelOutbound.Probe/ProbeModelComparison.cs",
+      "classes": [
+        "ProbeModelComparisonTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj",
       "classes": [
         "HostCleanupCheckpointExtractionTests"
@@ -20869,6 +20984,7 @@
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
         "DispatchConcurrencyAdmissionTests",
+        "LandGeneratedArtifactTests",
         "RcDirtyLaunchOrderTests"
       ]
     },
@@ -21684,6 +21800,7 @@
     {
       "path": "tests/Antiphon.Tests/AgentTui/AgentTuiLaunchResolverTests.cs",
       "classes": [
+        "CodexCliObservationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
         "RolePolicyToolBundleDispatchTests"
@@ -24014,6 +24131,7 @@
         "CheckpointAdmissionContractTests",
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointIndexPathsTests",
@@ -24030,7 +24148,6 @@
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
-        "CheckpointTypeCacheTests",
         "DirectoryLinkFixtureTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
@@ -24138,6 +24255,7 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
@@ -24149,7 +24267,6 @@
         "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
-        "CheckpointManifestTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -24168,13 +24285,13 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
         "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
-        "CheckpointIndexPathsTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -24235,6 +24352,13 @@
       "classes": [
         "CheckpointRecoveryWindowsTests",
         "CheckpointRunOwnershipTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/FixtureGitInProcess.cs",
+      "classes": [
+        "CheckpointConfinementLedgerTests",
+        "OutputCleanupTests"
       ]
     },
     {
@@ -24320,7 +24444,6 @@
         "DockerStackDocumentationTests",
         "DotnetToolManifestContractTests",
         "GrokRunnerImageContractTests",
-        "GrokSha256PinTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
@@ -24332,7 +24455,8 @@
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests",
         "Server2StagingServerContractTests",
-        "ServerImagePushCredentialTests"
+        "ServerImagePushCredentialTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -24542,7 +24666,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs",
       "classes": [
-        "DerivedImpactIndexTests"
+        "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
@@ -24756,6 +24881,7 @@
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
         "RcLedgerStatusTests",
+        "RcPortWrapperCasingTests",
         "RcReleaseBaselineTests",
         "RcRunEvidenceTests"
       ]
@@ -24839,6 +24965,12 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/RunCheckpointScriptTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
       ]
@@ -24967,6 +25099,7 @@
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
@@ -24996,6 +25129,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "ProcessSpawnLimitTests",
         "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
@@ -25370,6 +25504,7 @@
         "CheckpointColdBuildTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointExecutorLogTests",
+        "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointFixtureRoutingTests",
@@ -25384,8 +25519,7 @@
         "CheckpointOwnedOutputTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests",
-        "CheckpointRecoveryLinuxTests"
+        "CheckpointRecoveryFixtureTests"
       ]
     },
     {
@@ -25800,6 +25934,7 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "CheckpointSourceStateTests",
+        "RcDirtyOrderCSharpTests",
         "RunCheckpointSourceScriptTests",
         "ServerImagePushCredentialTests"
       ]
@@ -26266,6 +26401,7 @@
         "ChannelReplyAttachmentReaderTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "QualificationCheckoutSourceTests",
+        "RcDirtyOrderCSharpTests",
         "RcHistoricalEvidenceTests"
       ]
     },
@@ -26417,6 +26553,15 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/ProbeGeneratedModel.cs",
+      "classes": [
+        "ChannelOutboundProbeModelTests",
+        "ChannelOutboundRecoveryTests",
+        "ChannelOutboundUnifiedCrashTests",
+        "ChannelOutboundUnifiedTransportTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/ProductionRunnerGuard.cs",
       "classes": [
         "AgentTaskLandMonitoringTests",
@@ -26523,7 +26668,7 @@
         "CardTaskSettlementTests",
         "ChannelOutboundDeadlineTests",
         "ChannelOutboundDeliveryTests",
-        "ChannelOutboundDispatchIntegrationTests",
+        "CodexDelegateDispatchTests",
         "DefaultRunnerRerouteTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DesktopLaunchMemoryAdmissionTests",
@@ -26805,6 +26950,7 @@
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
+        "RunCheckpointSourceScriptTests",
         "ScriptModelSpawnLaneTests"
       ]
     },
@@ -26909,6 +27055,13 @@
       "path": "tests/Antiphon.Tests/TestHelpers/SharedCheckoutChildAttribute.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/SharedRedpandaBroker.cs",
+      "classes": [
+        "ChannelOutboundUnifiedCrashTests",
+        "ChannelOutboundUnifiedTransportTests"
       ]
     },
     {
@@ -27562,7 +27715,6 @@
         "Card1619RunnerExitTests",
         "Card1653PeerCheckTests",
         "Card1653SocketDirTests",
-        "ChannelOutboundUnifiedTransportTests",
         "CheckpointOutputConfinementTests",
         "CheckpointShapeConflictTests",
         "CheckpointTrackedBaselineTests",
@@ -27596,13 +27748,15 @@
     {
       "path": "tests/derived-impact-index-known-os-gated.txt",
       "classes": [
-        "DerivedImpactIndexTests"
+        "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
       "path": "tests/derived-impact-index.json",
       "classes": [
         "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
         "ReleaseImpactEnvelopeTests"
@@ -27662,6 +27816,12 @@
       "classes": [
         "CheckpointToolProjectContractTests",
         "HostCleanupCheckpointExtractionTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.Checkpoints/Execution/BuildStep.cs",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
