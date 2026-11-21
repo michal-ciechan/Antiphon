@@ -84,6 +84,13 @@ internal static class CheckpointFixtureProcess
     // Extra child variables are opt-in. A null environment keeps the historical three removals only.
     public static string Git(string root, IReadOnlyDictionary<string, string>? environment, params string[] args)
     {
+        var output = Run(CreateGitStartInfo(root, environment, args), 30_000);
+        output.Exit.ShouldBe(0, output.Stdout + output.Stderr);
+        return output.Stdout;
+    }
+
+    public static ProcessStartInfo CreateGitStartInfo(string root, IReadOnlyDictionary<string, string>? environment, params string[] args)
+    {
         var start = new ProcessStartInfo("git") { WorkingDirectory = root };
         start.Environment.Remove("GIT_DIR");
         start.Environment.Remove("GIT_WORK_TREE");
@@ -95,8 +102,6 @@ internal static class CheckpointFixtureProcess
         }
         foreach (var arg in args)
             start.ArgumentList.Add(arg);
-        var output = Run(start, 30_000);
-        output.Exit.ShouldBe(0, output.Stdout + output.Stderr);
-        return output.Stdout;
+        return start;
     }
 }
