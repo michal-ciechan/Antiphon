@@ -175,7 +175,7 @@ public class ModelAliasTests
         ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.2-sol");
         ModelLevelAliases.ForCodex(AgentModelLevel.Medium).ShouldBe("gpt-6.2-sol");
         ModelLevelAliases.ForCodex((AgentModelLevel)999).ShouldBe("gpt-6.2-sol");
-        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(ModelAlias.Gpt6Astra);
+        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(ModelAlias.Gpt62Astra);
         ModelLevelAliases.ForCodex(AgentModelLevel.Low).ShouldBe(ModelAlias.Gpt56Luna);
         ModelAlias.DelegatableAliases
             .Where(entry => entry.Kind == AgentKind.Codex)

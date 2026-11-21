@@ -164,7 +164,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             var args = terminal.StartedArgs.ToList();
             args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 remote " + vector);
             args[args.IndexOf("--model") + 1].ShouldBe(level switch {
-                AgentModelLevel.Frontier => "gpt-6-astra", AgentModelLevel.Low => "gpt-5.6-luna", _ => "gpt-6.2-sol",
+                AgentModelLevel.Frontier => "gpt-6.2-astra", AgentModelLevel.Low => "gpt-5.6-luna", _ => "gpt-6.2-sol",
             }, "C959-remote-selected-model");
             await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
             peer.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0,

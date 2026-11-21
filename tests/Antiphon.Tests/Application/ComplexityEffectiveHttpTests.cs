@@ -137,12 +137,12 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
                 if (row.GetProperty("complexity").GetString() == "Medium")
                 {
                     effective.GetProperty("governsDefault").GetBoolean().ShouldBeTrue();
-                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6-astra"), ("ClaudeCode", "Frontier", "fable")]);
+                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6.2-astra"), ("ClaudeCode", "Frontier", "fable")]);
                 }
                 else
                 {
                     effective.GetProperty("governsDefault").GetBoolean().ShouldBeFalse();
-                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6-astra")]);
+                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6.2-astra")]);
                 }
             }
         }

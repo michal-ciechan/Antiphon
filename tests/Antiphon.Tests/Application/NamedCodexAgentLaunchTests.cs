@@ -42,7 +42,7 @@ public class NamedCodexAgentLaunchTests
         await StartAsync(h);
 
         var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6-astra");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-astra");
         ConfigValue(args, "model_reasoning_effort").ShouldBe(
             "xhigh", "astra's OWN default is low — a Frontier agent must not inherit it");
         ConfigValue(args, "disable_paste_burst").ShouldBe("true",

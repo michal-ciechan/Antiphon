@@ -18,7 +18,7 @@ public sealed class ComplexityEffectiveComposeTests
             [Pair(AgentKind.ClaudeCode, AgentModelLevel.Frontier, "fable")], "Plan/Hard", "role", Policy(), false);
         result.Source.ShouldBe("pin");
         result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias))
-            .ShouldBe([(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+            .ShouldBe([(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra")]);
         result.StagePin.ShouldNotBeNull().Id.ShouldBe(pin.Id);
         result.GovernsDefault.ShouldBeFalse();
         result.WithheldReason.ShouldBeNull();
@@ -58,11 +58,11 @@ public sealed class ComplexityEffectiveComposeTests
         result.WithheldReason.ShouldBeNull();
         if (isDefault)
             result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
-                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra"),
+                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra"),
                 (AgentKind.ClaudeCode, AgentModelLevel.Frontier, "fable")]);
         else
             result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
-                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra")]);
     }
 
     [Test]
@@ -73,7 +73,7 @@ public sealed class ComplexityEffectiveComposeTests
             new PolicyResolution(null, null, null, "Plan policy names Raw/Frontier, which delegation cannot launch"), false);
         result.WithheldReason.ShouldBeNull();
         result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
-            (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+            (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra")]);
     }
 
     [Test]
@@ -142,7 +142,7 @@ public sealed class ComplexityEffectiveComposeTests
             var pin = Pin(strength, AgentKind.Codex, AgentModelLevel.Frontier);
             var pinned = ComplexityEffective.Compose(Decision(pin), [], "Plan/Medium", "none", policy, true);
             pinned.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias))
-                .ShouldBe([(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+                .ShouldBe([(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra")]);
             pinned.Source.ShouldBe(strength == RoutingPinStrength.Required ? "pin" : "pin+chain");
             pinned.WithheldReason.ShouldBe(strength == RoutingPinStrength.Required ? null : reason);
         }

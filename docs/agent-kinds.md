@@ -216,7 +216,7 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 
 | Tier | Claude | Grok | Codex |
 |---|---|---|---|
-| `Frontier` | `fable` | `grok-4.7` | `gpt-6-astra` |
+| `Frontier` | `fable` | `grok-4.7` | `gpt-6.2-astra` |
 | `High` (default) | `opus` | `grok-4.7` | `gpt-6.2-sol` |
 | `Medium` | `sonnet` | `grok-4.7` | `gpt-6.2-sol` |
 | `Low` | `haiku` | `grok-4.7` | `gpt-5.6-luna` |
@@ -263,22 +263,25 @@ Three things worth knowing about that table:
   gone from the ladder new dispatches resolve through.
 - **Codex pins full slugs and needs a deliberate bump.** Measured against codex-cli 0.147.0:
   `-m luna` is rejected locally ("Model metadata for `luna` not found") *and* by the service
-  (HTTP 400). Bare `-m astra` 400s the same way; the selectable id is `gpt-6-astra`. There are
-  no unversioned aliases in Codex's catalogue. Frontier remains `gpt-6-astra` and Low remains
-  `gpt-5.6-luna`. High and Medium both pin `gpt-6.2-sol` (operator 2026-11-19), with explicit
-  `high` and `medium` reasoning effort respectively; the 0.170.0 bundled catalog supports both
+  (HTTP 400). Bare `-m astra` 400s the same way. There are no unversioned aliases in Codex's
+  catalogue. Frontier runs `gpt-6.2-astra` at `xhigh` and Low runs `gpt-5.6-luna`.
+  High and Medium both pin `gpt-6.2-sol` (operator 2026-11-19), with explicit
+  `high` and `medium` reasoning effort respectively. The 0.170.0 bundled catalog supports both
   and still defaults those slugs to `low`. Medium→High is a same-model fresh-context escalation
   at deeper effort. Low→Medium and High→Frontier change models. Earlier `gpt-6.1-sol`,
   `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile model ids and recognized historical
   aliases; bare `sol` still normalizes to `gpt-6-sol` and bare `astra` still normalizes to
-  `gpt-6-astra`. `gpt-6.2-astra` is recognized and floored, and it is not a ladder rung.
-  A caller selects it with `-Model gpt-6.2-astra` (create field `model`) for an on-demand
-  audit or review the operator chooses. The GPT-6.2 system card records a Blocker Deception
-  regression of 22.28% for GPT-6.2 Astra against 11.09% for GPT-6 Astra, so Astra 6.2 is
-  not Frontier or Review. The selected level still supplies `model_reasoning_effort`.
+  `gpt-6-astra`. A caller can still select `-Model gpt-6-astra` (create field `model`).
+  Explicit aliases are recorded and keep the selected level's `model_reasoning_effort`.
+  They use a fresh pool process even when the slug matches the ladder. A warm Codex Frontier
+  process must have the current Frontier slug recorded at launch.
+  On 2026-11-21 the operator overrode the earlier decision to keep GPT-6.2 Astra off
+  Codex Frontier and promoted it for Frontier, including Review when routed to Codex Frontier.
+  The GPT-6.2 system card records a Blocker Deception regression of 22.28% for GPT-6.2 Astra
+  against 11.09% for GPT-6 Astra.
   The 0.169.1 floor stays data only and is not enforced on create, retry, or launch.
-  Frontier requires codex-cli 0.153.4+ (documented, not enforced). `gpt-6.2-sol` and
-  `gpt-6.2-astra` require 0.169.1+. `gpt-6.1-sol` keeps 0.159.1.
+  Frontier requires codex-cli 0.169.1+, the same floor as GPT-6.2 Sol. The documented
+  floor for explicit `gpt-6-astra` is 0.153.4+. `gpt-6.1-sol` keeps 0.159.1.
   CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model
   metadata only. Failed, stale, missing, malformed, clock-skewed and older observations
   never refuse create, retry, dispatch, warm reuse or final launch, and those paths start

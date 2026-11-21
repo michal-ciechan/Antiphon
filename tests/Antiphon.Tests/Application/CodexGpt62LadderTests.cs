@@ -9,9 +9,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// Codex High and Medium move to <c>gpt-6.2-sol</c> (floor 0.169.1). Frontier stays
-/// <c>gpt-6-astra</c> with no enforced floor. <c>gpt-6.2-astra</c> is recognized and
-/// floored, and it is not a ladder rung. The runner image pin must be at least that floor.
+/// Frontier uses <c>gpt-6.2-astra</c>. High and Medium use <c>gpt-6.2-sol</c>.
+/// The runner image pin must clear the documented 0.169.1 floor of both models.
 /// </summary>
 [Category("Unit")]
 public sealed class CodexGpt62LadderTests
@@ -55,27 +54,27 @@ public sealed class CodexGpt62LadderTests
             .ShouldBe(Floor62);
         Floor(Sol62).ShouldBe(Floor62);
         Floor("GPT-6.2-SOL").ShouldBe(Floor62);
-        Floor(Astra62).ShouldBe(Floor62, "catalogued 6.2 Astra keeps the same floor off the ladder");
+        Floor(Astra62).ShouldBe(Floor62);
         Floor("GPT-6.2-ASTRA").ShouldBe(Floor62);
         Floor(Sol61).ShouldBe(Floor61);
         Floor("GPT-6.1-SOL").ShouldBe(Floor61);
 
-        ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion
-            .ShouldBeNull("gpt-6-astra stays without an enforced MinimumCliVersion");
+        (ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion?.ToString())
+            .ShouldBe(Floor62);
         Floor(ModelAlias.Gpt6Astra).ShouldBeNull();
         ModelLevelAliases.ForCodexEntry(AgentModelLevel.Low).MinimumCliVersion.ShouldBeNull();
         Floor(ModelAlias.Gpt56Luna).ShouldBeNull();
 
         var kinds = DockerStackDocuments.Read("docs/agent-kinds.md").Replace("\r\n", "\n");
         kinds.ShouldContain(DocumentedAstraFloor);
-        kinds.ShouldContain("Frontier requires codex-cli " + DocumentedAstraFloor);
+        kinds.ShouldContain("Frontier requires codex-cli " + Floor62);
         kinds.ShouldContain(Sol62);
         kinds.ShouldContain(Floor62);
         kinds.ShouldNotContain("High and Medium both pin `gpt-6.1-sol`");
     }
 
     [Test]
-    public void Bare_names_stay_historical_and_gpt_6_2_astra_is_not_a_ladder_rung()
+    public void Bare_names_stay_historical_and_both_astra_slugs_are_delegatable()
     {
         ModelAlias.Normalize(AgentKind.Codex, "astra").ShouldBe(ModelAlias.Gpt6Astra);
         ModelAlias.Normalize(AgentKind.Codex, "sol").ShouldBe(ModelAlias.Gpt6Sol);
@@ -92,6 +91,7 @@ public sealed class CodexGpt62LadderTests
 
         ModelAlias.CanonicalHoldAlias(Sol62).ShouldBe(Sol62);
         ModelAlias.CanonicalHoldAlias(Astra62).ShouldBe(Astra62);
+        ModelAlias.CanonicalHoldAlias(ModelAlias.Gpt6Astra).ShouldBe(ModelAlias.Gpt6Astra);
         ModelAlias.CanonicalHoldAlias(Sol61).ShouldBeNull("6.1 Sol remains recognizable, not current");
 
         var codex = ModelAlias.DelegatableAliases

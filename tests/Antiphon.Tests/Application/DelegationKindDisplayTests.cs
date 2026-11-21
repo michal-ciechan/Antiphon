@@ -56,7 +56,7 @@ public class ModelLevelAliasDisplayTests
     }
 
     [Test]
-    [Arguments(AgentModelLevel.Frontier, "gpt-6-astra")]
+    [Arguments(AgentModelLevel.Frontier, "gpt-6.2-astra")]
     [Arguments(AgentModelLevel.High, "gpt-6.2-sol")]
     [Arguments(AgentModelLevel.Medium, "gpt-6.2-sol")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
@@ -76,7 +76,7 @@ public class ModelLevelAliasDisplayTests
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Medium))
             .ShouldBe("Codex/Medium (gpt-6.2-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier))
-            .ShouldBe("Codex/Frontier (gpt-6-astra)");
+            .ShouldBe("Codex/Frontier (gpt-6.2-astra)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Low))
             .ShouldBe("Codex/Low (gpt-5.6-luna)");
     }
@@ -86,7 +86,7 @@ public class ModelLevelAliasDisplayTests
     {
         // Measured 2026-08-20 against codex-cli 0.147.0 (`-m luna`) and 2026-09-05 against 0.153.4
         // (`-m astra`): both 400. Codex has no unversioned aliases, so a "family alias" of the kind
-        // Claude and Grok use would never start a session. Frontier is `gpt-6-astra`, not `gpt-5.6-*`.
+        // Claude and Grok use would never start a session. Frontier is `gpt-6.2-astra`, not `gpt-5.6-*`.
         foreach (var level in Enum.GetValues<AgentModelLevel>())
         {
             var slug = ModelLevelAliases.For(AgentKind.Codex, level);
@@ -122,7 +122,7 @@ public class ModelLevelAliasDisplayTests
         var note = DelegationReportFormatter.BuildCompletionNote(
             NewTask(AgentKind.Codex, AgentModelLevel.Frontier), Settings, "Landed the change.");
 
-        note.Body.ShouldContain("gpt-6-astra");
+        note.Body.ShouldContain("gpt-6.2-astra");
         note.Body.ShouldNotContain("fable");
     }
 

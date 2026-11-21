@@ -17,20 +17,19 @@ namespace Antiphon.Server.Application.Services;
 /// twice over — "Model metadata for `luna` not found" locally, then HTTP 400 "the 'luna' model is
 /// not supported" from the service. There are no unversioned aliases in Codex's catalog (bare
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
-/// (<c>gpt-6-astra</c> / <c>gpt-6.2-sol</c> / <c>gpt-6.2-sol</c> / <c>gpt-5.6-luna</c>) and needs
-/// deliberate catalog bumps. <c>gpt-6-astra</c>'s documented floor is codex-cli 0.153.4 and is
-/// not stored as <c>MinimumCliVersion</c>. <c>gpt-6.2-sol</c> and catalogued <c>gpt-6.2-astra</c>
-/// have floor 0.169.1. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1. CARD-0959 reports runner
+/// (<c>gpt-6.2-astra</c> / <c>gpt-6.2-sol</c> / <c>gpt-6.2-sol</c> / <c>gpt-5.6-luna</c>) and needs
+/// deliberate catalog bumps. Both 6.2 models have floor 0.169.1. The explicit <c>gpt-6-astra</c>
+/// alias has a documented floor of 0.153.4. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1. CARD-0959 reports runner
 /// CLI observations and retains floor metadata as data only; it does not enforce compatibility
 /// or require a fleet upgrade.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
     public sealed record CodexLadderEntry(string ModelId, CodexCliVersion? MinimumCliVersion);
-    private static readonly CodexLadderEntry CodexFrontier = new(ModelAlias.Gpt6Astra, null);
-    private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt62Sol, CodexCliVersion.Parse("0.169.1")!);
+    private static readonly CodexCliVersion Codex62Floor = CodexCliVersion.Parse("0.169.1")!;
+    private static readonly CodexLadderEntry CodexFrontier = new(ModelAlias.Gpt62Astra, Codex62Floor);
+    private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt62Sol, Codex62Floor);
     private static readonly CodexLadderEntry CodexLow = new(ModelAlias.Gpt56Luna, null);
-    private static readonly CodexCliVersion Codex62AstraFloor = CodexCliVersion.Parse("0.169.1")!;
     private static readonly CodexCliVersion Codex61SolFloor = CodexCliVersion.Parse("0.159.1")!;
 
     public static CodexLadderEntry ForCodexEntry(AgentModelLevel level) => level switch
@@ -49,8 +48,8 @@ public static class ModelLevelAliases
         var model = actualModel.Trim();
         if (string.Equals(model, CodexSol.ModelId, StringComparison.OrdinalIgnoreCase))
             return CodexSol.MinimumCliVersion;
-        if (string.Equals(model, ModelAlias.Gpt62Astra, StringComparison.OrdinalIgnoreCase))
-            return Codex62AstraFloor;
+        if (string.Equals(model, CodexFrontier.ModelId, StringComparison.OrdinalIgnoreCase))
+            return CodexFrontier.MinimumCliVersion;
         if (string.Equals(model, ModelAlias.Gpt61Sol, StringComparison.OrdinalIgnoreCase))
             return Codex61SolFloor;
         return null;
@@ -71,11 +70,11 @@ public static class ModelLevelAliases
     public static string ForGrok(AgentModelLevel level) => "grok-4.7";
 
     /// <summary>
-    /// Codex's ladder (CARD-0099 S3, CARD-0396, CARD-0611, CARD-0903). Frontier remains
-    /// <c>gpt-6-astra</c> and Low remains <c>gpt-5.6-luna</c>. The operator pinned both High
+    /// Codex's ladder (CARD-0099 S3, CARD-0396, CARD-0611, CARD-0903). The operator pinned Frontier
+    /// to <c>gpt-6.2-astra</c> on 2026-11-21. Low is <c>gpt-5.6-luna</c>. The operator pinned both High
     /// and Medium to <c>gpt-6.2-sol</c> on 2026-11-19. They use the same model but retain distinct
-    /// reasoning efforts (high and medium). <c>gpt-6.2-astra</c> stays catalogued and off this
-    /// ladder. The old <c>gpt-6.1-sol</c>, <c>gpt-6-sol</c> and <c>gpt-5.6-terra</c>
+    /// reasoning efforts (high and medium). <c>gpt-6-astra</c> is an explicit delegatable alias.
+    /// The old <c>gpt-6.1-sol</c>, <c>gpt-6-sol</c> and <c>gpt-5.6-terra</c>
     /// slugs remain selectable profile ids and recognizable historical aliases.
     ///
     /// <para>Low → Medium and High → Frontier are real model changes. Medium → High and High → Medium

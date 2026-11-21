@@ -101,13 +101,13 @@ public sealed class RolePolicyEndpointTests
             stagePin.GetProperty("id").GetString().ShouldBe(pinId);
             stagePin.GetProperty("candidateCount").GetInt32().ShouldBe(1);
             var head = stagePin.GetProperty("candidates")[0];
-            head.GetProperty("alias").GetString().ShouldBe("gpt-6-astra");
+            head.GetProperty("alias").GetString().ShouldBe("gpt-6.2-astra");
             head.GetProperty("availableNow").GetBoolean().ShouldBeTrue();
             var effective = plan.GetProperty("effective");
             effective.GetProperty("source").GetString().ShouldBe("pin");
             effective.GetProperty("agentKind").GetString().ShouldBe("Codex");
             effective.GetProperty("modelLevel").GetString().ShouldBe("Frontier");
-            effective.GetProperty("alias").GetString().ShouldBe("gpt-6-astra");
+            effective.GetProperty("alias").GetString().ShouldBe("gpt-6.2-astra");
             effective.GetProperty("strength").GetString().ShouldBe("Required");
 
             var code = Row(roles, "Code");

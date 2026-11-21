@@ -41,7 +41,7 @@ public static class CodexLaunchArgs
 
     /// <summary>
     /// Reasoning effort, set EXPLICITLY on every launch (plan §4 S3). Codex's per-model defaults are
-    /// wrong for a delegate at both ends: <c>gpt-6-astra</c>, <c>gpt-6.2-sol</c> and
+    /// wrong for a delegate at both ends: <c>gpt-6.2-astra</c>, <c>gpt-6.2-sol</c> and
     /// <c>gpt-6.1-sol</c> default to <c>low</c> in the 0.170.0 catalog, so a Frontier or High
     /// delegate left alone would reason below the tier it was dispatched at, while the operator's
     /// <c>~/.codex/config.toml</c> here says <c>xhigh</c> and would be inherited by a Low-tier

@@ -107,7 +107,8 @@ describe('the tier alias', () => {
   })
 
   it('names a Codex task the model it actually runs, not a Claude one', () => {
-    expect(tierAlias('Frontier', 'Codex')).toBe('gpt-6-astra')
+    expect(tierAlias('Frontier', 'Codex')).toBe('gpt-6.2-astra')
+    expect(tierAlias('Frontier', 'Codex', 'gpt-6-astra')).toBe('gpt-6-astra')
     expect(tierAlias('High', 'Codex')).toBe('gpt-6.2-sol')
     expect(tierAlias('Medium', 'Codex')).toBe('gpt-6.2-sol')
     expect(tierAlias('Low', 'Codex')).toBe('gpt-5.6-luna')
@@ -126,7 +127,7 @@ describe('the tier alias', () => {
     expect(tierTooltip('High')).toBe('High tier — Claude opus')
     // "Grok grok-4.7" would be a stutter — the alias already names the family.
     expect(tierTooltip('High', 'Grok')).toBe('High tier — grok-4.7')
-    expect(tierTooltip('Frontier', 'Codex')).toBe('Frontier tier — Codex gpt-6-astra')
+    expect(tierTooltip('Frontier', 'Codex')).toBe('Frontier tier — Codex gpt-6.2-astra')
     expect(tierTooltip('High', 'Codex')).toBe('High tier — Codex gpt-6.2-sol')
   })
 
