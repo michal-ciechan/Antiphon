@@ -54,8 +54,9 @@ function Install-NightlyCoreBuild {
     if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
     if ($null -eq (Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
     [void][IO.Directory]::CreateDirectory($cacheDir)
-    # One lock per project: every source version builds in the same work directory.
-    $lockPath = Join-Path $cacheDir ($Identity.Name + '.build.lock')
+    # One lock for every project: every source version builds in the same bin/ and obj/, and the CLI's build also
+    # builds the core project it references.
+    $lockPath = Join-Path $cacheDir 'build.lock'
     $lock = $null
     $deadline = [DateTime]::UtcNow.AddMinutes(10)
     while ($null -eq $lock) {
@@ -107,7 +108,7 @@ function Install-NightlyCoreBuild {
 }
 
 # The scripts' command-line implementation (scripts/lib/Antiphon.Scripts): built the same way, keyed by its
-# own sources plus the shared CheckpointProcessRunner.cs and the .NET version. Returns the command to start
+# own sources plus the shared CheckpointProcessRunner.cs, the core's build identity and the .NET version. Returns the command to start
 # (the built executable), or $null when it cannot be had: Windows PowerShell 5.1, ANTIPHON_SCRIPTS_CLI=off,
 # a copy of the scripts without the project, no SDK or a failed build (warned). Callers then keep their
 # PowerShell path; a command that cannot answer an input exactly also tells them to (exit 10).
@@ -133,7 +134,10 @@ function Get-AntiphonScriptsCli {
         $bytes = [IO.File]::ReadAllBytes($entry.Path)
         $stream.Write($bytes, 0, $bytes.Length)
     }
-    $runtime = [Text.Encoding]::UTF8.GetBytes("`n" + [Environment]::Version.ToString())
+    # The CLI references the compiled core (Antiphon.Nightly and what it references): its identity is part of this one.
+    $core = Get-NightlyCoreBuildIdentity
+    if ($null -eq $core) { return $null }
+    $runtime = [Text.Encoding]::UTF8.GetBytes("`n" + [Environment]::Version.ToString() + "`ncore " + $core.Hash)
     $stream.Write($runtime, 0, $runtime.Length)
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream.ToArray())).Substring(0, 24)
     $identity = [pscustomobject]@{ Hash = $hash; Project = (Join-Path $project 'Antiphon.Scripts.csproj'); Name = 'Antiphon.Scripts'; Output = 'Antiphon.Scripts.dll' }
