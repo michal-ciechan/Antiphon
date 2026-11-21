@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "platform": "linux",
+      "test": "Antiphon.Tests.Agents.CodexBootPointerCanaryTests.Real_Codex_consumes_and_submits_the_boot_pointer",
+      "reasonPrefix": "Codex CLI unavailable (ANTIPHON_CODEX_EXE or PATH); boot pointer canary skipped",
+      "reasonClass": "live-context"
+    },
+    {
       "platform": "windows",
       "test": "Antiphon.Tests.Application.C0824RefOnlyCleanupTests.Remote_cleanup_still_uses_its_binding_and_generation",
       "reasonPrefix": "S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate."

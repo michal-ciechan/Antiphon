@@ -30,7 +30,8 @@ public sealed class CodexBootPointerCanaryTests
     [Timeout(150_000)]
     public async Task Real_Codex_consumes_and_submits_the_boot_pointer(CancellationToken ct)
     {
-        var executable = ResolveCodex();
+        var executable = ResolveCodex()
+            ?? throw new SkipTestException("Codex CLI unavailable (ANTIPHON_CODEX_EXE or PATH); boot pointer canary skipped");
         var model = Environment.GetEnvironmentVariable("ANTIPHON_CODEX_CANARY_MODEL") ?? ModelAlias.Gpt62Sol;
         var sessionId = Guid.NewGuid();
         var root = Directory.CreateTempSubdirectory("antiphon-codex-boot-").FullName;
@@ -44,7 +45,11 @@ public sealed class CodexBootPointerCanaryTests
         try
         {
             var cwd = Directory.CreateDirectory(Path.Combine(root, "workspace")).FullName;
-            var task = new AgentTask { Id = Guid.NewGuid(), Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, Title = "Codex boot canary" };
+            var task = new AgentTask
+            {
+                Id = Guid.NewGuid(), Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+                Title = "Codex boot canary",
+            };
             var briefPath = $".antiphon/inbox/{task.Id:D}.md";
             Directory.CreateDirectory(Path.Combine(cwd, ".antiphon", "inbox"));
             var brief = "Reply with the local stub response. No files need changing.";
@@ -88,6 +93,7 @@ public sealed class CodexBootPointerCanaryTests
             observations.Add($"model={model} backend={backend} generation={generation:o}");
             started.Status.ShouldBe("Running");
             started.Backend.ShouldBe(SessionBackends.PtyHost);
+            started.AcceptedStartedAt.ShouldBe(generation);
             backend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty);
             try
             {
@@ -148,7 +154,7 @@ public sealed class CodexBootPointerCanaryTests
             }
             finally
             {
-                writes = client.BackendWrites.Select(write => write.Input).ToArray();
+                writes = client.BackendWrites.Select(write => write.Input == "\r" ? "enter" : "text").ToArray();
                 client.SnapshotObserved = null;
                 snapshots["last"] = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
             }
@@ -163,7 +169,7 @@ public sealed class CodexBootPointerCanaryTests
             }
             await File.WriteAllLinesAsync(Path.Combine(evidence, "milestones.txt"),
                 observations.Concat(readyLog.Entries.Select(entry => entry.Message))
-                    .Concat(PointerMilestones(queueLog)).Append($"backend-writes={writes.Length}"));
+                    .Concat(PointerMilestones(queueLog)).Append($"backend-writes={string.Join(",", writes)}"));
             Console.WriteLine($"CARD-2046 model={model} evidence={evidence}");
             RealCliStubBServerHarness.TryDelete(root);
         }
@@ -204,15 +210,13 @@ public sealed class CodexBootPointerCanaryTests
                     part.TryGetProperty("text", out var text) && PromptSubmissionMatch.IsCompleteIn(pointer, text.GetString())));
     }
 
-    private static string ResolveCodex()
+    private static string? ResolveCodex()
     {
         var configured = Environment.GetEnvironmentVariable(HeadedCodexGate.ExeOverrideEnv);
         var executable = !string.IsNullOrWhiteSpace(configured)
             ? File.Exists(configured) ? configured : null
             : OperatingSystem.IsWindows() ? HeadedCodexGate.ResolveCodex() : FindUnixCodex();
-        return executable is null
-            ? throw new SkipTestException("Codex CLI unavailable (ANTIPHON_CODEX_EXE or PATH); boot pointer canary skipped")
-            : Path.GetFullPath(executable);
+        return executable is null ? null : Path.GetFullPath(executable);
     }
 
     private static string? FindUnixCodex() =>

@@ -402,7 +402,7 @@ public class CodexAccountBootstrapTests
         const string astraPointer = "[antiphon-task:6d5b2869] role=Custom tier=High workspace=Worktree rc30 astra canary 2 "
             + "[antiphon-task:6d5b2869] YOUR BRIEF IS NOT IN THIS MESSAGE. It is 1,609 characters — too long to type into a terminal "
             + "without the transport dropping part of it, so it was written out instead. Read it in full before you do anything else: "
-            + "'.antiphon/inbox/e7d1d779-9041-4578-9540-a7ef62c16765.md' Everything you need is there. Do not start from this summary. "
+            + "'.antiphon/inbox/e7d1d779-9041-4578-9540-a7ef92c16765.md' Everything you need is there. Do not start from this summary. "
             + "--- how to report back --- The full reporting contract is in the brief above — read it there. Your final message is the "
             + "entire report the caller receives. [antiphon-task:6d5b2869]";
 
