@@ -31,25 +31,10 @@ public sealed class ChannelOutboundUnifiedCrashTests
     public Task C519_Complete_stage_death_preserves_snapshot(string kind) =>
         PreparationAsync(kind, "input-stage-complete");
 
-    // One Redpanda broker for the class (SharedRedpandaBroker: isolation, the reuse probe, replacement, fail-fast and
-    // bounds), started within 120 seconds; each test's own deadline starts once it has the broker.
-    private static readonly SharedRedpandaBroker SharedBroker = new(StartBrokerAsync, "C519_CRASH_BROKER");
-
-    private static async Task<RedpandaContainer> StartBrokerAsync()
-    {
-        var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        try
-        {
-            using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            await broker.StartAsync(startup.Token);
-            return broker;
-        }
-        catch
-        {
-            await SharedRedpandaBroker.DisposeAsync(broker, "C519_CRASH_BROKER");
-            throw;
-        }
-    }
+    // One Redpanda broker shared by the C519 classes (SharedRedpandaBroker.C519: isolation, the reuse probe,
+    // replacement, fail-fast, bounds and the CARD-1934 timed start); each test's own deadline starts once it has the
+    // broker, and each publication cut asks for it again (the reuse probe runs before every cut).
+    private static SharedRedpandaBroker SharedBroker => SharedRedpandaBroker.C519;
 
     [After(Class)]
     public static Task StopSharedBrokerAsync() => SharedBroker.StopAsync();
@@ -119,9 +104,9 @@ public sealed class ChannelOutboundUnifiedCrashTests
 
     private static async Task PublicationAsync(string kind, string[] cuts)
     {
-        var broker = await SharedBroker.GetAsync();
         foreach (var cut in cuts)
         {
+            var broker = await SharedBroker.GetAsync();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
             await w.SeedCrashSourceAsync(kind);
