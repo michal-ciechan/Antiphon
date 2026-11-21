@@ -272,5 +272,98 @@ public class CodexStartupReadinessTests
             .ShouldBeFalse("N-2 combined incident");
     }
 
+    [Test]
+    public void Codex_0170_shortcuts_row_under_the_footer_is_ready()
+    {
+        // Measured idle grid from server2 session 149a0bb6 (codex-cli 0.170.0). The last
+        // non-empty row is the shortcuts row; nothing is drawn under it.
+        const string sol = """
+              >_ OpenAI Codex (v0.170.0)
+                 /work/worktrees/ws-02-d3
+              permissions: YOLO mode
+
+              Tip: When goals are enabled, use /goal to set or inspect the objective for a long-running task.
+
+
+            › Ask Codex to do anything
+
+              GPT-6.2-Sol high · /work/worktrees/ws-02-d3
+              ← for agents · ? for shortcuts                                                              ⚠ 2 warnings · f2 to view
+            """;
+        var solObs = CodexStartupScreen.Classify(sol);
+        solObs.IsReady.ShouldBeTrue("0.170 Sol idle grid");
+        solObs.Reason.ShouldBe(CodexStartupReason.Ready, "0.170 Sol idle grid");
+        solObs.NormalizedRegion.ShouldContain("GPT-6.2-Sol high");
+        solObs.NormalizedRegion.ShouldContain("GPT-6.2-Sol high · /work/worktrees/ws-02-d3");
+        solObs.NormalizedRegion.ShouldContain("› Ask Codex to do anything");
+        solObs.NormalizedRegion.ShouldNotContain("for agents");
+
+        var astra = sol
+            .Replace(
+                "Tip: When goals are enabled, use /goal to set or inspect the objective for a long-running task.",
+                "Tip: You can resume a previous conversation by running codex resume.",
+                StringComparison.Ordinal)
+            .Replace(
+                "GPT-6.2-Sol high · /work/worktrees/ws-02-d3",
+                "GPT-6.2-Astra high · /work/worktrees/ws-03-d3",
+                StringComparison.Ordinal);
+        var astraObs = CodexStartupScreen.Classify(astra);
+        astraObs.IsReady.ShouldBeTrue("0.170 Astra idle grid");
+        astraObs.Reason.ShouldBe(CodexStartupReason.Ready, "0.170 Astra idle grid");
+        astraObs.NormalizedRegion.ShouldContain("GPT-6.2-Astra high");
+        astraObs.NormalizedRegion.ShouldNotContain("for agents");
+
+        var v0160 = CodexStartupScreen.Classify(CodexStartupFixtures.V0160Idle);
+        v0160.IsReady.ShouldBeTrue("0.160 same-line warning chip stays the footer");
+        v0160.Reason.ShouldBe(CodexStartupReason.Ready, "0.160 same-line warning chip stays the footer");
+
+        const string signIn = """
+              Welcome to Codex, OpenAI's command-line coding agent
+
+              Choose how you want to use Codex.
+
+            > 1. Sign in with ChatGPT
+                 Usage included with Plus, Pro, Business, and Enterprise plans
+
+              2. Sign in with Device Code
+                 Sign in from another device with a one-time code
+
+              3. Sign in another way
+                 Use an API key or another provider
+
+              Press enter to continue
+            """;
+        var signInObs = CodexStartupScreen.Classify(signIn);
+        signInObs.IsReady.ShouldBeFalse("0.170 sign-in chooser");
+        signInObs.Reason.ShouldBe(CodexStartupReason.SignIn, "0.170 sign-in chooser");
+
+        var modal = CodexStartupScreen.Classify(CodexStartupFixtures.V0158UpdateModal);
+        modal.IsReady.ShouldBeFalse("update modal");
+        modal.Reason.ShouldBe(CodexStartupReason.BlockingUpdate, "update modal");
+
+        const string shortcutsOnly = """
+              >_ OpenAI Codex (v0.170.0)
+
+            › Ask Codex to do anything
+
+              ← for agents · ? for shortcuts                                                              ⚠ 2 warnings · f2 to view
+            """;
+        var shortcutsOnlyObs = CodexStartupScreen.Classify(shortcutsOnly);
+        shortcutsOnlyObs.IsReady.ShouldBeFalse("shortcuts row is not a ready footer by itself");
+
+        // Both phrases sit above the model footer. There is no shortcuts row under it,
+        // so the footer must stay the last line.
+        var noRowBelow = CodexStartupFixtures.V0160Idle.Replace(
+            "Back for another round?",
+            "Back for another round? ← for agents · ? for shortcuts",
+            StringComparison.Ordinal);
+        noRowBelow.ShouldContain("for agents");
+        noRowBelow.ShouldContain("for shortcuts");
+        var noRowObs = CodexStartupScreen.Classify(noRowBelow);
+        noRowObs.IsReady.ShouldBeTrue("for-agents text with no row under the footer must not step off the model line");
+        noRowObs.Reason.ShouldBe(CodexStartupReason.Ready);
+        noRowObs.NormalizedRegion.ShouldContain("GPT-6.1-Sol low");
+    }
+
     private static bool Ready(string screen) => CodexStartupScreen.Classify(screen).IsReady;
 }
