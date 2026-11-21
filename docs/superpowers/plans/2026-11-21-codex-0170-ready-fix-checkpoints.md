@@ -16,9 +16,9 @@ and stays the last line.
 ## Performance budget
 
 CP-1's 15 minutes is the cold Pty build plus `CodexStartupReadinessTests`. CP-2
-reuses that build. CP-3 is the nine-class guard batch in its own cold output.
-No repeat block after green. No whole Unit lane. Cost floor is the sum of
-`EstimatedMinutes` (52).
+and CP-7 reuse that build. CP-3 is the nine-class guard batch in its own cold
+output, and CP-8 reuses it. No repeat block after green. No whole Unit lane.
+Cost floor is the sum of `EstimatedMinutes` (68).
 
 ## Unlisted runs
 
@@ -40,6 +40,7 @@ run after the rows. Fetch updates refs, so it is not a checkpoint command.
 - V-1: `CodexStartupReadinessTests`, including `Codex_0170_shortcuts_row_under_the_footer_is_ready`. The measured Sol and Astra 0.170 grids are Ready and the region names the model. The 0.160 idle fixture stays Ready. The sign-in chooser is SignIn. The update modal is BlockingUpdate. A shortcuts row with no model footer is not Ready. A grid whose `for agents` text has no row under the model footer stays Ready.
 - V-2: `CodexV0160StartupTests` stays green on the same build.
 - V-3: the nine-class guard batch. Floor 78.
+- V-4: impacted `pty-host-fixture` readers. The Pty filter is the selector's row. On `tests/Antiphon.Tests`, `CodexBootWedgeProbeTests` is `[Explicit]`, Headed, OptIn and RealCliStubProxy; a skip fails the row, and this brief is short tests only, so that class is not in CP-8. `Card1277PtyHostFixtureTests` runs on Linux and is also `windowsFilters`: the Windows lane stays owed, not passed.
 - R-1: pinned input digest equals the script pin. No reseal unless that check fails.
 - R-2: `scripts/audit-land-verification-graph.ps1 -Check` exits 0.
 - R-3: `scripts/check-evidence-diff.ps1` over `493bee0ee3af2052575bc7a26e9a313669b2fc2d..HEAD` exits 0.
@@ -57,3 +58,5 @@ No PC variants. Every PC stays pending for method-scoped SourceLanding Mutation;
 | CP-4 | fix | n/a | c0170-pins | `pwsh -NoProfile -Command '. ./scripts/lib/nightly-common.ps1; . ./scripts/lib/nightly-policy.ps1; $p = Read-NightlyExecutionPolicy -RepoRoot (Get-Location).Path; $d = @(& pwsh -NoProfile -File ./scripts/test-live-lane-run.ps1 -PrintInputDigest)[-1].Trim(); $q = [char]39; $m = [regex]::Match((Get-Content -Raw ./scripts/test-live-lane-run.ps1), ("PinnedInputDigest = " + $q + "([0-9a-f]{64})" + $q)); if (-not $m.Success) { throw "pin line missing" }; $pin = $m.Groups[1].Value; $quote = [char]34; $legacyPattern = "LegacyExclusionDigest = ${quote}([0-9a-f]{64})${quote}"; $legacy = [regex]::Match((Get-Content -Raw ./tests/Shared/NativeLinuxPolicyWitness.cs), $legacyPattern).Groups[1].Value; Write-Output ("policyHash=" + $p.Hash); Write-Output ("inputDigest=" + $d); Write-Output ("pinnedInputDigest=" + $pin); Write-Output ("legacyExclusionDigest=" + $legacy); if (-not $legacy) { throw "legacy pin line missing" }; if ($d -cne $pin) { throw ("input digest drift computed=" + $d) }'` | R-1 | exit 0, printed digest equals the script pin | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | fix | n/a | c0170-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-2 | exit 0 | n/a | 10 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | fix | n/a | c0170-evidence | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 493bee0ee3af2052575bc7a26e9a313669b2fc2d -HeadRef HEAD` | R-3 | exit 0 | n/a | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-7 | fix | CP-1 | c0170-impact-pty | `/*/*/(CodexAccountBootstrapTests*)\|(CodexReadyTrackerTests*)\|(CodexReadyWaitTests*)\|(CodexStartupReadinessTests*)\|(CodexV0156StartupPromptTests*)\|(CodexV0160StartupTests*)/*` | V-4 | all listed, 0 failed | 87 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-8 | fix | CP-3 | c0170-impact-tests | `/*/*/(Card1277PtyHostFixtureTests*)\|(CodexAccountBootstrapFailureTests*)/*` | V-4 | all listed, 0 failed | 6 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
