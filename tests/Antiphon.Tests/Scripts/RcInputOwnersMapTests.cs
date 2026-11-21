@@ -45,6 +45,8 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(90_000)] public Task E2EIdentityChangeSelectsSuites(CancellationToken token) => Run(nameof(E2EIdentityChangeSelectsSuites), token);
     // A renamed literal owner path must fail closed. Absence of the census is that miss.
     [Test, Timeout(60_000)] public Task OwnerLiteralPathsFailClosed(CancellationToken token) => Run(nameof(OwnerLiteralPathsFailClosed), token);
+    // The committed owner map is checked against this tree. Renaming the canary must fail that check.
+    [Test, Timeout(90_000)] public Task RealOwnerMapLiteralPathsExist(CancellationToken token) => Run(nameof(RealOwnerMapLiteralPathsExist), token);
     [Test, Timeout(60_000)] public Task CanaryEditSelectsPtySuite(CancellationToken token) => Run(nameof(CanaryEditSelectsPtySuite), token);
     [Test, Timeout(120_000)] public Task EnabledFalseMatchesBaseSelection(CancellationToken token) => Run(nameof(EnabledFalseMatchesBaseSelection), token);
 }
