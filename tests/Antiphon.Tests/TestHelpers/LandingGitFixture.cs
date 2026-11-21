@@ -148,6 +148,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
     public async Task<string> RequiredAsync(string path, params string[] arguments)
     {
+        // Fixture setup's most common commands run in process (LandingFixtureGitInProcess), recorded as if git ran
+        // them; the rest, and every command of the land code under test, start git.
+        if (LandingFixtureGitInProcess.TryRun(Git, path, arguments) is { } output) return output;
         var result = await Git.RunAsync(path, arguments, CancellationToken.None);
         if (!result.Succeeded) throw new InvalidOperationException($"fixture_git_failed:{arguments[0]}:{result.ExitCode}");
         return result.Output;
@@ -239,6 +242,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
     internal class FixtureGit(string home, Guid taskId) : LandingGit
     {
+        internal const string Name = "C448 Fixture";
+        internal const string Email = "fixture@example.invalid";
         public List<string[]> Trace { get; } = [];
         public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
@@ -250,6 +255,12 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             return base.InspectIndexLockAsync(checkout, ct);
         }
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
+        /// <summary>
+        /// LandingSafetyHarness's optional evidence writer, run where <see cref="BeforeObservedCommand"/> runs. It
+        /// writes only with ANTIPHON_C448_EVIDENCE set and only for rebase, merge, push, remove and update-ref, none
+        /// of which <see cref="LandingFixtureGitInProcess"/> runs, so it does not make this git <see cref="Observed"/>.
+        /// </summary>
+        internal Func<IReadOnlyList<string>, Task>? Evidence { get; set; }
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
         /// <summary>Runs before <see cref="BeforeCommand"/> in <see cref="RunAsync(string, IReadOnlyList{string}, CancellationToken)"/> with the caller's token.</summary>
         public Func<string, IReadOnlyList<string>, CancellationToken, Task>? BeforeCommandAsync { get; set; }
@@ -258,6 +269,21 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public Func<string, Task>? AfterUnregister { get; set; }
         public List<string> RegistrationDrops { get; } = [];
         private readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _children = new();
+
+        /// <summary>
+        /// Whether a test watches or rewrites this git's commands (a hook, a hooks path, a subclass): then every
+        /// fixture command starts git too (<see cref="LandingFixtureGitInProcess"/>).
+        /// </summary>
+        internal bool Observed => GetType() != typeof(FixtureGit) || HooksPathOverride is not null
+            || BeforeCommand is not null || BeforeCommandAsync is not null || BeforeObservedCommand is not null
+            || AfterCommand is not null;
+
+        /// <summary>A fixture command done in process, recorded as <see cref="RunAsync"/> records one it runs.</summary>
+        internal void RecordInProcess(string repository, string[] arguments)
+        {
+            Trace.Add(arguments.ToArray());
+            Commands.Add((repository, arguments.ToArray()));
+        }
 
         /// <summary>CARD-1436: the index-lock census sees only this fixture's own git children, never the host's.</summary>
         protected override GitIndexLock.IProcessSource GitProcesses => new ChildProcesses(_children);
@@ -304,10 +330,10 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             start.Environment["GIT_SEQUENCE_EDITOR"] = ":";
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(home, "empty-config");
-            start.Environment["GIT_AUTHOR_NAME"] = "C448 Fixture";
-            start.Environment["GIT_AUTHOR_EMAIL"] = "fixture@example.invalid";
-            start.Environment["GIT_COMMITTER_NAME"] = "C448 Fixture";
-            start.Environment["GIT_COMMITTER_EMAIL"] = "fixture@example.invalid";
+            start.Environment["GIT_AUTHOR_NAME"] = Name;
+            start.Environment["GIT_AUTHOR_EMAIL"] = Email;
+            start.Environment["GIT_COMMITTER_NAME"] = Name;
+            start.Environment["GIT_COMMITTER_EMAIL"] = Email;
             start.Environment["GIT_CONFIG_COUNT"] = "3";
             start.Environment["GIT_CONFIG_KEY_0"] = "commit.gpgSign";
             start.Environment["GIT_CONFIG_VALUE_0"] = "false";
@@ -337,6 +363,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (BeforeCommandAsync is not null) await BeforeCommandAsync(repository, arguments, ct);
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
+            if (Evidence is not null) await Evidence(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
             var result = await base.RunAsync(repository, arguments, ct);
             LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
@@ -372,6 +399,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (BeforeUnregister is not null) await BeforeUnregister(gitDirectory);
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
+            if (Evidence is not null) await Evidence(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
             var result = await base.UnregisterWorktreeAsync(repository, worktreePath, gitDirectory, ct);
             if (result.Succeeded)
@@ -398,6 +426,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
+            if (Evidence is not null) await Evidence(arguments);
             LandingEvidence.Write(taskId, "owned_git_start", new { repository, arguments });
             var result = await base.RunOwnedAsync(repository, arguments, started, ct);
             LandingEvidence.Write(taskId, "owned_git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });

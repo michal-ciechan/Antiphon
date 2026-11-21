@@ -65,7 +65,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     private void BuildServices()
     {
-        Fixture.Git.BeforeObservedCommand = async arguments =>
+        Fixture.Git.Evidence = async arguments =>
         {
             // The read below only feeds the optional evidence file; without ANTIPHON_C448_EVIDENCE it is skipped.
             if (!LandingEvidence.Enabled) return;
