@@ -21,21 +21,23 @@ public sealed class RcPortPowerShellAssemblyTests
             assembly,
         };
 
-        Resolve(null, [tools, installed], windows: true, files.Contains, _ => null).ShouldBe(assembly);
+        RcPortPowerShellAssembly.Resolve(null, [tools, installed], windows: true, files.Contains, _ => null)
+            .ShouldBe(assembly);
     }
 
     [Test]
     public void LinuxPrefersPsHomeThenTheRealPwshDirectory()
     {
         const string psHome = "/custom/powershell";
+        const string bin = "/usr/local/bin";
         const string target = "/somewhere/powershell/pwsh";
         var overrideAssembly = Path.Combine(psHome, Dll);
         var linkedAssembly = Path.Combine(Path.GetDirectoryName(target)!, Dll);
-        var files = new HashSet<string> { "/usr/local/bin/pwsh", overrideAssembly, linkedAssembly };
+        var files = new HashSet<string> { Path.Combine(bin, "pwsh"), overrideAssembly, linkedAssembly };
 
-        Resolve(psHome, ["/usr/local/bin"], windows: false, files.Contains, _ => target)
+        RcPortPowerShellAssembly.Resolve(psHome, [bin], windows: false, files.Contains, _ => target)
             .ShouldBe(overrideAssembly);
-        Resolve("/missing", ["/usr/local/bin"], windows: false, files.Contains, _ => target)
+        RcPortPowerShellAssembly.Resolve("/missing", [bin], windows: false, files.Contains, _ => target)
             .ShouldBe(linkedAssembly);
     }
 
@@ -46,9 +48,9 @@ public sealed class RcPortPowerShellAssemblyTests
         var image = Path.Combine("/opt/powershell", Dll);
         var files = new HashSet<string> { standard, image };
 
-        Resolve(null, [], windows: false, files.Contains, _ => null).ShouldBe(standard);
+        RcPortPowerShellAssembly.Resolve(null, [], windows: false, files.Contains, _ => null).ShouldBe(standard);
         files.Remove(standard);
-        Resolve(null, [], windows: false, files.Contains, _ => null).ShouldBe(image);
+        RcPortPowerShellAssembly.Resolve(null, [], windows: false, files.Contains, _ => null).ShouldBe(image);
     }
 
     [Test]
@@ -58,23 +60,12 @@ public sealed class RcPortPowerShellAssemblyTests
         const string bin = "/usr/bin";
         var pwsh = Path.Combine(bin, "pwsh");
         var error = Should.Throw<InvalidOperationException>(() =>
-            Resolve(psHome, [bin], windows: false, path => path == pwsh, _ => null));
+            RcPortPowerShellAssembly.Resolve(psHome, [bin], windows: false, path => path == pwsh, _ => null));
 
         error.Message.ShouldContain("RC port corpus could not locate " + Dll);
         error.Message.ShouldContain(Path.Combine(psHome, Dll));
         error.Message.ShouldContain(Path.Combine(bin, Dll));
         error.Message.ShouldContain(Path.Combine("/opt/microsoft/powershell/7", Dll));
         error.Message.ShouldContain(Path.Combine("/opt/powershell", Dll));
-    }
-
-    private static string Resolve(string? psHome, IEnumerable<string> searchDirectories, bool windows,
-        Func<string, bool> fileExists, Func<string, string?> resolveLink)
-    {
-        var method = typeof(RcPortCorpus).Assembly.GetType("Antiphon.Tests.Scripts.RcPortPowerShellAssembly")
-            ?.GetMethod("Resolve", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
-        method.ShouldNotBeNull("The RC port corpus must provide a PowerShell assembly resolver.");
-        var resolve = method.CreateDelegate<Func<string?, IEnumerable<string>, bool, Func<string, bool>,
-            Func<string, string?>, string>>();
-        return resolve(psHome, searchDirectories, windows, fileExists, resolveLink);
     }
 }
