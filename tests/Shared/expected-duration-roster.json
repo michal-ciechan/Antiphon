@@ -74,6 +74,13 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.E2E.DelegationScratchCallerTests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.E2E.DelegationSequencingE2ETests": {
       "seconds": 300,
       "basis": "conservative-bound",
