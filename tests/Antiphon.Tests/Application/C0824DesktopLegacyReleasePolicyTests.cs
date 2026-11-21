@@ -932,6 +932,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
         row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
         (await w.ReleasesAsync(a)).ShouldBeEmpty("no release");
+        if (escape == "absolute-outside") w.AssertNoGit(a);
     }
 
     /// <summary>V-17/G-37: a control character in the leaf or branch is refused before any pattern (built with escapes).</summary>
@@ -1170,9 +1171,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 var rows = new List<WorktreeResidueRunCandidate>();
                 foreach (var run in runs) rows.AddRange(await w.RowsAsync(run));
                 var reasons = rows.Where(r => r.TaskId == t.Id)
-                    .Select(r => $"{r.RunId}: {r.Outcome}/{r.ReasonCode}");
+                    .Select(r => $"{r.RunId} {r.Outcome}/{r.ReasonCode}").DefaultIfEmpty("none");
                 Directory.Exists(t.Path).ShouldBeFalse(
-                    $"the tree is gone for {mode} task {t.Id8}; candidate rows: {string.Join(", ", reasons)}");
+                    $"the tree is gone for {mode} task {t.Id8}. Candidate rows were {string.Join(", ", reasons)}");
             }
             await w.AssertRetiredAsync(t, origin);
             var attempts = await w.AttemptsAsync(t);
@@ -1195,6 +1196,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         var tracked = Path.Combine(task.Path, task.Id8 + ".txt");
         var attributes = File.GetAttributes(tracked);
         File.SetAttributes(tracked, attributes | FileAttributes.ReadOnly);
+        File.GetAttributes(tracked).HasFlag(FileAttributes.ReadOnly).ShouldBeTrue();
         var before = await w.SnapshotAsync(task.Path);
         var aside = WorktreeSetAside.SetAsidePath(task.Path);
         var moves = 0;
@@ -1263,8 +1265,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         var outside = Directory.CreateDirectory(Path.Combine(w.Fixture.Root, "outside")).FullName;
         var marker = Path.Combine(outside, "marker.txt");
         await File.WriteAllTextAsync(marker, "outside");
-        using var link = DirectoryLink.TryCreate(Path.Combine(w.Fixture.Root, "staged-link"), outside);
-        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
         var aside = WorktreeSetAside.SetAsidePath(task.Path);
         var swapped = false;
         w.Fixture.Git.BeforeUnregister = _ =>
@@ -1272,7 +1272,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             var movedObj = Path.Combine(aside, "obj");
             File.Delete(Path.Combine(movedObj, "build.out"));
             Directory.Delete(movedObj);
-            link.MoveTo(movedObj);
+            Directory.CreateSymbolicLink(movedObj, outside);
             swapped = true;
             return Task.CompletedTask;
         };
