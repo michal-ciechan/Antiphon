@@ -266,6 +266,7 @@ public class LandingGit : ILandingGit
 
     private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments)
     {
+        if (GitTreeVerdict.RequiresStandardError(arguments)) return null;
         if (!InProcessGitReads.Enabled || !InProcessEligible() || arguments.Count == 0) return null;
         if (arguments[0] is "status" or "ls-files" or "-c")
             return AnswerWorkingTreeReadsInProcess
@@ -962,7 +963,7 @@ public class LandingGit : ILandingGit
             // for Windows) and a silent stderr. Lands and the guarded removal's re-check both read this.
             var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
             // The listing is only tested for emptiness (Status is kept only when it is empty): a verdict.
-            var status = await this.StatusVerdictAsync(snapshot.RegisteredPath, ["-c", "core.longpaths=true", .. statusArgs], ct);
+            var status = await this.StatusWithStandardErrorAsync(snapshot.RegisteredPath, ["-c", "core.longpaths=true", .. statusArgs], ct);
             if (!status.Succeeded)
                 return new(null, "status_error", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
             var ignoredArgs = new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" };
