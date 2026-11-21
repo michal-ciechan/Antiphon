@@ -39,13 +39,14 @@ public sealed class ReviewEvidenceResettlementTests
 
         var directory = Directory.CreateTempSubdirectory("c2053-pipe-");
         var git = new PipeHolderGit();
-        var child = git.RunAsync(directory.FullName, ["push"], ct);
+        var child = git.RunAsync(directory.FullName, ["version"], ct);
         try
         {
             var timeout = await Should.ThrowAsync<TimeoutException>(() =>
                 AwaitGitAsync(child, nameof(LandingGit.RunAsync), TimeSpan.FromSeconds(2))
                     .WaitAsync(TimeSpan.FromSeconds(8), ct));
             File.Exists(Path.Combine(directory.FullName, "ready")).ShouldBeTrue();
+            git.Root.ShouldNotBeNull().HasExited.ShouldBeTrue("the fake Git root exited");
             child.IsCompleted.ShouldBeFalse("the holder still owns the redirected pipe");
             timeout.Message.ShouldBe($"{nameof(C2053_GitHelperDeadlineNamesTestAndHelper)} / RunAsync: "
                 + "git helper did not complete within 00:00:02 (pipe held open?)");
@@ -60,6 +61,8 @@ public sealed class ReviewEvidenceResettlementTests
 
     private sealed class PipeHolderGit : LandingGit
     {
+        public Process? Root { get; private set; }
+
         protected override Process? StartProcess(ProcessStartInfo start)
         {
             start.FileName = "/bin/sh";
@@ -77,7 +80,7 @@ public sealed class ReviewEvidenceResettlementTests
                     ' </dev/null &
                 )
                 """);
-            return base.StartProcess(start);
+            return Root = base.StartProcess(start);
         }
     }
 
