@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -9,7 +10,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// Replays twelve historical rc failures through two pure selections over the
-/// stored path lists. The current owner map is read from scripts/lib/rc-input-owners.json.
+/// stored path lists. The owner-map replay uses the committed RC input inventory.
 /// The proposed project closure selects a suite only when a changed path sits under
 /// the suite csproj or a project it reaches by ProjectReference (reflexive, transitive,
 /// every Include, conditions included, no Directory.Build import walk) or the path
@@ -18,7 +19,7 @@ namespace Antiphon.Tests.Scripts;
 /// until the recorded known-unsound set is updated.
 /// </summary>
 [Category("Unit")]
-[Timeout(60_000)]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class IncrementalSelectionSoundnessTests
 {
     private static readonly string[] RequiredRuns =
@@ -33,20 +34,17 @@ public sealed class IncrementalSelectionSoundnessTests
         AllowTrailingCommas = false,
     };
 
-    [Test]
-    public void Recorded_owner_map_status_matches_the_committed_map()
+    [Test, Timeout(150_000)]
+    public Task Recorded_owner_map_status_matches_the_committed_map(CancellationToken cancellationToken)
     {
-        var root = RepoRoot();
-        var corpus = LoadCorpus(root);
-        var map = LoadOwnerMap(root);
-        foreach (var item in corpus.Cases!)
-        {
-            var status = OwnerSelects(map, item.SuiteProject, item.ChangedPaths!) ? "selected" : "missed";
-            status.ShouldBe(item.CurrentMap, item.Id);
-        }
+        _ = LoadCorpus(RepoRoot());
+        const string replay = "HistoricalSelectionSoundness";
+        return ScriptHarness.RunHarnessCaseAsync("test-rc-input-owners.ps1", "RIO", replay, 1,
+            ["RIO " + replay + ".contract"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     }
 
-    [Test]
+    [Test, Timeout(60_000)]
     public void Project_closure_misses_match_the_recorded_known_unsound_set()
     {
         var root = RepoRoot();
@@ -139,82 +137,6 @@ public sealed class IncrementalSelectionSoundnessTests
         }
 
         return corpus;
-    }
-
-    private static OwnerMap LoadOwnerMap(string root)
-    {
-        var path = Path.Combine(root, "scripts", "lib", "rc-input-owners.json");
-        var map = JsonSerializer.Deserialize<OwnerMap>(File.ReadAllText(path), JsonOptions)
-            ?? throw new InvalidOperationException("owner map did not parse.");
-        if (map.SchemaVersion != 1 || map.Roots is null || map.Roots.Length == 0)
-            throw new InvalidOperationException("owner map schema is not a version-1 root list.");
-        if (string.IsNullOrWhiteSpace(map.SuiteProjects) && (map.Suites is null || map.Suites.Length == 0))
-            throw new InvalidOperationException("owner map names neither suiteProjects nor suites.");
-        if (map.Suites is not null)
-        {
-            foreach (var suite in map.Suites)
-            {
-                if (string.IsNullOrWhiteSpace(suite.Id) || string.IsNullOrWhiteSpace(suite.Project))
-                    throw new InvalidOperationException("owner suite is missing an id or a project.");
-            }
-        }
-
-        foreach (var ownerRoot in map.Roots)
-        {
-            if (string.IsNullOrWhiteSpace(ownerRoot.Path) || string.IsNullOrWhiteSpace(ownerRoot.Reason)
-                || ownerRoot.Consumers is null || ownerRoot.Consumers.Length == 0)
-                throw new InvalidOperationException("owner root is missing a path, a reason, or a consumer.");
-            _ = CompileOwnerPattern(ownerRoot.Path);
-        }
-
-        return map;
-    }
-
-    private static bool OwnerSelects(OwnerMap map, string suiteProject, string[] changedPaths)
-    {
-        foreach (var ownerRoot in map.Roots!)
-        {
-            var consumes = false;
-            foreach (var consumer in ownerRoot.Consumers!)
-            {
-                if (consumer == "*" || string.Equals(consumer, suiteProject, StringComparison.Ordinal))
-                {
-                    consumes = true;
-                    break;
-                }
-            }
-
-            if (!consumes)
-                continue;
-            var pattern = CompileOwnerPattern(ownerRoot.Path);
-            foreach (var changed in changedPaths)
-            {
-                if (pattern.IsMatch(changed))
-                    return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Same translation as scripts/lib/rc-input-manifest.ps1 New-RcInputPattern.
-    private static Regex CompileOwnerPattern(string pattern)
-    {
-        if (string.IsNullOrEmpty(pattern) || pattern.Length > 2048 || pattern.StartsWith('/')
-            || pattern.Split('/').Contains(".."))
-            throw new InvalidOperationException("invalid-input-pattern: " + pattern);
-        foreach (var character in pattern)
-        {
-            if (character < ' ' || character is '\\' or ':' or ';' or '[' or ']')
-                throw new InvalidOperationException("invalid-input-pattern: " + pattern);
-        }
-
-        var expression = "^" + Regex.Escape(pattern)
-            .Replace(@"\*\*/", "(?:.*/)?", StringComparison.Ordinal)
-            .Replace(@"\*\*", ".*", StringComparison.Ordinal)
-            .Replace(@"\*", "[^/]*", StringComparison.Ordinal)
-            .Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$";
-        return new Regex(expression, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     }
 
     private static bool ClassFileExists(string suiteDirectory, string className)
@@ -456,42 +378,6 @@ public sealed class IncrementalSelectionSoundnessTests
 
         [JsonPropertyName("m1")]
         public string? M1 { get; set; }
-
-        [JsonPropertyName("reason")]
-        public string? Reason { get; set; }
-    }
-
-    private sealed class OwnerMap
-    {
-        [JsonPropertyName("schemaVersion")]
-        public int SchemaVersion { get; set; }
-
-        [JsonPropertyName("suiteProjects")]
-        public string? SuiteProjects { get; set; }
-
-        [JsonPropertyName("suites")]
-        public OwnerSuite[]? Suites { get; set; }
-
-        [JsonPropertyName("roots")]
-        public OwnerRoot[]? Roots { get; set; }
-    }
-
-    private sealed class OwnerSuite
-    {
-        [JsonPropertyName("id")]
-        public string? Id { get; set; }
-
-        [JsonPropertyName("project")]
-        public string? Project { get; set; }
-    }
-
-    private sealed class OwnerRoot
-    {
-        [JsonPropertyName("path")]
-        public string Path { get; set; } = "";
-
-        [JsonPropertyName("consumers")]
-        public string[]? Consumers { get; set; }
 
         [JsonPropertyName("reason")]
         public string? Reason { get; set; }
