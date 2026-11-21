@@ -9,10 +9,11 @@ namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
 /// One Redpanda broker shared by test classes instead of one per test: <see cref="C519"/> serves the C519 transport and
-/// crash classes, so at most one such broker is up even when their tests interleave, and it is disposed once, after
-/// the test assembly (SharedRedpandaBrokerHooks): a per-class hook could dispose it under the other class's running
-/// test, since hooks do not run under the classes' ProcessSpawnLimit. Each rc launch group is its own test process,
-/// so the broker lives at most for its group. The classes run one test at a time (ProcessSpawnLimit), and every
+/// crash classes, so at most one such broker is up even when their tests interleave. It is disposed once both classes
+/// have finished (<see cref="ClassFinishedAsync"/>, from each class's After(Class): the second of those runs only when
+/// no test of either class is left), or after the test assembly when a run selects only one of them
+/// (SharedRedpandaBrokerHooks). A single class's hook must not dispose it, since hooks do not run under the classes'
+/// ProcessSpawnLimit and the other class's test could be using it. The classes run one test at a time (ProcessSpawnLimit), and every
 /// scenario has its own topic (with its own size cap, deleted when the scenario is disposed), consumer group, database
 /// schema and gateway (UnifiedOutboundTransport), so no test sees another's broker state; a test must not change
 /// broker-wide state. Started by the first test that needs it, with the CARD-1934 timed start (both classes' broker
@@ -24,7 +25,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// with the last start's error instead of each spending its own startup budget; a start after that window is tried
 /// again. Every step under the gate bounds itself (two 30-second probes, a 60-second disposal, a start of at most
 /// 120 seconds plus a 60-second wait for a failed start to settle and a 60-second disposal of it), so a gate holder
-/// always finishes and nothing it started outlives it: a caller waits for the gate at most <see cref="GateWait"/>
+/// always finishes; a start Docker keeps past that is disposed when it completes, or reaped at process exit (Ryuk).
+/// A caller waits for the gate at most <see cref="GateWait"/>
 /// (more than the longest holder) and then does its own bounded work. A test's own scenario deadline starts after it
 /// has the broker.
 /// </summary>
@@ -38,6 +40,8 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
     /// <summary>The broker of the C519 transport and crash classes, started with the CARD-1934 phase timing.</summary>
     public static SharedRedpandaBroker C519 { get; } = new(StartTimedAsync, C519Label);
 
+    private static readonly string[] C519Classes = ["ChannelOutboundUnifiedTransportTests", "ChannelOutboundUnifiedCrashTests"];
+    private readonly HashSet<string> _finished = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private RedpandaContainer? _broker;
     private int _startFailures;
@@ -90,11 +94,23 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
         }
     }
 
-    public async Task StopAsync()
+    /// <summary>A C519 class has finished (its After(Class)): the broker is disposed once both have.</summary>
+    public Task ClassFinishedAsync(string className)
     {
-        if (!await _gate.WaitAsync(GateWait))
+        lock (_finished)
         {
-            Console.WriteLine(label + " after-class gate not acquired; the reaper removes any broker left");
+            _finished.Add(className);
+            if (!C519Classes.All(_finished.Contains)) return Task.CompletedTask;
+        }
+        return StopAsync(GateWait);
+    }
+
+    /// <summary>Disposes the broker; at assembly end no test should hold the gate, so a short wait is enough there.</summary>
+    public async Task StopAsync(TimeSpan gateWait)
+    {
+        if (!await _gate.WaitAsync(gateWait))
+        {
+            Console.WriteLine(label + " stop: gate not acquired; the reaper removes any broker left");
             return;
         }
         try
@@ -246,6 +262,15 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
                 {
                     await starting.WaitAsync(TimeSpan.FromSeconds(60));
                 }
+                catch (TimeoutException)
+                {
+                    // Docker kept the start past every bound: whatever it starts is disposed when it completes.
+                    _ = starting.ContinueWith(late =>
+                        {
+                            if (late.IsCompletedSuccessfully) _ = DisposeAsync(broker, C519Label);
+                            else _ = late.Exception;
+                        }, TaskContinuationOptions.ExecuteSynchronously);
+                }
                 catch (Exception)
                 {
                 }
@@ -276,5 +301,5 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
 internal static class SharedRedpandaBrokerHooks
 {
     [After(Assembly)]
-    public static Task StopSharedBrokersAsync() => SharedRedpandaBroker.C519.StopAsync();
+    public static Task StopSharedBrokersAsync() => SharedRedpandaBroker.C519.StopAsync(TimeSpan.FromSeconds(60));
 }
