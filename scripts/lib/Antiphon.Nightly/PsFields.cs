@@ -140,14 +140,6 @@ namespace Antiphon.Nightly
         internal static void AddNote(object record, string name, object value) =>
             ((PSObject)record).Properties.Add(new PSNoteProperty(name, value));
 
-        /// <summary><c>$o.Name = value</c> for an existing property (a note or a settable adapted property).</summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void SetValue(object o, string name, object value)
-        {
-            var property = PSObject.AsPSObject(o).Properties[name];
-            if (property != null) property.Value = value;
-        }
-
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal static void SetNote(object record, string name, object value)
         {
