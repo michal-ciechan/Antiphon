@@ -24,8 +24,17 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             var layout = BuildStep.AppendSharedLayout(properties, root, entry, name, intermediateRoot);
             var arguments = BuildStep.BuildArguments(entry, name, properties, 1);
             const string cacheProperty = "--property:AntiphonCheckpointIntermediateRoot=";
+            const string importProperty = "--property:CustomBeforeDirectoryBuildProps=";
             var cache = arguments.SingleOrDefault(arg => arg.StartsWith(cacheProperty, StringComparison.Ordinal));
+            var import = arguments.SingleOrDefault(arg => arg.StartsWith(importProperty, StringComparison.Ordinal));
             cache.ShouldNotBeNull("build arguments must select a persistent intermediate root");
+            import.ShouldNotBeNull("build arguments must import the generated intermediate props");
+            var importPath = import![importProperty.Length..];
+            Path.GetRelativePath(root, importPath).Replace('\\', '/').ShouldBe(
+                ".antiphon/checkpoint-obj/CheckpointIntermediates.props");
+            var ownedRoot = Path.GetFullPath(layout.Owned).TrimEnd(Path.DirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            Path.GetFullPath(importPath).StartsWith(ownedRoot, StringComparison.Ordinal).ShouldBeFalse();
             return (Path.GetFullPath(layout.Owned).TrimEnd(Path.DirectorySeparatorChar), cache![cacheProperty.Length..]);
         }
 
