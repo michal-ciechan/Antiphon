@@ -109,6 +109,62 @@ public sealed class VolumeRetirementCloseExemptionTests
         printf 'SIBLINGS_UNTOUCHED=%s\n' "$stable"
         """;
 
+    private const string ClearableShell = """
+        set -euo pipefail
+        umask 077
+        root="$(mktemp -d)"
+        root="$(readlink -e -- "$root")"
+        trap 'rm -rf -- "$root"' EXIT
+        export SERVER2_ROOT="$root/server"
+        C1609_RETIREMENT_FILE="$RETIREMENT"
+        eval "$(sed -n '/^c1609_load_retirement() {$/,/^}$/p; /^c1609_temp_retirement_clearable() {$/,/^}$/p' "$REMOTE")"
+        c1008_volume() { printf 'null\n'; }
+
+        id=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        if [ "$MODE" = bad-name ]; then id=unexpected-directory; fi
+        op="$SERVER2_ROOT/retirement/$id"
+        mkdir -p -- "$op"
+        pid=$$
+        ticks="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$$/stat")"
+        if [ "$MODE" != live ]; then ticks="$((ticks + 1))"; fi
+        published=false
+        if [ "$MODE" = ready ]; then published=true; fi
+        jq -ncS --arg op "$id" --argjson pid "$pid" --arg ticks "$ticks" --argjson published "$published" '{
+          schema:1,active:false,children:[],complete:true,daemon:"fixture-daemon",
+          nonce:("a"*32),operationId:$op,owner:{pid:$pid,startTicks:$ticks},readyPublished:$published}' \
+          > "$op/lifecycle.json"
+        case "$MODE" in
+            pending) printf '{}\n' > "$op/close-pending.json" ;;
+            symlink)
+                mv -- "$op/lifecycle.json" "$root/lifecycle.json"
+                ln -s -- "$root/lifecycle.json" "$op/lifecycle.json" ;;
+        esac
+        [[ ! -e "$op/receipt.json" && ! -L "$op/receipt.json" ]]
+        declare -F c1609_load_retirement c1609_temp_retirement_clearable >/dev/null
+        printf 'RECEIPT_ABSENT=1\n'
+        code=0
+        c1609_temp_retirement_clearable || code=$?
+        printf 'CLEARABLE_EXIT=%s REASON=%s\n' "$code" "${c1609_clear_reason:-}"
+        """;
+
+    [Test]
+    [Arguments("exempt", 0, null)]
+    [Arguments("live", 1, "TempRetirementOwnerActive")]
+    [Arguments("ready", 1, "TempRetirementJournalUnknown")]
+    [Arguments("pending", 1, "TempRetirementJournalUnknown")]
+    [Arguments("symlink", 1, "TempRetirementJournalUnknown")]
+    [Arguments("bad-name", 1, "TempRetirementJournalUnknown")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Deploy_clearable_checks_receiptless_previews(string mode, int exit, string? refusal)
+    {
+        var run = await Run(ClearableShell, mode);
+        run.Exit.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("RECEIPT_ABSENT=1");
+        run.Output.ShouldContain($"CLEARABLE_EXIT={exit} ");
+        if (refusal is not null)
+            run.Output.ShouldContain($"REASON={refusal}");
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Close_exempts_receiptless_never_ready_previews()
@@ -191,6 +247,19 @@ public sealed class VolumeRetirementCloseExemptionTests
         closed.Output.ShouldContain("TempRetirementClosed operation=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa idempotent=false");
     }
 
+    [Test]
+    [Arguments("password x")]
+    [Arguments("Daemon password-x")]
+    [Arguments("TempVolumesRetained password-x")]
+    [Arguments("TempVolumesRetained antiphon-runner-temp_work password-x")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Close_wrapper_redacts_unrecognized_remote_refusals(string reason)
+    {
+        var run = await Transport($"printf 'TempRetirementCloseRefused: %s\\n' '{reason}' >&2; exit 2");
+        run.Exit.ShouldBe(2, run.Output);
+        run.Output.Trim().ShouldBe("TempRetirementCloseRefused: JournalUnknown");
+    }
+
     private static async Task<(int Exit, string Output)> Run(string script, string mode)
     {
         var psi = new ProcessStartInfo("bash")
@@ -202,6 +271,7 @@ public sealed class VolumeRetirementCloseExemptionTests
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(script);
         psi.Environment["RETIREMENT"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh");
+        psi.Environment["REMOTE"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh");
         psi.Environment["MODE"] = mode;
         return await Wait(psi, TimeSpan.FromSeconds(60));
     }
