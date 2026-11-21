@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -91,7 +92,11 @@ internal static class CheckpointFixtureProcess
 
     public static ProcessStartInfo CreateGitStartInfo(string root, IReadOnlyDictionary<string, string>? environment, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = root };
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            StandardOutputEncoding = new UTF8Encoding(false),
+        };
         start.Environment.Remove("GIT_DIR");
         start.Environment.Remove("GIT_WORK_TREE");
         start.Environment.Remove("GIT_INDEX_FILE");
