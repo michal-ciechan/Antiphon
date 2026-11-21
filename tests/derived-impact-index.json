@@ -17033,6 +17033,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.GitInProcess/Antiphon.GitInProcess.csproj",
+      "classes": [
+        "CheckpointToolProjectContractTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.GitInProcess/GitStatusConfigAgreement.cs",
       "classes": [
         "LibGit2VsGitWorkingTreeVerdictTests"
@@ -17101,6 +17107,7 @@
     {
       "path": "src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj",
       "classes": [
+        "CheckpointToolProjectContractTests",
         "HostCleanupCheckpointExtractionTests"
       ]
     },
