@@ -23,10 +23,13 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
+[Timeout(180_000)]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReviewEvidenceResettlementTests
 {
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan GitHelperBound = TimeSpan.FromSeconds(120);
+    private static CancellationToken TestCancellation => TestContext.Current!.Execution.CancellationToken;
 
     [Test]
     public async Task C2053_GitHelperDeadlineNamesTestAndHelper(CancellationToken ct)
@@ -84,7 +87,26 @@ public sealed class ReviewEvidenceResettlementTests
         }
     }
 
-    private static Task AwaitGitAsync(Task operation, string helper, TimeSpan? bound = null) => operation;
+    private static async Task AwaitGitAsync(Task operation, string helper, TimeSpan? bound = null)
+    {
+        var deadline = bound ?? GitHelperBound;
+        try
+        {
+            await operation.WaitAsync(deadline, TestCancellation);
+        }
+        catch (TimeoutException ex) when (operation.Exception?.InnerException != ex)
+        {
+            var test = TestContext.Current!.Metadata.TestDetails.TestName;
+            throw new TimeoutException(
+                $"{test} / {helper}: git helper did not complete within {deadline:c} (pipe held open?)", ex);
+        }
+    }
+
+    private static async Task<T> AwaitGitAsync<T>(Task<T> operation, string helper, TimeSpan? bound = null)
+    {
+        await AwaitGitAsync((Task)operation, helper, bound);
+        return await operation;
+    }
 
     private static string Report(RunnerSettlementWorld w, Guid subject, string sha,
         string finding = "Clean", string scope = "Full", string clean = "true", bool evidence = true) =>
@@ -96,12 +118,12 @@ public sealed class ReviewEvidenceResettlementTests
     private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> IncidentAsync()
     {
         // CARD-1082 D-8: the CARD-1043 incident stays reachable with the kill switch off.
-        var w = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
-            controlledSyncClock: true, mirrorPublish: true, syncDebt: false);
+        var w = await AwaitGitAsync(RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
+            controlledSyncClock: true, mirrorPublish: true, syncDebt: false), nameof(RunnerSettlementWorld.CreateAsync));
         try
         {
-            await w.Git.EnsureRunnerAsync();
-            var subject = await w.AddReviewSubjectAsync(w.Git.Baseline);
+            await AwaitGitAsync(w.Git.EnsureRunnerAsync(), nameof(w.Git.EnsureRunnerAsync));
+            var subject = await AwaitGitAsync(w.AddReviewSubjectAsync(w.Git.Baseline), nameof(w.AddReviewSubjectAsync));
             await BlockAsync(w, Report(w, subject, w.Git.Baseline));
             var old = (await RowsAsync(w)).ShouldHaveSingleItem();
             old.Outcome.ShouldBe(StageOutcomeKind.Clean);
@@ -113,17 +135,17 @@ public sealed class ReviewEvidenceResettlementTests
 
     private static async Task BlockAsync(RunnerSettlementWorld w, string report)
     {
-        await using var held = await w.Git.Leases.TryAcquireAsync(w.Git.Desktop, CancellationToken.None);
+        await using var held = await AwaitGitAsync(w.Git.Leases.TryAcquireAsync(w.Git.Desktop, TestCancellation),
+            nameof(w.Git.Leases.TryAcquireAsync));
         held.ShouldNotBeNull();
         var busy = w.LeaseBusy.Next();
         var settling = w.SettleAsync(report);
         try
         {
-            (await System.Threading.Tasks.Task.WhenAny(busy, settling).WaitAsync(Guard)).ShouldBe(busy);
+            (await AwaitGitAsync(System.Threading.Tasks.Task.WhenAny(busy, settling), nameof(w.SettleAsync), Guard)).ShouldBe(busy);
             w.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
-            await settling.WaitAsync(Guard);
         }
-        finally { await settling.WaitAsync(Guard); }
+        finally { await AwaitGitAsync(settling, nameof(w.SettleAsync), Guard); }
         w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         w.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
     }
@@ -131,9 +153,9 @@ public sealed class ReviewEvidenceResettlementTests
     private static async Task AnswerAsync(RunnerSettlementWorld w)
     {
         var service = w.Services.GetRequiredService<AgentTaskReplyService>();
-        await service.AnswerAsync(w.TaskId, "Lease released; report the final evidence again.",
-            AnswerOrigin.Cli, null, CancellationToken.None);
-        await service.OnTurnEndAsync(w.SessionId, CancellationToken.None);
+        await AwaitGitAsync(service.AnswerAsync(w.TaskId, "Lease released; report the final evidence again.",
+            AnswerOrigin.Cli, null, TestCancellation), nameof(service.AnswerAsync));
+        await AwaitGitAsync(service.OnTurnEndAsync(w.SessionId, TestCancellation), nameof(service.OnTurnEndAsync));
         await w.ReloadAsync();
         w.Task.Status.ShouldBe(AgentTaskStatus.Working, "old done token cannot settle the answer turn");
     }
@@ -161,16 +183,20 @@ public sealed class ReviewEvidenceResettlementTests
         {
             var (w, subject, old) = await IncidentAsync();
             await using var owned = w;
-            var sha = push ? await w.Git.RunnerPushAsync("new.txt", "new review tip") : w.Git.Baseline;
+            var sha = push
+                ? await AwaitGitAsync(w.Git.RunnerPushAsync("new.txt", "new review tip"), nameof(w.Git.RunnerPushAsync))
+                : w.Git.Baseline;
             if (push)
             {
-                await w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", w.Git.FullRef);
+                await AwaitGitAsync(w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", w.Git.FullRef),
+                    "RunAsync (fetch)");
                 await using var db = w.CreateContext();
                 var source = await db.AgentTasks.SingleAsync(t => t.Id == subject);
-                await w.Git.RunAsync(w.Git.Desktop, "push", "origin", sha + ":refs/heads/" + source.WorktreeBranch);
+                await AwaitGitAsync(w.Git.RunAsync(w.Git.Desktop, "push", "origin", sha + ":refs/heads/" + source.WorktreeBranch),
+                    "RunAsync (push)");
             }
             await AnswerAsync(w);
-            await w.SettleAsync(Report(w, subject, sha));
+            await AwaitGitAsync(w.SettleAsync(Report(w, subject, sha)), nameof(w.SettleAsync));
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
             w.Evidence()!.RemoteSync!.State.ShouldBe(push ? RemoteSettlementSyncState.Synchronized
                 : RemoteSettlementSyncState.NoPushedProgress);
@@ -193,9 +219,11 @@ public sealed class ReviewEvidenceResettlementTests
             var sha = w.Git.Baseline;
             if (variant == "different")
             {
-                sha = await w.Git.RunnerPushAsync("final.txt", "different final tip");
-                await w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", w.Git.FullRef);
-                var other = await w.AddReviewSubjectAsync(sha, followUp: false);
+                sha = await AwaitGitAsync(w.Git.RunnerPushAsync("final.txt", "different final tip"),
+                    nameof(w.Git.RunnerPushAsync));
+                await AwaitGitAsync(w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", w.Git.FullRef),
+                    "RunAsync (fetch)");
+                var other = await AwaitGitAsync(w.AddReviewSubjectAsync(sha, followUp: false), nameof(w.AddReviewSubjectAsync));
                 await SameCardAsync(w, subject, other);
                 subject = other;
             }
@@ -206,7 +234,7 @@ public sealed class ReviewEvidenceResettlementTests
             if (variant == "fenced") report = report.Replace("--- review evidence ---", "```\n--- review evidence ---")
                 .Replace("\n\n--- next stage ---", "\n```\n\n--- next stage ---");
             await AnswerAsync(w);
-            await w.SettleAsync(report);
+            await AwaitGitAsync(w.SettleAsync(report), nameof(w.SettleAsync));
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, variant);
             if (variant is "false" or "missing-clean")
             {
@@ -260,7 +288,7 @@ public sealed class ReviewEvidenceResettlementTests
         var originalSnapshot = obligation.CompletionSnapshotJson;
         await AnswerAsync(w);
         var report = "Ref: review-rebind-v1:forged-report-authority\n" + Report(w, subject, w.Git.Baseline);
-        await w.SettleAsync(report);
+        await AwaitGitAsync(w.SettleAsync(report), nameof(w.SettleAsync));
         var rows = await RowsAsync(w);
         JsonSerializer.Serialize(rows.Single(o => o.Id == old.Id)).ShouldBe(originalBytes, "G8");
         var replacement = await ReplacementAsync(w, old.Id);
@@ -287,14 +315,17 @@ public sealed class ReviewEvidenceResettlementTests
             await using var owned = w;
             if (mismatch)
             {
-                var moved = await w.Git.PublishForeignBranchAsync("moved", "moved.txt");
-                await w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", "refs/heads/moved");
+                var moved = await AwaitGitAsync(w.Git.PublishForeignBranchAsync("moved", "moved.txt"),
+                    nameof(w.Git.PublishForeignBranchAsync));
+                await AwaitGitAsync(w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", "refs/heads/moved"),
+                    "RunAsync (fetch)");
                 await using var db = w.CreateContext();
                 var source = await db.AgentTasks.SingleAsync(t => t.Id == subject);
-                await w.Git.RunAsync(w.Git.Desktop, "push", "origin", moved + ":refs/heads/" + source.WorktreeBranch);
+                await AwaitGitAsync(w.Git.RunAsync(w.Git.Desktop, "push", "origin", moved + ":refs/heads/" + source.WorktreeBranch),
+                    "RunAsync (push)");
             }
             await AnswerAsync(w);
-            await w.SettleAsync(Report(w, subject, w.Git.Baseline));
+            await AwaitGitAsync(w.SettleAsync(Report(w, subject, w.Git.Baseline)), nameof(w.SettleAsync));
             var notes = await w.ObligationsAsync();
             notes.Count.ShouldBe(2);
             var final = notes.Single(n => TaskCompletionNotification.TryReadSnapshot(n.CompletionSnapshotJson)!.Status == AgentTaskStatus.Succeeded);
@@ -372,7 +403,7 @@ public sealed class ReviewEvidenceResettlementTests
             await AnswerAsync(w);
             var report = Report(w, subject, w.Git.Baseline);
             if (variant is "failed" or "blocked") report += DelegationReportFormatter.ReportToken(w.TaskId, variant);
-            await w.SettleAsync(report);
+            await AwaitGitAsync(w.SettleAsync(report), nameof(w.SettleAsync));
             var rows = await RowsAsync(w);
             rows.Count.ShouldBe(variant == "superseded" ? 2 : 1, variant == "role" ? "G1"
                 : variant == "stage" ? "G2" : variant is "failed" or "blocked" ? "G3"
@@ -401,8 +432,8 @@ public sealed class ReviewEvidenceResettlementTests
                 await both.Task.WaitAsync(Guard);
             };
         await w.SeedReportAsync(Report(w, subject, w.Git.Baseline));
-        var firstRun = w.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, CancellationToken.None);
-        var secondRun = second.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, CancellationToken.None);
+        var firstRun = w.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, TestCancellation);
+        var secondRun = second.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, TestCancellation);
         try
         {
             await boundary.Entered.Task.WaitAsync(Guard);
@@ -416,7 +447,8 @@ public sealed class ReviewEvidenceResettlementTests
         finally
         {
             boundary.Release.TrySetResult();
-            await System.Threading.Tasks.Task.WhenAll(firstRun, secondRun).WaitAsync(Guard);
+            await AwaitGitAsync(System.Threading.Tasks.Task.WhenAll(firstRun, secondRun),
+                nameof(AgentTaskReplyService.OnTurnEndAsync), Guard);
         }
         (await ReplacementAsync(w, old.Id)).SupersedesId.ShouldBe(old.Id);
         (await w.ObligationsAsync()).Count.ShouldBe(2, "G36 exactly one final completion");
@@ -446,7 +478,7 @@ public sealed class ReviewEvidenceResettlementTests
         w.Interceptors.Add(transactions);
         w.ConfigureServices = s => s.AddSingleton<ITaskProgressGit>(git);
         await w.RestartServicesAsync();
-        await w.SettleAsync(Report(w, subject, w.Git.Baseline));
+        await AwaitGitAsync(w.SettleAsync(Report(w, subject, w.Git.Baseline)), nameof(w.SettleAsync));
         (await ReplacementAsync(w, old.Id)).ReviewedSourceSha.ShouldBe(w.Git.Baseline);
         git.Observations.ShouldBeGreaterThan(0, "G37 real exact-ref observation executed");
         git.UnderTransaction.ShouldBeFalse("G37 external preparation precedes finalization transaction");
@@ -473,12 +505,13 @@ public sealed class ReviewEvidenceResettlementTests
         {
             Observations++;
             UnderTransaction |= transactions.Active > 0;
-            return await base.ObserveExactRefAsync(repository, fullRef, expectedFingerprint, taskId, ct);
+            return await AwaitGitAsync(base.ObserveExactRefAsync(repository, fullRef, expectedFingerprint, taskId, ct),
+                nameof(ObserveExactRefAsync));
         }
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
         {
             UnderTransaction |= transactions.Active > 0;
-            return await base.RunAsync(repository, args, ct);
+            return await AwaitGitAsync(base.RunAsync(repository, args, ct), nameof(RunAsync));
         }
     }
 
@@ -493,7 +526,7 @@ public sealed class ReviewEvidenceResettlementTests
             var beforeResult = w.Task.Result;
             w.ConfigureServices = s => s.AddSingleton<LandDeliveryBoundary>(new ThrowBoundary(cut));
             await w.RestartServicesAsync();
-            await w.SettleAsync(Report(w, subject, w.Git.Baseline));
+            await AwaitGitAsync(w.SettleAsync(Report(w, subject, w.Git.Baseline)), nameof(w.SettleAsync));
             w.Task.Status.ShouldBe(AgentTaskStatus.Working, "G40 " + cut);
             w.Task.Result.ShouldBe(beforeResult, "G40 " + cut);
             (await RowsAsync(w)).ShouldHaveSingleItem().Id.ShouldBe(old.Id, "G40 " + cut);
@@ -501,7 +534,8 @@ public sealed class ReviewEvidenceResettlementTests
             (await w.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.FindingRecorded, "G40 " + cut);
             w.ConfigureServices = null;
             await w.RestartServicesAsync();
-            await w.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, CancellationToken.None);
+            await AwaitGitAsync(w.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(w.SessionId, TestCancellation),
+                nameof(AgentTaskReplyService.OnTurnEndAsync));
             await w.ReloadAsync();
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
             (await ReplacementAsync(w, old.Id)).ReviewedSourceSha.ShouldBe(w.Git.Baseline);
@@ -518,16 +552,16 @@ public sealed class ReviewEvidenceResettlementTests
     [Test]
     public async Task C1082_PendingContinuationRefusesStrictRebind()
     {
-        var w = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
-            controlledSyncClock: true, mirrorPublish: true);
+        var w = await AwaitGitAsync(RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
+            controlledSyncClock: true, mirrorPublish: true), nameof(RunnerSettlementWorld.CreateAsync));
         await using var owned = w;
-        await w.Git.EnsureRunnerAsync();
-        var subject = await w.AddReviewSubjectAsync(w.Git.Baseline);
+        await AwaitGitAsync(w.Git.EnsureRunnerAsync(), nameof(w.Git.EnsureRunnerAsync));
+        var subject = await AwaitGitAsync(w.AddReviewSubjectAsync(w.Git.Baseline), nameof(w.AddReviewSubjectAsync));
         var dirt = Path.Combine(w.Git.Worktree, "scratch.txt");
         await File.WriteAllTextAsync(dirt, "desktop dirt");
         var report = Report(w, subject, w.Git.Baseline);
 
-        await w.SettleAsync(report);
+        await AwaitGitAsync(w.SettleAsync(report), nameof(w.SettleAsync));
         w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         w.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Refused);
         w.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.Dirty);
@@ -537,18 +571,18 @@ public sealed class ReviewEvidenceResettlementTests
 
         File.Delete(dirt);
         await AnswerAsync(w);
-        await using (var held = await w.Git.Leases.TryAcquireAsync(w.Git.Desktop, CancellationToken.None))
+        await using (var held = await AwaitGitAsync(w.Git.Leases.TryAcquireAsync(w.Git.Desktop, TestCancellation),
+                         nameof(w.Git.Leases.TryAcquireAsync)))
         {
             held.ShouldNotBeNull();
             var busy = w.LeaseBusy.Next();
             var settling = w.SettleAsync(report);
             try
             {
-                (await System.Threading.Tasks.Task.WhenAny(busy, settling).WaitAsync(Guard)).ShouldBe(busy);
+                (await AwaitGitAsync(System.Threading.Tasks.Task.WhenAny(busy, settling), nameof(w.SettleAsync), Guard)).ShouldBe(busy);
                 w.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
-                await settling.WaitAsync(Guard);
             }
-            finally { await settling.WaitAsync(Guard); }
+            finally { await AwaitGitAsync(settling, nameof(w.SettleAsync), Guard); }
         }
 
         w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
@@ -561,7 +595,7 @@ public sealed class ReviewEvidenceResettlementTests
         sync.ConfirmedSha.ShouldBeNull();
         (await RowsAsync(w)).ShouldHaveSingleItem().Id.ShouldBe(old.Id);
         File.Exists(dirt).ShouldBeFalse();
-        (await w.Git.HeadAsync()).ShouldBe(w.Git.Baseline);
+        (await AwaitGitAsync(w.Git.HeadAsync(), nameof(w.Git.HeadAsync))).ShouldBe(w.Git.Baseline);
     }
 
     private sealed class ThrowBoundary(string cut) : LandDeliveryBoundary
