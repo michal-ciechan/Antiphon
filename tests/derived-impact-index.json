@@ -24,6 +24,7 @@
     "GrokSignInRuntimeTests",
     "HostSessionPipeTests",
     "ModernPtyDa1Tests",
+    "NamedCodexAgentLaunchTests",
     "ParentDeathSpikeTests",
     "PtyAgentRunnerTests",
     "PtyBackendContractTests",
@@ -1432,9 +1433,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 428,
+      "classes": 430,
       "reason": "cap",
-      "owed": 403,
+      "owed": 405,
       "first": [
         "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
@@ -1662,9 +1663,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 612,
+      "classes": 614,
       "reason": "cap",
-      "owed": 587,
+      "owed": 589,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,9 +1679,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 612,
+      "classes": 614,
       "reason": "cap",
-      "owed": 587,
+      "owed": 589,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2331,18 +2332,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
-      "classes": 35,
+      "classes": 37,
       "reason": "cap",
-      "owed": 10,
+      "owed": 12,
       "first": [
         "DispatchConcurrencyMigrationTests",
         "HerdrPlacementSettingsTests",
         "HostCleanupOrchestrationTests",
         "LandRequestWriteDiagnosticTests",
         "OutputDistillationMigrationTests",
-        "SessionRuntimeActionRoutingTests",
-        "SessionTranscriptSummaryMigrationTests",
-        "StandingRestartEscalationTests"
+        "RequestedModelAliasDatabaseMigrationTests",
+        "RequestedModelAliasSchemaTests",
+        "SessionRuntimeActionRoutingTests"
       ]
     },
     {
@@ -2411,9 +2412,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 527,
+      "classes": 528,
       "reason": "cap",
-      "owed": 502,
+      "owed": 503,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -24651,6 +24652,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RcPortPowerShellAssembly.cs",
+      "classes": [
+        "RcPortPowerShellAssemblyTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
@@ -24885,6 +24892,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "NamedCodexAgentLaunchTests",
         "ProcessSpawnLimitTests",
         "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
@@ -25688,6 +25696,7 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "CheckpointSourceStateTests",
+        "RcDirtyOrderCSharpTests",
         "RunCheckpointSourceScriptTests",
         "ServerImagePushCredentialTests"
       ]
@@ -26154,7 +26163,8 @@
       "classes": [
         "ChannelReplyAttachmentReaderTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
-        "QualificationCheckoutSourceTests"
+        "QualificationCheckoutSourceTests",
+        "RcDirtyOrderCSharpTests"
       ]
     },
     {
@@ -26578,6 +26588,13 @@
       "path": "tests/Antiphon.Tests/TestHelpers/RepositoryLeaseCrashWorker.cs",
       "classes": [
         "RepositoryMutationLeaseTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/RequestedModelAliasSchema.cs",
+      "classes": [
+        "RequestedModelAliasDatabaseMigrationTests",
+        "RequestedModelAliasSchemaTests"
       ]
     },
     {
@@ -27468,6 +27485,7 @@
         "CheckpointTrackedBaselineTests",
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
+        "RequestedModelAliasDatabaseMigrationTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",
