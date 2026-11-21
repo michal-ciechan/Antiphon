@@ -55,6 +55,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         File.WriteAllText(props, "<Project />");
         using var cacheOwner = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
         cacheOwner.ShouldNotBeNull();
+        File.ReadAllText(props).ShouldBe(CheckpointIntermediateCache.PropsText);
         using var competingCache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
         competingCache.ShouldBeNull("a second run must build without sharing these intermediates");
 
@@ -79,6 +80,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         cleanup.Deleted.ShouldContain(first.Owned);
         Directory.Exists(first.Owned).ShouldBeFalse();
         File.ReadAllText(assets).ShouldBe("{}");
+        File.ReadAllText(props).ShouldBe(CheckpointIntermediateCache.PropsText);
 
         using (var reused = cacheOwner.Prepare(project, forwarded))
             reused.ShouldNotBeNull("a matching sealed partition is reusable");

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
@@ -9,7 +10,21 @@ namespace Antiphon.Checkpoints;
 internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate) : IDisposable
 {
     internal const string RootProperty = "AntiphonCheckpointIntermediateRoot";
-    internal const string ProjectProps = "tools/Antiphon.Checkpoints/CheckpointIntermediates.props";
+    // Generated beside the cache. A tracked props file that sets BaseIntermediateOutputPath
+    // is refused by the land-graph pre-check, including when nothing imports it.
+    internal const string ProjectProps = ".antiphon/checkpoint-obj/CheckpointIntermediates.props";
+    internal const string PropsText = """
+        <Project>
+          <!-- Generated into the untracked worktree cache. Imported before the SDK selects its artifacts obj paths.
+               Each project (including nested apphost builds) selects its own path in the run's partition. -->
+          <PropertyGroup Condition="'$(AntiphonCheckpointIntermediateRoot)' != ''">
+            <_CheckpointRelativeProject>$([MSBuild]::MakeRelative('$(AntiphonCheckpointRepositoryRoot)', '$(MSBuildProjectFullPath)'))</_CheckpointRelativeProject>
+            <_CheckpointUseAppHost>true</_CheckpointUseAppHost>
+            <_CheckpointUseAppHost Condition="'$(UseAppHost)' == 'false'">false</_CheckpointUseAppHost>
+            <BaseIntermediateOutputPath Condition="!$([System.IO.Path]::IsPathRooted('$(_CheckpointRelativeProject)')) And !$(_CheckpointRelativeProject.StartsWith('..'))">$(AntiphonCheckpointIntermediateRoot)/$(_CheckpointRelativeProject)/apphost-$(_CheckpointUseAppHost)/</BaseIntermediateOutputPath>
+          </PropertyGroup>
+        </Project>
+        """;
     private static readonly HashSet<string> LayoutOverrides = new(StringComparer.OrdinalIgnoreCase)
     {
         "ArtifactsPath", "UseArtifactsOutput", "UseArtifactsIntermediateOutput", "BaseIntermediateOutputPath",
@@ -20,18 +35,63 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
     internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected)
     {
         if (expected is null || source.Commit != expected || source.CaptureStatus != "known"
-            || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint)
-            || !File.Exists(Path.Combine(root, ProjectProps)))
+            || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint))
             return null;
+        FileStream? stream = null;
         try
         {
             var home = Home(root);
-            return SafeWrite.OpenGate(Path.Combine(home, "run.lock"), SafeWrite.Under(root), out var stream) is null
-                && stream is not null ? new(root, source, stream) : null;
+            if (SafeWrite.OpenGate(Path.Combine(home, "run.lock"), SafeWrite.Under(root), out stream) is not null
+                || stream is null)
+                return null;
+            if (!WriteProps(root))
+            {
+                stream.Dispose();
+                stream = null;
+                return null;
+            }
+
+            var opened = new CheckpointIntermediateCache(root, source, stream);
+            stream = null;
+            return opened;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            stream?.Dispose();
             return null; // A concurrent run or an unavailable cache can build in its fresh output.
+        }
+    }
+
+    private static bool WriteProps(string root)
+    {
+        FileStream? stream = null;
+        try
+        {
+            if (SafeWrite.OpenGate(Path.Combine(root, ProjectProps), SafeWrite.Under(root), out stream) is not null
+                || stream is null)
+                return false;
+            var payload = Encoding.UTF8.GetBytes(PropsText);
+            if (stream.Length == payload.Length)
+            {
+                var existing = new byte[payload.Length];
+                stream.ReadExactly(existing);
+                if (existing.AsSpan().SequenceEqual(payload))
+                    return true;
+            }
+
+            stream.Position = 0;
+            stream.SetLength(0);
+            stream.Write(payload);
+            stream.Flush(flushToDisk: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        finally
+        {
+            stream?.Dispose();
         }
     }
 
