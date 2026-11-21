@@ -3,8 +3,6 @@
 // PowerShell copies were removed (the core is required).
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -46,7 +44,7 @@ namespace Antiphon.Nightly
             {
                 if (entry == null) continue;
                 var entryPlatform = PsValue.Str(PsValue.Prop(entry, "platform"));
-                if (!LanguagePrimitives.Equals(entryPlatform, platform, false, CultureInfo.InvariantCulture)) continue;
+                if (!PsValue.Eq(entryPlatform, platform, false)) continue;
                 var entryTest = PsValue.Str(PsValue.Prop(entry, "test"));
                 if (!knownTests.Contains(entryTest)) warnings.Add("stale-roster:" + entryTest);
             }
@@ -65,14 +63,13 @@ namespace Antiphon.Nightly
             foreach (var node in nodes)
             {
                 if (node == null) continue;
-                var properties = PSObject.AsPSObject(node).Properties;
-                var classProperty = properties["ClassName"];
-                if (classProperty == null) continue;
-                var methodProperty = properties["Method"];
-                if (methodProperty == null) continue;
-                var className = PsValue.Str(classProperty.Value);
+                var classValue = PsValue.Property(node, "ClassName", out var hasClass);
+                if (!hasClass) continue;
+                var methodValue = PsValue.Property(node, "Method", out var hasMethod);
+                if (!hasMethod) continue;
+                var className = PsValue.Str(classValue);
                 if (string.IsNullOrWhiteSpace(className)) continue;
-                var method = PsValue.Str(methodProperty.Value);
+                var method = PsValue.Str(methodValue);
                 if (string.IsNullOrWhiteSpace(method)) continue;
                 ids.Add(className + "." + method);
             }

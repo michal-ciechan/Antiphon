@@ -2167,14 +2167,14 @@
       "reason": "cap",
       "owed": 28,
       "first": [
-        "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
-        "NightlyDiscoveryParserTests"
+        "NightlyDiscoveryParserTests",
+        "NightlyVerificationContractTests"
       ]
     },
     {
@@ -3988,6 +3988,12 @@
     },
     {
       "path": "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs",
+      "classes": [
+        "RcRunEvidenceTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/NightlySuiteRunner.cs",
       "classes": [
         "RcRunEvidenceTests"
       ]
@@ -24839,6 +24845,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/FailedFirstDispatchCases.cs",
+      "classes": [
+        "RcFailedFirstPlannerTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
         "NightlyTestHelpersTests"
@@ -24895,6 +24907,7 @@
         "NightlySummaryWitnessTests",
         "NightlyTestHelpersTests",
         "NightlyTestsPlanTests",
+        "RcFailedFirstPlannerTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateRunTests",
         "TestTimingsTwinTests",
@@ -24927,6 +24940,8 @@
         "NightlyExecutionDiagnosticTests",
         "NightlyPrerequisiteTests",
         "NightlyTestsPlanTests",
+        "RcFailedFirstExecutionTests",
+        "RcFailedFirstPlannerTests",
         "RcRosterRepairTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGatePlatformTests"
@@ -25118,10 +25133,10 @@
         "CheckpointOwnedOutputScriptTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
+        "LiveLaneAttestationTests",
         "NightlyPrerequisiteTests",
         "NightlyScriptsTests",
         "RcFailedFirstExecutionTests",
-        "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",

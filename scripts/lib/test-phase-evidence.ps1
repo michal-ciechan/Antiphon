@@ -7,7 +7,7 @@
 # (TestPhasePublication.cs), the planned and executed manifests, the owner observation, the TRX read and the
 # phase-timing variables (TestPhaseManifests.cs) and the run summary (TestPhaseRunSummary.cs; the command is
 # antiphon-scripts summarize-test-phases). What stays here is what the still-PowerShell callers (the nightly-tests
-# executor and chunk runner, nightly-dispatch.ps1, the script test drivers) call by name, each a line over the C#:
+# executor and its run-state bindings, the script test drivers) call by name, each a line over the C#:
 # the variable names, Remove-TestPhaseVariables, Enable-TestPhaseExecutionEnvironment, Get-TestPhaseTimingDirectory,
 # Write-TestPhaseFailureMarker, and Get-TestPhasePublicationScope (what the compiled code reads from this script scope).
 # A caller that opens a writer context binds it ($script:TestPhaseExecutedContext) and unbinds it once it is closed.

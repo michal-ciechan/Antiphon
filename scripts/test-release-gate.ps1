@@ -2045,8 +2045,9 @@ function Test-C599_Prerequisites {
     $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $policyPath)
     $required = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($policy.Object, 'rc'))
     Assert-C487 -Cond ($required -contains 'e2e') -Name 'C599 Prerequisites the rc profile requires e2e before any prerequisite check'
-    $impl = Get-Content -LiteralPath (Join-Path $lib 'nightly-tests-impl.ps1') -Raw
-    Assert-C487 -Cond ($impl -match 'e2e-prerequisite-failed') -Name 'C599 Prerequisites a failed prerequisite is a named red reason'
+    # W2-nightly S13: the suite preparation that records it is Antiphon.Nightly/NightlySuiteRunner.cs.
+    $runner = Get-Content -LiteralPath (Join-Path $lib 'Antiphon.Nightly/NightlySuiteRunner.cs') -Raw
+    Assert-C487 -Cond ($runner -match 'e2e-prerequisite-failed') -Name 'C599 Prerequisites a failed prerequisite is a named red reason'
 }
 
 function Test-C599_EnvironmentIsolation {

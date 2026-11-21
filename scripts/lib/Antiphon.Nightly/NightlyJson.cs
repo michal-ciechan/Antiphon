@@ -388,6 +388,27 @@ namespace Antiphon.Nightly
             catch (GiveUp) { return null; }
         }
 
+        /// <summary>
+        /// W2-nightly S13: the value's indented text as WriteFile writes it, without the final line end (ConvertTo-Json's
+        /// layout for the dispatch schedule), or null for a value it cannot write.
+        /// </summary>
+        internal static string IndentedText(object value, int maxDepth)
+        {
+            try
+            {
+                using (var stream = new MemoryStream())
+                {
+                    using (var writer = new Utf8JsonWriter(stream, WriterOptions))
+                    {
+                        WriteValue(writer, value, 0, maxDepth);
+                        writer.Flush();
+                    }
+                    return Encoding.UTF8.GetString(stream.ToArray());
+                }
+            }
+            catch (GiveUp) { return null; }
+        }
+
         private static void WriteValue(Utf8JsonWriter writer, object value, int depth, int maxDepth)
         {
             if (value == null || (PsRuntime.Loaded && PsFields.IsAutomationNull(value))) { writer.WriteNullValue(); return; }

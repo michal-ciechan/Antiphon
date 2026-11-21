@@ -271,10 +271,11 @@ function Test-EpsVerdict {
     $titleOk = ($title -match '2 failed' -and $title -notmatch 'exit 8' -and $body.Contains($summaryDigest) -and $body.Contains($cleanup) -and $body.Contains('Tolerated skips'))
     Assert-C487 -Cond $titleOk -Name 'EPS title-omits-tolerated-exit' -Detail ($(if ($reportError) { $reportError } else { $title + ' | ' + $body.Substring(0, [Math]::Min(400, $body.Length)) }))
 
-    $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+    # W2-nightly S13: suite completion (the stale-roster warnings) is Antiphon.Nightly/NightlySuiteRunner.cs.
+    $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'Antiphon.Nightly/NightlySuiteRunner.cs'))
     $known = @([Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(@([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.C0824RefOnlyCleanupTests'; Method = 'Remote_cleanup_still_uses_its_binding_and_generation' })))
     $knownWarnings = @([Antiphon.Nightly.NightlyChunkVerdict]::StaleWarnings('windows', $roster, $known))
-    $wired = $implText.Contains('[Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(')
+    $wired = $implText.Contains('SuiteCompletionParts.KnownIdentities(')
     $discoveryOk = (@($known) -contains $cleanup -and @($knownWarnings) -contains ('stale-roster:' + $sync) -and @($knownWarnings) -notcontains ('stale-roster:' + $cleanup) -and $wired)
     Assert-C487 -Cond $discoveryOk -Name 'EPS discovery-known-identities' -Detail ('known=' + ($known -join ',') + ' warnings=' + ($knownWarnings -join ',') + ' wired=' + $wired)
 }

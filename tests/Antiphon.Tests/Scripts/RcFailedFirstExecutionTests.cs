@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -16,14 +18,51 @@ public sealed class RcFailedFirstExecutionTests
             ["FF ImportedAuthorityFixtureInitializesTiming.authorityBytes", "FF ImportedAuthorityFixtureInitializesTiming.authorityBinding"],
             ScriptHarnessOptions.Default, cancellationToken);
 
+    // A previous run's progress orders a new complete attempt: failed and unfinished rows first, each lane rotated after
+    // its last pass; a missing, stale, foreign or malformed record keeps the canonical order (W2-nightly S13: in-process,
+    // was Test-FFPreviousOrder, the PreviousOrder case and ActualLoopFollowsSchedule.progressOrder).
+    [Test]
+    public void PreviousOrder()
+    {
+        var rows = new NightlyCaseRows();
+        var sha = new string('a', 40);
+        var now = new DateTime(2026, 10, 31, 6, 0, 0, DateTimeKind.Utc);
+        var entries = new[] { "A", "B" }.SelectMany(suite => Enumerable.Range(1, 5).Select(id => (object)new PlainObject(("suite", suite), ("chunk", id.ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToArray();
+        static PlainObject Row(string id, string chunk, string result, int exitCode) => new(("id", id), ("chunk", chunk), ("result", result), ("exitCode", exitCode));
+        static PlainObject Previous(string completedAt, string runSha, object suites) =>
+            new(("schemaVersion", 1), ("liveness", "closed"), ("sha", runSha), ("completedAt", completedAt), ("suites", suites));
+        static string Keys(object order) => string.Join(",", PsValue.AsArray(PsValue.Prop(order, "entries")).Select(e => PsValue.Str(PsValue.Prop(e, "suite")) + PsValue.Str(PsValue.Prop(e, "chunk"))));
+        object[] progress = [Row("A", "1", "pass", 0), Row("A", "3", "pass", 0), Row("B", "2", "FAIL", 1)];
+        var order = DispatchSchedule.PreviousRunOrder(entries, Previous("2026-10-31T01:00:00Z", sha, progress), sha, now);
+        var progressOk = Keys(order) == "B2,A4,A5,A2,B1,B3,B4,B5,A1,A3" && PsValue.Str(PsValue.Prop(order, "reason")) == "previous-run-order";
+        var canonical = string.Join(",", entries.Select(e => PsValue.Str(PsValue.Prop(e, "suite")) + PsValue.Str(PsValue.Prop(e, "chunk"))));
+        var variants = new Dictionary<string, object?>
+        {
+            ["missing"] = null,
+            ["stale"] = Previous("2026-09-01T00:00:00Z", sha, progress),
+            ["candidate"] = Previous("2026-10-31T01:00:00Z", new string('b', 40), progress),
+            ["malformed"] = Previous("2026-10-31T01:00:00Z", sha, "wrong"),
+        };
+        foreach (var (name, record) in variants)
+        {
+            var fallback = DispatchSchedule.PreviousRunOrder(entries, record, sha, now);
+            var reason = PsValue.Str(PsValue.Prop(fallback, "reason"));
+            if (Keys(fallback) != canonical || reason.Length == 0 || reason == "previous-run-order") progressOk = false;
+        }
+        object[] rotated = [Row("A", "1", "FAIL", 1), Row("A", "3", "pass", 0), Row("A", "4", "FAIL", 1), Row("B", "1", "FAIL", 1), Row("B", "3", "pass", 0), Row("B", "5", "FAIL", 1)];
+        var keys = Keys(DispatchSchedule.PreviousRunOrder(entries, Previous("2026-10-31T01:00:00Z", sha, rotated), sha, now));
+        rows.Check(progressOk && keys == "A4,A1,B5,B1,A5,A2,B4,B2,A3,B3", "FF PreviousOrder.progressOrder", "failed-and-unfinished-lane-cursors actual=" + keys);
+        rows.ShouldAllPass(1);
+    }
+
     // Provisional full replay bound uses S2's measured 156-launch cost (CARD-1514).
     [Test, Timeout(1_140_000)]
     public Task ActualLoopFollowsSchedule(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ActualLoopFollowsSchedule), 18,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ActualLoopFollowsSchedule), 17,
             ["FF ActualLoopFollowsSchedule.actualTrace", "FF ActualLoopFollowsSchedule.permutation",
              "FF ActualLoopFollowsSchedule.oneBuildDiscovery", "FF ActualLoopFollowsSchedule.historyBinding",
              "FF ActualLoopFollowsSchedule.allChunksVerdict", "FF ActualLoopFollowsSchedule.finalProjection",
-             "FF ActualLoopFollowsSchedule.fallback", "FF ActualLoopFollowsSchedule.progressOrder",
+             "FF ActualLoopFollowsSchedule.fallback",
              "FF ActualLoopFollowsSchedule.heartbeatCollision", "FF ActualLoopFollowsSchedule.heartbeatLegacy",
              "FF ActualLoopFollowsSchedule.heartbeatRefusals", "FF ActualLoopFollowsSchedule.heartbeatIo",
              "FF ActualLoopFollowsSchedule.heartbeatLiveness",

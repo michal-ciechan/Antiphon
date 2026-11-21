@@ -4,11 +4,11 @@
 // list, and the required tests must all be covered. A member that cannot be mapped is unresolved, with the reason
 // (current-suite-missing, current-class-missing, entirely-excluded-class or current-class-unplanned) and its old chunks.
 // PriorFailureHistory.Resolve keeps the mode checks, the sweep's policy rows, the warnings and the result object.
+// The records are PsValue records (PSObjects under PowerShell, PlainObjects for a plain caller).
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -26,12 +26,12 @@ namespace Antiphon.Nightly
         /// { members, unresolved, excludedUids }. exclusionsBySuite (the sweep's profile rows by suite id) replaces each
         /// suite's own exclusions when given, and only then are excluded node rows reported.
         /// </summary>
-        public static PSObject Map(object history, object[] suites, IDictionary exclusionsBySuite, string exclusionProfile)
+        public static object Map(object history, object[] suites, IDictionary exclusionsBySuite, string exclusionProfile)
         {
             var sweep = exclusionsBySuite != null;
             var unresolved = new List<object>();
             foreach (var u in PsValue.AsArray(PsValue.Prop(history, "unresolved"))) unresolved.Add(u);
-            var excludedUids = new List<PSObject>();
+            var excludedUids = new List<object>();
             var matches = new List<object>();
             var bySuite = new Dictionary<string, SuiteEntry>(StringComparer.Ordinal);
             foreach (var suite in suites ?? new object[0])
@@ -76,14 +76,8 @@ namespace Antiphon.Nightly
                         {
                             var disposition = entry.Exclusions.Disposition(node);
                             if (PsValue.Str(PsValue.Prop(disposition, "Disposition")) != "excluded") continue;
-                            var row = new PSObject();
-                            row.Properties.Add(new PSNoteProperty("suite", memberSuite));
-                            row.Properties.Add(new PSNoteProperty("uid", PsValue.Str(PsValue.Prop(node, "Uid"))));
-                            row.Properties.Add(new PSNoteProperty("className", memberClass));
-                            row.Properties.Add(new PSNoteProperty("method", PsValue.Str(PsValue.Prop(node, "Method"))));
-                            row.Properties.Add(new PSNoteProperty("reason", PsValue.Prop(disposition, "Reason")));
-                            row.Properties.Add(new PSNoteProperty("owner", PsValue.Prop(disposition, "Owner")));
-                            excludedUids.Add(row);
+                            excludedUids.Add(PsValue.Record(("suite", memberSuite), ("uid", PsValue.Str(PsValue.Prop(node, "Uid"))), ("className", memberClass),
+                                ("method", PsValue.Str(PsValue.Prop(node, "Method"))), ("reason", PsValue.Prop(disposition, "Reason")), ("owner", PsValue.Prop(disposition, "Owner"))));
                         }
                     }
                     if (nodes.Count == 0) reason = "current-class-missing";
@@ -132,23 +126,18 @@ namespace Antiphon.Nightly
                 }
                 var uids = new List<object>();
                 foreach (var node in required) uids.Add(PsValue.Prop(node, "Uid"));
-                var match = new PSObject();
-                match.Properties.Add(new PSNoteProperty("suite", memberSuite));
-                match.Properties.Add(new PSNoteProperty("className", memberClass));
-                match.Properties.Add(new PSNoteProperty("chunks", chunkIds.ToArray()));
-                match.Properties.Add(new PSNoteProperty("requiredUids", DispatchSchedule.OrdinalStrings(uids)));
-                matches.Add(match);
+                matches.Add(PsValue.Record(("suite", memberSuite), ("className", memberClass), ("chunks", chunkIds.ToArray()),
+                    ("requiredUids", DispatchSchedule.OrdinalStrings(uids))));
             }
             excludedUids.Sort((a, b) =>
             {
                 var c = string.CompareOrdinal(PsValue.Str(PsValue.Prop(a, "suite")), PsValue.Str(PsValue.Prop(b, "suite")));
                 return c != 0 ? c : string.CompareOrdinal(PsValue.Str(PsValue.Prop(a, "uid")), PsValue.Str(PsValue.Prop(b, "uid")));
             });
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("members", matches.ToArray()));
-            result.Properties.Add(new PSNoteProperty("unresolved", unresolved.ToArray()));
-            result.Properties.Add(new PSNoteProperty("excludedUids", excludedUids.ToArray()));
-            return result;
+            // The excluded rows as PSObject[] under PowerShell, the type its callers always saw.
+            var excluded = PsValue.RecordArray(excludedUids.Count);
+            excludedUids.CopyTo(excluded);
+            return PsValue.Record(("members", matches.ToArray()), ("unresolved", unresolved.ToArray()), ("excludedUids", excluded));
         }
     }
 }

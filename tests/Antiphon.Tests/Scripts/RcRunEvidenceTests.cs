@@ -154,13 +154,15 @@ public sealed class RcRunEvidenceTests
         Contract(nameof(InterruptedWriterLeavesNotRun));
     }
 
-    // The call sites the two still-PowerShell impl scripts use, and the chunk runner (W2-nightly S12: the launch, the
-    // chunk record and its shadow parse moved there from nightly-tests-impl.ps1).
+    // The call sites the two still-PowerShell impl scripts use, the chunk runner (W2-nightly S12: the launch, the chunk
+    // record and its shadow parse moved there from nightly-tests-impl.ps1) and the suite runner (W2-nightly S13: the
+    // suite's discovery record moved there with the suite preparation).
     private const string TestsImpl = "scripts/lib/nightly-tests-impl.ps1";
     private const string RunImpl = "scripts/lib/nightly-run-impl.ps1";
     private const string ChunkRunner = "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs";
+    private const string SuiteRunner = "scripts/lib/Antiphon.Nightly/NightlySuiteRunner.cs";
     private const string BuildCall = "(Get-NightlyRcRunEvidence).Build(";
-    private const string DiscoveryCall = "(Get-NightlyRcRunEvidence).DiscoveryOnce(";
+    private const string DiscoveryCall = "s.RcEvidence?.DiscoveryOnce(";
     private const string LaunchCall = "c.RcEvidence?.Launch(";
     private const string RevisionCall = "c.RcEvidence.ChunkRevision(";
     private const string ReadCall = "RcChunkOutcome.Read(";
@@ -190,7 +192,8 @@ public sealed class RcRunEvidenceTests
         var testsImpl = ReadSource(TestsImpl);
         var runImpl = ReadSource(RunImpl);
         var chunkRunner = ReadSource(ChunkRunner);
-        Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && testsImpl.Contains(DiscoveryCall, StringComparison.Ordinal)
+        var suiteRunner = ReadSource(SuiteRunner);
+        Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && suiteRunner.Contains(DiscoveryCall, StringComparison.Ordinal)
             && chunkRunner.Contains(LaunchCall, StringComparison.Ordinal) && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
         Note(runImpl.Contains("$rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("$rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
         Note(!testsImpl.Contains("publish-release.ps1", StringComparison.OrdinalIgnoreCase) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");

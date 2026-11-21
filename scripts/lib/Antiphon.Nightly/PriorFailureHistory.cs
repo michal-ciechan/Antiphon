@@ -72,7 +72,7 @@ namespace Antiphon.Nightly
         {
             var keys = new HashSet<string>(StringComparer.Ordinal);
             if (PsOps.Base(o) is IDictionary d) { foreach (var k in d.Keys) keys.Add(PsValue.Str(k)); }
-            else if (o != null) { foreach (var p in PSObject.AsPSObject(o).Properties) keys.Add(p.Name); }
+            else if (o != null) { foreach (var name in PsValue.PropertyNames(o)) keys.Add(name); }
             foreach (var name in names) if (!keys.Contains(name)) throw Refuse("history-schema: missing " + name);
         }
 
@@ -85,7 +85,7 @@ namespace Antiphon.Nightly
 
         private static string Str(object o, string name) => PsValue.Str(PsValue.Prop(o, name));
 
-        private static bool True(object o, string name) => LanguagePrimitives.IsTrue(PsValue.Prop(o, name));
+        private static bool True(object o, string name) => PsValue.IsTrue(PsValue.Prop(o, name));
 
         private static void NoLink(string path)
         {
@@ -154,7 +154,7 @@ namespace Antiphon.Nightly
                 Fields(u, "suite", "reason");
                 if (string.IsNullOrWhiteSpace(Str(u, "reason"))) throw Refuse("history-schema: unresolved");
             }
-            if (!LanguagePrimitives.IsTrue(membership) && unresolved.Length == 0) throw Refuse("history-schema: missing unresolved membership");
+            if (!PsValue.IsTrue(membership) && unresolved.Length == 0) throw Refuse("history-schema: missing unresolved membership");
             foreach (var f in PsValue.AsArray(PsValue.Prop(history, "fallbackChunks")))
             {
                 Fields(f, "suite", "chunk", "reason", "classes", "membershipResolved");
@@ -813,7 +813,8 @@ namespace Antiphon.Nightly
         private static ExecutionPolicy PolicyOf(object policy) =>
             PsOps.Base(PsValue.Prop(policy, "Object")) as ExecutionPolicy ?? throw Refuse("partial-exclusion-policy-required");
 
-        public static PSObject Resolve(object history, object[] suites, string qualificationMode, object exclusionContext, object policy)
+        /// <remarks>Plain C# callers get a PlainObject (no PowerShell is loaded on this path).</remarks>
+        public static object Resolve(object history, object[] suites, string qualificationMode, object exclusionContext, object policy)
         {
             if (qualificationMode != "Full" && qualificationMode != "PriorFailureSweep") throw Refuse("history-qualification-mode");
             var sweep = qualificationMode == "PriorFailureSweep";
@@ -867,8 +868,8 @@ namespace Antiphon.Nightly
                 policyDigest = Str(policy, "Hash");
                 if (Digest(Str(policy, "Path")) != policyFileDigest) throw Refuse("partial-exclusion-profile-mismatch: policy changed");
             }
-            return Obj("members", members, "unresolved", unresolved, "exclusionProfile", exclusionProfile, "policyDigest", policyDigest,
-                "exclusionPolicyFileDigest", policyFileDigest, "exclusionPlatform", platform, "excludedUids", PsValue.Prop(map, "excludedUids"), "warnings", warnings.ToArray());
+            return PsValue.Record(("members", members), ("unresolved", unresolved), ("exclusionProfile", exclusionProfile), ("policyDigest", policyDigest),
+                ("exclusionPolicyFileDigest", policyFileDigest), ("exclusionPlatform", platform), ("excludedUids", PsValue.Prop(map, "excludedUids")), ("warnings", warnings.ToArray()));
         }
     }
 }

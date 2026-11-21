@@ -1,5 +1,5 @@
 // The dispatch schedule, compiled: New-NightlyDispatchSchedule, Resolve-NightlyPreviousRunOrder and
-// Get-NightlyPreviousRunKind (nightly-dispatch.ps1 calls these), and the stopped-run seed's ordering and content check
+// Get-NightlyPreviousRunKind (NightlyDispatch and the test drivers call these), and the stopped-run seed's ordering and content check
 // (StoppedSeed), which the seed reader and the history resolver call.
 //
 // Each method returns what its PowerShell body returned: the same objects (rows, lanes, schedule) with the same
@@ -8,6 +8,8 @@
 // culture (a list on the left of -eq/-ne filters, as it does in PowerShell), [string] is PsValue.Str, @() is
 // PsValue.AsArray, -cmatch is the same regular expression. Sets and maps keep the comparer the body gave them.
 // One schedule of 841 chunks took the PowerShell bodies about 0.6 s; this takes a few milliseconds.
+// The records are PsValue records: PSObjects of note properties under PowerShell, PlainObjects for a plain caller (the
+// in-process tests and NightlyDispatch, W2-nightly S13); nothing here loads PowerShell unless it is already loaded.
 //
 // canonicalPlanDigest is the SHA-256 of the canonical rows written as compact JSON by PlanJson: every chunk value
 // the planner can hold is written by type (strings escaped, numbers in invariant round-trip form, dates in ISO 8601,
@@ -18,7 +20,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
-using System.Management.Automation;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -28,7 +30,8 @@ namespace Antiphon.Nightly
     public sealed class DispatchBuild
     {
         public string Error { get; internal set; }
-        public PSObject Schedule { get; internal set; }
+        /// <summary>The schedule record (a PSObject under PowerShell, a PlainObject otherwise).</summary>
+        public object Schedule { get; internal set; }
     }
 
     public static class DispatchSchedule
@@ -47,7 +50,7 @@ namespace Antiphon.Nightly
             string candidateSha, DateTime nowUtc, string historyFallbackReason)
         {
             var build = new DispatchBuild();
-            var rows = new List<PSObject>();
+            var rows = new List<object>();
             var keys = new HashSet<string>(StringComparer.Ordinal);
             var canonicalSuites = new List<string>();
             var canonicalChunks = new List<object>();
@@ -73,23 +76,16 @@ namespace Antiphon.Nightly
                     }
                     canonicalSuites.Add(suiteId);
                     canonicalChunks.Add(chunk);
-                    var row = new PSObject();
-                    row.Properties.Add(new PSNoteProperty("suite", suiteId));
-                    row.Properties.Add(new PSNoteProperty("chunk", chunkId));
-                    row.Properties.Add(new PSNoteProperty("canonicalOrdinal", rows.Count));
-                    row.Properties.Add(new PSNoteProperty("dispatchOrdinal", rows.Count));
-                    row.Properties.Add(new PSNoteProperty("priorFailure", priority));
-                    row.Properties.Add(new PSNoteProperty("SuiteState", suite));
-                    row.Properties.Add(new PSNoteProperty("ChunkRef", chunk));
-                    rows.Add(row);
+                    rows.Add(PsValue.Record(("suite", suiteId), ("chunk", chunkId), ("canonicalOrdinal", rows.Count), ("dispatchOrdinal", rows.Count),
+                        ("priorFailure", priority), ("SuiteState", suite), ("ChunkRef", chunk)));
                 }
             }
             var canonicalRows = rows.ToArray();
             // Stable partition of references. Do not repack, copy or renumber a chunk.
             var ordered = new List<object>();
-            foreach (var row in rows) if ((bool)row.Properties["priorFailure"].Value) ordered.Add(row);
-            foreach (var row in rows) if (!(bool)row.Properties["priorFailure"].Value) ordered.Add(row);
-            PSObject previousOrder = null;
+            foreach (var row in rows) if ((bool)PsValue.Prop(row, "priorFailure")) ordered.Add(row);
+            foreach (var row in rows) if (!(bool)PsValue.Prop(row, "priorFailure")) ordered.Add(row);
+            object previousOrder = null;
             if (previousRun != null)
             {
                 previousOrder = PreviousRunOrder(canonicalRows, previousRun, candidateSha, nowUtc);
@@ -122,28 +118,19 @@ namespace Antiphon.Nightly
                     {
                         entries = new List<object>(canonicalRows);
                         for (var i = 0; i < entries.Count; i++) SetProp(entries[i], "dispatchOrdinal", i);
-                        order = new PSObject();
-                        order.Properties.Add(new PSNoteProperty("reason", digestReason));
-                        order.Properties.Add(new PSNoteProperty("lanes", new object[0]));
+                        order = PsValue.Record(("reason", digestReason), ("lanes", new object[0]));
                     }
                 }
-                var schedule = new PSObject();
-                schedule.Properties.Add(new PSNoteProperty("PreparedSuites", PsValue.AsArray(preparedSuites)));
-                schedule.Properties.Add(new PSNoteProperty("format", "antiphon-nightly-dispatch-v1"));
-                schedule.Properties.Add(new PSNoteProperty("runId", runId ?? ""));
-                schedule.Properties.Add(new PSNoteProperty("attempt", attempt ?? ""));
-                schedule.Properties.Add(new PSNoteProperty("historyDigest", historyDigest ?? ""));
-                schedule.Properties.Add(new PSNoteProperty("canonicalPlanDigest", digest));
-                schedule.Properties.Add(new PSNoteProperty("preparationComplete", preparationComplete));
-                schedule.Properties.Add(new PSNoteProperty("unresolved", PsValue.AsArray(unresolved ?? new object[0])));
-                schedule.Properties.Add(new PSNoteProperty("entries", entries.ToArray()));
+                var schedule = PsValue.Record(("PreparedSuites", PsValue.AsArray(preparedSuites)), ("format", "antiphon-nightly-dispatch-v1"), ("runId", runId ?? ""),
+                    ("attempt", attempt ?? ""), ("historyDigest", historyDigest ?? ""), ("canonicalPlanDigest", digest), ("preparationComplete", preparationComplete),
+                    ("unresolved", PsValue.AsArray(unresolved ?? new object[0])), ("entries", entries.ToArray()));
                 if (order != null)
                 {
-                    schedule.Properties.Add(new PSNoteProperty("orderingReason", PsValue.Prop(order, "reason")));
-                    schedule.Properties.Add(new PSNoteProperty("lanes", PsValue.Prop(order, "lanes")));
+                    PsValue.AddNote(schedule, "orderingReason", PsValue.Prop(order, "reason"));
+                    PsValue.AddNote(schedule, "lanes", PsValue.Prop(order, "lanes"));
                 }
                 if (!string.IsNullOrEmpty(historyFallbackReason))
-                    schedule.Properties.Add(new PSNoteProperty("historyFallbackReason", historyFallbackReason));
+                    PsValue.AddNote(schedule, "historyFallbackReason", historyFallbackReason);
                 build.Schedule = schedule;
             }
             return build;
@@ -169,7 +156,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Resolve-NightlyPreviousRunOrder: { entries, reason, lanes }.</summary>
-        public static PSObject PreviousRunOrder(object[] entries, object previousRun, string candidateSha, DateTime nowUtc)
+        public static object PreviousRunOrder(object[] entries, object previousRun, string candidateSha, DateTime nowUtc)
         {
             var kind = PreviousRunKind(previousRun);
             if (kind == "operator-seed") return StoppedSeedOrder(entries, previousRun);
@@ -248,10 +235,7 @@ namespace Antiphon.Nightly
                     {
                         for (var i = 0; i < rows.Length; i++) if (PsOps.Eq(PsValue.Prop(rows[i], "chunk"), passedChunk, false)) { last = i; break; }
                     }
-                    var laneObject = new PSObject();
-                    laneObject.Properties.Add(new PSNoteProperty("suite", lane));
-                    laneObject.Properties.Add(new PSNoteProperty("lastPassedChunk", last >= 0 ? PsValue.Prop(rows[last], "chunk") : null));
-                    lanes.Add(laneObject);
+                    lanes.Add(PsValue.Record(("suite", lane), ("lastPassedChunk", last >= 0 ? PsValue.Prop(rows[last], "chunk") : null)));
                     for (var offset = 1; offset <= rows.Length; offset++)
                     {
                         var entry = rows[(last + offset) % rows.Length];
@@ -273,7 +257,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>The stopped-run seed order: { entries, reason, lanes } (PreviousRunOrder calls it for a seed).</summary>
-        public static PSObject StoppedSeedOrder(object[] entries, object seed)
+        public static object StoppedSeedOrder(object[] entries, object seed)
         {
             try
             {
@@ -371,7 +355,7 @@ namespace Antiphon.Nightly
                             fold = new Fold();
                             foreach (var old in history)
                             {
-                                if (!LanguagePrimitives.IsTrue(PsValue.Prop(old, "completed")))
+                                if (!PsValue.IsTrue(PsValue.Prop(old, "completed")))
                                 {
                                     fold.Incomplete = true;
                                     if (PsOps.Eq(PsValue.Prop(old, "started"), true, true)) fold.Interrupted = true;
@@ -445,11 +429,8 @@ namespace Antiphon.Nightly
                         if (rows[i].Priority == 3) lastPassed = i;
                     }
                     if (start < 0) start = (lastPassed + 1) % rows.Length;
-                    var laneObject = new PSObject();
-                    laneObject.Properties.Add(new PSNoteProperty("suite", lane));
-                    laneObject.Properties.Add(new PSNoteProperty("resumeChunk", PsValue.Str(PsValue.Prop(rows[start].Entry, "chunk"))));
-                    laneObject.Properties.Add(new PSNoteProperty("lastPassedChunk", lastPassed >= 0 ? PsValue.Str(PsValue.Prop(rows[lastPassed].Entry, "chunk")) : null));
-                    lanes.Add(laneObject);
+                    lanes.Add(PsValue.Record(("suite", lane), ("resumeChunk", PsValue.Str(PsValue.Prop(rows[start].Entry, "chunk"))),
+                        ("lastPassedChunk", lastPassed >= 0 ? PsValue.Str(PsValue.Prop(rows[lastPassed].Entry, "chunk")) : null)));
                     for (var offset = 0; offset < rows.Length; offset++)
                     {
                         var row = rows[(start + offset) % rows.Length];
@@ -491,21 +472,18 @@ namespace Antiphon.Nightly
         private const int PlanMaxDepth = 30;
 
         /// <summary>
-        /// One value as compact JSON. A PSCustomObject is its properties in order; another wrapped value is its base
-        /// value; dictionaries are objects (keys as invariant text); other lists are arrays; numbers are invariant
+        /// One value as compact JSON. A PSCustomObject (a PlainObject for a plain caller) is its properties in order;
+        /// another wrapped value is its base value; dictionaries are objects (keys as invariant text); other lists are arrays; numbers are invariant
         /// (doubles in round-trip form with ".0" on a whole one, non-finite ones as strings); dates and offsets are
         /// ISO 8601 round-trip strings; chars, Guids and Uris are strings; enums are their numbers. Any other object
         /// is its readable properties in order.
         /// </summary>
         private static void PlanValue(StringBuilder sb, object value, int depth)
         {
-            if (value == null || ReferenceEquals(value, System.Management.Automation.Internal.AutomationNull.Value) || value is DBNull) { sb.Append("null"); return; }
-            var ps = value as PSObject;
-            if (ps != null)
-            {
-                if (ps.BaseObject is PSCustomObject) { PlanProperties(sb, ps, depth); return; }
-                value = ps.BaseObject;
-            }
+            if (value == null || (PsRuntime.Loaded && PsFields.IsAutomationNull(value)) || value is DBNull) { sb.Append("null"); return; }
+            if (PsValue.IsCustomObject(value)) { PlanProperties(sb, value, depth); return; }
+            var wrapper = PsValue.IsRecord(value) ? value : null;
+            value = PsValue.BaseObject(value);
             switch (value)
             {
                 case string text: TestPhaseRecords.AppendJsonString(sb, text); return;
@@ -550,25 +528,23 @@ namespace Antiphon.Nightly
                 sb.Append(']');
                 return;
             }
-            PlanProperties(sb, ps ?? PSObject.AsPSObject(value), depth);
+            PlanProperties(sb, wrapper ?? value, depth);
         }
 
-        private static void PlanProperties(StringBuilder sb, PSObject ps, int depth)
+        // A record's (or another object's) readable properties in order: PowerShell's view while it is loaded (a getter
+        // that throws is skipped), else a PlainObject's values or the public instance properties.
+        private static void PlanProperties(StringBuilder sb, object value, int depth)
         {
-            if (depth > PlanMaxDepth) { TestPhaseRecords.AppendJsonString(sb, ps.ToString()); return; }
+            if (depth > PlanMaxDepth) { TestPhaseRecords.AppendJsonString(sb, PsRuntime.Loaded ? DispatchPs.Text(value) : PsValue.Str(value)); return; }
             sb.Append('{');
             var first = true;
-            foreach (var property in ps.Properties)
+            foreach (var property in PsRuntime.Loaded ? DispatchPs.Readable(value) : PsValue.Properties(value))
             {
-                if (!property.IsGettable) continue;
-                object propertyValue;
-                try { propertyValue = property.Value; }
-                catch (GetValueException) { continue; }
                 if (!first) sb.Append(',');
                 first = false;
-                TestPhaseRecords.AppendJsonString(sb, property.Name);
+                TestPhaseRecords.AppendJsonString(sb, property.Key);
                 sb.Append(':');
-                PlanValue(sb, propertyValue, depth + 1);
+                PlanValue(sb, property.Value, depth + 1);
             }
             sb.Append('}');
         }
@@ -626,18 +602,17 @@ namespace Antiphon.Nightly
         private static string RowKey(object entry) =>
             PsValue.Str(PsValue.Prop(entry, "suite")) + "\0" + PsValue.Str(PsValue.Prop(entry, "chunk"));
 
-        private static void SetProp(object row, string name, object value) => PSObject.AsPSObject(row).Properties[name].Value = value;
-
-        private static PSObject Order(object[] entries, string reason, object[] lanes)
+        // A row's value replaced in place (its position kept).
+        private static void SetProp(object row, string name, object value)
         {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("entries", entries));
-            o.Properties.Add(new PSNoteProperty("reason", reason));
-            o.Properties.Add(new PSNoteProperty("lanes", lanes));
-            return o;
+            if (PsRuntime.Loaded) DispatchPs.Set(row, name, value);
+            else ((PlainObject)row)[name] = value;
         }
 
-        private static string Message(Exception e) => (e is MethodInvocationException && e.InnerException != null ? e.InnerException : e).Message;
+        private static object Order(object[] entries, string reason, object[] lanes) => PsValue.Record(("entries", entries), ("reason", reason), ("lanes", lanes));
+
+        private static string Message(Exception e) =>
+            (e.GetType().FullName == "System.Management.Automation.MethodInvocationException" && e.InnerException != null ? e.InnerException : e).Message;
 
         // A priority member: its suite, and its chunks for @($member.chunks) -ccontains $chunkId. String elements
         // go in a set with the comparer -ceq uses for two strings (the invariant culture, case-sensitive);
@@ -662,7 +637,7 @@ namespace Antiphon.Nightly
             public bool Holds(string chunkId)
             {
                 if (_strings.Contains(chunkId)) return true;
-                foreach (var other in _others) if (LanguagePrimitives.Equals(other, chunkId, false, CultureInfo.InvariantCulture)) return true;
+                foreach (var other in _others) if (PsValue.Eq(other, chunkId, false)) return true;
                 return false;
             }
         }
@@ -775,6 +750,33 @@ namespace Antiphon.Nightly
     }
 
     /// <summary>PowerShell's comparison operators as conditions (PowerShell's LanguagePrimitives while it is loaded).</summary>
+    /// <summary>The PowerShell readings DispatchSchedule needs; called only while PowerShell is loaded.</summary>
+    internal static class DispatchPs
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void Set(object row, string name, object value) =>
+            System.Management.Automation.PSObject.AsPSObject(row).Properties[name].Value = value;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static string Text(object value) => System.Management.Automation.PSObject.AsPSObject(value).ToString();
+
+        // $o.PSObject.Properties that are gettable and read without throwing, in order.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static List<KeyValuePair<string, object>> Readable(object value)
+        {
+            var properties = new List<KeyValuePair<string, object>>();
+            foreach (var property in System.Management.Automation.PSObject.AsPSObject(value).Properties)
+            {
+                if (!property.IsGettable) continue;
+                object propertyValue;
+                try { propertyValue = property.Value; }
+                catch (System.Management.Automation.GetValueException) { continue; }
+                properties.Add(new KeyValuePair<string, object>(property.Name, propertyValue));
+            }
+            return properties;
+        }
+    }
+
     internal static class PsOps
     {
         internal static object Base(object o) => PsValue.BaseObject(o);

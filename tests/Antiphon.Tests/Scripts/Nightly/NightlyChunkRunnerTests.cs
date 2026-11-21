@@ -376,14 +376,14 @@ public sealed class NightlyChunkRunnerTests
         rows.Check(index.Entries.Count == 2 && S(PsValue.Prop(after, "census"), "RequiredCount") == "9" && B(after, "coverageComplete"),
             "C1419 rewritten discovery is parsed again", "reads=" + (index.Entries.Count - 1) + " " + C1419Text(after));
 
-        // The suite's one index (Prepare-NightlySuiteExecution makes it before any launch) is the one every chunk's verdict uses.
+        // The suite's one index (NightlySuiteRunner.Prepare makes it before any launch) is the one every chunk's verdict uses.
         using var world = new NightlyChunkWorld();
         var suite = world.Suite();
         var suiteIndex = suite.DiscoveryIndex;
         foreach (var id in new[] { "first", "second", "third" }) NightlyChunkRunner.Run(world.Context(), suite, NightlyChunkWorld.Chunk(id));
-        var prepare = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "lib", "nightly-tests-impl.ps1"));
-        var prepareBody = prepare[prepare.IndexOf("function Prepare-NightlySuiteExecution", StringComparison.Ordinal)..prepare.IndexOf("function Invoke-NightlyScheduledChunk", StringComparison.Ordinal)];
-        var makers = Regex.Matches(prepareBody, @"\$suiteDiscoveryIndex = \[Antiphon\.Nightly\.NightlyDiscoveryIndex\]::new\(\)").Count;
+        var prepare = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "lib", "Antiphon.Nightly", "NightlySuiteRunner.cs"));
+        var prepareBody = prepare[prepare.IndexOf("public NightlyPreparedSuite Prepare(", StringComparison.Ordinal)..prepare.IndexOf("private bool E2EReady(", StringComparison.Ordinal)];
+        var makers = Regex.Matches(prepareBody, @"new NightlyDiscoveryIndex\(\)").Count;
         var siteOk = ReferenceEquals(suite.DiscoveryIndex, suiteIndex) && suiteIndex!.Entries.Count == 1 && world.Launcher.Launches.Count == 3 && makers == 1;
         rows.Check(siteOk, "C1419 suite loop builds one discovery index before its launches",
             "entries=" + suiteIndex!.Entries.Count + " launches=" + world.Launcher.Launches.Count + " makers=" + makers);

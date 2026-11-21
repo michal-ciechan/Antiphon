@@ -22,7 +22,17 @@ if($Case.Contains(',')){
 }
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'lib/nightly-dispatch.ps1')
+# W2-nightly S13: nightly-dispatch.ps1 is compiled (Antiphon.Nightly/NightlyDispatch.cs). The cases call the schedule through
+# this helper, with the refusal text as its error; S14 moves them in-process and deletes this driver.
+function New-NightlyDispatchSchedule {
+    param([object[]]$PreparedSuites, [object[]]$PriorityMembers = @(), [string]$HistoryDigest = '', [object[]]$Unresolved = @(),
+        [bool]$PreparationComplete = $true, [string]$RunId = '', [string]$Attempt = '', $PreviousRun = $null, [string]$CandidateSha = '',
+        [datetime]$NowUtc = [datetime]::UtcNow, [string]$HistoryFallbackReason = '')
+    try {
+        return [Antiphon.Nightly.NightlyDispatch]::Schedule($PreparedSuites, $PriorityMembers, $HistoryDigest, $Unresolved, $PreparationComplete, $RunId, $Attempt,
+            $PreviousRun, $CandidateSha, $NowUtc, $HistoryFallbackReason)
+    } catch { throw (Get-NightlyRefusalText $_) }
+}
 # Only these cases run executor code (its outcome, its launch packer, its public entry); the others need none of it.
 if($Case -cin @('ScheduleConservesAllChunks','PublicHopsForwardAcknowledgement','RealPackerRegroupKeepsFailedFirst','RealPackerFailedMethodFollows')){
     . (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
@@ -353,19 +363,21 @@ try {
                 $actual=@($schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})|Sort-Object
                 $ok=$ok -and ($expected -join ',') -ceq ($actual -join ',') -and $actual.Count -eq 25
             }
-            # Execute the same canonical objects through the production serial boundary.
+            # Execute the same canonical objects through the production serial boundary (NightlyDispatch.RunPrepared) with
+            # recording steps in place of the suite runner's.
             $script:trace=@();$script:reds=0;$script:NightlyTestsOutcome='green'
-            function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;$script:NightlyTestsOutcome=[Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome,'TESTS')}}
-            function Complete-NightlySuiteExecution($CompletionSuiteState){}
-            . Invoke-NightlyPreparedSchedule $schedule
+            $steps=[Antiphon.Nightly.NightlyDispatchSteps]::new()
+            $steps.RunChunk=[Action[object,object]]{param($ExecutionSuiteState,$ExecutionChunk)$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;$script:NightlyTestsOutcome=[Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome,'TESTS')}}
+            $steps.Complete=[Action[object]]{param($CompletionSuiteState)}
+            $dispatchState=[Antiphon.Nightly.NightlyRunState]::new()
+            [Antiphon.Nightly.NightlyDispatch]::RunPrepared($dispatchState,$steps,$schedule)
             $directOk=($script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS')
             # Consume the validated ingress through the real coordinator too. Dropping
             # its PreviousRun argument must lose unfinished/passed order and go red.
-            function Prepare-NightlySuiteExecution($ExecutionSuiteId){return @($suites|Where-Object id -ceq $ExecutionSuiteId)[0]}
-            $npmOk=$true;$dotnetOk=$true;$lintBlocksPipeline=$false
-            $Sha='b'*40;$Attempt=1;$invocationId='synthetic-coordinator';$LogRoot=$root
+            $steps.Prepare=[Func[string,bool,object]]{param($ExecutionSuiteId,$NeedsDiscovery)return @($suites|Where-Object id -ceq $ExecutionSuiteId)[0]}
+            $dispatchState.Sha='b'*40;$dispatchState.Attempt='1';$dispatchState.InvocationId='synthetic-coordinator';$dispatchState.LogRoot=$root
             $script:trace=@();$script:reds=0;$script:NightlyTestsOutcome='green'
-            . Invoke-NightlyDispatchCoordinator -DispatchSuites @($suites.id) -DispatchHistory $inputRecord.History -DispatchPreviousRun $inputRecord.PreviousRun
+            [Antiphon.Nightly.NightlyDispatch]::Coordinate($dispatchState,$steps,[object[]]@($suites.id),$null,$null,'',$inputRecord.History,$inputRecord.PreviousRun,'')
             $coordinatorOrder=(@($script:trace[0..4]|ForEach-Object {($_ -split '/')[1]}) -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red'
             $coordinatorOrder=$coordinatorOrder -and (@($script:trace[20..24]|ForEach-Object {($_ -split '/')[1]}) -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed'
             Check ($ok -and $directOk -and $coordinatorOrder -and $script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS') '64 random permutations and fresh red on previously unseen work; no inherited green/skip credit'
