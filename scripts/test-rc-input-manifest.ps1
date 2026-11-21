@@ -1,5 +1,10 @@
 #requires -Version 7.0
-param([string]$Case, [string]$ResultsDirectory)
+param(
+    [string]$Case,
+    [string]$ResultsDirectory,
+    [ValidateSet('All','ConfigAndFixtures','ScriptAndBuildInputs','ClientContainerAndDocs')]
+    [string]$FixtureFamily = 'All'
+)
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/lib/rc-input-manifest.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
@@ -175,28 +180,37 @@ switch ($Case) {
         Note ($s.dirtySuites -ccontains 'runner') 'old-graph-retained'
     }
     'ConfigFixtureScriptAndLockInputs' {
-        $families=@('tests/Server/appsettings.test.json','tests/Server/Fixtures/input.txt','scripts/fixture.ps1',
-            'tools/Helper/Helper.csproj','Directory.Packages.props','NuGet.config','global.json',
-            'client/package-lock.json','Dockerfile','docs/contract.md')
-        foreach ($path in $families) {
+        # Each path still gets its own manifest comparison. Bound the number of
+        # Git children that must finish within one ScriptHarness execution budget.
+        $families=[ordered]@{
+            ConfigAndFixtures=@('tests/Server/appsettings.test.json','tests/Server/Fixtures/input.txt','global.json')
+            ScriptAndBuildInputs=@('scripts/fixture.ps1','tools/Helper/Helper.csproj','Directory.Packages.props','NuGet.config')
+            ClientContainerAndDocs=@('client/package-lock.json','Dockerfile','docs/contract.md')
+        }
+        $paths=if ($FixtureFamily -eq 'All') { foreach ($family in $families.Values) { $family } } else { $families[$FixtureFamily] }
+        foreach ($path in $paths) {
             $content=if ($path.EndsWith('.props',[StringComparison]::Ordinal)) { '<Project><PropertyGroup><FixtureValue>changed</FixtureValue></PropertyGroup></Project>' }
                 elseif ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) { '<Project Sdk="Microsoft.NET.Sdk" />' }
                 else { 'changed '+$path }
             Put $path $content; $s=Select-Manifest (Commit)
+            Note ($s.changes.Count -eq 1 -and $s.changes[0].path -ceq $path) "family-isolated-change:$path"
             Note (Has $s 'server' $path) "family-inventory:$path"
             Note ($s.dirtySuites -ccontains 'server') "family-dirty:$path"
             Note ($s.unresolved.Count -eq 0) "family-closure-is-known:$path"
+            $baseline=$s.candidateSha
         }
-        Put 'tests/Server/Fixtures/added.json' '{}'; $s=Select-Manifest (Commit)
-        Note (Has $s 'server' 'tests/Server/Fixtures/added.json') 'new-input-not-old-glob-only'
-        [IO.File]::Delete((Join-Path $root 'tests/Server/Fixtures/input.txt')); $s=Select-Manifest (Commit)
-        Note (@($s.changes | Where-Object { $_.path -ceq 'tests/Server/Fixtures/input.txt' -and $_.status -ceq 'D' }).Count -eq 1) 'deleted-input-retained'
-        if (@($s.snapshots).Count -eq 2) {
-            Note (@((Suite $s 'server').inputs | Where-Object { $_.path -ceq 'tests/Server/Fixtures/input.txt' -and -not $_.present }).Count -eq 1) 'absence-record'
+        if ($FixtureFamily -in @('All','ConfigAndFixtures')) {
+            Put 'tests/Server/Fixtures/added.json' '{}'; $s=Select-Manifest (Commit)
+            Note (Has $s 'server' 'tests/Server/Fixtures/added.json') 'new-input-not-old-glob-only'
+            [IO.File]::Delete((Join-Path $root 'tests/Server/Fixtures/input.txt')); $s=Select-Manifest (Commit)
+            Note (@($s.changes | Where-Object { $_.path -ceq 'tests/Server/Fixtures/input.txt' -and $_.status -ceq 'D' }).Count -eq 1) 'deleted-input-retained'
+            if (@($s.snapshots).Count -eq 2) {
+                Note (@((Suite $s 'server').inputs | Where-Object { $_.path -ceq 'tests/Server/Fixtures/input.txt' -and -not $_.present }).Count -eq 1) 'absence-record'
+            }
+            # Dirty working bytes must not stand in for either Git commit.
+            Put 'src/Core/Queue.cs' 'uncommitted replacement'
+            Note ((ConvertTo-TestSelectionCanonicalJson $s) -ceq (ConvertTo-TestSelectionCanonicalJson (Select-Manifest $s.candidateSha))) 'historical-object-only'
         }
-        # Dirty working bytes must not stand in for either Git commit.
-        Put 'src/Core/Queue.cs' 'uncommitted replacement'
-        Note ((ConvertTo-TestSelectionCanonicalJson $s) -ceq (ConvertTo-TestSelectionCanonicalJson (Select-Manifest $s.candidateSha))) 'historical-object-only'
     }
     'PartialIndexNeverSubtracts' {
         Put 'src/Core/Queue.cs' 'index non-hit'; $a=Commit
