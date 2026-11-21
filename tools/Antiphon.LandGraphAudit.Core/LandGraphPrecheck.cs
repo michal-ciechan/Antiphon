@@ -229,13 +229,12 @@ internal sealed class PrecheckAudit : IDisposable
         "FakeBrowserTargetPath", "ImplicitUsings", "InvariantGlobalization", "IsAspireHost", "IsPackable",
         "IsTestProject", "Nullable", "OutputType", "PackageId", "PackageLicenseExpression", "PackageProjectUrl",
         "PackageReadmeFile", "PackageTags", "PackAsTool", "PublishRepositoryUrl", "RepositoryUrl", "RollForward",
-        "RootNamespace", "ServerGarbageCollection", "SourceControlInformationFeatureSupported", "SourceRevisionId",
+        "RootNamespace", "SatelliteResourceLanguages", "ServerGarbageCollection", "SourceControlInformationFeatureSupported", "SourceRevisionId",
         "TargetFramework", "ToolCommandName", "UseAppHost", "UsePublishedPackages", "UserSecretsId", "Version",
         "WarningsAsErrors",
     ], StringComparer.OrdinalIgnoreCase);
 
-    // CARD-1483 (Review cff23aba D-1): property -> the only element texts (ordinal) it may be set to. The value
-    // reaches an MSBuild task Properties string, which splits on ';'; a task Output may not set it.
+    // Property -> the only element texts (ordinal) it may be set to. A task Output may not set a pinned property.
     private static readonly Hashtable PinnedPropertyValues = PinnedProperties();
 
     // Item type -> rule. path: resolved like a file include and refused when it leaves the repository
@@ -361,7 +360,10 @@ internal sealed class PrecheckAudit : IDisposable
     private static Hashtable PinnedProperties()
     {
         var pinned = Ps.NewHashtable();
+        // CARD-1483 (Review cff23aba D-1): this reaches an MSBuild task Properties string, which splits on ';'.
         pinned["_StagedHelperFramework"] = new[] { "%(StagedHelper.HelperTargetFramework)", "$(TargetFramework)" };
+        // CARD-0519: the SDK filters package satellite resources before staging the channel-outbound probe.
+        pinned["SatelliteResourceLanguages"] = new[] { "en" };
         return pinned;
     }
 
