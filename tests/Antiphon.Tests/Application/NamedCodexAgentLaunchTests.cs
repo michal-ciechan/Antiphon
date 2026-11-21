@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Antiphon.FakeLlmApi;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -5,7 +6,9 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -29,6 +32,7 @@ namespace Antiphon.Tests.Application;
 /// branch.</para>
 /// </summary>
 [Category("Integration")]
+[WindowsOnly(WindowsUnitSkipRoster.NamedCodexReason)]
 [NotInParallel("MessageQueue")]
 public class NamedCodexAgentLaunchTests
 {
@@ -206,8 +210,10 @@ public class NamedCodexAgentLaunchTests
     private static RegisteringAdapterFactory Factory(BridgeQueueHarness h) =>
         (RegisteringAdapterFactory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>();
 
-    private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+    private static Task<BridgeQueueHarness> CreateHarnessAsync([CallerMemberName] string testMethod = "")
+    {
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(NamedCodexAgentLaunchTests), testMethod);
+        return BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = services =>
@@ -232,6 +238,7 @@ public class NamedCodexAgentLaunchTests
                     new RegisteringAdapterFactory(sp.GetRequiredService<AgentSessionRuntime>()));
             },
         });
+    }
 
     private static async Task SetAgentAsync(
         BridgeQueueHarness h, AgentModelLevel level, string? systemPrompt, string? modelId = null)

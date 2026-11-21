@@ -319,13 +319,19 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Recheck_target_refuses_a_changed_fingerprint", 1, ExistingReason),
     ];
 
-    // NTFS junctions are not a Linux reparse point. C1210 closure scans NativeLinuxGate
-    // and C1008HostFixture only; these rows stay out of that frozen inventory.
+    // Used by checkpoint receipt validation for Windows fixtures skipped off Windows.
     internal const string WindowsJunctionReason = "NTFS junction fixtures require Windows reparse points; Linux has no junction type.";
+    internal const string NamedCodexReason = "CARD-2049: named Codex launch fixtures resolve the Windows cmd.exe executable.";
     internal static readonly Entry[] WindowsOnly =
     [
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_codex_agent_launches_with_its_tier_slug_and_reasoning_effort", 1, NamedCodexReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_codex_agents_standing_instructions_ride_developer_instructions", 1, NamedCodexReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_codex_agents_long_standing_instructions_arrive_whole", 1, NamedCodexReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_null_profile_agent_keeps_default_Kind_and_still_launches_from_the_registry", 1, NamedCodexReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_Kind_PATCH_changes_the_column_and_not_the_composed_launch", 1, NamedCodexReason),
+        new("Antiphon.Tests.Application", "NamedCodexAgentLaunchTests", "A_codex_agent_with_an_exact_model_id_keeps_it_and_still_sets_effort", 1, NamedCodexReason),
         new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
         new("Antiphon.Tests.Scripts", "WindowsUnitPlatformAdmissionTests", "C1210_Windows_linux_only_outcomes_are_exact", 1, "CARD-1210: the child skip-roster audit requires Windows placement."),
     ];
