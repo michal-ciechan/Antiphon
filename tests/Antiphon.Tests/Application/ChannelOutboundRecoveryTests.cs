@@ -34,6 +34,10 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChannelOutboundRecoveryTests
 {
+    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test starts a probe.
+    [Before(Class)]
+    public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
+
     [Test]
     public async Task Resume_held_after_conversion_returns_to_ready()
     {
@@ -1325,6 +1329,7 @@ public sealed class ChannelOutboundRecoveryTests
 
     private static Process StartProbe(string dll, string config)
     {
+        ProbeGeneratedModel.AddTo(config);
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false };
         start.ArgumentList.Add(dll);
         start.ArgumentList.Add(config);

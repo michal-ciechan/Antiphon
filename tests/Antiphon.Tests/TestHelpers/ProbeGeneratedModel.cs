@@ -3,6 +3,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -15,8 +16,9 @@ namespace Antiphon.Tests.TestHelpers;
 /// beside the staged probe (channel-outbound-probe-model/&lt;key&gt;, keyed by the MVIDs of the probe and its model
 /// assemblies), so later test processes of the same build reuse it. When it cannot be generated this returns no
 /// path and the probes build the model themselves, as before (slower, not different), and
-/// ChannelOutboundProbeModelTests fails. Callers ask before a test's own deadline starts (each C519 class's
-/// Before(Class)); the result is shared by every caller in the process.
+/// ChannelOutboundProbeModelTests fails. Callers ask before a test's own deadline starts (the Before(Class) of each
+/// class that starts probes: the C519 classes and ChannelOutboundRecoveryTests); the result is shared by every caller
+/// in the process.
 /// </summary>
 internal static class ProbeGeneratedModel
 {
@@ -37,6 +39,20 @@ internal static class ProbeGeneratedModel
     public static Task<Result> ResultAsync() => Generated.Value;
 
     public static async Task<string?> PathAsync() => (await Generated.Value).Path;
+
+    /// <summary>
+    /// Adds the compiled model to a probe config a test wrote itself, once the model is ready (the caller's class asks
+    /// for it in its Before(Class)); before that, or without one, the config is left as it is and the probe builds
+    /// the model, as before.
+    /// </summary>
+    public static void AddTo(string configPath)
+    {
+        if (!Generated.IsValueCreated || !Generated.Value.IsCompletedSuccessfully) return;
+        if (Generated.Value.Result.Path is not { } path) return;
+        var config = JsonNode.Parse(File.ReadAllText(configPath))!.AsObject();
+        config["CompiledModelPath"] = path;
+        File.WriteAllText(configPath, config.ToJsonString());
+    }
 
     private static async Task<Result> GenerateAsync()
     {
