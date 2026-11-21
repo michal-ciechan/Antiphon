@@ -25,6 +25,16 @@ public static class CodexPointerComposerEvidence
         var lines = CodexStartupScreen.NormalizeLines(screen);
         var footer = lines.Length - 1;
         while (footer >= 0 && string.IsNullOrWhiteSpace(lines[footer])) footer--;
+        if (footer < 0)
+            return false;
+        // Codex 0.170.0 draws an agents/shortcuts row under the model footer.
+        // Step back to that footer. A 0.160 footer keeps the warning chip on the
+        // model line, which does not match and stays the last line.
+        if (CodexStartupScreen.IsAgentShortcutsRow(lines[footer]))
+        {
+            footer--;
+            while (footer >= 0 && string.IsNullOrWhiteSpace(lines[footer])) footer--;
+        }
         if (footer < 1 || !CodexStartupScreen.IsModelEffortCwdFooter(lines[footer])
             || !CodexStartupScreen.TryReadFooterOnlyModel(lines[footer].Trim(), out _)) return false;
         var bottom = footer - 1;
