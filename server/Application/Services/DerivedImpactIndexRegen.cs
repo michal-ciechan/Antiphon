@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using Antiphon.Server.Application.Interfaces;
 
@@ -13,14 +14,16 @@ internal interface IDerivedImpactIndexRegenerator
     Task<DerivedImpactRegenResult> RegenerateAsync(string landWorktree, CancellationToken ct);
 }
 
-/// <summary><paramref name="Reason"/> is the short why, without the <c>index-regen-failed:</c> prefix.</summary>
-internal sealed record DerivedImpactRegenResult(bool Succeeded, bool Changed, string? Reason, long Milliseconds);
+/// <summary><paramref name="Reason"/> is a short unprefixed reason.</summary>
+internal sealed record DerivedImpactRegenResult(bool Succeeded, bool Changed, string? Reason,
+    long Milliseconds, bool ToolchainUnavailable = false);
 
 internal static class DerivedImpactIndexRegen
 {
     internal const string RelativePath = "tests/derived-impact-index.json";
     internal const string CommitMessage = "chore(land): regenerate the derived impact index";
     internal const string FailurePrefix = "index-regen-failed:";
+    internal const string UnavailablePrefix = "index-regen-unavailable:";
     internal const string ScriptRelative = "scripts/regenerate-derived-impact-index.ps1";
     internal const string ProjectRelative = "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj";
     internal const int BudgetSeconds = 180;
@@ -49,6 +52,24 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
         var project = Path.Combine(landWorktree, DerivedImpactIndexRegen.ProjectRelative);
         if (!File.Exists(script) || !File.Exists(project))
             return new(false, false, "missing-generator", Elapsed());
+
+        // Use the checkout's SDK selection. The dotnet host can be present in a runtime-only image.
+        using (var probeBudget = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            probeBudget.CancelAfter(TimeSpan.FromSeconds(10));
+            try
+            {
+                if (!await ToolAvailableAsync(landWorktree, probeBudget.Token, "dotnet", "--version"))
+                    return new(false, false, "dotnet-sdk", Elapsed(), ToolchainUnavailable: true);
+                if (!await ToolAvailableAsync(landWorktree, probeBudget.Token, "pwsh", "-Version"))
+                    return new(false, false, "pwsh", Elapsed(), ToolchainUnavailable: true);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return new(false, false, "toolchain-check-timeout", Elapsed(), ToolchainUnavailable: true);
+            }
+        }
+        var probeMilliseconds = Elapsed();
         if (slots is null)
             return new(false, false, "slot-missing", Elapsed());
 
@@ -66,7 +87,8 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
                 return new(false, false, "slot-missing", Elapsed());
 
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            budget.CancelAfter(TimeSpan.FromSeconds(DerivedImpactIndexRegen.BudgetSeconds));
+            budget.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(0,
+                DerivedImpactIndexRegen.BudgetSeconds * 1000 - probeMilliseconds)));
             try
             {
                 var buildArgs = new List<string>
@@ -115,6 +137,22 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
         {
             if (slot is not null)
                 await slots.ReleaseAsync(slot, static _ => { }, CancellationToken.None);
+        }
+    }
+
+    private static async Task<bool> ToolAvailableAsync(string cwd, CancellationToken ct, string file, string arg)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var outcome = await RunAsync(cwd, ct, file, [arg]);
+            ct.ThrowIfCancellationRequested();
+            return outcome.Ok;
+        }
+        catch (Win32Exception)
+        {
+            ct.ThrowIfCancellationRequested();
+            return false;
         }
     }
 
