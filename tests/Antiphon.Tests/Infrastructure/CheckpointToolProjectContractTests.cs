@@ -7,10 +7,14 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class CheckpointToolProjectContractTests
 {
+    private const string ToolProject = "tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj";
+    private const string HostCleanupProject = "src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj";
+    private const string GitInProcessProject = "src/Antiphon.GitInProcess/Antiphon.GitInProcess.csproj";
+
     [Test]
     public void csproj_packs_as_tool_named_antiphon_checkpoints()
     {
-        var text = DockerStackDocuments.Read("tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj");
+        var text = DockerStackDocuments.Read(ToolProject);
         text.ShouldContain("<PackAsTool>true</PackAsTool>");
         text.ShouldContain("<ToolCommandName>antiphon-checkpoints</ToolCommandName>");
         text.ShouldContain("<PackageId>Antiphon.Checkpoints</PackageId>");
@@ -18,18 +22,32 @@ public sealed class CheckpointToolProjectContractTests
     }
 
     [Test]
-    public void csproj_references_only_host_cleanup()
+    public void csproj_references_only_isolated_libraries()
     {
-        // CARD-0987 custody refresh D-3 requires the one-way tool -> HostCleanup reference.
-        // Keep the exact set closed: missing, duplicate and unrelated references must fail.
-        var references = XDocument.Parse(
-                DockerStackDocuments.Read("tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj"))
-            .Descendants()
-            .Where(element => element.Name.LocalName == "ProjectReference")
-            .Select(element => (string?)element.Attribute("Include"))
-            .ToArray();
+        // The tool uses HostCleanup for custody and GitInProcess for source identity.
+        References(ToolProject, "ProjectReference").ShouldBe([
+            "../../src/Antiphon.GitInProcess/Antiphon.GitInProcess.csproj",
+            "../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj",
+        ]);
+    }
 
-        references.ShouldBe(["../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj"]);
+    [Test]
+    public void host_cleanup_references_only_git_in_process()
+    {
+        References(HostCleanupProject, "ProjectReference")
+            .ShouldBe(["../Antiphon.GitInProcess/Antiphon.GitInProcess.csproj"]);
+    }
+
+    [Test]
+    public void git_in_process_has_no_project_references()
+    {
+        References(GitInProcessProject, "ProjectReference").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void git_in_process_references_only_libgit2sharp()
+    {
+        References(GitInProcessProject, "PackageReference").ShouldBe(["LibGit2Sharp"]);
     }
 
     [Test]
@@ -44,4 +62,12 @@ public sealed class CheckpointToolProjectContractTests
         DockerStackDocuments.Read("tests/Antiphon.Tests/Antiphon.Tests.csproj")
             .ShouldContain("tools\\Antiphon.Checkpoints\\Antiphon.Checkpoints.csproj");
     }
+
+    private static string?[] References(string project, string itemName) =>
+        XDocument.Parse(DockerStackDocuments.Read(project))
+            .Descendants()
+            .Where(element => element.Name.LocalName == itemName)
+            .Select(element => (string?)element.Attribute("Include"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 }
