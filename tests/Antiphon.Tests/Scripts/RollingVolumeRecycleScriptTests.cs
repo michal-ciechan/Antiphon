@@ -896,7 +896,7 @@ public sealed class RollingVolumeRecycleScriptTests
             await PublishRepo(clean);
             var description = Path.Combine(WorkMount(clean), "repo", ".git", "description");
             var before = await File.ReadAllBytesAsync(description);
-            await InstallPreviewHook(clean, description, WorkMount(clean));
+            await InstallPreviewMountProbe(clean, description, WorkMount(clean));
             ResetPreviewTrace(clean);
             var hostWork = await HostWorkMount();
             var run = await clean.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
@@ -906,10 +906,10 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
-            // The hook remounts read-write and a detached child writes after the audit returns.
+            // The probe attempts a read-write remount and a detached child attempts a late write.
             await Task.Delay(TimeSpan.FromSeconds(4));
             (await File.ReadAllBytesAsync(description)).ShouldBe(before);
-            File.ReadAllText(Path.Combine(clean.Root, "hook-result")).ShouldContain("Read-only file system");
+            File.ReadAllText(Path.Combine(clean.Root, "mount-probe-result")).ShouldContain("Read-only file system");
             AssertReadonlyPreview(clean, image, audited: true);
             (await HostWorkMount()).ShouldBe(hostWork, "recycle-preview-receipt: the helper leaves the host /work mount alone");
             CleanupReceipt(clean, PreviewCleanupOperation)["image"]!.GetValue<string>().ShouldBe(image,
@@ -1468,14 +1468,13 @@ public sealed class RollingVolumeRecycleScriptTests
         setup.Exit.ShouldBe(0, "recycle-preview-receipt: git setup; " + setup.Output);
     }
 
-    private static async Task InstallPreviewHook(C1008HostFixture fixture, string description, string volume)
+    private static async Task InstallPreviewMountProbe(C1008HostFixture fixture, string description, string volume)
     {
-        var repo = Path.Combine(WorkMount(fixture), "repo");
-        var hook = Path.Combine(fixture.Root, "fsmonitor");
-        var result = Path.Combine(fixture.Root, "hook-result");
+        var probe = Path.Combine(fixture.Root, "preview-mount-probe");
+        var result = Path.Combine(fixture.Root, "mount-probe-result");
         // Remount the volume and /work, then write. A detached child writes again after
         // the audit returns. Capture the shell stderr before the append's own redirection.
-        await FixtureExecutable.WriteAsync(hook, "#!/bin/bash\n" +
+        await FixtureExecutable.WriteAsync(probe, "#!/bin/bash\n" +
             "exec 2>" + BashSingle(result + ".err") + "\n" +
             "mount -o remount,bind,rw -- " + BashSingle(volume) + " 2>>" + BashSingle(result + ".err") + " || true\n" +
             "mount -o remount,bind,rw /work 2>>" + BashSingle(result + ".err") + " || true\n" +
@@ -1487,8 +1486,6 @@ public sealed class RollingVolumeRecycleScriptTests
             "setsid bash -c " + BashSingle("sleep 2; mount -o remount,bind,rw -- \"$1\" 2>/dev/null || true; mount -o remount,bind,rw /work 2>/dev/null || true; printf ' late' >> \"$2\"") +
             " _ " + BashSingle(volume) + " " + BashSingle(description) + " </dev/null >/dev/null 2>&1 &\n" +
             "exit 0\n");
-        var setup = await C994ScriptProcess.Run("git", "-C", repo, "config", "core.fsmonitor", hook);
-        setup.Exit.ShouldBe(0, "recycle-preview-receipt: fsmonitor hook; " + setup.Output);
     }
 
     private static async Task PublishLinkedWorktree(C1008HostFixture fixture)

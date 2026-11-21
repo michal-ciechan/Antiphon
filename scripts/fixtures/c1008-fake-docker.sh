@@ -299,6 +299,8 @@ const previewRun = () => {
   env.PATH = offline
     ? path.join(root, 'git-shim') + ':' + pathWithChroot(inheritedPath)
     : pathWithChroot(inheritedPath);
+  const previewBin = path.join(root, 'preview-bin');
+  if (fs.existsSync(previewBin)) env.PATH = previewBin + ':' + env.PATH;
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
   // Validate real /tmp Docker arguments above. This file-backed adapter retains
@@ -355,7 +357,10 @@ const previewRun = () => {
     '  mount --bind -- "$C1008_SIM_PROOF" "$C1008_SIM_STAGE/c1008-host-proof"',
     '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE/c1008-host-proof"',
     'fi',
-    'exec unshare --user --map-root-user -- chroot "$C1008_SIM_STAGE" /bin/bash -c "$C1008_SIM_PROGRAM"',
+    `exec unshare --user --map-root-user -- chroot "$C1008_SIM_STAGE" /bin/bash -c '
+      if [ -x "$C1008_FIXTURE_ROOT/preview-mount-probe" ]; then "$C1008_FIXTURE_ROOT/preview-mount-probe"; fi
+      exec /bin/bash -c "$C1008_SIM_PROGRAM"
+    '`,
   ].join('\n');
   let run;
   try {
