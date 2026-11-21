@@ -242,7 +242,9 @@ public sealed class TestPhaseSupervisorTests
         $discPath = Join-Path $work 'discovery.json'
         [Antiphon.Nightly.TestPhaseFiles]::WriteTextAtomic($discPath, ([Antiphon.Nightly.TestPhaseJson]::Text($doc, 0)))
         $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($discPath)
-        $table = Get-NightlyClassCostTable
+        # The table the planner prices with and the planned manifest reads (W2-nightly S11: NightlyTestsPlan.ClassCostTable).
+        $script:NightlyClassCostTable = [Antiphon.Nightly.NightlyTestsPlan]::ClassCostTable($script:NightlyClassCostPath)
+        $table = $script:NightlyClassCostTable
         $hugeKey = 'Antiphon.Tests.C1514.Huge'
         $had = $table.ContainsKey($hugeKey)
         $prev = $null
@@ -253,8 +255,8 @@ public sealed class TestPhaseSupervisorTests
         try {
             $exclusions = @([pscustomobject]@{ Class = 'Antiphon.Tests.C1514.Leaf'; Methods = @('Skip') })
             $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
-            $plan1 = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($parsed.Nodes) -Chunks $chunks -Exclusions $exclusions)
-            $plan2 = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($parsed.Nodes) -Chunks $chunks -Exclusions $exclusions)
+            $plan1 = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($parsed.Nodes), $chunks, $exclusions, 'antiphon', $null, [Antiphon.Nightly.NightlyClassCosts]::Of($table)))
+            $plan2 = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($parsed.Nodes), $chunks, $exclusions, 'antiphon', $null, [Antiphon.Nightly.NightlyClassCosts]::Of($table)))
             function Get-C1514PlanText {
                 param($Plan)
                 $lines = New-Object System.Collections.Generic.List[string]

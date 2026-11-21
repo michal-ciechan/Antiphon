@@ -486,7 +486,7 @@ try {
                 Categories = @('Integration')
                 Excluded = $false
             }
-            $plan = @(Get-NightlyProfileLaunchPlan @($node) @([pscustomobject]@{ id = 'all'; classes = @() }) @())
+            $plan = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($node), @([pscustomobject]@{ id = 'all'; classes = @() }), @(), 'antiphon', $null, [Antiphon.Nightly.NightlyClassCosts]::Of($script:NightlyClassCostTable)))
             if ($plan.Count -ne 1 -or $plan[0].PSObject.Properties.Name -notcontains 'watchdogSeconds') {
                 Add-Problem 'planner-watchdog-unpaired'
             } else {
@@ -508,7 +508,7 @@ try {
             }
             $script:NightlyClassCostTable = @{ 'Antiphon.PtyHost.Tests.PricedTests' = 1500.0 }
             $ptyChunk = @([pscustomobject]@{ id = 'all'; classes = @() })
-            $ptyProbe = @(Get-NightlyProfileLaunchPlan @($ptyNode) $ptyChunk @())
+            $ptyProbe = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($ptyNode), $ptyChunk, @(), 'antiphon', $null, [Antiphon.Nightly.NightlyClassCosts]::Of($script:NightlyClassCostTable)))
             $ptyProbeAdmitted = $false
             $ptyProbeWatchdog = 0.0
             if ($ptyProbe.Count -ge 1 -and $ptyProbe[0].PSObject.Properties.Name -contains 'watchdogSeconds') {
@@ -519,7 +519,7 @@ try {
             $ptyStamp = 0.0
             $ptyMessage = ''
             try {
-                $ptyPlanned = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($ptyNode) -Chunks $ptyChunk -Exclusions @() -SuiteId 'pty-host' -PolicyObject $policy.Object)
+                $ptyPlanned = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($ptyNode), $ptyChunk, @(), 'pty-host', $policy.Object, [Antiphon.Nightly.NightlyClassCosts]::Of($script:NightlyClassCostTable)))
                 if ($ptyPlanned.Count -ge 1 -and ($ptyPlanned[0].PSObject.Properties.Name -contains 'watchdogAdmitted') -and [bool]$ptyPlanned[0].watchdogAdmitted) {
                     $ptyStamp = [double]$ptyPlanned[0].watchdogSeconds
                     $ptyMessage = 'planner-admitted-pty-host W=' + $ptyStamp
@@ -527,7 +527,7 @@ try {
                     $ptyMessage = 'planner-returned-without-admission'
                 }
             } catch {
-                $ptyMessage = [string]$_.Exception.Message
+                $ptyMessage = [string](Get-NightlyRefusalText $_)
                 if ($ptyMessage -match 'watchdog-admission-refused' -and $ptyMessage -match 'reason=suite-watchdog-ceiling' -and $ptyMessage -match 'watchdogSeconds=1200(\D|$)') {
                     $ptyRefused = $true
                     $ptyStamp = 1200

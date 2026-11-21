@@ -244,6 +244,16 @@ namespace Antiphon.Nightly
             ps.Members.Add(new PSNoteProperty(name, value));
         }
 
+        /// <summary><c>$o.Name = value</c> on an existing property (set in place, its order kept); a missing one throws.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void SetValue(object target, string name, object value)
+        {
+            if (!(target is PSObject) && target is System.Collections.IDictionary dictionary) { dictionary[name] = value; return; }
+            var property = PSObject.AsPSObject(target).Properties[name];
+            if (property == null) throw new InvalidOperationException("The property '" + name + "' cannot be found on this object. Verify that the property exists and can be set.");
+            property.Value = value;
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal static object[] NewObjectArray(int length) => new PSObject[length];
 

@@ -191,18 +191,20 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("setCopied").GetBoolean().ShouldBeTrue("set phase root was not copied");
     }
 
+    // W2-nightly S11: the production chunk discovery is NightlyTestsPlan.ChunkDiscoverySeconds, called in-process.
     [Test]
     [Timeout(60_000)]
-    public async Task DiscoveryIsNotCopiedFromSuite(CancellationToken cancellationToken)
+    public Task DiscoveryIsNotCopiedFromSuite(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(DiscoveryScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("copiedFromSuite").GetBoolean().ShouldBeFalse("baseline copied constant");
-        observed.GetProperty("missingChunk").ValueKind.ShouldBe(JsonValueKind.Null);
-        observed.GetProperty("markedChunk").GetDouble().ShouldBe(1.5);
-        observed.GetProperty("supplementalChunk").GetDouble().ShouldBe(22.627);
-        observed.GetProperty("suiteDiscoverySeconds").GetDouble().ShouldBe(21.377);
+        var missing = NightlyTestsPlan.ChunkDiscoverySeconds(21.377, null, false);
+        var marked = NightlyTestsPlan.ChunkDiscoverySeconds(21.377, 1.5, false);
+        var extra = NightlyTestsPlan.ChunkDiscoverySeconds(21.377, 1.25, true);
+        missing.CopiedFromSuite.ShouldBeFalse("baseline copied constant");
+        missing.ChunkDiscoverySeconds.ShouldBeNull("ordinary-chunk-copied-suite-constant");
+        marked.ChunkDiscoverySeconds.ShouldBe(1.5);
+        extra.ChunkDiscoverySeconds.ShouldBe(22.627);
+        missing.SuiteDiscoverySeconds.ShouldBe(21.377);
+        return Task.CompletedTask;
     }
 
     [Test]
@@ -659,49 +661,6 @@ public sealed class RcFullTimingContractTests
             rows = @($rows.ToArray())
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
-        """;
-
-    private const string DiscoveryScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        . (Join-Path $lib 'nightly-tests-impl.ps1')
-        $copied = $true
-        $missingChunk = 21.377
-        $markedChunk = 21.377
-        $supplemental = 21.377
-        $suite = 21.377
-        $problems = New-Object System.Collections.Generic.List[string]
-        if (Get-Command Resolve-NightlyProductionChunkDiscovery -ErrorAction SilentlyContinue) {
-            $missing = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds $null
-            $marked = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.5
-            $extra = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.25 -SupplementalLaunch
-            $copied = [bool]$missing.copiedFromSuite
-            $missingChunk = $missing.chunkDiscoverySeconds
-            $markedChunk = $marked.chunkDiscoverySeconds
-            $supplemental = $extra.chunkDiscoverySeconds
-            $suite = $missing.suiteDiscoverySeconds
-        } else {
-            $problems.Add('production-discovery-writer-missing')
-        }
-        if ($copied) { $problems.Add('discovery-copied-from-suite') }
-        if ($null -ne $missingChunk) { $problems.Add('ordinary-chunk-copied-suite-constant') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            copiedFromSuite = [bool]$copied
-            missingChunk = $missingChunk
-            markedChunk = $markedChunk
-            supplementalChunk = $supplemental
-            suiteDiscoverySeconds = $suite
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
 
     private const string SetupScript = """

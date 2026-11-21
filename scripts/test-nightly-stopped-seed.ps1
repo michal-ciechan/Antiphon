@@ -355,7 +355,7 @@ try {
             }
             # Execute the same canonical objects through the production serial boundary.
             $script:trace=@();$script:reds=0;$script:NightlyTestsOutcome='green'
-            function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;Set-NightlyOutcome 'TESTS'}}
+            function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;$script:NightlyTestsOutcome=[Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome,'TESTS')}}
             function Complete-NightlySuiteExecution($CompletionSuiteState){}
             . Invoke-NightlyPreparedSchedule $schedule
             $directOk=($script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS')
@@ -746,7 +746,7 @@ try {
                     }
                     [void]$leaves.Add([pscustomobject]@{id=('all-profile-'+$i);classes=@([string]$name);exactFilter='';nodes=@()})
                 }
-                return @(ConvertTo-NightlyProfileLaunchGroups -Leaves @($leaves.ToArray()) -DiscoveryNodes @($nodes.ToArray()))
+                return @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups(@($leaves.ToArray()), @($nodes.ToArray()), $null, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable), $null))
             }
             function Write-PackSeed($Rows,$Failed){
                 $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
@@ -981,7 +981,7 @@ try {
             }
             function Convert-ProbePlan([object[]]$Nodes,[string[]]$Classes){
                 $leaves=@(foreach($name in @($Classes)){[pscustomobject]@{id=('leaf-'+$name.Split('.')[-1]);classes=@($name);exactFilter='';nodes=@()}})
-                return @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $Nodes)
+                return @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups(@($leaves), @($Nodes), $null, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable), $null))
             }
             function Write-ProbeSeed($Rows,$Failed){
                 $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}

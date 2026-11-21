@@ -1090,7 +1090,8 @@ function Test-C599_RunSummaryIdentity {
     $saved = $script:NightlySeams
     try {
         $script:NightlySeams = @{ HostPlatform = { return 'windows' } }
-        Assert-C487 -Cond ((Get-NightlyExecutionPlatform) -ceq 'windows') -Name 'C599 RunSummaryIdentity Windows observation needs no native work'
+        $observed = [string]$script:NightlySeams.HostPlatform.Invoke()
+        Assert-C487 -Cond (([Antiphon.Nightly.NightlyTestsPlan]::ExecutionPlatform($observed)) -ceq 'windows') -Name 'C599 RunSummaryIdentity Windows observation needs no native work'
     } finally { $script:NightlySeams = $saved }
 }
 
@@ -2078,34 +2079,15 @@ function Test-C599_ScheduleProvenance {
 # ======================================================= V-4 e2e evidence ===
 
 function Test-C599_Prerequisites {
+    # W2-nightly S11: the prerequisite probe, the native classification and the generated playwright.ps1 install are
+    # NightlyTestsPlan; their rows are ReleaseGateE2EEvidenceTests.C599_PrerequisiteProbe, in-process.
     $root = New-C599Root
-    $logRoot = Join-Path $root 'logs'
-    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
-
-    # Missing generated playwright script: red, and named.
-    $fakeRepo = Join-Path $root 'repo'
-    New-Item -ItemType Directory -Path $fakeRepo -Force | Out-Null
-    $script:NightlySeams = $null
-    $noBrowser = Test-NightlyE2EPrerequisites -RepoRoot $fakeRepo -LogRoot $logRoot -BundlePath (Join-Path $fakeRepo 'client\dist\index.html')
-    Assert-C487 -Cond (-not $noBrowser.Ok) -Name 'C599 Prerequisites a missing playwright script is not ok'
-    $names = @($noBrowser.Rows | ForEach-Object { [string]$_.name })
-    Assert-C487 -Cond ($names -contains 'playwright-script') -Name 'C599 Prerequisites the missing browser installer is named' -Detail ($names -join ',')
-    Assert-C487 -Cond ($names -contains 'client-bundle') -Name 'C599 Prerequisites the missing client bundle is named' -Detail ($names -join ',')
-
-    # The production selection path must treat that as red, never as a skip.
+    # The production selection path must treat a failed prerequisite as red, never as a skip.
     $policyPath = New-C599Policy -Root $root
     $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $policyPath)
     $required = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($policy.Object, 'rc'))
     Assert-C487 -Cond ($required -contains 'e2e') -Name 'C599 Prerequisites the rc profile requires e2e before any prerequisite check'
-    $suiteMap = [Antiphon.Nightly.NightlyPolicy]::SuiteMap($policy.Object)
-    Assert-C487 -Cond (Test-NightlySuiteIsNative -Suite $suiteMap['e2e'] -SuiteId 'e2e') -Name 'C599 Prerequisites e2e is classified native so it serialises'
-    Assert-C487 -Cond (Test-NightlySuiteIsNative -Suite $suiteMap['antiphon'] -SuiteId 'antiphon') -Name 'C599 Prerequisites antiphon is still classified native'
-    Assert-C487 -Cond (-not (Test-NightlySuiteIsNative -Suite $suiteMap['client'] -SuiteId 'client')) -Name 'C599 Prerequisites the client suite is not native'
-
-    # The implementation must install through the GENERATED playwright.ps1.
     $impl = Get-Content -LiteralPath (Join-Path $lib 'nightly-tests-impl.ps1') -Raw
-    Assert-C487 -Cond ($impl -match 'playwright\.ps1') -Name 'C599 Prerequisites the executor uses the generated playwright.ps1'
-    Assert-C487 -Cond ($impl -match 'install.*chromium' -or $impl -match "'install', 'chromium'") -Name 'C599 Prerequisites the executor installs chromium'
     Assert-C487 -Cond ($impl -match 'e2e-prerequisite-failed') -Name 'C599 Prerequisites a failed prerequisite is a named red reason'
 }
 
@@ -2127,27 +2109,8 @@ function Test-C599_EnvironmentIsolation {
 }
 
 function Test-C599_ExecutionArtifacts {
-    $root = New-C599Root
-    $trx = Join-Path $root 'e2e-all.trx'
-    $diag = Join-Path $root 'e2e-exec'
-    $nativeArgs = @(Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory $diag `
-        -Classes @('Antiphon.E2E.SmokeE2ETests', 'Antiphon.E2E.BoardE2ETests') `
-        -GroupFilter '/*/Antiphon.E2E/(SmokeE2ETests*)|(BoardE2ETests*)/*')
-    Assert-C487 -Cond ($nativeArgs -contains '--report-trx') -Name 'C599 ExecutionArtifacts the executor requests a fresh TRX'
-    Assert-C487 -Cond ($nativeArgs -contains '--diagnostic') -Name 'C599 ExecutionArtifacts the executor requests MTP diagnostics'
-    Assert-C487 -Cond ($nativeArgs -contains '--diagnostic-output-directory') -Name 'C599 ExecutionArtifacts the executor pins the diagnostic directory'
-    $filterIdx = [array]::IndexOf($nativeArgs, '--treenode-filter')
-    Assert-C487 -Cond ($filterIdx -ge 0 -and ([string]$nativeArgs[$filterIdx + 1]) -match 'SmokeE2ETests' -and ([string]$nativeArgs[$filterIdx + 1]) -match 'BoardE2ETests') -Name 'C599 ExecutionArtifacts the executor launches only the eligible roster' -Detail ([string]$nativeArgs[$filterIdx + 1])
-    # The TRX filename reaching MTP must be a basename with the directory carried
-    # separately, or the runner writes the report where the census never reads it.
-    $nested = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path (Join-Path $root 'sub') 'x.trx') -DiagnosticDirectory $diag -Classes @())
-    $nameIdx = [array]::IndexOf($nested, '--report-trx-filename')
-    $dirIdx = [array]::IndexOf($nested, '--results-directory')
-    Assert-C487 -Cond (([string]$nested[$nameIdx + 1]) -eq 'x.trx') -Name 'C599 ExecutionArtifacts the trx filename is passed as a basename' -Detail ([string]$nested[$nameIdx + 1])
-    Assert-C487 -Cond (([string]$nested[$dirIdx + 1]) -like '*sub') -Name 'C599 ExecutionArtifacts the trx directory is passed separately' -Detail ([string]$nested[$dirIdx + 1])
-    $msg = ''
-    try { [void](Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory '' -Classes @()) } catch { $msg = $_.Exception.Message }
-    Assert-C487 -Cond ($msg -match 'diagnostic directory') -Name 'C599 ExecutionArtifacts a missing diagnostic directory is refused' -Detail $msg
+    # W2-nightly S11: the native argv is NightlyTestsPlan.NativeExecutionArguments; its rows are
+    # ReleaseGateE2EEvidenceTests.C599_ExecutionArtifactsArgv, in-process.
     $impl = Get-Content -LiteralPath (Join-Path $lib 'nightly-tests-impl.ps1') -Raw
     Assert-C487 -Cond ($impl -match 'Wait-NightlyOwnedCleanup') -Name 'C599 ExecutionArtifacts the executor waits for owned cleanup'
     Assert-C487 -Cond ($impl -match 'owned-child still running') -Name 'C599 ExecutionArtifacts an unjoined owned child is an error'

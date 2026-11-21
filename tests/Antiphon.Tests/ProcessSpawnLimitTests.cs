@@ -47,7 +47,6 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests),
         typeof(AgentTaskLandRecoveryTests),
         typeof(AgentTaskLandCheckpointWorkerTests),
-        typeof(C1514LandingSplitBudgetTests),
         // CARD-1439: LandingAdmissionControlTests and LandingSourceBoundaryControlTests only
         // call the controlled harness, so they are not on this floor. LandingRemovalControlTests
         // still calls the real-git cleanup and removal classes.
@@ -157,6 +156,8 @@ public class ProcessSpawnLimitTests
         ("Infrastructure/LandingAdmissionControlTests.cs", "LandingAdmissionControlTests"),
         ("Infrastructure/LandingSourceBoundaryControlTests.cs", "LandingSourceBoundaryControlTests"),
         ("Application/C0824RefOnlySnapshotMigrationTests.cs", "C0824RefOnlySnapshotMigrationTests"),
+        // W2-nightly S11: the launch-budget cases plan in-process (NightlyTestsPlan); no pwsh harness child.
+        ("Scripts/C1514LandingSplitBudgetTests.cs", "C1514LandingSplitBudgetTests"),
     ];
 
     [Test]

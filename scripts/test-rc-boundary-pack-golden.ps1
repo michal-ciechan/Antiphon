@@ -21,6 +21,9 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 # samples (12.8s). Wall-clock is recorded, not asserted. The standing pin is
 # that NightlyLaunchPlan.BoundaryIndexBuilds increases by exactly one per pack.
 $script:BoundaryPackSecondsBound = 12
+# W2-nightly S11: the packs are NightlyTestsPlan; the repack fixture shrinks the prices.
+$script:GoldenPrices = [Antiphon.Nightly.NightlyLaunchPrices]::Default
+function Get-GoldenCosts { [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable) }
 
 function Assert-BoundaryIndexOnce([int]$Before, [int]$ExpectedDelta) {
     if (-not (Test-NightlyCoreAvailable)) { return }
@@ -103,14 +106,12 @@ function Get-FixturePack([object[]]$Nodes, [hashtable]$Boundaries, [object[]]$In
     if ($InputLeaves.Count -eq 0) { $InputLeaves = @(Get-FixtureLeaves $Nodes) }
     $before = 0
     if (Test-NightlyCoreAvailable) { $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
-    $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $InputLeaves -DiscoveryNodes $Nodes -BoundaryAware -SuiteId $Suite -ClassBoundaries $Boundaries)
+    $plan = @([Antiphon.Nightly.NightlyTestsPlan]::BoundaryLaunchGroups($InputLeaves, $Nodes, $Suite, $Boundaries, (Get-GoldenCosts), $script:GoldenPrices))
     Assert-BoundaryIndexOnce $before 1
     return $plan
 }
 
 function Get-FixtureGoldens {
-    $savedTarget = $script:NightlyLaunchTargetSeconds
-    $savedBudget = $script:NightlyLaunchLoneClassBudgetSeconds
     try {
         $sepNodes = @((New-FixtureNode A), (New-FixtureNode AExtra), (New-FixtureNode B), (New-FixtureNode C), (New-FixtureNode Unknown))
         $sepMap = @{ 'Antiphon.Tests.Fixture.A'='core'; 'Antiphon.Tests.Fixture.B'='core'; 'Antiphon.Tests.Fixture.AExtra'='git'; 'Antiphon.Tests.Fixture.C'='git' }
@@ -120,11 +121,9 @@ function Get-FixtureGoldens {
 
         $repackNodes = @((New-FixtureNode Matrix Run 0), (New-FixtureNode Matrix Run 1), (New-FixtureNode Matrix RunExtra 0), (New-FixtureNode Matrix Other 0), (New-FixtureNode Matrix Other 1), (New-FixtureNode Matrix Last 0), (New-FixtureNode Z))
         $repackMap = @{ 'Antiphon.Tests.Fixture.Matrix'='core'; 'Antiphon.Tests.Fixture.Z'='core' }
-        $script:NightlyLaunchTargetSeconds = 1
-        $script:NightlyLaunchLoneClassBudgetSeconds = 2
+        $script:GoldenPrices = [Antiphon.Nightly.NightlyLaunchPrices]::new(1, 2)
         $out['repack-split.json'] = Get-PackJson (Get-FixturePack $repackNodes $repackMap)
-        $script:NightlyLaunchTargetSeconds = 900
-        $script:NightlyLaunchLoneClassBudgetSeconds = 2400
+        $script:GoldenPrices = [Antiphon.Nightly.NightlyLaunchPrices]::Default
         $out['repack-restored.json'] = Get-PackJson (Get-FixturePack $repackNodes $repackMap)
         $exact = [pscustomobject]@{ id='all-profile-1'; classes=@('Antiphon.Tests.Fixture.Matrix'); exactFilter='/*/Antiphon.Tests.Fixture/Matrix/Run'; nodes=@($repackNodes | Where-Object Method -CEQ Run | Where-Object Type -CEQ Matrix) }
         $out['repack-exact.json'] = Get-PackJson (Get-FixturePack $repackNodes $repackMap @($exact))
@@ -134,7 +133,7 @@ function Get-FixtureGoldens {
 
         $defaultNodes = @((New-FixtureNode B), (New-FixtureNode C))
         $defaultLeaves = @(Get-FixtureLeaves $defaultNodes)
-        $out['default-off.json'] = Get-PackJson @(ConvertTo-NightlyProfileLaunchGroups -Leaves $defaultLeaves -DiscoveryNodes $defaultNodes)
+        $out['default-off.json'] = Get-PackJson @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups($defaultLeaves, $defaultNodes, $null, (Get-GoldenCosts), $null))
         $out['default-on.json'] = Get-PackJson (Get-FixturePack $defaultNodes @{ 'Antiphon.Tests.Fixture.B'='core'; 'Antiphon.Tests.Fixture.C'='git' })
 
         $canonNodes = @((New-FixtureNode Matrix Run 0), (New-FixtureNode Matrix Run 1))
@@ -146,11 +145,10 @@ function Get-FixtureGoldens {
         $keys = @('10788987499786589518','17490688019260441962')
         $chunks = @(foreach ($key in $keys) { [pscustomobject]@{ id='pending'; nodes=@([pscustomobject]@{ Uid=$key }); marker=$key } })
         $memberships = @(foreach ($key in $keys) { @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='CTests/M'; caseKey=$key }) } })
-        $out['collision.json'] = Get-PackJson @(Complete-NightlyBoundaryLaunchGroups -Chunks $chunks -Memberships $memberships)
+        $out['collision.json'] = Get-PackJson @([Antiphon.Nightly.NightlyTestsPlan]::CompleteBoundaryLaunchGroups($chunks, $memberships))
         return $out
     } finally {
-        $script:NightlyLaunchTargetSeconds = $savedTarget
-        $script:NightlyLaunchLoneClassBudgetSeconds = $savedBudget
+        $script:GoldenPrices = [Antiphon.Nightly.NightlyLaunchPrices]::Default
     }
 }
 
@@ -240,7 +238,7 @@ $inputs = Get-RealTreeInputs $nodes
 $beforeOff = 0
 if (Test-NightlyCoreAvailable) { $beforeOff = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
 $offWatch = [Diagnostics.Stopwatch]::StartNew()
-$offJson = Get-PackJson @(ConvertTo-NightlyProfileLaunchGroups -Leaves $inputs.Leaves -DiscoveryNodes $nodes)
+$offJson = Get-PackJson @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups($inputs.Leaves, $nodes, $null, (Get-GoldenCosts), $null))
 $offWatch.Stop()
 Assert-BoundaryIndexOnce $beforeOff 0
 $offBytes = $utf8.GetByteCount($offJson)
@@ -252,7 +250,7 @@ for ($i = 0; $i -lt $runs; $i++) {
     $beforePack = 0
     if (Test-NightlyCoreAvailable) { $beforePack = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $boundaryPlan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $inputs.Leaves -DiscoveryNodes $nodes -BoundaryAware -SuiteId antiphon -ClassBoundaries $inputs.Boundaries)
+    $boundaryPlan = @([Antiphon.Nightly.NightlyTestsPlan]::BoundaryLaunchGroups($inputs.Leaves, $nodes, 'antiphon', $inputs.Boundaries, (Get-GoldenCosts), $null))
     $watch.Stop()
     Assert-BoundaryIndexOnce $beforePack 1
     $times.Add($watch.Elapsed.TotalSeconds)

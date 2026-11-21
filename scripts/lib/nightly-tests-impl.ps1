@@ -53,357 +53,16 @@ function Get-NightlyToolchainPreflight {
     }
 }
 
-# CARD-0599 D-6: kept as the pre-existing nightly inventory. Native ownership is now
-# decided from the suite definition itself (Test-NightlySuiteIsNative) so a profile can
-# add e2e without a second hard-coded list drifting out of step.
-$script:NightlyNativeGroups = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging')
-
-function Get-NightlyExecutionPlatform {
-    # The seam replaces only OS observation, never policy or coverage decisions.
-    $platform = if ($script:NightlySeams -and $script:NightlySeams.HostPlatform) {
-        [string]$script:NightlySeams.HostPlatform.Invoke()
-    } elseif ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows' }
-    elseif ($IsLinux) { 'linux' }
-    else { '' }
-    if ($platform -cnotin @('windows', 'linux')) { throw 'unsupported-host-platform' }
-    return $platform
-}
-
-# CARD-1410. Launch groups pack by estimated serial seconds. A class with a
-# row in nightly-class-costs.json (refreshed from TRX) uses it; any other
-# class uses the node model below. With CARD-1404 group-10 prices the recorded
-# listing estimates about 9.6 h serial, not a measured wall-clock SLA
-# (CARD-0856 measured an earlier whole Windows run at about 270 min).
-# An ordinary node is 0.5 s and Slow 1.5 s (measured Slow classes ran at
-# 1.7-5.4 s per node). Slow in a Land or Delivery type is 4 s. A type naming
-# Land, Delivery or Check anywhere doubles its nodes. The two-minute land
-# nodes of Windows group 27 are a measured row. A group targets 15 minutes;
-# a class estimated over 40 minutes is split into exact-method chunks of at
-# most the target, so no launch nears watchdogs.antiphon.
-$script:NightlyLaunchNodeSeconds = 0.5
-$script:NightlyLaunchSlowNodeSeconds = 1.5
-$script:NightlyLaunchLaneSlowNodeSeconds = 4
-$script:NightlyLaunchHeavyFamilyFactor = 2
-$script:NightlyLaunchTargetSeconds = 900
-$script:NightlyLaunchLoneClassBudgetSeconds = 2400
-$script:NightlyLaunchMaxGroupOperands = 30
+# W2-nightly S11: the launch prices (NightlyLaunchPrices, CARD-1410), the class-cost table, the launch groups and plans,
+# native classification, the E2E prerequisites, the test host, the chunk discovery seconds, the native argv, the npm
+# launch, the execution platform and the run outcome are Antiphon.Nightly/NightlyTestsPlan.cs. The cost file path and
+# the table read from it stay here: test-phase-evidence.ps1 reads both, and a fixture seam may replace either.
 # Once total ran and request execute stop are on disk, a leftover tree is killed after this grace instead of the
 # full launch watchdog. Unmeasured placeholder: chunk logs record execution-stop-to-exit-seconds; set this near 2x
 # that p95 (docs/test-performance-standards.md). 60000 matches NightlyCompletionGrace.DefaultMilliseconds.
 $script:NightlyCompletionGraceMilliseconds = 60000
 $script:NightlyClassCostPath = Join-Path $PSScriptRoot 'nightly-class-costs.json'
 $script:NightlyClassCostTable = $null
-
-function Get-NightlyClassCostTable {
-    # Bare class identity -> measured seconds per node.
-    if ($null -ne $script:NightlyClassCostTable) { return $script:NightlyClassCostTable }
-    # The file is parsed once per process and file content (Antiphon.Nightly/ClassCostCache.cs, shared with
-    # Get-TestPhaseClassBasisMap); callers add rows to the table, so each load gets its own copy.
-    $table = @{}
-    if (Test-Path -LiteralPath $script:NightlyClassCostPath) {
-        $entry = $null
-        $full = ''
-        if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) {
-            $full = [System.IO.Path]::GetFullPath($script:NightlyClassCostPath)
-            $entry = [Antiphon.Nightly.ClassCostCache]::Find($full)
-        }
-        if ($null -ne $entry -and $null -ne $entry.Costs) {
-            $table = $entry.Costs.Clone()
-        } else {
-            if ($null -ne $entry) { $doc = $entry.Document }
-            elseif ($full) {
-                $before = [Antiphon.Nightly.ClassCostCache]::Digest($full)
-                $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json
-                $entry = [Antiphon.Nightly.ClassCostCache]::Store($full, $before, $doc)
-            }
-            else { $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json }
-            if ([string]$doc.format -cne 'antiphon-nightly-class-costs-v1') { throw 'class-cost-format' }
-            foreach ($row in @($doc.classes.PSObject.Properties)) {
-                $nodes = [int]$row.Value.nodes
-                $seconds = [double]$row.Value.seconds
-                if ($nodes -lt 1 -or $seconds -le 0) { throw ('class-cost-row ' + [string]$row.Name) }
-                $table[[string]$row.Name] = $seconds / $nodes
-            }
-            if ($null -ne $entry) { $entry.Costs = $table.Clone() }
-        }
-    }
-    $script:NightlyClassCostTable = $table
-    return $table
-}
-
-function Get-NightlyLaunchClassCost {
-    param([object[]]$Nodes, [string]$TypeName, [string]$Bare = '')
-    Assert-NightlyCoreAvailable 'Get-NightlyLaunchClassCost'
-    return [Antiphon.Nightly.NightlyLaunchPlan]::ClassCost($Nodes, $TypeName, $Bare, (Get-NightlyClassCostTable),
-        [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
-        [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
-}
-
-function Complete-NightlyBoundaryLaunchGroups {
-    # Keep resolution at the packer/S2 boundary so collision policy is shared.
-    param([object[]]$Chunks, [object[]]$Memberships)
-    if ($Chunks.Count -ne $Memberships.Count) { throw 'boundary-pack: launch/membership count mismatch' }
-    if ($Chunks.Count -eq 0) { return @() }
-    $resolved = @([Antiphon.Nightly.RcBoundary]::ResolveChunks($Memberships))
-    for ($i = 0; $i -lt $Chunks.Count; $i++) {
-        $chunk = $Chunks[$i]; $membership = $resolved[$i]
-        if (-not ([Antiphon.Nightly.RcBoundary]::IsChunkId(([string]$membership.chunkId)))) { throw 'boundary-pack: chunk id length' }
-        $chunk.id = $membership.chunkId
-        foreach ($entry in @{
-            suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$membership.fullDigest
-            identityKeys=@($membership.identityKeys); caseKeys=@($membership.caseKeys)
-            alwaysDirty=$membership.alwaysDirty; collision=$membership.collision
-        }.GetEnumerator()) { Add-Member -InputObject $chunk -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force }
-    }
-    return $Chunks
-}
-
-function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
-    # Compiled discovery index, once per pack; ids and digests resolve in Antiphon.Nightly.RcBoundary.
-    param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
-    $costTable = Get-NightlyClassCostTable
-    $index = [Antiphon.Nightly.NightlyLaunchPlan]::IndexBoundaryDiscovery([object[]]$DiscoveryNodes, $costTable,
-        [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
-        [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
-    if ($index.Error) { throw [string]$index.Error }
-    $classes = $index.Classes
-    $boundaries = @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf')
-    $mapping = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    if ($null -ne $ClassBoundaries) { foreach ($key in $ClassBoundaries.Keys) { $mapping.Add([string]$key, $ClassBoundaries[$key]) } }
-    $partitions = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($leaf in $Leaves) {
-        if (@($leaf.classes).Count -ne 1) { throw 'boundary-pack: leaf must have one class' }
-        $bare = [string]@($leaf.classes)[0]
-        if (-not $classes.ContainsKey($bare)) { throw 'boundary-pack: leaf has no discovery membership' }
-        $rec = $classes[$bare]
-        $members = @($rec.Nodes)
-        if ($leaf.exactFilter) {
-            $members = @($members | Where-Object {
-                $parts = [Antiphon.Nightly.NightlyLaunchPlan]::BareTypeParts(([string]$_.ClassName))
-                ('/*/{0}/{1}/{2}' -f $parts.Namespace, $parts.Type, $_.Method) -ceq $leaf.exactFilter
-            })
-            [string[]]$declared = @($leaf.nodes | ForEach-Object { [string]$_.Uid })
-            [string[]]$actual = @($members | ForEach-Object { [string]$_.Uid })
-            [Array]::Sort($declared, [StringComparer]::Ordinal); [Array]::Sort($actual, [StringComparer]::Ordinal)
-            if ((ConvertTo-Json -InputObject @($declared) -Compress) -cne (ConvertTo-Json -InputObject @($actual) -Compress)) { throw 'boundary-pack: incomplete exact-method cases' }
-            $leaf = [pscustomobject]@{ id=$leaf.id; classes=@($bare); exactFilter=$leaf.exactFilter; nodes=$members }
-        }
-        if ($members.Count -eq 0) { throw 'boundary-pack: empty leaf membership' }
-        foreach ($node in $members) { if (-not $expected.Add([string]$node.Uid)) { throw 'boundary-pack: overlapping leaves' } }
-        $boundary = 'unassigned'
-        if ($mapping.ContainsKey($bare) -and $mapping[$bare] -is [string] -and $mapping[$bare] -cin $boundaries) { $boundary = [string]$mapping[$bare] }
-        if (-not $partitions.ContainsKey($boundary)) { $partitions.Add($boundary, [Collections.Generic.List[object]]::new()) }
-        $partitions[$boundary].Add($leaf)
-    }
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $memberships = [Collections.Generic.List[object]]::new()
-    [string[]]$ordered = @($partitions.Keys); [Array]::Sort($ordered, [StringComparer]::Ordinal)
-    $result = [Collections.Generic.List[object]]::new()
-    $prefixCache = @{}
-    foreach ($boundary in $ordered) {
-        # Compiled (LaunchPlanner.BoundaryPackedChunks): the profile planner's pack over this boundary's leaves.
-        $pack = [Antiphon.Nightly.LaunchPlanner]::BoundaryPackedChunks($partitions[$boundary].ToArray(), $classes, $index.Universe, $prefixCache, $costTable,
-            [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds, [double]$script:NightlyLaunchLaneSlowNodeSeconds,
-            [double]$script:NightlyLaunchHeavyFamilyFactor, [double]$script:NightlyLaunchTargetSeconds, [double]$script:NightlyLaunchLoneClassBudgetSeconds,
-            [int]$script:NightlyLaunchMaxGroupOperands)
-        if ($null -ne $pack.Error) { throw [string]$pack.Error }
-        $chunks = @($pack.Groups)
-        foreach ($chunk in $chunks) {
-            $packed = [Antiphon.Nightly.NightlyLaunchPlan]::ChunkMembershipForChunk($chunk.nodes, $chunk.classes, $classes, $index.JsonByUid, $expected, $seen)
-            if ($packed.Error) { throw [string]$packed.Error }
-            $memberships.Add(@{ suite=$SuiteId; boundary=$boundary; identities=@($packed.Identities) })
-            Add-Member -InputObject $chunk -NotePropertyName caseMembership -NotePropertyValue @($packed.Cases) -Force
-            Add-Member -InputObject $chunk -NotePropertyName caseIdentityBasis -NotePropertyValue 'discovery-only' -Force
-            $result.Add($chunk)
-        }
-    }
-    if (-not $seen.SetEquals($expected)) { throw 'boundary-pack: incomplete case partition' }
-    return @(Complete-NightlyBoundaryLaunchGroups -Chunks $result.ToArray() -Memberships $memberships.ToArray())
-}
-
-function ConvertTo-NightlyBoundaryLaunchGroups {
-    # Opt-in metadata only. The caller supplies one suite and its boundary map;
-    # missing/conflicting mappings stay unassigned. This grants no carry credit.
-    # The compiled pack indexes full discovery once.
-    param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
-    Assert-NightlyCoreAvailable 'ConvertTo-NightlyBoundaryLaunchGroups'
-    return @(ConvertTo-NightlyBoundaryLaunchGroupsIndexed -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
-}
-
-function ConvertTo-NightlyProfileLaunchGroups {
-    param([object[]]$Leaves, [object[]]$DiscoveryNodes, [switch]$BoundaryAware,
-        [string]$SuiteId = 'antiphon', [Collections.IDictionary]$ClassBoundaries = $null,
-        $DiscoveryIndex = $null)
-    if ($BoundaryAware) {
-        return @(ConvertTo-NightlyBoundaryLaunchGroups -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
-    }
-    Assert-NightlyCoreAvailable 'ConvertTo-NightlyProfileLaunchGroups'
-    # Compiled (Antiphon.Nightly/LaunchPlanner.cs): the leaf loop (exact leaves get their seconds, a class over
-    # its lone budget - 1500 s for Antiphon.E2E, CARD-1584 - is split into exact-method chunks), the bin pack per
-    # namespace with the Split-NightlyItemsBySeconds order, the group and method filters, and the same Sort-Object
-    # and Group-Object orders. The class cost table is loaded where Get-NightlyLaunchClassCost first loaded it.
-    $costTable = $null
-    if ([Antiphon.Nightly.LaunchPlanner]::NeedsCostTable($Leaves)) { $costTable = Get-NightlyClassCostTable }
-    $plan = [Antiphon.Nightly.LaunchPlanner]::ProfileLaunchGroups($Leaves, $DiscoveryNodes, $DiscoveryIndex, $costTable,
-        [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
-        [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor,
-        [double]$script:NightlyLaunchTargetSeconds, [double]$script:NightlyLaunchLoneClassBudgetSeconds,
-        [int]$script:NightlyLaunchMaxGroupOperands)
-    if ($null -ne $plan.Error) { throw [string]$plan.Error }
-    return @($plan.Groups)
-}
-
-function Get-NightlyProfileLaunchPlan {
-    param(
-        [object[]]$DiscoveryNodes,
-        [object[]]$Chunks,
-        [object[]]$Exclusions,
-        [string]$SuiteId = 'antiphon',
-        $PolicyObject = $null
-    )
-    $leaves = @([Antiphon.Nightly.LaunchPlanner]::ProfileExecutionChunks($DiscoveryNodes, $Chunks, $Exclusions))
-    $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
-    # CARD-1567: the 60-minute native watchdog detects hangs, not ordinary
-    # packing overflow. A single expanded method may itself exceed the
-    # splitter's target: refuse the plan before launching any test process.
-    foreach ($launch in $plan) {
-        $seconds = [double]$launch.seconds
-        $ceiling = 2400
-        foreach ($class in @($launch.classes)) {
-            if ([string]$class -clike 'Antiphon.E2E.*') { $ceiling = 1800 }
-        }
-        if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt $ceiling) {
-            throw ('launch-estimate-ceiling id={0} seconds={1} ceiling={2}' -f $launch.id, $seconds, $ceiling)
-        }
-        $suiteForWatchdog = 'antiphon'
-        if (-not [string]::IsNullOrWhiteSpace([string]$SuiteId)) { $suiteForWatchdog = [string]$SuiteId }
-        foreach ($class in @($launch.classes)) {
-            if ([string]$class -clike 'Antiphon.E2E.*') { $suiteForWatchdog = 'e2e' }
-        }
-        $admission = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteForWatchdog, $seconds, 'default', '', $null, $null, $PolicyObject)
-        if (-not $admission.Admitted) {
-            $watchdogText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', [double]$admission.WatchdogSeconds)
-            throw ('watchdog-admission-refused id={0} reason={1} watchdogSeconds={2}' -f $launch.id, $admission.Reason, $watchdogText)
-        }
-        Add-Member -InputObject $launch -NotePropertyName watchdogSeconds -NotePropertyValue ([double]$admission.WatchdogSeconds) -Force | Out-Null
-        Add-Member -InputObject $launch -NotePropertyName watchdogReason -NotePropertyValue ([string]$admission.Reason) -Force | Out-Null
-        Add-Member -InputObject $launch -NotePropertyName watchdogAdmitted -NotePropertyValue ([bool]$admission.Admitted) -Force | Out-Null
-    }
-    return $plan
-}
-
-function Resolve-NightlySuiteChunks {
-    # Master nightly is not profile-aware and has no exclusions, so it stays
-    # the single all chunk. Only a profile that actually excludes packs leaves.
-    param(
-        [object[]]$DiscoveryNodes,
-        [object[]]$Chunks,
-        [object[]]$Exclusions,
-        [bool]$ProfileAware,
-        [bool]$Native,
-        [string]$SuiteId = 'antiphon',
-        $PolicyObject = $null
-    )
-    if ($Native -and $ProfileAware -and @($Exclusions).Count -gt 0) {
-        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions -SuiteId $SuiteId -PolicyObject $PolicyObject)
-    }
-    return @($Chunks)
-}
-
-function Test-NightlySuiteIsNative {
-    <#
-      A native suite is one that runs a built TUnit assembly: it owns its process tree,
-      serialises against every other native suite, and must produce TRX plus discovery
-      and execution diagnostics. Project + assembly is the definition; the legacy id
-      list is only a fallback for a suite that predates those fields.
-    #>
-    param($Suite, [string]$SuiteId)
-    if ($null -ne $Suite) {
-        $project = [string]$Suite.project
-        $assembly = [string]$Suite.assembly
-        if (-not [string]::IsNullOrWhiteSpace($project) -and -not [string]::IsNullOrWhiteSpace($assembly)) { return $true }
-    }
-    return ($script:NightlyNativeGroups -contains $SuiteId)
-}
-
-function Test-NightlyE2EPrerequisites {
-    <#
-      D-6: before any E2E chunk runs, the matching Playwright Chromium must be installed
-      through the generated playwright.ps1 and must actually launch headlessly. A missing
-      browser is red/incomplete, never a skip. Returns every probe's real outcome.
-    #>
-    param(
-        [string]$RepoRoot,
-        [string]$LogRoot,
-        [hashtable]$Environment = $null,
-        [string]$BundlePath = ''
-    )
-    if ($script:NightlySeams -and $script:NightlySeams.E2EPrerequisites) {
-        return $script:NightlySeams.E2EPrerequisites.Invoke($RepoRoot, $LogRoot, $Environment, $BundlePath)
-    }
-    $rows = @()
-    $ok = $true
-    $installer = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.E2E' (Join-Path 'bin' (Join-Path 'Debug' (Join-Path 'net9.0' 'playwright.ps1')))))
-    if (-not (Test-Path -LiteralPath $installer)) {
-        $rows += [ordered]@{ name = 'playwright-script'; exitCode = 1; detail = ('missing {0}' -f $installer) }
-        $ok = $false
-    } else {
-        $install = Invoke-NightlyOwnedProcess -FilePath 'pwsh' `
-            -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $installer, 'install', 'chromium') `
-            -WorkingDirectory $RepoRoot -TimeoutMilliseconds 900000 -Environment $Environment `
-            -LogPath (Join-Path $LogRoot 'e2e-playwright-install.log')
-        $rows += [ordered]@{ name = 'playwright-install'; exitCode = [int]$install.ExitCode; detail = '' }
-        if ([int]$install.ExitCode -ne 0) { $ok = $false }
-    }
-    if (-not [string]::IsNullOrWhiteSpace($BundlePath)) {
-        $present = Test-Path -LiteralPath $BundlePath
-        $rows += [ordered]@{ name = 'client-bundle'; exitCode = $(if ($present) { 0 } else { 1 }); detail = $BundlePath }
-        if (-not $present) { $ok = $false }
-    }
-    return [pscustomobject]@{ Ok = $ok; Rows = $rows }
-}
-
-function Resolve-NightlyTestHost {
-    param([string]$RepoRoot, [string]$Assembly)
-    $dir = [IO.Path]::Combine($RepoRoot, 'tests', $Assembly, 'bin', 'Debug', 'net9.0')
-    $exe = [IO.Path]::Combine($dir, $Assembly + '.exe')
-    $dll = [IO.Path]::Combine($dir, $Assembly + '.dll')
-    if (Test-Path -LiteralPath $exe) {
-        return [pscustomobject]@{ FilePath = $exe; Prefix = @(); AssemblyPath = $dll }
-    }
-    if (Test-Path -LiteralPath $dll) {
-        $dotnet = 'dotnet'
-        $cmd = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($cmd -and -not [string]::IsNullOrWhiteSpace([string]$cmd.Source)) { $dotnet = [string]$cmd.Source }
-        return [pscustomobject]@{ FilePath = $dotnet; Prefix = @('exec', $dll); AssemblyPath = $dll }
-    }
-    $legacy = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $Assembly)
-    return [pscustomobject]@{ FilePath = $legacy; Prefix = @(); AssemblyPath = $legacy }
-}
-
-function Resolve-NightlyChunkDiscoverySeconds {
-    param(
-        [double]$SuiteDiscoverySeconds,
-        $ChunkMarkerSeconds,
-        [switch]$SupplementalLaunch
-    )
-    $chunk = $null
-    $copied = $false
-    if ($SupplementalLaunch) {
-        $extra = 0.0
-        if ($null -ne $ChunkMarkerSeconds) { $extra = [double]$ChunkMarkerSeconds }
-        $chunk = [math]::Round(([double]$SuiteDiscoverySeconds + $extra), 3)
-    } elseif ($null -ne $ChunkMarkerSeconds) {
-        $chunk = [double]$ChunkMarkerSeconds
-    }
-    return [pscustomobject]@{
-        chunkDiscoverySeconds = $chunk
-        copiedFromSuite = [bool]$copied
-        suiteDiscoverySeconds = [double]$SuiteDiscoverySeconds
-    }
-}
-
 function Add-NightlyOwnerObservation {
     param($Verdict, $Run)
     if ($null -eq $Verdict -or $null -eq $Run) { return }
@@ -478,21 +137,6 @@ function Write-NightlyMeasuredPhase {
         $ended = $started.AddSeconds([double]$Seconds)
         [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $Name, $started.ToString('o'), $ended.ToString('o'), ([double]$Seconds))
     } catch { }
-}
-
-function Resolve-NightlyProductionChunkDiscovery {
-    param(
-        [double]$SuiteDiscoverySeconds,
-        $ChunkMarkerSeconds,
-        [switch]$SupplementalLaunch
-    )
-    $resolvedDiscovery = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds $SuiteDiscoverySeconds -ChunkMarkerSeconds $ChunkMarkerSeconds -SupplementalLaunch:$SupplementalLaunch
-    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-    return [pscustomobject]@{
-        chunkDiscoverySeconds = $chunkDiscoverySeconds
-        copiedFromSuite = [bool]$resolvedDiscovery.copiedFromSuite
-        suiteDiscoverySeconds = [double]$SuiteDiscoverySeconds
-    }
 }
 
 function Write-NightlyPrerequisitePhases {
@@ -598,108 +242,7 @@ function Get-NightlyNativeActiveCount {
     return 0
 }
 
-function Get-NightlyNativeExecutionArguments {
-    param(
-        [string]$TrxPath,
-        [string]$DiagnosticDirectory,
-        [string[]]$Classes,
-        [string]$ExactFilter = '',
-        [string]$GroupFilter = '',
-        [string]$MethodFilter = ''
-    )
-    if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'missing trx path' }
-    if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
-    $trxName = [System.IO.Path]::GetFileName($TrxPath)
-    $resultsDir = [System.IO.Path]::GetDirectoryName($TrxPath)
-    if ([string]::IsNullOrWhiteSpace($trxName)) { throw 'missing trx filename' }
-    if ($trxName -match '[\\/]') { throw 'trx filename must be a basename' }
-    if ([string]::IsNullOrWhiteSpace($resultsDir)) { throw 'missing trx results directory' }
-    $nativeArgs = @(
-        '--no-progress',
-        '--no-ansi',
-        '--report-trx',
-        '--report-trx-filename', $trxName,
-        '--results-directory', $resultsDir,
-        '--diagnostic',
-        '--diagnostic-output-directory', $DiagnosticDirectory
-    )
-    $filterCount = @(@($ExactFilter, $GroupFilter, $MethodFilter) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
-    if ($filterCount -gt 1) {
-        throw 'ambiguous-chunk-filter'
-    }
-    if ($ExactFilter) {
-        if ($ExactFilter -notmatch '^/\*/[A-Za-z_][A-Za-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*$') { throw 'invalid-exact-filter' }
-        $nativeArgs += '--treenode-filter'
-        $nativeArgs += $ExactFilter
-    } elseif (-not [string]::IsNullOrWhiteSpace($MethodFilter)) {
-        # CARD-1410: /*/Namespace/Type/(MethodA*)|(MethodB*) . A prefix operand is refused.
-        if (-not ([Antiphon.Nightly.NightlyLaunchPlan]::MethodGroupFilter($Classes, $MethodFilter))) { throw 'invalid-method-filter' }
-        $nativeArgs += '--treenode-filter'
-        $nativeArgs += $MethodFilter
-    } elseif (-not [string]::IsNullOrWhiteSpace($GroupFilter)) {
-        # CARD-0403: /*/Namespace/(ClassA*)|(ClassB*)/* . A prefix operand is refused.
-        if (-not ([Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter))) { throw 'invalid-group-filter' }
-        $nativeArgs += '--treenode-filter'
-        $nativeArgs += $GroupFilter
-    } elseif ($Classes -and @($Classes).Count -gt 0) {
-        if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
-        $class = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity(([string]$Classes[0]))
-        if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'invalid-class-filter' }
-        $dot = $class.LastIndexOf('.')
-        $namespace = if ($dot -lt 0) { '*' } else { $class.Substring(0, $dot) }
-        $type = if ($dot -lt 0) { $class } else { $class.Substring($dot + 1) }
-        $nativeArgs += '--treenode-filter'
-        $nativeArgs += ('/*/{0}/{1}/*' -f $namespace, $type)
-    }
-    return $nativeArgs
-}
-
-function Resolve-NightlyNpmLauncher {
-    param([string]$PathValue = $env:PATH)
-    if ([string]::IsNullOrWhiteSpace($PathValue)) { throw 'npm launcher not found' }
-    # One resolution per PATH value and process (a run asks three times); only a found launcher is kept.
-    if ($null -eq $script:NightlyNpmLauncherByPath) {
-        $script:NightlyNpmLauncherByPath = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
-    }
-    $known = $null
-    if ($script:NightlyNpmLauncherByPath.TryGetValue($PathValue, [ref]$known) -and [System.IO.File]::Exists($known)) { return $known }
-    $names = @('npm.cmd', 'npm.exe', 'npm')
-    $separator = [string][System.IO.Path]::PathSeparator
-    foreach ($dir in ($PathValue -split [regex]::Escape($separator))) {
-        if ([string]::IsNullOrWhiteSpace($dir)) { continue }
-        foreach ($name in $names) {
-            $candidate = Join-Path $dir.Trim() $name
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                $full = [System.IO.Path]::GetFullPath($candidate)
-                if (-not [System.IO.Path]::IsPathRooted($full)) { throw 'npm launcher is not absolute' }
-                $script:NightlyNpmLauncherByPath[$PathValue] = $full
-                return $full
-            }
-        }
-    }
-    throw 'npm launcher not found'
-}
-
-function Get-NightlyNpmLaunch {
-    param([Parameter(Mandatory = $true)][string[]]$NpmArguments)
-    # A quoted bare npm.cmd makes cmd.exe set %~dp0 to the client cwd (CARD-1341).
-    $launcher = Resolve-NightlyNpmLauncher
-    return [pscustomobject]@{
-        FilePath = "$env:ComSpec"
-        ArgumentList = @('/c', $launcher) + @($NpmArguments)
-    }
-}
-
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
-
-function Set-NightlyOutcome([string]$Class) {
-    $order = @('PREFLIGHT', 'BUILD', 'TESTS', 'TIMEOUT')
-    if ($script:NightlyTestsOutcome -eq 'green') { $script:NightlyTestsOutcome = $Class; return }
-    $curIdx = [array]::IndexOf($order, $script:NightlyTestsOutcome)
-    $newIdx = [array]::IndexOf($order, $Class)
-    if ($newIdx -ge 0 -and ($curIdx -lt 0 -or $newIdx -lt $curIdx)) { $script:NightlyTestsOutcome = $Class }
-}
-
 
 # Dot-source these helpers: keyed suite state survives interleaving; run verdicts,
 # reasons and the publication context remain in the caller's execution scope.
@@ -710,7 +253,7 @@ function Prepare-NightlySuiteExecution {
     $profileExclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, $Profile, $suiteId, $platform))
     $label = [string]$suite.name
     if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
-    $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
+    $isNative = [Antiphon.Nightly.NightlyTestsPlan]::SuiteIsNative($suite, $suiteId)
     $mode = [string]$suite.mode
     # D-6: 'manual' keeps a suite out of the nightly default lane. A suite the
     # selected profile explicitly requires runs; it is never skipped as manual.
@@ -758,21 +301,33 @@ function Prepare-NightlySuiteExecution {
     if ($isNative) {
         $assemblyName = [string]$suite.assembly
         if ([string]::IsNullOrWhiteSpace($assemblyName)) { $assemblyName = $label }
-        $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $assemblyName
+        $suiteHost = [Antiphon.Nightly.NightlyTestsPlan]::TestHost($RepoRoot, $assemblyName)
     }
 
     if ($suiteId -eq 'e2e') {
         $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
         $prereqEnv = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
         Remove-TestPhaseVariables -Environment $prereqEnv
-        $prereq = Test-NightlyE2EPrerequisites -RepoRoot $RepoRoot -LogRoot $LogRoot -Environment $prereqEnv -BundlePath $bundle
+        if ($script:NightlySeams -and $script:NightlySeams.E2EPrerequisites) {
+            $prereq = @($script:NightlySeams.E2EPrerequisites.Invoke($RepoRoot, $LogRoot, $prereqEnv, $bundle))[0]
+        } else {
+            # The generated playwright.ps1 installs Chromium under this run's owned-process custody.
+            $prereqInstall = [Func[Antiphon.Nightly.NightlyLaunch, int]]{
+                param($Launch)
+                $installRun = Invoke-NightlyOwnedProcess -FilePath $Launch.FileName -ArgumentList @($Launch.Arguments) -WorkingDirectory $Launch.WorkingDirectory `
+                    -TimeoutMilliseconds $Launch.TimeoutMilliseconds -Environment $prereqEnv -LogPath $Launch.LogPath
+                [int]$installRun.ExitCode
+            }
+            try { $prereq = [Antiphon.Nightly.NightlyTestsPlan]::E2EPrerequisites($RepoRoot, $LogRoot, $prereqEnv, $bundle, $prereqInstall) }
+            catch { throw (Get-NightlyRefusalText $_) }
+        }
         $preflight.e2e = @($prereq.Rows)
         if (-not $prereq.Ok) {
             # D-6: a missing browser or stale bundle is red/incomplete, not a skip.
             $coverageComplete = $false
             $testsPassed = $false
             $overallFailed = $true
-            Set-NightlyOutcome PREFLIGHT
+            $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'PREFLIGHT')
             $reasons += 'e2e-prerequisite-failed'
             $suiteResults += [ordered]@{
                 id = $suiteId; name = $label; skipped = $false; result = 'FAIL'; exitCode = 1
@@ -809,7 +364,11 @@ function Prepare-NightlySuiteExecution {
             $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
             $suiteCensus = ([Antiphon.Nightly.NightlyDiscoveryIndex]::View($suiteDiscoveryEntry, $profileExclusions, $true)).Census
             if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
-            $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
+            # Compiled (NightlyTestsPlan.SuiteChunks); the cost table read for it is kept for the phase manifest.
+            $suiteCosts = [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)
+            try { $chunks = @([Antiphon.Nightly.NightlyTestsPlan]::SuiteChunks(@($suiteDiscoveryNodes), @($chunks), @($profileExclusions), [bool]$profileAware, [bool]$isNative, $suiteId, $policy.Object, $suiteCosts)) }
+            catch { throw (Get-NightlyRefusalText $_) }
+            if ($suiteCosts.Loaded) { $script:NightlyClassCostTable = $suiteCosts.Table }
             # S6b shadow: one discovery per suite. Carry cannot skip it. Recording grants no gate credit.
             [void](Get-NightlyRcRunEvidence).DiscoveryOnce($RcEvidenceRoot, $LogRoot, [string]$suiteId, $profileDiscoveryPath)
             if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
@@ -902,7 +461,7 @@ function Invoke-NightlyScheduledChunk {
     $execDiagDir = ''
     $queueWatch.Stop()
     $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
-    $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
+    $resolvedDiscovery = [Antiphon.Nightly.NightlyTestsPlan]::ChunkDiscoverySeconds([double]$suiteDiscoverySeconds, $null, $false)
     $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
     $heartbeatTrx = ''
     if ($isNative) { $heartbeatTrx = $trxPath }
@@ -942,7 +501,7 @@ function Invoke-NightlyScheduledChunk {
         if ($null -eq $suiteHost) {
             $exeName = [string]$suite.assembly
             if ([string]::IsNullOrWhiteSpace($exeName)) { $exeName = $label }
-            $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $exeName
+            $suiteHost = [Antiphon.Nightly.NightlyTestsPlan]::TestHost($RepoRoot, $exeName)
         }
         $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
         New-NightlyChunkDirectory $execDiagDir
@@ -958,7 +517,8 @@ function Invoke-NightlyScheduledChunk {
                 if (-not [string]::IsNullOrWhiteSpace([string]$prefixArg)) { $nativeArgs += [string]$prefixArg }
             }
         }
-        $nativeArgs += @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter -MethodFilter $methodFilter)
+        try { $nativeArgs += @([Antiphon.Nightly.NightlyTestsPlan]::NativeExecutionArguments($trxPath, $execDiagDir, [string[]]@($chunkClasses), ([string]$chunk.exactFilter), $groupFilter, $methodFilter)) }
+        catch { throw (Get-NightlyRefusalText $_) }
         $phaseEnv = @{}
         foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
         Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
@@ -1057,7 +617,7 @@ function Invoke-NightlyScheduledChunk {
                     -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
                     -Environment $envMap)
                 $chunkDiscWatch.Stop()
-                $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
+                $resolvedDiscovery = [Antiphon.Nightly.NightlyTestsPlan]::ChunkDiscoverySeconds([double]$suiteDiscoverySeconds, $chunkDiscWatch.Elapsed.TotalSeconds, $true)
                 $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
                 [void](Get-NightlyRcRunEvidence).DiscoveryOnce($RcEvidenceRoot, $LogRoot, [string]$suiteId, $discPath)
             } catch {
@@ -1186,18 +746,18 @@ function Invoke-NightlyScheduledChunk {
             $row.hangCapture = $capturePath
             # TESTS, not TIMEOUT, so publicationTerminal is failed-run.
             $harnessHangReason = 'completed-but-hung'
-            Set-NightlyOutcome TESTS
+            $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
         } else {
-            Set-NightlyOutcome TIMEOUT
+            $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TIMEOUT')
             $reasons += ('timeout {0}' -f $suiteId)
         }
     } elseif ($run.ExitCode -ne 0 -and -not $exitTolerated) {
         $overallFailed = $true
         $testsPassed = $false
-        Set-NightlyOutcome TESTS
+        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
     } elseif (-not $chunkTestsPassed -or -not $chunkCoverageComplete) {
         $overallFailed = $true
-        Set-NightlyOutcome TESTS
+        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
     }
     $timingPhase = 'complete'
     $timingWhy = ''
@@ -1391,7 +951,11 @@ function Invoke-AntiphonNightlyTests {
     $script:NightlyRcRunEvidence = $null
     Import-NightlySeams -SeamsPath $SeamsPath
     $script:QualificationTimingRoot = ''
-    try { $platform = Get-NightlyExecutionPlatform }
+    # The HostPlatform seam replaces only the OS observation (NightlyHostProbe.Platform), never the decision.
+    $observedPlatform = ''
+    if ($script:NightlySeams -and $script:NightlySeams.HostPlatform) { $observedPlatform = [string]$script:NightlySeams.HostPlatform.Invoke() }
+    else { $observedPlatform = [Antiphon.Nightly.NightlyHostProbe]::new().Platform() }
+    try { $platform = [Antiphon.Nightly.NightlyTestsPlan]::ExecutionPlatform($observedPlatform) }
     catch { return [pscustomobject]@{ ExitCode = 3; Refusal = 'unsupported-host-platform'; coverageComplete = $false; testsPassed = $false; LaunchCount = 0 } }
     if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = 'nightly' }
     $Profile = $Profile.Trim().ToLowerInvariant()
@@ -1575,7 +1139,7 @@ function Invoke-AntiphonNightlyTests {
                 $preflight.docker = [ordered]@{ exitCode = 0; version = 'unprobed-default'; detail = 'caller host' }
             }
         }
-        if ([int]$preflight.docker.exitCode -ne 0) { $dockerOk = $false; $overallFailed = $true; Set-NightlyOutcome PREFLIGHT; $coverageComplete = $false }
+        if ([int]$preflight.docker.exitCode -ne 0) { $dockerOk = $false; $overallFailed = $true; $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'PREFLIGHT'); $coverageComplete = $false }
 
         if ($script:NightlySeams -and $script:NightlySeams.DiskFree) {
             $preflight.disk = $script:NightlySeams.DiskFree.Invoke()
@@ -1584,7 +1148,7 @@ function Invoke-AntiphonNightlyTests {
         }
         # CARD-1698: record the toolchain versions and floor warnings; a warning never fails a run.
         $preflight.toolchain = Get-NightlyToolchainPreflight -RepoRoot $RepoRoot
-        if ([int]$preflight.disk.exitCode -ne 0) { $diskOk = $false; $overallFailed = $true; Set-NightlyOutcome PREFLIGHT; $coverageComplete = $false }
+        if ([int]$preflight.disk.exitCode -ne 0) { $diskOk = $false; $overallFailed = $true; $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'PREFLIGHT'); $coverageComplete = $false }
 
         if ($dockerOk -and $diskOk) {
             $buildWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -1597,7 +1161,7 @@ function Invoke-AntiphonNightlyTests {
             $dotnetStarted = $null
             $dotnetSeconds = $null
             $clientDir = Join-Path $RepoRoot 'client'
-            $npmCiLaunch = Get-NightlyNpmLaunch -NpmArguments @('ci')
+            try { $npmCiLaunch = [Antiphon.Nightly.NightlyTestsPlan]::NpmLaunch([string[]]@('ci'), $env:PATH, $env:ComSpec) } catch { throw (Get-NightlyRefusalText $_) }
             $npmCiStarted = Get-NightlyUtcNow
             $npmCiWatch = [Diagnostics.Stopwatch]::StartNew()
             $npmCi = Invoke-NightlyOwnedProcess -FilePath $npmCiLaunch.FilePath -ArgumentList $npmCiLaunch.ArgumentList `
@@ -1609,13 +1173,13 @@ function Invoke-AntiphonNightlyTests {
                 $npmOk = $false
                 $overallFailed = $true
                 $testsPassed = $false
-                Set-NightlyOutcome BUILD
+                $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'BUILD')
                 $coverageComplete = $false
                 $reasons += 'prerequisite-failed:npm ci'
             }
 
             if ($npmOk) {
-                $npmBuildLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'build')
+                try { $npmBuildLaunch = [Antiphon.Nightly.NightlyTestsPlan]::NpmLaunch([string[]]@('run', 'build'), $env:PATH, $env:ComSpec) } catch { throw (Get-NightlyRefusalText $_) }
                 $npmBuildStarted = Get-NightlyUtcNow
                 $npmBuildWatch = [Diagnostics.Stopwatch]::StartNew()
                 $npmBuild = Invoke-NightlyOwnedProcess -FilePath $npmBuildLaunch.FilePath -ArgumentList $npmBuildLaunch.ArgumentList `
@@ -1627,7 +1191,7 @@ function Invoke-AntiphonNightlyTests {
                     $npmOk = $false
                     $overallFailed = $true
                     $testsPassed = $false
-                    Set-NightlyOutcome BUILD
+                    $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'BUILD')
                     $coverageComplete = $false
                     $reasons += 'prerequisite-failed:npm run build'
                 }
@@ -1639,7 +1203,7 @@ function Invoke-AntiphonNightlyTests {
             }
 
             if ($npmOk) {
-                $lintLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'lint')
+                try { $lintLaunch = [Antiphon.Nightly.NightlyTestsPlan]::NpmLaunch([string[]]@('run', 'lint'), $env:PATH, $env:ComSpec) } catch { throw (Get-NightlyRefusalText $_) }
                 $lintStarted = Get-NightlyUtcNow
                 $lintWatch = [Diagnostics.Stopwatch]::StartNew()
                 $lint = Invoke-NightlyOwnedProcess -FilePath $lintLaunch.FilePath -ArgumentList $lintLaunch.ArgumentList `
@@ -1659,7 +1223,7 @@ function Invoke-AntiphonNightlyTests {
                     } else {
                         $lintBlocksPipeline = $true
                         $testsPassed = $false
-                        Set-NightlyOutcome BUILD
+                        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'BUILD')
                         $coverageComplete = $false
                         $reasons += 'prerequisite-failed:client lint'
                     }
@@ -1692,7 +1256,7 @@ function Invoke-AntiphonNightlyTests {
                     $dotnetOk = $false
                     $overallFailed = $true
                     $testsPassed = $false
-                    Set-NightlyOutcome BUILD
+                    $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'BUILD')
                     $coverageComplete = $false
                     $reasons += 'prerequisite-failed:dotnet build'
                 }
@@ -1750,7 +1314,7 @@ function Invoke-AntiphonNightlyTests {
     if (-not $lintOk) {
         $coverageComplete = $false
         $testsPassed = $false
-        if ($Profile -eq 'nightly' -and $script:NightlyTestsOutcome -eq 'green') { Set-NightlyOutcome BUILD }
+        if ($Profile -eq 'nightly' -and $script:NightlyTestsOutcome -eq 'green') { $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'BUILD') }
     }
     if ($nativeActiveMax -gt 1) { $coverageComplete = $false; $reasons += 'native-overlap' }
     $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
@@ -1827,7 +1391,7 @@ function Invoke-AntiphonNightlyTests {
         $coverageComplete = $false
         $testsPassed = $false
         $overallFailed = $true
-        Set-NightlyOutcome TESTS
+        $script:NightlyTestsOutcome = [Antiphon.Nightly.NightlyTestsPlan]::Outcome($script:NightlyTestsOutcome, 'TESTS')
     }
     $summary = [ordered]@{
         startedAt = $startedAt.ToString('o')
@@ -1910,7 +1474,8 @@ function Invoke-NightlyExactRoster {
         $dir = Join-Path $ResultsDirectory ('leaf-' + (++$index))
         [void][IO.Directory]::CreateDirectory($dir)
         $trx = Join-Path $dir 'run.trx'
-        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory $dir -ExactFilter $chunk.Filter)
+        try { $args = @([Antiphon.Nightly.NightlyTestsPlan]::NativeExecutionArguments($trx, $dir, $null, [string]$chunk.Filter, '', '')) }
+        catch { throw (Get-NightlyRefusalText $_) }
         $start = [Diagnostics.ProcessStartInfo]::new('dotnet')
         $start.WorkingDirectory = $ResultsDirectory
         $start.ArgumentList.Add([IO.Path]::GetFullPath($AssemblyPath))

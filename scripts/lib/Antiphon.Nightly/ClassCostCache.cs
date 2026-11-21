@@ -1,9 +1,10 @@
 // The parsed nightly-class-costs.json, kept once per process.
 //
-// Get-NightlyClassCostTable (nightly-tests-impl.ps1) and Get-TestPhaseClassBasisMap (test-phase-evidence.ps1)
-// both read the same 386 KB file, and a process that loads the libraries more than once or prices several
-// suites parsed it again each time. The PowerShell functions still parse it (ConvertFrom-Json) and build their
-// tables, so values, key comparers and errors are theirs; this type only remembers the results. An entry is
+// NightlyTestsPlan.ClassCostTable (the class-cost table; W2-nightly S11, formerly Get-NightlyClassCostTable) and
+// Get-TestPhaseClassBasisMap (test-phase-evidence.ps1) both read the same 386 KB file, and a process that loads the
+// libraries more than once or prices several suites parsed it again each time. The C# reader fills both tables from
+// one parse (Document stays null); the PowerShell basis map parses with ConvertFrom-Json when it reads first. This
+// type only remembers the results. An entry is
 // served only while the file at that full path still has the digest it had when parsed
 // (NightlyClassNames.CachedFileSha256: a stat while the file is settled, a fresh hash otherwise), and is
 // stored only when the digest was the same before and after the read. Callers hand out copies of the tables.
@@ -18,9 +19,9 @@ namespace Antiphon.Nightly
     {
         /// <summary>Lower-case hex SHA-256 of the file the document was parsed from.</summary>
         public string Digest;
-        /// <summary>What ConvertFrom-Json returned for the file's text (may be null).</summary>
+        /// <summary>What ConvertFrom-Json returned for the file's text (null when the C# reader parsed it).</summary>
         public object Document;
-        /// <summary>Get-NightlyClassCostTable's table, or null until it has been built without an error.</summary>
+        /// <summary>NightlyTestsPlan.ClassCostTable's table, or null until it has been built without an error.</summary>
         public Hashtable Costs;
         /// <summary>Get-TestPhaseClassBasisMap's map, or null until it has been built.</summary>
         public Hashtable Basis;

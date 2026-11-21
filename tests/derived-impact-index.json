@@ -2146,34 +2146,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 60,
+      "classes": 56,
       "reason": "cap",
-      "owed": 35,
+      "owed": 31,
       "first": [
-        "ScriptHarnessProcessContractTests",
-        "ChangeAwareReleaseTests",
-        "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
-        "LiveLaneOutcomeTests"
+        "LiveLaneOutcomeTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneRunnerTests",
+        "LongPathsCheckoutScriptTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 37,
+      "classes": 35,
       "reason": "cap",
-      "owed": 12,
+      "owed": 10,
       "first": [
-        "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
         "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
-        "RcFullWatchdogHarnessTests"
+        "RcQualificationStatusTests",
+        "RcRunEvidenceTests"
       ]
     },
     {
@@ -20690,7 +20690,8 @@
       "classes": [
         "E2ECopyOwnedPtyHostAppHostContractTests",
         "NightlyPolicyTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "ReleaseGateE2EEvidenceTests"
       ]
     },
     {
@@ -21998,6 +21999,7 @@
         "NightlyPolicyTests",
         "PlanCoverageBindingTests",
         "RcInputOwnersMapTests",
+        "ReleaseGateE2EEvidenceTests",
         "ReleaseImpactRuntimeTests",
         "ReleaseImpactScriptTests"
       ]
@@ -24473,12 +24475,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Scripts/C1514LandingSplitBudgetTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Scripts/C590Harness.cs",
       "classes": [
         "ClaudeTokenRefreshOptInTests",
@@ -24637,10 +24633,26 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
+        "ClassCostMeasurementTests",
+        "NightlyDiscoveryParserTests",
         "NightlyHostTests",
         "NightlyTestHelpersTests",
+        "NightlyTestsPlanTests",
+        "ReleaseGateE2EEvidenceTests",
         "TestTimingsTwinTests",
         "ToolchainFloorTwinTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
+      "classes": [
+        "C1514LandingSplitBudgetTests",
+        "ClassCostMeasurementTests",
+        "NightlyDiscoveryParserTests",
+        "NightlyTestsPlanTests",
+        "RcRosterRepairTests",
+        "ReleaseGateE2EEvidenceTests",
+        "ReleaseGatePlatformTests"
       ]
     },
     {
@@ -24808,10 +24820,10 @@
       "classes": [
         "AstraFixesBTests",
         "BuildSlotScriptTests",
-        "C1514LandingSplitBudgetTests",
         "C1733AllocatorFixtureTests",
         "C1744G3PhoneHomeSupervisionTests",
         "C599SnapshotTests",
+        "ChangeAwareReleaseTests",
         "CheckpointOwnedOutputScriptTests",
         "NightlyDeadOwnerLockTests",
         "NightlyPrerequisiteTests",
@@ -24822,13 +24834,13 @@
         "RcFailureHistoryTests",
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
-        "RcRosterRepairTests",
         "ReleaseBranchModelGateTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseSelectionCliTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
+        "ScriptHarnessProcessContractTests",
         "TestSelectionCatalogTests",
         "ToolchainFloorWarningTests"
       ]
@@ -24843,10 +24855,10 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
         "AstraFixesBTests",
+        "C1514HostLoadScriptTests",
         "C487ReadOnlyCleanupWitnessTests",
         "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
-        "ClassCostMeasurementTests",
         "DirectoryLinkFixtureWindowsTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",

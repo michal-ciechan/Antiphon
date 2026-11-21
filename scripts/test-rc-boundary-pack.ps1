@@ -17,15 +17,14 @@ function Leaves([object[]]$Nodes) {
         [pscustomobject]@{ id='all-profile-1'; classes=@($class.Name); exactFilter=''; nodes=@() }
     }
 }
+# W2-nightly S11: the boundary-aware pack is NightlyTestsPlan.BoundaryLaunchGroups; $script:Prices stands in for the
+# launch target and lone-class budget the repack case shrinks.
+$script:Prices = [Antiphon.Nightly.NightlyLaunchPrices]::Default
+function Costs { [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable) }
 function Pack([object[]]$Nodes, [hashtable]$Boundaries, [object[]]$InputLeaves = @(), [string]$Suite = 'antiphon') {
     if ($InputLeaves.Count -eq 0) { $InputLeaves = @(Leaves $Nodes) }
-    # Before S4a, the default-deny adapter exercises the real old packer. The red
-    # is a wrong packing result, never a missing function/parameter exception.
-    $options = @{}
-    if ((Get-Command ConvertTo-NightlyProfileLaunchGroups).Parameters.ContainsKey('BoundaryAware')) {
-        $options = @{ BoundaryAware=$true; SuiteId=$Suite; ClassBoundaries=$Boundaries }
-    }
-    @(ConvertTo-NightlyProfileLaunchGroups -Leaves $InputLeaves -DiscoveryNodes $Nodes @options)
+    try { @([Antiphon.Nightly.NightlyTestsPlan]::BoundaryLaunchGroups($InputLeaves, $Nodes, $Suite, $Boundaries, (Costs), $script:Prices)) }
+    catch { throw (Get-NightlyRefusalText $_) }
 }
 function Selected([object[]]$Plan, [object[]]$Nodes) {
     foreach ($chunk in $Plan) {
@@ -66,8 +65,7 @@ function Test-Separation {
 function Test-Repack {
     $nodes = @((Node Matrix Run 0), (Node Matrix Run 1), (Node Matrix RunExtra 0), (Node Matrix Other 0), (Node Matrix Other 1), (Node Matrix Last 0), (Node Z))
     $map = @{ 'Antiphon.Tests.Fixture.Matrix'='core'; 'Antiphon.Tests.Fixture.Z'='core' }
-    $script:NightlyLaunchTargetSeconds = 1
-    $script:NightlyLaunchLoneClassBudgetSeconds = 2
+    $script:Prices = [Antiphon.Nightly.NightlyLaunchPrices]::new(1, 2)
     $plan = @(Pack $nodes $map)
     Note ($plan.Count -ge 4) 'oversized class did not split'
     Note (SameBag @(Selected $plan $nodes) @($nodes.Uid)) 'split filter case universe changed'
@@ -76,7 +74,7 @@ function Test-Repack {
     Note (SameBag @($plan | ForEach-Object { $_.identityKeys } | Select-Object -Unique) @('Antiphon.Tests.Fixture.Matrix/Run','Antiphon.Tests.Fixture.Matrix/RunExtra','Antiphon.Tests.Fixture.Matrix/Other','Antiphon.Tests.Fixture.Matrix/Last','Antiphon.Tests.Fixture.Z/Run')) 'method manifest incomplete'
     $reversed = @($nodes); [array]::Reverse($reversed)
     Note (SameBag @($plan.id) @((Pack $reversed $map).id)) 'discovery order changed IDs'
-    $script:NightlyLaunchTargetSeconds = 900; $script:NightlyLaunchLoneClassBudgetSeconds = 2400
+    $script:Prices = [Antiphon.Nightly.NightlyLaunchPrices]::Default
     $repacked = @(Pack $nodes $map)
     Note (SameBag @(Selected $repacked $nodes) @($nodes.Uid)) 'repack changed case universe'
     Note (SameBag @($repacked | ForEach-Object { $_.caseMembership.uid }) @($nodes.Uid)) 'repack lost case evidence'
@@ -101,7 +99,7 @@ function Test-Repack {
 function Test-Default {
     $nodes = @((Node B), (Node C))
     $leaves = @(Leaves $nodes)
-    $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $nodes)
+    $plan = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups($leaves, $nodes, $null, (Costs), $null))
     Note ($plan.Count -eq 1 -and $plan[0].id -ceq 'all-group-1') 'Full ID changed'
     Note ($plan[0].groupFilter -ceq '/*/Antiphon.Tests.Fixture/(B*)|(C*)/*') 'Full filter changed'
     Note ($plan[0].PSObject.Properties.Name -cnotcontains 'boundary') 'Full opted into boundary metadata'
@@ -171,7 +169,7 @@ function Test-Collision {
     })
     Note (([Antiphon.Nightly.RcBoundary]::ChunkId('antiphon', 'core', @('CTests/M'), @($keys[0]))) -ceq 'b-core-360a4ef28b10a96c') 'collision fixture moved'
     try {
-        $plan = @(Complete-NightlyBoundaryLaunchGroups -Chunks $chunks -Memberships $memberships)
+        $plan = @([Antiphon.Nightly.NightlyTestsPlan]::CompleteBoundaryLaunchGroups($chunks, $memberships))
         Note ($plan.Count -eq 2) 'collision dropped a launch'
         foreach ($chunk in $plan) {
             Note ($chunk.boundary -ceq 'unassigned' -and $chunk.alwaysDirty -eq $true -and $chunk.collision -eq $true) 'collision was not dirty/unassigned'

@@ -3,8 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$AssemblyPath,
     [Parameter(Mandatory)][string]$DiscoveryLogPath,
-    [Parameter(Mandatory)][string]$ResultsDirectory,
-    [string]$BaseRef = '2349a1938b8ff11829ca6becf3c4719383bf9e52'
+    [Parameter(Mandatory)][string]$ResultsDirectory
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -56,30 +55,16 @@ $leaves = @(foreach ($bare in $byClass.Keys) {
     $boundaries.Add($bare, $boundary)
     [pscustomobject]@{ id='all-profile-1'; classes=@($bare); exactFilter=''; nodes=@() }
 })
-# Execute the base function's actual body, using the same discovery and unchanged
-# helper functions. Restore the candidate body before opt-out and opt-in calls.
-$current = (Get-Command ConvertTo-NightlyProfileLaunchGroups).ScriptBlock
-$baseText = (git -C $repo show ($BaseRef + ':scripts/lib/nightly-tests-impl.ps1')) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'base source unavailable' }
-$parseErrors = $null; $tokens = $null
-$ast = [Management.Automation.Language.Parser]::ParseInput($baseText, [ref]$tokens, [ref]$parseErrors)
-if ($parseErrors.Count) { throw 'base parse failed' }
-$definition = $ast.Find({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'ConvertTo-NightlyProfileLaunchGroups' }, $true)
-if ($null -eq $definition) { throw 'base packer absent' }
-. ([scriptblock]::Create($definition.Extent.Text))
-$baseWatch = [Diagnostics.Stopwatch]::StartNew()
-$baseJson = ConvertTo-Json -InputObject @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $nodes) -Depth 30 -Compress
-$baseWatch.Stop()
-Set-Item Function:ConvertTo-NightlyProfileLaunchGroups $current
+# W2-nightly S11: both packs are compiled (NightlyTestsPlan). The base-ref body comparison is retired: that body called
+# PowerShell helpers (Get-NightlyBareTypeParts, Split-NightlyItemsBySeconds) the compiled planner replaced.
+$costs = [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)
 $offWatch = [Diagnostics.Stopwatch]::StartNew()
-$offJson = ConvertTo-Json -InputObject @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $nodes) -Depth 30 -Compress
+$offJson = ConvertTo-Json -InputObject @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchGroups($leaves, $nodes, $null, $costs, $null)) -Depth 30 -Compress
 $offWatch.Stop()
-if ($baseJson -cne $offJson) { throw 'opt-out differs from base bytes' }
 $utf8 = [Text.UTF8Encoding]::new($false)
-[IO.File]::WriteAllText((Join-Path $ResultsDirectory 'base-pack.json'), $baseJson, $utf8)
 [IO.File]::WriteAllText((Join-Path $ResultsDirectory 'off-pack.json'), $offJson, $utf8)
 $packWatch = [Diagnostics.Stopwatch]::StartNew()
-$packed = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $nodes -BoundaryAware -SuiteId antiphon -ClassBoundaries $boundaries)
+$packed = @([Antiphon.Nightly.NightlyTestsPlan]::BoundaryLaunchGroups($leaves, $nodes, 'antiphon', $boundaries, $costs, $null))
 $packWatch.Stop()
 $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -116,12 +101,12 @@ foreach ($chunk in $packed) {
 if (-not $seen.SetEquals($expected)) { throw 'incomplete case union' }
 $verificationWatch.Stop()
 $receipt = [ordered]@{
-    sourceSha=(git -C $repo rev-parse HEAD); baseSha=$BaseRef; assemblyPath=$AssemblyPath
+    sourceSha=(git -C $repo rev-parse HEAD); assemblyPath=$AssemblyPath
     assemblySha256=(Get-FileHash -LiteralPath $AssemblyPath -Algorithm SHA256).Hash.ToLowerInvariant()
     cases=$expected.Count; classes=$byClass.Count; chunks=$packed.Count; selectedExactlyOnce=$seen.Count
-    optOutByteIdentical=$true; optOutBytes=$utf8.GetByteCount($offJson)
+    optOutBytes=$utf8.GetByteCount($offJson)
     discoveryLogPath=[IO.Path]::GetFullPath($DiscoveryLogPath); discoverySeconds=$null
-    discoveryParseSeconds=$parseWatch.Elapsed.TotalSeconds; basePackSeconds=$baseWatch.Elapsed.TotalSeconds
+    discoveryParseSeconds=$parseWatch.Elapsed.TotalSeconds
     offPackSeconds=$offWatch.Elapsed.TotalSeconds; boundaryPackSeconds=$packWatch.Elapsed.TotalSeconds
     verificationSeconds=$verificationWatch.Elapsed.TotalSeconds
     boundaryCounts=@($packed | Group-Object boundary | ForEach-Object { @{ boundary=$_.Name; chunks=$_.Count } })

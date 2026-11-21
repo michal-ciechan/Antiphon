@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// CARD-1514 S3. Existing heartbeat and C1397 contracts stay closed while
-// progress identity and launch admission are added.
+// CARD-1514 S3. The existing heartbeat contract stays closed while progress identity and launch admission are added.
+// The C1397 contract is NightlyTestsPlanTests.C1397_RcAntiphonLaunchGroups (in-process since W2-nightly S11).
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFullWatchdogHarnessTests
@@ -52,15 +52,4 @@ public sealed class RcFullWatchdogHarnessTests
             ran.Text.ShouldContain("PASS " + name, Case.Sensitive, ran.Text);
     }
 
-    [Test]
-    [Timeout(120_000)]
-    public Task C1397ExistingContract(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync(
-            "test-nightly-tests.ps1",
-            "C1397",
-            "C1397_RcAntiphonLaunchGroups",
-            1,
-            new[] { "C1397 rc antiphon launch groups are far below 1346 and assign every class once" },
-            ScriptHarnessOptions.Default,
-            cancellationToken);
 }

@@ -44,7 +44,7 @@ function New-FFReplay {
     $phases.fixtureSeconds = $phase.Elapsed.TotalSeconds
     $phase.Restart()
     $ex = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
-    $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes.ToArray() -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $ex -ProfileAware $true -Native $true -SuiteId antiphon -PolicyObject $policy.Object)
+    $chunks = @([Antiphon.Nightly.NightlyTestsPlan]::SuiteChunks($nodes.ToArray(), @([pscustomobject]@{ id = 'all'; classes = @() }), $ex, $true, $true, 'antiphon', $policy.Object, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)))
     $phases.plannerSeconds = $phase.Elapsed.TotalSeconds
     Write-FFJson (Join-Path $root 'replay.json') ([ordered]@{ nodes=$nodes.Count; chunks=$chunks.Count; listingDigest=(Get-FileHash -LiteralPath $listing).Hash; costDigest=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'lib/nightly-class-costs.json')).Hash; policyHash=$policy.Hash;phases=$phases })
     [pscustomobject]@{ id='antiphon'; nodes=$nodes.ToArray(); chunks=$chunks; exclusions=$ex }
@@ -130,7 +130,7 @@ function Test-EvidenceUnion {
     foreach ($suite in @('antiphon','session-runner','agents-pty','e2e')) {
         # Supplemental fixtures are separate from the unchanged 19,012-node anchor.
         $nodes=@($fx.Nodes[$suite]); $ex=@()
-        $plan=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='supplemental';classes=@()}) -Exclusions $ex -SuiteId $suite)
+        $plan=@([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($nodes), @([pscustomobject]@{id='supplemental';classes=@()}), @($ex), $suite, $null, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)))
         if ($suite -ceq 'antiphon') {
             $suites[0]=[pscustomobject]@{id=$suite;nodes=@($replay.nodes)+$nodes;chunks=@($replay.chunks)+$plan;exclusions=@($replay.exclusions)}
         } else { $suites += [pscustomobject]@{id=$suite;nodes=$nodes;chunks=$plan;exclusions=$ex} }
@@ -266,7 +266,7 @@ function Test-RefusesIncompleteEvidence {
     $current=@()
     foreach ($suite in @('antiphon','session-runner','agents-pty','e2e')) {
         $nodes=@($fx.Nodes[$suite])
-        $plan=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $suite)
+        $plan=@([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($nodes), @([pscustomobject]@{id='all';classes=@()}), @(), $suite, $null, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)))
         $current += [pscustomobject]@{id=$suite; nodes=$nodes; chunks=$plan; exclusions=@()}
     }
     $control=[Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
@@ -406,12 +406,12 @@ function New-FFGlobalFixture {
     $all.Add($replay)
     foreach ($s in @(@('session-runner','Antiphon.SessionRunner.Tests.GrokRulesHttpAcceptanceTests'),@('agents-pty','Antiphon.Agents.Pty.Tests.FakeClaudeContractTests'),@('e2e','Antiphon.E2E.BoardE2ETests'))) {
         $nodes = @((New-FFNode $s[1]),(New-FFNode ($s[1]+'Ordinary')))
-        $chunks = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $s[0] -PolicyObject $policy.Object)
+        $chunks = @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($nodes), @([pscustomobject]@{id='all';classes=@()}), @(), $s[0], $policy.Object, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)))
         # Separate companion classes by exact production class filter, preserving
         # the production planner's prices and watchdog. Supplemental, not replay.
         if ($chunks.Count -eq 1) {
             $chunks = @()
-            foreach ($n in $nodes) { $chunks += @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($n) -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $s[0] -PolicyObject $policy.Object) }
+            foreach ($n in $nodes) { $chunks += @([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($n), @([pscustomobject]@{id='all';classes=@()}), @(), $s[0], $policy.Object, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable))) }
             $chunks[1].id = 'ordinary'
         }
         $all.Add([pscustomobject]@{id=$s[0];nodes=$nodes;chunks=$chunks;exclusions=@()})
@@ -796,7 +796,7 @@ function New-FFSmallFixture {
     foreach ($sid in @('antiphon','session-runner')) {
         $nodes = @((New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Ordinary')),(New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Priority')))
         $chunks=@()
-        foreach($n in $nodes){$c=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($n) -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $sid -PolicyObject $policy.Object)[0];$c.id=$n.Type;$chunks += $c}
+        foreach($n in $nodes){$c=@([Antiphon.Nightly.NightlyTestsPlan]::ProfileLaunchPlan(@($n), @([pscustomobject]@{id='all';classes=@()}), @(), $sid, $policy.Object, [Antiphon.Nightly.NightlyClassCosts]::new([string]$script:NightlyClassCostPath, $script:NightlyClassCostTable)))[0];$c.id=$n.Type;$chunks += $c}
         $suites += [pscustomobject]@{id=$sid;nodes=$nodes;chunks=$chunks;exclusions=@()}
     }
     return [pscustomobject]@{suites=$suites;resolved=[pscustomobject]@{members=@([pscustomobject]@{suite='antiphon';chunks=@('Priority')},[pscustomobject]@{suite='session-runner';chunks=@('Priority')})}}

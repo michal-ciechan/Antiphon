@@ -86,49 +86,17 @@ public sealed class NightlyCoreGoldenTests
     }
 
     /// <summary>
-    /// Get-NightlyProfileLaunchPlan (what Resolve-NightlySuiteChunks runs for a native profile with exclusions): the
-    /// leaves, the compiled launch groups, each launch's estimate ceiling and watchdog admission noted on it.
+    /// Get-NightlyProfileLaunchPlan (what Resolve-NightlySuiteChunks runs for a native profile with exclusions), since
+    /// W2-nightly S11 the production NightlyTestsPlan.ProfileLaunchPlan: the leaves, the compiled launch groups, each
+    /// launch's estimate ceiling and watchdog admission noted on it.
     /// </summary>
-    internal static List<object?> ProfileLaunchPlan(object[] nodes, object[] chunks, object[] exclusions, string suiteId, object policyObject)
-    {
-        var leaves = LaunchPlanner.ProfileExecutionChunks(nodes, chunks, exclusions);
-        var costTable = LaunchPlanner.NeedsCostTable(leaves) ? ClassCostTable() : null;
-        var result = LaunchPlanner.ProfileLaunchGroups(leaves, nodes, null, costTable, 0.5, 1.5, 4, 2, 900, 2400, 30);
-        var error = PsValue.Prop(result, "Error");
-        if (error != null) throw new InvalidOperationException((string)error);
-        var plan = PsValue.AsArray(PsValue.Prop(result, "Groups")).ToList();
-        foreach (var launch in plan)
-        {
-            var seconds = PsValue.Double(PsValue.Prop(launch, "seconds"));
-            var classes = PsValue.AsArray(PsValue.Prop(launch, "classes")).Select(PsValue.Str).ToArray();
-            var e2e = classes.Any(c => c.StartsWith("Antiphon.E2E.", StringComparison.Ordinal));
-            var ceiling = e2e ? 1800 : 2400;
-            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0 || seconds > ceiling)
-                throw new InvalidOperationException("launch-estimate-ceiling id=" + PsValue.Str(PsValue.Prop(launch, "id")));
-            var admission = Antiphon.Nightly.NightlyWatchdog.ResolveLaunch(e2e ? "e2e" : suiteId, seconds, "default", "", null, null, policyObject);
-            if (!(bool)PsValue.Prop(admission, "Admitted")!) throw new InvalidOperationException("watchdog-admission-refused");
-            PsValue.AddMemberForce(launch, "watchdogSeconds", (double)PsValue.Prop(admission, "WatchdogSeconds")!);
-            PsValue.AddMemberForce(launch, "watchdogReason", (string)PsValue.Prop(admission, "Reason")!);
-            PsValue.AddMemberForce(launch, "watchdogAdmitted", (bool)PsValue.Prop(admission, "Admitted")!);
-        }
-        return plan;
-    }
+    internal static List<object?> ProfileLaunchPlan(object[] nodes, object[] chunks, object[] exclusions, string suiteId, object policyObject) =>
+        NightlyTestsPlan.ProfileLaunchPlan(nodes, chunks, exclusions, suiteId, policyObject, new NightlyClassCosts(CostFilePath)).ToList<object?>();
 
-    /// <summary>Get-NightlyClassCostTable: bare class -> measured seconds per node (scripts/lib/nightly-class-costs.json).</summary>
-    internal static Hashtable ClassCostTable()
-    {
-        var table = Table();
-        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "nightly-class-costs.json")));
-        doc.RootElement.GetProperty("format").GetString().ShouldBe("antiphon-nightly-class-costs-v1");
-        foreach (var row in doc.RootElement.GetProperty("classes").EnumerateObject())
-        {
-            var nodes = (int)Math.Round(row.Value.GetProperty("nodes").GetDouble(), MidpointRounding.ToEven);
-            var seconds = row.Value.GetProperty("seconds").GetDouble();
-            table[row.Name] = seconds / nodes;
-        }
-        return table;
-    }
+    private static string CostFilePath => Path.Combine(Repo, "scripts", "lib", "nightly-class-costs.json");
 
+    /// <summary>Get-NightlyClassCostTable (NightlyTestsPlan.ClassCostTable): bare class -> measured seconds per node.</summary>
+    internal static Hashtable ClassCostTable() => NightlyTestsPlan.ClassCostTable(CostFilePath);
     [Test]
     public void Discovery_index_view_matches_the_golden()
     {
