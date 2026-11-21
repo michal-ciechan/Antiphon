@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "8c376b03c4e012e3700de15e8b99bdbe851187bce4d3c5defe2b6b6df1f782e2",
+  "policyHash": "11897a91e82799521012ed5f457d8500549dba2fb50694ecca61e08b8fc57f2a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1104,6 +1104,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the relaunch kill checks the host start time only on Linux, and the recycled-pid stand-in is a copied /usr/bin/sleep. The case remains required on Linux.",
           "owner": "CARD-1653"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementCloseExemptionTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Close exemption runs the Linux retirement shell, /proc start ticks, and a fake ssh. The case remains required on Linux.",
+          "owner": "CARD-1609"
         },
         {
           "suite": "antiphon",

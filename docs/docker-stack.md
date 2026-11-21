@@ -150,6 +150,7 @@ volume, or a changed digest refuses. Its append-only closure distinguishes
 journal bytes remain intact. A failed closure flush leaves `close-pending.json`
 blocking deployment. Repeating the same Close after repairing the failure
 reobserves the complete set before finishing that appendix.
+A receipt-less preview is exempt in Close on the same terms as the clearable check: a finished lifecycle, a dead owner or a start-ticks mismatch, readyPublished false, and no closure.json or close-pending.json.
 
 Close reads the existing operator credential through `Get-RunnerOperatorToken`.
 A commissioned delegate also supplies `-AuthorityFile` with schema 1, actor,
@@ -756,6 +757,7 @@ pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <ope
 [retire-runner-volumes.ps1](../scripts/retire-runner-volumes.ps1) and
 `c1609_close_host` own Close. It records an audited journal transition after all
 four targets are absent; it neither removes a volume nor bypasses a live owner.
+A receipt-less preview is exempt in Close on the same terms as the clearable check: a finished lifecycle, a dead owner or a start-ticks mismatch, readyPublished false, and no closure.json or close-pending.json.
 Do not edit the receipt or lifecycle to make it resumable or clearable.
 
 #### Temp retirement trusted origins (CARD-1689)
