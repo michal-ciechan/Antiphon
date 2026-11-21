@@ -15,6 +15,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.AgentTui;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,8 +41,8 @@ public sealed class CodexCliObservationTests
         foreach (var level in new[] { AgentModelLevel.High, AgentModelLevel.Medium, (AgentModelLevel)999 })
             (ModelLevelAliases.ForCodexEntry(level).MinimumCliVersion?.ToString())
                 .ShouldBe("0.169.1", "C959-pc-124 Sol entry floor " + level);
-        ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion
-            .ShouldBeNull("C959-pc-125 Frontier entry floor");
+        (ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion?.ToString())
+            .ShouldBe("0.169.1", "C959-pc-125 Frontier entry floor");
         ModelLevelAliases.ForCodexEntry(AgentModelLevel.Low).MinimumCliVersion
             .ShouldBeNull("C1029-pc-264 Low entry floor");
         Floor(AgentKind.Codex, "GPT-6.1-SOL").ShouldBe("0.159.1", "C959-pc-126 exact canonical lookup");
@@ -652,6 +653,10 @@ public sealed class CodexCliObservationTests
                         return profile;
                     });
                     services.AddSingleton<SessionDeliveryProfile>();
+                    services.AddSingleton<IAgentTuiSecretProtector, RecordingLaunchSecretProtector>();
+                    services.AddSingleton<AgentTuiMetrics>();
+                    services.AddSingleton<AgentTuiRunnerCatalog>();
+                    services.AddScoped<AgentTuiLaunchResolver>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     if (git is not null) services.RemoveAll<IWorktreeManager>();
                     services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = git?.WorktreeRoot ?? Path.Combine(Path.GetTempPath(), "c959-unused") });

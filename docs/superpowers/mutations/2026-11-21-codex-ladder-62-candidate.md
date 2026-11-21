@@ -10,6 +10,6 @@ assertion red, restoration, and green on the same method filter.
 | Control | Variant | Exact test filter | Required red |
 |---|---|---|---|
 | PC-1 | Restore `ModelAlias.Gpt6Astra` in the Frontier ladder entry in `ModelLevelAliases.cs`. | `/*/*/CodexGpt62LadderTests/Codex_tiers_resolve_to_the_pinned_model_slugs` | Frontier gives `gpt-6-astra` where the test requires `gpt-6.2-astra`. |
-| PC-2 | Disable the current launch slug requirement for Codex Frontier warm reuse in `AgentTaskDispatcher.cs` by setting `expectedWarmModel` to null. | `/*/*/AgentTaskPoolTests/Frontier_Codex_reuse_requires_the_current_launch_model` | Legacy and unstamped sessions return `Reused` where the test requires `SpawnFresh`. The observed session must be the seeded pool process. |
+| PC-2 | Disable the Codex Frontier launch slug requirement in `AgentTaskDispatcher.cs` by replacing the `expectedWarmModel` declaration and initializer with `string? expectedWarmModel = null;`. | `/*/*/AgentTaskPoolTests/Frontier_Codex_reuse_requires_the_current_launch_model` | Legacy and unstamped sessions return `Reused` where the test requires `SpawnFresh`. The observed session must be the seeded pool process. |
 
 Both controls are pending for the caller-commissioned SourceLanding Mutation task.

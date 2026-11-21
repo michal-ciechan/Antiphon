@@ -80,7 +80,7 @@ public sealed class RolePolicyReadServiceTests
             AgentTaskRole.Plan,
             RoutingPinStrength.Preferred,
             cardId: null,
-            Candidate(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra"),
+            Candidate(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra"),
             Candidate(AgentKind.ClaudeCode, AgentModelLevel.High, "opus"));
         var codeCardPin = Pin(
             AgentTaskRole.Code,
@@ -93,7 +93,7 @@ public sealed class RolePolicyReadServiceTests
         var plan = Row(dto, AgentTaskRole.Plan);
         plan.StagePin.ShouldBe(planPin);
         plan.Effective.ShouldBe(new RolePolicyEffectiveDto(
-            "pin", AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra", RoutingPinStrength.Preferred));
+            "pin", AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6.2-astra", RoutingPinStrength.Preferred));
         var code = Row(dto, AgentTaskRole.Code);
         code.StagePin.ShouldBeNull();
         code.Effective.Source.ShouldBe("rolePolicy");
