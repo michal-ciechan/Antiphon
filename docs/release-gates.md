@@ -301,13 +301,14 @@ tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, U
 POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as
 Windows obligations (junctions, case-sensitivity, CARD-1199 unverified Windows behavior, and
 opt-in) stay required and have no exclusion row.
-CARD-1199 runtime skip census: 0 of 35. S-A, S-B1, S-B2, S-C1 and S-C2
-removed the runtime gates; all thirty-five checkpoint identities remain required
-on both platforms, with no policy exclusions.
+The original CARD-1199 census had 35 checkpoint identities and zero runtime skips
+after S-A, S-B1, S-B2, S-C1 and S-C2 removed their runtime gates. CARD-2006 added
+two portable tests that inspect generated project definitions to count SDK fixtures.
+All 37 checkpoint identities are required on both platforms with no policy exclusions.
 `test-rc-platform.ps1 -Case C1199_WindowsRequiredRoster` compares the compiled S/T/O
 roster, minus the existing Windows confinement sibling, with that required set and
 pins the six unrelated Windows and seven Linux runtime-skip patterns. It also
-checks that a NotExecuted result for any of the thirty-five prevents completeness.
+checks that a NotExecuted result for any of the 37 prevents completeness.
 Native Windows verification remains owed for those slices and S-F; removing gates
 and passing Linux checks do not grant Windows Full credit. S-F requires final
 source-bound receipts and CP-46's independently built evaluator, exact `approved`

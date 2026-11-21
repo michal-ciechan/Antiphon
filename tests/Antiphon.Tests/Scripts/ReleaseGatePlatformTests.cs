@@ -102,7 +102,7 @@ public sealed partial class ReleaseGatePlatformTests
             await ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1199_WindowsRequiredRoster", 6,
                 new[]
                 {
-                    "C1323 c1199-roster-35", "C1323 c1199-windows-required", "C1323 c1199-linux-required",
+                    "C1323 c1199-roster-37", "C1323 c1199-windows-required", "C1323 c1199-linux-required",
                     "C1323 c1199-each-gap-incomplete", "C1323 c1199-all-passed-complete", "C1323 c1199-residual-skips-exact",
                 },
                 ScriptHarnessOptions.Default with { AdditionalArguments = new[] { "-CompiledRosterPath", path } },
@@ -138,6 +138,7 @@ public sealed partial class ReleaseGatePlatformTests
         "Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_directory",
         "Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_symlink",
         "Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.missing_receipt_is_not_negative_success",
+        "Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_fixture_sdk_build_count",
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.local_output_property_tampering_is_reported",
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.intermediate_output_path_tampering_is_reported",
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.generated_target_file_tampering_is_reported",
@@ -151,6 +152,7 @@ public sealed partial class ReleaseGatePlatformTests
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_ignored_file_is_kept_and_indexed",
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.index_added_file_is_kept_and_indexed",
         "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.passing_script_requires_writable_source_receipt",
+        "Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.baseline_staged_fixture_sdk_build_count",
         "Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency",
         "Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency",
         "Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency",
