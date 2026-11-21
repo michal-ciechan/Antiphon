@@ -493,44 +493,276 @@ function Test-RcStarWalkerPath {
     return $false
 }
 
-function Get-RcTestIdentities([string]$Text) {
-    # Roster key is namespace.class|method|Arguments, not the [Test] count.
-    $counts=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
-    if (-not $Text) { return $counts }
+function Get-RcCommentStrippedText([string]$Text) {
+    if (-not $Text) { return '' }
     $kept=New-Object System.Text.StringBuilder
     foreach ($line in ($Text -split '\n')) {
         $trim=$line.Trim().TrimEnd("`r")
         if ($trim.StartsWith('//',[StringComparison]::Ordinal) -or $trim.StartsWith('*',[StringComparison]::Ordinal) -or $trim.StartsWith('/*',[StringComparison]::Ordinal)) { continue }
         [void]$kept.AppendLine($line.TrimEnd("`r"))
     }
-    $source=$kept.ToString()
+    return $kept.ToString()
+}
+
+function Skip-RcQuoted([string]$Text, [int]$Index) {
+    $quote=$Text[$Index]
+    $i=$Index+1
+    while ($i -lt $Text.Length) {
+        if ($Text[$i] -eq '\') { $i+=2; continue }
+        if ($Text[$i] -eq $quote) { return $i+1 }
+        $i++
+    }
+    return $Text.Length
+}
+
+function Skip-RcNonCode([string]$Text, [int]$Index) {
+    if ($Index -ge $Text.Length) { return -1 }
+    $c=$Text[$Index]
+    if ($c -eq '/' -and ($Index+1) -lt $Text.Length) {
+        $next=$Text[$Index+1]
+        if ($next -eq '/') {
+            $end=$Text.IndexOf("`n",$Index)
+            if ($end -lt 0) { return $Text.Length }
+            return $end+1
+        }
+        if ($next -eq '*') {
+            $end=$Text.IndexOf('*/',$Index+2)
+            if ($end -lt 0) { return $Text.Length }
+            return $end+2
+        }
+    }
+    if ($c -eq '@' -and ($Index+1) -lt $Text.Length -and $Text[$Index+1] -eq '"') {
+        $end=$Text.IndexOf('"@',$Index+2)
+        if ($end -lt 0) { return $Text.Length }
+        return $end+2
+    }
+    if ($c -eq '$' -and ($Index+2) -lt $Text.Length -and $Text[$Index+1] -eq '@' -and $Text[$Index+2] -eq '"') {
+        $end=$Text.IndexOf('"@',$Index+3)
+        if ($end -lt 0) { return $Text.Length }
+        return $end+2
+    }
+    if ($c -eq '$' -and ($Index+1) -lt $Text.Length -and $Text[$Index+1] -eq '"') { return Skip-RcQuoted $Text ($Index+1) }
+    if ($c -eq '"') {
+        if (($Index+2) -lt $Text.Length -and $Text[$Index+1] -eq '"' -and $Text[$Index+2] -eq '"') {
+            $end=$Text.IndexOf('"""',$Index+3)
+            if ($end -lt 0) { return $Text.Length }
+            return $end+3
+        }
+        return Skip-RcQuoted $Text $Index
+    }
+    if ($c -eq "'") { return Skip-RcQuoted $Text $Index }
+    return -1
+}
+
+function Close-RcDelimiter([string]$Text, [int]$OpenAt, [char]$Open, [char]$Close) {
+    $depth=0
+    $i=$OpenAt
+    while ($i -lt $Text.Length) {
+        $skip=Skip-RcNonCode $Text $i
+        if ($skip -ge 0) { $i=$skip; continue }
+        $c=$Text[$i]
+        if ($c -eq $Open) { $depth++ }
+        elseif ($c -eq $Close) {
+            $depth--
+            if ($depth -eq 0) { return $i }
+        }
+        $i++
+    }
+    return -1
+}
+
+function Skip-RcWhitespace([string]$Text, [int]$Index) {
+    while ($Index -lt $Text.Length -and [char]::IsWhiteSpace($Text[$Index])) { $Index++ }
+    return $Index
+}
+
+function Read-RcIdentifier([string]$Text, [int]$Index) {
+    if ($Index -ge $Text.Length) { return $null }
+    $c=$Text[$Index]
+    if (-not ($c -eq '_' -or [char]::IsLetter($c))) { return $null }
+    $j=$Index+1
+    while ($j -lt $Text.Length) {
+        $d=$Text[$j]
+        if ($d -eq '_' -or [char]::IsLetterOrDigit($d)) { $j++ } else { break }
+    }
+    return @{text=$Text.Substring($Index,$j-$Index); next=$j}
+}
+
+function Try-RcReturnTypeEnd([string]$Text, [int]$Index) {
+    $ident=Read-RcIdentifier $Text $Index
+    if ($null -eq $ident) { return -1 }
+    if ($ident.text -ceq 'void') { return $ident.next }
+    $last=$ident.text
+    $i=$ident.next
+    while ($i -lt $Text.Length -and $Text[$i] -eq '.') {
+        $part=Read-RcIdentifier $Text ($i+1)
+        if ($null -eq $part) { return -1 }
+        $last=$part.text
+        $i=$part.next
+    }
+    if ($last -cne 'Task' -and $last -cne 'ValueTask') { return -1 }
+    if ($i -lt $Text.Length -and $Text[$i] -eq '<') {
+        $close=Close-RcDelimiter $Text $i '<' '>'
+        if ($close -lt 0) { return -1 }
+        $i=$close+1
+    }
+    if ($i -lt $Text.Length -and $Text[$i] -eq '?') { $i++ }
+    return $i
+}
+
+function Try-RcMethodSignature([string]$Text, [int]$Index) {
+    $mods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($word in @('public','private','protected','internal','static','async','sealed','override','virtual','new','unsafe','partial','file')) {
+        [void]$mods.Add($word)
+    }
+    $i=Skip-RcWhitespace $Text $Index
+    while ($true) {
+        $word=Read-RcIdentifier $Text $i
+        if ($null -eq $word -or -not $mods.Contains($word.text)) { break }
+        $i=Skip-RcWhitespace $Text $word.next
+    }
+    $typeEnd=Try-RcReturnTypeEnd $Text $i
+    if ($typeEnd -lt 0) { return $null }
+    $i=Skip-RcWhitespace $Text $typeEnd
+    $name=Read-RcIdentifier $Text $i
+    if ($null -eq $name) { return $null }
+    $i=Skip-RcWhitespace $Text $name.next
+    if ($i -lt $Text.Length -and $Text[$i] -eq '<') {
+        $close=Close-RcDelimiter $Text $i '<' '>'
+        if ($close -lt 0) { return $null }
+        $i=Skip-RcWhitespace $Text ($close+1)
+    }
+    if ($i -ge $Text.Length -or $Text[$i] -ne '(') { return $null }
+    return @{name=$name.text; open=$i}
+}
+
+function Get-RcArgumentInners([string]$AttrText) {
+    $rows=New-Object System.Collections.Generic.List[string]
+    $i=0
+    while ($i -lt $AttrText.Length) {
+        $rel=$AttrText.Substring($i)
+        $found=[regex]::Match($rel,'\[Arguments\(')
+        if (-not $found.Success) { break }
+        $open=$i+$found.Index+$found.Length-1
+        $close=Close-RcDelimiter $AttrText $open '(' ')'
+        if ($close -lt 0) { break }
+        $rows.Add($AttrText.Substring($open+1,$close-$open-1))
+        $i=$close+1
+    }
+    return ,$rows
+}
+
+function Try-ReadRcClassAt([string]$Text, [int]$Index) {
+    if ($Index -gt 0) {
+        $prev=$Text[$Index-1]
+        if ($prev -eq '_' -or [char]::IsLetterOrDigit($prev)) { return $null }
+    }
+    $kind=Read-RcIdentifier $Text $Index
+    if ($null -eq $kind -or ($kind.text -cne 'class' -and $kind.text -cne 'record')) { return $null }
+    $i=Skip-RcWhitespace $Text $kind.next
+    $name=Read-RcIdentifier $Text $i
+    if ($null -eq $name) { return $null }
+    if ($kind.text -ceq 'record' -and ($name.text -ceq 'class' -or $name.text -ceq 'struct')) {
+        $i=Skip-RcWhitespace $Text $name.next
+        $name=Read-RcIdentifier $Text $i
+        if ($null -eq $name) { return $null }
+    }
+    return @{name=$name.text; next=$name.next}
+}
+
+function Get-RcTestIdentityParse([string]$Text) {
+    # Roster key is namespace.class|method|Arguments, not the [Test] count.
+    # An attribute run may contain ']', span lines, and precede a generic or qualified Task.
+    # The enclosing class is the open brace scope, so a nested class declared above does not steal the method.
+    $counts=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    $empty=@{identities=$counts; matched=0; capturedArguments=0; testAttributes=0; argumentOpeners=0}
+    $source=Get-RcCommentStrippedText $Text
+    if (-not $source) { return $empty }
     $nsMatch=[regex]::Match($source,'namespace\s+([A-Za-z_][A-Za-z0-9_.]*)')
     $ns= if ($nsMatch.Success) { $nsMatch.Groups[1].Value } else { '' }
-    $pattern='(?<attrs>(?:\[[^\]]+\]\s*)+)(?:(?:public|private|protected|internal|static|async|sealed|override|virtual|new|unsafe|partial|file)\s+)*(?:async\s+)?(?:Task(?:<[^>\r\n]+>)?|void|ValueTask(?:<[^>\r\n]+>)?)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\('
-    foreach ($method in [regex]::Matches($source,$pattern)) {
-        $attrs=$method.Groups['attrs'].Value
-        if ($attrs -notmatch '\[Test(?![A-Za-z0-9_])') { continue }
-        $prefix=$source.Substring(0,$method.Index)
-        $classes=[regex]::Matches($prefix,'(?<![A-Za-z0-9_])class\s+([A-Za-z_][A-Za-z0-9_]*)')
-        $type= if ($classes.Count -gt 0) { $classes[$classes.Count-1].Groups[1].Value } else { '' }
+    $classNames=New-Object System.Collections.Generic.List[string]
+    $classDepths=New-Object System.Collections.Generic.List[int]
+    $depth=0
+    $pending=$null
+    $matched=0
+    $captured=0
+    $testAttributes=0
+    $argumentOpeners=0
+    $i=0
+    while ($i -lt $source.Length) {
+        $c=$source[$i]
+        if ($c -eq '/' -or $c -eq '"' -or $c -eq "'" -or $c -eq '@' -or $c -eq '$') {
+            $skip=Skip-RcNonCode $source $i
+            if ($skip -ge 0) { $i=$skip; continue }
+        }
+        if ($c -eq 'c' -or $c -eq 'r') {
+            $class=Try-ReadRcClassAt $source $i
+            if ($null -ne $class) { $pending=$class.name; $i=$class.next; continue }
+        }
+        if ($c -eq '{') {
+            $depth++
+            if ($pending) { $classNames.Add($pending); $classDepths.Add($depth); $pending=$null }
+            $i++; continue
+        }
+        if ($c -eq '}') {
+            if ($classDepths.Count -gt 0 -and $classDepths[$classDepths.Count-1] -eq $depth) {
+                $classNames.RemoveAt($classNames.Count-1)
+                $classDepths.RemoveAt($classDepths.Count-1)
+            }
+            if ($depth -gt 0) { $depth-- }
+            $pending=$null
+            $i++; continue
+        }
+        if ($c -ne '[') { $i++; continue }
+        $pos=$i
+        $attr=New-Object System.Text.StringBuilder
+        $any=$false
+        while ($pos -lt $source.Length -and $source[$pos] -eq '[') {
+            $end=Close-RcDelimiter $source $pos '[' ']'
+            if ($end -lt 0) { break }
+            [void]$attr.Append($source.Substring($pos,$end-$pos+1))
+            $any=$true
+            $pos=Skip-RcWhitespace $source ($end+1)
+        }
+        if (-not $any) { $i++; continue }
+        $attrText=$attr.ToString()
+        $testAttributes+=[regex]::Matches($attrText,'\[Test(?![A-Za-z0-9_])').Count
+        $argumentOpeners+=[regex]::Matches($attrText,'\[Arguments\(').Count
+        $isTest=$attrText -match '\[Test(?![A-Za-z0-9_])'
+        $sig= if ($isTest) { Try-RcMethodSignature $source $pos } else { $null }
+        if ($null -eq $sig) { $i=$pos; continue }
+        $matched++
+        $rows=Get-RcArgumentInners $attrText
+        $captured+=$rows.Count
+        $type= if ($classNames.Count -gt 0) { $classNames[$classNames.Count-1] } else { '' }
         $bare= if ($ns -and $type) { $ns+'.'+$type } elseif ($type) { $type } else { '' }
-        $name=$method.Groups['name'].Value -replace '_Batch\d+$',''
-        $arguments=@([regex]::Matches($attrs,'\[Arguments\((.*?)\)\]') | ForEach-Object { $_.Groups[1].Value })
-        if ($arguments.Count -eq 0) { $arguments=@('') }
+        $name=$sig.name -replace '_Batch\d+$',''
+        $arguments= if ($rows.Count -eq 0) { @('') } else { @($rows) }
         foreach ($argument in $arguments) {
             $id=$bare+'|'+$name+'|'+$argument
             if (-not $counts.ContainsKey($id)) { $counts[$id]=0 }
             $counts[$id]++
         }
+        $i=$sig.open+1
     }
-    return $counts
+    return @{identities=$counts; matched=$matched; capturedArguments=$captured; testAttributes=$testAttributes; argumentOpeners=$argumentOpeners}
+}
+
+function Get-RcTestIdentities([string]$Text) {
+    return (Get-RcTestIdentityParse $Text).identities
+}
+
+function Test-RcTestIdentityIncomplete($Parse) {
+    # A form the scanner dropped must select. Equal empty maps are not proof of no change.
+    return ($Parse.testAttributes -gt $Parse.matched) -or ($Parse.argumentOpeners -gt $Parse.capturedArguments)
 }
 
 function Test-RcTestIdentityChange {
     param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, [string]$Path)
-    $before=Get-RcTestIdentities (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
-    $after=Get-RcTestIdentities (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
-    return -not (Test-RcCountMapsEqual $before $after)
+    $before=Get-RcTestIdentityParse (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
+    $after=Get-RcTestIdentityParse (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
+    if ((Test-RcTestIdentityIncomplete $before) -or (Test-RcTestIdentityIncomplete $after)) { return $true }
+    return -not (Test-RcCountMapsEqual $before.identities $after.identities)
 }
 
 function Get-RcLiteralPathPrefix([string]$Pattern) {
