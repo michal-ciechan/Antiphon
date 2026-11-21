@@ -74,6 +74,18 @@ if (-not $NoBuild) {
 }
 if (-not (Test-Path -LiteralPath $exe)) { throw "Runner not built: $exe" }
 
+if ($NoBuild) {
+    $assembly = [IO.Path]::ChangeExtension($exe, '.dll')
+    $version = try {
+        [Diagnostics.FileVersionInfo]::GetVersionInfo($assembly).ProductVersion
+    } catch {
+        $null
+    }
+    if ($version -notmatch '\+[0-9a-f]{40}(?:$|[.+])') {
+        Write-Warning '-NoBuild is launching a runner with an unknown source stamp. Start without -NoBuild to build from checkout HEAD.'
+    }
+}
+
 . (Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1')
 $envs = New-WindowsPhoneHomeRunnerEnv -RunnerId $RunnerId -Root $Root -Port $Port -Capacity $Capacity -ServerOrigin $ServerOrigin -ClaudeHome $claudeHome -CodexHome $codexHome -GrokHome $grokHome -PwshPath (Get-Command pwsh).Source -Executables $executables
 foreach ($key in $envs.Keys) { [Environment]::SetEnvironmentVariable($key, $envs[$key], 'Process') }

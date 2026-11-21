@@ -160,7 +160,7 @@ if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { Write-Error "git rev-parse HEA
 
 # Launch AppHost detached in a hidden window so this script can exit cleanly
 $encodedCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-    "Set-Location '$appHostDir'; . '$root\scripts\lib\live-startup-timing.ps1'; `$buildTiming = Start-LiveStartupPhase -Operation build; try { & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build -p:SourceRevisionId=$sourceRevision 2>&1 | Tee-Object -FilePath '$logFile' } finally { Stop-LiveStartupPhase -Phase `$buildTiming -Succeeded (`$LASTEXITCODE -eq 0) 6>&1 | Tee-Object -FilePath '$logFile' -Append }; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
+    "Set-Location '$appHostDir'; . '$root\scripts\lib\live-startup-timing.ps1'; `$buildTiming = Start-LiveStartupPhase -Operation build; try { & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build `"-p:SourceRevisionId=$sourceRevision`" 2>&1 | Tee-Object -FilePath '$logFile' } finally { Stop-LiveStartupPhase -Phase `$buildTiming -Succeeded (`$LASTEXITCODE -eq 0) 6>&1 | Tee-Object -FilePath '$logFile' -Append }; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
 ))
 $appHostProc = Start-Process pwsh -ArgumentList @(
     '-NonInteractive', '-NoLogo', '-EncodedCommand', $encodedCmd
