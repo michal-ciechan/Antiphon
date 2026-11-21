@@ -476,11 +476,15 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             $"Session {request.SessionId:D}: {GrokRulesArgvPolicy.Format(violation)}");
     }
 
+    internal void RequireSupportedCodexModel(RunnerLaunchRequest request) =>
+        CodexCliProbe?.RequireSupportedModel(request);
+
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
         // Before the launch lock's session work, and before custody: a mismatched OS must not
         // create a session, mutate custody, materialize Grok files or start a child.
         RunnerPlatformLaunchGuard.RefuseBeforeLaunch(request.RequiredPlatform);
+        RequireSupportedCodexModel(request);
         if (!OperatingSystem.IsWindows()
             && (request.Backend is null
                 || string.Equals(request.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)))

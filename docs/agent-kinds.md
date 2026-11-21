@@ -279,20 +279,20 @@ Three things worth knowing about that table:
   Codex Frontier and promoted it for Frontier, including Review when routed to Codex Frontier.
   The GPT-6.2 system card records a Blocker Deception regression of 22.28% for GPT-6.2 Astra
   against 11.09% for GPT-6 Astra.
-  The 0.169.1 floor stays data only and is not enforced on create, retry, or launch.
-  Frontier requires codex-cli 0.169.1+, the same floor as GPT-6.2 Sol. The documented
-  floor for explicit `gpt-6-astra` is 0.153.4+. `gpt-6.1-sol` keeps 0.159.1.
-  CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model
-  metadata only. Failed, stale, missing, malformed, clock-skewed and older observations
-  never refuse create, retry, dispatch, warm reuse or final launch, and those paths start
-  no CLI version probe. Existing provider-auth, model-hold and placement rules still apply.
+  GPT-6.2 Astra and Sol require codex-cli 0.169.1+. A fresh runner-local version for the
+  matching launcher can refuse a cold launch below that floor with
+  `codex_cli_model_unsupported`. The documented floor for explicit `gpt-6-astra` is
+  0.153.4+ and `gpt-6.1-sol` keeps its 0.159.1 metadata.
+  CARD-0959 runner observations remain advisory for task create, retry, dispatch, and
+  warm reuse. The cold-launch check uses the runner's cached observation and verifies
+  the launcher identity. Existing provider-auth, model-hold and placement rules still apply.
   Catalogue/status fields describe the default launcher independently of the runner build.
   Freshness uses a fixed fifteen-minute display threshold; missing or invalid evidence has
   null freshness. Explicit launcher diagnostics are observations, not placement permission.
   Activate reporting runners first and verify their completed observations over two refresh
   periods, then activate server readers. Older runners display unknown and remain subject
   to existing placement rules. No CLI upgrade is required by this reporting feature.
-  CARD-1023 owns any future compatibility matrix and evidence-backed known-broken refusal.
+  CARD-1023 owns any future compatibility matrix beyond this bundled-catalog floor.
   Production activation remains a separate commissioned action.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task

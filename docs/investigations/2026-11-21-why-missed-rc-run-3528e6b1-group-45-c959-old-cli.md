@@ -1,4 +1,4 @@
-# Why rc run 3528e6b1 missed the C959 exact Codex model launch
+# Why the C959 exact Codex model failure reached rc run 3528e6b1
 
 ## Introducing commit
 
@@ -48,3 +48,18 @@ The C1213 failures share the schema-lock cause documented for group 86.
 qualification tip. It avoids the repeated `ACCESS EXCLUSIVE` lock when the
 alias column is already present.
 [Group 86 investigation](2026-11-21-why-missed-rc-run-3528e6b1-group-86.md)
+
+## Runner compatibility
+
+A cold GPT-6.2 launch can reach a CLI below the catalog floor even when C959's
+argv and delivery assertions pass. The runner now checks the fresh cached
+version against the launcher it resolved for the request. It refuses a proven
+below-floor launch before registering a session and reports the required
+version. At CLI 0.156.1, GPT-6.1 Sol is also below its recorded floor, so this
+case calls for a refusal.
+
+`CodexLaunchRefusalTests.Verified_old_cli_refuses_gpt_6_2_before_launch`
+uses a runner-owned version observation and an isolated Herdr fixture. At
+`a2c4eafe5e5bc5d35ecc71738920ad59b7214dc4`, the launch completed without the
+expected refusal, producing one assertion failure in Linux checkpoint
+`20261121-204348-725c`.

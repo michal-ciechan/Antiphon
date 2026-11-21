@@ -72,7 +72,7 @@ Every repo place that names a model or a CLI version (check all of them in the s
 
 | Place | What it holds |
 |---|---|
-| `server/Application/Services/ModelLevelAliases.cs` | The ladder (`ForCodexEntry`, `ForClaude`, `ForGrok`) and `MinimumCodexCliVersion` floors. The floor is **data only**: launch, create, retry, dispatch and warm reuse never call it (CARD-0959). |
+| `server/Application/Services/ModelLevelAliases.cs` | The ladder (`ForCodexEntry`, `ForClaude`, `ForGrok`) and `MinimumCodexCliVersion` floors. The runner uses the shared GPT-6.2 catalog floor at cold launch when the selected launcher has a fresh, matching version observation. |
 | `server/Application/Core/ModelAlias.cs` | Slug constants, `DelegatableAliases` (what `-Model` and holds accept), `Normalize`, `CanonicalHoldAlias`. |
 | `server/Application/Services/AgentTuiRunnerCatalog.cs` | Curated profile model lists per kind. |
 | `GET /api/model-availability` / `scripts/model-availability.ps1` | Live holds (verbs `get`, `hold`, `clear`). |
@@ -341,7 +341,7 @@ Only after step 6 passes on the new CLI everywhere:
 | Unit lane green, production red | derived with-text fixture in `CodexAccountBootstrapTests` | `tests/Antiphon.Agents.Pty.Tests/CodexAccountBootstrapTests.cs` | measured capture; CARD-2046 real-CLI gate |
 | `redeploy-old` refuses `RecycleLandInFlight` | census names a server2-bound pending land | land request of a stale owner | cancel the stale owner, rerun the phase |
 | `retire-temp` refuses on journal / `worktree-status status=127` | `C1609_RETIREMENT` / `RecycleGitAuditUnknown` | `scripts/c1008-retirement.sh`, `scripts/c590-remote.sh` | Close fix `328eafa3d` series; CARD-2043 |
-| New slug rejected by the CLI | CLI error naming model metadata | `ModelLevelAliases.cs` floor not enforced | roll the image before the AppHost |
+| New slug rejected by the CLI | CLI error naming model metadata | CLI is below the model catalog floor | roll the image before the AppHost |
 
 ## Rollback
 

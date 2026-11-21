@@ -151,6 +151,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     public string Health() => "Healthy";
     public IReadOnlyList<RunnerSessionDto> List() => _runtime.List();
     public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => _runtime.GetAsync(sessionId, ct);
+    public void RequireSupportedCodexModel(RunnerLaunchRequest request) =>
+        _runtime.RequireSupportedCodexModel(request);
     public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) =>
         _runtime.StartAsync(request, ct);
     public RunnerBufferDto GetBuffer(Guid sessionId) => _runtime.GetBuffer(sessionId);

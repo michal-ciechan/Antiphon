@@ -6,6 +6,7 @@ public static class CodexLaunchProblemTypes
     public const string CommandLineTooLong = "codex_command_line_too_long";
     public const string LauncherUnavailable = "codex_launcher_unavailable";
     public const string LauncherUnsupported = "codex_launcher_unsupported";
+    public const string CliModelUnsupported = "codex_cli_model_unsupported";
 
     /// <summary>Windows CreateProcessW-shaped ceiling the runner will never raise.</summary>
     public const int TransportCeilingChars = 30_000;

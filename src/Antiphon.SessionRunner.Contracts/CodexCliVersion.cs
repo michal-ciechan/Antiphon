@@ -22,6 +22,8 @@ public sealed class CodexCliVersion : IComparable<CodexCliVersion>, IComparable
     public int Minor { get; }
     public int Patch { get; }
 
+    public static CodexCliVersion Gpt62CatalogFloor { get; } = Parse("0.169.1")!;
+
     /// <summary>The first valid whole banner line in bounded LF/CRLF stdout; EOF may end the last line.</summary>
     public static CodexCliVersion? ParseBanner(string? output)
     {
