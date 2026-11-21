@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -88,5 +90,71 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         using var changedCache = cacheOwner.Prepare(project, forwarded);
         changedCache.ShouldBeNull("unsealed intermediate bytes cannot seed a verified build");
         File.Exists(assets).ShouldBeTrue("cold fallback leaves the cache in place");
+    }
+
+    [Test]
+    public void props_replace_breaks_a_hard_link_without_writing_the_outside_file()
+    {
+        var root = TempDir();
+        var source = Arrange(root);
+        var outside = Path.Combine(root, "outside-sentinel.txt");
+        var props = Path.Combine(root, CheckpointIntermediateCache.ProjectProps);
+        Directory.CreateDirectory(Path.GetDirectoryName(props)!);
+        File.WriteAllBytes(outside, "outside-sentinel-not-props"u8.ToArray());
+        try
+        {
+            NativeHardLink.Create(props, outside);
+        }
+        catch (Exception ex) when (ex is Win32Exception or PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        {
+            Skip.Test("hard links are unavailable on this volume (" + ex.GetType().Name + ")");
+        }
+
+        var before = File.ReadAllBytes(outside);
+        var mtime = File.GetLastWriteTimeUtc(outside);
+        using var cache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
+        cache.ShouldNotBeNull();
+        File.ReadAllBytes(outside).ShouldBe(before);
+        File.GetLastWriteTimeUtc(outside).ShouldBe(mtime);
+        File.ReadAllText(props).ShouldBe(CheckpointIntermediateCache.PropsText);
+        var propsId = NativeHardLink.Observe(props);
+        var outsideId = NativeHardLink.Observe(outside);
+        propsId.Links.ShouldBe(1u);
+        outsideId.Links.ShouldBe(1u);
+        propsId.FileId.ShouldNotBe(outsideId.FileId);
+    }
+
+    [Test]
+    public void props_symlink_is_a_typed_refusal()
+    {
+        var root = TempDir();
+        var source = Arrange(root);
+        var outside = Path.Combine(root, "outside-sentinel.txt");
+        var props = Path.Combine(root, CheckpointIntermediateCache.ProjectProps);
+        Directory.CreateDirectory(Path.GetDirectoryName(props)!);
+        File.WriteAllBytes(outside, "outside-sentinel-not-props"u8.ToArray());
+        try
+        {
+            File.CreateSymbolicLink(props, outside);
+        }
+        catch (Exception linkFailure) when (linkFailure is PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        {
+            Skip.Test("symlinks are unavailable on this volume (" + linkFailure.GetType().Name + ")");
+        }
+
+        var before = File.ReadAllBytes(outside);
+        var mtime = File.GetLastWriteTimeUtc(outside);
+        var refusal = Should.Throw<Exception>(() => CheckpointIntermediateCache.TryOpen(root, source, source.Commit));
+        refusal.GetType().Name.ShouldBe("CheckpointCacheRefusal");
+        refusal.Message.ShouldBe("link-component");
+        File.ReadAllBytes(outside).ShouldBe(before);
+        File.GetLastWriteTimeUtc(outside).ShouldBe(mtime);
+        File.Exists(outside).ShouldBeTrue();
+    }
+
+    private static SourceObservation Arrange(string root)
+    {
+        LibGit2Sharp.Repository.Init(root);
+        return new SourceObservation(new string('a', 40), 0, "source fingerprint", DateTimeOffset.UtcNow, "known");
     }
 }
