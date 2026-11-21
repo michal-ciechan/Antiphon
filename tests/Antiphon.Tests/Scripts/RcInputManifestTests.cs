@@ -210,27 +210,36 @@ public sealed class RcInputManifestTests : IDisposable
         s.DirtySuites.ShouldContain("runner", "old-graph-retained");
     }
 
+    // Each path still gets its own manifest comparison. One family per case bounds the git work one case must finish.
+    private static readonly IReadOnlyDictionary<string, string[]> InputFamilies = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        ["ConfigAndFixtures"] = ["tests/Server/appsettings.test.json", "tests/Server/Fixtures/input.txt", "global.json"],
+        ["ScriptAndBuildInputs"] = ["scripts/fixture.ps1", "tools/Helper/Helper.csproj", "Directory.Packages.props", "NuGet.config"],
+        ["ClientContainerAndDocs"] = ["client/package-lock.json", "Dockerfile", "docs/contract.md"],
+    };
+
     [Test]
-    public void ConfigFixtureScriptAndLockInputs()
+    [Arguments("ConfigAndFixtures")]
+    [Arguments("ScriptAndBuildInputs")]
+    [Arguments("ClientContainerAndDocs")]
+    public void ConfigFixtureScriptAndLockInputs(string family)
     {
         var baseline = seeded;
-        var families = new[]
-        {
-            "tests/Server/appsettings.test.json", "tests/Server/Fixtures/input.txt", "scripts/fixture.ps1", "tools/Helper/Helper.csproj",
-            "Directory.Packages.props", "NuGet.config", "global.json", "client/package-lock.json", "Dockerfile", "docs/contract.md",
-        };
-        RcInputManifest s;
-        foreach (var path in families)
+        RcInputManifest s = null!;
+        foreach (var path in InputFamilies[family])
         {
             var content = path.EndsWith(".props", StringComparison.Ordinal) ? "<Project><PropertyGroup><FixtureValue>changed</FixtureValue></PropertyGroup></Project>"
                 : path.EndsWith(".csproj", StringComparison.Ordinal) ? "<Project Sdk=\"Microsoft.NET.Sdk\" />"
                 : "changed " + path;
             repo.Put(path, content);
             s = Select(baseline, repo.Commit());
+            (s.Changes.Length == 1 && s.Changes[0].Path == path).ShouldBeTrue("family-isolated-change:" + path);
             Has(s, "server", path).ShouldBeTrue("family-inventory:" + path);
             s.DirtySuites.ShouldContain("server", "family-dirty:" + path);
             s.Unresolved.ShouldBeEmpty("family-closure-is-known:" + path);
+            baseline = s.CandidateSha;
         }
+        if (family != "ConfigAndFixtures") return;
         repo.Put("tests/Server/Fixtures/added.json", "{}");
         s = Select(baseline, repo.Commit());
         Has(s, "server", "tests/Server/Fixtures/added.json").ShouldBeTrue("new-input-not-old-glob-only");
