@@ -917,6 +917,47 @@ public sealed class LandingGitTests
         }
     }
 
+    // A root that exits 0 while a grandchild never closes stdout must fail inside
+    // LandingGit.SuccessPipeCloseBound. At the base this call stays in WhenAll until the
+    // holder is killed, so the witness is red until the drain is bounded.
+    [Test]
+    [Timeout(90_000)]
+    [NativeLinuxOnly("POSIX double-fork witness for a grandchild that never closes stdout.")]
+    public async Task HungPipeHolderFailsWithGitPipeTimeout(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX double-fork witness for a grandchild that never closes stdout.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("pipe-never");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var script = Path.Combine(repo.Path, "holder.sh");
+        await File.WriteAllTextAsync(script, NeverClosingPipeHolderGit.Script(pidFile), ct);
+        var git = new NeverClosingPipeHolderGit(script);
+        var call = git.RunAsync(repo.Path, ["push", "origin", "master"],
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var finished = await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(45), ct));
+            watch.Stop();
+            finished.ShouldBe(call,
+                "git_pipe_timeout: a grandchild that never closes stdout must not hang RunAsync");
+            var thrown = await Should.ThrowAsync<TimeoutException>(() => call);
+            thrown.Message.ShouldBe("git_pipe_timeout");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(45));
+        }
+        finally
+        {
+            watch.Stop();
+            KillHolder(pidFile);
+            try { await call; } catch { /* the base has no bound; killing the holder lets it finish */ }
+        }
+    }
+
     private static bool HolderAlive(int pid)
     {
         try
@@ -1863,6 +1904,32 @@ public sealed class LandingGitTests
             "(\n" +
             "trap '' HUP\n" +
             "sh -c 'trap \"\" HUP; echo $$ > \"" + pidFile + "\"; exec sleep 8' </dev/null &\n" +
+            ") &\n" +
+            "i=0\n" +
+            "while [ ! -s \"" + pidFile + "\" ] && [ \"$i\" -lt 100 ]; do\n" +
+            "  i=$((i+1))\n" +
+            "  sleep 0.05\n" +
+            "done\n" +
+            "exit 0\n";
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "push")
+                return base.StartProcess(start);
+            return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
+    }
+
+    /// <summary>A push stand-in that exits 0 at once while a reparented grandchild keeps stdout
+    /// open for five minutes.</summary>
+    private sealed class NeverClosingPipeHolderGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile) =>
+            "#!/bin/sh\n" +
+            "trap '' HUP\n" +
+            "(\n" +
+            "trap '' HUP\n" +
+            "sh -c 'trap \"\" HUP; echo $$ > \"" + pidFile + "\"; exec sleep 300' </dev/null &\n" +
             ") &\n" +
             "i=0\n" +
             "while [ ! -s \"" + pidFile + "\" ] && [ \"$i\" -lt 100 ]; do\n" +
