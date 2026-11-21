@@ -188,9 +188,13 @@ So a readiness fix needs an AppHost restart (step 5), and a CLI bump needs an im
 
 ## Step 4. Roll the image, then the desktop CLI
 
-The image goes **before** the AppHost restart. `MinimumCodexCliVersion` is not enforced at launch,
-so an AppHost on the new ladder sends the new slug at whatever CLI the runner has, and an old CLI
-rejects it ([0.170 everywhere note](investigations/2026-11-20-codex-0-170-everywhere.md) §4).
+The image goes **before** the AppHost restart. A cold Codex launch is refused with HTTP 409
+`codex_cli_model_unsupported` when the selected launcher's CLI observation is fresh and
+fingerprint-matched, older than the 0.169.1 floor, and the model is exactly `gpt-6.2-sol`
+or `gpt-6.2-astra`. Unknown, stale, skewed, unparsable or non-Codex observations fail open
+and never refuse, so an unobserved CLI can still receive the new slug and reject it
+([0.170 everywhere note](investigations/2026-11-20-codex-0-170-everywhere.md) §4).
+`FailureCode` stays null. The message names the model, the floor and the observed version.
 
 Server2, from `C:\src\Antiphon` on the desktop, `$env:ANTIPHON_API` set, one phase per invocation,
 `-Sha` the full 40-hex rc tip whose Dockerfile carries the new pin. Never `-Phase all` (the

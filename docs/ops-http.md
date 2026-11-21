@@ -104,8 +104,13 @@ Descriptor strings are limited to 32,768 characters each; invalid inputs return
 unknown evidence before process start. Default probes run before registration and
 every five minutes. `GET /capabilities` reads memory. Launcher fingerprints stay
 on internal capability/probe DTOs and are absent from catalogue/status projections.
-There is no new server public probe endpoint. No observation refuses create, retry,
-dispatch, warm reuse or launch, and those paths start no diagnostic version probes.
+There is no new server public probe endpoint. Create, retry, dispatch and warm reuse
+stay advisory and start no diagnostic version probes. A cold Codex launch is refused
+with HTTP 409 `codex_cli_model_unsupported` when the selected launcher's CLI
+observation is fresh and fingerprint-matched, older than the 0.169.1 floor, and the
+model is exactly `gpt-6.2-sol` or `gpt-6.2-astra`. Unknown, stale, skewed, unparsable
+or non-Codex observations fail open and never refuse. `FailureCode` stays null. The
+message names the model, the floor and the observed version.
 Existing auth/model/placement rules remain independent. Activate reporting runners
 first, then server readers; older runners display unknown without a CLI gate. See the active
 [implementation and verification plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md).
