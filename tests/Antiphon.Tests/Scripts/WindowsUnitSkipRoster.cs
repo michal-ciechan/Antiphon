@@ -331,6 +331,11 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
         new("Antiphon.Tests.Scripts", "WindowsUnitPlatformAdmissionTests", "C1210_Windows_linux_only_outcomes_are_exact", 1, "CARD-1210: the child skip-roster audit requires Windows placement."),
+        new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write", 1, "CARD-1310 Windows output custody"),
+        new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_set_clock_and_foreign_dacl_are_not_adopted", 1, "CARD-1318 Windows custody hardening"),
+        new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_copied_old_change_time_is_adopted", 1, "CARD-1318 Windows copy change time"),
+        new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_sharing_violation_retries_then_adopts", 1, "CARD-1318 Windows custody hardening"),
+        new("Antiphon.Tests.Checkpoints", "CheckpointOutputConfinementTests", "windows_confined_build_leaves_use_app_host_unset", 1, "CARD-1310 confined Windows build leaves UseAppHost unset"),
     ];
 
     internal static void SkipOnLinux(string className, string method)
