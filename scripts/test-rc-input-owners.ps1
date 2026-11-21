@@ -688,7 +688,7 @@ class MultiLineArgumentsE2EProbeTests {
         Note ($live.Count -eq 0) "real-owner-map:$($live -join ' | ')"
         $census=Join-Path $sourceRoot 'scripts/rc-input-owner-path-census.ps1'
         $censusOut=@(& pwsh -NoProfile -File $census | ForEach-Object { "$_" })
-        Note ($LASTEXITCODE -eq 0 -and (@($censusOut) -join "`n") -match 'missing-literal-path=0') "real-census-script:$LASTEXITCODE:$(@($censusOut) -join ' | ')"
+        Note ($LASTEXITCODE -eq 0 -and (@($censusOut) -join "`n") -match 'missing-literal-path=0') "real-census-script:${LASTEXITCODE}:$(@($censusOut) -join ' | ')"
         $mapObj=ConvertFrom-Json -InputObject $json -AsHashtable
         $canary=@($mapObj.roots | Where-Object { [string]$_.path -like '*ClaudeDialogWatchdogCanaryTests.cs' } | ForEach-Object { [string]$_.path })
         Note ($canary.Count -eq 1) "real-canary-row:$($canary -join ',')"
