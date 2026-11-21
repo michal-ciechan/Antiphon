@@ -1432,9 +1432,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 428,
+      "classes": 430,
       "reason": "cap",
-      "owed": 403,
+      "owed": 405,
       "first": [
         "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
@@ -1662,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 613,
+      "classes": 614,
       "reason": "cap",
-      "owed": 588,
+      "owed": 589,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,9 +1678,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 613,
+      "classes": 614,
       "reason": "cap",
-      "owed": 588,
+      "owed": 589,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2331,18 +2331,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
-      "classes": 35,
+      "classes": 37,
       "reason": "cap",
-      "owed": 10,
+      "owed": 12,
       "first": [
         "DispatchConcurrencyMigrationTests",
         "HerdrPlacementSettingsTests",
         "HostCleanupOrchestrationTests",
         "LandRequestWriteDiagnosticTests",
         "OutputDistillationMigrationTests",
-        "SessionRuntimeActionRoutingTests",
-        "SessionTranscriptSummaryMigrationTests",
-        "StandingRestartEscalationTests"
+        "RequestedModelAliasDatabaseMigrationTests",
+        "RequestedModelAliasSchemaTests",
+        "SessionRuntimeActionRoutingTests"
       ]
     },
     {
@@ -26594,6 +26594,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/RequestedModelAliasSchema.cs",
+      "classes": [
+        "RequestedModelAliasDatabaseMigrationTests",
+        "RequestedModelAliasSchemaTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/RestartableQueueRecipient.cs",
       "classes": [
         "C0824RefOnlyReceiptTests"
@@ -27481,6 +27488,7 @@
         "CheckpointTrackedBaselineTests",
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
+        "RequestedModelAliasDatabaseMigrationTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",
