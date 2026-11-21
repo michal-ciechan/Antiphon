@@ -43,7 +43,7 @@ CP-5 is the guard batch (168 executed, plan floor 111). Wall 27m18s, one build a
 - `scripts/test-live-lane-run.ps1 -PrintInputDigest` equals the pin `aff88704a0be7c2b989b6149b08976853da2fdf094491fd5baef6a57deae858d`.
 - `scripts/audit-land-verification-graph.ps1 -Check` approved, digest `A9BB27C595EA171463F0ED13725E198AA64385B1744B9E0BA2D211829C65A7CF`, count 80, exit 0.
 - `scripts/antiphon evidence-diff --base 3ed773829e584eec0c93ec8b47bf3517a69204d7 --head f4d45a524d86258f3d092766acc05aa305135a72`: commits=9 entries=0 violations=0, exit 0.
-- `git merge-tree --write-tree origin/master HEAD` against fetched `faf7ff1b1206710886263dd3f32fdf9cd23d71a9`: exit 0, tree `d4d625d408290d368a98bca82a2ea89b7c029d3e`.
+- `git merge-tree --write-tree origin/master f4d45a524d86258f3d092766acc05aa305135a72` against fetched `faf7ff1b1206710886263dd3f32fdf9cd23d71a9`: exit 0, tree `d4d625d408290d368a98bca82a2ea89b7c029d3e`.
 - OS-witness lint exit 0 for base `3ed77382` head `f4d45a52`. The only candidates are the unchanged phone-home `$IsWindows` refusal (line 40 both sides) and the pre-existing `LaunchAsync` Windows skip (base line 30, head line 56). `restart.required` is true because `dev-aspire.ps1` changed. The Windows native obligation is pending. That is the next rc restart, not a restart performed here.
 
 The five stamp scripts and their direct tests are byte-identical from `68b64fa83306ba7d2e41d26ad1dd51dd275aedb1` through this tip. Historical CP-1 through CP-4 cover those bytes. This round re-ran the commissioned gap only.
