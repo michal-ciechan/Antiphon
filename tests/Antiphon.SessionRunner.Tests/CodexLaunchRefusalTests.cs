@@ -31,6 +31,48 @@ public sealed class CodexLaunchRefusalTests
     }
 
     [Test]
+    public async Task Verified_old_cli_refuses_gpt_6_2_before_launch()
+    {
+        using var fixture = new CodexCliVersionTestFixture { Mode = "version-old" };
+        await using var fixtureRuntime = fixture.Runtime;
+        await fixture.Refresh();
+        var probe = (CodexCliVersionProbe)fixture.Probe!;
+        probe.Snapshot.CodexCliVersion.ShouldBe("0.156.1");
+
+        await using var herdr = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Codex };
+        herdr.Start();
+        await herdr.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        settings.SessionLogPath = fixture.Root;
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(settings),
+            NullLogger<SessionRunnerRuntime>.Instance,
+            new HerdrClient(new HerdrSettings
+            {
+                Enabled = true,
+                Session = herdr.Session,
+                SocketPath = herdr.EndpointPath,
+                LaunchDetectTimeoutMs = 5_000,
+            }),
+            new PowershellProcessProbe(),
+            codexCliProbe: probe);
+        var launch = new RunnerLaunchRequest(
+            Guid.NewGuid(), fixture.Executable, ["--model", "gpt-6.2-sol"],
+            new Dictionary<string, string>(), fixture.Root, 120, 30,
+            Backend: SessionBackends.Herdr, TranscriptFormat: TranscriptFormats.Codex,
+            Herdr: new HerdrLaunchOptions("c959-floor", "c959-floor", fixture.Root, "c959-floor",
+                AgentKind: HerdrAgentKinds.Codex));
+
+        var refusal = await Should.ThrowAsync<CodexLaunchException>(() =>
+            runtime.StartAsync(launch, CancellationToken.None));
+        refusal.Code.ShouldBe("codex_cli_model_unsupported");
+        refusal.Message.ShouldContain("0.169.1");
+        runtime.List().ShouldBeEmpty();
+        herdr.Requests.ShouldBeEmpty();
+        fixture.Starts.Count.ShouldBe(1);
+    }
+
+    [Test]
     public async Task Pty_host_oversized_codex_launch_is_refused_before_a_session_is_registered()
     {
         using var layout = new CodexNpmLayout();
