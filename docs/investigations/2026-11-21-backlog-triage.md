@@ -15,5 +15,23 @@ Merge checks used `git merge-tree --write-tree --name-only origin/master <tip>`.
 
 ## Cards filed
 
-See the task report and the Antiphon board. Each advisory and defect named in the brief was
-checked with `card.ps1 search '<phrase>' -Board Antiphon -All` before filing.
+All cards are in Backlog on the Antiphon board. Advisories use the board default importance; defects use Normal.
+Before filing, each one was checked with `card.ps1 search '<phrase>' -Board Antiphon -All`. No duplicate was found.
+CARD-1997 is related to defects (v) and (vi) but is a different fix: it makes Close work for a superseded PartialRefused operation.
+
+| Source | Cards |
+|---|---|
+| Astra 6.2 r3 A-1, A-2 | CARD-2012, CARD-2019 |
+| FT-5 r1 A-1..A-7 | CARD-2020, CARD-2021, CARD-2022, CARD-2023, CARD-2024, CARD-2025, CARD-2026 |
+| SHA-stamp r1 A-1..A-5 | CARD-2027, CARD-2028, CARD-2029, CARD-2030, CARD-2031 |
+| StartRef hold r1 A-1..A-3 | CARD-2032, CARD-2033, CARD-2034 |
+| FT-2 r1 A-1, A-2 | CARD-2035, CARD-2036 |
+| CARD-2006 r1 A-1..A-3 | CARD-2037, CARD-2038, CARD-2039 |
+| Close exemption r1 A-1..A-3 | CARD-2040, CARD-2041, CARD-2042 |
+| Defects (i)..(vi) | CARD-2013, CARD-2014, CARD-2015, CARD-2016, CARD-2017, CARD-2018 |
+
+Not filed:
+- FT-2 A-3: the duplicate test oracle is called defensible, and there is nothing to do.
+- FT-2 A-4: an activation note only. A master land is not activation.
+- Astra r1 and r2 advisories: superseded by r3 or closed.
+- S6c port r1 advisories (task bb05708f): not in the brief.
