@@ -59,9 +59,9 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
             probeBudget.CancelAfter(TimeSpan.FromSeconds(10));
             try
             {
-                if (!await ToolAvailableAsync(landWorktree, probeBudget.Token, "dotnet", "--version"))
+                if (!await ToolAvailableAsync(landWorktree, "dotnet", "--version", probeBudget.Token))
                     return new(false, false, "dotnet-sdk", Elapsed(), ToolchainUnavailable: true);
-                if (!await ToolAvailableAsync(landWorktree, probeBudget.Token, "pwsh", "-Version"))
+                if (!await ToolAvailableAsync(landWorktree, "pwsh", "-Version", probeBudget.Token))
                     return new(false, false, "pwsh", Elapsed(), ToolchainUnavailable: true);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -140,7 +140,7 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
         }
     }
 
-    private static async Task<bool> ToolAvailableAsync(string cwd, CancellationToken ct, string file, string arg)
+    private static async Task<bool> ToolAvailableAsync(string cwd, string file, string arg, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         try
