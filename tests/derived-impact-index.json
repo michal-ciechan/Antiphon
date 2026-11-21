@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 343,
+      "classes": 344,
       "reason": "allowlist"
     },
     {
@@ -26793,6 +26793,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/SharedRedpandaBroker.cs",
+      "classes": [
+        "ChannelOutboundUnifiedCrashTests",
+        "ChannelOutboundUnifiedTransportTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/SharedStoreWarmup.cs",
       "classes": [
         "TestDbFixtureLazyInitializationTests",
@@ -27442,7 +27449,6 @@
         "Card1619RunnerExitTests",
         "Card1653PeerCheckTests",
         "Card1653SocketDirTests",
-        "ChannelOutboundUnifiedTransportTests",
         "CheckpointOutputConfinementTests",
         "CheckpointShapeConflictTests",
         "CheckpointTrackedBaselineTests",
