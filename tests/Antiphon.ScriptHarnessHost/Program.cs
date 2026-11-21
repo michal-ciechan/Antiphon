@@ -14,6 +14,8 @@ if (args.Length >= 3 && args[0] == "fixture-child")
     return await FixtureChild(args[1], args[2]);
 if (args.Length >= 3 && args[0] == "fixture-grandchild")
     return await FixtureGrandchild(args[1], args[2]);
+if (args.Length == 4 && args[0] == "c1375-owned-tree")
+    return C1375OwnedTree(args[1], args[2], args[3]);
 if (args.Length == 1 && args[0] == "windows-sentinel" && OperatingSystem.IsWindows())
 {
     await Task.Delay(TimeSpan.FromSeconds(20));
@@ -174,6 +176,41 @@ static async Task<int> FixtureGrandchild(string directory, string heldStream)
     PublishIdentity(directory, "grandchild");
     await Task.Delay(TimeSpan.FromSeconds(20));
     return 0;
+}
+
+// CARD-1375 owned tree for NightlyProbeSupervisorTests: c1375-owned-tree <root|child|grandchild> <directory> <nonce>.
+// root starts child and child starts grandchild, each inheriting both standard streams. Each writes its stdout and
+// stderr markers, then publishes <directory>/<role>.json (role, nonce, pid, parentPid, /proc start, start ticks), then
+// waits for ever. There is no self-exit deadline: the supervisor must terminate it.
+static int C1375OwnedTree(string role, string directory, string nonce)
+{
+    if (!OperatingSystem.IsLinux() || role is not ("root" or "child" or "grandchild")) return 2;
+    Process? next = null;
+    if (role != "grandchild")
+    {
+        var psi = new ProcessStartInfo(Environment.ProcessPath ?? "dotnet") { UseShellExecute = false };
+        foreach (var arg in new[] { typeof(Program).Assembly.Location, "c1375-owned-tree", role == "root" ? "child" : "grandchild", directory, nonce })
+            psi.ArgumentList.Add(arg);
+        // Start the next generation before publishing our record: its startup can overlap
+        // ours within the same readiness bound. The child is retained for normal OS reaping.
+        next = Process.Start(psi) ?? throw new InvalidOperationException("Fixture next generation did not start.");
+    }
+    var stat = File.ReadAllText($"/proc/{Environment.ProcessId}/stat");
+    var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+    var identity = System.Text.Json.JsonSerializer.Serialize(new
+    {
+        role, nonce, pid = Environment.ProcessId, parentPid = int.Parse(fields[1], CultureInfo.InvariantCulture),
+        start = fields[19], startTimeUtcTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks,
+    });
+    var path = Path.Combine(directory, role + ".json");
+    File.WriteAllText(path + ".tmp", identity);
+    Console.Out.WriteLine($"C1375 {role} stdout {nonce}");
+    Console.Error.WriteLine($"C1375 {role} stderr {nonce}");
+    // Publication certifies both markers are already written, even if this process
+    // is descheduled immediately after the harness observes its readiness record.
+    File.Move(path + ".tmp", path);
+    next?.WaitForExit();
+    while (true) Thread.Sleep(1000);
 }
 
 // A fake build slot for PostLandEarlyWarningTests: post-land-slot <marker> <trx> <build-exit> <shard-exit> -Label <label>

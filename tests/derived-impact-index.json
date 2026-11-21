@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 339,
+      "classes": 340,
       "reason": "allowlist"
     },
     {
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 134,
+      "classes": 135,
       "reason": "cap",
-      "owed": 109,
+      "owed": 110,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 63,
+      "classes": 62,
       "reason": "cap",
-      "owed": 38,
+      "owed": 37,
       "first": [
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
@@ -2162,18 +2162,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 39,
+      "classes": 38,
       "reason": "cap",
-      "owed": 14,
+      "owed": 13,
       "first": [
-        "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
-        "NightlyCoreTests"
+        "NightlyCoreTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -24781,13 +24781,13 @@
         "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
+        "DirectoryLinkFixtureWindowsTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
-        "NightlyProbeSupervisorTests",
         "NightlyScriptsTests",
         "QualificationEtaTests",
         "RcBoundaryPackTests",
@@ -26238,6 +26238,7 @@
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "NightlyProbeSupervisorTests",
         "OwnedTempLeakTests",
         "RcIncrementalShadowTests",
         "TaskWorktreeRetirementTests",

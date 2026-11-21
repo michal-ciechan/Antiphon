@@ -18,7 +18,7 @@ if ($Case -ceq 'admission') {
     $gate = Read-Source 'tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs'
     $gate = $gate.Replace('namespace Antiphon.Tests.TestHelpers;', '')
     $cuts = @(
-        @{Class='NightlyProbeSupervisorTests';Method='C1375_DeadlineKillsAndJoinsTree';Cut='return ScriptHarness'},
+        @{Class='NightlyProbeSupervisorTests';Method='C1375_DeadlineKillsAndJoinsTree';Cut='return Task.Run'},
         @{Class='RetiredTempContainerDockerTests';Method='C994_Real_retired_temp_lifecycle';Cut='var psi = new ProcessStartInfo'},
         @{Class='RollingVolumeRecycleDockerTests';Method='C1008_Real_docker_comparison';Cut='var psi = new ProcessStartInfo'}
     )

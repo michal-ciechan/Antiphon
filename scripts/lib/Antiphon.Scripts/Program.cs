@@ -28,11 +28,12 @@ namespace Antiphon.Scripts
             if (args.Length >= 1 && args[0] == PostLandCommand.Name) return PostLandCommand.Run(args);
             // The evidence policy answers every input itself: exit 0 compliant, 1 violations, 2 unverifiable or usage.
             if (args.Length >= 1 && (args[0] == EvidenceCommand.Diff || args[0] == EvidenceCommand.Deletion)) return EvidenceCommand.Run(args);
+            if (args.Length >= 1 && args[0] == NightlyProbeCommand.Name) return NightlyProbeCommand.Run(args);
             try
             {
                 if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
                 Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage);
+                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage);
                 return Usage;
             }
             catch (NotHandledException e)

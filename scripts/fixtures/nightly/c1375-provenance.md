@@ -22,9 +22,14 @@ Build command:
 ```sh
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1375-probe-build -SlotWaitMinutes 1 -- dotnet build scripts/fixtures/nightly/c1375-probe/Probe.csproj --property:OutputPath=bin-c1375-probe/ --property:UseAppHost=false --nologo
 ```
-Capture command:
+Capture command (as run at the capture driver source above; that PowerShell driver was later replaced by the
+`nightly-probe-capture` command of `scripts/lib/Antiphon.Scripts`):
 ```sh
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1375-probe-capture -SlotWaitMinutes 1 -- pwsh -NoProfile -File scripts/capture-nightly-probe.ps1 -ProbeDirectory scripts/fixtures/nightly/c1375-probe -ResultsDirectory .antiphon/c1375-evidence/producer-validated -ProbeBuildSourceSha eff6639ac191a555f76bdaf9e404a5eb52134132
+```
+To capture again, use a fresh results directory and the probe build's source SHA:
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1375-probe-capture -SlotWaitMinutes 1 -- dotnet run --project scripts/lib/Antiphon.Scripts -- nightly-probe-capture --probe-directory scripts/fixtures/nightly/c1375-probe --results-directory .antiphon/c1375-evidence/<fresh> --probe-build-source-sha <probe-build-sha>
 ```
 
 ## Timeout
