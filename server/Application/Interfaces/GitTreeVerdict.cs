@@ -3,20 +3,22 @@ using Antiphon.Server.Application.Dtos;
 namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
-/// A <c>git status</c> whose caller only asks "is the tree clean?" (the output is tested for emptiness and
-/// never parsed). It runs through the ordinary runner call, so a test double that overrides
-/// <c>RunAsync</c> sees exactly the call it saw before, with the same argument list. The real runner may then
-/// answer a dirty tree in process as well as a clean one: the output is non-empty porcelain-shaped rows (codes
-/// and order are libgit2's reading, not git's bytes). Every status not asked this way keeps git's exact bytes
-/// for a dirty tree. The mark is the argument list instance itself, so a nested or copied call is unmarked.
+/// A <c>git status</c> whose caller tests the listing for emptiness. A verdict-only caller permits an
+/// in-process answer for a dirty tree. A caller that also checks Git's standard-error flag needs the
+/// actual command because the in-process listing can omit an unreadable directory silently.
+/// Both requests use the ordinary <c>RunAsync</c> call with the original argument list, so overrides
+/// see the same command. The mark applies only to that argument list instance.
 /// </summary>
 public static class GitTreeVerdict
 {
-    private static readonly AsyncLocal<IReadOnlyList<string>?> Asked = new();
+    private static readonly AsyncLocal<(IReadOnlyList<string> Arguments, bool RequireStandardError)?> Asked = new();
 
     /// <summary>Whether this exact argument list was passed by a verdict-only caller.</summary>
     internal static bool IsVerdictOnly(IReadOnlyList<string> arguments) =>
-        Asked.Value is { } asked && ReferenceEquals(asked, arguments);
+        Asked.Value is { } asked && !asked.RequireStandardError && ReferenceEquals(asked.Arguments, arguments);
+
+    internal static bool RequiresStandardError(IReadOnlyList<string> arguments) =>
+        Asked.Value is { } asked && asked.RequireStandardError && ReferenceEquals(asked.Arguments, arguments);
 
     public static Task<LandingGitResult> StatusVerdictAsync(this ILandingGit git, string checkout,
         IReadOnlyList<string> statusArguments, CancellationToken ct)
@@ -26,10 +28,15 @@ public static class GitTreeVerdict
         IReadOnlyList<string> statusArguments, CancellationToken ct)
         => Mark(statusArguments, () => git.RunAsync(checkout, statusArguments, ct));
 
-    private static async Task<LandingGitResult> Mark(IReadOnlyList<string> arguments, Func<Task<LandingGitResult>> run)
+    public static Task<LandingGitResult> StatusWithStandardErrorAsync(this ILandingGit git, string checkout,
+        IReadOnlyList<string> statusArguments, CancellationToken ct)
+        => Mark(statusArguments, () => git.RunAsync(checkout, statusArguments, ct), requireStandardError: true);
+
+    private static async Task<LandingGitResult> Mark(IReadOnlyList<string> arguments, Func<Task<LandingGitResult>> run,
+        bool requireStandardError = false)
     {
         var previous = Asked.Value;
-        Asked.Value = arguments;
+        Asked.Value = (arguments, requireStandardError);
         try { return await run(); }
         finally { Asked.Value = previous; }
     }
