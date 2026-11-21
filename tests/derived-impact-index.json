@@ -1988,14 +1988,14 @@
       "reason": "cap",
       "owed": 55,
       "first": [
+        "TranscriptSinceReadTests",
         "CodexLaunchRefusalTests",
         "CompactionContinuationStopTests",
         "DelegateBranchDeliveryTests",
         "GrokHerdrRealCliStubProxyCanaryTests",
         "GrokRulesHttpAcceptanceTests",
         "HerdrPaneChildKillTests",
-        "HerdrStatusPushTests",
-        "PtyConditionalReadTests"
+        "HerdrStatusPushTests"
       ]
     },
     {
@@ -2004,14 +2004,14 @@
       "reason": "cap",
       "owed": 55,
       "first": [
+        "TranscriptSinceReadTests",
         "CodexLaunchRefusalTests",
         "CompactionContinuationStopTests",
         "DelegateBranchDeliveryTests",
         "GrokHerdrRealCliStubProxyCanaryTests",
         "GrokRulesHttpAcceptanceTests",
         "HerdrPaneChildKillTests",
-        "HerdrStatusPushTests",
-        "PtyConditionalReadTests"
+        "HerdrStatusPushTests"
       ]
     },
     {
@@ -2026,8 +2026,8 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerEventHubTests",
-        "C1677TempSweepNativeTests",
-        "GrokRulesRunnerRefusalTests"
+        "C1022BackendLaunchTests",
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -2179,18 +2179,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
+        "C1744G3PhoneHomeSupervisionTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
         "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
-        "RcQualificationStatusTests",
-        "RcRunEvidenceTests"
+        "RcQualificationStatusTests"
       ]
     },
     {
@@ -4229,12 +4229,6 @@
       ]
     },
     {
-      "path": "scripts/run-daemon.ps1",
-      "classes": [
-        "SourceRevisionStampContractTests"
-      ]
-    },
-    {
       "path": "scripts/runner-slots.ps1",
       "classes": [
         "DockerStackContractTests"
@@ -4266,12 +4260,6 @@
       "classes": [
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "scripts/start-windows-phone-home-runner.ps1",
-      "classes": [
-        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -19715,6 +19703,7 @@
         "BlockedParkWireTests",
         "C1022BackendLaunchTests",
         "C1677TempSweepDispatchTests",
+        "C1744G3PhoneHomeSupervisionTests",
         "DelegateBranchDeliveryTests",
         "HerdrSnapshotBoundedReadTests",
         "PtyConditionalReadTests",
@@ -20091,6 +20080,7 @@
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.DecisionPaths.cs",
       "classes": [
         "BlockedParkWireTests",
+        "C1022BackendLaunchTests",
         "Card1619LinuxStopIntentTests",
         "Card1619RunnerExitTests",
         "Card1653SocketDirTests",
@@ -20113,14 +20103,14 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerRuntimeTests",
-        "TranscriptAdoptionSafetyTests",
-        "TranscriptSinceReadTests"
+        "TranscriptAdoptionSafetyTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
       "classes": [
         "BlockedParkWireTests",
+        "C1022BackendLaunchTests",
         "Card1619LinuxStopIntentTests",
         "Card1619RunnerExitTests",
         "Card1653SocketDirTests",
@@ -20143,8 +20133,7 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerRuntimeTests",
-        "TranscriptAdoptionSafetyTests",
-        "TranscriptSinceReadTests"
+        "TranscriptAdoptionSafetyTests"
       ]
     },
     {
