@@ -167,7 +167,7 @@ public class ComplexityRoutingWalkTests
             TaskComplexity.Hard, AgentTaskKind.Worker, AgentTaskRole.Plan,
             pinDecision, null, null, false, CancellationToken.None);
 
-        walk.Chosen!.Alias.ShouldBe("gpt-6-astra");
+        walk.Chosen!.Alias.ShouldBe("gpt-6.2-astra");
         walk.Outcomes.ShouldHaveSingleItem();
         walk.Walked.ShouldBeFalse();
         walk.Source.ShouldStartWith("pin:");

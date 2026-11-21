@@ -29,7 +29,7 @@ public static class ModelAlias
 
     /// <summary>
     /// Every alias <see cref="ModelLevelAliases"/> launches for <see cref="AgentTaskService.DelegatableKinds"/>,
-    /// plus the one off-ladder Codex alias <c>gpt-6.2-astra</c> a caller can select explicitly.
+    /// plus the off-ladder Codex alias <c>gpt-6-astra</c> a caller can select explicitly.
     /// <c>ListAvailable</c> is this set minus currently held rows.
     /// </summary>
     public static readonly IReadOnlyList<(AgentKind Kind, string Alias)> DelegatableAliases =
@@ -177,8 +177,7 @@ public static class ModelAlias
     private static bool IsGrok46(string folded) =>
         folded is "grok 4 6" or "grok 46";
 
-    // Folded "gpt 6 2 astra" is selectable on demand and is not a ladder rung.
-    // Bare "astra" stays on the older arm below. The backend 400s bare -m astra.
+    // Folded "gpt 6 2 astra" is the Frontier launch slug.
     private static bool IsAstra62(string folded) =>
         folded is "gpt 6 2 astra" or "gpt62 astra";
 
@@ -186,8 +185,7 @@ public static class ModelAlias
     private static bool IsSol62(string folded) =>
         folded is "gpt 6 2 sol" or "gpt62 sol";
 
-    // Folded "astra" maps to the canonical slug for holds / TUI text. Launch never uses this
-    // path: ModelLevelAliases.ForCodex returns "gpt-6-astra". The backend 400s bare -m astra.
+    // Bare "astra" keeps its historical meaning for holds and TUI text.
     private static bool IsAstra(string folded) =>
         folded is "gpt 6 astra" or "gpt6 astra" or "astra";
 

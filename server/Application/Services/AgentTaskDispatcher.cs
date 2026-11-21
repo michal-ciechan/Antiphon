@@ -7424,6 +7424,8 @@ public sealed partial class AgentTaskDispatcher
             // placeholder only; the resolved value is never stored.
             if (agent.IsPoolDelegate)
             {
+                if (spec.Kind == AgentKind.Codex && task.ModelLevel == AgentModelLevel.Frontier)
+                    session.EffectiveModelId = LaunchTierAlias(task, spec.Kind);
                 agent.PoolClaudeEffort = spec.Kind == AgentKind.ClaudeCode
                     ? ClaudeLaunchArgs.ReadLaunchEffort(spec.Args) : null;
                 agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
@@ -8858,6 +8860,11 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0167 S3: the project's endpoints, read once, so the warm-pool predicate can compare
         // each candidate's projection with what this task would launch with.
         var projectEndpoints = await ProjectProviderEndpointsAsync(claimed.ProjectId, ct);
+        // A pre-upgrade Frontier process can survive a server restart. Require the launch slug
+        // here so the new ladder cannot hand work to the previous model or an unstamped session.
+        var expectedWarmModel = claimed.AgentKind == AgentKind.Codex && claimed.ModelLevel == AgentModelLevel.Frontier
+            ? ModelLevelAliases.ForCodex(claimed.ModelLevel)
+            : null;
 
         Agent? agent = null;
 
@@ -8986,6 +8993,14 @@ public sealed partial class AgentTaskDispatcher
             var candidateSessions = candidates
                 .Select(a => Guid.TryParse(a.PersistentSessionId, out var id) ? (Guid?)id : null)
                 .OfType<Guid>().Distinct().ToList();
+            if (expectedWarmModel is not null && candidateSessions.Count != 0)
+            {
+                candidateSessions = await _db.AgentSessions.AsNoTracking()
+                    .Where(s => candidateSessions.Contains(s.Id) && s.EffectiveModelId == expectedWarmModel)
+                    .Select(s => s.Id).ToListAsync(ct);
+                var matchingSessions = candidateSessions.ToHashSet();
+                candidates.RemoveAll(a => !Guid.TryParse(a.PersistentSessionId, out var id) || !matchingSessions.Contains(id));
+            }
             var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, candidateSessions, ct);
             agent = candidates
                 .Where(a => !Guid.TryParse(a.PersistentSessionId, out var id)
@@ -9000,7 +9015,7 @@ public sealed partial class AgentTaskDispatcher
         if (agent is null)
             return ReuseOutcome.SpawnFresh;
 
-        var sessionId = await LiveSessionIdOfAsync(agent, ct);
+        var sessionId = await LiveSessionIdOfAsync(agent, ct, expectedWarmModel);
         if (sessionId is not Guid session)
             return ReuseOutcome.SpawnFresh;
 
@@ -10197,17 +10212,18 @@ public sealed partial class AgentTaskDispatcher
         return true;
     }
 
-    private async Task<Guid?> LiveSessionIdOfAsync(Agent agent, CancellationToken ct)
+    private async Task<Guid?> LiveSessionIdOfAsync(Agent agent, CancellationToken ct, string? expectedModelId = null)
     {
         if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
             return null;
 
-        return await SessionIsLiveAsync(sessionId, ct) ? sessionId : null;
+        return await SessionIsLiveAsync(sessionId, ct, expectedModelId) ? sessionId : null;
     }
 
-    private Task<bool> SessionIsLiveAsync(Guid sessionId, CancellationToken ct) =>
+    private Task<bool> SessionIsLiveAsync(Guid sessionId, CancellationToken ct, string? expectedModelId = null) =>
         _db.AgentSessions.AsNoTracking().AnyAsync(
             s => s.Id == sessionId
+                && (expectedModelId == null || s.EffectiveModelId == expectedModelId)
                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
 
     private static bool SameDirectory(string a, string b)

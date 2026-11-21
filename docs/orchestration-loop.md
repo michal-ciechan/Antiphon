@@ -1314,6 +1314,8 @@ An ordinary Worker create without an explicit kind/level, standing agent or mode
 uses `Delegation:DefaultComplexity` (shipped `Medium`) when a role, any-role or config row resolves.
 RolePolicy supplies the fallback when that row is unset. A Required pin with candidates can
 override the row; a Preferred pin prepends candidates. Escalation, timeout and WIP remain RolePolicy settings.
+Kind and level pairs resolve through the [model ladder](agent-kinds.md#3-model-levels).
+Codex Frontier candidates resolve to `gpt-6.2-astra`.
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|

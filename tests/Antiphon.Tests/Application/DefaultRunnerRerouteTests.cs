@@ -298,7 +298,7 @@ public sealed class DefaultRunnerRerouteTests
             var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
                 (AgentKind.Codex, AgentModelLevel.Frontier));
             await SeedHoldAsync(schema, "fable");
-            await SeedHoldAsync(schema, "gpt-6-astra", AgentKind.Codex);
+            await SeedHoldAsync(schema, "gpt-6.2-astra", AgentKind.Codex);
             var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
                 sessionId: Guid.NewGuid(), parentSessionId: parent.SessionId, runnerId: null);
             var fault = new BlockNoteFault(cut, taskId, parent.SessionId);

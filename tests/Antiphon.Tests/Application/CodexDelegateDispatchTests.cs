@@ -88,7 +88,7 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
-    [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
+    [Arguments(AgentModelLevel.Frontier, "gpt-6.2-astra", "xhigh")]
     [Arguments(AgentModelLevel.High, "gpt-6.2-sol", "high")]
     [Arguments(AgentModelLevel.Medium, "gpt-6.2-sol", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
@@ -97,7 +97,7 @@ public class CodexDelegateDispatchTests
     {
         // The slug half: there are no unversioned aliases in Codex's catalog — a bare `-m luna` is
         // rejected locally AND with an HTTP 400, so a "family alias" here never starts a session.
-        // The effort half: gpt-6-astra's own default is `low`, and the operator's ~/.codex/config.toml
+        // The effort half: gpt-6.2-astra's own default is `low`, and the operator's ~/.codex/config.toml
         // says xhigh globally, so leaving it unset makes the tier mean whatever a file nothing in
         // this repo owns happens to say.
         var (dispatcher, _) = CreateHarness();
@@ -112,10 +112,13 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
-    public async Task explicit_gpt_6_2_astra_at_high_launches_that_slug_with_high_effort()
+    [Arguments(AgentModelLevel.High, "high")]
+    [Arguments(AgentModelLevel.Frontier, "xhigh")]
+    public async Task explicit_gpt_6_2_astra_is_recorded_and_uses_the_selected_effort(
+        AgentModelLevel level, string effort)
     {
         ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.2-sol");
-        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe("gpt-6-astra");
+        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe("gpt-6.2-astra");
         ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, ModelAlias.Gpt62Astra)!
             .ToString().ShouldBe("0.169.1");
         ModelAlias.CanonicalHoldAlias("astra").ShouldBeNull();
@@ -125,7 +128,7 @@ public class CodexDelegateDispatchTests
         using var workspace = new TempWorkspace();
         var service = CreateServiceWithHolds(db);
         var created = await service.CreateAsync(
-            CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra),
+            CodexRequest(level, ModelAlias.Gpt62Astra),
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
         var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
@@ -133,7 +136,7 @@ public class CodexDelegateDispatchTests
         var (dispatcher, _) = CreateHarness();
         var args = SpecOf(dispatcher, task).Args.ToList();
         args[args.IndexOf("--model") + 1].ShouldBe(ModelAlias.Gpt62Astra);
-        ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
+        ConfigValue(args, "model_reasoning_effort").ShouldBe(effort);
     }
 
     [Test]
@@ -226,7 +229,7 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
-    public async Task explicit_gpt_6_2_astra_hold_refuses_only_that_alias()
+    public async Task the_astra_6_2_hold_applies_to_explicit_and_ladder_launches_of_that_slug()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -253,9 +256,20 @@ public class CodexDelegateDispatchTests
 
         var sol = await service.CreateAsync(CodexRequest(AgentModelLevel.High, model: null), caller, CancellationToken.None);
         sol.Status.ShouldBe(AgentTaskStatus.Queued);
-        var frontier = await service.CreateAsync(
-            CodexRequest(AgentModelLevel.Frontier, model: null), caller, CancellationToken.None);
-        frontier.Status.ShouldBe(AgentTaskStatus.Queued);
+        var frontier = await Should.ThrowAsync<ModelDisabledException>(() =>
+            service.CreateAsync(CodexRequest(AgentModelLevel.Frontier, model: null), caller, CancellationToken.None));
+        frontier.StatusCode.ShouldBe(409);
+        frontier.Message.ShouldContain("gpt-6.2-astra is disabled");
+
+        var legacy = await service.CreateAsync(
+            CodexRequest(AgentModelLevel.Frontier, ModelAlias.Gpt6Astra), caller, CancellationToken.None);
+        legacy.Status.ShouldBe(AgentTaskStatus.Queued);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == legacy.Id);
+        task.RequestedModelAlias.ShouldBe("gpt-6-astra");
+        var (dispatcher, _) = CreateHarness();
+        var args = SpecOf(dispatcher, task).Args.ToList();
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6-astra");
+        ConfigValue(args, "model_reasoning_effort").ShouldBe("xhigh");
     }
 
     [Test]
@@ -451,7 +465,7 @@ public class CodexDelegateDispatchTests
 
         var detail = await LatestEscalationDetailAsync(task.Id);
         // High Sol -> Frontier Astra.
-        detail.ShouldStartWith("Escalated gpt-6.2-sol -> gpt-6-astra.");
+        detail.ShouldStartWith("Escalated gpt-6.2-sol -> gpt-6.2-astra.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
@@ -528,14 +542,17 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
-    public async Task dispatching_a_codex_task_writes_a_codex_session_and_a_codex_pool_row()
+    [Arguments(AgentModelLevel.Medium, null)]
+    [Arguments(AgentModelLevel.Frontier, "gpt-6.2-astra")]
+    public async Task dispatching_a_codex_task_writes_a_codex_session_and_a_codex_pool_row(
+        AgentModelLevel level, string? expectedModelId)
     {
         // The task's kind has to reach the SESSION row (which the brief's spill gate, the tailer and
         // delivery all read) and the pool ROW (which the next task's claim reads) — a warm row with
         // the wrong kind would hand the next Claude task a live Codex process.
         using var workspace = new TempWorkspace();
         var dispatcher = CreateDispatchHarness();
-        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Codex);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Codex, level: level);
 
         var result = await dispatcher.TickAsync(CancellationToken.None);
 
@@ -549,6 +566,7 @@ public class CodexDelegateDispatchTests
             .SingleAsync(s => s.Id == dispatched.AgentSessionId!.Value);
         session.AgentKind.ShouldBe(AgentKind.Codex);
         session.DefinitionName.ShouldBe("codex");
+        session.EffectiveModelId.ShouldBe(expectedModelId);
 
         var agent = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == dispatched.AgentId!.Value);
         agent.Kind.ShouldBe(AgentKind.Codex);
@@ -817,7 +835,8 @@ public class CodexDelegateDispatchTests
     }
 
     private static async Task<AgentTask> SeedQueuedTaskAsync(
-        string directory, AgentKind agentKind, Guid? pinnedAgentId = null)
+        string directory, AgentKind agentKind, Guid? pinnedAgentId = null,
+        AgentModelLevel level = AgentModelLevel.Medium)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -829,7 +848,7 @@ public class CodexDelegateDispatchTests
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Docs,
             AgentKind = agentKind,
-            ModelLevel = AgentModelLevel.Medium,
+            ModelLevel = level,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
             AgentId = pinnedAgentId,

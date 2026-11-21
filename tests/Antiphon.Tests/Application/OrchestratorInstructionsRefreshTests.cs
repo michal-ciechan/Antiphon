@@ -729,6 +729,10 @@ public class OrchestratorInstructionsRefreshTests
         h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
         await Instructions(h).ReconcileNowAsync("startup");
         var startup = await ReadStateAsync(h);
+        startup.Body.ShouldContain("- Codex Frontier: gpt-6.2-astra");
+        startup.Body.ShouldContain("- Codex High: gpt-6.2-sol");
+        startup.Body.ShouldContain("- Codex Medium: gpt-6.2-sol");
+        startup.Body.ShouldContain("- Codex Low: gpt-5.6-luna");
         (await SessionVersionAsync(h)).ShouldBeNull();
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "Dispatch work.");
         var floor = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
@@ -760,7 +764,7 @@ public class OrchestratorInstructionsRefreshTests
         state.Revision.ShouldBe(startup.Revision + 1);
         state.Version.ShouldNotBe(startup.Version);
         (await SessionVersionAsync(h)).ShouldBe(state.Version);
-        state.Body.ShouldContain("- Plan: Hard unset; Medium (default) Codex/Frontier (gpt-6-astra); Easy unset; effective Codex/Frontier (gpt-6-astra) via role");
+        state.Body.ShouldContain("- Plan: Hard unset; Medium (default) Codex/Frontier (gpt-6.2-astra); Easy unset; effective Codex/Frontier (gpt-6.2-astra) via role");
         var snapshot = JsonSerializer.Deserialize<OrchestratorInstructionsSnapshot>(state.SnapshotJson,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         snapshot.Matrix.ShouldNotBeNull();

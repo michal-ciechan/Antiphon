@@ -52,7 +52,7 @@ public sealed class CodexCliObservationTests
             (AgentModelLevel.High, "gpt-6.2-sol", "0.169.1"),
             (AgentModelLevel.Medium, "gpt-6.2-sol", "0.169.1"),
             ((AgentModelLevel)999, "gpt-6.2-sol", "0.169.1"),
-            (AgentModelLevel.Frontier, "gpt-6-astra", (string?)null),
+            (AgentModelLevel.Frontier, "gpt-6.2-astra", "0.169.1"),
             (AgentModelLevel.Low, "gpt-5.6-luna", (string?)null),
         })
         {
@@ -353,7 +353,7 @@ public sealed class CodexCliObservationTests
             await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
             foreach (var (level, exact, expected) in new[] {
                 (AgentModelLevel.Medium, (string?)null, "gpt-6.2-sol"),
-                (AgentModelLevel.Frontier, (string?)null, "gpt-6-astra"),
+                (AgentModelLevel.Frontier, (string?)null, "gpt-6.2-astra"),
                 (AgentModelLevel.Low, (string?)null, "gpt-5.6-luna"),
                 (AgentModelLevel.High, "gpt-6.1-sol", "gpt-6.1-sol"),
             })

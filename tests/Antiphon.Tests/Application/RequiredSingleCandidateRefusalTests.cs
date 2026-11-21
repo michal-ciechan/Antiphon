@@ -43,7 +43,7 @@ public sealed class RequiredSingleCandidateRefusalTests
 
         ex.StatusCode.ShouldBe(409);
         ex.Code.ShouldBe("routing_exhausted");
-        ex.Message.ShouldStartWith("routing exhausted: Plan/Hard chain — gpt-6-astra not a delegate kind");
+        ex.Message.ShouldStartWith("routing exhausted: Plan/Hard chain — gpt-6.2-astra not a delegate kind");
         ex.Message.ShouldContain("An orchestrator runs only on ClaudeCode");
         ex.Routing.Walked.ShouldBeFalse();
         ex.Routing.Candidates.Count.ShouldBe(1);

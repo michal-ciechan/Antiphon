@@ -42,7 +42,7 @@ public sealed class OrchestratorInstructionsRendererTests
         body.ShouldContain("## 5. Role × complexity matrix");
         body.ShouldContain("default Medium");
         body.ShouldContain("GET /api/complexity-chains");
-        body.ShouldContain("- Plan: Hard Codex/Frontier (gpt-6-astra); Medium (default) opus; Easy unset; effective ClaudeCode/High (opus) via stage pin");
+        body.ShouldContain("- Plan: Hard Codex/Frontier (gpt-6.2-astra); Medium (default) opus; Easy unset; effective ClaudeCode/High (opus) via stage pin");
         body.ShouldContain("## 6. Routing pins");
         body.ShouldContain("## 7. Model levels");
         body.ShouldContain("## 8. Operator standing instructions");
@@ -275,10 +275,10 @@ public sealed class OrchestratorInstructionsRendererTests
             new LevelInstructionRow("ClaudeCode", "High", "opus"),
             new LevelInstructionRow("ClaudeCode", "Medium", "sonnet"),
             new LevelInstructionRow("ClaudeCode", "Low", "haiku"),
-            new LevelInstructionRow("Codex", "Frontier", "gpt-6-astra"),
+            new LevelInstructionRow("Codex", "Frontier", "gpt-6.2-astra"),
             new LevelInstructionRow("Grok", "High", "grok-4.7"),
         ],
         StandingLines: ["prefer the live file"],
         Matrix: new MatrixSection("Medium", [new MatrixInstructionRow("Plan",
-            "Codex/Frontier (gpt-6-astra)", "opus", "unset", "ClaudeCode/High (opus)", "stage pin")]));
+            "Codex/Frontier (gpt-6.2-astra)", "opus", "unset", "ClaudeCode/High (opus)", "stage pin")]));
 }

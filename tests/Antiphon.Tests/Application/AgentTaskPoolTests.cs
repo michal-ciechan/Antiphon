@@ -1170,7 +1170,7 @@ public class AgentTaskPoolTests
         await using var ownedProvider = provider;
         var (agentId, sessionId) = await SeedWarmAgentAsync(
             workspace.Path, AgentModelLevel.Frontier, idleMinutes: 10,
-            kind: AgentKind.Codex, connectionString: cs);
+            kind: AgentKind.Codex, connectionString: cs, effectiveModelId: ModelAlias.Gpt62Astra);
         await SeedTaskOnDelegateAsync(
             cs, agentId, sessionId, workspace.Path, AgentTaskStatus.Succeeded,
             DateTime.UtcNow.AddMinutes(-30), kind: AgentKind.Codex,
@@ -1257,7 +1257,7 @@ public class AgentTaskPoolTests
         await using var ownedProvider = provider;
         var (agentId, sessionId) = await SeedWarmAgentAsync(
             workspace.Path, AgentModelLevel.Frontier, idleMinutes: 10,
-            kind: AgentKind.Codex, connectionString: cs);
+            kind: AgentKind.Codex, connectionString: cs, effectiveModelId: ModelAlias.Gpt62Astra);
         await SeedTaskOnDelegateAsync(
             cs, agentId, sessionId, workspace.Path, AgentTaskStatus.Succeeded,
             DateTime.UtcNow.AddMinutes(-30), kind: AgentKind.Codex,
