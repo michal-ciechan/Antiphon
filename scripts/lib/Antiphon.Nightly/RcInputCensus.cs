@@ -165,6 +165,22 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
+        /// CARD-2009 (moved from scripts/rc-input-owner-path-census.ps1): every literal owner path of the working tree's
+        /// scripts/lib/rc-input-owners.json exists, so a renamed owner path cannot silently disable its row. Returns 1
+        /// after one missing-literal-path line per gap; otherwise prints missing-literal-path=0 and returns 0.
+        /// </summary>
+        public static int OwnerPaths(string repositoryRoot, TextWriter output)
+        {
+            var root = Path.GetFullPath(repositoryRoot);
+            var json = File.ReadAllText(Path.Combine(root, RcInputInventory.MapPath.Replace('/', Path.DirectorySeparatorChar)));
+            var missing = RcInputInventory.MissingOwnerLiteralPaths(root, json);
+            foreach (var line in missing) output.WriteLine(line);
+            if (missing.Length > 0) return 1;
+            output.WriteLine("missing-literal-path=0");
+            return 0;
+        }
+
+        /// <summary>
         /// Runs the census over the repository at HEAD (refusing tests and census inputs that differ from HEAD). Lines go
         /// to output; the unowned list goes to .antiphon/rc-unowned-paths.txt. Returns 1 when any pair is under-selected,
         /// a listing is unanalysable or a no-op conflicts with a reader or an owner root; otherwise 0.

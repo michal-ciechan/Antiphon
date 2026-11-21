@@ -28,6 +28,7 @@ namespace Antiphon.Scripts
             ["rc-ledger-plan"] = RcLedgerCommand,
             ["rc-ledger-status"] = RcLedgerCommand,
             ["rc-input-census"] = RcLedgerCommand,
+            ["rc-input-owner-path-census"] = RcLedgerCommand,
             // The post-land early warning answers every input itself: exit 0/1 outcome, 2 refused or usage, 3 not Linux.
             [PostLandCommand.Name] = PostLandCommand.Run,
             // The evidence policy answers every input itself: exit 0 compliant, 1 violations, 2 unverifiable or usage.
@@ -96,7 +97,8 @@ namespace Antiphon.Scripts
             "rc-ledger-import --source-run-root <dir> --evidence-root <dir> --repository <dir> --expected-sha <sha> --expected-run-id <id> [--current-manifest <json>]"
             + " | rc-ledger-plan --request <json> --request-digest <sha256> --repository <dir> --expected-sha <sha> --plan <json>"
             + " | rc-ledger-status --evidence-root <dir> --plan-digest <sha256> [--json]"
-            + " | rc-input-census [--repository <dir>] [--emit-rows] [--scan-only]";
+            + " | rc-input-census [--repository <dir>] [--emit-rows] [--scan-only]"
+            + " | rc-input-owner-path-census [--repository <dir>]";
 
         // --name value flags (and bare switches) into a map; a repeated, unknown or valueless flag is malformed.
         internal static System.Collections.Generic.Dictionary<string, string> Flags(string[] args, string[] valued, string[] switches)
@@ -141,6 +143,11 @@ namespace Antiphon.Scripts
                         flags = Flags(args, new[] { "--repository" }, new[] { "--emit-rows", "--scan-only" });
                         if (flags == null) break;
                         return Antiphon.Nightly.RcInputCensus.Run(F("--repository") ?? Environment.CurrentDirectory, F("--emit-rows") != null, F("--scan-only") != null, Console.Out);
+                    case "rc-input-owner-path-census":
+                        // CARD-2009: exit 1 names every missing literal owner path of the working tree's owner map.
+                        flags = Flags(args, new[] { "--repository" }, new string[0]);
+                        if (flags == null) break;
+                        return Antiphon.Nightly.RcInputCensus.OwnerPaths(F("--repository") ?? Environment.CurrentDirectory, Console.Out);
                     case "rc-ledger-status":
                         flags = Flags(args, new[] { "--evidence-root", "--plan-digest" }, new[] { "--json" });
                         if (flags == null || F("--evidence-root") == null || F("--plan-digest") == null) break;

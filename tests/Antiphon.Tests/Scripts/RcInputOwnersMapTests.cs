@@ -630,6 +630,277 @@ public sealed class RcInputOwnersMapTests : IDisposable
         s.DirtySuites.ShouldBeEmpty("e2e-body-still-defers");
     }
 
+    // A net-zero rename, a moved test and an added [Arguments] row must select. The [Test] count does not.
+    [Test]
+    public void E2EIdentityChangeSelectsSuites()
+    {
+        // class|method|Arguments identities, not the [Test] count. A net-zero rename, a same-identity move between files
+        // and an added [Arguments] row select every suite. A later body edit still defers.
+        const string renamed = "tests/Antiphon.E2E/RenameProbeTests.cs";
+        repo.Put(renamed, "class RenameE2EProbeTests { [Test] void OriginalMethod() { int x = 1; } }");
+        var baseline = repo.Commit();
+        repo.Put(renamed, "class RenameE2EProbeTests { [Test] void RenamedMethod() { int x = 1; } }");
+        var s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-rename-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-rename-stays-shadow");
+        string.IsNullOrEmpty(s.CreditBlockedBy).ShouldBeTrue("e2e-rename-credit:" + s.CreditBlockedBy);
+        const string left = "tests/Antiphon.E2E/MoveLeftProbeTests.cs";
+        const string right = "tests/Antiphon.E2E/MoveRightProbeTests.cs";
+        repo.Put(left, "class MovedE2EProbeTests { [Test] void MovedMethod() { int x = 1; } }");
+        repo.Put(right, "class MovedE2EProbeTests { void Holder() { int x = 1; } }");
+        baseline = repo.Commit();
+        repo.Put(left, "class MovedE2EProbeTests { void Holder() { int x = 1; } }");
+        repo.Put(right, "class MovedE2EProbeTests { [Test] void MovedMethod() { int x = 1; } }");
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-move-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-move-stays-shadow");
+        const string rows = "tests/Antiphon.E2E/ArgumentsProbeTests.cs";
+        repo.Put(rows, "class ArgumentsE2EProbeTests { [Test] void RowMethod() { int x = 1; } }");
+        baseline = repo.Commit();
+        repo.Put(rows, "class ArgumentsE2EProbeTests { [Test] [Arguments(\"added-row\")] void RowMethod() { int x = 1; } }");
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-arguments-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-arguments-stays-shadow");
+        string.IsNullOrEmpty(s.CreditBlockedBy).ShouldBeTrue("e2e-arguments-credit:" + s.CreditBlockedBy);
+        baseline = repo.Head();
+        repo.Put(rows, "class ArgumentsE2EProbeTests { [Test] [Arguments(\"added-row\")] void RowMethod() { int x = 2; } }");
+        s = Select(baseline, repo.Commit());
+        s.DirtySuites.ShouldBeEmpty("e2e-identity-body-still-defers:" + Shown(s));
+        // A multi-line [Arguments] row, a new[] attribute and a generic method are roster changes. Dropping the form
+        // must still select every suite.
+        const string multi = "tests/Antiphon.E2E/MultiLineArgumentsProbeTests.cs";
+        repo.Put(multi, "class MultiLineArgumentsE2EProbeTests { [Test] void RowMethod() { int x = 1; } }");
+        baseline = repo.Commit();
+        repo.Put(multi, "class MultiLineArgumentsE2EProbeTests {\n    [Test]\n    [Arguments(\n        \"b\")]\n    void RowMethod() { int x = 1; }\n}\n");
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-multiline-arguments-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-multiline-arguments-stays-shadow");
+        const string array = "tests/Antiphon.E2E/ArrayArgumentsProbeTests.cs";
+        repo.Put(array, "class ArrayArgumentsE2EProbeTests { [Test] [Arguments(new[] { \"a\" })] void OriginalMethod() { int x = 1; } }");
+        baseline = repo.Commit();
+        repo.Put(array, "class ArrayArgumentsE2EProbeTests { [Test] [Arguments(new[] { \"a\" })] void RenamedMethod() { int x = 1; } }");
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-array-arguments-rename-selects-all:" + Shown(s));
+        const string generic = "tests/Antiphon.E2E/GenericProbeTests.cs";
+        repo.Put(generic, "class GenericE2EProbeTests { [Test] Task A<T>() { return Task.CompletedTask; } }");
+        baseline = repo.Commit();
+        repo.Put(generic, "class GenericE2EProbeTests { [Test] Task B<T>() { return Task.CompletedTask; } }");
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-generic-rename-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-generic-rename-stays-shadow");
+    }
+
+    private static string VerbatimProbe(string method, string body) => """"
+        class VerbatimRenameE2EProbeTests {
+            [Test] void First() {
+                string name = "n";
+                var pattern = @"^Session 1 - ";
+                var quoted = @"say ""hi""";
+                var interp = $@"C:\src\{name.Replace(" ", "-")}";
+                var swapped = @$"pre {name} post";
+                var raw = """
+                    hello
+                    """;
+                var rawInterp = $$$"""
+                    {{{suffix}}}
+                    Work on {{ issue.title }}.
+                    """;
+            }
+            [Test] void METHOD() { int x = BODY; }
+        }
+
+        """".Replace("METHOD", method).Replace("BODY", body);
+
+    private static string CommaProbe(string extra, string body) => """
+        class CommaArgumentsE2EProbeTests {
+            [Test, Arguments(1)EXTRA] void RowMethod() { int x = BODY; }
+        }
+
+        """.Replace("EXTRA", extra).Replace("BODY", body);
+
+    // A rename after a C# verbatim string must select. A later body edit of that method must defer.
+    [Test]
+    public void VerbatimStringRenameSelectsSuites()
+    {
+        // A method renamed after @" $@" and @$" strings, a raw """ string and an interpolated raw string must select. A
+        // later body edit must defer, so the selection is the parsed identity and not an incomplete file. A comma-list
+        // [Test, Arguments(...)] row is part of that identity.
+        const string file = "tests/Antiphon.E2E/VerbatimRenameProbeTests.cs";
+        repo.Put(file, VerbatimProbe("OriginalMethod", "1"));
+        var baseline = repo.Commit();
+        repo.Put(file, VerbatimProbe("RenamedMethod", "1"));
+        var s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-verbatim-rename-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-verbatim-rename-stays-shadow");
+        baseline = repo.Head();
+        repo.Put(file, VerbatimProbe("RenamedMethod", "2"));
+        s = Select(baseline, repo.Commit());
+        s.DirtySuites.ShouldBeEmpty("e2e-verbatim-body-still-defers:" + Shown(s));
+        const string comma = "tests/Antiphon.E2E/CommaArgumentsProbeTests.cs";
+        repo.Put(comma, CommaProbe("", "1"));
+        baseline = repo.Commit();
+        repo.Put(comma, CommaProbe(", Arguments(2)", "1"));
+        s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-comma-arguments-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-comma-arguments-stays-shadow");
+        baseline = repo.Head();
+        repo.Put(comma, CommaProbe(", Arguments(2)", "2"));
+        s = Select(baseline, repo.Commit());
+        s.DirtySuites.ShouldBeEmpty("e2e-comma-arguments-body-still-defers:" + Shown(s));
+    }
+
+    private static string FailClosedProbe(string body) => """
+        class FailClosedE2EProbeTests {
+            [Test] public int NotAMethod => 1;
+            [Test] void RealMethod() { int x = BODY; }
+        }
+
+        """.Replace("BODY", body);
+
+    // An unparsed [Test] makes a body edit select. The identity map itself does not change.
+    [Test]
+    public void FailClosedOnlySelectsSuites()
+    {
+        // [Test] on a property is not a method. A body edit of the real method keeps the same identity map, so only the
+        // incomplete-file rule selects.
+        const string file = "tests/Antiphon.E2E/FailClosedProbeTests.cs";
+        repo.Put(file, FailClosedProbe("1"));
+        var baseline = repo.Commit();
+        repo.Put(file, FailClosedProbe("2"));
+        var s = Select(baseline, repo.Commit());
+        SameSet(s, AllSuites(s), "e2e-fail-closed-selects-all:" + Shown(s));
+        StaysShadow(s, "e2e-fail-closed-stays-shadow");
+    }
+
+    // Every E2E file's parsed tests match an independent [Test] count, and none is incomplete.
+    [Test]
+    public void RealE2EParseMatchesRegex()
+    {
+        // Independent of the scanner's own counters: comment-stripped [Test and Arguments( counts, compared with what
+        // the parser matched.
+        var tree = Path.GetFullPath(RcInputFixtureRepository.SourceRoot);
+        var e2eRoot = Path.Combine(tree, "tests", "Antiphon.E2E");
+        var testRegex = new Regex(@"\[Test(?![A-Za-z0-9_])", RegexOptions.CultureInvariant);
+        var files = Directory.GetFiles(e2eRoot, "*.cs", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).ToArray();
+        (files.Length > 0).ShouldBeTrue("e2e-tree-empty");
+        var misses = new List<string>();
+        foreach (var file in files)
+        {
+            var text = File.ReadAllText(file);
+            var parse = RcTestIdentity.Parse(text);
+            var tests = testRegex.Matches(RcTestIdentity.CommentStripped(text)).Count;
+            var rel = Path.GetFullPath(file).Substring(tree.Length).TrimStart('\\', '/').Replace('\\', '/');
+            if (parse.Matched != tests) misses.Add($"e2e-test-count:{rel}:matched={parse.Matched}:regex={tests}");
+            if (parse.Incomplete)
+                misses.Add($"e2e-incomplete:{rel}:tests={parse.TestAttributes}/{parse.Matched}:args={parse.ArgumentOpeners}/{parse.CapturedArguments}");
+        }
+        misses.ShouldBeEmpty(string.Join(" | ", misses));
+    }
+
+    // A renamed literal owner path must fail closed. Absence of the census is that miss.
+    [Test]
+    public void OwnerLiteralPathsFailClosed()
+    {
+        // Every literal owner path, exceptPaths prefix and owner-glob prefix must exist. Renaming the canary, the E2E
+        // directory or tests/Shared fails closed and names the missing path.
+        var censusRoot = Path.Combine(repo.Scratch, "owner-literal");
+        string Literal(string relative) => Path.Combine(censusRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+        foreach (var dir in new[] { "tests/Antiphon.E2E", "tests/Shared", "tests/Antiphon.Tests/Agents", "tests/fixtures", "docs/reviews" })
+            Directory.CreateDirectory(Literal(dir));
+        const string canaryRel = "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs";
+        File.WriteAllText(Literal(canaryRel), "class Canary {}");
+        var json = new JsonObject
+        {
+            ["schemaVersion"] = 1,
+            ["suiteProjects"] = "tests/**/*.csproj",
+            ["testOnly"] = new JsonObject
+            {
+                ["enabled"] = true,
+                ["paths"] = new JsonArray("tests/**/*.cs", "tests/fixtures/**"),
+                ["exceptPaths"] = new JsonArray("tests/Shared/**"),
+                ["exceptReasons"] = new JsonArray("forced-full-root"),
+                ["productEdgeReasons"] = new JsonArray("runtime-reader-scan"),
+            },
+            ["roots"] = new JsonArray(
+                new JsonObject { ["path"] = canaryRel, ["consumers"] = new JsonArray("tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"), ["reason"] = "runtime-reader-scan" },
+                new JsonObject { ["path"] = "tests/Antiphon.E2E/**/*.cs", ["consumers"] = new JsonArray("*"), ["reason"] = "runtime-reader-unproven", ["walker"] = true },
+                new JsonObject { ["path"] = "docs/**", ["except"] = new JsonArray("docs/reviews/**"), ["consumers"] = new JsonArray("*"), ["reason"] = "repository-reader-non-code" }),
+        }.ToJsonString();
+        var missing = RcInputInventory.MissingOwnerLiteralPaths(censusRoot, json);
+        var intact = missing.Length == 0;
+        File.Delete(Literal(canaryRel));
+        missing = RcInputInventory.MissingOwnerLiteralPaths(censusRoot, json);
+        var message = string.Join(" | ", missing);
+        var renamed = missing.Count(m => m.StartsWith("missing-literal-path:", StringComparison.Ordinal) && m.Contains(canaryRel, StringComparison.Ordinal)) >= 1;
+        File.WriteAllText(Literal(canaryRel), "class Canary {}");
+        Directory.Delete(Literal("tests/Antiphon.E2E"));
+        missing = RcInputInventory.MissingOwnerLiteralPaths(censusRoot, json);
+        var prefixMessage = string.Join(" | ", missing);
+        var prefixGone = missing.Count(m => m.StartsWith("missing-literal-path:", StringComparison.Ordinal) && m.Contains("tests/Antiphon.E2E", StringComparison.Ordinal)) >= 1;
+        Directory.CreateDirectory(Literal("tests/Antiphon.E2E"));
+        Directory.Delete(Literal("tests/Shared"));
+        missing = RcInputInventory.MissingOwnerLiteralPaths(censusRoot, json);
+        var exceptMessage = string.Join(" | ", missing);
+        var exceptGone = missing.Count(m => m.StartsWith("missing-literal-path:", StringComparison.Ordinal) && m.Contains("tests/Shared", StringComparison.Ordinal)) >= 1;
+        intact.ShouldBeTrue("literal-intact-not-quiet");
+        renamed.ShouldBeTrue("literal-rename-not-detected:" + message);
+        prefixGone.ShouldBeTrue("literal-prefix-not-detected:" + prefixMessage);
+        exceptGone.ShouldBeTrue("literal-except-not-detected:" + exceptMessage);
+    }
+
+    // The committed owner map is checked against this tree. Renaming the canary must fail that check.
+    [Test]
+    public void RealOwnerMapLiteralPathsExist()
+    {
+        // The committed map is checked against this repository, and the census command answers the same. A scratch copy
+        // of those literal prefixes must go red when the canary file is renamed.
+        var sourceRoot = RcInputFixtureRepository.SourceRoot;
+        var json = SourceMap.Value;
+        var live = RcInputInventory.MissingOwnerLiteralPaths(sourceRoot, json);
+        live.ShouldBeEmpty("real-owner-map:" + string.Join(" | ", live));
+        var census = new StringWriter();
+        var exit = RcInputCensus.OwnerPaths(sourceRoot, census);
+        var censusOut = census.ToString().Replace("\r\n", "\n").TrimEnd('\n').Replace("\n", " | ");
+        (exit == 0 && census.ToString().Contains("missing-literal-path=0", StringComparison.Ordinal)).ShouldBeTrue("real-census-command:" + exit + ":" + censusOut);
+        var map = SourceMapNode();
+        static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 ? text : null;
+        var rootPaths = map["roots"]!.AsArray().Select(r => Text(r?["path"])).OfType<string>().ToArray();
+        var canary = rootPaths.Where(p => p.EndsWith("ClaudeDialogWatchdogCanaryTests.cs", StringComparison.Ordinal)).ToArray();
+        canary.Length.ShouldBe(1, "real-canary-row:" + string.Join(",", canary));
+        var scratch = Path.Combine(repo.Scratch, "real-map-canary");
+        Directory.CreateDirectory(scratch);
+        var patterns = new List<string>();
+        if (Text(map["suiteProjects"]) is { } suitePattern) patterns.Add(suitePattern);
+        if (map["testOnly"] is JsonObject testOnly)
+            foreach (var name in new[] { "paths", "exceptPaths" })
+                if (testOnly[name] is JsonArray items)
+                    patterns.AddRange(items.Select(Text).OfType<string>());
+        patterns.AddRange(rootPaths);
+        foreach (var pattern in patterns)
+        {
+            var prefix = RcInputInventory.LiteralPathPrefix(pattern);
+            if (prefix == null) continue;
+            var full = Path.Combine(scratch, prefix.Replace('/', Path.DirectorySeparatorChar));
+            if (pattern.IndexOfAny(['*', '?']) >= 0)
+            {
+                Directory.CreateDirectory(full);
+                continue;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            if (!File.Exists(full) && !Directory.Exists(full)) File.WriteAllText(full, "x");
+        }
+        var scratchIntact = RcInputInventory.MissingOwnerLiteralPaths(scratch, json);
+        scratchIntact.ShouldBeEmpty("scratch-map-intact:" + string.Join(" | ", scratchIntact));
+        if (canary.Length == 1)
+        {
+            var canaryFull = Path.Combine(scratch, canary[0].Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(canaryFull)) File.Move(canaryFull, canaryFull + ".renamed");
+            var scratchMissing = RcInputInventory.MissingOwnerLiteralPaths(scratch, json);
+            scratchMissing.Count(m => m.StartsWith("missing-literal-path:", StringComparison.Ordinal) && m.Contains(canary[0], StringComparison.Ordinal))
+                .ShouldBeGreaterThanOrEqualTo(1, "scratch-canary-rename:" + string.Join(" | ", scratchMissing));
+        }
+    }
+
     [Test]
     public void CanaryEditSelectsPtySuite()
     {

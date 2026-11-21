@@ -684,10 +684,75 @@ namespace Antiphon.Nightly
             return lines.ToArray();
         }
 
+        // ---- owner-map literal paths (CARD-2009) -------------------------------------------------------------------
+
+        /// <summary>
+        /// The directory part of an owner pattern before its first wildcard, or the whole pattern when it has none.
+        /// scripts/nightly-*.ps1 cuts mid-segment, so its prefix is the directory before that segment. A pattern that
+        /// starts with a wildcard (for example **/*.md) has no prefix: null.
+        /// </summary>
+        public static string LiteralPathPrefix(string pattern)
+        {
+            if (string.IsNullOrEmpty(pattern)) return null;
+            var star = pattern.IndexOfAny(new[] { '*', '?' });
+            var literal = (star < 0 ? pattern : pattern.Substring(0, star)).TrimEnd('/');
+            if (literal.Length == 0) return null;
+            if (star >= 0 && !pattern.Substring(0, star).EndsWith("/", StringComparison.Ordinal))
+            {
+                var slash = literal.LastIndexOf('/');
+                if (slash < 0) return null;
+                literal = literal.Substring(0, slash);
+            }
+            return literal;
+        }
+
+        /// <summary>
+        /// One "missing-literal-path: &lt;prefix&gt; &lt;= &lt;pattern&gt;" line for each literal prefix of the map's
+        /// suiteProjects, testOnly paths and exceptPaths, and root paths that does not exist under the repository's
+        /// working tree: a renamed literal owner path would otherwise silently disable its row. Root except carve-outs are
+        /// not checked (a missing carve-out over-selects). Each prefix is checked once.
+        /// </summary>
+        public static string[] MissingOwnerLiteralPaths(string repositoryRoot, string mapJson)
+        {
+            if (string.IsNullOrEmpty(repositoryRoot) || string.IsNullOrEmpty(mapJson)) throw Refuse("missing-owner-literal-input");
+            using var json = JsonDocument.Parse(mapJson);
+            var map = json.RootElement;
+            if (map.ValueKind != JsonValueKind.Object) throw Refuse("invalid-input-map");
+            var patterns = new List<string>();
+            void AddText(JsonElement value)
+            {
+                if (value.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.GetString())) patterns.Add(value.GetString());
+            }
+            if (map.TryGetProperty("suiteProjects", out var suiteProjects)) AddText(suiteProjects);
+            if (map.TryGetProperty("testOnly", out var testOnly) && testOnly.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var name in new[] { "paths", "exceptPaths" })
+                {
+                    if (!testOnly.TryGetProperty(name, out var items)) continue;
+                    if (items.ValueKind == JsonValueKind.Array) foreach (var item in items.EnumerateArray()) AddText(item);
+                    else AddText(items);
+                }
+            }
+            if (map.TryGetProperty("roots", out var roots) && roots.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var root in roots.EnumerateArray())
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("path", out var path)) AddText(path);
+            }
+            var missing = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var pattern in patterns)
+            {
+                var prefix = LiteralPathPrefix(pattern);
+                if (prefix == null || !seen.Add(prefix)) continue;
+                var full = System.IO.Path.Join(repositoryRoot, prefix.Replace('/', System.IO.Path.DirectorySeparatorChar));
+                if (!File.Exists(full) && !Directory.Exists(full)) missing.Add("missing-literal-path: " + prefix + " <= " + pattern);
+            }
+            return missing.ToArray();
+        }
+
         // ---- two commits ------------------------------------------------------------------------------------------
 
         private static readonly Regex ClassDeclaration = new Regex(@"(?<![A-Za-z0-9_])class\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.CultureInvariant);
-        private static readonly Regex TestAttribute = new Regex(@"\[Test(?![A-Za-z0-9_])", RegexOptions.CultureInvariant);
 
         private static IEnumerable<string> CodeLines(string text)
         {
@@ -710,8 +775,6 @@ namespace Antiphon.Nightly
                 }
             return counts;
         }
-
-        private static int TestAttributes(string text) => CodeLines(text).Sum(line => TestAttribute.Matches(line).Count);
 
         private sealed class TestOnlyPolicy
         {
@@ -783,8 +846,9 @@ namespace Antiphon.Nightly
         /// The two snapshots of a baseline and a candidate, their changed paths and the dirty suites. A suite is dirty
         /// when it exists on one side only or its input records differ once each side records the other's paths as
         /// absent. A changed path on a positive index edge dirties its suites. With the test-only policy on, a suite
-        /// whose changed inputs are all test-only (no product edge, no structural walker change, no new test attribute
-        /// under a * walker) is deferred, and classes added by a test-only change are listed as changed but not run.
+        /// whose changed inputs are all test-only (no product edge, no structural walker change, no roster identity
+        /// change or unparsed test form under a * walker) is deferred, and classes added by a test-only change are
+        /// listed as changed but not run.
         /// </summary>
         public static RcInputManifest Manifest(string repositoryRoot, string baselineSha, string candidateSha, RcDerivedIndex derivedIndex = null)
         {
@@ -861,7 +925,9 @@ namespace Antiphon.Nightly
                         var changeStatus = status.TryGetValue(path, out var s) ? s : "M";
                         var structural = changeStatus == "A" || changeStatus == "D" || changeStatus == "T" || !SameCounts(ClassCounts(FileText(baselineSha, path)), ClassCounts(FileText(candidateSha, path)));
                         if (structural && policy.IsWalker(id, path)) keep = true;
-                        if (policy.IsStarWalker(path) && TestAttributes(FileText(candidateSha, path)) > TestAttributes(FileText(baselineSha, path))) keep = true;
+                        // CARD-2009: a roster identity change (class|method|Arguments) selects every suite; so does a
+                        // file whose [Test] or Arguments( forms the scan could not match.
+                        if (policy.IsStarWalker(path) && RcTestIdentity.Changed(FileText(baselineSha, path), FileText(candidateSha, path))) keep = true;
                     }
                     if (keep) continue;
                     dirty.Remove(id);
