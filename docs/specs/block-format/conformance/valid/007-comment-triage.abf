@@ -1,0 +1,15 @@
+@abf 1 comment-triage/1.0
+=== comment PRRC_kwDOAbc123
+finding: F3
+scope: repo
+scope-confidence: 0.81
+reason-category: by-design
+reason-category-confidence: 0.9
+dismiss 0.93
+question-finding 0.12
+--- reason
+The author says the EF execution strategy retries saves for the whole repository.
+=== comment PRRC_kwDOAbc124
+approval 0.88
+noise 0.05
+=== end

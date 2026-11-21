@@ -1,0 +1,14 @@
+@abf 1 review-findings/1.0
+=== finding F1
+check: CHK-0200
+severity: nit
+confidence: 0.5
+file: docs/report-format.md
+anchor: === checks
+--- body
+```text
+=== checks
+```
+=== checks
+CHK-0200 finding F1
+=== end

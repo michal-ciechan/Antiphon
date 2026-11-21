@@ -1,0 +1,14 @@
+review body
+--- REVIEW EVIDENCE ---
+SUBJECTTASKID: AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
+ReviewedSourceSha: 0123456789ABCDEF0123456789ABCDEF01234567
+ordinaryScopeCompleted: interim
+  ordinaryScopeCompleted: Full
+reviewedSourceClean: True
+
+subject_task_id: 11111111-2222-3333-4444-555555555555
+--- next stage ---
+next: Review
+handoff: Final review of the Interim round.
+artifact: `docs/superpowers/plans/2026-11-21-example-plan.md`
+[antiphon-report:aaaaaaaa done]

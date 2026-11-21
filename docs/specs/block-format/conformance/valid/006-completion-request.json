@@ -1,0 +1,43 @@
+{
+  "abf": 1,
+  "type": "completion-request",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "request",
+      "id": "R-20261121-0107",
+      "fields": {
+        "expect": "review-findings/1.0"
+      },
+      "rows": []
+    },
+    {
+      "type": "instructions",
+      "id": null,
+      "fields": {
+        "body": "Review the diff below against check CHK-0311 only.\nReply with one review-findings/1.0 document."
+      },
+      "rows": []
+    },
+    {
+      "type": "input",
+      "id": "diff",
+      "fields": {
+        "title": "order_totals.sql at 3f2c9e1",
+        "source": "db/views/order_totals.sql",
+        "body": "--- a/db/views/order_totals.sql\n+++ b/db/views/order_totals.sql\n@@ -1,4 +1,4 @@\n--- totals\n+-- totals per order\n SELECT order_id, SUM(price) AS total\n FROM order_lines"
+      },
+      "rows": []
+    },
+    {
+      "type": "input",
+      "id": "check",
+      "fields": {
+        "title": "CHK-0311",
+        "body": "Flag a view whose comment no longer describes its columns."
+      },
+      "rows": []
+    }
+  ],
+  "diagnostics": []
+}

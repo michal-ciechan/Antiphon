@@ -1,0 +1,25 @@
+@abf 1 decision-request/1.0
+=== request R-20261121-0042
+respond-with: decision-response/1.0
+=== state
+--- body
+PR #812 in orders-service: "Release the order lock only after SaveChangesAsync completes."
+Changed files: src/Orders/OrderSaver.cs (+14 -6), tests/Orders/OrderSaverTests.cs (+40).
+=== question touches-persistence
+type: noul
+instructions: Does this change alter how data is written to a database?
+=== question risk
+type: choice
+instructions: Which risk category fits the change best?
+low Cosmetic or test-only
+medium Behaviour change behind existing contracts
+high Changes an external contract or stored data
+=== question reversal-after-months
+type: score
+instructions: How hard would it be to reverse this change after months in production?
+1 Trivial
+2 Easy
+3 Moderate
+4 Hard
+5 Practically impossible
+=== end

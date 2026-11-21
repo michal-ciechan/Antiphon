@@ -1,0 +1,44 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0200",
+        "severity": "nit",
+        "confidence": "0.5",
+        "file": "docs/report-format.md",
+        "anchor": "=== checks",
+        "body": "The format example shows the record line unescaped:\n~~~text\n=== checks\n--- body\n~~~\nEscape it with a backslash instead."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0200",
+          "finding",
+          "F1"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 11,
+      "code": "unescaped-in-fence",
+      "severity": "warning"
+    },
+    {
+      "line": 12,
+      "code": "unescaped-in-fence",
+      "severity": "warning"
+    }
+  ]
+}

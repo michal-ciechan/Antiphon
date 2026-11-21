@@ -1,0 +1,9 @@
+@abf 1 comment-triage/1.0
+=== Comment PRRC_kwDOAbc123
+Finding: F3
+reason category: by-design
+reason_category_confidence: 0.9
+scope:repo
+scopeConfidence: 0.81
+Dismiss 0.93
+=== end

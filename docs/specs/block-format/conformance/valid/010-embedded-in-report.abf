@@ -1,0 +1,12 @@
+Reviewed the pushed tip. Findings below.
+
+@abf 1 review-findings/1.0
+=== checks
+CHK-0142 pass
+CHK-0007 n/a Test-only change
+=== end
+
+--- next stage ---
+next: land
+handoff: Clean review.
+[antiphon-report:aaaaaaaa done]

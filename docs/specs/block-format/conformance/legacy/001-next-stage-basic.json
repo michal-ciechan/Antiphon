@@ -1,0 +1,42 @@
+{
+  "source": "Real report tail (.antiphon/task-03d6c869.md), trimmed. Progress-claim token line and closing report token.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 6,
+        "standalone": true,
+        "fields": {
+          "next": "review",
+          "handoff": "CARD-1385 tip e6f917ef0cf4163b4c549df765bfef5960aff514 hashes 57 dotnet-build definition files; manifest F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F. CP-1 red 1 failed at af0ba47b6; CP-2 green 44/44. Master only, no PCs, no RC backport. Review the selector, fail-closed manifest load, and Skipped(non-code).",
+          "artifact": "docs/superpowers/plans/2026-10-21-card-1385-land-graph-fingerprint-plan.md"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "review",
+      "rawToken": "review",
+      "handoff": "CARD-1385 tip e6f917ef0cf4163b4c549df765bfef5960aff514 hashes 57 dotnet-build definition files; manifest F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F. CP-1 red 1 failed at af0ba47b6; CP-2 green 44/44. Master only, no PCs, no RC backport. Review the selector, fail-closed manifest load, and Skipped(non-code).",
+      "artifactPath": "docs/superpowers/plans/2026-10-21-card-1385-land-graph-fingerprint-plan.md"
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

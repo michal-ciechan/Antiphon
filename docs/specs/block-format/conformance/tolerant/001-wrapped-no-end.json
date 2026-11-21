@@ -1,0 +1,44 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0142",
+        "severity": "major",
+        "confidence": "0.8",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "_lock.Release();",
+        "body": "The lock is released before the save completes."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "finding",
+          "F1"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 4,
+      "code": "wrapped-document",
+      "severity": "warning"
+    },
+    {
+      "line": 15,
+      "code": "missing-end",
+      "severity": "warning"
+    }
+  ]
+}

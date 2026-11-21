@@ -1,0 +1,42 @@
+{
+  "source": "Real report tail (.antiphon/task-0a670765.md). Unrecognised next token; artifact is not a docs/**/*.md path.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 3,
+        "standalone": true,
+        "fields": {
+          "next": "short Final review of D-1/D-2 then land",
+          "handoff": "D-1 caller-row adjustment is in ToSummary; D-2 list witness pins the old candidate rollup (scope-excluded child still counts; status, specialist, and since exclusions do not) and goes red under Rollup(items)",
+          "artifact": "feat/card-task-0a670765 code tip f1909ae8efed0f8a633ab59ce922291919828306"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": null,
+      "rawToken": "short Final review of D-1/D-2 then land",
+      "handoff": "D-1 caller-row adjustment is in ToSummary; D-2 list witness pins the old candidate rollup (scope-excluded child still counts; status, specialist, and since exclusions do not) and goes red under Rollup(items)",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

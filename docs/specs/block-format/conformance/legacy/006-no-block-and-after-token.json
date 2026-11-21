@@ -1,0 +1,29 @@
+{
+  "source": "Real report tail (.antiphon/task-11c3a54a.md) plus the block-after-token case from PipelineHandoffParseTests.a_block_after_the_report_token_is_ignored.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": false,
+      "kind": null,
+      "rawToken": null,
+      "handoff": null,
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

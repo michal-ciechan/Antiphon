@@ -1,0 +1,10 @@
+review body
+--- next stage ---
+next: land
+handoff: bind SHA
+
+artifact: docs/superpowers/plans/2026-11-21-example-plan.md
+--- review evidence ---
+subjectTaskId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+reviewedSourceSha: 0123456789abcdef0123456789abcdef01234567
+[antiphon-report:aaaaaaaa done]

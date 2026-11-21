@@ -1,0 +1,56 @@
+{
+  "source": "Built from server/Bundles/stage-review.md lines 7-15 and ReviewEvidenceParserTests; adds an ABF review-findings document before the legacy blocks.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 16,
+        "standalone": true,
+        "fields": {
+          "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "reviewedSourceSha": "0123456789abcdef0123456789abcdef01234567",
+          "reviewedSourceClean": "true",
+          "ordinaryScopeCompleted": "Full",
+          "reviewRound": "1",
+          "reviewedRange": "1111111111111111111111111111111111111111..0123456789abcdef0123456789abcdef01234567"
+        },
+        "rows": []
+      },
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 23,
+        "standalone": true,
+        "fields": {
+          "next": "land",
+          "handoff": "Clean Final review; land the Code owner with -ExpectedSourceSha 0123456789abcdef0123456789abcdef01234567."
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "land",
+      "rawToken": "land",
+      "handoff": "Clean Final review; land the Code owner with -ExpectedSourceSha 0123456789abcdef0123456789abcdef01234567.",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": true,
+      "usable": true,
+      "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "reviewedSourceSha": "0123456789abcdef0123456789abcdef01234567",
+      "warning": null,
+      "scope": "Full",
+      "reviewedSourceClean": true
+    }
+  }
+}

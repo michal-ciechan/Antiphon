@@ -1,0 +1,19 @@
+@abf 1 review-findings/1.0
+=== finding F3
+check: CHK-0200
+severity: nit
+confidence: 0.5
+file: docs/report-format.md
+anchor: --- next stage ---
+--- body
+The example block is missing its closing line. Escaped structural lines:
+\=== end
+\=== finding F9
+\--- body
+\--- next stage ---
+\@abf 1 review-findings/1.0
+\\=== one backslash stays
+\not structural, kept as written
+=== checks
+CHK-0200 finding F3
+=== end

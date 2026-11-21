@@ -1,0 +1,24 @@
+review body
+```
+--- review evidence ---
+subjectTaskId: 11111111-2222-3333-4444-555555555555
+reviewedSourceSha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ordinaryScopeCompleted: None
+```
+> --- review evidence ---
+> subjectTaskId: 11111111-2222-3333-4444-555555555555
+--- review evidence ---
+subjectTaskId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+reviewedSourceSha: 0123456789abcdef0123456789abcdef01234567
+ordinaryScopeCompleted: Full
+--- separator ---
+```
+--- review evidence ---
+subjectTaskId: 11111111-2222-3333-4444-555555555555
+reviewedSourceSha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ordinaryScopeCompleted: None
+```
+--- next stage ---
+next: land
+handoff: bind SHA
+[antiphon-report:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee done]

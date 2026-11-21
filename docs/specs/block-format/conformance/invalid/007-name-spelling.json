@@ -1,0 +1,15 @@
+{
+  "expect": "comment-triage/1.0",
+  "errors": [
+    {
+      "line": 3,
+      "code": "name-spelling",
+      "name": "reason-category"
+    },
+    {
+      "line": 4,
+      "code": "name-spelling",
+      "name": "scope"
+    }
+  ]
+}

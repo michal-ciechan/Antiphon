@@ -1,0 +1,42 @@
+{
+  "source": "Real report tail (.antiphon/task-1d5d34a3.md), trimmed. The next-stage parser does not track fences.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 6,
+        "standalone": true,
+        "fields": {
+          "next": "review",
+          "handoff": "Review feat/card-task-1d5d34a3. Product behavior verified at 63ed1c99ca406102291b91265e49cd6d730f02ff.",
+          "artifact": ".antiphon/task-1d5d34a3.md"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "review",
+      "rawToken": "review",
+      "handoff": "Review feat/card-task-1d5d34a3. Product behavior verified at 63ed1c99ca406102291b91265e49cd6d730f02ff.",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

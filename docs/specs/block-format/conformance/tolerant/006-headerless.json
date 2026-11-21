@@ -1,0 +1,44 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0142",
+        "severity": "minor",
+        "confidence": "0.55",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "_lock.Release();",
+        "body": "Probably fine, but the release could move after the save."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "finding",
+          "F1"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 3,
+      "code": "missing-header",
+      "severity": "warning"
+    },
+    {
+      "line": 12,
+      "code": "missing-end",
+      "severity": "warning"
+    }
+  ]
+}

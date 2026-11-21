@@ -1,0 +1,20 @@
+{
+  "expect": "review-findings/1.0",
+  "errors": [
+    {
+      "line": 4,
+      "code": "bad-enum",
+      "name": "severity"
+    },
+    {
+      "line": 5,
+      "code": "bad-value",
+      "name": "confidence"
+    },
+    {
+      "line": 12,
+      "code": "bad-enum",
+      "name": "status"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+@abf 1 review-findings/1.0
+=== finding F1
+check: CHK-0142
+severity: major
+confidence: 0.8
+file: src/Orders/OrderSaver.cs
+anchor: _lock.Release();
+--- body
+The release should move after the save:
+```cs
+await _db.SaveChangesAsync(ct);
+_lock.Release();
+=== checks
+CHK-0142 finding F1
+=== end

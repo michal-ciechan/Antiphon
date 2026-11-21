@@ -1,0 +1,39 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0142",
+        "severity": "major",
+        "confidence": "0.8",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "_lock.Release();",
+        "body": "The release should move after the save:\n```cs\nawait _db.SaveChangesAsync(ct);\n_lock.Release();"
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "finding",
+          "F1"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 10,
+      "code": "unterminated-fence",
+      "severity": "warning"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "source": "ReviewEvidenceParserTests.C807_StandaloneErrorPrecedence (placement row), plus a field after a blank line.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 2,
+        "standalone": true,
+        "fields": {
+          "next": "land",
+          "handoff": "bind SHA",
+          "artifact": "docs/superpowers/plans/2026-11-21-example-plan.md"
+        },
+        "rows": []
+      },
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 7,
+        "standalone": true,
+        "fields": {
+          "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "reviewedSourceSha": "0123456789abcdef0123456789abcdef01234567"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "land",
+      "rawToken": "land",
+      "handoff": "bind SHA",
+      "artifactPath": "docs/superpowers/plans/2026-11-21-example-plan.md"
+    },
+    "review-evidence": {
+      "found": true,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": "review_evidence_after_next_stage",
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

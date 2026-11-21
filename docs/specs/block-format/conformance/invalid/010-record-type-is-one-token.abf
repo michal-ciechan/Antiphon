@@ -1,0 +1,4 @@
+@abf 1 seed-candidates/1.0
+=== check candidate C1
+title: Lock released before async save completes
+=== end

@@ -1,0 +1,15 @@
+@abf 1 decision-response/1.0
+=== response R-20261121-0042
+=== answer touches-persistence
+value: 0.92
+confidence: 0.85
+=== answer risk
+value: medium
+confidence: 0.7
+low 0.1
+medium 0.7
+high 0.2
+=== answer reversal-after-months
+refused: true
+reason: The state does not say whether a migration ships with the change.
+=== end

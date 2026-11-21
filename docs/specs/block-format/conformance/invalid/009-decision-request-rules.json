@@ -1,0 +1,24 @@
+{
+  "expect": "decision-request/1.0",
+  "errors": [
+    {
+      "line": 10,
+      "code": "duplicate-option",
+      "name": "csv"
+    },
+    {
+      "line": 11,
+      "code": "missing-options",
+      "name": "size"
+    },
+    {
+      "line": 17,
+      "code": "unexpected-row"
+    },
+    {
+      "line": 18,
+      "code": "duplicate-id",
+      "name": "Format"
+    }
+  ]
+}

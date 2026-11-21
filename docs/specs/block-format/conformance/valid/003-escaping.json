@@ -1,0 +1,33 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F3",
+      "fields": {
+        "check": "CHK-0200",
+        "severity": "nit",
+        "confidence": "0.5",
+        "file": "docs/report-format.md",
+        "anchor": "--- next stage ---",
+        "body": "The example block is missing its closing line. Escaped structural lines:\n=== end\n=== finding F9\n--- body\n--- next stage ---\n@abf 1 review-findings/1.0\n\\=== one backslash stays\n\\not structural, kept as written"
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0200",
+          "finding",
+          "F3"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": []
+}

@@ -1,0 +1,12 @@
+I checked CHK-0142 only.
+
+=== finding F1
+check: CHK-0142
+severity: minor
+confidence: 0.55
+file: src/Orders/OrderSaver.cs
+anchor: _lock.Release();
+--- body
+Probably fine, but the release could move after the save.
+=== checks
+CHK-0142 finding F1

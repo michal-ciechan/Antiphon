@@ -1,0 +1,10 @@
+`scripts/check-evidence-diff.ps1 -BaseRef e65343132e877ce20bd26540d440eff3867d9798 -HeadRef 63ed1c99ca406102291b91265e49cd6d730f02ff` exited 0: 10 commits, 0 violations.
+
+## Next stage
+
+```
+--- next stage ---
+next: review
+handoff: Review feat/card-task-1d5d34a3. Product behavior verified at 63ed1c99ca406102291b91265e49cd6d730f02ff.
+artifact: .antiphon/task-1d5d34a3.md
+```

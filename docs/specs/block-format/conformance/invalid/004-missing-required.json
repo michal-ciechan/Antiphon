@@ -1,0 +1,20 @@
+{
+  "expect": "review-findings/1.0",
+  "errors": [
+    {
+      "line": 1,
+      "code": "missing-record",
+      "name": "checks"
+    },
+    {
+      "line": 2,
+      "code": "missing-required",
+      "name": "anchor"
+    },
+    {
+      "line": 2,
+      "code": "missing-required",
+      "name": "body"
+    }
+  ]
+}

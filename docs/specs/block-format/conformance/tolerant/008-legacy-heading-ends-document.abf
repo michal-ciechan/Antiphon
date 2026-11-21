@@ -1,0 +1,9 @@
+@abf 1 review-findings/1.0
+=== checks
+CHK-0142 pass
+--- review evidence ---
+subjectTaskId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+reviewedSourceSha: 0123456789abcdef0123456789abcdef01234567
+--- next stage ---
+next: land
+handoff: Clean review; land the subject at the reviewed SHA.

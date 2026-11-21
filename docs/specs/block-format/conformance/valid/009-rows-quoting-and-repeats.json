@@ -1,0 +1,59 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F4",
+      "fields": {
+        "check": "CHK-0510",
+        "severity": "blocker",
+        "confidence": "0.9",
+        "file": "src/Billing/InvoiceWriter.cs",
+        "anchor": "File.WriteAllText(path, json);",
+        "flags": [
+          "security",
+          "data-loss"
+        ],
+        "body": "Writes customer data to a world-readable temp path."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0510",
+          "finding",
+          "F4"
+        ],
+        [
+          "CHK-0007",
+          "unverified",
+          "Could not run the analyzer"
+        ]
+      ]
+    },
+    {
+      "type": "context",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "opened",
+          "docs/billing/Data Retention.md",
+          "Retention rules for invoices"
+        ],
+        [
+          "opened",
+          "src/Billing/Temp \"Scratch\" Paths.cs",
+          "Quoted reason, kept whole"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": []
+}

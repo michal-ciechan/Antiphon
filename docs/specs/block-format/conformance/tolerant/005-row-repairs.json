@@ -1,0 +1,73 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0142",
+        "severity": "major",
+        "confidence": "80%",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "_lock.Release();",
+        "body": "The lock is released before the save completes."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "finding",
+          "F1"
+        ],
+        [
+          "CHK-0007",
+          "pass"
+        ],
+        [
+          "CHK-0311",
+          "n/a"
+        ],
+        [
+          "CHK-0400",
+          "skipped"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 5,
+      "code": "value-repaired",
+      "severity": "warning",
+      "name": "confidence"
+    },
+    {
+      "line": 11,
+      "code": "row-bullet",
+      "severity": "warning"
+    },
+    {
+      "line": 12,
+      "code": "field-as-row",
+      "severity": "warning"
+    },
+    {
+      "line": 13,
+      "code": "row-bullet",
+      "severity": "warning"
+    },
+    {
+      "line": 14,
+      "code": "bad-enum",
+      "severity": "warning",
+      "name": "status"
+    }
+  ]
+}

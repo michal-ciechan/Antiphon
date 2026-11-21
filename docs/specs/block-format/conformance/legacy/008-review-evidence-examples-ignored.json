@@ -1,0 +1,85 @@
+{
+  "source": "ReviewEvidenceParserTests.C807_MixedExamplesPreserveStandalone and C488_QuotedAndFencedBlocksAreNotEvidence.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 3,
+        "standalone": false,
+        "fields": {},
+        "rows": []
+      },
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 8,
+        "standalone": false,
+        "fields": {},
+        "rows": []
+      },
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 10,
+        "standalone": true,
+        "fields": {
+          "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "reviewedSourceSha": "0123456789abcdef0123456789abcdef01234567",
+          "ordinaryScopeCompleted": "Full"
+        },
+        "rows": []
+      },
+      {
+        "type": "separator",
+        "id": null,
+        "line": 14,
+        "standalone": true,
+        "fields": {},
+        "rows": []
+      },
+      {
+        "type": "review-evidence",
+        "id": null,
+        "line": 16,
+        "standalone": false,
+        "fields": {},
+        "rows": []
+      },
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 21,
+        "standalone": true,
+        "fields": {
+          "next": "land",
+          "handoff": "bind SHA"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "land",
+      "rawToken": "land",
+      "handoff": "bind SHA",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": true,
+      "usable": true,
+      "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "reviewedSourceSha": "0123456789abcdef0123456789abcdef01234567",
+      "warning": null,
+      "scope": "Full",
+      "reviewedSourceClean": null
+    }
+  }
+}

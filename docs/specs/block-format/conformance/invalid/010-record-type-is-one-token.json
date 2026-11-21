@@ -1,0 +1,14 @@
+{
+  "expect": "seed-candidates/1.0",
+  "errors": [
+    {
+      "line": 2,
+      "code": "stray-text"
+    },
+    {
+      "line": 2,
+      "code": "unknown-record",
+      "name": "check"
+    }
+  ]
+}

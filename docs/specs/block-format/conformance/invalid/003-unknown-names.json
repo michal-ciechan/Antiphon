@@ -1,0 +1,15 @@
+{
+  "expect": "review-findings/1.0",
+  "errors": [
+    {
+      "line": 5,
+      "code": "unknown-key",
+      "name": "priority"
+    },
+    {
+      "line": 13,
+      "code": "unknown-record",
+      "name": "verdict"
+    }
+  ]
+}

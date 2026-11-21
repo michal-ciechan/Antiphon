@@ -1,0 +1,27 @@
+@abf 1 review-findings/1.0
+=== finding F1
+check: CHK-0142
+severity: major
+confidence: 0.8
+file: src/Orders/OrderSaver.cs
+lines: 41-44
+anchor: _lock.Release();
+title: Lock released before the async save completes
+flags: data-loss
+--- body
+`_lock.Release()` runs before `SaveChangesAsync` is awaited, so a second
+writer can enter while the first save is still in flight.
+--- suggestion
+await _db.SaveChangesAsync(ct);
+_lock.Release();
+=== checks
+CHK-0142 finding F1
+CHK-0007 pass
+CHK-0311 n/a Generated code only
+=== context
+opened src/Orders/OrderLock.cs Needed the lock's contract
+missing docs/orders/locking.md
+=== summary
+--- body
+One major finding. The rest of the change is test-only.
+=== end

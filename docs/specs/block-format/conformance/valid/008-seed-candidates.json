@@ -1,0 +1,72 @@
+{
+  "abf": 1,
+  "type": "seed-candidates",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "source",
+      "id": null,
+      "fields": {
+        "uri": "docs/investigations/",
+        "cursor": "2026-11-20"
+      },
+      "rows": []
+    },
+    {
+      "type": "check-candidate",
+      "id": "C1",
+      "fields": {
+        "title": "Lock released before async save completes",
+        "severity": "major",
+        "category": "concurrency",
+        "flags": "data-loss",
+        "globs": "**/*.cs",
+        "languages": "csharp",
+        "tags": "concurrency, persistence",
+        "symbols": "SaveChangesAsync",
+        "related-files": "**/DbContext*.cs",
+        "selector": "Does the change release a lock, semaphore or mutex before an awaited persistence call completes?",
+        "prompt": "Look for a lock release that runs before an awaited save. Judge whether a second writer can\nenter while the save is in flight.",
+        "humans": "Releasing a lock before the save completes lets two writers interleave.",
+        "rationale": "Missed in review twice in 2026 (order lock, invoice lock)."
+      },
+      "rows": [
+        [
+          "doc",
+          "docs/investigations/2026-10-02-why-missed-order-lock.md",
+          "the lock was released one line too early"
+        ],
+        [
+          "commit",
+          "3f2c9e1a7b4d5e6f708192a3b4c5d6e7f8091a2b",
+          "Fix order lock release"
+        ]
+      ]
+    },
+    {
+      "type": "eval-case",
+      "id": "E1",
+      "fields": {
+        "repo": "orders-service",
+        "bug-commit": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+        "fix-commit": "3f2c9e1a7b4d5e6f708192a3b4c5d6e7f8091a2b",
+        "check": "C1",
+        "description": "OrderSaver released the lock before SaveChangesAsync completed."
+      },
+      "rows": []
+    },
+    {
+      "type": "related-hint",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "src/Orders/**",
+          "src/Orders/Locking/*.cs",
+          "Lock helpers explain the release contract"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": []
+}

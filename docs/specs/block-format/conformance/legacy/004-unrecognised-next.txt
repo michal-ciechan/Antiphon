@@ -1,0 +1,6 @@
+Isolated `bin-card1622r1/` and `bin-land-audit/` outputs were left in place. The brief says not to delete outside scratch.
+
+--- next stage ---
+next: short Final review of D-1/D-2 then land
+handoff: D-1 caller-row adjustment is in ToSummary; D-2 list witness pins the old candidate rollup (scope-excluded child still counts; status, specialist, and since exclusions do not) and goes red under Rollup(items)
+artifact: feat/card-task-0a670765 code tip f1909ae8efed0f8a633ab59ce922291919828306

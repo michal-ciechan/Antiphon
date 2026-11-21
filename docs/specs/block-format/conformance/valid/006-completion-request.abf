@@ -1,0 +1,23 @@
+@abf 1 completion-request/1.0
+=== request R-20261121-0107
+expect: review-findings/1.0
+=== instructions
+--- body
+Review the diff below against check CHK-0311 only.
+Reply with one review-findings/1.0 document.
+=== input diff
+title: order_totals.sql at 3f2c9e1
+source: db/views/order_totals.sql
+--- body
+--- a/db/views/order_totals.sql
++++ b/db/views/order_totals.sql
+@@ -1,4 +1,4 @@
+\--- totals
++-- totals per order
+ SELECT order_id, SUM(price) AS total
+ FROM order_lines
+=== input check
+title: CHK-0311
+--- body
+Flag a view whose comment no longer describes its columns.
+=== end

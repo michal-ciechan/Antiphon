@@ -1,0 +1,81 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F1",
+      "fields": {
+        "check": "CHK-0142",
+        "severity": [
+          "minor",
+          "major"
+        ],
+        "confidence": "0.8",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "_lock.Release();",
+        "body": "The lock is released before the save completes."
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "finding",
+          "F1"
+        ]
+      ]
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0007",
+          "pass"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 2,
+      "code": "stray-text",
+      "severity": "warning"
+    },
+    {
+      "line": 3,
+      "code": "stray-text",
+      "severity": "warning"
+    },
+    {
+      "line": 6,
+      "code": "duplicate-field",
+      "severity": "warning",
+      "name": "severity"
+    },
+    {
+      "line": 10,
+      "code": "field-heading-suffix",
+      "severity": "warning",
+      "name": "body"
+    },
+    {
+      "line": 14,
+      "code": "duplicate-record",
+      "severity": "warning",
+      "name": "checks"
+    },
+    {
+      "line": 16,
+      "code": "stray-text",
+      "severity": "warning"
+    }
+  ]
+}

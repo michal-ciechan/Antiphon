@@ -1,0 +1,29 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "pass"
+        ],
+        [
+          "CHK-0007",
+          "pass"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 4,
+      "code": "duplicate-document",
+      "severity": "warning"
+    }
+  ]
+}

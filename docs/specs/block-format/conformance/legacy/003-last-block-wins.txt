@@ -1,0 +1,17 @@
+--- next stage ---
+next: review
+handoff: Review test-only input proof completion at the final qualified pushed SHA; inspect red-first deviation, synthetic immediate-row ownership/recovery and inherited Unit skips; then caller lands current Code owner 4c1697dc and commissions SourceLanding Mutation.
+artifact: docs/superpowers/plans/2026-10-03-card-0965-final-qualification.md
+
+
+## Final qualification outcome at 0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26
+
+CHECKPOINT CP-1 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=ok executed=31 passed=31 failed=0 skipped=0
+CHECKPOINT CP-2 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=reused executed=29 passed=28 failed=1 skipped=0
+
+Fresh TRX: CP-1 31/31, CP-2 28/29 (V-22 RequestDelegate serialization fixture exception); no integration skips.
+
+--- next stage ---
+next: code
+handoff: Continue from the pushed 4c1697dc branch: compile and rerun full CP-2 for the added delegate-metadata serializer, then qualify the published tip through the four-row qualification plan; Unit 3910/0/52 and CP-7 18/18 are complete, all PCs pending. Request Review only after ordinary green.
+artifact: docs/superpowers/plans/2026-10-03-card-0965-final-qualification.md

@@ -1,0 +1,25 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0142",
+          "pass"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 4,
+      "code": "missing-end",
+      "severity": "warning"
+    }
+  ]
+}

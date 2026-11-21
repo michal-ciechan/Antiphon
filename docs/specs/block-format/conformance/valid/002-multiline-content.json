@@ -1,0 +1,32 @@
+{
+  "abf": 1,
+  "type": "review-findings",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "finding",
+      "id": "F2",
+      "fields": {
+        "check": "none",
+        "severity": "minor",
+        "confidence": "0.6",
+        "file": "src/Orders/OrderSaver.cs",
+        "anchor": "if (order.Lines.Count == 0) return;",
+        "body": "Heading\n===\n\nIndented lines keep their indentation:\n\n    if (order.Lines.Count == 0) return;\n        // nested\n\n---\nstatus: not a field inside a multi-line field\n--- a/src/Orders/OrderSaver.cs\n--- two words without a closing marker\n```cs\nvar total = order.Lines.Sum(l => l.Price);\n```"
+      },
+      "rows": []
+    },
+    {
+      "type": "checks",
+      "id": null,
+      "fields": {},
+      "rows": [
+        [
+          "CHK-0007",
+          "pass"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": []
+}

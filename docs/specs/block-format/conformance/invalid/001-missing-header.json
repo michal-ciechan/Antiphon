@@ -1,0 +1,9 @@
+{
+  "expect": "review-findings/1.0",
+  "errors": [
+    {
+      "line": 1,
+      "code": "missing-header"
+    }
+  ]
+}

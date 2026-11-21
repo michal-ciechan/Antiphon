@@ -1,0 +1,62 @@
+{
+  "abf": 1,
+  "type": "comment-triage",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "comment",
+      "id": "PRRC_kwDOAbc123",
+      "fields": {
+        "finding": "F3",
+        "reason-category": "by-design",
+        "reason-category-confidence": "0.9",
+        "scope": "repo",
+        "scope-confidence": "0.81"
+      },
+      "rows": [
+        [
+          "Dismiss",
+          "0.93"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 2,
+      "code": "name-spelling",
+      "severity": "warning",
+      "name": "comment"
+    },
+    {
+      "line": 3,
+      "code": "name-spelling",
+      "severity": "warning",
+      "name": "finding"
+    },
+    {
+      "line": 4,
+      "code": "row-as-field",
+      "severity": "warning",
+      "name": "reason-category"
+    },
+    {
+      "line": 5,
+      "code": "name-spelling",
+      "severity": "warning",
+      "name": "reason-category-confidence"
+    },
+    {
+      "line": 6,
+      "code": "row-as-field",
+      "severity": "warning",
+      "name": "scope"
+    },
+    {
+      "line": 7,
+      "code": "name-spelling",
+      "severity": "warning",
+      "name": "scope-confidence"
+    }
+  ]
+}

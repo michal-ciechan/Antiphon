@@ -1,0 +1,21 @@
+@abf 1 decision-request/1.0
+=== request R-20261121-0050
+=== state
+--- body
+PR #815 changes the invoice export.
+=== question format
+type: choice
+instructions: Which export format does the change use?
+csv Comma separated
+csv Duplicate value
+=== question size
+type: score
+instructions: How large is the change?
+=== question touches-billing
+type: noul
+instructions: Does the change touch billing code?
+yes Billing paths changed
+=== question Format
+type: noul
+instructions: Same name as an earlier question under the fold.
+=== end

@@ -1,0 +1,11 @@
+git merge-tree --write-tree origin/master HEAD exit 0, tree 07d8d6baad54822fa2648cc119f9d12f478fc287, no conflicts. Not merged.
+Project bin-c1385-red, bin-c1385, and the checkpoint-tool bootstrap directories are removed.
+
+[antiphon-progress:03d6c869-b361-4f14-aef3-2033293154a0 commit=e6f917ef0cf4163b4c549df765bfef5960aff514]
+
+--- next stage ---
+next: review
+handoff: CARD-1385 tip e6f917ef0cf4163b4c549df765bfef5960aff514 hashes 57 dotnet-build definition files; manifest F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F. CP-1 red 1 failed at af0ba47b6; CP-2 green 44/44. Master only, no PCs, no RC backport. Review the selector, fail-closed manifest load, and Skipped(non-code).
+artifact: docs/superpowers/plans/2026-10-21-card-1385-land-graph-fingerprint-plan.md
+
+[antiphon-report:03d6c869 done]

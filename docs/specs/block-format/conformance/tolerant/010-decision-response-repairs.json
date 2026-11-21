@@ -1,0 +1,66 @@
+{
+  "abf": 1,
+  "type": "decision-response",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "answer",
+      "id": "touches-persistence",
+      "fields": {
+        "value": "92%",
+        "confidence": "0.85"
+      },
+      "rows": []
+    },
+    {
+      "type": "answer",
+      "id": "risk",
+      "fields": {
+        "value": "medium",
+        "confidence": "0.7"
+      },
+      "rows": [
+        [
+          "low",
+          "0.2"
+        ],
+        [
+          "medium",
+          "0.6"
+        ],
+        [
+          "high",
+          "0.4"
+        ]
+      ]
+    },
+    {
+      "type": "answer",
+      "id": "reversal-after-months",
+      "fields": {
+        "refused": "yes"
+      },
+      "rows": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 3,
+      "code": "value-repaired",
+      "severity": "warning",
+      "name": "value"
+    },
+    {
+      "line": 5,
+      "code": "probabilities-renormalised",
+      "severity": "warning",
+      "name": "risk"
+    },
+    {
+      "line": 12,
+      "code": "value-repaired",
+      "severity": "warning",
+      "name": "refused"
+    }
+  ]
+}

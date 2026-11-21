@@ -1,0 +1,42 @@
+{
+  "source": "Real report tail (.antiphon/task-561196a9.md), first paragraph shortened. Handoff over 400 characters is clipped.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [
+      {
+        "type": "next-stage",
+        "id": null,
+        "line": 3,
+        "standalone": true,
+        "fields": {
+          "next": "review",
+          "handoff": "Review S2+S3 together with an incomplete gate; do not land S2 alone. Require a fresh isolated CP-17/CP-28/CP-52 producer and tests for 5039ccb73e5482ef33c89258db00beca36a8afe9, Debug/Code triage for the three inherited C1151 failures, and all other owed closed rows/timing before land. The latest fixes are compiled but not reverified; historical green is bound to 4df55274ca31b9f490e87b26539d6994886c3be0. Retain the custody refusal and wait discrepancy as failures/incomplete evidence.",
+          "artifact": "/work/worktrees/task-561196a9/.antiphon/task-561196a9.md"
+        },
+        "rows": []
+      }
+    ],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": true,
+      "kind": "review",
+      "rawToken": "review",
+      "handoff": "Review S2+S3 together with an incomplete gate; do not land S2 alone. Require a fresh isolated CP-17/CP-28/CP-52 producer and tests for 5039ccb73e5482ef33c89258db00beca36a8afe9, Debug/Code triage for the three inherited C1151 failures, and all other owed closed rows/timing before land. The latest fixes are compiled but not reverified; historical green is bound to 4df55274ca31b9f490e87b26539d6994886",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

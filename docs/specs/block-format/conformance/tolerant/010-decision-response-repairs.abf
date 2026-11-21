@@ -1,0 +1,13 @@
+@abf 1 decision-response/1.0
+=== answer touches-persistence
+value: 92%
+confidence: 0.85
+=== answer risk
+value: medium
+confidence: 0.7
+low 0.2
+medium 0.6
+high 0.4
+=== answer reversal-after-months
+refused: yes
+=== end

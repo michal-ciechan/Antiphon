@@ -1,0 +1,85 @@
+{
+  "abf": 1,
+  "type": "decision-request",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "request",
+      "id": "R-20261121-0042",
+      "fields": {
+        "respond-with": "decision-response/1.0"
+      },
+      "rows": []
+    },
+    {
+      "type": "state",
+      "id": null,
+      "fields": {
+        "body": "PR #812 in orders-service: \"Release the order lock only after SaveChangesAsync completes.\"\nChanged files: src/Orders/OrderSaver.cs (+14 -6), tests/Orders/OrderSaverTests.cs (+40)."
+      },
+      "rows": []
+    },
+    {
+      "type": "question",
+      "id": "touches-persistence",
+      "fields": {
+        "type": "noul",
+        "instructions": "Does this change alter how data is written to a database?"
+      },
+      "rows": []
+    },
+    {
+      "type": "question",
+      "id": "risk",
+      "fields": {
+        "type": "choice",
+        "instructions": "Which risk category fits the change best?"
+      },
+      "rows": [
+        [
+          "low",
+          "Cosmetic or test-only"
+        ],
+        [
+          "medium",
+          "Behaviour change behind existing contracts"
+        ],
+        [
+          "high",
+          "Changes an external contract or stored data"
+        ]
+      ]
+    },
+    {
+      "type": "question",
+      "id": "reversal-after-months",
+      "fields": {
+        "type": "score",
+        "instructions": "How hard would it be to reverse this change after months in production?"
+      },
+      "rows": [
+        [
+          "1",
+          "Trivial"
+        ],
+        [
+          "2",
+          "Easy"
+        ],
+        [
+          "3",
+          "Moderate"
+        ],
+        [
+          "4",
+          "Hard"
+        ],
+        [
+          "5",
+          "Practically impossible"
+        ]
+      ]
+    }
+  ],
+  "diagnostics": []
+}

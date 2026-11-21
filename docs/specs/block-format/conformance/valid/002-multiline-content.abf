@@ -1,0 +1,28 @@
+@abf 1 review-findings/1.0
+=== finding F2
+check: none
+severity: minor
+confidence: 0.6
+file: src/Orders/OrderSaver.cs
+anchor: if (order.Lines.Count == 0) return;
+--- body
+
+Heading
+===
+
+Indented lines keep their indentation:
+
+    if (order.Lines.Count == 0) return;
+        // nested
+
+---
+status: not a field inside a multi-line field
+--- a/src/Orders/OrderSaver.cs
+--- two words without a closing marker
+```cs
+var total = order.Lines.Sum(l => l.Price);
+```
+
+=== checks
+CHK-0007 pass
+=== end

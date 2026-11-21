@@ -1,0 +1,54 @@
+{
+  "abf": 1,
+  "type": "decision-response",
+  "version": "1.0",
+  "records": [
+    {
+      "type": "response",
+      "id": "R-20261121-0042",
+      "fields": {},
+      "rows": []
+    },
+    {
+      "type": "answer",
+      "id": "touches-persistence",
+      "fields": {
+        "value": "0.92",
+        "confidence": "0.85"
+      },
+      "rows": []
+    },
+    {
+      "type": "answer",
+      "id": "risk",
+      "fields": {
+        "value": "medium",
+        "confidence": "0.7"
+      },
+      "rows": [
+        [
+          "low",
+          "0.1"
+        ],
+        [
+          "medium",
+          "0.7"
+        ],
+        [
+          "high",
+          "0.2"
+        ]
+      ]
+    },
+    {
+      "type": "answer",
+      "id": "reversal-after-months",
+      "fields": {
+        "refused": "true",
+        "reason": "The state does not say whether a migration ships with the change."
+      },
+      "rows": []
+    }
+  ],
+  "diagnostics": []
+}
