@@ -17,7 +17,6 @@ internal static class RcPortCorpus
 {
     const string ShadowType = "Antiphon.Nightly.RcShadowSample";
     const string DirtyType = "Antiphon.Nightly.RcDirtyOrder";
-    const string SmaPath = "/opt/powershell/System.Management.Automation.dll";
 
     static readonly object Gate = new object();
     static JsonArray cases;
@@ -452,9 +451,9 @@ internal static class RcPortCorpus
         if (automation != null) return automation;
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
-            if (assembly.GetName().Name == "System.Management.Automation") return automation = assembly;
+            if (assembly.GetName().Name == RcPortPowerShellAssembly.Name) return automation = assembly;
         }
-        return automation = System.Reflection.Assembly.LoadFrom(SmaPath);
+        return automation = RcPortPowerShellAssembly.Load();
     }
 
     static object Substitute(object value, Dictionary<string, string> roles, string field)
