@@ -1,9 +1,12 @@
 #!/bin/sh
 # antiphon <command> [arguments]: runs antiphon-scripts (scripts/lib/Antiphon.Scripts) from this checkout and
 # passes the arguments, stdin, stdout, stderr and exit code through untouched.
-# Minimal form: every call builds the project (a no-op when nothing changed) into its bin/launcher, with the build
-# output on stderr, and a failed build exits 9. The cached launcher in section 2.2 of
+# Minimal form: every call builds the project (a no-op when nothing changed) into <checkout>/bin-launcher (ignored,
+# and outside scripts/ so fixtures that copy scripts/lib never carry it), with the build output on stderr, and a
+# failed build exits 9. The cached launcher in section 2.2 of
 # docs/superpowers/plans/2026-11-19-ps1-to-csharp-migration-plan.md replaces this. scripts/antiphon.cmd is the Windows twin.
-project=$(CDPATH= cd -- "$(dirname -- "$0")/lib/Antiphon.Scripts" && pwd) || exit 9
-dotnet msbuild "$project" -restore -p:Configuration=Release "-p:ArtifactsPath=$project/bin/launcher" -nologo -v:q -tl:off -clp:NoSummary -nodeReuse:false -p:UseSharedCompilation=false >&2 || exit 9
-exec dotnet exec "$project/bin/launcher/bin/Antiphon.Scripts/release/Antiphon.Scripts.dll" "$@"
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 9
+project="$root/scripts/lib/Antiphon.Scripts"
+artifacts="$root/bin-launcher/antiphon-scripts"
+dotnet msbuild "$project" -restore -p:Configuration=Release "-p:ArtifactsPath=$artifacts" -nologo -v:q -tl:off -clp:NoSummary -nodeReuse:false -p:UseSharedCompilation=false >&2 || exit 9
+exec dotnet exec "$artifacts/bin/Antiphon.Scripts/release/Antiphon.Scripts.dll" "$@"
