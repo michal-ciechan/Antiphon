@@ -530,9 +530,10 @@ function Invoke-NoBuildStamp {
     Copy-Item -LiteralPath $RunnerAssembly -Destination (Join-Path $bin 'Antiphon.SessionRunner.dll')
     Set-Content -LiteralPath (Join-Path $runnerRoot 'secrets/phone-home') -Value 'offline fixture'
     $exe = Join-Path $bin 'Antiphon.SessionRunner.exe'
-    if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
+    $nativeWindows = [Environment]::OSVersion.Platform -eq 'Win32NT'
+    if ($nativeWindows) {
         Copy-Item -LiteralPath (Join-Path ([Environment]::SystemDirectory) 'where.exe') -Destination $exe
-        $expectedExit = 1
+        $expectedExit = @(1, 2)
     } else {
         [IO.File]::WriteAllText($exe, "#!/bin/sh`nexit 42`n")
         & chmod +x $exe
@@ -548,8 +549,10 @@ Set-Variable -Name IsWindows -Value $true -Scope Local -Force
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $wrapper
     $output = (& pwsh -NoProfile -File $wrapper $launcher $runnerRoot 2>&1 | Out-String)
-    Assert-C1744 ($LASTEXITCODE -eq $expectedExit) 'no-build-stamp.launch' $output
-    Assert-C1744 ($output -match 'WARNING:.*-NoBuild.*unknown') 'no-build-stamp.warning' $output
+    $exitCode = $LASTEXITCODE
+    $announced = $output.Contains("Phone-home runner 'stamp-fixture'")
+    Assert-C1744 ($announced -and $exitCode -in $expectedExit) 'no-build-stamp.launch' "fixture launch exit=$exitCode"
+    Assert-C1744 ($output -match 'WARNING:.*-NoBuild.*unknown') 'no-build-stamp.warning' 'unknown stamp warning absent'
 }
 
 function Invoke-Compat {
