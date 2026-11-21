@@ -27,10 +27,12 @@ public static class CodexPointerComposerEvidence
         while (footer >= 0 && string.IsNullOrWhiteSpace(lines[footer])) footer--;
         if (footer < 0)
             return false;
-        // Codex 0.170.0 draws an agents/shortcuts row under the model footer.
-        // Step back to that footer. A 0.160 footer keeps the warning chip on the
-        // model line, which does not match and stays the last line.
-        if (CodexStartupScreen.IsAgentShortcutsRow(lines[footer]))
+        // Codex 0.170.0 draws an agents/shortcuts row under the model footer while
+        // the composer is empty. With text in the composer that row keeps only the
+        // right-aligned warning chip. Step back to the footer. A 0.160 footer keeps
+        // the chip on the GPT-* line, which fails IsWarningChipRow and stays put.
+        if (CodexStartupScreen.IsAgentShortcutsRow(lines[footer])
+            || IsWarningChipRow(lines[footer]))
         {
             footer--;
             while (footer >= 0 && string.IsNullOrWhiteSpace(lines[footer])) footer--;
@@ -52,5 +54,13 @@ public static class CodexPointerComposerEvidence
                 return false;
         }
         return false;
+    }
+
+    private static bool IsWarningChipRow(string line)
+    {
+        var t = line.Trim();
+        return t.Contains("f2 to view", StringComparison.Ordinal)
+            && t.Contains("warning", StringComparison.OrdinalIgnoreCase)
+            && !t.Contains("GPT-", StringComparison.Ordinal);
     }
 }
