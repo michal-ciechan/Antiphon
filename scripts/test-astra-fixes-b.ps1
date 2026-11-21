@@ -163,11 +163,11 @@ function Test-AstraFlushFailure {
     $new = '{"sequence":2,"publicationComplete":false}'
     [IO.File]::WriteAllText($file1, $old)
     [IO.File]::WriteAllText($file2, $old)
-    & chmod 500 $blocked
-    if ($LASTEXITCODE -ne 0) { throw 'chmod 500 failed' }
     $done = @{}
     try {
         Enable-NightlyDeferredEvidenceWrites
+        # Fail both queued writes via the same IOException seam as the journal case.
+        Set-AstraBeforeWrite -Mode 'throw'
         [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file1, $new, $false)
         [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file2, $new, $false)
         $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -179,8 +179,9 @@ function Test-AstraFlushFailure {
             Start-Sleep -Milliseconds 50
         }
         if (-not $ready) { throw 'setup: replacement stayed queued' }
-        $landed = [IO.File]::ReadAllText($file1)
-        if ($landed -ne $old) { throw ('setup: replacement landed uid=' + [string](id -u)) }
+        if ([IO.File]::ReadAllText($file1) -ne $old -or [IO.File]::ReadAllText($file2) -ne $old) {
+            throw 'setup: replacement landed despite the injected write failure'
+        }
         $read = [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($file1, 4096, 5000, [Diagnostics.Stopwatch]::StartNew())
         $staleComplete = ([bool]$read.Complete -and -not [bool]$read.Refused)
         Assert-C487 (-not $staleComplete) 'AB FlushFailure.not-complete-stale' ('Complete=' + $read.Complete + ' Refused=' + $read.Refused + ' Kind=' + $read.Kind)
@@ -214,8 +215,7 @@ function Test-AstraFlushFailure {
         }
         Assert-C487 $verdictOk 'AB FlushFailure.verdict' $verdictDetail
         $done['verdict'] = $true
-        & chmod 700 $blocked
-        if ($LASTEXITCODE -ne 0) { throw 'chmod 700 failed' }
+        Clear-AstraBeforeWrite
         $retryText = '{"sequence":3,"publicationComplete":true}'
         [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file1, $retryText, $false)
         $retryWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -225,6 +225,7 @@ function Test-AstraFlushFailure {
             Start-Sleep -Milliseconds 50
         }
         if (-not $retryReady) { throw 'setup: retry stayed queued' }
+        if ([IO.File]::ReadAllText($file1) -ne $retryText) { throw 'setup: retry did not land' }
         $retryReported = @([Antiphon.Nightly.EvidenceFiles]::Flush($file1) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
         $retryVerdict = Get-NightlyDeferredEvidenceWriteVerdict
         $retryReasons = [string](@($retryVerdict.reasons) -join ' | ')
@@ -253,7 +254,6 @@ function Test-AstraFlushFailure {
             if (-not $done[$name]) { Assert-C487 $false ('AB FlushFailure.' + $name) $detail }
         }
     } finally {
-        & chmod 700 $blocked
         Clear-AstraBeforeWrite
         if ($script:NightlyDeferEvidenceWrites) {
             try { Disable-NightlyDeferredEvidenceWrites } catch { }
