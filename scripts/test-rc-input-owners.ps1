@@ -5,7 +5,6 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
 if (-not $ResultsDirectory) { $ResultsDirectory=Join-Path ([IO.Path]::GetTempPath()) ('rio-'+[guid]::NewGuid().ToString('N')) }
 $root=Join-Path $ResultsDirectory 'repository with spaces'
-[void][IO.Directory]::CreateDirectory($root)
 $errors=[Collections.Generic.List[string]]::new()
 function Note($ok,[string]$label) { if (-not $ok) { $errors.Add($label) } }
 function Git([string[]]$a) { return Invoke-C487FixtureGit $root $a }
@@ -98,10 +97,34 @@ function Note-RioSelectionParity([string]$name, $on, $off) {
     Note (-not $on.gateCredit -and -not $off.gateCredit) "parity-gate:${name}"
     Note ([string]$on.activation -ceq 'shadow-only' -and [string]$off.activation -ceq 'shadow-only') "parity-shadow:${name}"
 }
-[void](Git @('init','-q','-b','main'))
-[void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $sourceRoot=Split-Path -Parent $PSScriptRoot
 $sourceSha=(Invoke-TestSelectionGit $sourceRoot @('rev-parse','HEAD')).Stdout.Trim()
+if ($Case -ceq 'HistoricalSelectionSoundness') {
+    $corpusPath=Join-Path $sourceRoot 'tests/fixtures/incremental-selection-soundness.json'
+    $corpus=Get-Content -LiteralPath $corpusPath -Raw | ConvertFrom-Json -AsHashtable
+    $inventory=Read-RcInputInventory $sourceRoot $sourceSha $null -SkipUnresolvedBroadening
+    # The historical fixture contains paths. Replay committed ownership before
+    # the manifest examines the contents of the original before/after files.
+    foreach ($item in $corpus.cases) {
+        $suites=@($inventory.suites | Where-Object project -CEQ $item.suiteProject)
+        Note ($suites.Count -gt 0) "$($item.id): missing suite for $($item.suiteProject)"
+        $selected=$false
+        foreach ($suite in $suites) {
+            foreach ($path in $item.changedPaths) {
+                if (Test-RioPresentOwned $suite $path) { $selected=$true; break }
+            }
+            if ($selected) { break }
+        }
+        $status=if ($selected) { 'selected' } else { 'missed' }
+        Note ($status -ceq $item.currentMap) "$($item.id): expected $($item.currentMap), got $status"
+    }
+    Assert-C487 ($errors.Count -eq 0) ("RIO $Case.contract") ($errors -join '; ')
+    Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
+}
+
+[void][IO.Directory]::CreateDirectory($root)
+[void](Git @('init','-q','-b','main'))
+[void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $mapText=Get-TestSelectionBlob $sourceRoot $sourceSha 'scripts/lib/rc-input-owners.json'
 $map=ConvertFrom-Json -InputObject $mapText -AsHashtable
 Put 'scripts/lib/rc-input-owners.json' $mapText

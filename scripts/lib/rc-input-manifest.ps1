@@ -239,8 +239,9 @@ function Read-RcInputInventory {
                             try {
                                 $target=if ($kind -ceq 'Import') { Resolve-RcInventoryPath $input $part } else { Resolve-RcInventoryPath $input $part $project }
                                 $pattern=New-RcInputPattern $target
-                                $targets=@($paths | Where-Object { $pattern.IsMatch($_) })
-                                if ($target -notmatch '[*?]') { $targets=@($target) }
+                                $targets=@(if ($target -notmatch '[*?]') { $target } else {
+                                    $paths | Where-Object { $pattern.IsMatch($_) }
+                                })
                                 if (-not $targets.Count -and $kind -cin @('Import','ProjectReference')) { throw 'missing-glob-target' }
                                 foreach ($destination in $targets) {
                                     Add-RcInventoryInput $suite $tree $destination $kind
