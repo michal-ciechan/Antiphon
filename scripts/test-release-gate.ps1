@@ -1222,31 +1222,10 @@ function Test-C599_CloneOwnership {
     Assert-C487 -Cond ([int]$r3.ExitCode -eq 0) -Name 'C599 CloneOwnership control owned clone is accepted' -Detail ([string]$r3.Refusal)
 }
 
-function Test-C599_SharedLock {
-    $root = New-C599Root
-    $coord = Join-Path $root 'coord'
-    $first = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-master' -Lane 'master'
-    Assert-C487 -Cond ($first.Ok -and $first.OwnsLock) -Name 'C599 SharedLock first lane acquires' -Detail ([string]$first.Reason)
-    Assert-C487 -Cond (Test-Path -LiteralPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord))) -Name 'C599 SharedLock the lock file exists on disk'
-
-    # A live owner is never stolen, whatever the other lane is.
-    $script:ReleaseGateOwnsNativeLock2 = $null
-    $second = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-rc' -Lane 'rc'
-    Assert-C487 -Cond ((-not $second.Ok) -and [string]$second.Reason -eq 'deferred-busy') -Name 'C599 SharedLock the second lane gets deferred-busy' -Detail ([string]$second.Reason)
-    Assert-C487 -Cond (-not $second.OwnsLock) -Name 'C599 SharedLock the deferred lane owns nothing'
-
-    $record = Read-NightlyLockRecord -LockPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord))
-    Assert-C487 -Cond ([int]$record.pid -eq $PID) -Name 'C599 SharedLock owner identity records the pid' -Detail ([string]$record.pid)
-    Assert-C487 -Cond ([string]$record.lane -eq 'master') -Name 'C599 SharedLock owner identity records the lane' -Detail ([string]$record.lane)
-    Assert-C487 -Cond (-not [string]::IsNullOrWhiteSpace([string]$record.processStartedAt)) -Name 'C599 SharedLock owner identity records the process start' -Detail ([string]$record.processStartedAt)
-
-    Exit-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-master'
-    Assert-C487 -Cond (-not (Test-Path -LiteralPath ([Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($coord)))) -Name 'C599 SharedLock release removes the lock file'
-    $third = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-rc2' -Lane 'rc'
-    Assert-C487 -Cond ($third.Ok -and $third.OwnsLock) -Name 'C599 SharedLock the other lane acquires once released' -Detail ([string]$third.Reason)
-    Exit-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-rc2'
-
-    # A contended scheduled run records deferred-busy and stays non-green.
+function Test-C599_SharedLockDeferredRun {
+    # W2-nightly S18: the shared lock itself is ReleaseGateRunTests.C599_SharedLock and C599_Continuation, in-process
+    # against Antiphon.Nightly/ReleaseGateNativeLock.cs. This keeps the part that runs the still-PowerShell run core:
+    # a contended scheduled run records deferred-busy and stays non-green.
     $fx = New-C599RunFx
     $held = Enter-ReleaseGateNativeLock -CoordinationRoot $fx.Coordination -RunId 'other-run' -Lane 'master'
     Assert-C487 -Cond ($held.Ok) -Name 'C599 SharedLock control: a foreign owner holds the lock'
@@ -1257,27 +1236,6 @@ function Test-C599_SharedLock {
     $recorded = ''
     if (Test-Path -LiteralPath $attempt) { $recorded = [string]((Get-Content -LiteralPath $attempt -Raw | ConvertFrom-Json).phase) }
     Assert-C487 -Cond ($recorded -eq 'deferred-busy') -Name 'C599 SharedLock the deferred attempt is recorded on disk' -Detail $recorded
-}
-
-function Test-C599_Continuation {
-    $root = New-C599Root
-    $coord = Join-Path $root 'coord'
-    $own = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1' -Lane 'master'
-    Assert-C487 -Cond ($own.Ok) -Name 'C599 Continuation control: the parent owns the shared lock'
-    $start = [string]$own.Record.processStartedAt
-
-    $hop = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1' -Lane 'master' -ContinueOwnerPid $PID -ContinueOwnerStartedAt $start
-    Assert-C487 -Cond ($hop.Ok -and (-not $hop.OwnsLock) -and [string]$hop.Reason -eq 'hop') -Name 'C599 Continuation a matching continuation inherits without owning' -Detail ([string]$hop.Reason)
-
-    $wrongRun = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-2' -Lane 'master' -ContinueOwnerPid $PID -ContinueOwnerStartedAt $start
-    Assert-C487 -Cond ((-not $wrongRun.Ok) -and [string]$wrongRun.Reason -eq 'shared-hop-identity') -Name 'C599 Continuation a mismatched run id refuses' -Detail ([string]$wrongRun.Reason)
-    $wrongLane = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1' -Lane 'rc' -ContinueOwnerPid $PID -ContinueOwnerStartedAt $start
-    Assert-C487 -Cond ((-not $wrongLane.Ok) -and [string]$wrongLane.Reason -eq 'shared-hop-identity') -Name 'C599 Continuation a mismatched lane refuses' -Detail ([string]$wrongLane.Reason)
-    $wrongStart = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1' -Lane 'master' -ContinueOwnerPid $PID -ContinueOwnerStartedAt '2001-01-01T00:00:00.0000000Z'
-    Assert-C487 -Cond ((-not $wrongStart.Ok) -and [string]$wrongStart.Reason -eq 'shared-hop-identity') -Name 'C599 Continuation a mismatched process start refuses' -Detail ([string]$wrongStart.Reason)
-    $deadParent = Enter-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1' -Lane 'master' -ContinueOwnerPid 999999 -ContinueOwnerStartedAt $start
-    Assert-C487 -Cond (-not $deadParent.Ok) -Name 'C599 Continuation a dead continuation parent refuses' -Detail ([string]$deadParent.Reason)
-    Exit-ReleaseGateNativeLock -CoordinationRoot $coord -RunId 'run-1'
 }
 
 function Test-C599_ReportLane {

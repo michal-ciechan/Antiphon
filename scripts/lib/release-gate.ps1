@@ -77,29 +77,70 @@ function Push-ReleaseGateExactTag {
 
 # -------------------------------------------------------------- shared lock ---
 
-function New-ReleaseGateLockOwner {
-    <#
-      D-4: owner identity is PID + process start + run id + continuation id, so a
-      self-reexec hop can prove it inherited the lock instead of stealing it.
-    #>
-    param([string]$RunId, [string]$Lane, [string]$ContinuationId = '')
-    $start = Get-NightlyProcessStartUtc -ProcessId $PID
-    $startText = ''
-    if ($null -ne $start) { $startText = ([datetime]$start).ToUniversalTime().ToString('o') }
-    return [ordered]@{
-        pid = $PID
-        processStartedAt = $startText
-        runId = $RunId
-        lane = $Lane
-        continuationId = $ContinuationId
-        acquiredAt = (Get-NightlyUtcNow).ToString('o')
+# W2-nightly S18: both locks are compiled. D-4's shared native-run lock is Antiphon.Nightly/ReleaseGateNativeLock.cs
+# (the two functions below are thin calls into it); the per-task run lock is NightlyRunLock.cs (nightly-run-impl.ps1
+# calls it). They observe processes and the clock through the nightly-common seams (IsProcessAlive,
+# GetProcessStartTimeUtc, GetParentProcess, GetBootId, GetHostId, UtcNow) when a test sets them and through the
+# compiled process table otherwise, read on every call; run lines and traces go to Write-NightlyRunLine and
+# Write-NightlyTrace. One lock object per session holds what $script:ReleaseGateOwnsNativeLock held.
+function New-ReleaseGateLockSeams {
+    if ($null -eq $script:ReleaseGateLockProcesses) { $script:ReleaseGateLockProcesses = [Antiphon.Nightly.NightlyProcessTable]::new() }
+    $processes = [Antiphon.Nightly.NightlyDelegateProcessTable]::new($PID,
+        [Func[int, bool]]{
+            param([int]$ProcessId)
+            if ($script:NightlySeams -and $script:NightlySeams.IsProcessAlive) { return [bool](Test-NightlyProcessAlive -ProcessId $ProcessId) }
+            return $script:ReleaseGateLockProcesses.IsAlive($ProcessId)
+        },
+        [Func[int, Nullable[datetime]]]{
+            param([int]$ProcessId)
+            if ($script:NightlySeams -and $script:NightlySeams.GetProcessStartTimeUtc) {
+                $start = Get-NightlyProcessStartUtc -ProcessId $ProcessId
+                if (-not $start) { return $null }
+                return [datetime]$start
+            }
+            return $script:ReleaseGateLockProcesses.StartTimeUtc($ProcessId)
+        },
+        [Func[int, Antiphon.Nightly.NightlyParent]]{
+            param([int]$ProcessId)
+            if ($script:NightlySeams -and $script:NightlySeams.GetParentProcess) {
+                $parent = Get-NightlyParentProcess -ProcessId $ProcessId
+                if (-not $parent) { return [Antiphon.Nightly.NightlyParent]::None }
+                $start = $null
+                if ($parent.StartTimeUtc) { $start = [datetime]$parent.StartTimeUtc }
+                return [Antiphon.Nightly.NightlyParent]::new([int]$parent.Id, $start)
+            }
+            return $script:ReleaseGateLockProcesses.Parent($ProcessId)
+        },
+        [Func[string]]{
+            if ($script:NightlySeams -and $script:NightlySeams.GetBootId) { return [string](Get-NightlyBootId) }
+            return $script:ReleaseGateLockProcesses.BootId()
+        },
+        [Func[string]]{
+            if ($script:NightlySeams -and $script:NightlySeams.GetHostId) { return [string](Get-NightlyHostId) }
+            return $script:ReleaseGateLockProcesses.HostId()
+        })
+    return [pscustomobject]@{
+        Clock = [Antiphon.Nightly.NightlyDelegateClock]::new([Func[datetime]]{ return [datetime](Get-NightlyUtcNow) })
+        Processes = $processes
+        RunLine = [Action[string]]{ param([string]$Line) Write-NightlyRunLine $Line }
+        Trace = [Action[string, string]]{ param([string]$Kind, [string]$Message) Write-NightlyTrace -Kind $Kind -Message $Message }
     }
+}
+
+function Get-ReleaseGateNativeLock {
+    if ($null -eq $script:ReleaseGateNativeLockCore) {
+        $seams = New-ReleaseGateLockSeams
+        $script:ReleaseGateNativeLockCore = [Antiphon.Nightly.ReleaseGateNativeLock]::new($seams.Clock, $seams.Processes)
+    }
+    return $script:ReleaseGateNativeLockCore
 }
 
 function Enter-ReleaseGateNativeLock {
     <#
       D-4: one atomic create-new lock across both lanes. A live owner is never
       stolen on age; the caller writes deferred-busy and waits for its next slot.
+      Owner identity is PID + process start + run id + continuation id, so a
+      self-reexec hop can prove it inherited the lock instead of stealing it.
     #>
     param(
         [string]$CoordinationRoot = '',
@@ -109,75 +150,13 @@ function Enter-ReleaseGateNativeLock {
         [int]$ContinueOwnerPid = 0,
         [string]$ContinueOwnerStartedAt = ''
     )
-    $lockPath = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($CoordinationRoot)
-    $dir = Split-Path -Parent $lockPath
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-
-    if ($ContinueOwnerPid -gt 0) {
-        $existing = Read-NightlyLockRecord -LockPath $lockPath
-        if ($null -eq $existing) {
-            return [pscustomobject]@{ Ok = $false; Reason = 'missing-shared-lock'; OwnsLock = $false }
-        }
-        $alive = Test-NightlyProcessAlive -ProcessId $ContinueOwnerPid
-        $runOk = [string]::Equals([string]$existing.runId, $RunId, [StringComparison]::OrdinalIgnoreCase)
-        $pidOk = ([int]$existing.pid -eq $ContinueOwnerPid)
-        $startOk = $true
-        if (-not [string]::IsNullOrWhiteSpace($ContinueOwnerStartedAt)) {
-            $startOk = [Antiphon.Nightly.ReleaseGateCredit]::SameInstant($existing.processStartedAt, $ContinueOwnerStartedAt)
-        }
-        $laneOk = [string]::Equals([string]$existing.lane, $Lane, [StringComparison]::OrdinalIgnoreCase)
-        if (-not ($alive -and $runOk -and $pidOk -and $startOk -and $laneOk)) {
-            return [pscustomobject]@{ Ok = $false; Reason = 'shared-hop-identity'; OwnsLock = $false; Record = $existing }
-        }
-        return [pscustomobject]@{ Ok = $true; Reason = 'hop'; OwnsLock = $false; Record = $existing }
-    }
-
-    $record = New-ReleaseGateLockOwner -RunId $RunId -Lane $Lane -ContinuationId $ContinuationId
-    $payload = ($record | ConvertTo-Json -Compress)
-    $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
-    try {
-        # CreateNew is the exclusion; the handle is closed immediately afterwards so the
-        # owner record stays READABLE. A contender must be able to say who holds the lock
-        # and prove the owner is alive - it cannot do that against a file it cannot open.
-        $stream = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
-        try {
-            $stream.Write($bytes, 0, $bytes.Length)
-            $stream.Flush()
-        } finally {
-            $stream.Dispose()
-        }
-        $script:ReleaseGateNativeLockStream = $null
-        $script:ReleaseGateNativeLockPath = $lockPath
-        $script:ReleaseGateOwnsNativeLock = $true
-        return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = [pscustomobject]$record; Path = $lockPath }
-    } catch [System.IO.IOException] {
-        $existing = Read-NightlyLockRecord -LockPath $lockPath
-        $alive = $false
-        if ($existing -and [int]$existing.pid -gt 0) { $alive = Test-NightlyProcessAlive -ProcessId ([int]$existing.pid) }
-        $reason = 'deferred-busy'
-        if (-not $alive) { $reason = 'stale-shared-lock' }
-        return [pscustomobject]@{ Ok = $false; Reason = $reason; OwnsLock = $false; Record = $existing; Path = $lockPath }
-    }
+    return (Get-ReleaseGateNativeLock).Enter($CoordinationRoot, $RunId, $Lane, $ContinuationId, $ContinueOwnerPid, $ContinueOwnerStartedAt)
 }
 
 function Exit-ReleaseGateNativeLock {
     param([string]$CoordinationRoot = '', [string]$RunId = '')
-    if (-not $script:ReleaseGateOwnsNativeLock) { return }
-    $lockPath = [Antiphon.Nightly.ReleaseGatePublication]::NativeLockPath($CoordinationRoot)
-    $existing = Read-NightlyLockRecord -LockPath $lockPath
-    $same = $false
-    if ($existing) {
-        $same = ([int]$existing.pid -eq $PID) -and
-                ([string]::IsNullOrWhiteSpace($RunId) -or [string]::Equals([string]$existing.runId, $RunId, [StringComparison]::OrdinalIgnoreCase))
-    }
-    if ($script:ReleaseGateNativeLockStream) {
-        try { $script:ReleaseGateNativeLockStream.Dispose() } catch { }
-        $script:ReleaseGateNativeLockStream = $null
-    }
-    if ($same -and (Test-Path -LiteralPath $lockPath)) {
-        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
-    }
-    $script:ReleaseGateOwnsNativeLock = $false
+    if ($null -eq $script:ReleaseGateNativeLockCore) { return }
+    $script:ReleaseGateNativeLockCore.Exit($CoordinationRoot, $RunId)
 }
 
 # ------------------------------------------------------------------ calver ---

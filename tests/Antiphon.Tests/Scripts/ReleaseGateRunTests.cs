@@ -1,4 +1,7 @@
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -6,7 +9,8 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-0599 V-2, V-3 and R-4. Each method runs the matching <c>Test-C599_*</c> case of
 /// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION credit predicate, the production
-/// run core and the production shared lock, using private clone/state/release/coordination roots.
+/// run core and the production shared lock, using private clone/state/release/coordination roots;
+/// C599_SharedLock and C599_Continuation call the compiled shared lock in-process (W2-nightly S18).
 ///
 /// <para>The decisive behaviours: master green and RC green are separate kinds of credit that
 /// cannot be exchanged, an RC run leaves all four master state files byte-identical, the pinned
@@ -83,22 +87,81 @@ public sealed class ReleaseGateRunTests
             "C599 CloneOwnership control owned clone is accepted");
     }
 
+    /// <summary>
+    /// D-4 in-process (W2-nightly S18): the shared native-run lock (Antiphon.Nightly/ReleaseGateNativeLock.cs) on a
+    /// private coordination root. The contended run that records deferred-busy is C599_SharedLockDeferredRun: the run
+    /// core is still PowerShell.
+    /// </summary>
     [Test]
-    public Task C599_SharedLock() => RunCaseAsync("C599_SharedLock", 12,
-        "C599 SharedLock first lane acquires",
-        "C599 SharedLock the second lane gets deferred-busy",
-        "C599 SharedLock owner identity records the lane",
-        "C599 SharedLock the other lane acquires once released",
+    public void C599_SharedLock()
+    {
+        using var fixture = NightlyFixture.Create("c599-shared-lock");
+        var processes = new FakeProcessTable().Start(4242, new DateTime(2026, 9, 11, 11, 0, 0, DateTimeKind.Utc));
+        var native = new ReleaseGateNativeLock(fixture.Host(processes: processes));
+        var coord = fixture.PathOf("coord");
+        var lockPath = ReleaseGateNativeLock.LockPath(coord);
+
+        var first = native.Enter(coord, "run-master", "master");
+        (first.Ok && first.OwnsLock).ShouldBeTrue("C599 SharedLock first lane acquires " + first.Reason);
+        File.Exists(lockPath).ShouldBeTrue("C599 SharedLock the lock file exists on disk");
+
+        // A live owner is never stolen, whatever the other lane is.
+        var second = native.Enter(coord, "run-rc", "rc");
+        (!second.Ok && second.Reason == "deferred-busy").ShouldBeTrue("C599 SharedLock the second lane gets deferred-busy " + second.Reason);
+        second.OwnsLock.ShouldBeFalse("C599 SharedLock the deferred lane owns nothing");
+
+        var record = NightlyLockRecord.Read(lockPath)!;
+        record.Pid.ShouldBe(processes.CurrentPid, "C599 SharedLock owner identity records the pid " + record.Pid);
+        record.Lane.ShouldBe("master", "C599 SharedLock owner identity records the lane " + record.Lane);
+        string.IsNullOrWhiteSpace(record.ProcessStartedAt).ShouldBeFalse("C599 SharedLock owner identity records the process start " + record.ProcessStartedAt);
+
+        native.Exit(coord, "run-master");
+        File.Exists(lockPath).ShouldBeFalse("C599 SharedLock release removes the lock file");
+        var third = native.Enter(coord, "run-rc2", "rc");
+        (third.Ok && third.OwnsLock).ShouldBeTrue("C599 SharedLock the other lane acquires once released " + third.Reason);
+        native.Exit(coord, "run-rc2");
+
+        // A dead holder is reported stale and left alone (no reclaim on the shared lock).
+        File.WriteAllText(lockPath, """{"pid":424599,"processStartedAt":"","runId":"gone","lane":"master","continuationId":"","acquiredAt":""}""");
+        processes.Exit(424599);
+        var stale = native.Enter(coord, "run-rc3", "rc");
+        (!stale.Ok && stale.Reason == "stale-shared-lock" && !stale.OwnsLock).ShouldBeTrue("a dead holder is stale-shared-lock " + stale.Reason);
+        NightlyLockRecord.Read(lockPath)!.RunId.ShouldBe("gone", "the stale lock is not reclaimed");
+    }
+
+    [Test]
+    public Task C599_SharedLockDeferredRun() => RunCaseAsync("C599_SharedLockDeferredRun", 3,
+        "C599 SharedLock control: a foreign owner holds the lock",
         "C599 SharedLock a contended rc run returns deferred-busy",
         "C599 SharedLock the deferred attempt is recorded on disk");
 
+    /// <summary>D-4 in-process (W2-nightly S18): a self-reexec hop inherits the shared lock only with the owner's exact identity.</summary>
     [Test]
-    public Task C599_Continuation() => RunCaseAsync("C599_Continuation", 6,
-        "C599 Continuation a matching continuation inherits without owning",
-        "C599 Continuation a mismatched run id refuses",
-        "C599 Continuation a mismatched lane refuses",
-        "C599 Continuation a mismatched process start refuses",
-        "C599 Continuation a dead continuation parent refuses");
+    public void C599_Continuation()
+    {
+        using var fixture = NightlyFixture.Create("c599-continuation");
+        var processes = new FakeProcessTable().Start(4242, new DateTime(2026, 9, 11, 11, 0, 0, DateTimeKind.Utc)).Exit(999999);
+        var native = new ReleaseGateNativeLock(fixture.Host(processes: processes));
+        var coord = fixture.PathOf("coord");
+        var own = native.Enter(coord, "run-1", "master");
+        own.Ok.ShouldBeTrue("C599 Continuation control: the parent owns the shared lock");
+        var start = own.Record!.ProcessStartedAt;
+        var pid = processes.CurrentPid;
+
+        var hop = native.Enter(coord, "run-1", "master", "", pid, start);
+        (hop.Ok && !hop.OwnsLock && hop.Reason == "hop").ShouldBeTrue("C599 Continuation a matching continuation inherits without owning " + hop.Reason);
+        var wrongRun = native.Enter(coord, "run-2", "master", "", pid, start);
+        (!wrongRun.Ok && wrongRun.Reason == "shared-hop-identity").ShouldBeTrue("C599 Continuation a mismatched run id refuses " + wrongRun.Reason);
+        var wrongLane = native.Enter(coord, "run-1", "rc", "", pid, start);
+        (!wrongLane.Ok && wrongLane.Reason == "shared-hop-identity").ShouldBeTrue("C599 Continuation a mismatched lane refuses " + wrongLane.Reason);
+        var wrongStart = native.Enter(coord, "run-1", "master", "", pid, "2001-01-01T00:00:00.0000000Z");
+        (!wrongStart.Ok && wrongStart.Reason == "shared-hop-identity").ShouldBeTrue("C599 Continuation a mismatched process start refuses " + wrongStart.Reason);
+        var deadParent = native.Enter(coord, "run-1", "master", "", 999999, start);
+        deadParent.Ok.ShouldBeFalse("C599 Continuation a dead continuation parent refuses " + deadParent.Reason);
+        native.Exit(coord, "run-1");
+        File.Exists(ReleaseGateNativeLock.LockPath(coord)).ShouldBeFalse("the owner's exit removes the lock");
+        native.Enter(coord, "run-1", "master", "", pid, start).Reason.ShouldBe("missing-shared-lock", "a continuation without a lock refuses");
+    }
 
     [Test]
     public Task C599_ReportLane() => RunCaseAsync("C599_ReportLane", 5,

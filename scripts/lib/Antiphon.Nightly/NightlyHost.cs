@@ -181,6 +181,22 @@ namespace Antiphon.Nightly
     /// <summary>The production process table: this machine's processes, boot and identity.</summary>
     public sealed class NightlyProcessTable : INightlyProcessTable
     {
+        private readonly Func<string, string, object> _readRegistry;
+
+        /// <summary>This machine's table.</summary>
+        public NightlyProcessTable() : this(null)
+        {
+        }
+
+        /// <summary>
+        /// This machine's table with the HKLM value reader (key, value name; null when unreadable) replaced, as a Windows
+        /// host: a test fails the BootId read (CARD-1389 D-3). Null reads the registry.
+        /// </summary>
+        public NightlyProcessTable(Func<string, string, object> readRegistry)
+        {
+            _readRegistry = readRegistry;
+        }
+
         /// <inheritdoc />
         public int CurrentPid => Environment.ProcessId;
 
@@ -233,9 +249,10 @@ namespace Antiphon.Nightly
         /// <inheritdoc />
         public string BootId()
         {
-            if (OperatingSystem.IsWindows())
+            // The registry BootId only: an unreadable value is an empty boot id, never another source (CARD-1389 D-3).
+            if (_readRegistry != null || OperatingSystem.IsWindows())
             {
-                var value = ReadRegistry(@"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters", "BootId");
+                var value = Registry(@"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters", "BootId");
                 if (value == null) return "";
                 try { return Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture); }
                 catch (Exception e) when (e is FormatException || e is InvalidCastException || e is OverflowException) { return ""; }
@@ -247,9 +264,9 @@ namespace Antiphon.Nightly
         /// <inheritdoc />
         public string HostId()
         {
-            if (OperatingSystem.IsWindows())
+            if (_readRegistry != null || OperatingSystem.IsWindows())
             {
-                var value = ReadRegistry(@"SOFTWARE\Microsoft\Cryptography", "MachineGuid") as string;
+                var value = Registry(@"SOFTWARE\Microsoft\Cryptography", "MachineGuid") as string;
                 return string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
             }
             if (OperatingSystem.IsLinux())
@@ -261,6 +278,17 @@ namespace Antiphon.Nightly
                 }
             }
             return "";
+        }
+
+        private object Registry(string key, string name)
+        {
+            if (_readRegistry != null)
+            {
+                try { return _readRegistry(key, name); }
+                catch (Exception e) when (e is System.Security.SecurityException || e is UnauthorizedAccessException || e is IOException) { return null; }
+            }
+            if (OperatingSystem.IsWindows()) return ReadRegistry(key, name);
+            return null;
         }
 
         [System.Runtime.Versioning.SupportedOSPlatform("windows")]

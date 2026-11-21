@@ -21,6 +21,18 @@ if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyConti
 
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 
+# W2-nightly S18: the per-task run lock (<StateRoot>\run.lock, dead-owner reclaim, the hop identity) is compiled:
+# Antiphon.Nightly/NightlyRunLock.cs, through the nightly-common seams (New-ReleaseGateLockSeams in release-gate.ps1).
+# One lock object per session holds the owner's handle from Enter to Exit. Enter-/Exit-NightlyExclusiveLock in
+# nightly-common.ps1 (a pinned live-lane input) are no longer called and go in S27.
+function Get-NightlyRunLock {
+    if ($null -eq $script:NightlyRunLockCore) {
+        $seams = New-ReleaseGateLockSeams
+        $script:NightlyRunLockCore = [Antiphon.Nightly.NightlyRunLock]::new($seams.Clock, $seams.Processes, $seams.RunLine, $seams.Trace)
+    }
+    return $script:NightlyRunLockCore
+}
+
 function Repair-NightlyCheckoutLineEndings {
     param([string]$CheckoutRoot)
     $eol = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('-c', 'core.quotePath=false', 'ls-files', '--eol')
@@ -336,7 +348,7 @@ function Invoke-AntiphonNightlyRunCore {
             return [pscustomobject]$result
         }
 
-        $lock = Enter-NightlyExclusiveLock -StateRoot $StateRoot -RunId $RunId -ContinueRunId $ContinueRunId -ContinueParentPid $ContinueParentPid -ContinueParentStartedAt $ContinueParentStartedAt
+        $lock = (Get-NightlyRunLock).Enter($StateRoot, $RunId, $ContinueRunId, $ContinueParentPid, $ContinueParentStartedAt)
         if (-not $lock.Ok) {
             Write-Host ('REFUSED: nightly lock ({0}).' -f $lock.Reason)
             $exitCode = 3
@@ -803,7 +815,7 @@ function Invoke-AntiphonNightlyRunCore {
         # D-4: released only after this run's owned children are accounted for, which the
         # tests hop guarantees by waiting for its child before returning.
         Exit-ReleaseGateNativeLock -CoordinationRoot $CoordinationRoot -RunId $RunId
-        Exit-NightlyExclusiveLock -StateRoot $StateRoot -RunId $RunId
+        if ($null -ne $script:NightlyRunLockCore) { $script:NightlyRunLockCore.Exit($StateRoot, $RunId) }
     }
 
     $result.ExitCode = $exitCode
