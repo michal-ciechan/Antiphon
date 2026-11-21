@@ -7,6 +7,8 @@ namespace Antiphon.SessionRunner;
 
 public interface IPhoneHomeRuntimeSurface
 {
+    void RequireSupportedCodexModel(RunnerLaunchRequest request) { }
+
     Task<DecisionPathInspectionResult?> InspectDecisionPathsAsync(DecisionPathInspectionRequest request, CancellationToken ct) =>
         Task.FromResult<DecisionPathInspectionResult?>(null);
     RunnerWorkspaceUseGate? WorkspaceUseGate => null;
@@ -649,6 +651,10 @@ public sealed class PhoneHomeCommandDispatcher
         {
             return Error(request, "grok_rules", ex.Message, 409);
         }
+        catch (CodexLaunchException ex) when (ex.Code == CodexLaunchProblemTypes.CliModelUnsupported)
+        {
+            return Error(request, ex.Code, ex.Message, 409);
+        }
         catch (HerdrLaunchException ex)
         {
             return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 409);
@@ -785,6 +791,7 @@ public sealed class PhoneHomeCommandDispatcher
             // probes. Re-check here, still before the generation is consumed and before the
             // process starts, so a symlink that replaced the leaf in between is refused.
             RejectLinkedStandingCheckout(launch.Cwd);
+            _runtime.RequireSupportedCodexModel(launch);
             // Durable before the process exists: a crash between the two can only refuse a re-send.
             if (launch.AcceptedStartedAt is { } accepting)
                 _launchGenerations.Record(launch.SessionId, accepting);

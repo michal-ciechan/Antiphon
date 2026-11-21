@@ -50,6 +50,85 @@ public sealed class CodexCliVersionProbe : IDisposable
         lock (_gate) _snapshot = sample;
     }
 
+    internal void RequireSupportedModel(RunnerLaunchRequest request)
+    {
+        if (!string.Equals(request.TranscriptFormat, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+            return;
+        var model = ReadRequestedModel(request.Args);
+        if (model is not ("gpt-6.2-sol" or "gpt-6.2-astra"))
+            return;
+
+        var sample = Snapshot;
+        var now = _clock.GetUtcNow();
+        var floor = CodexCliVersion.Gpt62CatalogFloor;
+        if (sample.CodexCliVersionCheckedAtUtc is not { } checkedAt
+            || checkedAt > now || now - checkedAt > TimeSpan.FromMinutes(_settings.MaxAgeMinutes)
+            || sample.CodexCliVersionError is not (null or "stderr_output" or "output_truncated")
+            || CodexCliVersion.Parse(sample.CodexCliVersion) is not { } version
+            || version.CompareTo(floor) >= 0
+            || sample.CodexCliLauncherFingerprint is not { } fingerprint
+            || !MatchesDefaultLauncher(request, fingerprint))
+            return;
+
+        throw new CodexLaunchException(CodexLaunchProblemTypes.CliModelUnsupported,
+            $"Session {request.SessionId:D}: {model} requires Codex CLI {floor} or newer. "
+            + $"The selected launcher is on {version}. Upgrade the CLI or select a compatible model.");
+    }
+
+    private bool MatchesDefaultLauncher(RunnerLaunchRequest request, string fingerprint)
+    {
+        if (string.IsNullOrWhiteSpace(request.Exe) || request.Env is null)
+            return false;
+
+        string? GetEnv(string name) => request.Env
+            .FirstOrDefault(entry => entry.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+        if (new[] { "NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DOTNET_STARTUP_HOOKS" }
+            .Any(name => !string.IsNullOrEmpty(GetEnv(name) ?? Environment.GetEnvironmentVariable(name))))
+            return false;
+
+        try
+        {
+            // A bare Herdr command resolves in the pane's shell. The Windows stock .cmd shim is
+            // resolved and replaced by the runner before passing it to the pane.
+            if (string.Equals(request.Backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase)
+                && !Path.IsPathFullyQualified(request.Exe)
+                && !(OperatingSystem.IsWindows() && request.Exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            var observed = Resolve(new(_settings.Executable, _settings.ResolutionCwd));
+            if (observed.Fingerprint != fingerprint)
+                return false;
+
+            var exeName = Path.GetFileName(request.Exe.Replace('\\', '/'));
+            var prefix = exeName.Equals("node", StringComparison.OrdinalIgnoreCase)
+                || exeName.Equals("node.exe", StringComparison.OrdinalIgnoreCase)
+                ? request.Args.FirstOrDefault() : null;
+            var selected = Resolve(new(request.Exe, request.Cwd, GetEnv("PATH"), GetEnv("PATHEXT"), prefix));
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            return pathComparer.Equals(observed.Exe, selected.Exe)
+                && observed.Args.SequenceEqual(selected.Args, pathComparer);
+        }
+        catch (Exception ex) when (ex is ProbeRefusal or IOException or UnauthorizedAccessException
+                                   or ArgumentException or NotSupportedException or CodexLaunchException)
+        {
+            return false;
+        }
+    }
+
+    private static string? ReadRequestedModel(IReadOnlyList<string>? args)
+    {
+        string? model = null;
+        for (var index = 0; args is not null && index < args.Count && args[index] != "--"; index++)
+        {
+            var arg = args[index];
+            if (arg is "--model" or "-m")
+                model = ++index < args.Count ? args[index] : null;
+            else if (arg?.StartsWith("--model=", StringComparison.Ordinal) == true)
+                model = arg["--model=".Length..];
+        }
+        return model;
+    }
+
     public async Task<RunnerCodexCliVersionDto> ProbeAsync(
         RunnerCodexCliProbeRequest request, bool force, CancellationToken ct)
     {

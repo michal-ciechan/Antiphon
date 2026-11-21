@@ -20,13 +20,13 @@ namespace Antiphon.Server.Application.Services;
 /// (<c>gpt-6.2-astra</c> / <c>gpt-6.2-sol</c> / <c>gpt-6.2-sol</c> / <c>gpt-5.6-luna</c>) and needs
 /// deliberate catalog bumps. Both 6.2 models have floor 0.169.1. The explicit <c>gpt-6-astra</c>
 /// alias has a documented floor of 0.153.4. <c>gpt-6.1-sol</c> keeps recorded floor 0.159.1.
-/// CARD-0959 reports runner CLI observations and treats floor metadata as data only.
-/// It does not enforce compatibility or require a fleet upgrade.</para>
+/// CARD-0959 reports runner CLI observations independently of task admission.
+/// The runner can refuse a cold GPT-6.2 launch when the selected launcher is verified below its floor.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
     public sealed record CodexLadderEntry(string ModelId, CodexCliVersion? MinimumCliVersion);
-    private static readonly CodexCliVersion Codex62Floor = CodexCliVersion.Parse("0.169.1")!;
+    private static readonly CodexCliVersion Codex62Floor = CodexCliVersion.Gpt62CatalogFloor;
     private static readonly CodexLadderEntry CodexFrontier = new(ModelAlias.Gpt62Astra, Codex62Floor);
     private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt62Sol, Codex62Floor);
     private static readonly CodexLadderEntry CodexLow = new(ModelAlias.Gpt56Luna, null);
