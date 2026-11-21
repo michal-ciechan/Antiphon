@@ -43,7 +43,7 @@ public sealed class AstraFixesBTests
             EvidenceFiles.WriteAtomic(file1, fresh, false);
             EvidenceFiles.WriteAtomic(file2, fresh, false);
             WaitLanded(file1, file2).ShouldBeTrue("setup: replacement stayed queued");
-            File.ReadAllText(file1).ShouldBe(old, "setup: replacement landed");
+            (File.ReadAllText(file1) == old && File.ReadAllText(file2) == old).ShouldBeTrue("setup: replacement landed despite the injected write failure");
 
             var read = TestPhaseFiles.BoundedRead(file1, 4096, 5000, Stopwatch.StartNew());
             var detail = "Complete=" + read.Complete + " Refused=" + read.Refused + " Kind=" + read.Kind;
@@ -70,6 +70,7 @@ public sealed class AstraFixesBTests
             const string retryText = "{\"sequence\":3,\"publicationComplete\":true}";
             EvidenceFiles.WriteAtomic(file1, retryText, false);
             WaitLanded(file1).ShouldBeTrue("setup: retry stayed queued");
+            File.ReadAllText(file1).ShouldBe(retryText, "setup: retry did not land");
             var retryReported = EvidenceFiles.Flush(file1).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
             var retryVerdict = EvidenceFiles.DeferredWriteVerdict();
             var retryReasons = string.Join(" | ", retryVerdict.Reasons);
