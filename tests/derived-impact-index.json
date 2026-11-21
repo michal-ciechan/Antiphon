@@ -1988,7 +1988,7 @@
       "reason": "cap",
       "owed": 55,
       "first": [
-        "CodexLaunchRefusalTests",
+        "TranscriptSinceReadTests",
         "CompactionContinuationStopTests",
         "DelegateBranchDeliveryTests",
         "GrokHerdrRealCliStubProxyCanaryTests",
@@ -2004,7 +2004,7 @@
       "reason": "cap",
       "owed": 55,
       "first": [
-        "CodexLaunchRefusalTests",
+        "TranscriptSinceReadTests",
         "CompactionContinuationStopTests",
         "DelegateBranchDeliveryTests",
         "GrokHerdrRealCliStubProxyCanaryTests",
@@ -2021,13 +2021,13 @@
       "owed": 68,
       "first": [
         "ClaudeDialogInputGuardTests",
+        "CodexLaunchRefusalTests",
         "HerdrEventPumpTests",
         "PhoneHomeBackpressureTests",
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerEventHubTests",
-        "C1677TempSweepNativeTests",
-        "GrokRulesRunnerRefusalTests"
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -18325,6 +18325,7 @@
         "CodexCliObservationTests",
         "CodexCliVersionProbeTests",
         "CodexCliVersionWindowsTests",
+        "CodexLaunchRefusalTests",
         "RunnerCodexCliEvidenceTests"
       ]
     },
@@ -18955,6 +18956,7 @@
         "C1022BackendCapabilitiesTests",
         "CodexCliVersionProbeTests",
         "CodexCliVersionWindowsTests",
+        "CodexLaunchRefusalTests",
         "RunnerCodexCliEvidenceTests",
         "TaskParkPublicationTests",
         "VerificationCleanupServiceTests"
@@ -18972,6 +18974,7 @@
         "C1022BackendCapabilitiesTests",
         "CodexCliVersionProbeTests",
         "CodexCliVersionWindowsTests",
+        "CodexLaunchRefusalTests",
         "RunnerCodexCliEvidenceTests"
       ]
     },
@@ -20096,6 +20099,7 @@
         "Card1653SocketDirTests",
         "CodexBootWedgeProbeTests",
         "CodexHerdrRealCliStubProxyCanaryTests",
+        "CodexLaunchRefusalTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesFileLaunchTests",
         "GrokRulesRunnerRefusalTests",
@@ -20113,8 +20117,7 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerRuntimeTests",
-        "TranscriptAdoptionSafetyTests",
-        "TranscriptSinceReadTests"
+        "TranscriptAdoptionSafetyTests"
       ]
     },
     {
@@ -20126,6 +20129,7 @@
         "Card1653SocketDirTests",
         "CodexBootWedgeProbeTests",
         "CodexHerdrRealCliStubProxyCanaryTests",
+        "CodexLaunchRefusalTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesFileLaunchTests",
         "GrokRulesRunnerRefusalTests",
@@ -20143,8 +20147,7 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerRuntimeTests",
-        "TranscriptAdoptionSafetyTests",
-        "TranscriptSinceReadTests"
+        "TranscriptAdoptionSafetyTests"
       ]
     },
     {
@@ -21374,7 +21377,8 @@
       "path": "tests/Antiphon.SessionRunner.Tests/CodexCliVersionTestFixture.cs",
       "classes": [
         "CodexCliVersionProbeTests",
-        "CodexCliVersionWindowsTests"
+        "CodexCliVersionWindowsTests",
+        "CodexLaunchRefusalTests"
       ]
     },
     {
@@ -21476,6 +21480,7 @@
       "classes": [
         "CodexCliVersionProbeTests",
         "CodexCliVersionWindowsTests",
+        "CodexLaunchRefusalTests",
         "RunnerCodexCliEvidenceTests"
       ]
     },
