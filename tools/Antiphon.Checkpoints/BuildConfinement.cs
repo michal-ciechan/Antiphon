@@ -239,7 +239,7 @@ public static class BuildConfinement
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken,
         Ledger? ledger = null,
-        bool usesIntermediateCache = false)
+        int graphEvaluationParallelism = 1)
     {
         if (!TryFindOutput(arguments, out var outputValue))
             return new Prepared(null, "", arguments, null);
@@ -281,9 +281,8 @@ public static class BuildConfinement
         WalkResult walked;
         try
         {
-            walked = usesIntermediateCache && ProjectWriteRoots.TryFindProjectFile(projectFull, out var entry, out _)
-                ? EvaluateWarmGraph(repository, entry!, layout, forwarded, workingDirectory, environment, cancellationToken)
-                : Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment,
+                cancellationToken, graphEvaluationParallelism);
         }
         catch (OperationCanceledException)
         {
@@ -593,7 +592,8 @@ public static class BuildConfinement
         IReadOnlyList<string> forwarded,
         string workingDirectory,
         IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int parallelism)
     {
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var seen = new HashSet<string>(comparer);
@@ -602,20 +602,35 @@ public static class BuildConfinement
         queue.Enqueue(projectFull);
         while (queue.Count > 0)
         {
-            var current = Path.GetFullPath(queue.Dequeue());
-            if (!seen.Add(current))
-                continue;
-            if (projects.Count >= WalkCap)
-                return new WalkResult([], "walk cap exceeded");
-            projects.Add(current);
-            var eval = Evaluate(current, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
-            if (eval.Error is not null)
-                return new WalkResult([], eval.Error);
-            foreach (var reference in eval.References)
+            var batch = new List<string>();
+            while (batch.Count < parallelism && queue.TryDequeue(out var path))
             {
-                if (!File.Exists(reference))
-                    return new WalkResult([], "referenced project missing: " + reference);
-                queue.Enqueue(reference);
+                var current = Path.GetFullPath(path);
+                if (!seen.Add(current))
+                    continue;
+                if (projects.Count >= WalkCap)
+                    return new WalkResult([], "walk cap exceeded");
+                projects.Add(current);
+                batch.Add(current);
+            }
+            // These probes evaluate projects without running targets. Keep them within the
+            // slot's CPU grant and join every probe before the actual build can start.
+            EvalResult Probe(string project) =>
+                Evaluate(project, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            var evaluated = batch.Count == 1
+                ? [Probe(batch[0])]
+                : Task.WhenAll(batch.Select(project => Task.Run(() => Probe(project), cancellationToken)))
+                    .GetAwaiter().GetResult();
+            foreach (var eval in evaluated)
+            {
+                if (eval.Error is not null)
+                    return new WalkResult([], eval.Error);
+                foreach (var reference in eval.References)
+                {
+                    if (!File.Exists(reference))
+                        return new WalkResult([], "referenced project missing: " + reference);
+                    queue.Enqueue(reference);
+                }
             }
         }
 
@@ -623,30 +638,6 @@ public static class BuildConfinement
     }
 
     private readonly record struct EvalResult(List<string> References, string? Error);
-
-    private static WalkResult EvaluateWarmGraph(
-        string repository,
-        string project,
-        OutputLayout layout,
-        IReadOnlyList<string> forwarded,
-        string workingDirectory,
-        IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
-    {
-        var args = new List<string>
-        {
-            "msbuild", Path.Combine(repository, CheckpointIntermediateCache.GraphProject), "-target:Validate",
-            "-nologo", "-nodeReuse:false", "--property:CheckpointGraphEntry=" + project,
-            "--property:CheckpointGraphWalkCap=" + WalkCap,
-            "--property:OutputPath=" + layout.Owned, "--property:ArtifactsPath=" + layout.Artifacts,
-            "--property:UseArtifactsOutput=true",
-        };
-        args.AddRange(forwarded);
-        var result = Evaluate(args, workingDirectory, environment, cancellationToken);
-        return result.Error is null && result.Result.Exit == 0
-            ? new WalkResult([], null)
-            : new WalkResult([], result.Error ?? "msbuild graph exit " + result.Result.Exit);
-    }
 
     private static EvalResult Evaluate(
         string project,
@@ -667,18 +658,6 @@ public static class BuildConfinement
         args.AddRange(forwarded);
         AddConfinedUseAppHost(args, forwarded.Any(token => token.StartsWith("--property:UseAppHost=", StringComparison.OrdinalIgnoreCase)));
 
-        var result = Evaluate(args, workingDirectory, environment, cancellationToken);
-        if (result.Error is not null) return new EvalResult([], result.Error);
-        if (result.Result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Result.Exit);
-        return ParseReferences(result.Result.Stdout, result.Result.Stderr);
-    }
-
-    private static (CheckpointProcessRunner.Result Result, string? Error) Evaluate(
-        IReadOnlyList<string> args,
-        string workingDirectory,
-        IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
-    {
         var psi = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
@@ -701,8 +680,10 @@ public static class BuildConfinement
         CheckpointProcessRunner.Result result;
         try { result = CheckpointProcessRunner.Run(psi, 120_000, false, cancellationToken); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        { return (default!, ex.GetType().Name); }
-        return (result, result.TimedOut ? "msbuild evaluation timed out" : null);
+        { return new EvalResult([], ex.GetType().Name); }
+        if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
+        if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
+        return ParseReferences(result.Stdout, result.Stderr);
     }
 
     private static EvalResult ParseReferences(string stdout, string stderr)

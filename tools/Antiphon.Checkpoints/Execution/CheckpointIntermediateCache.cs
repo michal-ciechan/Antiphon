@@ -10,20 +10,18 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
 {
     internal const string RootProperty = "AntiphonCheckpointIntermediateRoot";
     internal const string ProjectProps = "tools/Antiphon.Checkpoints/CheckpointIntermediates.props";
-    internal const string GraphProject = "tools/Antiphon.Checkpoints/CheckpointBuildGraph.proj";
     private static readonly HashSet<string> LayoutOverrides = new(StringComparer.OrdinalIgnoreCase)
     {
         "ArtifactsPath", "UseArtifactsOutput", "UseArtifactsIntermediateOutput", "BaseIntermediateOutputPath",
         "IntermediateOutputPath", "MSBuildProjectExtensionsPath", "CustomBeforeDirectoryBuildProps",
         "CustomAfterDirectoryBuildProps", RootProperty, "AntiphonCheckpointRepositoryRoot",
-        "CheckpointGraphEntry", "CheckpointGraphWalkCap",
     };
 
     internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected)
     {
         if (expected is null || source.Commit != expected || source.CaptureStatus != "known"
             || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint)
-            || !File.Exists(Path.Combine(root, ProjectProps)) || !File.Exists(Path.Combine(root, GraphProject)))
+            || !File.Exists(Path.Combine(root, ProjectProps)))
             return null;
         try
         {

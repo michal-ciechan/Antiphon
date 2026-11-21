@@ -527,7 +527,7 @@ public sealed class RunScheduler
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log)
                 {
                     Ledger = ledger,
-                    UsesIntermediateCache = intermediate is not null,
+                    GraphEvaluationParallelism = intermediate is null ? 1 : cpu,
                 },
                 TimeSpan.FromMinutes(deadlineMinutes),
                 _buildTimeProvider,

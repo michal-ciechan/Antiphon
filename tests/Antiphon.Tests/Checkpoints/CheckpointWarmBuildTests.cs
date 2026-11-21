@@ -41,12 +41,9 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         first.Cache.ShouldNotBe(otherSource.Cache);
 
         var assets = Path.Combine(first.Cache, "project.assets.json");
-        foreach (var helper in new[] { CheckpointIntermediateCache.ProjectProps, CheckpointIntermediateCache.GraphProject })
-        {
-            var path = Path.Combine(root, helper);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, "<Project />");
-        }
+        var props = Path.Combine(root, CheckpointIntermediateCache.ProjectProps);
+        Directory.CreateDirectory(Path.GetDirectoryName(props)!);
+        File.WriteAllText(props, "<Project />");
         using var cacheOwner = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
         cacheOwner.ShouldNotBeNull();
         using var competingCache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
