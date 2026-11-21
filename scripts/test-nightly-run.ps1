@@ -529,6 +529,23 @@ function Invoke-C545ResultLineRun {
     param([string]$Row, [string]$UtcNow, [int]$TestExit = 0, [bool]$TestsPassed = $true, [switch]$NoReport,
         [string]$CheckoutRoot = '', [switch]$Rc, [string]$ReleaseRoot)
     $fx = New-RunFx
+    $sha = 'a' * 40
+    if ($Rc) {
+        # The real selection worker reads policy blobs from the pinned commit.
+        $inputs = @('global.json', 'tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'scripts/select-test-rosters.ps1')
+        [void][IO.Directory]::CreateDirectory((Join-Path $fx.Clone 'tests'))
+        foreach ($file in $inputs) {
+            Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $here) $file) -Destination (Join-Path $fx.Clone $file)
+        }
+        & git -C $fx.Clone init -q
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the rc fixture repository.' }
+        & git -C $fx.Clone add -- @inputs 'scripts/lib/test-selection.ps1'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not stage the rc fixture selection inputs.' }
+        & git -C $fx.Clone -c user.name=C2044 -c user.email=c2044@example.invalid -c core.hooksPath=.git/no-hooks -c commit.gpgsign=false commit -qm 'rc fixture selection inputs'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not commit the rc fixture selection inputs.' }
+        $sha = & git -C $fx.Clone rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the rc fixture candidate.' }
+    }
     $runId = ('c545-' + $Row + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $summaryJson = ('{{"coverageComplete":true,"testsPassed":{0},"reportDelivered":true,"policyHash":"p"}}' -f $(if ($TestsPassed) { 'true' } else { 'false' }))
     $extra = [scriptblock]::Create(@"
@@ -547,14 +564,14 @@ function Invoke-C545ResultLineRun {
     return @{ ExitCode = 0; TimedOut = `$false; Pid = 2 }
 }
 "@)
-    Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -Extra $extra
+    Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -GitOutput $sha -Extra $extra
     $checkout = $fx.Clone
     if ($CheckoutRoot) { $checkout = $CheckoutRoot }
     $argList = @('-NoProfile', '-NonInteractive', '-File', $runPs1, '-NoSync', '-CheckoutRoot', $checkout, '-StateRoot', $fx.State,
         '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-RunId', $runId,
         '-CoordinationRoot', $fx.Coordination)
     if ($Rc) {
-        $argList += @('-Profile', 'rc', '-Trigger', 'rc', '-Ref', 'rc/2026-11-30', '-ExpectedSha', ('a' * 40))
+        $argList += @('-Profile', 'rc', '-Trigger', 'rc', '-Ref', 'rc/2026-11-30', '-ExpectedSha', $sha)
     } else {
         $argList += @('-Trigger', 'scheduled', '-Ref', 'master')
     }
@@ -562,6 +579,7 @@ function Invoke-C545ResultLineRun {
     if ($NoReport) { $argList += '-NoReport' }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'pwsh'
+    $psi.WorkingDirectory = $fx.Root
     foreach ($x in $argList) { [void]$psi.ArgumentList.Add($x) }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -636,9 +654,10 @@ function Test-C2044_RcReleaseRootRefusal {
             -Name ('C2044 {0} ReleaseRoot is refused before recording a run and named in the final JSON' -f $run.Row) `
             -Detail ('exit={0} last={1} stderr={2}' -f $run.ExitCode, $run.Last, $run.Stderr)
     }
-    $explicit = Invoke-C545ResultLineRun -Row 'explicit' -ReleaseRoot (Join-Path $ResultsDirectory 'rc-releases') @arguments
+    $release = Join-Path $ResultsDirectory 'rc-releases'
+    $explicit = Invoke-C545ResultLineRun -Row 'explicit' -ReleaseRoot $release @arguments
     Assert-C487 -Cond ($explicit.Record.nativeRunId -ceq $explicit.RunId -and $explicit.State.profile -ceq 'rc' -and
-        $explicit.State.coverageScope -in @('Full', 'PlatformDiagnostic') -and $explicit.Record.testsPassed) `
+        $explicit.Record.testsPassed -and (Test-Path -LiteralPath (Join-Path $release "candidates/$($explicit.State.candidateId)/attempts/$($explicit.RunId)/selection.json"))) `
         -Name 'C2044 explicit ReleaseRoot reaches the test result' -Detail $explicit.Last
 }
 
