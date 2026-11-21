@@ -6,27 +6,33 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[Category("Unit")]
+[Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerSettlementGitDeadlineTests
 {
-    private static readonly TimeSpan CommandBudget = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan CommandBudget = TimeSpan.FromSeconds(4);
 
     [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
     [Timeout(20_000)]
-    [NativeLinuxOnly("POSIX witness for a fake Git child or a detached holder of its redirected pipes.")]
     public async Task FakeGitExitAndOutputShareDeadline(bool landingPath, bool holdPipesAfterExit, CancellationToken ct)
     {
         using var descendants = DescendantLeakScope.Create();
-        // The finite fallback also bounds the lifetime if the test host itself is interrupted.
-        var script = holdPipesAfterExit ? "sleep 25 & exit 0" : "exec sleep 25";
+        Task? rootExit = null;
+        void ObserveStart(Process root)
+        {
+            descendants.AdoptOrKill(root);
+            rootExit = root.WaitForExitAsync(ct);
+        }
+
+        string expected;
         Task run;
         if (landingPath)
         {
-            var git = new FakeSettlementGit(script, descendants);
+            var git = new FakeSettlementGit(holdPipesAfterExit, descendants, ObserveStart);
+            expected = "git_timeout";
             run = git.RunAsync(Path.GetTempPath(), ["fixture-child"], new LandingGitRunOptions(CommandBudget), ct);
         }
         else
@@ -38,15 +44,22 @@ public sealed class RunnerSettlementGitDeadlineTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            ConfigureFakeChild(start, script, descendants);
-            run = RunnerSettlementSyncTests.SyncWorld.ExecAsync(start, CommandBudget);
+            ConfigureFakeChild(start, holdPipesAfterExit, descendants);
+            expected = "git " + string.Join(' ', start.ArgumentList);
+            run = RunnerSettlementSyncTests.SyncWorld.ExecAsync(start, CommandBudget, ObserveStart);
         }
 
         try
         {
+            if (holdPipesAfterExit)
+            {
+                await rootExit.ShouldNotBeNull().WaitAsync(TimeSpan.FromSeconds(3), ct);
+                descendants.Alive().ShouldNotBeEmpty("a descendant still holds a redirected writer after the root exits");
+            }
             var error = await Should.ThrowAsync<TimeoutException>(
-                () => run.WaitAsync(TimeSpan.FromSeconds(8), ct));
-            error.Message.ShouldBe(landingPath ? "git_timeout" : "git -c " + script);
+                () => run.WaitAsync(TimeSpan.FromSeconds(10), ct));
+            error.Message.ShouldBe(expected);
+            await rootExit.ShouldNotBeNull().WaitAsync(TimeSpan.FromSeconds(3), ct);
         }
         finally
         {
@@ -56,22 +69,39 @@ public sealed class RunnerSettlementGitDeadlineTests
         }
     }
 
-    private static void ConfigureFakeChild(ProcessStartInfo start, string script, DescendantLeakScope descendants)
+    private static void ConfigureFakeChild(ProcessStartInfo start, bool holdPipesAfterExit, DescendantLeakScope descendants)
     {
-        start.FileName = "/bin/sh";
+        start.CreateNoWindow = true;
         start.ArgumentList.Clear();
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(script);
+        // Both children have a finite fallback if the test host dies. The initial Windows ping
+        // lets the test's job adopt the root before it starts the descendant.
+        if (OperatingSystem.IsWindows())
+        {
+            start.FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            start.ArgumentList.Add("/d");
+            start.ArgumentList.Add("/c");
+            start.ArgumentList.Add(holdPipesAfterExit
+                ? "ping -n 2 127.0.0.1 >nul & start /b ping -n 25 127.0.0.1"
+                : "ping -n 25 127.0.0.1");
+        }
+        else
+        {
+            start.FileName = "/bin/sh";
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(holdPipesAfterExit ? "sleep 25 & exit 0" : "exec sleep 25");
+        }
         descendants.Apply(start);
     }
 
-    private sealed class FakeSettlementGit(string script, DescendantLeakScope descendants)
+    private sealed class FakeSettlementGit(bool holdPipesAfterExit, DescendantLeakScope descendants, Action<Process> started)
         : RunnerSettlementSyncTests.SettlementFixtureGit
     {
         protected override Process? StartProcess(ProcessStartInfo start)
         {
-            ConfigureFakeChild(start, script, descendants);
-            return base.StartProcess(start);
+            ConfigureFakeChild(start, holdPipesAfterExit, descendants);
+            var child = base.StartProcess(start);
+            if (child is not null) started(child);
+            return child;
         }
     }
 }

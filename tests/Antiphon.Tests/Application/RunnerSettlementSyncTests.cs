@@ -1382,10 +1382,12 @@ public sealed class RunnerSettlementSyncTests
             return await ExecAsync(start, TimeSpan.FromSeconds(60));
         }
 
-        internal static async Task<LandingGitResult> ExecAsync(ProcessStartInfo start, TimeSpan timeout)
+        internal static async Task<LandingGitResult> ExecAsync(ProcessStartInfo start, TimeSpan timeout,
+            Action<Process>? started = null)
         {
             using var process = Process.Start(start)
                 ?? throw new IOException("git_start_failed");
+            started?.Invoke(process);
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             using var budget = new CancellationTokenSource(timeout);
