@@ -374,6 +374,91 @@ public sealed class RcInputOwnersMapTests : IDisposable
         missing.ShouldBeEmpty();
     }
 
+    private static string OwnershipStatus(IEnumerable<RcInputSuite> suites, IEnumerable<string> paths)
+    {
+        foreach (var suite in suites)
+            foreach (var path in paths)
+                if (PresentOwned(suite, path)) return "selected";
+        return "missed";
+    }
+
+    private static string SourceHead()
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = RcInputFixtureRepository.SourceRoot, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { "rev-parse", "HEAD" }) start.ArgumentList.Add(arg);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+        var output = process.StandardOutput.ReadToEndAsync();
+        _ = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(60_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw new TimeoutException("git rev-parse HEAD did not exit within 60 s");
+        }
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException("git rev-parse HEAD exited " + process.ExitCode);
+        return output.Result.Trim();
+    }
+
+    /// <summary>
+    /// The HistoricalSelectionSoundness case of the deleted test-rc-input-owners.ps1 (upstream 0058c60c5, b18b9ef13,
+    /// 39a3d7a19), in-process. tests/fixtures/incremental-selection-soundness.json is replayed through the committed owner
+    /// inventory of this checkout's HEAD: a case is selected when its suite owns one of its changed paths as a present
+    /// input that is not a fallback. Three rows, each checked: contract (every case's recorded currentMap), unowned (a
+    /// path the census lists as unowned is missed by the Pty suite) and composer-inputs (each Composer input is an owned
+    /// input of the Pty suite on its own). IncrementalSelectionSoundnessTests.Recorded_owner_map_status_matches_the_committed_map
+    /// runs it.
+    /// </summary>
+    internal static void HistoricalSelectionSoundness()
+    {
+        const string replay = "RIO HistoricalSelectionSoundness";
+        var sourceRoot = RcInputFixtureRepository.SourceRoot;
+        var failed = new List<string>();
+        var errors = new List<string>();
+        using var corpus = JsonDocument.Parse(File.ReadAllText(Path.Combine(sourceRoot, "tests", "fixtures", "incremental-selection-soundness.json")));
+        var cases = corpus.RootElement.GetProperty("cases").EnumerateArray().ToArray();
+        if (cases.Length == 0) errors.Add("soundness corpus contains no cases");
+        var inventory = RcInputInventory.Read(sourceRoot, SourceHead());
+        // The historical fixture contains paths. Replay committed ownership before the manifest examines the contents of
+        // the original before/after files.
+        foreach (var item in cases)
+        {
+            var id = item.GetProperty("id").GetString();
+            var suiteProject = item.GetProperty("suiteProject").GetString();
+            var suites = inventory.Suites.Where(s => s.Project == suiteProject).ToArray();
+            if (suites.Length == 0) errors.Add(id + ": missing suite for " + suiteProject);
+            var status = OwnershipStatus(suites, item.GetProperty("changedPaths").EnumerateArray().Select(p => p.GetString()!));
+            var expected = item.GetProperty("currentMap").GetString();
+            if (status != expected) errors.Add(id + ": expected " + expected + ", got " + status);
+        }
+        if (errors.Count > 0) failed.Add(replay + ".contract: " + string.Join("; ", errors));
+
+        var pty = inventory.Suites.Where(s => s.Project == Pty).ToArray();
+        // The inventory census names tracked paths with no owner. Use a current census entry so the witness remains
+        // unowned when ownership rules evolve.
+        var unownedPath = (inventory.Unowned ?? []).FirstOrDefault()?.Path;
+        var unownedStatus = string.IsNullOrEmpty(unownedPath) ? "no unowned path" : OwnershipStatus(pty, [unownedPath]);
+        if (!(pty.Length == 1 && unownedStatus == "missed"))
+            failed.Add(replay + ".unowned: Pty suites=" + pty.Length + ", expected missed for '" + unownedPath + "', got " + unownedStatus);
+
+        // Check each Composer path independently; siblings can still select the suite.
+        string[] composerPaths =
+        [
+            "src/Antiphon.Agents.Pty/ComposerDeliveryEvidence.cs",
+            "src/Antiphon.Agents.Pty/ComposerInputProbe.cs",
+            "src/Antiphon.FakeClaude/Program.cs",
+            "tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs",
+            "tests/Antiphon.Agents.Pty.Tests/ComposerInputProbeTests.cs",
+            "tests/Antiphon.Agents.Pty.Tests/FakeClaudeContractTests.cs",
+        ];
+        var missing = composerPaths.Where(path => pty.Length == 0 || !PresentOwned(pty[0], path)).ToArray();
+        if (!(pty.Length == 1 && missing.Length == 0))
+            failed.Add(replay + ".composer-inputs: Pty suites=" + pty.Length + ", missing present owned inputs: " + string.Join(", ", missing));
+        failed.ShouldBeEmpty(string.Join(" | ", failed));
+    }
+
     private static bool PresentOwned(RcInputSuite suite, string path)
     {
         var record = Present(suite, path);

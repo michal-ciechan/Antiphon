@@ -34,14 +34,14 @@ public sealed class IncrementalSelectionSoundnessTests
         AllowTrailingCommas = false,
     };
 
+    // In-process: the HistoricalSelectionSoundness case (RcInputOwnersMapTests) replays the corpus through the committed
+    // owner inventory (Antiphon.Nightly.RcInputInventory), with its three rows: contract, unowned and composer-inputs.
     [Test, Timeout(150_000)]
-    public Task Recorded_owner_map_status_matches_the_committed_map(CancellationToken cancellationToken)
+    public void Recorded_owner_map_status_matches_the_committed_map(CancellationToken cancellationToken)
     {
         _ = LoadCorpus(RepoRoot());
-        const string replay = "HistoricalSelectionSoundness";
-        return ScriptHarness.RunHarnessCaseAsync("test-rc-input-owners.ps1", "RIO", replay, 3,
-            ["RIO " + replay + ".contract", "RIO " + replay + ".unowned", "RIO " + replay + ".composer-inputs"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        RcInputOwnersMapTests.HistoricalSelectionSoundness();
     }
 
     [Test, Timeout(60_000)]
