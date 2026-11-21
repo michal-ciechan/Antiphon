@@ -42,8 +42,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
     // replacement, fail-fast, bounds and the CARD-1934 timed start).
     private static Task<RedpandaContainer> SharedBrokerAsync() => SharedRedpandaBroker.C519.GetAsync();
 
-    [After(Class)]
-    public static Task StopSharedBrokerAsync() => SharedRedpandaBroker.C519.StopAsync();
+    // Disposed once after the assembly (SharedRedpandaBrokerHooks), not per class.
 
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {

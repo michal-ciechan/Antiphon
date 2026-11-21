@@ -270,7 +270,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // Visible, so a broker that keeps leaking topics can be told from one that fails to create them.
-            Console.WriteLine("C519_TOPIC_DELETE_FAILED " + Topic + " " + ex.GetType().Name);
+            Console.WriteLine("C519_TOPIC_DELETE_FAILED " + Topic + " " + ex.GetType().Name + ": " + ex.Message);
         }
     }
 

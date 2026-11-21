@@ -3,34 +3,36 @@ using Confluent.Kafka;
 using DotNet.Testcontainers.Configurations;
 using DotNet.Testcontainers.Containers;
 using Testcontainers.Redpanda;
+using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
 /// One Redpanda broker shared by test classes instead of one per test: <see cref="C519"/> serves the C519 transport and
-/// crash classes, so at most one such broker is up even when their tests interleave; each class disposes it after it
-/// ends (a later test starts a new one). The classes run one test at a time (ProcessSpawnLimit), and every scenario
-/// has its own topic (with its own size
-/// cap, deleted when the scenario is disposed), consumer group, database schema and gateway (UnifiedOutboundTransport),
-/// so no test sees another's broker state; a test must not change broker-wide state. Started by the first test that
-/// needs it, with the class's own start (its timing and budget); a later test that reuses it prints
-/// `<label> shared=true`. Before each reuse the broker must answer a metadata request (Testcontainers' State is cached,
-/// not live), allowed 20 seconds and asked twice because a loaded host can be slow: one that still does not answer
-/// prints `shared=replaced` and is disposed (bounded; a failed disposal is logged and left to the reaper) and replaced.
-/// After two failed starts in a row within FailFastWindow the remaining tests fail at once with the last start's error
-/// instead of each spending its own startup budget; a start after that window is tried again. Every step under the
-/// gate has its own bound (two 30-second probes, a 60-second disposal, a start bounded by StartBound, whose
-/// failed-start disposal is bounded too), so a gate
-/// holder always finishes and no caller abandons work it started: a caller waits for the gate at most
-/// <see cref="GateWait"/> (more than the longest holder) and then does its own bounded work. A test's own scenario
-/// deadline starts after it has the broker. <see cref="StopAsync"/> runs after the class, under the same gate.
+/// crash classes, so at most one such broker is up even when their tests interleave, and it is disposed once, after
+/// the test assembly (SharedRedpandaBrokerHooks): a per-class hook could dispose it under the other class's running
+/// test, since hooks do not run under the classes' ProcessSpawnLimit. Each rc launch group is its own test process,
+/// so the broker lives at most for its group. The classes run one test at a time (ProcessSpawnLimit), and every
+/// scenario has its own topic (with its own size cap, deleted when the scenario is disposed), consumer group, database
+/// schema and gateway (UnifiedOutboundTransport), so no test sees another's broker state; a test must not change
+/// broker-wide state. Started by the first test that needs it, with the CARD-1934 timed start (both classes' broker
+/// lines carry the C1934_BROKER_PHASE label); a later test that reuses it prints `C1934_BROKER_PHASE shared=true`.
+/// Before each reuse the broker must answer a metadata request (Testcontainers' State is cached, not live), allowed
+/// 20 seconds and asked twice because a loaded host can be slow, recorded as a TestTiming FixtureSetup phase: one that
+/// still does not answer prints `shared=replaced` and is disposed (bounded; a failed disposal is logged and left to
+/// the reaper) and replaced. After two failed starts in a row within FailFastWindow the remaining tests fail at once
+/// with the last start's error instead of each spending its own startup budget; a start after that window is tried
+/// again. Every step under the gate bounds itself (two 30-second probes, a 60-second disposal, a start of at most
+/// 120 seconds plus a 60-second wait for a failed start to settle and a 60-second disposal of it), so a gate holder
+/// always finishes and nothing it started outlives it: a caller waits for the gate at most <see cref="GateWait"/>
+/// (more than the longest holder) and then does its own bounded work. A test's own scenario deadline starts after it
+/// has the broker.
 /// </summary>
 internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, string label)
 {
     public const string Image = "docker.redpanda.com/redpandadata/redpanda:v25.3.4";
     private const string C519Label = "C1934_BROKER_PHASE";
-    public static readonly TimeSpan GateWait = TimeSpan.FromSeconds(420);
-    private static readonly TimeSpan StartBound = TimeSpan.FromSeconds(150);
+    public static readonly TimeSpan GateWait = TimeSpan.FromSeconds(480);
     private static readonly TimeSpan FailFastWindow = TimeSpan.FromMinutes(10);
 
     /// <summary>The broker of the C519 transport and crash classes, started with the CARD-1934 phase timing.</summary>
@@ -45,12 +47,15 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
     public async Task<RedpandaContainer> GetAsync()
     {
         if (!await _gate.WaitAsync(GateWait))
-            throw new TimeoutException("the class's shared Redpanda broker was held by another test past every bound");
+            throw new TimeoutException("the shared Redpanda broker (C519 classes) was held by another test past every bound");
         try
         {
             if (_broker is { } current)
             {
-                if (await AnswersAsync(current) || await AnswersAsync(current))
+                bool answers;
+                using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "shared-broker-probe"))
+                    answers = await AnswersAsync(current) || await AnswersAsync(current);
+                if (answers)
                 {
                     Console.WriteLine(label + " shared=true");
                     return current;
@@ -63,17 +68,13 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
                 throw new InvalidOperationException(
                     "the shared Redpanda broker failed to start twice in a row within " + FailFastWindow.TotalMinutes
                     + " minutes; this test did not try again", _startFailure);
-            var starting = start();
             try
             {
-                _broker = await starting.WaitAsync(StartBound);
+                // The start bounds itself (StartTimedAsync): it finishes, or fails, before the gate is released.
+                _broker = await start();
             }
             catch (Exception ex)
             {
-                // A start past its bound is left to finish on its own: whatever it starts is disposed.
-                if (ex is TimeoutException)
-                    _ = starting.ContinueWith(async late => { if (late.IsCompletedSuccessfully) await DisposeAsync(late.Result, label); },
-                        TaskContinuationOptions.ExecuteSynchronously);
                 _startFailures++;
                 _startFailure = ex;
                 _lastStartFailure = DateTimeOffset.UtcNow;
@@ -147,8 +148,9 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
 
     // CARD-1934 (ChannelOutboundUnifiedTransportTests). C519_Partial_prompt_requires_complete_receipt,
     // C519_Enabled_loss_notice_reaches_adapter and C519_Size_refusal used to pass their 120-second deadline to this same StartAsync. The broker is now shared
-    // (C519, above): StartTimedAsync gives every start 120 seconds, and each caller bounds its wait for the shared
-    // broker (GateWait; each test's own deadline starts once it has the broker). On 08cc3dc the exact main
+    // (C519, above): StartTimedAsync gives every start 120 seconds (plus at most 60 seconds for a failed start to
+    // settle and 60 to dispose it), and each caller bounds its wait for the shared broker (GateWait; each test's own
+    // deadline starts once it has the broker). On 08cc3dc the exact main
     // UID spent 12.3s, 16.0s and 13.1s of the old 30-second token on Docker time before the Redpanda
     // container existed (load 21.63, 35.46 and 27.30), 40 to 53 percent of that budget, before Kafka
     // readiness. A failing-tail p95 is unavailable: those three passes finished inside 30 seconds, and
@@ -234,15 +236,15 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
                     kafkaMs = kafka.ElapsedMilliseconds;
                 }
 
-                await starting;
+                await starting.WaitAsync(startup);
             }
             catch
             {
-                // The phase wait already surfaced the startup failure. Await StartAsync so its
-                // exception is observed, then keep the original failure.
+                // The phase wait already surfaced the startup failure. Await StartAsync (at most 60 more seconds) so
+                // its exception is observed, then keep the original failure.
                 try
                 {
-                    await starting;
+                    await starting.WaitAsync(TimeSpan.FromSeconds(60));
                 }
                 catch (Exception)
                 {
@@ -268,4 +270,11 @@ internal sealed class SharedRedpandaBroker(Func<Task<RedpandaContainer>> start, 
 
     private static string PhaseMs(long? value) =>
         value is long ms ? ms.ToString(System.Globalization.CultureInfo.InvariantCulture) : "incomplete";
+}
+
+/// <summary>Disposes the shared C519 broker once, after the test assembly (see <see cref="SharedRedpandaBroker"/>).</summary>
+internal static class SharedRedpandaBrokerHooks
+{
+    [After(Assembly)]
+    public static Task StopSharedBrokersAsync() => SharedRedpandaBroker.C519.StopAsync();
 }

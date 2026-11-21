@@ -36,8 +36,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
     // broker, and each publication cut asks for it again (the reuse probe runs before every cut).
     private static SharedRedpandaBroker SharedBroker => SharedRedpandaBroker.C519;
 
-    [After(Class)]
-    public static Task StopSharedBrokerAsync() => SharedBroker.StopAsync();
+    // Disposed once after the assembly (SharedRedpandaBrokerHooks), not per class.
 
     private static async Task PreparationAsync(string kind, string cut)
     {
