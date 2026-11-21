@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "11897a91e82799521012ed5f457d8500549dba2fb50694ecca61e08b8fc57f2a",
+  "policyHash": "016ed18faae0c180aacddf382b4e6a2fadff3ce40a65117e62c6c39b9baf325c",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1517,11 +1517,22 @@
             "C448_ParentDeathGrandchildDoesNotKeepTheJournal",
             "C448_JournalStaysWhileTheRootLives",
             "C448_LateInTreeHolderIsKilledAndTheJournalIsRemoved",
-            "C1714_Status_that_cannot_open_a_directory_is_untrusted"
+            "C1714_Status_that_cannot_open_a_directory_is_untrusted",
+            "HungPipeHolderFailsWithGitPipeTimeout"
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: POSIX pipe-holder/process stand-ins and mode-bit status witnesses; native Windows landing acceptance remains required.",
           "owner": "CARD-0448"
+        },
+        {
+          "suite": "antiphon",
+          "class": "AgentTaskLandPublicationTests",
+          "methods": [
+            "PushExitZeroWithHungPipeConfirmsPublication"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: POSIX double-fork witness for a push that exits 0 while a grandchild holds stdout; native Windows landing acceptance remains required.",
+          "owner": "CARD-1514"
         },
         {
           "suite": "antiphon",

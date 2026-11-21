@@ -29,9 +29,58 @@ public class LandingGit : ILandingGit
 
     /// <summary>After a normal exit, wait at most this long for redirected stdout and stderr to
     /// reach EOF. A grandchild that closes the pipe inside the bound still succeeds and must not
-    /// become <c>git_timeout</c>. A holder that never closes fails the call with
-    /// <c>git_pipe_timeout</c> so the host cannot sit out a chunk watchdog.</summary>
+    /// become <c>git_timeout</c>. A holder that never closes is <c>git_pipe_timeout</c>: a mutating
+    /// command keeps the exit code it already produced, and a read throws
+    /// <see cref="GitPipeTimeoutException"/>.</summary>
     internal static readonly TimeSpan SuccessPipeCloseBound = TimeSpan.FromSeconds(30);
+
+    internal enum PipeDrainVerdict { Closed, TimedOut, Faulted }
+
+    private TimeSpan? _pipeCloseBound;
+
+    /// <summary>Test seam. Production leaves this unset and uses <see cref="SuccessPipeCloseBound"/>.</summary>
+    internal void UsePipeCloseBound(TimeSpan bound)
+    {
+        if (bound < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(bound));
+        _pipeCloseBound = bound;
+    }
+
+    protected virtual TimeSpan PipeCloseBound => _pipeCloseBound ?? SuccessPipeCloseBound;
+
+    /// <summary>Decide the drain once, from the task state after the bound. The run budget is not an input.</summary>
+    protected virtual Task<PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
+    {
+        _ = runBudget;
+        return DrainPipesAsync(drain, bound);
+    }
+
+    /// <summary>A drain that is already complete, including one that finished on the deadline, is not a timeout.</summary>
+    internal static Task<PipeDrainVerdict> DrainPipesAsync(Task drain, TimeSpan bound)
+    {
+        if (drain.IsCompleted) return Task.FromResult(ClassifyPipeDrain(drain));
+        return DrainAfterWaitAsync(drain, bound);
+    }
+
+    private static async Task<PipeDrainVerdict> DrainAfterWaitAsync(Task drain, TimeSpan bound)
+    {
+        using var timer = new CancellationTokenSource();
+        var delay = Task.Delay(bound, timer.Token);
+        try
+        {
+            await Task.WhenAny(drain, delay);
+            return ClassifyPipeDrain(drain);
+        }
+        finally
+        {
+            timer.Cancel();
+            _ = delay.Exception;
+        }
+    }
+
+    internal static PipeDrainVerdict ClassifyPipeDrain(Task drain) =>
+        !drain.IsCompleted ? PipeDrainVerdict.TimedOut
+        : drain.IsFaulted || drain.IsCanceled ? PipeDrainVerdict.Faulted
+        : PipeDrainVerdict.Closed;
 
     /// <summary>
     /// CARD-0824 S4a round 3 Review B-1: a caller's live switch for one call, read after this class's own last await
@@ -366,17 +415,15 @@ public class LandingGit : ILandingGit
                     if (started is not null && identified) await started(process.Id, startTicks, ct);
                 }
                 await process.WaitForExitAsync(budget.Token);
-                // A grandchild that closes the pipe inside SuccessPipeCloseBound still succeeds
-                // and must not become git_timeout (CARD-1076 D-2). A holder that never closes
-                // fails with git_pipe_timeout; the journal stays until those pipes close.
-                var pipeTimedOut = false;
-                try
+                // The exit is already known. One snapshot of the drain decides the pipe: a later
+                // grace wait must not turn TimedOut into success, and a cancelled run budget must
+                // not turn a closed pipe into git_timeout (CARD-1076 D-2).
+                var drain = Task.WhenAll(output, error);
+                var verdict = await AwaitPipeDrainAsync(drain, PipeCloseBound, budget);
+                if (verdict == PipeDrainVerdict.Faulted)
+                    await drain;
+                if (verdict == PipeDrainVerdict.TimedOut)
                 {
-                    await Task.WhenAll(output, error).WaitAsync(SuccessPipeCloseBound);
-                }
-                catch (TimeoutException) when (!(output.IsCompletedSuccessfully && error.IsCompletedSuccessfully))
-                {
-                    pipeTimedOut = true;
                     var pipeHandedOff = false;
                     var pipeDrained = false;
                     try
@@ -391,10 +438,24 @@ public class LandingGit : ILandingGit
                     if (pipeHandedOff) disposeProcess = false;
                     else if (pipeDrained && process.HasExited) journal?.Exited(process);
                     _cardFiles?.NoteServerGit(repository, arguments);
+                    if (!IsMutating(arguments))
+                        throw new GitPipeTimeoutException(process.ExitCode);
+                    string? heldRebaseHead = null;
+                    if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
+                    {
+                        var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), ct);
+                        if (head.Succeeded) heldRebaseHead = head.Output.Trim();
+                    }
+                    // Empty output: a partial listing must not be read as a complete ref or tree.
+                    return new LandingGitResult(process.ExitCode, "",
+                        process.ExitCode == 0 ? "git_pipe_timeout" : $"git_exit_{process.ExitCode}")
+                    {
+                        RebaseHeadSha = heldRebaseHead,
+                        PipeDrainIncomplete = true,
+                    };
                 }
-                if (pipeTimedOut) throw new TimeoutException("git_pipe_timeout");
             }
-            catch (TimeoutException ex) when (ex.Message == "git_pipe_timeout")
+            catch (GitPipeTimeoutException)
             {
                 throw;
             }

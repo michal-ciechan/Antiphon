@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
+using Antiphon.TestSupport;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -931,5 +933,106 @@ public sealed partial class AgentTaskLandPublicationTests
         var cleanup = h.Git.InspectionScopes.Select(i => i.Scope).ToList();
         cleanup.Count.ShouldBe(2);
         cleanup.ShouldAllBe(scope => scope == LandInspectionScope.Full);
+    }
+
+    // A real local push exits 0 while a pre-push grandchild holds the inherited stdout past the
+    // pipe bound. The land must confirm that destination and settle, not refuse the request.
+    [Test]
+    [Timeout(120_000)]
+    [NativeLinuxOnly("POSIX double-fork: a real git push exits 0 while a grandchild holds stdout.")]
+    public async Task PushExitZeroWithHungPipeConfirmsPublication(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("POSIX double-fork: a real git push exits 0 while a grandchild holds stdout.");
+            return;
+        }
+
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var hooks = Path.Combine(h.Fixture.Root, "pipe-hooks");
+        Directory.CreateDirectory(hooks);
+        var pidFile = Path.Combine(h.Fixture.Root, "holder.pid");
+        var hook = Path.Combine(hooks, "pre-push");
+        await File.WriteAllTextAsync(hook, PrePushHolderScript(pidFile), ct);
+        File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        h.Fixture.Git.HooksPathOverride = hooks;
+        h.Fixture.Git.UsePipeCloseBound(TimeSpan.FromSeconds(1));
+        LandingGitResult? pushed = null;
+        h.Fixture.Git.AfterCommand = (_, args, result) =>
+        {
+            if (args.Count > 0 && args[0] == "push" && args[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal))
+                pushed = result;
+            return Task.CompletedTask;
+        };
+        try
+        {
+            await h.RunAsync();
+            var seen = pushed.ShouldNotBeNull();
+            seen.ExitCode.ShouldBe(0);
+            seen.PipeDrainIncomplete.ShouldBeTrue();
+            seen.Diagnostic.ShouldBe("git_pipe_timeout");
+            seen.Output.ShouldBe("");
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.PushExitCode.ShouldBe(0);
+            op.RemoteConfirmedAt.ShouldNotBeNull();
+            op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+            op.VerifiedSourceSha.ShouldNotBeNull();
+            (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim()
+                .ShouldBe(op.VerifiedSourceSha);
+            await using var db = h.CreateContext();
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+            request.State.ShouldBe(LandRequestState.Completed);
+            request.IsPending.ShouldBeFalse();
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Type == AgentTaskEventType.Landed)).ShouldBe(1);
+            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId
+                && n.Kind == LandNotificationKind.Outcome)).ShouldBe(1);
+        }
+        finally
+        {
+            KillHolderPids(pidFile);
+        }
+    }
+
+    private static string PrePushHolderScript(string pidFile) =>
+        "#!/bin/sh\n" +
+        "while read -r _line; do\n" +
+        "  :\n" +
+        "done\n" +
+        "trap '' HUP\n" +
+        "(\n" +
+        "trap '' HUP\n" +
+        "sh -c 'trap \"\" HUP; echo $$ >> \"" + pidFile + "\"; exec sleep 300' </dev/null &\n" +
+        ") &\n" +
+        "i=0\n" +
+        "while [ ! -s \"" + pidFile + "\" ] && [ \"$i\" -lt 100 ]; do\n" +
+        "  i=$((i+1))\n" +
+        "  sleep 0.05\n" +
+        "done\n" +
+        "exit 0\n";
+
+    private static void KillHolderPids(string pidFile)
+    {
+        try
+        {
+            if (!File.Exists(pidFile)) return;
+            foreach (var line in File.ReadAllLines(pidFile))
+            {
+                if (!int.TryParse(line.Trim(), out var pid) || pid <= 0) continue;
+                try
+                {
+                    using var process = Process.GetProcessById(pid);
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                { }
+            }
+        }
+        catch (IOException)
+        { }
     }
 }

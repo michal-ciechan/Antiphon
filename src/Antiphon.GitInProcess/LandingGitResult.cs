@@ -12,4 +12,7 @@ public sealed record LandingGitResult(int ExitCode, string Output, string Diagno
     /// open a directory past MAX_PATH or without permission, warns and lists nothing under it).
     /// </summary>
     public bool WroteStandardError { get; init; }
+    /// <summary>Stdout and stderr did not reach EOF before the post-exit pipe bound. Output is empty.
+    /// ExitCode is the process exit and remains the caller's verdict.</summary>
+    public bool PipeDrainIncomplete { get; init; }
 }

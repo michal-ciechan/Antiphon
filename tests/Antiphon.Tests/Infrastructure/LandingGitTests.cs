@@ -917,10 +917,11 @@ public sealed class LandingGitTests
         }
     }
 
-    // A root that exits 0 while a grandchild never closes stdout fails with git_pipe_timeout
-    // inside LandingGit.SuccessPipeCloseBound. The 8-second holder stays on the success path.
+    // A root that exits 0 while a grandchild never closes stdout keeps that exit and reports
+    // git_pipe_timeout. The bound is injectable so the witness is the grace, not the 30s production wait.
+    // The 8-second holder stays on the success path under the production bound.
     [Test]
-    [Timeout(90_000)]
+    [Timeout(30_000)]
     [NativeLinuxOnly("POSIX double-fork witness for a grandchild that never closes stdout.")]
     public async Task HungPipeHolderFailsWithGitPipeTimeout(CancellationToken ct)
     {
@@ -936,9 +937,10 @@ public sealed class LandingGitTests
         var script = Path.Combine(repo.Path, "holder.sh");
         await File.WriteAllTextAsync(script, NeverClosingPipeHolderGit.Script(pidFile), ct);
         var git = new NeverClosingPipeHolderGit(script);
+        git.UsePipeCloseBound(TimeSpan.FromSeconds(1));
         var call = git.RunAsync(repo.Path, ["push", "origin", "master"],
             new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct);
-        var limit = LandingGit.SuccessPipeCloseBound + TimeSpan.FromSeconds(15);
+        var limit = TimeSpan.FromSeconds(8);
         var watch = Stopwatch.StartNew();
         try
         {
@@ -950,7 +952,9 @@ public sealed class LandingGitTests
             // caller can confirm the remote, instead of a TimeoutException the land refuses.
             var result = await call;
             result.ExitCode.ShouldBe(0);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
             result.Diagnostic.ShouldBe("git_pipe_timeout");
+            result.PipeDrainIncomplete.ShouldBeTrue();
             result.Output.ShouldBe("");
             watch.Elapsed.ShouldBeLessThan(limit);
         }
@@ -960,6 +964,87 @@ public sealed class LandingGitTests
             KillHolder(pidFile);
             try { await call; } catch { /* observe a late failure so it is not unobserved */ }
         }
+    }
+
+    // EOF that is already complete when the bound is inspected, including a zero bound, is Closed.
+    // A drain that is still incomplete after that same bound is TimedOut. The decision is one snapshot.
+    [Test]
+    public async Task PipeDrainEofAtTheDeadlineIsClosed()
+    {
+        (await LandingGit.DrainPipesAsync(Task.CompletedTask, TimeSpan.Zero))
+            .ShouldBe(LandingGit.PipeDrainVerdict.Closed);
+        var hung = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        (await LandingGit.DrainPipesAsync(hung, TimeSpan.Zero))
+            .ShouldBe(LandingGit.PipeDrainVerdict.TimedOut);
+        var faulted = new TaskCompletionSource();
+        faulted.SetException(new InvalidOperationException("read"));
+        _ = faulted.Task.Exception;
+        LandingGit.ClassifyPipeDrain(faulted.Task).ShouldBe(LandingGit.PipeDrainVerdict.Faulted);
+        LandingGit.ClassifyPipeDrain(Task.CompletedTask).ShouldBe(LandingGit.PipeDrainVerdict.Closed);
+    }
+
+    // The run budget can already be cancelled when the pipes reach EOF. That must stay a success.
+    [Test]
+    public async Task BudgetExpiredEofIsNotGitTimeout(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-eof");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new VerdictForcingGit { CancelBudget = true, Forced = LandingGit.PipeDrainVerdict.Closed };
+        var result = await git.RunAsync(repo.Path, ["push", "origin", "master"],
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        result.ExitCode.ShouldBe(0);
+        result.Succeeded.ShouldBeTrue(result.Diagnostic);
+        result.Diagnostic.ShouldBe("");
+        result.PipeDrainIncomplete.ShouldBeFalse();
+    }
+
+    // The deadline won and the run budget is already cancelled. The push exit is still the result.
+    [Test]
+    public async Task BudgetExpiredPipeTimeoutPreservesPushExit(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-budget");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new VerdictForcingGit { CancelBudget = true, Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var result = await git.RunAsync(repo.Path, ["push", "origin", "master"],
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        result.ExitCode.ShouldBe(0);
+        result.Diagnostic.ShouldBe("git_pipe_timeout");
+        result.PipeDrainIncomplete.ShouldBeTrue();
+        result.Output.ShouldBe("");
+        result.Succeeded.ShouldBeTrue();
+    }
+
+    // An incomplete read must not come back as an empty success. The exit travels on the exception.
+    [Test]
+    public async Task NonMutatingPipeTimeoutThrowsWithTheExitCode(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-read");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new VerdictForcingGit { Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var thrown = await Should.ThrowAsync<GitPipeTimeoutException>(() =>
+            git.RunAsync(repo.Path, ["status", "--porcelain"],
+                new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct));
+        thrown.Message.ShouldBe("git_pipe_timeout");
+        thrown.ExitCode.ShouldBe(0);
+    }
+
+    // A rebase that already exited 0 still reports HEAD when the pipe bound fires, so the land
+    // can pin Prepared instead of classifying the rebase as interrupted.
+    [Test]
+    public async Task RebaseExitZeroWithPipeTimeoutStillReportsHead(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("pipe-rebase");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        await repo.GitAsync("checkout", "-b", "feature");
+        await repo.CommitFileAsync("feature.txt", "feature\n");
+        var head = (await repo.GitReadAsync("rev-parse", "--verify", "HEAD")).Trim();
+        var git = new VerdictForcingGit { Forced = LandingGit.PipeDrainVerdict.TimedOut };
+        var result = await git.RunAsync(repo.Path, ["rebase", "master"],
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(30)), ct);
+        result.ExitCode.ShouldBe(0);
+        result.PipeDrainIncomplete.ShouldBeTrue();
+        result.RebaseHeadSha.ShouldBe(head);
+        result.Succeeded.ShouldBeTrue();
     }
 
     private static bool HolderAlive(int pid)
@@ -1859,6 +1944,45 @@ public sealed class LandingGitTests
             if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
                 return base.StartProcess(start);
             return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
+    }
+
+    /// <summary>The first command returns a chosen drain verdict. Later commands, such as the rebase
+    /// rev-parse, drain for real. A push stand-in exits 0 without a remote.</summary>
+    private sealed class VerdictForcingGit : LandingGit
+    {
+        public LandingGit.PipeDrainVerdict? Forced { get; init; }
+        public bool CancelBudget { get; init; }
+        private bool _used;
+
+        protected override Task<LandingGit.PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
+        {
+            if (CancelBudget) runBudget.Cancel();
+            if (Forced is { } forced && !_used)
+            {
+                _used = true;
+                return Task.FromResult(forced);
+            }
+            return base.AwaitPipeDrainAsync(drain, bound, runBudget);
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "push")
+                return base.StartProcess(start);
+            var standIn = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh")
+            {
+                WorkingDirectory = start.WorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+            standIn.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+            standIn.ArgumentList.Add("exit 0");
+            return Process.Start(standIn);
         }
     }
 

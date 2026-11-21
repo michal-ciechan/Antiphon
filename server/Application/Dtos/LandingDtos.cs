@@ -22,6 +22,16 @@ public sealed record LandSourceInspection(LandSourceSnapshot? Snapshot, string? 
     public bool Accepted => Snapshot is not null && Reason is null;
 }
 
+/// <summary>A non-mutating git read exited, then its redirected pipes stayed open past the post-exit bound.
+/// Not a <see cref="TimeoutException"/>: callers map that type to a refused land. ExitCode is the process exit.
+/// Output is omitted because a partial read is not a complete listing.</summary>
+public sealed class GitPipeTimeoutException : Exception
+{
+    public int ExitCode { get; }
+
+    public GitPipeTimeoutException(int exitCode) : base("git_pipe_timeout") => ExitCode = exitCode;
+}
+
 public sealed class LandingGitCommandException : IOException
 {
     public string Command { get; }
