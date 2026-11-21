@@ -1662,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 612,
+      "classes": 613,
       "reason": "cap",
-      "owed": 587,
+      "owed": 588,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,9 +1678,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 612,
+      "classes": 613,
       "reason": "cap",
-      "owed": 587,
+      "owed": 588,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2411,9 +2411,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 527,
+      "classes": 528,
       "reason": "cap",
-      "owed": 502,
+      "owed": 503,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -24651,6 +24651,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RcPortPowerShellAssembly.cs",
+      "classes": [
+        "RcPortPowerShellAssemblyTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
@@ -25661,7 +25667,8 @@
         "HostJqPrerequisiteScriptTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
-        "ScriptModelSpawnLaneTests"
+        "ScriptModelSpawnLaneTests",
+        "VolumeRetirementContentTests"
       ]
     },
     {
@@ -25688,6 +25695,7 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "CheckpointSourceStateTests",
+        "RcDirtyOrderCSharpTests",
         "RunCheckpointSourceScriptTests",
         "ServerImagePushCredentialTests"
       ]
@@ -26154,7 +26162,8 @@
       "classes": [
         "ChannelReplyAttachmentReaderTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
-        "QualificationCheckoutSourceTests"
+        "QualificationCheckoutSourceTests",
+        "RcDirtyOrderCSharpTests"
       ]
     },
     {
