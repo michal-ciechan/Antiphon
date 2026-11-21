@@ -60,7 +60,7 @@ provisional from that sample. The existing M1 closure test still uses its
   the nine-class guard union (84/84), `DerivedImpactIndexTests` (27/27) and
   the literal owner census. Both later selections also omitted the S2 class.
   [S3 follow-up review](https://github.com/michal-ciechan/Antiphon/blob/0263ae5c30bc5a2e569a7828ba748aa1931f2aec/docs/superpowers/reviews/2026-11-20-s3-testonly-review-r2.md),
-  [CARD-2009 review](https://github.com/michal-ciechan/Antiphon/blob/4ead7c286/docs/superpowers/reviews/2026-11-21-card-2009-review-r3.md)
+  [CARD-2009 review](https://github.com/michal-ciechan/Antiphon/blob/4ead7c286ce02b9fc3a7f0766ec4f74fa5d4e775/docs/superpowers/reviews/2026-11-21-card-2009-review-r3.md)
 
 ## Outside the selection
 
@@ -77,6 +77,18 @@ For CARD-1782, select
 for `scripts/lib/rc-input-owners*.json`, `scripts/lib/rc-input-noop.json`,
 `scripts/lib/rc-input-manifest.ps1`, `scripts/test-rc-input-owners.ps1` and
 `tests/fixtures/incremental-selection-soundness.json` changes.
+
+## Verification
+
+The repair through `12dc2de0463f9a8c7c3e0f7fdf613cb702bc2d0a` applied
+cleanly to the detached master checkout. The Linux class run passed both
+methods, with zero failures or skips. The inventory replay took 74.6 seconds
+and the M1 comparison took 0.08 seconds. All three class runs used the build
+slot, `ANTIPHON_LINUX_COMPILER_POLICY=0`, native build outputs and
+`--timeout 570s`, with filter
+`/*/Antiphon.Tests.Scripts/IncrementalSelectionSoundnessTests/*`.
+The identical rc assertion on Linux supplies the reproduction requested for
+the Windows failure.
 
 ## Exemption
 

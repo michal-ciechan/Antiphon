@@ -2162,9 +2162,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 75,
+      "classes": 76,
       "reason": "cap",
-      "owed": 50,
+      "owed": 51,
       "first": [
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
@@ -2172,24 +2172,24 @@
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
-        "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests"
+        "IncrementalSelectionSoundnessTests",
+        "LiveLaneAttestationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 52,
+      "classes": 53,
       "reason": "cap",
-      "owed": 27,
+      "owed": 28,
       "first": [
+        "RcHistoricalAdmissionTests",
         "RcIncrementalLedgerTests",
         "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
         "RcLedgerDurationTests",
         "RcLedgerStatusTests",
-        "RcReleaseBaselineTests",
-        "ReleaseSelectionHopSeedTests"
+        "RcReleaseBaselineTests"
       ]
     },
     {
@@ -24732,6 +24732,7 @@
       "classes": [
         "C487ReadOnlyCleanupWitnessTests",
         "ClassCostMeasurementTests",
+        "IncrementalSelectionSoundnessTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
@@ -24749,7 +24750,6 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcForcedFullTests",
-        "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
         "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
