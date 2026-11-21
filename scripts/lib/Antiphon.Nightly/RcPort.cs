@@ -1,4 +1,5 @@
-// Shared readers for the CARD-1836 shadow and dirty ports.
+// Shared readers for the CARD-1836 shadow and dirty ports. Inputs are plain values: dictionaries with string keys,
+// arrays and other enumerables, strings, booleans and integers. No PowerShell types.
 // Dictionary keys are the real key collection. ExpandoObject is not a dictionary.
 #nullable disable
 using System;
@@ -41,15 +42,6 @@ namespace Antiphon.Nightly
             return false;
         }
 
-        public static bool IsPs(object value)
-        {
-            value = See(value);
-            if (value == null) return false;
-            var name = value.GetType().FullName;
-            return name == "System.Management.Automation.PSObject"
-                || name == "System.Management.Automation.PSCustomObject";
-        }
-
         public static object Field(object source, string name)
         {
             source = See(source);
@@ -59,30 +51,18 @@ namespace Antiphon.Nightly
                 TryDictionary(source, name, true, out var value);
                 return See(value);
             }
-            if (IsPs(source))
-            {
-                TryPs(source, name, true, out var value);
-                return See(value);
-            }
             var property = source.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
             return See(property == null ? null : property.GetValue(source));
         }
 
-        public static bool HasKey(object source, string name)
-        {
-            source = See(source);
-            if (source == null) return false;
-            if (IsDictionary(source)) return TryDictionary(source, name, true, out _);
-            if (IsPs(source)) return TryPs(source, name, true, out _);
-            return false;
-        }
+        public static bool HasKey(object source, string name) =>
+            source != null && IsDictionary(source) && TryDictionary(source, name, true, out _);
 
         public static List<string> Names(object source)
         {
             source = See(source);
             var names = new List<string>();
-            if (source == null || !IsDictionary(source) && !IsPs(source)) return names;
-            if (source is IDictionary dictionary)
+            if (source is IDictionary dictionary && IsDictionary(source))
             {
                 foreach (var key in dictionary.Keys)
                 {
@@ -90,44 +70,36 @@ namespace Antiphon.Nightly
                 }
                 return names;
             }
-            if (source is IDictionary<string, object> generic)
+            if (source is IDictionary<string, object> generic && IsDictionary(source))
             {
                 foreach (var key in generic.Keys) names.Add(key);
-                return names;
-            }
-            if (!IsPs(source)) return names;
-            foreach (var property in Properties(source))
-            {
-                var propertyName = property.GetType().GetProperty("Name").GetValue(property) as string;
-                if (propertyName != null) names.Add(propertyName);
             }
             return names;
         }
 
         public static object DirtyProp(object source, string name)
         {
-            source = See(source);
-            if (source == null) return null;
-            if (IsDictionary(source))
-            {
-                TryDictionary(source, name, false, out var value);
-                return See(value);
-            }
-            if (IsPs(source))
-            {
-                TryPs(source, name, false, out var value);
-                return See(value);
-            }
-            return null;
+            if (source == null || !IsDictionary(source)) return null;
+            TryDictionary(source, name, false, out var value);
+            return value;
         }
 
+        /// <summary>
+        /// The one emptiness rule (advisory A-5): null, a blank string and a collection with no items are empty; a
+        /// dictionary and any other value are not. Arrays, lists, sets and lazy sequences are counted by enumerating.
+        /// </summary>
         public static bool Empty(object value)
         {
             value = See(value);
             if (value == null) return true;
             if (value is string text) return string.IsNullOrWhiteSpace(text);
             if (IsDictionary(value)) return false;
-            if (value is ICollection collection) return collection.Count == 0;
+            if (value is IEnumerable enumerable)
+            {
+                var items = enumerable.GetEnumerator();
+                try { return !items.MoveNext(); }
+                finally { (items as IDisposable)?.Dispose(); }
+            }
             return false;
         }
 
@@ -140,7 +112,7 @@ namespace Antiphon.Nightly
                 items.Add(null);
                 return items;
             }
-            if (value is string || IsDictionary(value) || IsPs(value))
+            if (value is string || IsDictionary(value))
             {
                 items.Add(value);
                 return items;
@@ -190,27 +162,6 @@ namespace Antiphon.Nightly
                 }
             }
             return false;
-        }
-
-        static bool TryPs(object source, string name, bool ordinal, out object value)
-        {
-            value = null;
-            foreach (var property in Properties(source))
-            {
-                var propertyName = property.GetType().GetProperty("Name").GetValue(property) as string;
-                var comparison = ordinal ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-                if (!string.Equals(propertyName, name, comparison)) continue;
-                value = property.GetType().GetProperty("Value").GetValue(property);
-                return true;
-            }
-            return false;
-        }
-
-        static IEnumerable Properties(object source)
-        {
-            var collection = source.GetType().GetProperty("Properties").GetValue(source) as IEnumerable;
-            if (collection == null) yield break;
-            foreach (var property in collection) yield return property;
         }
     }
 }

@@ -420,7 +420,6 @@ namespace Antiphon.Nightly
                     if (!seen.Add(text)) return Fail("provenance-failure", text);
                     ids.Add(text);
                 }
-                if (ids.Count == 0) return Fail("empty-results", "");
             }
             var rows = new List<object>();
             if (sawResults)
@@ -434,7 +433,6 @@ namespace Antiphon.Nightly
                     if (!Readable(rowId)) return Fail("unreadable-chunk-id", "");
                     rows.Add(row);
                 }
-                if (rows.Count == 0) return Fail("empty-results", ids.Count > 0 ? ids[0] : "");
             }
             var launched = new HashSet<string>(ids, StringComparer.Ordinal);
             foreach (var row in rows)
@@ -449,7 +447,6 @@ namespace Antiphon.Nightly
             if (ids.Count > 0 && rows.Count == 0) return Fail("empty-results", ids[0]);
             if (ids.Count == 0)
             {
-                if (rows.Count == 0) return Fail("empty-results", "");
                 foreach (var row in rows)
                 {
                     var rowId = RcPort.Field(row, "chunkId");

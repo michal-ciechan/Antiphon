@@ -1,7 +1,11 @@
-// CARD-1836 S6c prerequisite. Replays the pre-port PowerShell golden.
-// Require() fails closed until Antiphon.Nightly.RcShadowSample and RcDirtyOrder exist.
-// The same methods then compare compiled verdicts to that fixture. Do not regenerate the fixture
-// from the wrappers. scripts/generate-rc-port-golden.ps1 reads the libraries at c6565bc95776.
+// CARD-1836 S6c. Replays the pre-port PowerShell golden against the compiled RcShadowSample and RcDirtyOrder.
+// Do not regenerate the fixture from the ports: it records what the PowerShell libraries returned.
+// scripts/generate-rc-port-golden.ps1 reads those libraries at c6565bc95776.
+// Inputs are plain .NET values; PowerShell is not loaded. A recorded PowerShell hashtable ("map") or object ("ps")
+// becomes an ordinal Dictionary<string, object> (neither can hold two keys that differ only in case). The other
+// recorded shapes are already plain and stay the advisory witnesses: List, ArrayList and HashSet for the one
+// emptiness rule (A-5), a DateTimeOffset where a string id was coerced (A-4), and an ExpandoObject, which is not a
+// dictionary (A-6).
 #nullable disable
 using System.Collections;
 using System.Diagnostics;
@@ -21,7 +25,6 @@ internal static class RcPortCorpus
 
     static readonly object Gate = new object();
     static JsonArray cases;
-    static Assembly automation;
 
     public static void RequireShadow() => Require(ShadowType);
 
@@ -120,7 +123,7 @@ internal static class RcPortCorpus
             }
             finally
             {
-                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                if (Directory.Exists(dir)) ReadOnlyDirectory.Delete(dir);
             }
         }
     }
@@ -276,7 +279,6 @@ internal static class RcPortCorpus
     {
         if (source == null || name == null) return null;
         if (TryMap(source, name, out var value)) return value;
-        if (TryPs(source, name, out value)) return value;
         var property = source.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
         return property == null ? null : property.GetValue(source);
     }
@@ -310,24 +312,6 @@ internal static class RcPortCorpus
                     return true;
                 }
             }
-        }
-        return false;
-    }
-
-    static bool TryPs(object source, string name, out object value)
-    {
-        value = null;
-        var typeName = source.GetType().FullName ?? "";
-        if (typeName != "System.Management.Automation.PSObject" &&
-            typeName != "System.Management.Automation.PSCustomObject") return false;
-        var properties = source.GetType().GetProperty("Properties")?.GetValue(source) as IEnumerable;
-        if (properties == null) return false;
-        foreach (var property in properties)
-        {
-            var propertyName = property.GetType().GetProperty("Name")?.GetValue(property) as string;
-            if (!string.Equals(propertyName, name, StringComparison.Ordinal)) continue;
-            value = property.GetType().GetProperty("Value")?.GetValue(property);
-            return true;
         }
         return false;
     }
@@ -388,9 +372,10 @@ internal static class RcPortCorpus
             case "f64": return shape["v"]!.GetValue<double>();
             case "dt":
                 return DateTimeOffset.Parse(Str(shape, "v"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-            case "map": return MaterializeMapObject(shape);
-            case "ps": return MaterializePs(shape);
-            case "pswrap": return AsPsObject(Materialize(shape["v"]!));
+            case "map":
+            case "ps": return MaterializeMap(shape);
+            // PowerShell member access sees through a PSObject wrapper: the plain value is the wrapped one.
+            case "pswrap": return Materialize(shape["v"]!);
             case "expando": return MaterializeExpando(shape);
             case "arr": return Items(shape).ToArray();
             case "list":
@@ -409,43 +394,14 @@ internal static class RcPortCorpus
         }
     }
 
-    static object MaterializeMapObject(JsonObject shape)
+    // A PowerShell hashtable (OrdinalIgnoreCase) or object (case-insensitive property names) as an ordinal dictionary.
+    // The lookups the ports make use the recorded key spelling, so the answers are the same.
+    static object MaterializeMap(JsonObject shape)
     {
-        if (Str(shape, "cmp") == "ignore")
-        {
-            var table = new Hashtable(StringComparer.OrdinalIgnoreCase);
-            foreach (var row in shape["e"]!.AsArray())
-                table[row!["k"]!.GetValue<string>()] = Materialize(row["v"]);
-            return table;
-        }
-        var ordinal = new Dictionary<string, object>(StringComparer.Ordinal);
+        var map = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var row in shape["e"]!.AsArray())
-            ordinal[row!["k"]!.GetValue<string>()] = Materialize(row["v"]);
-        return ordinal;
-    }
-
-    static object MaterializePs(JsonObject shape)
-    {
-        var assembly = Automation();
-        var psObject = Activator.CreateInstance(assembly.GetType("System.Management.Automation.PSObject"));
-        var properties = psObject.GetType().GetProperty("Properties").GetValue(psObject);
-        var note = assembly.GetType("System.Management.Automation.PSNoteProperty");
-        var add = properties.GetType().GetMethod("Add", new[] { assembly.GetType("System.Management.Automation.PSPropertyInfo") });
-        if (add == null) throw new InvalidOperationException("ps-property-add");
-        foreach (var row in shape["e"]!.AsArray())
-        {
-            var member = Activator.CreateInstance(note, row!["k"]!.GetValue<string>(), Materialize(row["v"]));
-            add.Invoke(properties, new[] { member });
-        }
-        return psObject;
-    }
-
-    static object AsPsObject(object inner)
-    {
-        var type = Automation().GetType("System.Management.Automation.PSObject");
-        var method = type.GetMethod("AsPSObject", new[] { typeof(object) });
-        if (method == null) throw new InvalidOperationException("psobject-as");
-        return method.Invoke(null, new[] { inner });
+            map.Add(row!["k"]!.GetValue<string>(), Materialize(row["v"]));
+        return map;
     }
 
     static object MaterializeExpando(JsonObject shape)
@@ -461,16 +417,6 @@ internal static class RcPortCorpus
         var items = new List<object>();
         foreach (var item in shape["items"]!.AsArray()) items.Add(Materialize(item));
         return items;
-    }
-
-    static Assembly Automation()
-    {
-        if (automation != null) return automation;
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            if (assembly.GetName().Name == RcPortPowerShellAssembly.Name) return automation = assembly;
-        }
-        return automation = RcPortPowerShellAssembly.Load();
     }
 
     static object Substitute(object value, Dictionary<string, string> roles, string field)
@@ -490,13 +436,6 @@ internal static class RcPortCorpus
 
     static object WithField(object row, string field, string value)
     {
-        if (row is Hashtable table)
-        {
-            var copy = new Hashtable(StringComparer.OrdinalIgnoreCase);
-            foreach (DictionaryEntry entry in table)
-                copy[entry.Key] = entry.Key is string key && string.Equals(key, field, StringComparison.Ordinal) ? value : entry.Value;
-            return copy;
-        }
         if (row is Dictionary<string, object> map)
         {
             var copy = new Dictionary<string, object>(map, map.Comparer);
