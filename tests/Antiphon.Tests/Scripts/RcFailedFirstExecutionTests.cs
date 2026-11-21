@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Antiphon.Nightly;
-using Antiphon.Tests.Application;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -8,16 +7,25 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-1404/1514: failed-first execution through the real coordinator, suite runner, journal and nightly-tests.ps1
+/// entry. W2-nightly S14: in-process (the actual-loop cases still run the PowerShell nightly-tests.ps1 entry and the
+/// qualification heartbeat library as pwsh children until S17/S10); were cases of scripts/test-nightly-failed-first.ps1.
+/// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[NotInParallel(new[] { "nightly-history-statics", nameof(QualificationTimingTests), "release-authority-card-reader" })]
 public sealed class RcFailedFirstExecutionTests
 {
+    // The release authority a prepared arm runs beside stays byte-identical and valid (Test-FFAuthorityConservation).
     [Test]
-    public Task ImportedAuthorityFixtureInitializesTiming(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ImportedAuthorityFixtureInitializesTiming), 2,
-            ["FF ImportedAuthorityFixtureInitializesTiming.authorityBytes", "FF ImportedAuthorityFixtureInitializesTiming.authorityBinding"],
-            ScriptHarnessOptions.Default, cancellationToken);
-
+    public void ImportedAuthorityFixtureInitializesTiming()
+    {
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-authority");
+        FailedFirstArmCases.AuthorityConservation(fixture, rows, nameof(ImportedAuthorityFixtureInitializesTiming));
+        rows.ShouldAllPass(2);
+    }
     // A previous run's progress orders a new complete attempt: failed and unfinished rows first, each lane rotated after
     // its last pass; a missing, stale, foreign or malformed record keeps the canonical order (W2-nightly S13: in-process,
     // was Test-FFPreviousOrder, the PreviousOrder case and ActualLoopFollowsSchedule.progressOrder).
@@ -57,48 +65,47 @@ public sealed class RcFailedFirstExecutionTests
 
     // Provisional full replay bound uses S2's measured 156-launch cost (CARD-1514).
     [Test, Timeout(1_140_000)]
-    public Task ActualLoopFollowsSchedule(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ActualLoopFollowsSchedule), 17,
-            ["FF ActualLoopFollowsSchedule.actualTrace", "FF ActualLoopFollowsSchedule.permutation",
-             "FF ActualLoopFollowsSchedule.oneBuildDiscovery", "FF ActualLoopFollowsSchedule.historyBinding",
-             "FF ActualLoopFollowsSchedule.allChunksVerdict", "FF ActualLoopFollowsSchedule.finalProjection",
-             "FF ActualLoopFollowsSchedule.fallback",
-             "FF ActualLoopFollowsSchedule.heartbeatCollision", "FF ActualLoopFollowsSchedule.heartbeatLegacy",
-             "FF ActualLoopFollowsSchedule.heartbeatRefusals", "FF ActualLoopFollowsSchedule.heartbeatIo",
-             "FF ActualLoopFollowsSchedule.heartbeatLiveness",
-             "FF ActualLoopFollowsSchedule.chainProducer", "FF ActualLoopFollowsSchedule.chainPreviousOrder",
-             "FF ActualLoopFollowsSchedule.chainRegrouped",
-             "FF ActualLoopFollowsSchedule.chainDigestMissing", "FF ActualLoopFollowsSchedule.chainIngress"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
-
-    // Actual entrypoint journal custody (CARD-1514). The D-15 diagnostic/authority matrix
-    // it used to repeat runs in C1590_ArchiveHoldsNoGitRepository (ConservationDiagnostics)
-    // and RcFailedFirstPlannerTests.FullBytesAndCoverageConserved.
-    // R5 (CARD-1638) budget kept from the matrix-inclusive measurement (240.3s on loaded server2).
-    [Test, Timeout(541_000)]
-    public Task JournalCustodySurvivesInterleaving(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(JournalCustodySurvivesInterleaving), 9,
-            ["FF JournalCustodySurvivesInterleaving.interleaving", "FF JournalCustodySurvivesInterleaving.hostDiscovery",
-             "FF JournalCustodySurvivesInterleaving.prefixState", "FF JournalCustodySurvivesInterleaving.journalBindings",
-             "FF JournalCustodySurvivesInterleaving.oneContextClose", "FF JournalCustodySurvivesInterleaving.timeoutPermutation",
-             "FF JournalCustodySurvivesInterleaving.custody", "FF JournalCustodySurvivesInterleaving.fieldPolicies",
-             "FF JournalCustodySurvivesInterleaving.activeIdentity"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
-
-    // CARD-1590: the retained archive keeps the authority fixture inputs but never the
-    // fixture checkout's Git admin files, so no nested repository lands in the worktree.
-    // Budget: 481 s is ~3x the 162 s red run on loaded server2 (2026-11-03, n=1; provisional).
-    [Test, Timeout(541_000)]
-    public async Task C1590_ArchiveHoldsNoGitRepository(CancellationToken cancellationToken)
+    public async Task ActualLoopFollowsSchedule(CancellationToken cancellationToken)
     {
-        var result = await ScriptHarnessProcess.RunAsync("test-nightly-failed-first.ps1", "FF", "ConservationDiagnostics",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-failed-first.ps1"),
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
-        var output = result.Stdout + result.Stderr;
-        result.ExitCode.ShouldBe(0, output);
-        var archive = output.ReplaceLineEndings("\n").Split('\n')
-            .Single(line => line.StartsWith("FF EVIDENCE ", StringComparison.Ordinal))["FF EVIDENCE ".Length..].Trim();
-        Directory.Exists(archive).ShouldBeTrue(output);
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-loop");
+        await FailedFirstLoopRows.ActualLoopFollowsSchedule(fixture, rows, cancellationToken);
+        rows.ShouldAllPass(17);
+    }
+
+    // The heartbeat's planned-cost binding: suite-qualified identity, the legacy singleton, every refusal and the
+    // journal liveness checks (Test-FFHeartbeatBindings; also part of ActualLoopFollowsSchedule).
+    [Test, Timeout(300_000)]
+    public void HeartbeatBindings()
+    {
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-heartbeat");
+        FailedFirstLoopRows.HeartbeatBindings(fixture, rows, nameof(HeartbeatBindings));
+        rows.ShouldAllPass(4);
+    }
+
+    // Actual entrypoint journal custody (CARD-1514). The D-15 diagnostic/authority matrix it used to repeat runs in
+    // C1590_ArchiveHoldsNoGitRepository (ConservationDiagnostics) and RcFailedFirstPlannerTests.FullBytesAndCoverageConserved.
+    [Test, Timeout(541_000)]
+    public async Task JournalCustodySurvivesInterleaving(CancellationToken cancellationToken)
+    {
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-journal");
+        await FailedFirstLoopRows.JournalCustody(fixture, rows, cancellationToken);
+        rows.ShouldAllPass(9);
+    }
+
+    // CARD-1590: the retained archive keeps the authority fixture inputs but never the fixture checkout's Git admin
+    // files, so no nested repository lands in the worktree. The ConservationDiagnostics rows run first.
+    [Test, Timeout(541_000)]
+    public void C1590_ArchiveHoldsNoGitRepository()
+    {
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-diagnostics");
+        FailedFirstConservation.Run(fixture, rows, "ConservationDiagnostics", diagnosticsOnly: true);
+        rows.ShouldAllPass(14);
+        var archive = FailedFirstArmCases.Retain(fixture.Root, "ConservationDiagnostics", "Antiphon.Tests.Scripts.RcFailedFirstPlannerTests");
+        Directory.Exists(archive).ShouldBeTrue();
         Directory.EnumerateFileSystemEntries(archive, "*", SearchOption.AllDirectories)
             .Where(path => Path.GetRelativePath(archive, path).Split('/', '\\').Contains(".git", StringComparer.OrdinalIgnoreCase))
             .ShouldBeEmpty();
@@ -113,30 +120,27 @@ public sealed class RcFailedFirstExecutionTests
     // CARD-1691 F1: only a whole .git segment is Git admin. Files whose names merely contain
     // .git are archived as regular copies, and every archived file is accounted for.
     [Test]
-    public async Task C1590_ArchiveKeepsGitNamedFiles(CancellationToken cancellationToken)
+    public void C1590_ArchiveKeepsGitNamedFiles()
     {
-        var result = await ScriptHarnessProcess.RunAsync("test-nightly-failed-first.ps1", "FF", "C1590_ArchiveSegments",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-failed-first.ps1"),
-            ScriptHarnessOptions.Default, cancellationToken);
-        var output = result.Stdout + result.Stderr;
-        result.ExitCode.ShouldBe(0, output);
-        output.ShouldContain("PASS FF C1590_ArchiveSegments.fixture", Case.Sensitive, output);
-        var archive = output.ReplaceLineEndings("\n").Split('\n')
-            .Single(line => line.StartsWith("FF EVIDENCE ", StringComparison.Ordinal))["FF EVIDENCE ".Length..].Trim();
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-segments");
+        FailedFirstArmCases.ArchiveSegments(fixture.Root, rows);
+        rows.ShouldAllPass(1, "FF C1590_ArchiveSegments.fixture");
+        var archive = FailedFirstArmCases.Retain(fixture.Root, "C1590_ArchiveSegments", "Antiphon.Tests.Scripts.RcFailedFirstPlannerTests");
         using var inventory = JsonDocument.Parse(File.ReadAllText(Path.Combine(archive, "inventory.json")));
-        var rows = inventory.RootElement.GetProperty("files").EnumerateArray().ToDictionary(
+        var rows2 = inventory.RootElement.GetProperty("files").EnumerateArray().ToDictionary(
             file => file.GetProperty("path").GetString()!.Replace('\\', '/'), file => file, StringComparer.Ordinal);
-        foreach (var relative in new[] { ".gitignore", ".github/workflow.yml", "foo.git.txt", "checkout/.gitignore", "checkout/tracked.txt" })
+        foreach (var relative in FailedFirstArmCases.ArchiveSegmentFiles)
         {
-            rows.ShouldContainKey(relative, output);
-            rows[relative].GetProperty("kind").GetString().ShouldBe("regular", relative);
-            rows[relative].GetProperty("copied").GetBoolean().ShouldBeTrue(relative);
+            rows2.ShouldContainKey(relative);
+            rows2[relative].GetProperty("kind").GetString().ShouldBe("regular", relative);
+            rows2[relative].GetProperty("copied").GetBoolean().ShouldBeTrue(relative);
             File.ReadAllText(Path.Combine(archive, relative)).ShouldBe(relative);
         }
-        var skipped = rows.Where(row => row.Value.GetProperty("kind").GetString() == "git-dir").ToList();
+        var skipped = rows2.Where(row => row.Value.GetProperty("kind").GetString() == "git-dir").ToList();
         skipped.Select(row => row.Key).ShouldContain("checkout/.git/HEAD");
         skipped.ShouldAllBe(row => row.Key.StartsWith("checkout/.git/", StringComparison.Ordinal) && !row.Value.GetProperty("copied").GetBoolean());
-        var regular = rows.Where(row => row.Value.GetProperty("kind").GetString() == "regular").Select(row => row.Key).Order(StringComparer.Ordinal);
+        var regular = rows2.Where(row => row.Value.GetProperty("kind").GetString() == "regular").Select(row => row.Key).Order(StringComparer.Ordinal);
         var archived = Directory.EnumerateFiles(archive, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(archive, path).Replace('\\', '/'))
             .Where(path => path is not ("inventory.json" or "performance.json")).Order(StringComparer.Ordinal);

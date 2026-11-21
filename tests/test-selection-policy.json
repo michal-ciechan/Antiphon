@@ -198,7 +198,6 @@
       "id": "P-AUTHORITY",
       "paths": [
         "scripts/export-nightly-prior-failures.ps1",
-        "scripts/test-nightly-failed-first.ps1",
         "tests/Antiphon.Tests/Scripts/RcFailureHistoryTests.cs"
       ]
     },
@@ -3615,7 +3614,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "d1305115cead0120dbcbc3405452854b7e75d4bd39307c23c040d3776398180c",
+  "catalogHash": "8ccfe9b0821984d0b0ee1fa656dc2810d8857cf2c5ae1d3c095fd92f86fddc6b",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

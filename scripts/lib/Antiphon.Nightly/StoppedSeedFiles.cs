@@ -5,14 +5,14 @@
 // before and after it is read and again before the seed is written (chunk-file drift marks that chunk unfinished; plan,
 // owner and summary-prefix drift refuses), and the output must lie outside the run and timing directories. The seed's
 // JSON is written by System.Text.Json, so its layout is not ConvertTo-Json's; its content hash is the same projection
-// (Newtonsoft's escaping of seven strings), so seeds written before still verify.
+// (Newtonsoft's escaping of seven strings), so seeds written before still verify. The records are PsValue records
+// (PSObjects under PowerShell, PlainObjects for a plain caller such as the in-process tests).
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -27,8 +27,8 @@ namespace Antiphon.Nightly
     /// </summary>
     public static class StoppedSeedFiles
     {
-        /// <summary>Tests: runs after each export input's text is read and before its digest is taken again.</summary>
-        public static ScriptBlock ReadBarrier { get; set; }
+        /// <summary>Tests: runs after each export input's text is read (given its full path) and before its digest is taken again.</summary>
+        public static Action<string> ReadBarrier { get; set; }
 
         private const string Format = "antiphon-nightly-stopped-seed-v1";
         private const string Kind = "operator-seed-from-stopped-run";
@@ -80,15 +80,15 @@ namespace Antiphon.Nightly
         /// createdAtUtc), one member per failed suite and class, and no unresolved rows. expectedDigest, when given, is
         /// the file's required SHA-256.
         /// </summary>
-        public static PSObject Read(string path, string expectedDigest) =>
+        public static object Read(string path, string expectedDigest) =>
             ReadContent(path, expectedDigest, HistoryLinkCache.Current, HistoryNodeIdentity.ForceWindows);
 
-        internal static PSObject ReadContent(string path, string expectedDigest, HistoryLinkCache links, bool forceWindows)
+        internal static object ReadContent(string path, string expectedDigest, HistoryLinkCache links, bool forceWindows)
         {
             NoLink(links, path, forceWindows);
             var digest = Sha(path);
             if (!string.IsNullOrEmpty(expectedDigest) && !string.Equals(digest, expectedDigest, StringComparison.Ordinal)) throw new NightlyRefusal("history-digest-mismatch");
-            var envelope = (PSObject)NightlyJson.ParseText(File.ReadAllText(path), 1024, true) ?? throw new NightlyRefusal("seed-schema");
+            var envelope = NightlyJson.ParseText(File.ReadAllText(path), 1024, true) ?? throw new NightlyRefusal("seed-schema");
             var payload = PsValue.Prop(envelope, "payload");
             if (!PsOps.StrEqValue(PsValue.Prop(envelope, "format"), Format) || !PsOps.StrEqValue(PsValue.Prop(envelope, "seedKind"), Kind)
                 || !Sha40.IsMatch(PsValue.Str(PsValue.Prop(envelope, "sourceSha")))
@@ -100,7 +100,7 @@ namespace Antiphon.Nightly
             try { actualHash = ContentHash(envelope); }
             catch (NightlyRefusal) { throw new NightlyRefusal("seed-hash-mismatch"); }
             if (!Sha64.IsMatch(contentHash) || !string.Equals(actualHash, contentHash, StringComparison.Ordinal)) throw new NightlyRefusal("seed-hash-mismatch");
-            var content = (PSObject)NightlyJson.ParseText(payloadText, 1024, true) ?? throw new NightlyRefusal("seed-schema");
+            var content = NightlyJson.ParseText(payloadText, 1024, true) ?? throw new NightlyRefusal("seed-schema");
             foreach (var field in new[] { "seedKind", "sourceRunId", "sourceCandidateId", "sourceSha" })
                 SetNote(content, field, PsValue.Str(PsValue.Prop(envelope, field)));
             SetNote(content, "createdAtUtc", PsValue.Prop(envelope, "createdAtUtc"));
@@ -109,6 +109,7 @@ namespace Antiphon.Nightly
             // order their first failure appears, observed in each failure's chunk.
             var members = new List<object>();
             var groups = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+            var firsts = new List<(string Key, object Test)>();
             foreach (var test in PsValue.AsArray(PsValue.Prop(content, "failedTests")))
             {
                 var key = PsValue.Str(PsValue.Prop(test, "suite")) + "\0" + PsValue.Str(PsValue.Prop(test, "className"));
@@ -116,19 +117,13 @@ namespace Antiphon.Nightly
                 {
                     observations = new List<object>();
                     groups[key] = observations;
-                    var member = new PSObject();
-                    member.Properties.Add(new PSNoteProperty("suite", PsValue.Prop(test, "suite")));
-                    member.Properties.Add(new PSNoteProperty("className", PsValue.Prop(test, "className")));
-                    member.Properties.Add(new PSNoteProperty("reasons", new object[] { "stopped-run-failure" }));
-                    member.Properties.Add(new PSNoteProperty("observations", null));
-                    members.Add(member);
+                    firsts.Add((key, test));
                 }
-                var observation = new PSObject();
-                observation.Properties.Add(new PSNoteProperty("chunk", PsValue.Prop(test, "chunk")));
-                observations.Add(observation);
+                observations.Add(PsValue.Record(("chunk", PsValue.Prop(test, "chunk"))));
             }
-            var index = 0;
-            foreach (var observations in groups.Values) ((PSObject)members[index++]).Properties["observations"].Value = observations.ToArray();
+            foreach (var (key, test) in firsts)
+                members.Add(PsValue.Record(("suite", PsValue.Prop(test, "suite")), ("className", PsValue.Prop(test, "className")),
+                    ("reasons", new object[] { "stopped-run-failure" }), ("observations", groups[key].ToArray())));
             SetNote(content, "members", members.ToArray());
             SetNote(content, "unresolved", new object[0]);
             if (!string.Equals(Sha(path), digest, StringComparison.Ordinal)) throw new NightlyRefusal("seed-changed-during-read");
@@ -138,19 +133,15 @@ namespace Antiphon.Nightly
         // ---- summary prefix, timing root ----
 
         /// <summary>{ Document, Sha, Length } of a summary before its first bulk key (timingChunks, suiteTimeline, suites).</summary>
-        public static PSObject SummaryPrefix(string path)
+        public static object SummaryPrefix(string path)
         {
             var prefix = ReadPrefix(path);
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Document", prefix.Document));
-            o.Properties.Add(new PSNoteProperty("Sha", prefix.Sha));
-            o.Properties.Add(new PSNoteProperty("Length", prefix.Length));
-            return o;
+            return PsValue.Record(("Document", prefix.Document), ("Sha", prefix.Sha), ("Length", prefix.Length));
         }
 
         private sealed class Prefix
         {
-            public PSObject Document;
+            public object Document;
             public string Sha;
             public int Length;
         }
@@ -185,7 +176,7 @@ namespace Antiphon.Nightly
                 if (text.Length > 0 && text[0] == (char)0xFEFF) text = text.Substring(1);
                 text = text.TrimEnd().TrimEnd(',');
                 if (!text.EndsWith("}", StringComparison.Ordinal)) text += "}";
-                var document = (PSObject)NightlyJson.ParseText(text, 1024, true) ?? throw new NightlyRefusal("seed-summary-header");
+                var document = NightlyJson.ParseText(text, 1024, true) ?? throw new NightlyRefusal("seed-summary-header");
                 return new Prefix { Document = document, Sha = TestPhaseRecords.Sha256Hex(prefix), Length = cut };
             }
         }
@@ -260,7 +251,7 @@ namespace Antiphon.Nightly
         /// directory is read-only; the output must be outside it and its timing directory. Source identity the owner
         /// files and summary do not carry comes from the arguments; a conflict refuses. The process link cache restarts.
         /// </summary>
-        public static PSObject Export(string runDirectory, string outputPath, string sourceRunId, string sourceCandidateId,
+        public static object Export(string runDirectory, string outputPath, string sourceRunId, string sourceCandidateId,
             string sourceSha, string timingRoot)
         {
             HistoryLinkCache.Reset();
@@ -269,17 +260,14 @@ namespace Antiphon.Nightly
                 SourceRunId = sourceRunId ?? "", SourceCandidateId = sourceCandidateId ?? "", SourceSha = sourceSha ?? "",
             };
             var path = export.Run(runDirectory, outputPath, timingRoot ?? "");
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Path", path));
-            result.Properties.Add(new PSNoteProperty("Digest", Sha(path)));
-            return result;
+            return PsValue.Record(("Path", path), ("Digest", Sha(path)));
         }
 
         private sealed class SeedExport
         {
             private readonly HistoryLinkCache _links;
             private readonly bool _force;
-            private readonly ScriptBlock _barrier;
+            private readonly Action<string> _barrier;
             private readonly Dictionary<string, string> _inputs = new Dictionary<string, string>(StringComparer.Ordinal);
             private readonly Dictionary<string, string> _chunkInputs = new Dictionary<string, string>(StringComparer.Ordinal);
             private string _root;
@@ -287,7 +275,7 @@ namespace Antiphon.Nightly
 
             public string SourceRunId, SourceCandidateId, SourceSha;
 
-            public SeedExport(HistoryLinkCache links, bool forceWindows, ScriptBlock readBarrier)
+            public SeedExport(HistoryLinkCache links, bool forceWindows, Action<string> readBarrier)
             {
                 _links = links ?? new HistoryLinkCache();
                 _force = forceWindows;
@@ -362,7 +350,7 @@ namespace Antiphon.Nightly
                 foreach (var ownerFile in files)
                 {
                     if (!string.Equals(ownerFile.DirectoryName, _root, StringComparison.Ordinal) || !OwnerFile.IsMatch(ownerFile.Name)) continue;
-                    var owner = (PSObject)NightlyJson.ParseText(ReadInput(ownerFile.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-owner-schema");
+                    var owner = NightlyJson.ParseText(ReadInput(ownerFile.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-owner-schema");
                     Claim(owner, "runId", ref SourceRunId);
                     Claim(owner, "candidateId", ref SourceCandidateId);
                     Claim(owner, "sha", ref SourceSha);
@@ -373,7 +361,7 @@ namespace Antiphon.Nightly
                 var plannedKeys = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var file in plans)
                 {
-                    var document = (PSObject)NightlyJson.ParseText(ReadInput(file.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-plan-schema");
+                    var document = NightlyJson.ParseText(ReadInput(file.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-plan-schema");
                     documents.Add(document);
                     foreach (var group in PsValue.AsArray(PsValue.Prop(document, "groups")))
                         plannedKeys.Add(PsValue.Str(PsValue.Prop(document, "suite")) + "/" + PsValue.Str(PsValue.Prop(group, "chunk")));
@@ -401,18 +389,10 @@ namespace Antiphon.Nightly
                         foreach (var row in rows) orphanClasses.Add(NightlyClassNames.Bare(PsValue.Str(PsValue.Prop(row, "ClassName"))));
                     }
                     catch (Exception e) when (!Message(e).StartsWith("seed-", StringComparison.Ordinal)) { }
-                    var group = new PSObject();
-                    group.Properties.Add(new PSNoteProperty("chunk", orphanChunk));
-                    group.Properties.Add(new PSNoteProperty("classes", DispatchSchedule.OrdinalStrings(orphanClasses)));
-                    group.Properties.Add(new PSNoteProperty("plannedTestIds", new object[0]));
-                    group.Properties.Add(new PSNoteProperty("fromTrxOnly", true));
-                    var orphan = new PSObject();
-                    orphan.Properties.Add(new PSNoteProperty("version", 1));
-                    orphan.Properties.Add(new PSNoteProperty("runId", SourceRunId));
-                    orphan.Properties.Add(new PSNoteProperty("sourceDigest", SourceSha));
-                    orphan.Properties.Add(new PSNoteProperty("suite", orphanSuite));
-                    orphan.Properties.Add(new PSNoteProperty("groups", new object[] { group }));
-                    documents.Add(orphan);
+                    var group = PsValue.Record(("chunk", orphanChunk), ("classes", DispatchSchedule.OrdinalStrings(orphanClasses)),
+                        ("plannedTestIds", new object[0]), ("fromTrxOnly", true));
+                    documents.Add(PsValue.Record(("version", 1), ("runId", SourceRunId), ("sourceDigest", SourceSha), ("suite", orphanSuite),
+                        ("groups", new object[] { group })));
                 }
 
                 var chunks = new List<OrderedDictionary>();
@@ -421,7 +401,7 @@ namespace Antiphon.Nightly
                 var failedKeys = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var plan in documents)
                 {
-                    if (!LanguagePrimitives.Equals(PsValue.Prop(plan, "version"), 1) || !LanguagePrimitives.IsTrue(PsValue.Prop(plan, "suite"))
+                    if (!PsValue.Eq(PsValue.Prop(plan, "version"), 1, false) || !PsValue.IsTrue(PsValue.Prop(plan, "suite"))
                         || !PsOps.IsArray(PsValue.Prop(plan, "groups"))) throw new NightlyRefusal("seed-plan-schema");
                     var planRun = PsValue.Str(PsValue.Prop(plan, "runId"));
                     var planSha = PsValue.Str(PsValue.Prop(plan, "sourceDigest"));
@@ -512,7 +492,7 @@ namespace Antiphon.Nightly
                 foreach (var cls in PsValue.AsArray(PsValue.Prop(group, "classes"))) planned.Add(NightlyClassNames.Bare(PsValue.Str(cls)));
                 var classes = DispatchSchedule.OrdinalStrings(planned);
                 var stem = suite + "-" + chunk;
-                PSObject timing = null;
+                object timing = null;
                 DateTimeOffset? last = null;
                 var completed = false;
                 var started = false;
@@ -525,7 +505,7 @@ namespace Antiphon.Nightly
                     started = true;
                     try
                     {
-                        timing = (PSObject)NightlyJson.ParseText(ReadInput(timingPath, true), 1024, true) ?? throw new InvalidDataException("timing-json");
+                        timing = NightlyJson.ParseText(ReadInput(timingPath, true), 1024, true) ?? throw new InvalidDataException("timing-json");
                         _chunkInputs[timingPath] = key;
                         if (!PsOps.StrEqValue(PsValue.Prop(timing, "suite"), suite) || !PsOps.StrEqValue(PsValue.Prop(timing, "chunk"), chunk)) AddReason(reasons, "timing-identity");
                         else
@@ -601,7 +581,7 @@ namespace Antiphon.Nightly
                 var chunkRow = new OrderedDictionary
                 {
                     { "suite", suite }, { "chunk", chunk }, { "classes", classes },
-                    { "membershipSource", LanguagePrimitives.IsTrue(PsValue.Prop(group, "fromTrxOnly")) ? "trx-without-plan-row" : "plan" },
+                    { "membershipSource", PsValue.IsTrue(PsValue.Prop(group, "fromTrxOnly")) ? "trx-without-plan-row" : "plan" },
                     { "completed", completed }, { "started", started },
                     { "lastRunAtUtc", last.HasValue ? last.Value.ToString("o", CultureInfo.InvariantCulture) : null },
                 };
@@ -641,7 +621,7 @@ namespace Antiphon.Nightly
                 {
                     digest = Sha(full);
                     text = File.ReadAllText(full);
-                    if (_barrier != null) _barrier.Invoke(full);
+                    _barrier?.Invoke(full);
                     if (!string.Equals(Sha(full), digest, StringComparison.Ordinal)) throw new NightlyRefusal("seed-source-changed");
                 }
                 catch (Exception e)
@@ -669,16 +649,16 @@ namespace Antiphon.Nightly
             }
 
             // A summary value fills an identity the caller left empty, and refuses one that differs.
-            private static void Adopt(PSObject summary, string field, ref string current, string mismatch)
+            private static void Adopt(object summary, string field, ref string current, string mismatch)
             {
                 var value = PsValue.Prop(summary, field);
-                if (!LanguagePrimitives.IsTrue(value)) return;
+                if (!PsValue.IsTrue(value)) return;
                 var text = PsValue.Str(value);
                 if (!string.IsNullOrEmpty(current) && !string.Equals(current, text, StringComparison.Ordinal)) throw new NightlyRefusal(mismatch);
                 if (string.IsNullOrEmpty(current)) current = text;
             }
 
-            private static void Claim(PSObject owner, string field, ref string current)
+            private static void Claim(object owner, string field, ref string current)
             {
                 var value = PsValue.Str(PsValue.Prop(owner, field));
                 if (string.IsNullOrEmpty(value)) return;
@@ -742,21 +722,18 @@ namespace Antiphon.Nightly
             }
         }
 
-        private static void SetNote(PSObject target, string name, object value)
-        {
-            if (target.Properties[name] != null) target.Properties.Remove(name);
-            target.Properties.Add(new PSNoteProperty(name, value));
-        }
+        private static void SetNote(object target, string name, object value) => PsValue.SetNote(target, name, value);
 
+        /// <summary>A failure's reason: the innermost invoked exception's message (under PowerShell, also a runtime error's record).</summary>
         internal static string Message(Exception e)
         {
-            while ((e is MethodInvocationException || e is System.Reflection.TargetInvocationException) && e.InnerException != null) e = e.InnerException;
-            if (e is RuntimeException runtime && runtime.ErrorRecord?.Exception != null && !ReferenceEquals(runtime.ErrorRecord.Exception, e)) e = runtime.ErrorRecord.Exception;
+            if (PsRuntime.Loaded) return PsFields.InvocationMessage(e);
+            while (e is System.Reflection.TargetInvocationException && e.InnerException != null) e = e.InnerException;
             return e.Message;
         }
     }
 
-    /// <summary>Seed and report JSON: dictionaries, PSCustomObjects, lists and scalars; dates in round-trip form.</summary>
+    /// <summary>Seed and report JSON: dictionaries, custom objects (PSCustomObjects, PlainObjects), lists and scalars; dates in round-trip form.</summary>
     internal static class SeedJson
     {
         private static readonly JsonWriterOptions Compact = new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, SkipValidation = false };
@@ -776,21 +753,18 @@ namespace Antiphon.Nightly
         private static void Write(Utf8JsonWriter w, object value, int depth)
         {
             if (depth > 64) throw new InvalidDataException("seed-json-depth");
-            if (value is PSObject ps)
+            if (PsValue.IsCustomObject(value))
             {
-                if (ps.BaseObject is PSCustomObject)
+                w.WriteStartObject();
+                foreach (var property in PsValue.Properties(value))
                 {
-                    w.WriteStartObject();
-                    foreach (var property in ps.Properties)
-                    {
-                        w.WritePropertyName(property.Name);
-                        Write(w, property.Value, depth + 1);
-                    }
-                    w.WriteEndObject();
-                    return;
+                    w.WritePropertyName(property.Key);
+                    Write(w, property.Value, depth + 1);
                 }
-                value = ps.BaseObject;
+                w.WriteEndObject();
+                return;
             }
+            value = PsValue.BaseObject(value);
             switch (value)
             {
                 case null: w.WriteNullValue(); return;

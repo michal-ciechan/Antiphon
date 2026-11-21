@@ -2036,18 +2036,6 @@
       "wildcard": false
     },
     {
-      "id": "test-rc-roster-repairs",
-      "path": "scripts/test-rc-roster-repairs.ps1",
-      "disposition": "argument-consumer",
-      "wildcard": false
-    },
-    {
-      "id": "test-nightly-failed-first",
-      "path": "scripts/test-nightly-failed-first.ps1",
-      "disposition": "argument-consumer",
-      "wildcard": false
-    },
-    {
       "id": "test-qualification-graph",
       "path": "scripts/test-qualification-graph.ps1",
       "disposition": "argument-consumer",
@@ -2211,7 +2199,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "d1305115cead0120dbcbc3405452854b7e75d4bd39307c23c040d3776398180c",
+    "hash": "8ccfe9b0821984d0b0ee1fa656dc2810d8857cf2c5ae1d3c095fd92f86fddc6b",
     "path": "tests/test-selection-policy.json"
   }
 }

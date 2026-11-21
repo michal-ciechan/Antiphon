@@ -227,6 +227,23 @@ namespace Antiphon.Nightly
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal static object NewWrapper(object o) => new PSObject(o);
 
+        /// <summary><c>PSObject.AsPSObject(o).Properties.Add(new PSNoteProperty(name, value))</c>: a note on any value's wrapper.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void AddNoteWrapped(object o, string name, object value) =>
+            PSObject.AsPSObject(o).Properties.Add(new PSNoteProperty(name, value));
+
+        /// <summary>
+        /// StoppedSeedFiles.Message under PowerShell: the innermost method or reflection invocation's exception, then a
+        /// runtime exception's error record exception when that is another one.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static string InvocationMessage(Exception e)
+        {
+            while ((e is MethodInvocationException || e is System.Reflection.TargetInvocationException) && e.InnerException != null) e = e.InnerException;
+            if (e is RuntimeException runtime && runtime.ErrorRecord?.Exception != null && !ReferenceEquals(runtime.ErrorRecord.Exception, e)) e = runtime.ErrorRecord.Exception;
+            return e.Message;
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal static void AddMemberForce(object target, string name, object value)
         {

@@ -65,7 +65,7 @@ internal static class FailedFirstDispatchCases
     }
 
     /// <summary>New-FFGlobalFixture: the replay plus three companion suites, a history of four anchors and three companions, resolved and scheduled.</summary>
-    public sealed record GlobalFixture(object[] Suites, PlainObject Replay, object Resolved, object Schedule);
+    public sealed record GlobalFixture(object[] Suites, PlainObject Replay, object Resolved, object Schedule, PlainObject History);
 
     public static GlobalFixture Global()
     {
@@ -106,7 +106,7 @@ internal static class FailedFirstDispatchCases
         var resolved = PriorFailureHistory.Resolve(history, suites, "Full", null, null);
         var schedule = NightlyDispatch.Schedule(suites, PsValue.AsArray(PsValue.Prop(resolved, "members")), new string('d', 64), null, true, "new", "1", null, "",
             DateTime.UtcNow, "");
-        return new GlobalFixture(suites, replay, resolved, schedule);
+        return new GlobalFixture(suites, replay, resolved, schedule, history);
     }
 
     private static PlainObject Member(string suite, string cls) =>

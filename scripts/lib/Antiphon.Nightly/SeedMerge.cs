@@ -13,7 +13,6 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -40,7 +39,7 @@ namespace Antiphon.Nightly
 
         private sealed class Loaded
         {
-            public PSObject Doc;
+            public object Doc;
             public int Index;
             public long Ticks;
             public string RunId => PsValue.Str(PsValue.Prop(Doc, "sourceRunId"));
@@ -308,7 +307,7 @@ namespace Antiphon.Nightly
             candidate.Ticks > baseline.Ticks || (candidate.Ticks == baseline.Ticks && candidate.Index > baseline.Index);
 
         // Every chunk listing the class completed, and the method not among the seed's failures.
-        private static bool Green(PSObject seed, string suite, string className, string method)
+        private static bool Green(object seed, string suite, string className, string method)
         {
             var listed = 0;
             foreach (var chunk in PsValue.AsArray(PsValue.Prop(seed, "chunks")))

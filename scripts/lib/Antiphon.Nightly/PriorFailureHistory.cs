@@ -5,14 +5,14 @@
 // History is a scheduling hint, never a receipt or execution credit. Every evidence file is resolved under the run root
 // (an absolute retained path is rebound only by an exact logDir prefix or run id), link-checked through the process's
 // HistoryLinkCache, hashed when read and hashed again before the history is written; a reader rechecks every digest and
-// the summary's provenance. A refusal is thrown as NightlyRefusal with the reason the scripts reported.
+// the summary's provenance. A refusal is thrown as NightlyRefusal with the reason the scripts reported. The records are
+// PsValue records (PSObjects under PowerShell, PlainObjects for a plain caller such as the in-process tests).
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Text.RegularExpressions;
 using System.Xml;
 
@@ -66,7 +66,7 @@ namespace Antiphon.Nightly
             return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : (DateTimeOffset?)null;
         }
 
-        private static PSObject ReadJson(string path, string[] omit) => (PSObject)NightlyJson.ReadFile(path, true, omit);
+        private static object ReadJson(string path, string[] omit) => NightlyJson.ReadFile(path, true, omit);
 
         private static void Fields(object o, params string[] names)
         {
@@ -93,17 +93,14 @@ namespace Antiphon.Nightly
             if (refusal != null) throw Refuse(refusal);
         }
 
-        private static void SetNote(PSObject target, string name, object value)
-        {
-            if (target.Properties[name] != null) target.Properties.Remove(name);
-            target.Properties.Add(new PSNoteProperty(name, value));
-        }
+        private static void SetNote(object target, string name, object value) => PsValue.SetNote(target, name, value);
 
-        private static PSObject Obj(params object[] pairs)
+        // A record: name, value pairs.
+        private static object Obj(params object[] pairs)
         {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
+            var properties = new (string Name, object Value)[pairs.Length / 2];
+            for (var i = 0; i < properties.Length; i++) properties[i] = ((string)pairs[2 * i], pairs[2 * i + 1]);
+            return PsValue.Record(properties);
         }
 
         // ---- schema ----
@@ -171,7 +168,7 @@ namespace Antiphon.Nightly
         /// An evidence path under the run root: relative paths as they are; an absolute retained path rebound by the root,
         /// the summary's logDir or its run id. { FullPath, RelativePath, Exists, Rebound, Original }.
         /// </summary>
-        public static PSObject ResolveArtifact(string root, string path, object summary)
+        public static object ResolveArtifact(string root, string path, object summary)
         {
             if (string.IsNullOrWhiteSpace(path) || Control.IsMatch(path)) throw Refuse("evidence-path-escape");
             var relative = path.Replace('\\', '/');
@@ -210,7 +207,7 @@ namespace Antiphon.Nightly
         /// The nodes an execution document or diagnostic log records, by uid, each checked against the discovery when
         /// one is given: { Nodes, Complete }. A torn or unpinned log is incomplete; an identity conflict refuses.
         /// </summary>
-        public static PSObject FailureNodes(string path, object discovery)
+        public static object FailureNodes(string path, object discovery)
         {
             var text = File.ReadAllText(path);
             if (text.Length > 0 && text[0] == (char)0xFEFF) text = text.Substring(1);
@@ -284,7 +281,7 @@ namespace Antiphon.Nightly
         }
 
         // ConvertFrom-NightlyDiscoveryDocument: the pinned format and versions, the assembly hash and the compiled nodes.
-        private static PSObject DiscoveryDocument(object doc)
+        private static object DiscoveryDocument(object doc)
         {
             if (doc == null) throw new InvalidDataException("empty discovery document");
             var format = Str(doc, "format");
@@ -307,7 +304,7 @@ namespace Antiphon.Nightly
         /// identities from each chunk's TRX and diagnostic log, incomplete chunks as fallback rows with their planned
         /// classes when the retained plan binds, and every evidence file's digest.
         /// </summary>
-        public static PSObject Export(string runDirectory, string outputPath) => new HistoryExport().Run(runDirectory, outputPath);
+        public static object Export(string runDirectory, string outputPath) => new HistoryExport().Run(runDirectory, outputPath);
 
         private sealed class HistoryExport
         {
@@ -317,7 +314,7 @@ namespace Antiphon.Nightly
             private readonly Dictionary<string, OrderedDictionary> _members = new Dictionary<string, OrderedDictionary>(StringComparer.Ordinal);
 
             // Read-HistoryInput: an evidence file under the root, recorded with its digest; null when it does not exist.
-            private PSObject Input(string path, string kind, object summary)
+            private object Input(string path, string kind, object summary)
             {
                 var artifact = ResolveArtifact(_root, path, summary);
                 if (!(bool)PsValue.Prop(artifact, "Exists")) return null;
@@ -346,7 +343,7 @@ namespace Antiphon.Nightly
                 if (observation != null) ((List<object>)member["observations"]).Add(observation);
             }
 
-            public PSObject Run(string runDirectory, string outputPath)
+            public object Run(string runDirectory, string outputPath)
             {
                 if (string.IsNullOrWhiteSpace(runDirectory) || string.IsNullOrWhiteSpace(outputPath)) throw Refuse("history-path-required");
                 _root = Path.GetFullPath(runDirectory).TrimEnd('\\', '/');
@@ -376,7 +373,7 @@ namespace Antiphon.Nightly
                 var fallback = new List<object>();
                 var unresolved = new List<object>();
                 var seenChunks = new HashSet<string>(StringComparer.Ordinal);
-                var discoveries = new Dictionary<string, PSObject>(StringComparer.Ordinal);
+                var discoveries = new Dictionary<string, object>(StringComparer.Ordinal);
                 foreach (var chunk in PsValue.AsArray(PsValue.Prop(summary, "suites")))
                 {
                     var suite = Str(chunk, "id");
@@ -391,7 +388,7 @@ namespace Antiphon.Nightly
                     if (!discoveries.ContainsKey(suite))
                     {
                         var disc = Input(suite + "-profile.discovery.json", "discovery", summary);
-                        PSObject parsed = null;
+                        object parsed = null;
                         if (disc != null)
                         {
                             try
@@ -456,13 +453,13 @@ namespace Antiphon.Nightly
                 return Obj("Path", output, "Digest", Digest(output), "History", document);
             }
 
-            private void ChunkHistory(object chunk, string suite, string chunkId, PSObject summary, PSObject summaryArtifact, PSObject discovery,
+            private void ChunkHistory(object chunk, string suite, string chunkId, object summary, object summaryArtifact, object discovery,
                 string runId, string attempt, string sha, string policyHash, List<object> fallback, List<object> unresolved)
             {
                 var incomplete = false;
                 var accountingIncomplete = false;
                 var why = new List<string>();
-                var observed = new List<PSObject>();
+                var observed = new List<object>();
                 var trxRowCount = 0;
                 if (!string.IsNullOrEmpty(Str(chunk, "detail"))) { accountingIncomplete = true; why.Add("summary-detail"); }
                 if (accountingIncomplete) incomplete = true;
@@ -553,10 +550,10 @@ namespace Antiphon.Nightly
                 }
                 // A retained suite-qualified plan is usable only when its old provenance and UID/class/assembly membership
                 // all bind. The last singleton may belong to a completely different suite and supplies no fallback.
-                PSObject plan = null;
+                object plan = null;
                 var timing = Str(summary, "timingRoot");
                 if (timing.Length == 0) timing = "timing";
-                PSObject timingArtifact = null;
+                object timingArtifact = null;
                 try { timingArtifact = ResolveArtifact(_root, timing, summary); }
                 catch (NightlyRefusal refusal) when (refusal.Message.StartsWith("evidence-path-escape: unbound-absolute-path", StringComparison.Ordinal)) { }
                 if (timingArtifact != null && (bool)PsValue.Prop(timingArtifact, "Exists"))
@@ -567,11 +564,11 @@ namespace Antiphon.Nightly
                     if (!perSuite) planArtifact = Input(timingRelative + "/groups-planned.json", "planned", summary);
                     if (planArtifact != null)
                     {
-                        PSObject candidate;
+                        object candidate;
                         try { candidate = ReadJson(Str(planArtifact, "FullPath"), null); } catch (Exception) { candidate = null; }
                         if (candidate != null && PsOps.StrEqValue(PsValue.Prop(candidate, "suite"), suite))
                         {
-                            if (!LanguagePrimitives.Equals(PsValue.Prop(candidate, "version"), 1)) throw Refuse("history-schema: planned version");
+                            if (!PsValue.Eq(PsValue.Prop(candidate, "version"), 1, false)) throw Refuse("history-schema: planned version");
                             if (discovery != null && True(candidate, "assemblyDigest") && Str(candidate, "assemblyDigest") != Str(discovery, "AssemblyHash")) throw Refuse("history-provenance: planned assembly");
                             if (Str(candidate, "runId") != runId || (attempt != "unknown" && Str(candidate, "attempt") != attempt)
                                 || (True(candidate, "sourceDigest") && Str(candidate, "sourceDigest") != sha) || (True(candidate, "policyDigest") && Str(candidate, "policyDigest") != policyHash))
@@ -584,7 +581,7 @@ namespace Antiphon.Nightly
                     if (indexArtifact != null)
                     {
                         var index = ReadJson(Str(indexArtifact, "FullPath"), null) ?? throw Refuse("history-schema: planned index");
-                        if (!LanguagePrimitives.Equals(PsValue.Prop(index, "version"), 1)) throw Refuse("history-schema: planned index version");
+                        if (!PsValue.Eq(PsValue.Prop(index, "version"), 1, false)) throw Refuse("history-schema: planned index version");
                         if (Str(index, "runId") != runId || (attempt != "unknown" && Str(index, "attempt") != attempt)) throw Refuse("history-provenance: planned index");
                         var rows = new List<object>();
                         foreach (var row in PsValue.AsArray(PsValue.Prop(index, "suites"))) if (PsOps.StrEqValue(PsValue.Prop(row, "suite"), suite)) rows.Add(row);
@@ -659,7 +656,7 @@ namespace Antiphon.Nightly
                 });
             }
 
-            private static List<object> PlanGroups(PSObject plan, string chunkId)
+            private static List<object> PlanGroups(object plan, string chunkId)
             {
                 var groups = new List<object>();
                 if (plan == null) return groups;
@@ -672,7 +669,7 @@ namespace Antiphon.Nightly
         // ---- read ----
 
         /// <summary>Reads an exported history that no digest is required of (see the three-argument Read).</summary>
-        public static PSObject Read(string path) => Read(path, null, null);
+        public static object Read(string path) => Read(path, null, null);
 
         /// <summary>
         /// Reads an exported history: its schema, its digest, every evidence file's digest under the run root
@@ -680,7 +677,7 @@ namespace Antiphon.Nightly
         /// 64-hex digest the file has; a blank one refuses (a script passing $null passes ""). Only a C# caller's null
         /// means none is required; scripts call Read(path) for that.
         /// </summary>
-        public static PSObject Read(string path, string expectedDigest, string runDirectory)
+        public static object Read(string path, string expectedDigest, string runDirectory)
         {
             if (string.IsNullOrWhiteSpace(path)) throw Refuse("empty-history-path");
             NoLink(path);
@@ -727,7 +724,8 @@ namespace Antiphon.Nightly
             {
                 var rows = new List<object>();
                 foreach (var row in PsValue.AsArray(PsValue.Prop(summary, "suites"))) if (row != null && True(row, "chunk")) rows.Add(row);
-                PSObject.AsPSObject(progress).Properties.Add(new PSNoteProperty("suites", rows.ToArray()));
+                if (PsRuntime.Loaded) PsFields.AddNoteWrapped(progress, "suites", rows.ToArray());
+                else PsValue.AddNote(progress, "suites", rows.ToArray());
             }
             return progress;
         }
@@ -740,7 +738,7 @@ namespace Antiphon.Nightly
         /// is given. { History, PreviousRun, Digest, Path, FallbackReason, Warning }: on any refusal History is null and
         /// FallbackReason says why (Warning is the line to print, null when no history was asked for).
         /// </summary>
-        public static PSObject InitializeDispatch(string path, string expectedDigest, string ownedDirectory, string candidateSha,
+        public static object InitializeDispatch(string path, string expectedDigest, string ownedDirectory, string candidateSha,
             bool acceptCrossCandidateSeed, string seedSourceCandidateId, DateTime nowUtc)
         {
             var fallback = "history-not-requested";
@@ -769,7 +767,7 @@ namespace Antiphon.Nightly
                     var summary = ReadJson(Path.Combine(Str(read, "sourceRoot"), "summary.json"), OmitBulk) ?? throw Refuse("history-schema: summary");
                     if (In(PsValue.Prop(summary, "outcome"), new[] { "Working", "Running" })) throw Refuse("history-run-not-closed");
                     var progress = PsValue.Prop(summary, "dispatchProgress");
-                    if (LanguagePrimitives.IsTrue(progress) && PsOps.HasName(progress, "liveness") && !PsOps.StrEqValue(PsValue.Prop(progress, "liveness"), "closed")) throw Refuse("history-liveness-unknown");
+                    if (PsValue.IsTrue(progress) && PsOps.HasName(progress, "liveness") && !PsOps.StrEqValue(PsValue.Prop(progress, "liveness"), "closed")) throw Refuse("history-liveness-unknown");
                     if (!string.IsNullOrEmpty(candidateSha) && Str(read, "sourceSha") != candidateSha) throw Refuse("history-candidate-mismatch");
                     var completed = TerminalInstant(PsValue.Prop(summary, "completedAt")) ?? throw Refuse("history-terminal-time-invalid");
                     if (completed.UtcDateTime < nowUtc.AddDays(-7) || completed.UtcDateTime > nowUtc.AddMinutes(5)) throw Refuse("history-stale");

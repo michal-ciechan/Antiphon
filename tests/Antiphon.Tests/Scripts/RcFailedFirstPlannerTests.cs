@@ -94,18 +94,16 @@ public sealed class RcFailedFirstPlannerTests
         rows.ShouldAllPass(4);
     }
 
-    // CARD-1404/1514: full 312-launch conservation replay; see measured plan amendment. The preparation rows run
-    // in-process (PreparationSequencing, W2-nightly S13).
+    // CARD-1404/1514: the full 312-launch conservation replay, the small fixture's terminal matrix, journal, timelines,
+    // phase summaries and bindings, the authority conservation, the planned golden and the artifact schemas (W2-nightly
+    // S14: in-process, was the driver case; same rows). The preparation rows run in PreparationSequencing (S13).
     [Test, Timeout(1_140_000)]
-    public Task FullBytesAndCoverageConserved(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(FullBytesAndCoverageConserved), 19,
-            ["FF FullBytesAndCoverageConserved.observedPermutation", "FF FullBytesAndCoverageConserved.anchors",
-             "FF FullBytesAndCoverageConserved.canonicalBytes", "FF FullBytesAndCoverageConserved.coverage",
-             "FF FullBytesAndCoverageConserved.keyedObservations", "FF FullBytesAndCoverageConserved.terminalMatrix",
-             "FF FullBytesAndCoverageConserved.prefixState", "FF FullBytesAndCoverageConserved.stickyHeader",
-             "FF FullBytesAndCoverageConserved.settlementOrder", "FF FullBytesAndCoverageConserved.reasonSequence",
-             "FF FullBytesAndCoverageConserved.journalBindings", "FF FullBytesAndCoverageConserved.timelines",
-             "FF FullBytesAndCoverageConserved.phaseSummariesAndIndex", "FF FullBytesAndCoverageConserved.schedulePolicy",
-             "FF FullBytesAndCoverageConserved.authorityBytes", "FF FullBytesAndCoverageConserved.authorityBinding", "FF FullBytesAndCoverageConserved.originalManifestBytes", "FF FullBytesAndCoverageConserved.artifactSchemas", "FF FullBytesAndCoverageConserved.phaseBindings"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
+    [NotInParallel(new[] { "nightly-history-statics", nameof(QualificationTimingTests), "release-authority-card-reader" })]
+    public void FullBytesAndCoverageConserved()
+    {
+        var rows = new NightlyCaseRows();
+        using var fixture = NightlyFixture.Create("ff-conserve");
+        FailedFirstConservation.Run(fixture, rows, nameof(FullBytesAndCoverageConserved), diagnosticsOnly: false);
+        rows.ShouldAllPass(19);
+    }
 }
