@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,10 +23,65 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReviewEvidenceResettlementTests
 {
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);
+
+    [Test]
+    public async Task C2053_GitHelperDeadlineNamesTestAndHelper(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux shell witness for a Git child that exits while a descendant holds stdout.");
+            return;
+        }
+
+        var directory = Directory.CreateTempSubdirectory("c2053-pipe-");
+        var git = new PipeHolderGit();
+        var child = git.RunAsync(directory.FullName, ["push"], ct);
+        try
+        {
+            var timeout = await Should.ThrowAsync<TimeoutException>(() =>
+                AwaitGitAsync(child, nameof(LandingGit.RunAsync), TimeSpan.FromSeconds(2))
+                    .WaitAsync(TimeSpan.FromSeconds(8), ct));
+            File.Exists(Path.Combine(directory.FullName, "ready")).ShouldBeTrue();
+            child.IsCompleted.ShouldBeFalse("the holder still owns the redirected pipe");
+            timeout.Message.ShouldBe($"{nameof(C2053_GitHelperDeadlineNamesTestAndHelper)} / RunAsync: "
+                + "git helper did not complete within 00:00:02 (pipe held open?)");
+        }
+        finally
+        {
+            File.WriteAllText(Path.Combine(directory.FullName, "release"), "");
+            (await child.WaitAsync(Guard)).ExitCode.ShouldBe(0);
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private sealed class PipeHolderGit : LandingGit
+    {
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            start.FileName = "/bin/sh";
+            start.ArgumentList.Clear();
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("""
+                (
+                    sh -c '
+                        : > ready
+                        remaining=70
+                        while [ ! -e release ] && [ "$remaining" -gt 0 ]; do
+                            sleep 1
+                            remaining=$((remaining - 1))
+                        done
+                    ' </dev/null &
+                )
+                """);
+            return base.StartProcess(start);
+        }
+    }
+
+    private static Task AwaitGitAsync(Task operation, string helper, TimeSpan? bound = null) => operation;
 
     private static string Report(RunnerSettlementWorld w, Guid subject, string sha,
         string finding = "Clean", string scope = "Full", string clean = "true", bool evidence = true) =>
