@@ -35,6 +35,8 @@ public sealed class C1722GitTimeoutBudgetTests
     [Arguments(typeof(C0824WorkspaceSlotColdResetTests), nameof(C0824WorkspaceSlotColdResetTests.C0824_MissedBoundaryRunsOnceAtStart), 0.326)]
     [Arguments(typeof(C0824WorkspaceSlotColdResetTests), nameof(C0824WorkspaceSlotColdResetTests.C0824_ColdResetRemovesDeletedProjectResidue), 0.880)]
     [Arguments(typeof(C0824WorkspaceSlotColdResetTests), nameof(C0824WorkspaceSlotColdResetTests.C0824_ColdResetQuarantinesWhatALeaseWould), 1.319)]
+    // CARD-0824 S3: five isolated Linux samples of the qualification-fence method.
+    [Arguments(typeof(C0824WorkspaceSlotColdResetTests), nameof(C0824WorkspaceSlotColdResetTests.C0824_QualificationFenceDefersColdAndKeepsWarm), 1.171)]
     [Arguments(typeof(C0824WorkspaceSlotNativeRehomeTests), nameof(C0824WorkspaceSlotNativeRehomeTests.C0824_Real0555DirectoryRehomes), 0.699)]
     [Arguments(typeof(C0824WorkspaceSlotOverflowTests), nameof(C0824WorkspaceSlotOverflowTests.C0824_AllLeasedGrowsOverflowSlot), 0.891)]
     [Arguments(typeof(C0824WorkspaceSlotOverflowTests), nameof(C0824WorkspaceSlotOverflowTests.C0824_ReleasingSlotWaitsBeforeGrowing), 1.392)]
