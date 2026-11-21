@@ -888,23 +888,24 @@ public class LandingGit : ILandingGit
         var admin = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gitDirectory));
         if (!PathsEqual(Path.GetDirectoryName(admin) ?? admin, Path.Combine(common, "worktrees")))
             return new(1, "", "registration_entry_outside_common");
-        string recorded;
-        try { recorded = (await File.ReadAllTextAsync(Path.Combine(admin, "gitdir"), ct)).Trim(); }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        { return new(1, "", "registration_entry_missing"); }
-        if (recorded.Length == 0 || !PathsEqual(recorded, Path.Combine(worktreePath, ".git")))
-            return new(1, "", "registration_entry_mismatch");
-        // CARD-0824 S4a round 3 Review B-1: the reads above await. A caller's switch is read here; nothing awaits
-        // between this read and the move.
-        if (await DestructiveRefusalAsync(ct) is { } refused) return new(1, "", refused);
-        if (File.Exists(Path.Combine(admin, "locked"))) return new(1, "", "registration_locked");
-        if (Exists(worktreePath)) return new(1, "", "worktree_path_recreated");
+        if (await RefuseMoveAsync() is { } refused) return new(1, "", refused);
         var retired = WorktreeSetAside.RetiredAdminPath(common, worktreePath);
+        var renames = RegistrationRenames;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(retired)!);
             if (Exists(retired)) WorktreeNoFollowDelete.Delete(retired);
-            RegistrationRenames.MoveDirectory(admin, retired);
+            for (var attempt = 1; ; attempt++)
+            {
+                try { renames.MoveDirectory(admin, retired); break; }
+                catch (Exception ex) when (attempt < WorktreeRenames.SharingAttempts && renames.IsSharingConflict(ex))
+                {
+                    // A concurrent Git reader can hold the registration open on Windows. Refresh the
+                    // registration and switch checks after the pause, before the next move.
+                    renames.Pause(WorktreeRenames.SharingPause);
+                    if (await RefuseMoveAsync() is { } retryRefused) return new(1, "", retryRefused);
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -918,6 +919,21 @@ public class LandingGit : ILandingGit
         // this path and the caller would put the tree back (CARD-0721).
         Scope?.Invalidate(false);
         return new(0, "", "");
+
+        async Task<string?> RefuseMoveAsync()
+        {
+            string recorded;
+            try { recorded = (await File.ReadAllTextAsync(Path.Combine(admin, "gitdir"), ct)).Trim(); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            { return "registration_entry_missing"; }
+            if (recorded.Length == 0 || !PathsEqual(recorded, Path.Combine(worktreePath, ".git")))
+                return "registration_entry_mismatch";
+            // CARD-0824 S4a round 3 Review B-1: read the caller's switch after the awaits needed
+            // to check the registration, with no await between this check and the move.
+            if (await DestructiveRefusalAsync(ct) is { } blocked) return blocked;
+            if (File.Exists(Path.Combine(admin, "locked"))) return "registration_locked";
+            return Exists(worktreePath) ? "worktree_path_recreated" : null;
+        }
 
         static bool Exists(string path)
         {
