@@ -945,9 +945,13 @@ public sealed class LandingGitTests
             var finished = await Task.WhenAny(call, Task.Delay(limit, ct));
             watch.Stop();
             finished.ShouldBe(call,
-                "git_pipe_timeout: a grandchild that never closes stdout must not hang RunAsync");
-            var thrown = await Should.ThrowAsync<TimeoutException>(() => call);
-            thrown.Message.ShouldBe("git_pipe_timeout");
+                "a grandchild that never closes stdout must not hang RunAsync");
+            // The push already exited 0. A post-exit pipe bound must keep that exit so the
+            // caller can confirm the remote, instead of a TimeoutException the land refuses.
+            var result = await call;
+            result.ExitCode.ShouldBe(0);
+            result.Diagnostic.ShouldBe("git_pipe_timeout");
+            result.Output.ShouldBe("");
             watch.Elapsed.ShouldBeLessThan(limit);
         }
         finally
