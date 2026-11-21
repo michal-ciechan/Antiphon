@@ -29,20 +29,16 @@ public sealed class CodexGpt62LadderTests
         "e9c09925a64bd7bb624c0be17753e2aedf2fb15d5d3fc09f1bde3e207ca050ee26db8a182d0ac82272492f22b370cbffb94a276eed5d176266717840fece5bb2";
 
     [Test]
-    public void High_and_medium_resolve_to_gpt_6_2_sol_frontier_and_low_stay()
+    public void Codex_tiers_resolve_to_the_pinned_model_slugs()
     {
         ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe(Sol62);
         ModelLevelAliases.ForCodex(AgentModelLevel.Medium).ShouldBe(Sol62);
         ModelLevelAliases.ForCodex((AgentModelLevel)999).ShouldBe(Sol62);
-        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(ModelAlias.Gpt6Astra);
+        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(Astra62);
         ModelLevelAliases.ForCodex(AgentModelLevel.Low).ShouldBe(ModelAlias.Gpt56Luna);
         ModelLevelAliases.ForLaunch(AgentKind.Codex, AgentModelLevel.High).ShouldBe(Sol62);
         ModelLevelAliases.ForLaunch(AgentKind.Codex, AgentModelLevel.Medium).ShouldBe(Sol62);
         ModelLevelAliases.For(AgentKind.Codex, AgentModelLevel.High).ShouldBe(Sol62);
-
-        foreach (AgentModelLevel level in Enum.GetValues<AgentModelLevel>())
-            ModelLevelAliases.ForCodex(level).ShouldNotBe(Astra62);
-        ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldNotBe(Sol61);
     }
 
     [Test]
