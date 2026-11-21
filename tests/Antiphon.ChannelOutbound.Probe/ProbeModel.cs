@@ -6,14 +6,26 @@ using Microsoft.EntityFrameworkCore.Metadata;
 // The probe's AppDbContext model. Every probe is a fresh process, and building the AppDbContext model from scratch
 // took about 7 s of each 11-14 s run on the HP laptop. When the parent passes the compiled model the probe generated
 // from this same build (ProbeConfig.CompiledModelPath, ProbeModelGenerator), every context here uses it; without one
-// the probe builds the model itself, as before.
+// the probe builds the model itself, as before. A given model that does not load fails the probe at its start (the
+// top-level handler prints the exception type), never a silent rebuild that only makes every probe slower.
 internal static class ProbeModel
 {
-    private static readonly object Gate = new();
-    private static string? _path;
     private static IModel? _model;
 
-    public static void Use(string? compiledModelPath) => _path = compiledModelPath;
+    public static void Use(string? compiledModelPath)
+    {
+        if (compiledModelPath is null) return;
+        try
+        {
+            _model = Load(Assembly.LoadFrom(compiledModelPath));
+        }
+        catch (Exception ex)
+        {
+            // ProbeLog's contract: the exception type, never its message.
+            ProbeLog.Phase("model-not-loaded " + Path.GetFileName(compiledModelPath) + " " + ex.GetType().Name);
+            throw;
+        }
+    }
 
     public static DbContextOptionsBuilder<AppDbContext> WithProbeModel(this DbContextOptionsBuilder<AppDbContext> builder)
     {
@@ -22,30 +34,9 @@ internal static class ProbeModel
     }
 
     public static DbContextOptionsBuilder WithProbeModel(this DbContextOptionsBuilder builder) =>
-        Model() is { } model ? builder.UseModel(model) : builder;
+        _model is null ? builder : builder.UseModel(_model);
 
     public static IModel Load(Assembly generated) =>
         (IModel)generated.GetType(ProbeModelGenerator.Namespace + ".AppDbContextModel", throwOnError: true)!
             .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
-
-    // A model that does not load (its dll removed or damaged after the parent checked it) is reported once, and the
-    // probe then builds the model itself.
-    private static IModel? Model()
-    {
-        lock (Gate)
-        {
-            if (_model is not null || _path is null) return _model;
-            try
-            {
-                return _model = Load(Assembly.LoadFrom(_path));
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine("probe model " + _path + " not loaded (" + ex.GetType().Name + ": " + ex.Message
-                    + "); building the model");
-                _path = null;
-                return null;
-            }
-        }
-    }
 }

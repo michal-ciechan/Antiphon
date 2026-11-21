@@ -22,9 +22,9 @@ if (args is ["--generate-model", var modelDir]) return ProbeModelGenerator.Run(m
 if (args.Length != 1 || !File.Exists(args[0])) return 2;
 var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync(args[0]));
 if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;
-ProbeModel.Use(config.CompiledModelPath);
 try
 {
+    ProbeModel.Use(config.CompiledModelPath);
     if (config.Mode == "unified") return await UnifiedRecoveryProbe.RunAsync(config);
     var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString).WithProbeModel();
     if (config.FailPublishCommit)

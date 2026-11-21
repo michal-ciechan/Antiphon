@@ -22,11 +22,13 @@ internal static class ProbeGeneratedModel
 {
     public const string Label = "C519_PROBE_MODEL";
     private const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
-    // Measured 20-27 s on the HP laptop (4 runs): about 3x, for a loaded host, and well inside TUnit's 5-minute hook
-    // timeout, so a stuck generation ends as "unavailable" (probes build the model) rather than failing the class.
-    // Provisional (R5): a small sample.
+    // Measured 20-27 s on the HP laptop (5 runs, an otherwise idle host). About 3x rather than R5's 2x p95 because
+    // it runs once per probe build, usually while other launch groups load the host, and a time-out costs every probe
+    // of the run (about 6 s each) and turns ChannelOutboundProbeModelTests red. Well inside TUnit's 5-minute hook
+    // timeout, so a stuck generation ends as "unavailable" rather than failing the C519 classes. Provisional (R5).
     private static readonly TimeSpan GenerateBound = TimeSpan.FromSeconds(90);
-    private static readonly TimeSpan StaleAfter = TimeSpan.FromHours(1);
+    // A reused model is touched (Reuse), so only an entry no test process has used for a day is pruned.
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromDays(1);
     private static readonly Regex CacheEntry = new(@"^[0-9a-f]{16}(\.tmp-[0-9a-f]{32})?$", RegexOptions.CultureInvariant);
     private static readonly Lazy<Task<Result>> Generated = new(GenerateAsync);
 
@@ -47,7 +49,7 @@ internal static class ProbeGeneratedModel
             var key = Key(probe);
             var published = Path.Combine(root, key);
             var dll = Path.Combine(published, AssemblyName + ".dll");
-            if (File.Exists(dll)) return Report(new(dll, "reused key=" + key), watch);
+            if (File.Exists(dll)) return Report(new(Reuse(published, dll), "reused key=" + key), watch);
             Directory.CreateDirectory(root);
             Prune(root, key);
             var work = Path.Combine(root, key + ".tmp-" + Guid.NewGuid().ToString("N"));
@@ -85,17 +87,51 @@ internal static class ProbeGeneratedModel
         return result;
     }
 
-    // Earlier builds' models, and work directories a killed test process left, once an hour old (a work directory of
-    // another process generating this same build is younger, and is kept). Only this cache's own entry names.
+    private static string Reuse(string published, string dll)
+    {
+        try
+        {
+            Directory.SetLastWriteTimeUtc(published, DateTime.UtcNow);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        return dll;
+    }
+
+    // Earlier builds' models no test process has used for a day, and work directories a killed test process left
+    // (a work directory of another process generating now is younger, and is kept). Only this cache's own entry
+    // names. Best effort: nothing here may stop the generation.
     private static void Prune(string root, string key)
     {
-        foreach (var entry in new DirectoryInfo(root).EnumerateDirectories())
+        try
         {
-            if (entry.Name == key || !CacheEntry.IsMatch(entry.Name)) continue;
-            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-            if (DateTime.UtcNow - entry.LastWriteTimeUtc < StaleAfter) continue;
-            if (!string.Equals(Path.GetFullPath(entry.FullName), Path.Combine(root, entry.Name), StringComparison.Ordinal)) continue;
-            TryDelete(entry);
+            foreach (var entry in new DirectoryInfo(root).EnumerateDirectories())
+            {
+                try
+                {
+                    if (entry.Name == key || !CacheEntry.IsMatch(entry.Name)) continue;
+                    if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    if (DateTime.UtcNow - entry.LastWriteTimeUtc < StaleAfter) continue;
+                    if (!string.Equals(Path.GetFullPath(entry.FullName), Path.Combine(root, entry.Name), StringComparison.Ordinal)) continue;
+                    TryDelete(entry);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
@@ -159,6 +195,7 @@ internal static class ProbeGeneratedModel
             {
                 // Already gone, or part of the tree could not be killed: the bounded wait below decides.
             }
+            var timedOut = "timed out after " + GenerateBound.TotalSeconds + " s";
             using var exited = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             try
             {
@@ -166,9 +203,19 @@ internal static class ProbeGeneratedModel
             }
             catch (OperationCanceledException)
             {
+                // Still running: its pipes stay open, so its output is not awaited (only observed).
+                _ = stdout.ContinueWith(t => t.Exception, TaskScheduler.Default);
+                _ = stderr.ContinueWith(t => t.Exception, TaskScheduler.Default);
+                return (-1, timedOut + ", not exited after the kill");
             }
-            // Its output is not awaited: a child that has not exited still holds the pipes.
-            return (-1, "timed out after " + GenerateBound.TotalSeconds + " s");
+            // Exited: what it wrote shows where it was.
+            var output = Task.WhenAll(stdout, stderr);
+            if (await Task.WhenAny(output, Task.Delay(TimeSpan.FromSeconds(5))) != output)
+            {
+                _ = output.ContinueWith(t => t.Exception, TaskScheduler.Default);
+                return (-1, timedOut);
+            }
+            return (-1, (timedOut + " " + (await stdout) + (await stderr)).Trim());
         }
         return (process.ExitCode, ((await stdout) + (await stderr)).Trim());
     }
