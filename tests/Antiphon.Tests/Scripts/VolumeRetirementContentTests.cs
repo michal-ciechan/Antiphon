@@ -120,7 +120,12 @@ public sealed class VolumeRetirementContentTests
                 dirty) printf 'dirty\n' >> {{q(Path.Combine(scratch, "readme.txt"))}} ;;
                 unpublished|reflog)
                     git -C {{q(scratch)}} commit --allow-empty -qm 'unpublished scratch'
-                    if [ {{q(vector)}} = reflog ]; then git -C {{q(scratch)}} checkout -q --detach HEAD^; fi ;;
+                    if [ {{q(vector)}} = reflog ]; then
+                        git -C {{q(scratch)}} checkout -q --detach HEAD^
+                    else
+                        # Leave this commit reachable only through the detached HEAD.
+                        rm -f -- {{q(Path.Combine(repo, ".git", "worktrees", "cp11-wt", "logs", "HEAD"))}}
+                    fi ;;
             esac
             printf '%s\n' {{q("/tmp/" + NestedScratchPath + "/.git")}} > {{q(Path.Combine(repo, ".git", "worktrees", "cp11-wt", "gitdir"))}}
             printf '%s\n' 'gitdir: /work/repos/outer/.git/worktrees/cp11-wt' > {{q(Path.Combine(scratch, ".git"))}}

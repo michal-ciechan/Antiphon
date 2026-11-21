@@ -380,7 +380,7 @@ c1609_scan_git() {
             c1609_note_unvisited "$rel"
             continue
         fi
-        if ! porcelain="$(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)"; then
+        if ! porcelain="$(audit_git_status "$scratch/offender-filters" git -C "$repo" 2>/dev/null)"; then
             c1609_note_unvisited "$rel"
             continue
         fi
