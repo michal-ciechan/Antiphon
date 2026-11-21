@@ -1955,7 +1955,7 @@ public sealed class LandingGitTests
         public bool CancelBudget { get; init; }
         private bool _used;
 
-        protected override Task<LandingGit.PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
+        internal override Task<LandingGit.PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
         {
             if (CancelBudget) runBudget.Cancel();
             if (Forced is { } forced && !_used)

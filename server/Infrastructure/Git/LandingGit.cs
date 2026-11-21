@@ -48,7 +48,7 @@ public class LandingGit : ILandingGit
     protected virtual TimeSpan PipeCloseBound => _pipeCloseBound ?? SuccessPipeCloseBound;
 
     /// <summary>Decide the drain once, from the task state after the bound. The run budget is not an input.</summary>
-    protected virtual Task<PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
+    internal virtual Task<PipeDrainVerdict> AwaitPipeDrainAsync(Task drain, TimeSpan bound, CancellationTokenSource runBudget)
     {
         _ = runBudget;
         return DrainPipesAsync(drain, bound);
