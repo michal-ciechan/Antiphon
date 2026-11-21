@@ -285,6 +285,67 @@ public class CodexAccountBootstrapTests
         outcome.ShouldContain("(code -32603)");
     }
 
+    // Measured idle grid from server2 session 149a0bb6 (codex-cli 0.170.0),
+    // docs/investigations/2026-11-21-codex-0170-not-ready-on-server2.md at 25b83a250.
+    // The with-text grid below is derived from this frame by replacing the composer
+    // line. It is not a measured typed-composer capture: that needs the logged-in
+    // shared auth, which this task does not open. The live canary is the measurement.
+    private const string Sol0170 = """
+              >_ OpenAI Codex (v0.170.0)
+                 /work/worktrees/ws-02-d3
+              permissions: YOLO mode
+
+              Tip: When goals are enabled, use /goal to set or inspect the objective for a long-running task.
+
+
+            › Ask Codex to do anything
+
+              GPT-6.2-Sol high · /work/worktrees/ws-02-d3
+              ← for agents · ? for shortcuts                                                              ⚠ 2 warnings · f2 to view
+            """;
+
+    private const string Pointer0170 = "task-brief .antiphon/inbox/9d385501-f159-4ba4-ab20-274684b129cd.md";
+
+    [Test]
+    public void Codex_0170_typed_pointer_with_shortcuts_row_is_complete()
+    {
+        var typed = Sol0170.Replace(
+            "› Ask Codex to do anything",
+            "› " + Pointer0170,
+            StringComparison.Ordinal);
+        typed.ShouldContain(Pointer0170);
+        typed.ShouldContain("for shortcuts");
+        CodexPointerComposerEvidence.MatchingPrefixLength(typed, Pointer0170)
+            .ShouldBe(Compact(Pointer0170), "derived 0.170 grid: pointer text in the composer, shortcuts row below");
+        CodexPointerComposerEvidence.IsComplete(typed, Pointer0170)
+            .ShouldBeTrue("derived 0.170 grid: pointer text in the composer, shortcuts row below");
+
+        var shortcutLine = typed.Split('\n').Single(line => line.Contains("for shortcuts", StringComparison.Ordinal));
+        var withoutRow = typed.Replace("\n" + shortcutLine, "", StringComparison.Ordinal);
+        withoutRow.ShouldNotContain("for shortcuts");
+        CodexPointerComposerEvidence.IsComplete(withoutRow, Pointer0170)
+            .ShouldBeTrue("same derived grid with the shortcuts row removed");
+        CodexPointerComposerEvidence.MatchingPrefixLength(withoutRow, Pointer0170)
+            .ShouldBe(Compact(Pointer0170));
+    }
+
+    [Test]
+    public void Codex_0170_shortcuts_row_without_composer_text_is_not_complete()
+    {
+        var emptyComposer = Sol0170.Replace("› Ask Codex to do anything", "›", StringComparison.Ordinal);
+        emptyComposer.ShouldContain("for shortcuts");
+        emptyComposer.ShouldNotContain(Pointer0170);
+        CodexPointerComposerEvidence.IsComplete(emptyComposer, Pointer0170)
+            .ShouldBeFalse("no composer text, shortcuts row below");
+        CodexPointerComposerEvidence.MatchingPrefixLength(emptyComposer, Pointer0170).ShouldBe(0);
+
+        var shortcutsOnly = Sol0170.Split('\n').Single(line => line.Contains("for shortcuts", StringComparison.Ordinal));
+        shortcutsOnly.ShouldNotContain("›");
+        CodexPointerComposerEvidence.IsComplete(shortcutsOnly, Pointer0170)
+            .ShouldBeFalse("shortcuts row only");
+        CodexPointerComposerEvidence.MatchingPrefixLength(shortcutsOnly, Pointer0170).ShouldBe(0);
+    }
+
     private static void IdlePointer(string screen)
     {
         var hint = CodexStartupScreen.HintAskAnything;
