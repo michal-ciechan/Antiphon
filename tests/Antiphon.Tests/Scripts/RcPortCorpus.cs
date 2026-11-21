@@ -171,25 +171,31 @@ internal static class RcPortCorpus
         var attempts = Materialize(input["attempts"]);
         var fixes = Materialize(input["fixes"]);
         var candidate = Str(input, "candidate");
-        var repo = "";
         if (plan.Count > 0)
         {
-            var built = BuildRepo(plan);
-            repo = built.Dir;
-            try
+            WithScratchRepo(repo =>
             {
-                candidate = ResolveToken(candidate, built.Roles);
-                attempts = Substitute(attempts, built.Roles, "sourceSha");
-                fixes = Substitute(fixes, built.Roles, "fixSha");
-                RunDirty(expect, obligations, attempts, fixes, repo, candidate);
-            }
-            finally
-            {
-                if (Directory.Exists(repo)) Directory.Delete(repo, true);
-            }
+                var roles = BuildRepo(repo, plan);
+                RunDirty(expect, obligations, Substitute(attempts, roles, "sourceSha"),
+                    Substitute(fixes, roles, "fixSha"), repo, ResolveToken(candidate, roles));
+            });
             return;
         }
         RunDirty(expect, obligations, attempts, fixes, "", candidate);
+    }
+
+    internal static void WithScratchRepo(Action<string> run)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "rc-port-repo-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            run(root);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     static void RunDirty(JsonObject expect, object obligations, object attempts, object fixes, string repo, string candidate)
@@ -509,16 +515,8 @@ internal static class RcPortCorpus
         return token;
     }
 
-    sealed class BuiltRepo
+    static Dictionary<string, string> BuildRepo(string dir, List<string> plan)
     {
-        public string Dir;
-        public Dictionary<string, string> Roles;
-    }
-
-    static BuiltRepo BuildRepo(List<string> plan)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "rc-port-repo-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
         var roles = new Dictionary<string, string>(StringComparer.Ordinal);
         Git(dir, "init", "-q", "-b", "main");
         Git(dir, "config", "user.name", "Fixture");
@@ -555,7 +553,7 @@ internal static class RcPortCorpus
                     throw new InvalidOperationException("plan " + part[0]);
             }
         }
-        return new BuiltRepo { Dir = dir, Roles = roles };
+        return roles;
     }
 
     static string Git(string dir, params string[] args)
