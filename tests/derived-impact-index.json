@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 85,
+      "classes": 86,
       "reason": "cap",
-      "owed": 60,
+      "owed": 61,
       "first": [
         "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -1694,9 +1694,9 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "LandNonCodeSkipTests",
         "RunnerSettlementSyncTests",
@@ -2277,9 +2277,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 136,
+      "classes": 135,
       "reason": "cap",
-      "owed": 111,
+      "owed": 110,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
