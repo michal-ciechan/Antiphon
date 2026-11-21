@@ -207,6 +207,10 @@ overlay — `ANTIPHON_*` is refused 422 by name. See
 
 ## 3. Model levels
 
+**Changing a CLI version or a model on this ladder** follows [cli-upgrade.md](cli-upgrade.md):
+upgrade the CLI in a throwaway environment, capture its screens and run the tests first, roll the
+runner image before the AppHost, and change routing last (operator, 2026-11-21).
+
 Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a model id.
 `ModelLevelAliases` maps a tier to a per-provider identifier at launch:
 
@@ -815,6 +819,8 @@ health episode. A committed caller note keeps its durable queue identity through
   profiles through the UI.
 - [herdr-sessions.md](herdr-sessions.md) — the optional herdr session lane (ClaudeCode, Grok, Codex).
 - [orchestration-loop.md](orchestration-loop.md) — picking a tier and a kind when delegating.
+- [cli-upgrade.md](cli-upgrade.md) — upgrading Codex, Claude Code or Grok so new models are
+  picked up: capture, test, roll, then route.
 - `docs/adr/0002-modern-conpty-backend.md` — the pseudoconsole these TUIs run in, and the delivery
   ceilings that follow from it.
 

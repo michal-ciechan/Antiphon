@@ -16,6 +16,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Retrieving desktop, runner, Hangfire, remote, and transcript logs | [docs/logs.md](docs/logs.md) |
 | Workflow tracker configuration | [docs/workflow-tracker-block.md](docs/workflow-tracker-block.md) |
 | Agent kinds, provider settings, remote control, and Codex test isolation | [docs/agent-kinds.md](docs/agent-kinds.md), [docs/ai-agent-tui-configuration.md](docs/ai-agent-tui-configuration.md) |
+| Agent CLI upgrades and new models: upgrade the CLI and run the tests first, then roll, then route | [docs/cli-upgrade.md](docs/cli-upgrade.md), [antiphon-cli-upgrade](.claude/skills/antiphon-cli-upgrade/SKILL.md) |
 | Secrets, keys, and configuration custody | [docs/agent-credentials.md](docs/agent-credentials.md) |
 | Herdr panes and delivery | [docs/herdr-sessions.md](docs/herdr-sessions.md) |
 | Session, transcript, launch, reconciliation, and delivery invariants | [docs/session-runtime-invariants.md](docs/session-runtime-invariants.md) |
