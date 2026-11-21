@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -16,6 +17,44 @@ namespace Antiphon.Tests.TestHelpers;
 [Category("Integration")]
 public sealed class RequestedModelAliasSchemaTests
 {
+    [Test]
+    public async Task Historical_seed_can_write_an_alias_before_the_migration(CancellationToken ct)
+    {
+        const string predecessor = "20261119045705_AddLandVerificationFailure";
+        await using var historical = await MigrationTestDatabase.CreateAsync(predecessor, ct);
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(historical.ConnectionString).Options;
+        await using var unmodified = new AppDbContext(options);
+        var before = (await unmodified.Database.GetAppliedMigrationsAsync(ct)).ToArray();
+        before.Last().ShouldBe(predecessor);
+        (await unmodified.Database.SqlQueryRaw<bool>("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'AgentTasks'
+                  AND column_name = 'RequestedModelAlias') AS "Value"
+            """).SingleAsync(ct)).ShouldBeFalse();
+
+        var fixtureOptions = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(historical.ConnectionString)
+            .AddInterceptors(RequestedModelAliasSchema.Interceptor)
+            .Options;
+        var id = Guid.NewGuid();
+        await using (var fixture = new AppDbContext(fixtureOptions))
+        {
+            fixture.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                CreatedAt = DateTime.UtcNow,
+                RequestedModelAlias = "gpt-6.2-astra",
+            });
+            await fixture.SaveChangesAsync(ct);
+        }
+
+        (await unmodified.AgentTasks.Where(task => task.Id == id).Select(task => task.RequestedModelAlias).SingleAsync(ct))
+            .ShouldBe("gpt-6.2-astra");
+        (await unmodified.Database.GetAppliedMigrationsAsync(ct)).ShouldBe(before);
+    }
+
     [Test]
     [Timeout(120_000)]
     public async Task Open_transaction_does_not_keep_access_exclusive_on_agent_tasks()

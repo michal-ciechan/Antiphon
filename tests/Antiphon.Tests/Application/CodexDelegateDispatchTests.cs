@@ -128,12 +128,19 @@ public class CodexDelegateDispatchTests
             CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra),
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
-        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
         (await service.GetSummaryAsync(task, [task])).RequestedModelAlias.ShouldBe(ModelAlias.Gpt62Astra);
-        var (dispatcher, _) = CreateHarness();
-        var args = SpecOf(dispatcher, task).Args.ToList();
-        args[args.IndexOf("--model") + 1].ShouldBe(ModelAlias.Gpt62Astra);
+        var (dispatcher, provider) = CreateHarness();
+        await using var ownedProvider = provider;
+        var spec = SpecOf(dispatcher, task);
+        spec.Kind.ShouldBe(AgentKind.Codex);
+        spec.DefinitionName.ShouldBe("codex");
+        var args = spec.Args.ToList();
+        args.Count(arg => arg == "--model").ShouldBe(1);
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.2-astra");
+        args.ShouldNotContain("gpt-6.2-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
+        args.Count(arg => arg.StartsWith("model_reasoning_effort=", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     [Test]
