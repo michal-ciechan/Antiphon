@@ -422,9 +422,15 @@ c1609_request_host_proof() {
     C1609_PROOF_STAGE=''
 }
 
-# The coordinator console shows only the diagnosis, so each cause names itself
-# and the host file holding its detail (CARD-1689). An unnamed failure stays a
-# bare RecycleGitAuditUnknown at the caller.
+# The first structured audit line keeps its bounded stderr field when present.
+# Raw Git and Docker stderr never enters the coordinator diagnosis here.
+c1609_audit_failure_detail() {
+    local detail
+    detail="$(sed -n '/^audit check=/{p;q}')" || return 1
+    printf '%s\n' "${detail:-audit check=unclassified status= repo=.}"
+}
+
+# Inventory refusals also name the host file holding the structured rows.
 c1609_prepare_exchange() {
     [ "${C1609_EXCHANGE:-0}" = 1 ] || return 0
     local root destination out code=0 line empty detail
@@ -437,8 +443,7 @@ c1609_prepare_exchange() {
     c1008_audit_readonly inventory > "$out" || code=$?
     sync -- "$out" || return 1
     if [ "$code" != 0 ]; then
-        detail="$(sed -n '/^audit check=/{p;q}' "$out")"
-        [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+        detail="$(c1609_audit_failure_detail < "$out")"
         case "$code" in
             3) c1008_refuse RecycleUnpublishedWork ;;
             4) c1008_refuse RecycleWorktreeDirty ;;

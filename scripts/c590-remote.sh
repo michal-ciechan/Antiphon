@@ -7031,11 +7031,17 @@ IFS= read -r -d '' c1008_audit_body <<'C1008_AUDIT_BODY' || :
 set -euo pipefail
 export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 LC_ALL=C
 export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
-export GIT_NO_REPLACE_OBJECTS=1
+export GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+unset GIT_CONFIG_PARAMETERS GIT_EXTERNAL_DIFF
 # A commit-graph can answer parent/tree lookups for a commit whose object is gone.
 # Every Git call reads the objects themselves.
-export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_COUNT=7 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false
 export GIT_CONFIG_KEY_1=gc.writeCommitGraph GIT_CONFIG_VALUE_1=false
+export GIT_CONFIG_KEY_2=core.hooksPath GIT_CONFIG_VALUE_2=/dev/null
+export GIT_CONFIG_KEY_3=core.fsmonitor GIT_CONFIG_VALUE_3=false
+export GIT_CONFIG_KEY_4=core.attributesFile GIT_CONFIG_VALUE_4=/dev/null
+export GIT_CONFIG_KEY_5=diff.external GIT_CONFIG_VALUE_5=
+export GIT_CONFIG_KEY_6=submodule.recurse GIT_CONFIG_VALUE_6=false
 root=''
 # The session runner mounts its runner-tmp volume at /tmp. c1008_audit mounts that
 # volume read-only at C1008_TMP_MOUNT (only when the volume exists); a linked
@@ -7068,7 +7074,7 @@ dirty_pids=()
 dirty_paths=()
 dirty_next=0
 # Receipt paths are relative to the work volume. A credential-shaped component is
-# replaced; git stderr is never copied. A path outside the volume is "?".
+# replaced. A path outside the volume is "?".
 rel_repo() {
     local path="$1" rest part lower out
     case "$path" in
@@ -7100,6 +7106,55 @@ rel_repo() {
         if [ -z "$out" ]; then out="$part"; else out="$out/$part"; fi
     done
     printf '%s' "$out"
+}
+audit_git_status() {
+    local filters="$1" status=0 key
+    shift
+    local -a overrides=()
+    # Attributes in the repo can still select a filter, including one defined
+    # by an include or config.worktree. Override its commands at the same Git
+    # config scope used for status. An unrepresentable key refuses the audit.
+    "$@" config --includes --null --name-only --get-regexp '^filter\..*\.(clean|smudge|process|required)$' > "$filters" || status=$?
+    case "$status" in 0|1) ;; *) return "$status" ;; esac
+    while IFS= read -r -d '' key; do
+        [[ "$key" =~ ^filter\.[A-Za-z0-9._-]+\.(clean|smudge|process|required)$ ]] || return 2
+        case "$key" in
+            *.required) overrides+=(-c "$key=false") ;;
+            *) overrides+=(-c "$key=") ;;
+        esac
+    done < "$filters"
+    # Gitlinks are already refused by the index-mode check. Keep staged
+    # gitlink changes visible, without probing the submodule's working files.
+    "$@" "${overrides[@]}" status --porcelain --untracked-files=all --ignore-submodules=dirty
+}
+audit_status_stderr() {
+    local file="$1" line='' name lower
+    local shell_missing='^([^[:cntrl:]]{1,80}: (line )?[0-9]+: )?([A-Za-z0-9_.+/-]{1,160}): (command not found|not found|No such file or directory)$'
+    local git_missing='^(error|fatal): cannot (run|exec) ([A-Za-z0-9_.+/-]{1,160}): No such file or directory$'
+    local env_missing="^(.*[/])?env: '([A-Za-z0-9_.+/-]{1,160})': No such file or directory$"
+    [ -s "$file" ] || return 0
+    # Stderr can contain paths, URLs or arbitrary repository text. Retain
+    # only a recognized missing-executable basename from a complete line.
+    while IFS= read -r line; do
+        if [[ "$line" =~ $shell_missing ]]; then
+            name="${BASH_REMATCH[3]##*/}"
+        elif [[ "$line" =~ $git_missing ]]; then
+            name="${BASH_REMATCH[3]##*/}"
+        elif [[ "$line" =~ $env_missing ]]; then
+            name="${BASH_REMATCH[2]##*/}"
+        else
+            name=''
+        fi
+        lower="${name,,}"
+        case "$lower" in
+            *credential*|*token*|*secret*|*password*|gh[pousr]_*|github_pat_*|glpat-*|xox*|sk-*|akia*|eyj*) name='' ;;
+        esac
+        if [[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}$ ]]; then
+            printf 'missing-executable:%s' "$name"
+            return 0
+        fi
+    done < "$file"
+    printf redacted
 }
 fail() {
     trap - ERR
@@ -7202,6 +7257,7 @@ selector_fixture() {
 # read with its admin directory as the Git directory (fourth argument).
 consider_dirty() {
     local where="$1" kind="$2" work="$3" admin="${4:-}" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags expected
+    local status=0 error
     local -a g=(git -C "$where")
     [ -z "$admin" ] || g=(git -C "$where" --git-dir="$admin" --work-tree="$where")
     audit_repo="$where"
@@ -7213,7 +7269,13 @@ consider_dirty() {
     esac
     if [ -e "$index_path" ]; then index_existed=1; fi
     audit_check="$kind"
-    clean="$("${g[@]}" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
+    { audit_git_status "$work.filters" "${g[@]}" > "$work.status"; } 2>&1 |
+        { head -c 256 > "$work.stderr" && cat >/dev/null; } || status=$?
+    if [ "$status" != 0 ]; then
+        error="$(audit_status_stderr "$work.stderr")"
+        fail "$status" "${error:+ stderr=$error}"
+    fi
+    clean="$(< "$work.status")"
     # A nested repository is classified on its own pass. Leaving it as the
     # parent's untracked content exits here and omits no-remote-unclassified.
     if [ "${C1609_CONTENT_V2:-}" = 1 ] && [ -n "$clean" ]; then
@@ -7321,7 +7383,7 @@ reap_dirty() {
     output="$(< "$scratch/dirty-$n.out")" || output=''
     rm -f -- "$scratch/dirty-$n.out" "$scratch/dirty-$n.flags" "$scratch/dirty-$n.index" \
         "$scratch/dirty-$n.paths" "$scratch/dirty-$n.expected" "$scratch/dirty-$n.actual" \
-        "$scratch/dirty-$n.stash"
+        "$scratch/dirty-$n.stash" "$scratch/dirty-$n.filters" "$scratch/dirty-$n.status" "$scratch/dirty-$n.stderr"
     [ "$status" != 0 ] || return 0
     trap - ERR
     case "$output" in
@@ -7340,7 +7402,7 @@ consider_stale_index() {
     [ -e "$directory/index" ] || [ -L "$directory/index" ] || return 0
     audit_repo="$directory"
     audit_check=stale-index
-    git --git-dir="$directory" diff-index --cached --quiet --ignore-submodules=none HEAD -- 2>/dev/null || status=$?
+    git --git-dir="$directory" diff-index --cached --quiet --no-ext-diff --no-textconv --ignore-submodules=none HEAD -- 2>/dev/null || status=$?
     case "$status" in
         0) ;;
         1) refuse_dirty stale-index "$directory" ;;
@@ -7780,6 +7842,7 @@ consider_tmp_git() {
 # HEAD (git --git-dir=<id> --work-tree=<checkout>), so a lost or foreign .git
 # pointer cannot hide modified or untracked files. Only an absent checkout (Git's
 # prunable state) leaves the index, which must then equal its HEAD.
+# Nested task scratchpads follow this same content and publication proof.
 consider_linked() {
     local admin="$1" pointer parent recorded target='' checkout='' agreed=0 probe status=0 in_tmp=0 read=0
     audit_repo="$admin"
@@ -8791,7 +8854,11 @@ c1008_audit() {
     docker rm -- "$helper" >/dev/null 2>&1 || return 2
     if [ "$code" != 0 ]; then
         printf '%s\n' "$output"
-        case "$output" in *RecycleUnpublishedWork*) return 3 ;; *RecycleWorktreeDirty*) return 4 ;; *) return 2 ;; esac
+        case $'\n'"$output"$'\n' in
+            *$'\nRecycleUnpublishedWork\n'*) return 3 ;;
+            *$'\nRecycleWorktreeDirty\n'*) return 4 ;;
+            *) return 2 ;;
+        esac
     fi
     printf '%s' "$output" | sort
 }
@@ -8916,9 +8983,9 @@ c1008_preview_finish() {
             *) printf 'audit check=preview-helper status=%s repo=. detail=%s\n' "$run_code" "$(c1008_preview_helper_reason)" ;;
         esac
         printf '%s\n' "$output"
-        case "$output" in
-            *RecycleUnpublishedWork*) return 3 ;;
-            *RecycleWorktreeDirty*) return 4 ;;
+        case $'\n'"$output"$'\n' in
+            *$'\nRecycleUnpublishedWork\n'*) return 3 ;;
+            *$'\nRecycleWorktreeDirty\n'*) return 4 ;;
             *) return 2 ;;
         esac
     fi
@@ -9070,8 +9137,12 @@ c1008_audit_checked() {
     fi
     audit="$(c1008_audit)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
-        [ -n "$detail" ] || detail='audit check=unclassified status= repo='
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            detail="$(c1609_audit_failure_detail <<< "$audit")"
+        else
+            detail="$(sed -n '/^audit check=/{p;q}' <<< "$audit")"
+            [ -n "$detail" ] || detail='audit check=unclassified status= repo='
+        fi
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.auditFailure=$audit | .audit //= $audit')" || c1008_refuse RecycleReceiptUnavailable
         c1008_save || c1008_refuse RecycleReceiptUnavailable
         case "$code" in
@@ -9445,10 +9516,12 @@ c1008_recycle() {
                 fi
             fi
             if [ "$code" != 0 ]; then
-                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
-                [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
                 if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                    detail="$(c1609_audit_failure_detail <<< "$audit")"
                     c1609_write_refused_preview "$detail" || true
+                else
+                    detail="$(sed -n '/^audit check=/{p;q}' <<< "$audit")"
+                    [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
                 fi
                 case "$code" in
                     3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
@@ -10412,8 +10485,7 @@ case_retire_temp_inventory() {
     C1008_RECORD="$(jq -cn --arg image "$image" '{image:$image}')" || write_result false RecycleGitAuditUnknown 2
     out="$(c1008_audit_readonly inventory)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/p' | sed -n '1p')"
-        [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+        detail="$(c1609_audit_failure_detail <<< "$out")"
         case "$code" in
             3) write_result false "RecycleUnpublishedWork $detail" 2 ;;
             4) write_result false "RecycleWorktreeDirty $detail" 2 ;;
