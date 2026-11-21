@@ -26,6 +26,7 @@ public sealed class SchedulerRequest
     public SourceRunGuard? SourceGuard { get; init; }
     public string? ExpectedSourceSha { get; init; }
     public string? TimingRoot { get; init; }
+    internal CheckpointIntermediateCache? IntermediateCache { get; init; }
     internal Func<CheckpointBuildBinding, CancellationToken, Task>? BeforeBuildReceiptWrite { get; init; }
 }
 
@@ -222,7 +223,8 @@ public sealed class RunScheduler
                     var buildState = next.IsCommand
                         ? "n/a"
                         : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
-                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, budget, total.Token), rowProgress));
+                    var properties = next.IsCommand ? null : buildStates[next.Build!].ResolvedProperties;
+                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, properties, budget, total.Token), rowProgress));
                 }
             }
 
@@ -425,8 +427,9 @@ public sealed class RunScheduler
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
         var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
             repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
+        using var intermediate = request.IntermediateCache?.Prepare(build.Project, properties);
         if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
-            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
+            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath, intermediate?.Path);
         var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
         // CARD-1241: files outside the write roots are stamped before the slot is taken, re-checked once
         // it is granted (AdmitLedger) and verified after release (VerifyLedger).
@@ -518,9 +521,14 @@ public sealed class RunScheduler
             }
             launched = true;
             built = binding;
+            intermediate?.Invalidate();
             result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest("dotnet", args, request.WorkingDirectory, log) { Ledger = ledger },
+                new DriverRequest("dotnet", args, request.WorkingDirectory, log)
+                {
+                    Ledger = ledger,
+                    UsesIntermediateCache = intermediate is not null,
+                },
                 TimeSpan.FromMinutes(deadlineMinutes),
                 _buildTimeProvider,
                 cancellationToken).ConfigureAwait(false);
@@ -551,6 +559,11 @@ public sealed class RunScheduler
                     succeeded = false;
                     progress.AdmissionExitCode = ExitCodes.Invalid;
                     progress.SlotReason = "refused: " + written;
+                }
+                else
+                {
+                    intermediate?.Publish();
+                    progress.ResolvedProperties = properties;
                 }
             }
             else if (refusal is not null)
@@ -592,6 +605,7 @@ public sealed class RunScheduler
         SlotSession session,
         RowProgress progress,
         string buildState,
+        IReadOnlyList<string>? properties,
         RunBudgetClock budget,
         CancellationToken cancellationToken)
     {
@@ -668,6 +682,7 @@ public sealed class RunScheduler
             Repeat = spec.Repeat,
             Expect = spec.Expect,
             Properties = request.Manifest.Build.Properties.ToList(),
+            ResolvedBuildProperties = properties,
             KnownFlaky = spec.Repeat > 1 ? [] : request.KnownFlaky,
             Commit = request.Commit,
             Source = rowSource,

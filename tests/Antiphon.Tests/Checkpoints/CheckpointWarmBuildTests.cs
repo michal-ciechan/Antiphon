@@ -15,30 +15,53 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         const string project = "App/App.csproj";
         Directory.CreateDirectory(Path.Combine(root, "App"));
 
-        (string Owned, string Cache) Plan(string name, string useAppHost, string entry = project)
+        var source = new SourceObservation(new string('a', 40), 0, "source fingerprint", DateTimeOffset.UtcNow, "known");
+        (string Owned, string Cache) Plan(string name, string useAppHost, string entry = project, SourceObservation? observed = null)
         {
             var properties = BuildStep.PropertyArguments(
                 new Dictionary<string, string> { ["UseAppHost"] = useAppHost }, OperatingSystem.IsWindows()).ToList();
-            var layout = BuildStep.AppendSharedLayout(properties, root, entry, name);
+            var intermediateRoot = CheckpointIntermediateCache.PathFor(root, entry, properties, observed ?? source);
+            var layout = BuildStep.AppendSharedLayout(properties, root, entry, name, intermediateRoot);
             var arguments = BuildStep.BuildArguments(entry, name, properties, 1);
             const string cacheProperty = "--property:AntiphonCheckpointIntermediateRoot=";
             var cache = arguments.SingleOrDefault(arg => arg.StartsWith(cacheProperty, StringComparison.Ordinal));
             cache.ShouldNotBeNull("build arguments must select a persistent intermediate root");
-            return (layout.Owned.TrimEnd('/'), cache![cacheProperty.Length..]);
+            return (Path.GetFullPath(layout.Owned).TrimEnd(Path.DirectorySeparatorChar), cache![cacheProperty.Length..]);
         }
 
         var first = Plan("bin-warm-first/", "false");
         var second = Plan("bin-warm-second/", "false");
         var changed = Plan("bin-warm-second/", "true");
         var otherProject = Plan("bin-warm-second/", "false", "App/Other.csproj");
+        var otherSource = Plan("bin-warm-second/", "false", observed: source with { Commit = new string('b', 40) });
         Path.GetRelativePath(root, first.Cache).Replace('\\', '/').ShouldStartWith(".antiphon/checkpoint-obj/obj/");
         first.Cache.ShouldBe(second.Cache);
         first.Cache.ShouldNotBe(changed.Cache);
         first.Cache.ShouldNotBe(otherProject.Cache);
+        first.Cache.ShouldNotBe(otherSource.Cache);
 
-        Directory.CreateDirectory(first.Cache);
         var assets = Path.Combine(first.Cache, "project.assets.json");
-        File.WriteAllText(assets, "{}");
+        foreach (var helper in new[] { CheckpointIntermediateCache.ProjectProps, CheckpointIntermediateCache.GraphProject })
+        {
+            var path = Path.Combine(root, helper);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "<Project />");
+        }
+        using var cacheOwner = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
+        cacheOwner.ShouldNotBeNull();
+        using var competingCache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
+        competingCache.ShouldBeNull("a second run must build without sharing these intermediates");
+
+        var forwarded = BuildStep.PropertyArguments(new Dictionary<string, string> { ["UseAppHost"] = "false" },
+            OperatingSystem.IsWindows());
+        using (var entry = cacheOwner!.Prepare(project, forwarded))
+        {
+            entry.ShouldNotBeNull();
+            entry!.Path.ShouldBe(first.Cache);
+            entry.Invalidate();
+            File.WriteAllText(assets, "{}");
+            entry.Publish();
+        }
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(first.Owned, SafeWrite.Under(root)));
         var binary = Path.Combine(first.Owned, "App.dll");
         SafeWrite.Require(SafeWrite.Text(binary, "build output", SafeWrite.Under(first.Owned)));
@@ -50,5 +73,12 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         cleanup.Deleted.ShouldContain(first.Owned);
         Directory.Exists(first.Owned).ShouldBeFalse();
         File.ReadAllText(assets).ShouldBe("{}");
+
+        using (var reused = cacheOwner.Prepare(project, forwarded))
+            reused.ShouldNotBeNull("a matching sealed partition is reusable");
+        File.WriteAllText(assets, "{\"changed\":true}");
+        using var changedCache = cacheOwner.Prepare(project, forwarded);
+        changedCache.ShouldBeNull("unsealed intermediate bytes cannot seed a verified build");
+        File.Exists(assets).ShouldBeTrue("cold fallback leaves the cache in place");
     }
 }

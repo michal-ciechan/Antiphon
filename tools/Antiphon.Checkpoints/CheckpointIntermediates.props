@@ -1,0 +1,10 @@
+<Project>
+  <!-- Imported before the SDK selects its artifacts obj paths and before NuGet imports its assets.
+       Each project (including nested apphost builds) selects its own path in the run's partition. -->
+  <PropertyGroup Condition="'$(AntiphonCheckpointIntermediateRoot)' != ''">
+    <_CheckpointRelativeProject>$([MSBuild]::MakeRelative('$(AntiphonCheckpointRepositoryRoot)', '$(MSBuildProjectFullPath)'))</_CheckpointRelativeProject>
+    <_CheckpointUseAppHost>true</_CheckpointUseAppHost>
+    <_CheckpointUseAppHost Condition="'$(UseAppHost)' == 'false'">false</_CheckpointUseAppHost>
+    <BaseIntermediateOutputPath Condition="!$([System.IO.Path]::IsPathRooted('$(_CheckpointRelativeProject)')) And !$(_CheckpointRelativeProject.StartsWith('..'))">$(AntiphonCheckpointIntermediateRoot)/$(_CheckpointRelativeProject)/apphost-$(_CheckpointUseAppHost)/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

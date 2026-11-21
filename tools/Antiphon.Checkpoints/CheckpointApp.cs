@@ -197,6 +197,9 @@ public static class CheckpointApp
                 && sourceGuard.Observe();
             if (admitted)
             {
+                using var intermediateCache = driver is ProcessDriver { DotnetShim: null } && selected.Any(row => !row.IsCommand)
+                    ? CheckpointIntermediateCache.TryOpen(repo, source.Start, request.ExpectedSourceSha)
+                    : null;
                 watcher = owner.WatchAsync(watchCancel.Token);
                 result = await scheduler.RunAsync(new SchedulerRequest
             {
@@ -220,6 +223,7 @@ public static class CheckpointApp
                 OwnerBound = owner.Bound,
                 SourceGuard = sourceGuard,
                 ExpectedSourceSha = request.ExpectedSourceSha,
+                IntermediateCache = intermediateCache,
                 TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
             }, workCancel.Token).ConfigureAwait(false);
             }

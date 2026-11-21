@@ -238,7 +238,8 @@ public static class BuildConfinement
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken,
-        Ledger? ledger = null)
+        Ledger? ledger = null,
+        bool usesIntermediateCache = false)
     {
         if (!TryFindOutput(arguments, out var outputValue))
             return new Prepared(null, "", arguments, null);
@@ -280,7 +281,9 @@ public static class BuildConfinement
         WalkResult walked;
         try
         {
-            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            walked = usesIntermediateCache && ProjectWriteRoots.TryFindProjectFile(projectFull, out var entry, out _)
+                ? EvaluateWarmGraph(repository, entry!, layout, forwarded, workingDirectory, environment, cancellationToken)
+                : Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -621,6 +624,30 @@ public static class BuildConfinement
 
     private readonly record struct EvalResult(List<string> References, string? Error);
 
+    private static WalkResult EvaluateWarmGraph(
+        string repository,
+        string project,
+        OutputLayout layout,
+        IReadOnlyList<string> forwarded,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment,
+        CancellationToken cancellationToken)
+    {
+        var args = new List<string>
+        {
+            "msbuild", Path.Combine(repository, CheckpointIntermediateCache.GraphProject), "-target:Validate",
+            "-nologo", "-nodeReuse:false", "--property:CheckpointGraphEntry=" + project,
+            "--property:CheckpointGraphWalkCap=" + WalkCap,
+            "--property:OutputPath=" + layout.Owned, "--property:ArtifactsPath=" + layout.Artifacts,
+            "--property:UseArtifactsOutput=true",
+        };
+        args.AddRange(forwarded);
+        var result = Evaluate(args, workingDirectory, environment, cancellationToken);
+        return result.Error is null && result.Result.Exit == 0
+            ? new WalkResult([], null)
+            : new WalkResult([], result.Error ?? "msbuild graph exit " + result.Result.Exit);
+    }
+
     private static EvalResult Evaluate(
         string project,
         string owned,
@@ -640,6 +667,18 @@ public static class BuildConfinement
         args.AddRange(forwarded);
         AddConfinedUseAppHost(args, forwarded.Any(token => token.StartsWith("--property:UseAppHost=", StringComparison.OrdinalIgnoreCase)));
 
+        var result = Evaluate(args, workingDirectory, environment, cancellationToken);
+        if (result.Error is not null) return new EvalResult([], result.Error);
+        if (result.Result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Result.Exit);
+        return ParseReferences(result.Result.Stdout, result.Result.Stderr);
+    }
+
+    private static (CheckpointProcessRunner.Result Result, string? Error) Evaluate(
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment,
+        CancellationToken cancellationToken)
+    {
         var psi = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
@@ -662,10 +701,8 @@ public static class BuildConfinement
         CheckpointProcessRunner.Result result;
         try { result = CheckpointProcessRunner.Run(psi, 120_000, false, cancellationToken); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        { return new EvalResult([], ex.GetType().Name); }
-        if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
-        if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
-        return ParseReferences(result.Stdout, result.Stderr);
+        { return (default!, ex.GetType().Name); }
+        return (result, result.TimedOut ? "msbuild evaluation timed out" : null);
     }
 
     private static EvalResult ParseReferences(string stdout, string stderr)

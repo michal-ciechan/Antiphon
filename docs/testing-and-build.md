@@ -702,6 +702,14 @@ The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedM
 
 ### Checkpoint runner tool (CARD-0723)
 
+Source-qualified plan runs keep MSBuild intermediates in the worktree's
+`.antiphon/checkpoint-obj/obj/` directory, partitioned by source, entry project
+and build properties. Each build still creates, seals and cleans its own binary
+output. A worktree lock serializes cache use, and a missing or changed cache
+seal falls back to a cold build. Warm slot resets retain the cache. To reset it,
+use the workspace slot's cold reset or remove `.antiphon/checkpoint-obj/`
+while the worktree is idle.
+
 Pinned TUnit 1.44 reflection discovery rejects an assembly when its full path contains
 the substring `ref` (not just a reference-assembly directory). Keep checkpoint output
 names free of that substring: use `bin-c0824-s5b2-a/`, for example. A rejected entry
