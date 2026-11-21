@@ -48,7 +48,19 @@ public sealed class ChannelOutboundProbeModelTests
             using var probe = Process.Start(start)!;
             var stderr = probe.StandardError.ReadToEndAsync();
             using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            await probe.WaitForExitAsync(bound.Token);
+            try
+            {
+                await probe.WaitForExitAsync(bound.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // A stalled probe is killed (and its exit waited for, bounded), never left running.
+                try { probe.Kill(entireProcessTree: true); } catch (Exception) { }
+                using var exited = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try { await probe.WaitForExitAsync(exited.Token); } catch (OperationCanceledException) { }
+                _ = stderr.ContinueWith(t => t.Exception, TaskScheduler.Default);
+                throw new TimeoutException("the probe did not exit within 60 s of a model that does not load");
+            }
             probe.ExitCode.ShouldBe(1);
             var output = await stderr;
             output.ShouldContain("model-not-loaded not-a-model.dll BadImageFormatException");
@@ -56,7 +68,7 @@ public sealed class ChannelOutboundProbeModelTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
     }
 }
