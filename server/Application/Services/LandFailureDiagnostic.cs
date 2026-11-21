@@ -86,7 +86,7 @@ internal static class LandFailureDiagnostic
         if (exception is LandSourceResolutionConflictException) return SourceStateChanged;
         if (exception is DbUpdateConcurrencyException) return ConcurrencyConflict;
         if (exception is DbUpdateException) return PersistenceFailed;
-        if (exception is TimeoutException) return Timeout;
+        if (exception is TimeoutException or GitPipeTimeoutException) return Timeout;
         if (exception is UnauthorizedAccessException) return AccessDenied;
         if (exception is IOException) return IoError;
         return Unexpected;

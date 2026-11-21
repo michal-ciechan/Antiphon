@@ -1243,9 +1243,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 const string heads = "refs/heads/";
                 if (!fullRef.StartsWith(heads, StringComparison.Ordinal) || fullRef.Length == heads.Length)
                     return "park_source_missing";
-                var prune = await _git.RunAsync(repo, ["worktree", "prune"], ct);
+                var prune = await _git.RunAsync(repo, ["worktree", "prune"],
+                    GitCommandEffect.Mutation, new LandingGitRunOptions(), ct);
                 if (!prune.Succeeded) return "park_source_missing";
-                var added = await _git.RunAsync(repo, ["worktree", "add", path, fullRef[heads.Length..]], ct);
+                var added = await _git.RunAsync(repo, ["worktree", "add", path, fullRef[heads.Length..]],
+                    GitCommandEffect.Mutation, new LandingGitRunOptions(), ct);
                 if (!added.Succeeded || !Directory.Exists(path)) return "park_source_missing";
             }
 

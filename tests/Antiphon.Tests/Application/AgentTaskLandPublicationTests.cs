@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using Antiphon.TestSupport;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -1009,6 +1010,19 @@ public sealed partial class AgentTaskLandPublicationTests
         File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         h.Fixture.Git.HooksPathOverride = hooks;
         h.Fixture.Git.UsePipeCloseBound(TimeSpan.FromSeconds(1));
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = h.Schema.ConnectionString,
+        });
+        await caller.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "caller is mid-turn");
+        await using (var seeded = h.CreateContext())
+        {
+            var task = await seeded.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.ReplyTo = AgentTaskReplyTo.Session;
+            task.ParentSessionId = caller.SessionId;
+            await seeded.SaveChangesAsync();
+        }
+        h.Messages = caller.Queue;
         LandingGitResult? pushed = null;
         h.Fixture.Git.AfterCommand = (_, args, result) =>
         {
@@ -1039,8 +1053,62 @@ public sealed partial class AgentTaskLandPublicationTests
                 && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
                 && e.Type == AgentTaskEventType.Landed)).ShouldBe(1);
-            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId
-                && n.Kind == LandNotificationKind.Outcome)).ShouldBe(1);
+            var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId
+                && n.Kind == LandNotificationKind.Outcome);
+            note.ParentSessionId.ShouldBe(caller.SessionId);
+            note.State.ShouldBe(LandNotificationState.Queued);
+            var flushes = new CompletionNoteFlushQueue();
+            await ReconcileAsync(new EnqueueCut("before-enqueue"));
+            await using (var blocked = h.CreateContext())
+            {
+                var saved = await blocked.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
+                saved.State.ShouldBe(LandNotificationState.RetryPending);
+                (await blocked.SessionQueuedMessages.CountAsync(q => q.SourceLandNotificationId == note.Id)).ShouldBe(0);
+            }
+            await DueAsync(note.Id);
+            var inserted = new EnqueueCut("queue-inserted");
+            await ReconcileAsync(inserted);
+            await using (var held = h.CreateContext())
+            {
+                var saved = await held.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
+                saved.State.ShouldBe(LandNotificationState.RetryPending);
+                var row = await held.SessionQueuedMessages.SingleAsync(q => q.SourceLandNotificationId == note.Id);
+                row.Id.ShouldBe(inserted.InsertedQueueId!.Value);
+            }
+            await DueAsync(note.Id);
+            await h.RestartServicesAsync();
+            await ReconcileAsync(null);
+            await caller.Queue.FlushIfIdleAsync(caller.SessionId, default);
+            caller.Adapter.SubmittedBodies.ShouldBeEmpty();
+            await ReconcileAsync(null);
+            await using (var waiting = h.CreateContext())
+                (await waiting.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id)).ConfirmedAt.ShouldBeNull();
+            await caller.Queue.OnTurnEndAsync(caller.SessionId, default);
+            await ReconcileAsync(null);
+            await using (var delivered = h.CreateContext())
+            {
+                var saved = await delivered.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
+                saved.State.ShouldBe(LandNotificationState.Confirmed);
+                var prompts = await delivered.TranscriptEntries.Where(p => p.AgentSessionId == caller.SessionId
+                    && p.Kind == TranscriptKinds.UserPrompt && p.Text != null).ToListAsync();
+                var prompt = prompts.Where(p => PromptSubmissionMatch.IsCompleteIn(note.Body, p.Text!)).ShouldHaveSingleItem();
+                saved.ConfirmingPromptSequence.ShouldBe(prompt.Sequence);
+                PromptSubmissionMatch.IsCompleteIn(note.Body, caller.Adapter.SubmittedBodies.ShouldHaveSingleItem()).ShouldBeTrue();
+            }
+
+            async Task ReconcileAsync(LandDeliveryBoundary? fault)
+            {
+                await using var context = h.CreateContext();
+                await new AgentTaskLandNotificationService(context, caller.Queue, flushes, caller.Runtime, TimeProvider.System, fault)
+                    .ReconcileAsync(note.Id, default);
+            }
+
+            async Task DueAsync(Guid id)
+            {
+                await using var due = h.CreateContext();
+                await due.AgentTaskLandNotifications.Where(n => n.Id == id)
+                    .ExecuteUpdateAsync(n => n.SetProperty(x => x.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
+            }
         }
         finally
         {

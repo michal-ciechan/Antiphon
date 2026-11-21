@@ -189,7 +189,8 @@ public sealed class StartRefAvailability(
             bounded.Token.ThrowIfCancellationRequested();
             return (await git.RunAsync(repoPath, arguments, bounded.Token), false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException && !ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is (OperationCanceledException or TimeoutException or GitPipeTimeoutException)
+            && !ct.IsCancellationRequested)
         {
             // The owned-child path kills the process tree and clears its journal before this surfaces.
             logger.LogWarning("git {Arguments} in {RepoPath} exceeded {Seconds}s at create",

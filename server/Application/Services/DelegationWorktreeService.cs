@@ -550,7 +550,8 @@ public sealed class DelegationWorktreeService
         var tip = await _landingGit!.RunAsync(repo, ["rev-parse", "--verify", "--quiet", full], ct);
         if (tip.ExitCode != 0)
         {
-            var created = await _landingGit.RunAsync(repo, ["branch", "--", branch, resolved.Ref], ct);
+            var created = await _landingGit.RunAsync(repo, ["branch", "--", branch, resolved.Ref],
+                GitCommandEffect.Mutation, new LandingGitRunOptions(), ct);
             if (created.ExitCode != 0)
                 throw new ConflictException("windows_slot_branch: " + created.Diagnostic);
             tip = await _landingGit.RunAsync(repo, ["rev-parse", full], ct);

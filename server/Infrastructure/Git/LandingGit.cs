@@ -236,7 +236,8 @@ public class LandingGit : ILandingGit
         // Create-only land pins and the land worktree lock: written in process when libgit2's write is git's (no
         // child, so no journal). A cancelled call is left to the git path (checked before the write: a completed
         // write is never reported as cancelled).
-        if (started is null && !ct.IsCancellationRequested && InProcessGitWrites.Handles(arguments)
+        if (started is null && effect == GitCommandEffect.Mutation && !ct.IsCancellationRequested
+            && InProcessGitWrites.Handles(arguments)
             && InProcessGitReads.Enabled && InProcessEligible()
             && InProcessGitWrites.TryWrite(repository, arguments, _childEnvironment) is { } pinned)
         {
@@ -244,7 +245,7 @@ public class LandingGit : ILandingGit
             ServerGitProcess.Span("landing", arguments)?.SetTag("git.spawned", false).Dispose();
             return pinned;
         }
-        if (started is null && !IsMutating(arguments) && InProcessAnswer(repository, arguments) is { } inProcess)
+        if (started is null && effect == GitCommandEffect.Read && InProcessAnswer(repository, arguments) is { } inProcess)
         {
             ct.ThrowIfCancellationRequested();
             Scope?.Profile.InProcessHit(arguments);
@@ -367,7 +368,6 @@ public class LandingGit : ILandingGit
     private async Task<LandingGitResult> ExecuteProcessAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, GitCommandEffect effect, CancellationToken ct)
     {
-        _ = effect;
         using var span = ServerGitProcess.Span("landing", arguments);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(options.Budget ?? DefaultBudget);
@@ -382,7 +382,10 @@ public class LandingGit : ILandingGit
         ApplyIdentity(start);
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
+        // A mutation fences the common dir. init and clone have none yet, so they run without a
+        // record; the next mutation in the repository they create writes one.
+        var journal = effect == GitCommandEffect.Mutation && GitLayoutExists(repository)
+            ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
         // CARD-0824 S4a round 3 Review B-1: writing the journal awaits. A caller's switch is read here, last before the
         // child starts; a refusal starts nothing and clears the unstarted journal.
         if (journal is not null)
@@ -408,6 +411,7 @@ public class LandingGit : ILandingGit
         var process = child ?? throw new IOException("git_start_failed");
         owned?.Attach(process, WriteChildLog);
         var disposeProcess = true;
+        CapturedGitExit? captured = null;
         try
         {
             var output = process.StandardOutput.ReadToEndAsync();
@@ -426,6 +430,7 @@ public class LandingGit : ILandingGit
                     if (started is not null && identified) await started(process.Id, startTicks, ct);
                 }
                 await process.WaitForExitAsync(budget.Token);
+                captured = ReadExit(process);
                 // The exit is already known. One snapshot of the drain decides the pipe: a later
                 // grace wait must not turn TimedOut into success, and a cancelled run budget must
                 // not turn a closed pipe into git_timeout (CARD-1076 D-2).
@@ -449,21 +454,17 @@ public class LandingGit : ILandingGit
                     if (pipeHandedOff) disposeProcess = false;
                     else if (pipeDrained && process.HasExited) journal?.Exited(process);
                     _cardFiles?.NoteServerGit(repository, arguments);
-                    RelinquishExitHandle(process);
-                    if (!IsMutating(arguments))
-                        throw new GitPipeTimeoutException(process.ExitCode);
-                    string? heldRebaseHead = null;
-                    if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
-                    {
-                        var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), GitCommandEffect.Read, ct);
-                        if (head.Succeeded) heldRebaseHead = head.Output.Trim();
-                    }
+                    var heldRebaseHead = await RebaseHeadAfterExitAsync(repository, arguments, captured.Value.Code, ct);
+                    if (!pipeHandedOff) RelinquishExitHandle(process);
+                    if (effect == GitCommandEffect.Read)
+                        throw new GitPipeTimeoutException(captured.Value.Code, captured.Value.ExitedAtUtc);
                     // Empty output: a partial listing must not be read as a complete ref or tree.
-                    return new LandingGitResult(process.ExitCode, "",
-                        process.ExitCode == 0 ? "git_pipe_timeout" : $"git_exit_{process.ExitCode}")
+                    return new LandingGitResult(captured.Value.Code, "",
+                        captured.Value.Code == 0 ? "git_pipe_timeout" : $"git_exit_{captured.Value.Code}")
                     {
                         RebaseHeadSha = heldRebaseHead,
                         PipeDrainIncomplete = true,
+                        ProcessExitedAtUtc = captured.Value.ExitedAtUtc,
                     };
                 }
             }
@@ -478,6 +479,11 @@ public class LandingGit : ILandingGit
                 // extend this past the budget by its own lifetime (CARD-1076, Windows 30.5s on a 2s budget).
                 // The journal is removed only once the abandoned streams close, so a crash while the
                 // holder lives still leaves a record for recover-repository-children.ps1.
+                if (captured is null && RootExited(process))
+                {
+                    try { captured = ReadExit(process); }
+                    catch (InvalidOperationException) { }
+                }
                 var handedOff = false;
                 var drained = false;
                 try
@@ -491,24 +497,31 @@ public class LandingGit : ILandingGit
                 }
                 if (handedOff) disposeProcess = false;
                 else if (drained && process.HasExited) journal?.Exited(process);
+                if (captured is null && RootExited(process))
+                {
+                    try { captured = ReadExit(process); }
+                    catch (InvalidOperationException) { }
+                }
+                if (!handedOff) RelinquishExitHandle(process);
                 _cardFiles?.NoteServerGit(repository, arguments);
                 if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
                 throw;
             }
             // Never expose Git stderr (endpoints/hooks may contain secrets). The journal stays until
             // the drain above finishes, so a worker death while the pipes are open still fences.
+            var exited = captured ?? ReadExit(process);
+            var stdout = await output;
+            var stderr = await error;
             journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
+            var rebaseHead = await RebaseHeadAfterExitAsync(repository, arguments, exited.Code, ct);
             RelinquishExitHandle(process);
-            string? rebaseHead = null;
-            if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
+            return new(exited.Code, stdout, exited.Code == 0 ? "" : $"git_exit_{exited.Code}")
             {
-                var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), GitCommandEffect.Read, ct);
-                if (head.Succeeded) rebaseHead = head.Output.Trim();
-            }
-            return new(process.ExitCode, await output,
-                process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}")
-            { RebaseHeadSha = rebaseHead, WroteStandardError = (await error).Length != 0 };
+                RebaseHeadSha = rebaseHead,
+                WroteStandardError = stderr.Length != 0,
+                ProcessExitedAtUtc = exited.ExitedAtUtc,
+            };
         }
         finally
         {
@@ -806,10 +819,183 @@ public class LandingGit : ILandingGit
         EffectOf(arguments) == GitCommandEffect.Mutation;
 
     /// <summary>Verb after global options. An operand token is not a verb. Unknown verbs preserve the exit.</summary>
-    internal static GitCommandEffect EffectOf(IReadOnlyList<string> arguments) =>
-        arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
-            or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset")
-            ? GitCommandEffect.Mutation : GitCommandEffect.Read;
+    internal static GitCommandEffect EffectOf(IReadOnlyList<string> arguments)
+    {
+        var index = LandingGitProfile.SubcommandIndex(arguments);
+        if (index >= arguments.Count) return GitCommandEffect.Mutation;
+        return arguments[index] switch
+        {
+            "rev-parse" or "ls-remote" or "merge-base" or "cat-file" or "rev-list"
+                or "log" or "diff" or "diff-tree" or "diff-index" or "show" or "status"
+                or "ls-tree" or "merge-tree" or "for-each-ref" or "ls-files" or "show-ref"
+                or "check-ref-format" or "name-rev" or "describe" or "version" or "var"
+                or "help" or "grep" or "blame" or "shortlog" or "commit-tree" => GitCommandEffect.Read,
+            "config" => ConfigEffect(arguments, index),
+            "branch" => BranchEffect(arguments, index),
+            "worktree" => WorktreeEffect(arguments, index),
+            "remote" => RemoteEffect(arguments, index),
+            "symbolic-ref" => SymbolicRefEffect(arguments, index),
+            "hash-object" => HashObjectEffect(arguments, index),
+            _ => GitCommandEffect.Mutation,
+        };
+    }
+
+    /// <summary>A rebase that should record HEAD. <c>--abort</c> and <c>--quit</c> do not.</summary>
+    internal static bool FollowsRebaseHead(IReadOnlyList<string> arguments)
+    {
+        var index = LandingGitProfile.SubcommandIndex(arguments);
+        if (index >= arguments.Count || arguments[index] != "rebase") return false;
+        for (var i = index + 1; i < arguments.Count; i++)
+            if (arguments[i] is "--abort" or "--quit") return false;
+        return true;
+    }
+
+    private static GitCommandEffect ConfigEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        var positionals = 0;
+        for (var i = verb + 1; i < arguments.Count; i++)
+        {
+            var token = arguments[i];
+            if (token is "--unset" or "--unset-all" or "--add" or "--replace-all"
+                or "--rename-section" or "--remove-section" or "-e" or "--edit")
+                return GitCommandEffect.Mutation;
+            if (token == "--")
+            {
+                positionals += arguments.Count - i - 1;
+                break;
+            }
+            if (token.StartsWith('-')) continue;
+            positionals++;
+        }
+        return positionals >= 2 ? GitCommandEffect.Mutation : GitCommandEffect.Read;
+    }
+
+    private static GitCommandEffect BranchEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        var positionals = 0;
+        var afterDash = false;
+        for (var i = verb + 1; i < arguments.Count; i++)
+        {
+            var token = arguments[i];
+            if (afterDash)
+            {
+                positionals++;
+                continue;
+            }
+            if (token == "--")
+            {
+                afterDash = true;
+                continue;
+            }
+            if (token is "-d" or "-D" or "-f" or "-m" or "-M" or "-c" or "-C"
+                or "--delete" or "--force" or "--move" or "--copy")
+                return GitCommandEffect.Mutation;
+            if (token.StartsWith('-')) continue;
+            positionals++;
+        }
+        return positionals > 0 ? GitCommandEffect.Mutation : GitCommandEffect.Read;
+    }
+
+    private static GitCommandEffect WorktreeEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        for (var i = verb + 1; i < arguments.Count; i++)
+        {
+            var token = arguments[i];
+            if (token == "--")
+                return i + 1 < arguments.Count && arguments[i + 1] == "list"
+                    ? GitCommandEffect.Read : GitCommandEffect.Mutation;
+            if (token.StartsWith('-')) continue;
+            return token == "list" ? GitCommandEffect.Read : GitCommandEffect.Mutation;
+        }
+        return GitCommandEffect.Mutation;
+    }
+
+    private static GitCommandEffect RemoteEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        for (var i = verb + 1; i < arguments.Count; i++)
+        {
+            var token = arguments[i];
+            if (token == "--")
+                return i + 1 < arguments.Count && arguments[i + 1] is "get-url" or "show"
+                    ? GitCommandEffect.Read : GitCommandEffect.Mutation;
+            if (token.StartsWith('-')) continue;
+            return token is "get-url" or "show" ? GitCommandEffect.Read : GitCommandEffect.Mutation;
+        }
+        return GitCommandEffect.Read;
+    }
+
+    private static GitCommandEffect SymbolicRefEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        var positionals = 0;
+        for (var i = verb + 1; i < arguments.Count; i++)
+        {
+            var token = arguments[i];
+            if (token is "-d" or "--delete") return GitCommandEffect.Mutation;
+            if (token == "--")
+            {
+                positionals += arguments.Count - i - 1;
+                break;
+            }
+            if (token.StartsWith('-')) continue;
+            positionals++;
+        }
+        return positionals >= 2 ? GitCommandEffect.Mutation : GitCommandEffect.Read;
+    }
+
+    private static GitCommandEffect HashObjectEffect(IReadOnlyList<string> arguments, int verb)
+    {
+        for (var i = verb + 1; i < arguments.Count; i++)
+            if (arguments[i] is "-w" or "--write") return GitCommandEffect.Mutation;
+        return GitCommandEffect.Read;
+    }
+
+    /// <summary>A checkout (<c>.git</c> file or directory) or a bare repository. Parents are not walked:
+    /// <c>init</c> and <c>clone</c> run in a directory that is not a repository yet.</summary>
+    private static bool GitLayoutExists(string repository)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(repository)) return false;
+            var dotGit = Path.Combine(repository, ".git");
+            if (Directory.Exists(dotGit) || File.Exists(dotGit)) return true;
+            return File.Exists(Path.Combine(repository, "HEAD"))
+                && Directory.Exists(Path.Combine(repository, "objects"));
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private readonly record struct CapturedGitExit(int Code, DateTime ExitedAtUtc);
+
+    /// <summary>Exit code and time, read once while the handle still accepts them.</summary>
+    private static CapturedGitExit ReadExit(Process process)
+    {
+        var code = process.ExitCode;
+        DateTime exited;
+        try { exited = process.ExitTime.ToUniversalTime(); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { exited = DateTime.UtcNow; }
+        return new(code, exited);
+    }
+
+    private async Task<string?> RebaseHeadAfterExitAsync(string repository, IReadOnlyList<string> arguments,
+        int exitCode, CancellationToken ct)
+    {
+        if (exitCode != 0 || !FollowsRebaseHead(arguments)) return null;
+        try
+        {
+            var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null,
+                new LandingGitRunOptions(), GitCommandEffect.Read, ct);
+            return head.Succeeded ? head.Output.Trim() : null;
+        }
+        catch (Exception ex) when (ex is GitPipeTimeoutException or TimeoutException or IOException
+            || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Test seam. Production does not dispose. A witness disposes the handle after the exit was captured.</summary>
     protected virtual void RelinquishExitHandle(Process process) { }
@@ -1943,7 +2129,8 @@ public class LandingGit : ILandingGit
         if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
-        return await RunAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], ct);
+        return await RunAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"],
+            GitCommandEffect.Mutation, new LandingGitRunOptions(), ct);
     }
 
     public async Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
@@ -1954,7 +2141,8 @@ public class LandingGit : ILandingGit
         if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
-        return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], started, ct);
+        return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"],
+            GitCommandEffect.Mutation, started, ct);
     }
 
     public virtual async Task<LandingGitResult> PushSourceOwnedAsync(string repository, string sourceFullRef,
@@ -1971,7 +2159,7 @@ public class LandingGit : ILandingGit
             return new(1, "", "source_remote_endpoint_changed");
         return await RunOwnedAsync(repository,
             ["push", endpoint, $"--force-with-lease={sourceFullRef}:{expectedRemoteSha ?? ""}",
-                $"{sha}:{sourceFullRef}"], started, ct);
+                $"{sha}:{sourceFullRef}"], GitCommandEffect.Mutation, started, ct);
     }
 
     /// <summary>

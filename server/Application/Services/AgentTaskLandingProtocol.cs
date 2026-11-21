@@ -231,6 +231,23 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     await RecheckApprovalAsync(op, request, ct, skipRecoverySourceFreshness: true);
                     await RecheckSourceIdentityAndPinsAsync(op, ct);
                     Require(GitObjectId.IsFull(op.VerifiedSourceSha), "verified_source_missing");
+                    if (op.PushExitCode == 0)
+                    {
+                        // The push already exited 0. Observe that destination and do not push again.
+                        try
+                        {
+                            var saved = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
+                            if (saved.ContainsSource)
+                            {
+                                await ConfirmAsync(op, saved, LandPublicationOutcome.Landed, ct);
+                                return await CleanupAsync(op, lease, request, ct);
+                            }
+                        }
+                        catch (Exception ex) when (ex is LandingRefusal || IsObservationMiss(ex, ct))
+                        {
+                        }
+                        return await UnconfirmedAsync(op, "push_unconfirmed", ct);
+                    }
                     var savedTarget = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
                     if (savedTarget.ContainsSource)
                     {
@@ -325,10 +342,38 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     }
                 }
                 var rebasedHead = regeneratedHead ?? rebase.RebaseHeadSha;
-                Require(rebasedHead is not null, "interrupted_rebase");
+                if (rebasedHead is null)
+                {
+                    if (rebase.ExitCode == 0)
+                        return await UnconfirmedAsync(op, "rebase_head_unconfirmed", ct);
+                    Require(false, "interrupted_rebase");
+                }
                 await RecheckSourceAsync(op, ct);
                 Require(await CommitAsync(land, "HEAD", ct) == rebasedHead, "land_worktree_changed");
                 op.RebasedSourceSha = rebasedHead;
+                await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
+                op.PreparedPinned = true;
+                op.PreparedAt = Now();
+                await TransitionAsync(op, LandPhase.Prepared, ct);
+            }
+            if (op.Phase == LandPhase.RebaseStarted && op.RebasedSourceSha is null
+                && op.LastReason == "rebase_head_unconfirmed")
+            {
+                string? resumedHead = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(op.LandWorktreePath))
+                        resumedHead = await CommitAsync(op.LandWorktreePath, "HEAD", ct);
+                }
+                catch (Exception ex) when (ex is LandingRefusal || IsObservationMiss(ex, ct))
+                {
+                    resumedHead = null;
+                }
+                if (resumedHead is null)
+                    return await UnconfirmedAsync(op, "rebase_head_unconfirmed", ct);
+                await RecheckSourceAsync(op, ct);
+                Require(await CommitAsync(op.LandWorktreePath!, "HEAD", ct) == resumedHead, "land_worktree_changed");
+                op.RebasedSourceSha = resumedHead;
                 await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
                 op.PreparedPinned = true;
                 op.PreparedAt = Now();
@@ -412,14 +457,29 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                         git.PushOwnedAsync(op.RepositoryPath, Destination(op), op.VerifiedSourceSha!, started, ct), ct);
                     op.PushExitCode = pushed.ExitCode;
                     await SaveAsync(op, ct);
-                    beforePush = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
-                    if (!beforePush.ContainsSource)
+                    if (pushed.ExitCode == 0)
                     {
-                        // A rejected push is a target race only when this re-observation shows the tip moved.
-                        // A successful push that the remote does not contain stays push_unconfirmed.
-                        if (!pushed.Succeeded && beforePush.Sha != baseline)
-                            throw new LandingRefusal("remote_changed_before_push", beforePush.Sha);
-                        Require(false, pushed.Succeeded ? "push_unconfirmed" : "push_rejected");
+                        try
+                        {
+                            beforePush = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
+                        }
+                        catch (Exception ex) when (ex is LandingRefusal || IsObservationMiss(ex, ct))
+                        {
+                            return await UnconfirmedAsync(op, "push_unconfirmed", ct);
+                        }
+                        if (!beforePush.ContainsSource)
+                            return await UnconfirmedAsync(op, "push_unconfirmed", ct);
+                    }
+                    else
+                    {
+                        beforePush = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
+                        if (!beforePush.ContainsSource)
+                        {
+                            // A rejected push is a target race only when this re-observation shows the tip moved.
+                            if (beforePush.Sha != baseline)
+                                throw new LandingRefusal("remote_changed_before_push", beforePush.Sha);
+                            Require(false, "push_rejected");
+                        }
                     }
                 }
                 await ConfirmAsync(op, beforePush,
@@ -1012,6 +1072,17 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && SamePath(op.WorktreePath, coordinates.WorktreePath) && SamePath(common, op.CommonDirectory),
             "pending_operation_coordinates_changed");
 
+    private async Task<LandingProtocolResult> UnconfirmedAsync(AgentTaskLanding op, string reason, CancellationToken ct)
+    {
+        op.LastReason = reason;
+        await SaveAsync(op, ct);
+        return new(op, reason, []) { ResumeObservation = true };
+    }
+
+    private static bool IsObservationMiss(Exception ex, CancellationToken ct) =>
+        ex is GitPipeTimeoutException or TimeoutException or IOException
+        || ex is OperationCanceledException && !ct.IsCancellationRequested;
+
     private async Task<LandingRemoteObservation> ObserveAsync(AgentTaskLanding op, string sha, CancellationToken ct)
     {
         var observed = await git.ObserveAsync(op.RepositoryPath, Destination(op), sha, op.RecoveryRefPrefix + "/remote-observed", ct);
@@ -1025,7 +1096,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task<LandingGitResult> MutateAsync(AgentTaskLanding op, string repository,
         IReadOnlyList<string> arguments, CancellationToken ct)
         => await OwnedAsync(op, string.Join(" ", arguments.Take(5)),
-            started => git.RunOwnedAsync(repository, arguments, started, ct), ct);
+            started => git.RunOwnedAsync(repository, arguments, GitCommandEffect.Mutation, started, ct), ct);
 
     private async Task<LandingGitResult> OwnedAsync(AgentTaskLanding op, string description,
         Func<Func<int, long, CancellationToken, Task>, Task<LandingGitResult>> execute, CancellationToken ct)
@@ -1534,5 +1605,7 @@ public sealed record LandingProtocolResult(AgentTaskLanding? Operation, string? 
 {
     public PreparedLandingVerification? Verification { get; init; }
     public bool Published => Operation is not null && new AgentTaskLandingState().HasPublication(Operation);
+    /// <summary>Push exit 0 or a rebase whose HEAD read failed. The request stays pending and the next run observes again.</summary>
+    public bool ResumeObservation { get; init; }
     public string? Detail { get; init; }
 }

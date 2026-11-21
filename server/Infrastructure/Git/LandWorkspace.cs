@@ -35,7 +35,8 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
     public async Task<LandWorkspaceState> EnsureAsync(string repository, string path, string sha,
         Func<string, IReadOnlyList<string>, CancellationToken, Task<LandingGitResult>>? mutate, CancellationToken ct)
     {
-        mutate ??= (directory, arguments, token) => git.RunAsync(directory, arguments, token);
+        mutate ??= (directory, arguments, token) =>
+            git.RunAsync(directory, arguments, GitCommandEffect.Mutation, new LandingGitRunOptions(), token);
         LandWorkspaceState Refuse(string reason, string? detail = null) => new(path, null, false, reason, detail);
         if (!LandingGit.IsOid(sha)) return Refuse(UnreadyCode, "invalid commit");
         var common = await git.CommonDirectoryAsync(repository, ct);
@@ -104,7 +105,8 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
         if (!status.Succeeded || status.Output.Length != 0) return Refuse(UnreadyCode, "the land worktree is not clean");
         if (!Exists(Path.Combine(admin, "locked")))
         {
-            var locked = await git.RunAsync(repository, ["worktree", "lock", "--reason", LockReason, path], ct);
+            var locked = await git.RunAsync(repository, ["worktree", "lock", "--reason", LockReason, path],
+                GitCommandEffect.Mutation, new LandingGitRunOptions(), ct);
             if (!locked.Succeeded && !Exists(Path.Combine(admin, "locked"))) return Refuse("land_worktree_lock_failed", locked.Diagnostic);
         }
         return new(path, sha, created, null);

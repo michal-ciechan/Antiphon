@@ -38,6 +38,7 @@ public sealed class LandFailureDiagnosticTests
         LandFailureDiagnostic.Classify(new LandSourceResolutionConflictException()).ShouldBe("source_resolution_state_changed");
         LandFailureDiagnostic.Classify(new IOException(Marker), afterPublication: true)
             .ShouldBe("landing_interrupted_after_publication");
+        LandFailureDiagnostic.Classify(new GitPipeTimeoutException(0, DateTime.UtcNow)).ShouldBe("landing_timeout");
     }
 
     [Test]

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Shouldly;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Git;
 
@@ -317,12 +318,17 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             start.Environment["GIT_CONFIG_VALUE_2"] = HooksPathOverride ?? Path.Combine(home, "no-hooks");
         }
 
-        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+            => RunAsync(repository, arguments, LandingGit.EffectOf(arguments), new LandingGitRunOptions(), ct);
+
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments,
+            GitCommandEffect effect, LandingGitRunOptions options, CancellationToken ct)
         {
             using var wait = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "wait");
             // The trace span (not the timing label, a CARD-1514 contract) is named by subcommand and
             // covers start to exit; "git.spawned" marks calls that started a process, the rest were
-            // answered in process or by a hook.
+            // answered in process or by a hook. The three-argument overload forwards here so a
+            // caller that names GitCommandEffect is traced once.
             if (System.Diagnostics.Activity.Current is { } span && span.DisplayName == "process-wait wait")
             {
                 span.DisplayName = "process-wait git " + (arguments.Count > 0 ? arguments[0] : "?");
@@ -338,7 +344,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
-            var result = await base.RunAsync(repository, arguments, ct);
+            var result = await base.RunAsync(repository, arguments, effect, options, ct);
             LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
@@ -391,15 +397,19 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             return result;
         }
 
-        public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+        public override Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+            => RunOwnedAsync(repository, arguments, LandingGit.EffectOf(arguments), started, ct);
+
+        public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+            GitCommandEffect effect, Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "owned_git_start", new { repository, arguments });
-            var result = await base.RunOwnedAsync(repository, arguments, started, ct);
+            var result = await base.RunOwnedAsync(repository, arguments, effect, started, ct);
             LandingEvidence.Write(taskId, "owned_git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;

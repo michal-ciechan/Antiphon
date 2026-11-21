@@ -820,6 +820,11 @@ public sealed class AgentTaskLandService
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
                     DurationSeconds(op, OrchestrationStage.Verify), VerifyDetail(op, "verification passed"));
+            if (result.ResumeObservation || op is { Phase: LandPhase.PushStarted, PushExitCode: 0 })
+            {
+                await RequeueUnconfirmedAsync(task, request, ct);
+                return LandRunResult.Complete;
+            }
             if (op is not null && state.IsTargetRaceRefusal(op) && raceRetries < budget)
             {
                 raceRetries++;
@@ -1324,11 +1329,19 @@ public sealed class AgentTaskLandService
                 || !LandApproval.RequestStatusEligible(row, request)) continue;
             if (row.LandAttempt >= maxAttempts)
             {
-                var last = row.LandStartedAt?.ToString("u") ?? "unknown";
-                await RefuseAsync(row,
-                    $"land interrupted {row.LandAttempt} times without finishing (last started {last}); not retried automatically — run -Land again",
-                    ct);
-                continue;
+                var active = row.ActiveLandingId is Guid activeId
+                    ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == activeId, ct)
+                    : null;
+                var observing = active is { Phase: LandPhase.PushStarted, PushExitCode: 0 }
+                    || active is { Phase: LandPhase.RebaseStarted, LastReason: "rebase_head_unconfirmed" };
+                if (!observing)
+                {
+                    var last = row.LandStartedAt?.ToString("u") ?? "unknown";
+                    await RefuseAsync(row,
+                        $"land interrupted {row.LandAttempt} times without finishing (last started {last}); not retried automatically — run -Land again",
+                        ct);
+                    continue;
+                }
             }
 
             if (row.LandStartedAt is not null)
@@ -1461,6 +1474,26 @@ public sealed class AgentTaskLandService
         var line = LandFailureDiagnostic.FormatUnconfirmed(code, diagnosticId, typeName, request, concurrencySummary);
         await CompleteTerminalLockedAsync(task, request, AgentTaskEventType.LandRefused, line,
             [$"Landing not confirmed; no cleanup authorized by this result. {code}"], null, ct);
+    }
+
+    /// <summary>A push that exited 0, or a rebase waiting on HEAD, stays pending. The next run observes before it mutates again.</summary>
+    private async Task RequeueUnconfirmedAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await LockTaskAsync(task.Id, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        await _db.Entry(request).ReloadAsync(ct);
+        if (task.CurrentLandRequestId != request.Id || !request.IsPending || request.TerminalEventId is not null)
+        {
+            await transaction.CommitAsync(ct);
+            return;
+        }
+        request.State = LandRequestState.Queued;
+        LandRequestWriteProvenance.Stamp(request, "protocol-progress", _clock);
+        task.LandStartedAt = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct) =>

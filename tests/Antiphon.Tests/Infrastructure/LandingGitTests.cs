@@ -957,6 +957,19 @@ public sealed class LandingGitTests
             result.PipeDrainIncomplete.ShouldBeTrue();
             result.Output.ShouldBe("");
             watch.Elapsed.ShouldBeLessThan(limit);
+            var common = await git.CommonDirectoryAsync(repo.Path, ct);
+            var children = Path.Combine(common, "antiphon", "children");
+            JournalFiles(children).ShouldNotBeEmpty(
+                "a live pipe holder keeps the repository child journal until the abandoned streams close");
+            KillHolder(pidFile);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0)
+            {
+                if (cleared.Elapsed > TimeSpan.FromSeconds(5)) break;
+                await Task.Delay(50, ct);
+            }
+            JournalFiles(children).ShouldBeEmpty(
+                "once the holder exits, the abandon continuation removes the journal");
         }
         finally
         {
