@@ -38,128 +38,19 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
     public Task C519_Queue_to_busy_adapter(string kind) => QueueToAdapterAsync(kind, busy: true);
 
-    // One Redpanda broker for the class instead of one per test: the class runs one test at a time
-    // (ProcessSpawnLimit), and every scenario already has its own topic (with its own size cap, deleted when the
-    // scenario is disposed), consumer group, database schema and gateway (UnifiedOutboundTransport), so no test sees
-    // another's broker state. Started by the first test that needs it, inside that test's budget, with the CARD-1934
-    // phase timing; a later test that reuses it prints `C1934_BROKER_PHASE shared=true`. Before each reuse the broker
-    // must answer a metadata request (Testcontainers' State is cached, not live), allowed 20 seconds and asked twice
-    // because a loaded host can be slow: one that still does not answer prints `shared=replaced` and is disposed
-    // (bounded; a failed disposal is logged and left to the reaper) and replaced. After two failed starts in a row the
-    // remaining tests fail at once with the last start's error instead of each spending its own startup budget.
-    // Every step under the gate has its own bound (two 30-second probes, a 60-second disposal, a 120-second start whose
-    // failed-start disposal is bounded too), so a gate holder always finishes and no caller abandons work it started:
-    // a caller waits for the gate at most SharedBrokerGateWait (more than the longest holder) and then does its own
-    // bounded work. A test's own scenario deadline starts after it has the broker. Disposed after the class, under the
-    // same gate.
-    private static readonly TimeSpan SharedBrokerGateWait = TimeSpan.FromSeconds(420);
-    private static readonly SemaphoreSlim SharedBrokerGate = new(1, 1);
-    private static RedpandaContainer? _sharedBroker;
-    private static int _sharedBrokerStartFailures;
-    private static Exception? _sharedBrokerStartFailure;
+    // One Redpanda broker for the class (SharedRedpandaBroker: isolation, the reuse probe, replacement, fail-fast and
+    // bounds), started with the CARD-1934 phase timing below.
+    private static readonly SharedRedpandaBroker SharedBroker = new(StartOwnedBrokerAsync, "C1934_BROKER_PHASE");
 
-    private static async Task<RedpandaContainer> SharedBrokerAsync()
-    {
-        if (!await SharedBrokerGate.WaitAsync(SharedBrokerGateWait))
-            throw new TimeoutException("the class's shared Redpanda broker was held by another test past every bound");
-        try
-        {
-            if (_sharedBroker is { } current)
-            {
-                if (await BrokerAnswersAsync(current) || await BrokerAnswersAsync(current))
-                {
-                    Console.WriteLine("C1934_BROKER_PHASE shared=true");
-                    return current;
-                }
-                Console.WriteLine("C1934_BROKER_PHASE shared=replaced");
-                _sharedBroker = null;
-                await DisposeBrokerAsync(current);
-            }
-            if (_sharedBrokerStartFailures >= 2)
-                throw new InvalidOperationException(
-                    "the class's shared Redpanda broker failed to start twice in a row; this test did not try again",
-                    _sharedBrokerStartFailure);
-            try
-            {
-                _sharedBroker = await StartOwnedBrokerAsync();
-            }
-            catch (Exception ex)
-            {
-                _sharedBrokerStartFailures++;
-                _sharedBrokerStartFailure = ex;
-                throw;
-            }
-            _sharedBrokerStartFailures = 0;
-            _sharedBrokerStartFailure = null;
-            return _sharedBroker;
-        }
-        finally
-        {
-            SharedBrokerGate.Release();
-        }
-    }
-
-    // A live answer from the broker itself: cluster metadata. The client is built, asked and disposed off this thread,
-    // and the whole probe is bounded.
-    private static async Task<bool> BrokerAnswersAsync(RedpandaContainer broker)
-    {
-        try
-        {
-            var bootstrap = broker.GetBootstrapAddress();
-            var asking = Task.Run(() =>
-            {
-                using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build();
-                return admin.GetMetadata(TimeSpan.FromSeconds(20)).Brokers.Count > 0;
-            });
-            _ = asking.ContinueWith(attempt => _ = attempt.Exception,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
-            return await asking.WaitAsync(TimeSpan.FromSeconds(30));
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            return false;
-        }
-    }
-
-    // Disposal of a broker that is gone may itself fail or hang (Docker): bounded, logged, never thrown.
-    private static async Task DisposeBrokerAsync(RedpandaContainer broker)
-    {
-        try
-        {
-            await broker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(60));
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            Console.WriteLine("C1934_BROKER_PHASE dispose-failed " + ex.GetType().Name + ": " + ex.Message);
-        }
-    }
+    private static Task<RedpandaContainer> SharedBrokerAsync() => SharedBroker.GetAsync();
 
     [After(Class)]
-    public static async Task StopSharedBrokerAsync()
-    {
-        if (!await SharedBrokerGate.WaitAsync(SharedBrokerGateWait))
-        {
-            Console.WriteLine("C1934_BROKER_PHASE after-class gate not acquired; the reaper removes any broker left");
-            return;
-        }
-        try
-        {
-            if (_sharedBroker is { } broker)
-            {
-                _sharedBroker = null;
-                await DisposeBrokerAsync(broker);
-            }
-        }
-        finally
-        {
-            SharedBrokerGate.Release();
-        }
-    }
+    public static Task StopSharedBrokerAsync() => SharedBroker.StopAsync();
 
     // CARD-1934. C519_Partial_prompt_requires_complete_receipt, C519_Enabled_loss_notice_reaches_adapter
     // and C519_Size_refusal used to pass their 120-second deadline to this same StartAsync. The broker is now shared
-    // (above): StartOwnedBrokerAsync gives every start 120 seconds, and each caller bounds its wait for the shared
-    // broker (SharedBrokerGateWait for the gate; each test's own deadline starts once it has the broker). On 08cc3dc the exact main
+    // (SharedRedpandaBroker): StartOwnedBrokerAsync gives every start 120 seconds, and each caller bounds its wait for
+    // the shared broker (SharedRedpandaBroker.GateWait; each test's own deadline starts once it has the broker). On 08cc3dc the exact main
     // UID spent 12.3s, 16.0s and 13.1s of the old 30-second token on Docker time before the Redpanda
     // container existed (load 21.63, 35.46 and 27.30), 40 to 53 percent of that budget, before Kafka
     // readiness. A failing-tail p95 is unavailable: those three passes finished inside 30 seconds, and
@@ -182,7 +73,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         }
         catch
         {
-            await DisposeBrokerAsync(broker);
+            await SharedRedpandaBroker.DisposeAsync(broker, "C1934_BROKER_PHASE");
             throw;
         }
     }

@@ -31,11 +31,33 @@ public sealed class ChannelOutboundUnifiedCrashTests
     public Task C519_Complete_stage_death_preserves_snapshot(string kind) =>
         PreparationAsync(kind, "input-stage-complete");
 
+    // One Redpanda broker for the class (SharedRedpandaBroker: isolation, the reuse probe, replacement, fail-fast and
+    // bounds), started within 120 seconds; each test's own deadline starts once it has the broker.
+    private static readonly SharedRedpandaBroker SharedBroker = new(StartBrokerAsync, "C519_CRASH_BROKER");
+
+    private static async Task<RedpandaContainer> StartBrokerAsync()
+    {
+        var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
+        try
+        {
+            using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            await broker.StartAsync(startup.Token);
+            return broker;
+        }
+        catch
+        {
+            await SharedRedpandaBroker.DisposeAsync(broker, "C519_CRASH_BROKER");
+            throw;
+        }
+    }
+
+    [After(Class)]
+    public static Task StopSharedBrokerAsync() => SharedBroker.StopAsync();
+
     private static async Task PreparationAsync(string kind, string cut)
     {
+        var broker = await SharedBroker.GetAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        await broker.StartAsync(deadline.Token);
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
         await w.SeedCrashSourceAsync(kind);
         await using (var child = await w.StartProbeAsync(cut))
@@ -73,9 +95,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
     [Test]
     public async Task C519_Stalled_cut_probe_fails_with_its_own_evidence()
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await broker.StartAsync(startup.Token);
+        var broker = await SharedBroker.GetAsync();
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
         await w.SeedCrashSourceAsync("trailing");
         await using var child = await w.StartProbeAsync("capture-committed", stallPoint: "capture-committed");
@@ -99,9 +119,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
 
     private static async Task PublicationAsync(string kind, string[] cuts)
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await broker.StartAsync(startup.Token);
+        var broker = await SharedBroker.GetAsync();
         foreach (var cut in cuts)
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
