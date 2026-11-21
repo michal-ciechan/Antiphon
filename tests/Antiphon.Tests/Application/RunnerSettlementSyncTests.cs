@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.ComponentModel;
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -1414,7 +1413,7 @@ public sealed class RunnerSettlementSyncTests
                 {
                     if (!process.HasExited) process.Kill(entireProcessTree: true);
                 }
-                catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
                 {
                     cleanupFailure = ex;
                 }
