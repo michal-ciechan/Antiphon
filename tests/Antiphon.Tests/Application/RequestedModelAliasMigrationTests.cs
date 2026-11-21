@@ -59,7 +59,7 @@ public sealed class RequestedModelAliasDatabaseMigrationTests
         before.Last().ShouldBe(Predecessor);
         (await ReadAliasColumnAsync(db, ct)).ShouldBeNull();
 
-        using (TestTiming.BeginPhase(TestPhaseKind.DbMigrate, "requested model alias upgrade"))
+        using (TestTiming.BeginPhase(TestPhaseKind.DbMigrate, "migrate"))
             await db.Database.MigrateAsync(RequestedModelAliasSchema.MigrationId, ct);
 
         (await ReadAliasColumnAsync(db, ct)).ShouldBe("character varying(80) nullable=YES");
