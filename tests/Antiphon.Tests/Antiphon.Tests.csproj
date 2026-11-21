@@ -230,13 +230,14 @@
   <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
     <PropertyGroup><_PtyHostNativeDir>$(TargetDir)ptyhost-native/</_PtyHostNativeDir></PropertyGroup>
     <!-- The outer Linux build restores with UseAppHost=false, which omits the net9
-         apphost pack. Restore this producer with the same property as its inner build. -->
+         apphost pack. Give restore and build the same child-owned SDK artifacts root so
+         neither overwrites the outer graph's per-project assets or compile intermediates. -->
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Restore"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=true;ArtifactsPath=$(_PtyHostNativeDir)artifacts/" />
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Build"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(_PtyHostNativeDir)" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=true;ArtifactsPath=$(_PtyHostNativeDir)artifacts/;OutDir=$(_PtyHostNativeDir)" />
     <Copy SourceFiles="$(_PtyHostNativeDir)Antiphon.PtyHost"
           DestinationFiles="$(TargetDir)Antiphon.PtyHost" SkipUnchangedFiles="true" />
   </Target>

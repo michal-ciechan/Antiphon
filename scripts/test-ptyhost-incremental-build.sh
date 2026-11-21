@@ -9,11 +9,14 @@ esac
 : "${ANTIPHON_BUILD_SLOT_MAXCPUCOUNT:?run this command through its checkpoint row}"
 export ANTIPHON_LINUX_COMPILER_POLICY=0
 
-read -r load rest < /proc/loadavg
-if ! awk -v load="$load" 'BEGIN { exit !(load < 14) }'; then
-    echo "REFUSING load=$load (requires Linux one-minute load below 14)" >&2
-    exit 4
-fi
+while :; do
+    read -r load rest < /proc/loadavg
+    if awk -v load="$load" 'BEGIN { exit !(load < 14) }'; then
+        break
+    fi
+    printf 'LOAD waiting=%s\n' "$load" >&2
+    sleep 30
+done
 
 project_dir=tests/Antiphon.Tests
 evidence_dir=.antiphon/c2013-evidence
