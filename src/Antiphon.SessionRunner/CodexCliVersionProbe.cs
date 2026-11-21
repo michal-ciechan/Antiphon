@@ -105,7 +105,7 @@ public sealed class CodexCliVersionProbe : IDisposable
                 ? request.Args.FirstOrDefault() : null;
             var selected = Resolve(new(request.Exe, request.Cwd, GetEnv("PATH"), GetEnv("PATHEXT"), prefix));
             var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-            return pathComparer.Equals(observed.Exe, selected.Exe)
+            return pathComparer.Equals(observed.Executable, selected.Executable)
                 && observed.Args.SequenceEqual(selected.Args, pathComparer);
         }
         catch (Exception ex) when (ex is ProbeRefusal or IOException or UnauthorizedAccessException
