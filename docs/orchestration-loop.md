@@ -2111,6 +2111,28 @@ the same SHA, never a hand push of `master`. `push_rejected` means the remote di
 `-Land` again resumes that push. Publication recovery and guarded cleanup retain their
 existing operation and evidence.
 
+### Landing toolchain recovery and FT-2 rollback (CARD-2022, CARD-2036)
+
+The server Dockerfile ships the ASP.NET runtime and pinned Git. The SDK stays in the
+publish stage, and the runtime has no PowerShell. An index-only conflict on that server
+leaves the request in `NeedsResolution`. Read `landing.reason` or the conflict receipt
+for `index-regen-unavailable:dotnet-sdk`, `index-regen-unavailable:pwsh`, or
+`index-regen-unavailable:toolchain-check-timeout`. Use the normal Merge conflict path
+on an SDK and PowerShell-equipped runner. After resolving the source conflicts, build
+the index driver under a build slot and regenerate in the merged worktree. Run the
+generator again and require `derived-impact-index unchanged`. Review the resulting
+source SHA before retrying the land through the original owner.
+
+Carry the FT-2 policy and the `docs-skip-target-manifest` state-machine literal together
+when porting to rc. Before rolling back to a server older than FT-2, pause new land
+requests and drain accepted ones on the compatible server. Check `landing.phase` in
+`GET /api/agent-tasks/{id}` for each outstanding land and wait for `Verified`,
+`PushStarted`, `PublicationConfirmed`, and `CleanupStarted` to settle. The older server
+cannot validate a target-manifest skip during publication or cleanup. If a rollback
+already hit `landing_transition_refused` or `publication_unconfirmed`, restore an
+FT-2-compatible server and confirm the remote target before resuming the existing
+request or retrying guarded cleanup.
+
 Read the task's structured `landing` evidence and the outcome's operation ID, original source,
 verified commit, observed remote commit, confirmation time, mode and cleanup status.
 `AlreadyPresent` records independent containment without claiming a successful push.

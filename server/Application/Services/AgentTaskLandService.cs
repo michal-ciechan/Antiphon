@@ -781,7 +781,8 @@ public sealed class AgentTaskLandService
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct,
                 task.MergeTargetRef ?? "master", result.Operation?.SourceRemoteSha);
             var regenDetail = result.Detail is string detail
-                && detail.StartsWith(DerivedImpactIndexRegen.FailurePrefix, StringComparison.Ordinal)
+                && (detail.StartsWith(DerivedImpactIndexRegen.FailurePrefix, StringComparison.Ordinal)
+                    || detail.StartsWith(DerivedImpactIndexRegen.UnavailablePrefix, StringComparison.Ordinal))
                 ? detail : null;
             var stageBudget = regenDetail is null
                 ? StageOutcome.DetailMaxLength

@@ -356,7 +356,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.VerificationPassed = false;
                 op.VerificationSkipReason = null;
                 op.VerificationCommand = decision.Skip
-                    ? $"Skipped({decision.Reason}); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={decision.Graph ?? LandVerificationBuildGraph.Fingerprint}"
+                    ? $"Skipped({decision.Reason}); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={decision.Graph}; trust={decision.Trust}"
                     : $"dotnet build; dotnet run --project tests/Antiphon.Tests; policy={decision.Reason}";
                 try { logger?.LogInformation(
                     "Landing verification decision task {TaskId} operation {OperationId} request {RequestId} reason {Reason} target {TargetSha} candidate {CandidateSha}",
@@ -1170,7 +1170,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         catch (Exception) { }
 
         if (!regen.Succeeded)
-            return new(RefuseRegeneration(op, regen.Reason), null);
+            return new(RefuseRegeneration(op, regen.Reason, regen.ToolchainUnavailable), null);
 
         var records = await ReadStatusAsync(land, ct);
         if (records is null)
@@ -1267,13 +1267,16 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         return status is " M" or "M " or "MM";
     }
 
-    private LandingProtocolResult RefuseRegeneration(AgentTaskLanding op, string? why)
+    private LandingProtocolResult RefuseRegeneration(AgentTaskLanding op, string? why, bool toolchainUnavailable = false)
     {
-        op.LastReason = "rebase_conflict";
+        const string conflict = "rebase_conflict";
+        var detail = (toolchainUnavailable ? DerivedImpactIndexRegen.UnavailablePrefix : DerivedImpactIndexRegen.FailurePrefix)
+            + RegenWhy(why);
+        op.LastReason = toolchainUnavailable ? detail : conflict;
         _state.Transition(op, LandPhase.Refused, Now());
-        return new(op, op.LastReason, [DerivedImpactIndexRegen.RelativePath])
+        return new(op, conflict, [DerivedImpactIndexRegen.RelativePath])
         {
-            Detail = DerivedImpactIndexRegen.FailurePrefix + RegenWhy(why),
+            Detail = detail,
         };
     }
 
