@@ -18,6 +18,13 @@ namespace Antiphon.Tests.Scripts;
 public sealed class NightlyScriptsTests
 {
     [Test]
+    public Task C2044_RcReleaseRootRefusal() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C2044", nameof(C2044_RcReleaseRootRefusal), 3,
+            "C2044 omitted ReleaseRoot is refused before recording a run and named in the final JSON",
+            "C2044 blank ReleaseRoot is refused before recording a run and named in the final JSON",
+            "C2044 explicit ReleaseRoot reaches the test result");
+
+    [Test]
     public Task C1854_EolRepairHardening() =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1854",
             nameof(C1854_EolRepairHardening), 11,

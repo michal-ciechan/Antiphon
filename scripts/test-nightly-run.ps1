@@ -526,7 +526,8 @@ function Test-C1854_EolRepairHardening {
 # ---- CARD-0545 D-10: the wrapper's last stdout line is the JSON completion record ----
 
 function Invoke-C545ResultLineRun {
-    param([string]$Row, [string]$UtcNow, [int]$TestExit = 0, [bool]$TestsPassed = $true, [switch]$NoReport, [string]$CheckoutRoot = '')
+    param([string]$Row, [string]$UtcNow, [int]$TestExit = 0, [bool]$TestsPassed = $true, [switch]$NoReport,
+        [string]$CheckoutRoot = '', [switch]$Rc, [string]$ReleaseRoot)
     $fx = New-RunFx
     $runId = ('c545-' + $Row + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $summaryJson = ('{{"coverageComplete":true,"testsPassed":{0},"reportDelivered":true,"policyHash":"p"}}' -f $(if ($TestsPassed) { 'true' } else { 'false' }))
@@ -550,8 +551,14 @@ function Invoke-C545ResultLineRun {
     $checkout = $fx.Clone
     if ($CheckoutRoot) { $checkout = $CheckoutRoot }
     $argList = @('-NoProfile', '-NonInteractive', '-File', $runPs1, '-NoSync', '-CheckoutRoot', $checkout, '-StateRoot', $fx.State,
-        '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-Trigger', 'scheduled', '-Ref', 'master', '-RunId', $runId,
+        '-LogRoot', (Join-Path $fx.State 'logs'), '-SeamsPath', $fx.Seams, '-RunId', $runId,
         '-CoordinationRoot', $fx.Coordination)
+    if ($Rc) {
+        $argList += @('-Profile', 'rc', '-Trigger', 'rc', '-Ref', 'rc/2026-11-30', '-ExpectedSha', ('a' * 40))
+    } else {
+        $argList += @('-Trigger', 'scheduled', '-Ref', 'master')
+    }
+    if ($PSBoundParameters.ContainsKey('ReleaseRoot')) { $argList += @('-ReleaseRoot', $ReleaseRoot) }
     if ($NoReport) { $argList += '-NoReport' }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'pwsh'
@@ -617,6 +624,22 @@ function Test-C545_ResultLine {
         $raw = $run.Stdout.Replace("`r`n", "`n")
         Assert-C487 -Cond ($raw.TrimEnd("`n").EndsWith($run.Last) -and $run.Last.StartsWith('{')) -Name ('C545 ResultLine {0} no line follows the record' -f $run.Row) -Detail $run.Last
     }
+}
+
+function Test-C2044_RcReleaseRootRefusal {
+    $arguments = @{ Rc = $true; UtcNow = '2026-11-21T07:35:00Z' }
+    $omitted = Invoke-C545ResultLineRun -Row 'omitted' @arguments
+    $blank = Invoke-C545ResultLineRun -Row 'blank' -ReleaseRoot '   ' @arguments
+    foreach ($run in @($omitted, $blank)) {
+        Assert-C487 -Cond ($run.ExitCode -eq 3 -and $run.Record.exitCode -eq 3 -and
+            $run.Record.refusal -ceq 'rc-release-root-required' -and $run.Record.nativeRunId -ceq '' -and $null -eq $run.State) `
+            -Name ('C2044 {0} ReleaseRoot is refused before recording a run and named in the final JSON' -f $run.Row) `
+            -Detail ('exit={0} last={1} stderr={2}' -f $run.ExitCode, $run.Last, $run.Stderr)
+    }
+    $explicit = Invoke-C545ResultLineRun -Row 'explicit' -ReleaseRoot (Join-Path $ResultsDirectory 'rc-releases') @arguments
+    Assert-C487 -Cond ($explicit.Record.nativeRunId -ceq $explicit.RunId -and $explicit.State.profile -ceq 'rc' -and
+        $explicit.State.coverageScope -in @('Full', 'PlatformDiagnostic') -and $explicit.Record.testsPassed) `
+        -Name 'C2044 explicit ReleaseRoot reaches the test result' -Detail $explicit.Last
 }
 
 function Write-C1386Seams {

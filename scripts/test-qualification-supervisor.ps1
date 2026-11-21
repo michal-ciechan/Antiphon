@@ -87,8 +87,8 @@ function Invoke-Launch([string]$Name, $Record, [string]$BoundRunId) {
     } finally { $env:ANTIPHON_QUALIFICATION_RUN_ID = $previous }
     return [pscustomobject]@{ Code = $code; Text = $text }
 }
-function Invoke-Observe($Run) {
-    $text = @(& $pwshPath -NoProfile -NonInteractive -File $observeScript -TaskRoot $Run.Task -StateRoot $Run.State 2>&1) -join "`n"
+function Invoke-Observe($Run, [string]$Script = $observeScript, [string[]]$CheckoutArguments = @()) {
+    $text = @(& $pwshPath -NoProfile -NonInteractive -File $Script -TaskRoot $Run.Task -StateRoot $Run.State @CheckoutArguments 2>&1) -join "`n"
     $code = $LASTEXITCODE
     $parsed = $null
     try { $parsed = ($text.Trim() -split "`n")[-1] | ConvertFrom-Json } catch { }
@@ -406,7 +406,7 @@ try {
     # End to end: wrapper -> detached supervisor -> fake launch-rc (exit 7). The wrapper runs as the
     # leader of its own process group; after it returns that group is killed, which is the Unix
     # analogue of the shared console teardown that killed the 7f8e9fd1 supervisor.
-    $e2eTask = New-OwnedDirectory 'e2e-task'
+    $e2eTask = New-OwnedDirectory 'e2e task'
     $e2eLogs = New-OwnedDirectory 'e2e-logs'
     $e2eState = New-OwnedDirectory 'e2e-state'
     $fake = Join-Path $e2eTask 'fake-launch.ps1'
@@ -416,8 +416,21 @@ try {
         'supervisor-heartbeat.json', 'supervisor-heartbeat.json.tmp', 'commission-console.log', 'commission-stderr.log', 'commission-exit.txt',
         'commission-exit.txt.tmp', 'launch-child.json', 'hang-suspected.txt', 'wrapper-out.log', 'wrapper-err.log')) { $owned.Add((Join-Path $e2eTask $name)) }
     $owned.Add((Join-Path $e2eLogs 'a.trx'))
-    $wrapperArgs = @('-NoProfile', '-NonInteractive', '-File', $startScript, '-TaskRoot', $e2eTask, '-LaunchScript', $fake,
+    foreach ($name in @('start-supervisor.ps1', 'supervise-rc.ps1', 'observe.ps1')) {
+        $copy = Join-Path $e2eTask $name
+        Copy-Item -LiteralPath (Join-Path $qualification $name) -Destination $copy
+        $owned.Add($copy)
+    }
+    $copiedStarter = Join-Path $e2eTask 'start-supervisor.ps1'
+    $copiedObserver = Join-Path $e2eTask 'observe.ps1'
+    # Exercise the old invocation on the red commit to expose the missing-library error.
+    $starterCheckout = @()
+    if ((Get-Command $copiedStarter).Parameters.ContainsKey('CheckoutRoot')) { $starterCheckout = @('-CheckoutRoot', $root) }
+    $observerCheckout = @()
+    if ((Get-Command $copiedObserver).Parameters.ContainsKey('CheckoutRoot')) { $observerCheckout = @('-CheckoutRoot', $root) }
+    $wrapperArgs = @('-NoProfile', '-NonInteractive', '-File', $copiedStarter, '-TaskRoot', $e2eTask, '-LaunchScript', $fake,
         '-LogRoot', $e2eLogs, '-StateRoot', $e2eState, '-RunId', 'c1667e2e', '-PollSeconds', '1', '-ProgressMinutes', '1')
+    $wrapperArgs += $starterCheckout
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
@@ -441,7 +454,7 @@ try {
     }
     $exitFile = Join-Path $e2eTask 'commission-exit.txt'
     $deadline = [datetime]::UtcNow.AddSeconds(60)
-    while (-not (Test-Path -LiteralPath $exitFile) -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    while ($identity -and -not (Test-Path -LiteralPath $exitFile) -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
     $supervisorGone = $false
     if ($identity) {
         while ([datetime]::UtcNow -lt $deadline) {
@@ -455,7 +468,8 @@ try {
     $logText = ''
     if (Test-Path -LiteralPath (Join-Path $e2eTask 'supervisor.log')) { $logText = [string](Get-Content -LiteralPath (Join-Path $e2eTask 'supervisor.log') -Raw) }
     $detail = "wrapperCode=$wrapperCode teardown=$teardown exit=$exitText gone=$supervisorGone wrapper=[$wrapperText] log=[$logText]"
-    Assert-C1667 ($wrapperExited -and $wrapperCode -eq 0 -and $identity -and [int]$identity.pid -ne $wrapperPid) `
+    Assert-C1667 ($wrapperExited -and $wrapperCode -eq 0 -and $identity -and [int]$identity.pid -ne $wrapperPid -and
+        $identity.script -ceq (Join-Path $e2eTask 'supervise-rc.ps1')) `
         'start-supervisor returns after the supervisor records its own identity' $detail
     $detached = $false
     if ($identity) {
@@ -472,7 +486,7 @@ try {
     $console = ''
     if (Test-Path -LiteralPath (Join-Path $e2eTask 'commission-console.log')) { $console = [string](Get-Content -LiteralPath (Join-Path $e2eTask 'commission-console.log') -Raw) }
     Assert-C1667 ($console.Contains('fake launch done')) 'launch child output goes to its own commission-console.log' $console
-    $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState })
+    $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState }) -Script $copiedObserver -CheckoutArguments $observerCheckout
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.supervisor -ceq 'absent' -and $o.Json.commissionExit -ceq '7') `
         'observe reads the real supervisor identity and commission-exit of the finished run' $o.Text
     $child = $null
