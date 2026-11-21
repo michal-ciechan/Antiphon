@@ -140,18 +140,25 @@ public sealed class C1722GitTimeoutBudgetTests
             typeof(C1677RetentionNativeProcessTests),
         ];
         var pure = PureMethods();
-        var actual = classes.SelectMany(type => type.GetMethods()
+        var expected = classes.SelectMany(type => type.GetMethods()
                 .Where(method => method.IsDefined(typeof(TestAttribute)))
                 .Select(method => type.Name + "." + method.Name))
-            .Except(pure, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            .Except(pure, StringComparer.Ordinal).ToArray();
         var recorded = typeof(C1722GitTimeoutBudgetTests)
             .GetMethod(nameof(Git_budget_covers_measured_method))!
             .GetCustomAttributes<ArgumentsAttribute>()
-            .Select(row => ((Type)row.Values[0]!).Name + "." + row.Values[1])
+            .Select(row => ((Type)row.Values[0]!).Name + "." + row.Values[1]).ToArray();
+
+        var missing = expected.Except(recorded, StringComparer.Ordinal);
+        var extra = recorded.Except(expected, StringComparer.Ordinal);
+        var duplicates = recorded.GroupBy(name => name, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1).Select(group => group.Key);
+        var discrepancies = missing.Select(name => "Missing budget row for " + name)
+            .Concat(extra.Select(name => "Unexpected budget row for " + name))
+            .Concat(duplicates.Select(name => "Duplicate budget rows for " + name))
             .Order(StringComparer.Ordinal).ToArray();
 
-        recorded.ShouldBe(actual, "every Git-spawning method needs recorded measurements");
-        recorded.Distinct(StringComparer.Ordinal).Count().ShouldBe(recorded.Length);
+        discrepancies.ShouldBeEmpty("every Git-spawning method needs exactly one recorded measurement");
     }
 
     [Test]
