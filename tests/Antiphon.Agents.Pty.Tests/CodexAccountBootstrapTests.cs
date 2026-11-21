@@ -346,6 +346,89 @@ public class CodexAccountBootstrapTests
         CodexPointerComposerEvidence.MatchingPrefixLength(shortcutsOnly, Pointer0170).ShouldBe(0);
     }
 
+    // Measured with-text last row from server2 sessions dd111a14 (Sol) and 2aa3f72e
+    // (Astra) at 2026-11-21T06:07:31Z. The note is
+    // docs/investigations/2026-11-21-codex-0170-delivery-verification-failed.md at
+    // 243f9924bc7333a4f7fc07b5eae4bf1ddfb72101. The last non-empty row is 94 spaces
+    // then the warning chip (119 columns). The model footer is the row above it.
+    // The pointer is a › row plus one indented wrap row. There is no shortcuts row.
+    private static readonly string WarningChipOnlyRow =
+        new string(' ', 94) + "⚠ 2 warnings · f2 to view";
+
+    private const string SolChipHead =
+        "[antiphon-task:7c3daf8a] role=Custom tier=High workspace=Worktree rc30 ladder canary 2 [antiphon-task:7c3daf8a] YOUR";
+
+    private const string SolChipWrap =
+        "  BRIEF IS NOT IN THIS MESSAGE. inbox/1443a3c0-2224-4057-8838-2bb718642247.md";
+
+    private const string AstraChipHead =
+        "[antiphon-task:6d5b2869] role=Custom tier=High workspace=Worktree rc30 astra canary 2 [antiphon-task:6d5b2869] YOUR";
+
+    private const string AstraChipWrap =
+        "  BRIEF IS NOT IN THIS MESSAGE. inbox/e7d1d779-9041-4578-9540-a7ef92c16765.md";
+
+    private static string MeasuredChipComposer(string footer, string head, string wrap) =>
+        "  >_ OpenAI Codex (v0.170.0)\n"
+        + "› " + head + "\n"
+        + wrap + "\n"
+        + "\n"
+        + "  " + footer + "\n"
+        + WarningChipOnlyRow + "\n";
+
+    private static string ChipPointer(string head, string wrap) => head + " " + wrap.TrimStart();
+
+    [Test]
+    public void Codex_0170_typed_pointer_with_warning_chip_row_is_complete()
+    {
+        WarningChipOnlyRow.Length.ShouldBe(119);
+        WarningChipOnlyRow.Trim().ShouldBe("⚠ 2 warnings · f2 to view");
+        SolChipWrap.StartsWith("  ", StringComparison.Ordinal).ShouldBeTrue();
+        AstraChipWrap.StartsWith("  ", StringComparison.Ordinal).ShouldBeTrue();
+
+        var solPointer = ChipPointer(SolChipHead, SolChipWrap);
+        var sol = MeasuredChipComposer(
+            "GPT-6.2-Sol high · /work/worktrees/ws-03-d3", SolChipHead, SolChipWrap);
+        sol.ShouldContain("› " + SolChipHead);
+        sol.ShouldNotContain("for agents");
+        sol.ShouldNotContain("for shortcuts");
+        sol.TrimEnd().EndsWith("f2 to view", StringComparison.Ordinal).ShouldBeTrue();
+        CodexPointerComposerEvidence.MatchingPrefixLength(sol, solPointer)
+            .ShouldBe(Compact(solPointer), "measured 0.170 Sol grid: chip-only last row, pointer in the composer");
+        CodexPointerComposerEvidence.IsComplete(sol, solPointer)
+            .ShouldBeTrue("measured 0.170 Sol grid: chip-only last row, pointer in the composer");
+
+        var astraPointer = ChipPointer(AstraChipHead, AstraChipWrap);
+        var astra = MeasuredChipComposer(
+            "GPT-6.2-Astra high · /work/worktrees/ws-02-d3", AstraChipHead, AstraChipWrap);
+        astra.ShouldContain("GPT-6.2-Astra high · /work/worktrees/ws-02-d3");
+        astra.ShouldNotContain("for shortcuts");
+        CodexPointerComposerEvidence.MatchingPrefixLength(astra, astraPointer)
+            .ShouldBe(Compact(astraPointer), "measured 0.170 Astra grid: chip-only last row, pointer in the composer");
+        CodexPointerComposerEvidence.IsComplete(astra, astraPointer)
+            .ShouldBeTrue("measured 0.170 Astra grid: chip-only last row, pointer in the composer");
+    }
+
+    [Test]
+    public void Codex_0170_warning_chip_row_without_composer_text_is_not_complete()
+    {
+        const string pointer = "[antiphon-task:7c3daf8a] role=Custom YOUR BRIEF";
+        var emptyComposer = MeasuredChipComposer(
+            "GPT-6.2-Sol high · /work/worktrees/ws-03-d3", "", "");
+        emptyComposer.ShouldContain("›");
+        emptyComposer.ShouldNotContain(pointer);
+        emptyComposer.TrimEnd().EndsWith("f2 to view", StringComparison.Ordinal).ShouldBeTrue();
+        CodexPointerComposerEvidence.IsComplete(emptyComposer, pointer)
+            .ShouldBeFalse("chip-only last row with no composer text");
+        CodexPointerComposerEvidence.MatchingPrefixLength(emptyComposer, pointer).ShouldBe(0);
+
+        var chipOnly = WarningChipOnlyRow;
+        chipOnly.ShouldNotContain("›");
+        chipOnly.ShouldNotContain("GPT-");
+        CodexPointerComposerEvidence.IsComplete(chipOnly, pointer)
+            .ShouldBeFalse("chip row alone");
+        CodexPointerComposerEvidence.MatchingPrefixLength(chipOnly, pointer).ShouldBe(0);
+    }
+
     private static void IdlePointer(string screen)
     {
         var hint = CodexStartupScreen.HintAskAnything;
