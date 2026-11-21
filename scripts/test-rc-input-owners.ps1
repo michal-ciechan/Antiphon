@@ -49,6 +49,14 @@ function Test-RioPresentOwned($suite,[string]$path) {
     $reasons=@($record[0].reason.Split(';'))
     return ($reasons -cnotcontains 'unmatched-path-fallback') -and ($reasons -cnotcontains 'unresolved-conservative-all-inputs')
 }
+function Get-RioOwnershipStatus($suites,[string[]]$paths) {
+    foreach ($suite in $suites) {
+        foreach ($path in $paths) {
+            if (Test-RioPresentOwned $suite $path) { return 'selected' }
+        }
+    }
+    return 'missed'
+}
 function UnownedRows($s,[string]$path) {
     # The comma keeps a one-row result an array. A bare return unwraps it,
     # and an ordered dictionary's Count is its key count.
@@ -110,18 +118,34 @@ if ($Case -ceq 'HistoricalSelectionSoundness') {
     foreach ($item in $corpus.cases) {
         $suites=@($inventory.suites | Where-Object project -CEQ $item.suiteProject)
         Note ($suites.Count -gt 0) "$($item.id): missing suite for $($item.suiteProject)"
-        $selected=$false
-        foreach ($suite in $suites) {
-            foreach ($path in $item.changedPaths) {
-                if (Test-RioPresentOwned $suite $path) { $selected=$true; break }
-            }
-            if ($selected) { break }
-        }
-        $status=if ($selected) { 'selected' } else { 'missed' }
+        $status=Get-RioOwnershipStatus $suites $item.changedPaths
         Note ($status -ceq $item.currentMap) "$($item.id): expected $($item.currentMap), got $status"
     }
     Assert-C487 ($errors.Count -eq 0) ("RIO $Case.contract") ($errors -join '; ')
-    Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
+
+    $pty=@($inventory.suites | Where-Object project -CEQ 'tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj')
+    # The inventory census names tracked paths with no owner. Use a current
+    # census entry so the witness remains unowned when ownership rules evolve.
+    $unownedPath=if ($inventory.unowned.Count -gt 0) { $inventory.unowned[0].path }
+    $status=if ($unownedPath) { Get-RioOwnershipStatus $pty @($unownedPath) } else { 'no unowned path' }
+    Assert-C487 ($pty.Count -eq 1 -and $status -ceq 'missed') "RIO $Case.unowned" "Pty suites=$($pty.Count), expected missed for '$unownedPath', got $status"
+
+    # Check each Composer path independently; siblings can still select the suite.
+    $composerPaths=@(
+        'src/Antiphon.Agents.Pty/ComposerDeliveryEvidence.cs'
+        'src/Antiphon.Agents.Pty/ComposerInputProbe.cs'
+        'src/Antiphon.FakeClaude/Program.cs'
+        'tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs'
+        'tests/Antiphon.Agents.Pty.Tests/ComposerInputProbeTests.cs'
+        'tests/Antiphon.Agents.Pty.Tests/FakeClaudeContractTests.cs'
+    )
+    $missing=@(foreach ($path in $composerPaths) {
+        if (-not (Test-RioPresentOwned $pty[0] $path)) { $path }
+    })
+    Assert-C487 ($pty.Count -eq 1 -and $missing.Count -eq 0) "RIO $Case.composer-inputs" (
+        "Pty suites=$($pty.Count), missing present owned inputs: " + ($missing -join ', '))
+
+    Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 3
 }
 
 [void][IO.Directory]::CreateDirectory($root)
