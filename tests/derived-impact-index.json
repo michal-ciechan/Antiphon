@@ -25672,7 +25672,8 @@
         "HostJqPrerequisiteScriptTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
-        "ScriptModelSpawnLaneTests"
+        "ScriptModelSpawnLaneTests",
+        "VolumeRetirementContentTests"
       ]
     },
     {
