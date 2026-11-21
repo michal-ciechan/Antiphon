@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Antiphon.Tests.Scripts;
 using Shouldly;
 using TUnit.Core;
 
@@ -11,6 +12,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// Only a build whose binary is deployed and compared to a SHA passes -p:SourceRevisionId.
 /// </summary>
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class SourceRevisionStampContractTests
 {
     private const string ProbeSha = "0123456789abcdef0123456789abcdef01234567";
@@ -40,6 +42,9 @@ public sealed class SourceRevisionStampContractTests
     [Arguments("dev-aspire.ps1", "-Label apphost-build -- dotnet build -p:SourceRevisionId=$sourceRevision")]
     [Arguments("scripts/run-daemon.ps1", "$buildArgs += \"-p:SourceRevisionId=$sourceRevision\"")]
     [Arguments("scripts/start-windows-phone-home-runner.ps1", "dotnet build $project -nologo -v:q \"-p:SourceRevisionId=$sourceRevision\"")]
+    [Arguments("dev-start.ps1", "dotnet run -p:SourceRevisionId=$sourceRevision")]
+    [Arguments("dev-upgrade.ps1", "dotnet build \"$root\\server\" \"-p:SourceRevisionId=$sourceRevision\"")]
+    [Arguments("restart-server.ps1", "dotnet build $ServerProject \"-p:SourceRevisionId=$sourceRevision\"")]
     public void Deployed_builds_stamp_head(string script, string stampedBuild)
     {
         var text = DockerStackDocuments.Read(script);
@@ -47,6 +52,24 @@ public sealed class SourceRevisionStampContractTests
         text.ShouldContain("match '^[0-9a-f]{40}$'");
         text.ShouldContain(stampedBuild);
     }
+
+    [Test]
+    public void PowerShell_census_rejects_stamp_decoys()
+    {
+        var result = Run("pwsh", "-NoProfile -File scripts/test-source-revision-stamp.ps1 -Case decoys",
+            DockerStackDocuments.RepoRoot);
+        result.Code.ShouldBe(0, result.Text);
+    }
+
+    [Test]
+    public Task Phone_home_no_build_warns_and_launches() =>
+        ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1", "C1744G3", "no-build-stamp", 2,
+            ["C1744G3 no-build-stamp.launch", "C1744G3 no-build-stamp.warning"],
+            ScriptHarnessOptions.Default with
+            {
+                AdditionalArguments = ["-RunnerAssembly", typeof(SessionRunner.RunnerBuildIdentity).Assembly.Location],
+            }, CancellationToken.None);
 
     [Test]
     public void Deploy_surfaces_stamp_every_product_build()

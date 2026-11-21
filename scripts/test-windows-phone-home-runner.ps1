@@ -6,7 +6,8 @@
 [CmdletBinding()]
 param(
     [string]$Case = '',
-    [string]$ResultsDirectory = ''
+    [string]$ResultsDirectory = '',
+    [string]$RunnerAssembly
 )
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
@@ -517,6 +518,40 @@ function Invoke-AutostartScriptDirect {
     Assert-C1744 (-not $result.Log.Contains('phone-home config refused')) 'autostart-script-direct.log' $result.Log
 }
 
+function Invoke-NoBuildStamp {
+    $stage = Join-Path $script:c1744Scratch 'checkout'
+    $scripts = Join-Path $stage 'scripts'
+    $lib = Join-Path $scripts 'lib'
+    $bin = Join-Path $stage 'src/Antiphon.SessionRunner/bin/Debug/net9.0'
+    $runnerRoot = Join-Path $script:c1744Scratch 'runner'
+    New-Item -ItemType Directory -Force -Path $lib, $bin, (Join-Path $runnerRoot 'secrets') | Out-Null
+    Copy-Item -LiteralPath $startPath -Destination $scripts
+    Copy-Item -LiteralPath $helperPath -Destination $lib
+    Copy-Item -LiteralPath $RunnerAssembly -Destination (Join-Path $bin 'Antiphon.SessionRunner.dll')
+    Set-Content -LiteralPath (Join-Path $runnerRoot 'secrets/phone-home') -Value 'offline fixture'
+    $exe = Join-Path $bin 'Antiphon.SessionRunner.exe'
+    if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
+        Copy-Item -LiteralPath (Join-Path ([Environment]::SystemDirectory) 'where.exe') -Destination $exe
+        $expectedExit = 1
+    } else {
+        [IO.File]::WriteAllText($exe, "#!/bin/sh`nexit 42`n")
+        & chmod +x $exe
+        if ($LASTEXITCODE -ne 0) { throw 'Could not create fixture launch executable.' }
+        $expectedExit = 42
+    }
+    $launcher = Join-Path $scripts (Split-Path -Leaf $startPath)
+    $wrapper = Join-Path $script:c1744Scratch 'launch.ps1'
+    @'
+param($Launcher, $Root)
+Set-Variable -Name IsWindows -Value $true -Scope Local -Force
+& $Launcher -RunnerId stamp-fixture -Root $Root -ServerOrigin 'http://127.0.0.1:1' -NoBuild
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $wrapper
+    $output = (& pwsh -NoProfile -File $wrapper $launcher $runnerRoot 2>&1 | Out-String)
+    Assert-C1744 ($LASTEXITCODE -eq $expectedExit) 'no-build-stamp.launch' $output
+    Assert-C1744 ($output -match 'WARNING:.*-NoBuild.*unknown') 'no-build-stamp.warning' $output
+}
+
 function Invoke-Compat {
     $paths = @($helperPath, $autostartPath, $startPath, $restartPath, $aspirePath)
     $asciiOk = $true
@@ -564,6 +599,7 @@ try {
             'autostart-script-direct' { Invoke-AutostartScriptDirect }
             'apphost-guard' { Invoke-ApphostGuard }
             'compat' { Invoke-Compat }
+            'no-build-stamp' { Invoke-NoBuildStamp }
             default { Assert-C1744 $false 'unknown-case' $Case }
         }
     } catch {
