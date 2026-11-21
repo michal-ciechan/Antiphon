@@ -6,6 +6,30 @@ namespace Antiphon.Tests.Application;
 public sealed partial class LandGraphEvaluationTests
 {
     [Test]
+    [Arguments("en", 0)]
+    [Arguments("fr", 1)]
+    [Arguments("$(Configuration)", 1)]
+    public async Task Satellite_resource_languages_admits_only_the_reviewed_literal(string languages, int expectedExit)
+    {
+        const string project = "App/App.csproj";
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            [project] = SdkProject($"<PropertyGroup><SatelliteResourceLanguages>{languages}</SatelliteResourceLanguages></PropertyGroup>"),
+        });
+        var manifest = repo.Full("precheck-manifest.txt");
+
+        var run = await RunPrecheckAsync(repo.Root, "-Update", manifest);
+
+        run.ExitCode.ShouldBe(expectedExit, run.Text);
+        File.Exists(manifest).ShouldBe(expectedExit == 0, run.Text);
+        if (expectedExit != 0)
+        {
+            run.Text.ShouldContain("definition file sets a pinned property to a value the audit does not allow");
+            run.Text.ShouldContain($"{project} SatelliteResourceLanguages");
+        }
+    }
+
+    [Test]
     [Arguments("_SourceItemsToCopyToOutputDirectory")]
     [Arguments("_SourceItemsToCopyToOutputDirectoryAlways")]
     [Arguments("_SourceItemsToCopyToOutputDirectoryIfDifferent")]
