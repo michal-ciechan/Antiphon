@@ -10,7 +10,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     [Test]
     public void intermediate_cache_is_shared_by_matching_builds_and_survives_bin_cleanup()
     {
-        var root = InitGitRepo();
+        var root = TempDir();
+        LibGit2Sharp.Repository.Init(root);
         const string project = "App/App.csproj";
         Directory.CreateDirectory(Path.Combine(root, "App"));
 
