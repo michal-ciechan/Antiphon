@@ -3692,6 +3692,7 @@
         "RollingVolumeRecycleScriptTests",
         "SeedSmokeTargetingPackContractTests",
         "VolumeRetirementApplyGateTests",
+        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
