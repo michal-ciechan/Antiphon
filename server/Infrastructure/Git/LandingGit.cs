@@ -904,7 +904,7 @@ public class LandingGit : ILandingGit
         {
             Directory.CreateDirectory(Path.GetDirectoryName(retired)!);
             if (Exists(retired)) WorktreeNoFollowDelete.Delete(retired);
-            Directory.Move(admin, retired);
+            RegistrationRenames.MoveDirectory(admin, retired);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -925,6 +925,8 @@ public class LandingGit : ILandingGit
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
         }
     }
+
+    internal WorktreeRenames RegistrationRenames { get; set; } = WorktreeRenames.System;
 
     public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
         => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,

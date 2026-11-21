@@ -851,6 +851,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Test]
     [Arguments("dotdot", "outside_root")]
     [Arguments("relative", "outside_root")]
+    [Arguments("absolute-outside", "outside_root")]
     [Arguments("symlink-leaf", "reparse_point")]
     [Arguments("symlink-ancestor", "outside_root")]
     [Arguments("symlink-inside-tree", "ignored_reparse_point")]
@@ -876,6 +877,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 break;
             case "relative":
                 a = await w.AddTaskAsync(id: id, shape: "none", path: "trees/card-task-" + id8);
+                break;
+            case "absolute-outside":
+                a = await w.AddTaskAsync(id: id, shape: "none", path: target);
                 break;
             case "symlink-leaf":
                 Directory.CreateSymbolicLink(leafPath, target);
@@ -1161,6 +1165,15 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
 
         foreach (var t in new[] { a, b })
         {
+            if (Directory.Exists(t.Path))
+            {
+                var rows = new List<WorktreeResidueRunCandidate>();
+                foreach (var run in runs) rows.AddRange(await w.RowsAsync(run));
+                var reasons = rows.Where(r => r.TaskId == t.Id)
+                    .Select(r => $"{r.RunId}: {r.Outcome}/{r.ReasonCode}");
+                Directory.Exists(t.Path).ShouldBeFalse(
+                    $"the tree is gone for {mode} task {t.Id8}; candidate rows: {string.Join(", ", reasons)}");
+            }
             await w.AssertRetiredAsync(t, origin);
             var attempts = await w.AttemptsAsync(t);
             attempts.Count.ShouldBe(1, "one attempt per task");
@@ -1168,6 +1181,108 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
         foreach (var run in runs)
             (await w.RowsAsync(run)).ShouldNotContain(r => r.ReasonCode == "release_conflict" || r.ReasonCode == "cleanup_command_slot_spent");
+    }
+
+    [Test]
+    [Arguments("transient")]
+    [Arguments("persistent")]
+    [Arguments("disabled")]
+    public async Task Registration_move_retries_only_while_authorized(string mode)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var task = await w.AddTaskAsync();
+        var origin = await w.OriginRefsAsync();
+        var tracked = Path.Combine(task.Path, task.Id8 + ".txt");
+        var attributes = File.GetAttributes(tracked);
+        File.SetAttributes(tracked, attributes | FileAttributes.ReadOnly);
+        var before = await w.SnapshotAsync(task.Path);
+        var aside = WorktreeSetAside.SetAsidePath(task.Path);
+        var moves = 0;
+        var pauses = new List<TimeSpan>();
+        w.Fixture.Git.RegistrationRenames = WorktreeRenames.System with
+        {
+            Windows = true,
+            MoveDirectory = (source, destination) =>
+            {
+                moves++;
+                Directory.Exists(aside).ShouldBeTrue("the checkout was moved aside before unregistering");
+                if (moves == 1 || mode == "persistent")
+                    throw new IOException("registration in use", unchecked((int)0x80070020));
+                Directory.Move(source, destination);
+            },
+            Pause = pause =>
+            {
+                pauses.Add(pause);
+                if (mode == "disabled") w.Settings.Value.Enabled = false;
+            },
+        };
+
+        try
+        {
+            var tick = await w.TickAsync();
+            var row = await w.RowAsync(tick.RunId, task);
+            if (mode == "transient")
+            {
+                row.ReasonCode.ShouldBe("removed");
+                moves.ShouldBe(2);
+                pauses.ShouldBe([WorktreeRenames.SharingPause]);
+                await w.AssertRetiredAsync(task, origin);
+            }
+            else
+            {
+                row.ReasonCode.ShouldBe(mode == "disabled"
+                    ? TaskWorktreeRetirementService.LegacyReleaseDisabled : "worktree_remove_failed");
+                moves.ShouldBe(mode == "disabled" ? 1 : WorktreeRenames.SharingAttempts);
+                pauses.Count.ShouldBe(mode == "disabled" ? 1 : WorktreeRenames.SharingAttempts - 1);
+                pauses.ShouldAllBe(pause => pause == WorktreeRenames.SharingPause);
+                (await w.SnapshotAsync(task.Path)).ShouldBe(before, "the checkout was restored intact");
+                (await w.RegisteredAsync(task.Path)).ShouldBeTrue();
+                (await w.BranchExistsAsync(task)).ShouldBeTrue();
+                (await w.OriginRefsAsync()).ShouldBe(origin);
+                File.GetAttributes(tracked).HasFlag(FileAttributes.ReadOnly).ShouldBeTrue();
+            }
+            Directory.Exists(aside).ShouldBeFalse();
+            (await w.AttemptsAsync(task)).ShouldHaveSingleItem().CommandIntentId.ShouldNotBeNull();
+        }
+        finally
+        {
+            if (File.Exists(tracked)) File.SetAttributes(tracked, attributes);
+        }
+    }
+
+    [Test]
+    public async Task Registration_move_leaves_a_late_directory_links_target_intact()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var task = await w.AddTaskAsync();
+        var origin = await w.OriginRefsAsync();
+        var obj = Path.Combine(task.Path, "obj");
+        Directory.CreateDirectory(obj);
+        await File.WriteAllTextAsync(Path.Combine(obj, "build.out"), "disposable");
+
+        var outside = Directory.CreateDirectory(Path.Combine(w.Fixture.Root, "outside")).FullName;
+        var marker = Path.Combine(outside, "marker.txt");
+        await File.WriteAllTextAsync(marker, "outside");
+        using var link = DirectoryLink.TryCreate(Path.Combine(w.Fixture.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var aside = WorktreeSetAside.SetAsidePath(task.Path);
+        var swapped = false;
+        w.Fixture.Git.BeforeUnregister = _ =>
+        {
+            var movedObj = Path.Combine(aside, "obj");
+            File.Delete(Path.Combine(movedObj, "build.out"));
+            Directory.Delete(movedObj);
+            link.MoveTo(movedObj);
+            swapped = true;
+            return Task.CompletedTask;
+        };
+
+        await w.TickAsync();
+
+        swapped.ShouldBeTrue();
+        await w.AssertRetiredAsync(task, origin);
+        Directory.Exists(aside).ShouldBeFalse();
+        (await File.ReadAllTextAsync(marker)).ShouldBe("outside");
     }
 
     /// <summary>V-23/G-50/G-51/G-53: a crash at each handoff recovers exactly once.</summary>
