@@ -143,12 +143,21 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
         var before = File.ReadAllBytes(outside);
         var mtime = File.GetLastWriteTimeUtc(outside);
-        var refusal = Should.Throw<Exception>(() => CheckpointIntermediateCache.TryOpen(root, source, source.Commit));
-        refusal.GetType().Name.ShouldBe("CheckpointCacheRefusal");
-        refusal.Message.ShouldBe("link-component");
-        File.ReadAllBytes(outside).ShouldBe(before);
-        File.GetLastWriteTimeUtc(outside).ShouldBe(mtime);
-        File.Exists(outside).ShouldBeTrue();
+        try
+        {
+            var refusal = Should.Throw<Exception>(() => CheckpointIntermediateCache.TryOpen(root, source, source.Commit));
+            refusal.GetType().Name.ShouldBe("CheckpointCacheRefusal");
+            refusal.Message.ShouldBe("link-component");
+            File.ReadAllBytes(outside).ShouldBe(before);
+            File.GetLastWriteTimeUtc(outside).ShouldBe(mtime);
+            File.Exists(outside).ShouldBeTrue();
+        }
+        finally
+        {
+            // The fixture inventory rejects a temp root that still contains a reparse.
+            try { File.Delete(props); }
+            catch (Exception deleteFailure) when (deleteFailure is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static SourceObservation Arrange(string root)
