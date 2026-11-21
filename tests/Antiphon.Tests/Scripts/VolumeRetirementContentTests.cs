@@ -14,6 +14,120 @@ namespace Antiphon.Tests.Scripts;
 public sealed class VolumeRetirementContentTests
 {
     internal const string NativeLinuxReason = "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly.";
+    private const string NestedScratchPath = "claude-1654/-work-worktrees-ws-01/finished-task/scratchpad/cp11-wt";
+
+    [Test]
+    [Arguments("audit-helper-missing", "missing-executable:audit-helper-missing")]
+    [Arguments("SENTINEL_PASSWORD", "redacted")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Nested_scratch_status_failure_reports_safe_stderr(string program, string expected)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await SeedNestedScratch(fixture);
+        var bin = Directory.CreateDirectory(Path.Combine(fixture.Root, "preview-bin")).FullName;
+        await FixtureExecutable.WriteAsync(Path.Combine(bin, "git"), $$"""
+            #!/bin/bash
+            case " $* " in
+                *"/scratchpad/cp11-wt status "*) ;;
+                *) export PATH="${PATH#*:}"; exec git "$@" ;;
+            esac
+            printf '%s\n' 'sh: 1: {{program}}: not found' >&2
+            printf '%s\n' 'fatal: https://fixture-user:SENTINEL_PASSWORD@fixture.invalid/' >&2
+            printf '%4096s\n' 'SENTINEL_TAIL' >&2
+            exit 127
+            """ + "\n");
+
+        var run = await VolumeRetirementFixture.Preview(fixture);
+        var diagnosis = Diagnosis(run.Output);
+        run.Exit.ShouldBe(2, run.Output);
+        diagnosis.ShouldBe($"RecycleGitAuditUnknown audit check=worktree-status status=127 repo=/tmp/{NestedScratchPath} stderr={expected}", run.Output);
+        run.Output.ShouldNotContain("SENTINEL_PASSWORD");
+        run.Output.ShouldNotContain("SENTINEL_TAIL");
+        fixture.Removed.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("fsmonitor")]
+    [Arguments("filter")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Nested_scratch_audit_does_not_execute_repository_commands(string vector)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var (repo, scratch) = await SeedNestedScratch(fixture);
+        var marker = Path.Combine(fixture.Root, "repository-program-ran");
+        var program = Path.Combine(fixture.Root, "repository-program");
+        await FixtureExecutable.WriteAsync(program, "#!/bin/bash\nprintf invoked >> " +
+            VolumeRetirementFixture.Quote(marker) + "\ncat\n");
+        var q = VolumeRetirementFixture.Quote;
+        var setupScript = vector == "fsmonitor"
+            ? $"git -C {q(repo)} config core.fsmonitor {q(program)}"
+            : $"""
+              git -C {q(repo)} config filter.witness.clean {q(program)}
+              git -C {q(repo)} config filter.witness.required true
+              mkdir -p {q(Path.Combine(repo, ".git", "info"))}
+              printf 'readme.txt filter=witness\n' > {q(Path.Combine(repo, ".git", "info", "attributes"))}
+              touch -m -t 200001010000 {q(Path.Combine(scratch, "readme.txt"))}
+              """;
+        var setup = await VolumeRetirementFixture.Bash("set -e\n" + setupScript);
+        setup.Exit.ShouldBe(0, setup.Output);
+
+        var run = await VolumeRetirementFixture.Preview(fixture);
+        File.Exists(marker).ShouldBeFalse("repository-configured " + vector + " ran in the audit; " + run.Output);
+        run.Exit.ShouldBe(0, run.Output);
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        fixture.Removed.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("published", "Ready")]
+    [Arguments("dirty", "RecycleWorktreeDirty")]
+    [Arguments("unpublished", "RecycleUnpublishedWork")]
+    [Arguments("reflog", "RecycleUnpublishedWork")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Nested_scratch_requires_clean_content_and_published_recovery_tips(string vector, string expected)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await SeedNestedScratch(fixture, vector);
+        var run = await VolumeRetirementFixture.Preview(fixture);
+        if (vector == "published")
+        {
+            run.Exit.ShouldBe(0, run.Output);
+            run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        }
+        else
+        {
+            run.Exit.ShouldBe(2, run.Output);
+            run.Output.ShouldContain("DIAGNOSIS=" + expected);
+            run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            if (vector == "dirty") run.Output.ShouldContain("repo=/tmp/" + NestedScratchPath);
+        }
+        fixture.Removed.ShouldBeEmpty();
+    }
+
+    private static async Task<(string Repo, string Scratch)> SeedNestedScratch(C1008HostFixture fixture, string vector = "published")
+    {
+        var (_, repo) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        var mount = VolumeRetirementFixture.TmpMount(fixture);
+        var scratch = Path.Combine(mount, NestedScratchPath);
+        var q = VolumeRetirementFixture.Quote;
+        var setup = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            git -C {{q(repo)}} worktree add -q --detach {{q(scratch)}}
+            case {{q(vector)}} in
+                dirty) printf 'dirty\n' >> {{q(Path.Combine(scratch, "readme.txt"))}} ;;
+                unpublished|reflog)
+                    git -C {{q(scratch)}} commit --allow-empty -qm 'unpublished scratch'
+                    if [ {{q(vector)}} = reflog ]; then git -C {{q(scratch)}} checkout -q --detach HEAD^; fi ;;
+            esac
+            printf '%s\n' {{q("/tmp/" + NestedScratchPath + "/.git")}} > {{q(Path.Combine(repo, ".git", "worktrees", "cp11-wt", "gitdir"))}}
+            printf '%s\n' 'gitdir: /work/repos/outer/.git/worktrees/cp11-wt' > {{q(Path.Combine(scratch, ".git"))}}
+            """);
+        setup.Exit.ShouldBe(0, setup.Output);
+        return (repo, scratch);
+    }
 
     [Test]
     [Arguments("ignored", "Ready")]
