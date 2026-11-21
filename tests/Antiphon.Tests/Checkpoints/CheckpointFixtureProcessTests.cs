@@ -14,6 +14,27 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
 {
+    [Test]
+    [Timeout(30_000)]
+    public void fixture_git_stdout_keeps_utf8_under_a_cp437_default(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        const string path = "dir/caf\u00e9.txt";
+        Directory.CreateDirectory(Path.Combine(root, "dir"));
+        File.WriteAllText(Path.Combine(root, path), "fixture");
+        CheckpointFixtureProcess.Git(root, "add", "-A");
+
+        var start = CheckpointFixtureProcess.CreateGitStartInfo(root, environment: null, "ls-files", "-z");
+        // Simulate the decoder .NET would pick for an unset encoding on a CP437 console.
+        var oemEncoding = CodePagesEncodingProvider.Instance.GetEncoding(437)
+            ?? throw new InvalidOperationException("CP437 is required for the console encoding witness");
+        start.StandardOutputEncoding ??= oemEncoding;
+        var output = CheckpointFixtureProcess.Run(start, 10_000, cancellationToken);
+        output.Exit.ShouldBe(0, output.Stderr);
+        output.Stdout.ShouldBe(path + "\0");
+    }
+
     [NativeLinuxOnly("FIFO config proof runs on Linux")]
     [Test]
     [Timeout(60_000)]
