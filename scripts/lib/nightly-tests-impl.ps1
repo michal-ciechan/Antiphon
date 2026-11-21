@@ -26,16 +26,26 @@ if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) 
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
 }
 # CARD-1698: toolchain versions, floors and warnings for summary.json preflight.toolchain.
-# The ToolchainVersions seam replaces the real git/dotnet probes in fixtures. Never throws.
+# The compiled twin (Antiphon.Nightly/ToolchainFloor.cs) checks; its rows keep the field names
+# toolchain-floor.ps1 wrote. The ToolchainVersions seam replaces the real git/dotnet probes in
+# fixtures. Never throws.
 function Get-NightlyToolchainPreflight {
     param([string]$RepoRoot)
     $source = $null
-    if ($script:NightlySeams -and $script:NightlySeams.ToolchainVersions) { $source = $script:NightlySeams.ToolchainVersions }
+    if ($script:NightlySeams -and $script:NightlySeams.ToolchainVersions) {
+        $seam = $script:NightlySeams.ToolchainVersions
+        $source = [Func[string, string]]({ param([string]$Tool) [string](& $seam $Tool) }.GetNewClosure())
+    }
     try {
-        . (Join-Path $PSScriptRoot 'toolchain-floor.ps1')
-        $report = Get-ToolchainFloorReport -RepoRoot $RepoRoot -VersionSource $source
-        foreach ($w in @($report.warnings)) { Write-Host $w.message }
-        return [ordered]@{ tools = @($report.tools); warnings = @($report.warnings) }
+        $report = [Antiphon.Nightly.ToolchainFloor]::Report($RepoRoot, $source)
+        $tools = @(foreach ($t in $report.Tools) {
+                [pscustomobject][ordered]@{ tool = $t.Tool; found = $t.Found; floor = $t.Floor; source = $t.Source; enforced = [bool]$t.Enforced; status = $t.Status }
+            })
+        $warnings = @(foreach ($w in $report.Warnings) {
+                [pscustomobject][ordered]@{ tool = $w.Tool; found = $w.Found; floor = $w.Floor; impact = $w.Impact; fix = $w.Fix; reason = $w.Reason; message = $w.Message }
+            })
+        foreach ($w in $warnings) { Write-Host $w.message }
+        return [ordered]@{ tools = $tools; warnings = $warnings }
     } catch {
         $message = ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message)
         Write-Host $message
@@ -1908,29 +1918,32 @@ function Invoke-NightlyExactRoster {
         if ($Environment) { foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] } }
         . (Join-Path $PSScriptRoot 'build-driver-environment.ps1')
         Set-AntiphonBuildDriverEnvironment -StartInfo $start
+        # CARD-1313 timing journal (antiphon-test-timing-v1) through the compiled twin
+        # (Antiphon.Nightly/TestTimings.cs); test-timings.ps1 stays for run-checkpoint. Persistence
+        # failure is not a test result.
         $timingRoot = $env:ANTIPHON_TEST_TIMING_ROOT
         if ($timingRoot) {
             try {
-                . (Join-Path $PSScriptRoot 'test-timings.ps1')
                 $stamp = [DateTimeOffset]::UtcNow.ToString('o')
-                Write-TestTimingEvent -Root $timingRoot -Event ([ordered]@{
+                $timingEvent = [ordered]@{
                     schemaVersion = 'antiphon-test-timing-v1'; eventId = ('nightly-start-' + $index); eventKind = 'run-started'
                     runId = 'nightly'; attempt = 1; producer = 'nightly'; setKind = 'chunk'; setId = [string]$chunk.Filter
                     outcome = 'started'; startedAt = $stamp; timingPersistence = 'complete'
-                })
+                }
+                [Antiphon.Nightly.TestTimings]::WriteEvent($timingRoot, $timingEvent)
             } catch { }
         }
         $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 600000, $false)
         if ($timingRoot) {
             try {
-                . (Join-Path $PSScriptRoot 'test-timings.ps1')
                 $stamp = [DateTimeOffset]::UtcNow.ToString('o')
-                Write-TestTimingEvent -Root $timingRoot -Event ([ordered]@{
+                $timingEvent = [ordered]@{
                     schemaVersion = 'antiphon-test-timing-v1'; eventId = ('nightly-done-' + $index); eventKind = 'set-completed'
                     runId = 'nightly'; attempt = 1; producer = 'nightly'; setKind = 'chunk'; setId = [string]$chunk.Filter
                     outcome = $(if ($run.Exit -eq 0) { 'passed' } else { 'failed' }); exitCode = $run.Exit
                     startedAt = $stamp; endedAt = $stamp; category = 'unavailable'; timingPersistence = 'complete'
-                })
+                }
+                [Antiphon.Nightly.TestTimings]::WriteEvent($timingRoot, $timingEvent)
             } catch { }
         }
         [IO.File]::WriteAllText((Join-Path $dir 'console.log'), $run.Stdout + $run.Stderr)

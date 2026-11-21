@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 341,
+      "classes": 343,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 13,
+      "classes": 15,
       "reason": "allowlist"
     },
     {
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 136,
+      "classes": 138,
       "reason": "cap",
-      "owed": 111,
+      "owed": 113,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -24638,13 +24638,21 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "NightlyHostTests",
-        "NightlyTestHelpersTests"
+        "NightlyTestHelpersTests",
+        "TestTimingsTwinTests",
+        "ToolchainFloorTwinTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
         "NightlyTestHelpersTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/ToolchainFloorTwinTests.cs",
+      "classes": [
+        "TestTimingsTwinTests"
       ]
     },
     {

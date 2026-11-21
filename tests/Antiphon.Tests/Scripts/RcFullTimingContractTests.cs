@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -63,28 +64,97 @@ public sealed class RcFullTimingContractTests
         SuiteOf(observed, "e2e-case").ShouldBe("e2e");
     }
 
+    // W2-nightly S03: the host-stats library is the compiled QualificationHostStats (still not wired), called in-process.
     [Test]
     [Timeout(60_000)]
-    public async Task HostSamplesPreserveUnknownAndStop(CancellationToken cancellationToken)
+    public Task HostSamplesPreserveUnknownAndStop(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(HostScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("sampleCount").GetInt32().ShouldBe(2);
-        observed.GetProperty("firstCpu").ValueKind.ShouldBe(JsonValueKind.Null);
-        observed.GetProperty("secondCpu").GetDouble().ShouldBe(5);
-        observed.GetProperty("unavailableMemory").ValueKind.ShouldBe(JsonValueKind.Null);
-        observed.GetProperty("readsAfterStop").GetInt32().ShouldBe(0);
-        Matrix(observed, "desktop").ShouldBe("incompatible-runtime");
-        Matrix(observed, "net8").ShouldBe("incompatible-runtime");
-        Matrix(observed, "net9").ShouldBe("compatible");
-        observed.GetProperty("desktopLoaderCalled").GetBoolean().ShouldBeFalse();
-        observed.GetProperty("net8LoaderCalled").GetBoolean().ShouldBeFalse();
-        observed.GetProperty("desktopAdmission").GetBoolean().ShouldBeFalse();
-        observed.GetProperty("net8Admission").GetBoolean().ShouldBeFalse();
-        observed.GetProperty("desktopDiagnosticComplete").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("loaderWrapped").GetBoolean().ShouldBeTrue("loader fault escaped");
-        observed.GetProperty("productionUnwired").GetBoolean().ShouldBeTrue("production still loads the host-stats probe");
+        var stopped = false;
+        var reads = 0;
+        var readsAfterStop = 0;
+        QualificationHostSample Probe()
+        {
+            if (stopped) { readsAfterStop++; return null!; }
+            reads++;
+            return reads == 1
+                ? new QualificationHostSample("2026-10-29T00:00:00.0000000Z", null, 4, 10, null, null)
+                : new QualificationHostSample("2026-10-29T00:00:30.0000000Z", 5, 4, null, null, null);
+        }
+        var sampled = QualificationHostStats.Sample(Probe, 2, () => stopped = true);
+        sampled.Samples.Count.ShouldBe(2);
+        sampled.Samples[0].CpuPercent.ShouldBeNull();
+        sampled.Samples[1].CpuPercent.ShouldBe(5);
+        sampled.Samples[1].MemoryAvailableBytes.ShouldBeNull();
+        readsAfterStop.ShouldBe(0);
+
+        (string Decision, bool LoaderCalled, bool Admission, bool Diagnostic) Matrix(string edition, string framework)
+        {
+            var called = false;
+            var gate = QualificationHostStats.TestRuntime(edition, framework, () => { called = true; return "loaded"; });
+            return (gate.Decision, called, gate.MeasurementAdmission, gate.DiagnosticComplete);
+        }
+        var desktop = Matrix("Desktop", ".NET Framework 4.8.1");
+        var net8 = Matrix("Core", ".NET 8.0.11");
+        var net9 = Matrix("Core", ".NET 9.0.8");
+        desktop.Decision.ShouldBe("incompatible-runtime");
+        net8.Decision.ShouldBe("incompatible-runtime");
+        net9.Decision.ShouldBe("compatible");
+        desktop.LoaderCalled.ShouldBeFalse();
+        net8.LoaderCalled.ShouldBeFalse();
+        desktop.Admission.ShouldBeFalse();
+        net8.Admission.ShouldBeFalse();
+        desktop.Diagnostic.ShouldBeTrue();
+
+        var work = FreshRoot();
+        QualificationHostStatsProvider? blown = null;
+        Should.NotThrow(() => blown = QualificationHostStats.NewProvider(Path.Combine(work, "probe.dll"),
+            () => throw new InvalidOperationException("loader-fault"), "Core", ".NET 9.0.8"), "loader fault escaped");
+        (blown!.LoadReason == "loader-failed" && !blown.MeasurementAdmission).ShouldBeTrue("loader fault escaped");
+
+        // No production file calls the compiled library, and the nightly executor loads no probe.
+        var repo = C1514Support.RepoRoot();
+        var own = Path.GetFullPath(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "QualificationHostStats.cs"));
+        var callers = ProductionSources(repo)
+            .Where(path => !string.Equals(Path.GetFullPath(path), own, StringComparison.OrdinalIgnoreCase))
+            .Where(path => File.ReadAllText(path).Contains("QualificationHostStats", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(repo, path))
+            .ToArray();
+        callers.ShouldBeEmpty("production still loads the host-stats probe");
+        var implText = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "nightly-tests-impl.ps1"));
+        var productionUnwired = !implText.Contains("function Start-NightlyHostSampling", StringComparison.OrdinalIgnoreCase)
+            && !implText.Contains("qualification-host-stats", StringComparison.Ordinal)
+            && !implText.Contains("Antiphon.SessionRunner.dll", StringComparison.Ordinal)
+            && !implText.Contains("Add-Type", StringComparison.Ordinal);
+        productionUnwired.ShouldBeTrue("production still loads the host-stats probe");
+        Directory.Delete(work, recursive: true);
+        return Task.CompletedTask;
+    }
+
+    // Production sources that could call a type: the scripts (not their fixtures or test drivers), the server, src
+    // and tools, without build output; and the repository root's scripts.
+    private static IEnumerable<string> ProductionSources(string repo)
+    {
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".cs", ".ps1", ".psm1", ".cmd", ".sh" };
+        var skipped = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", ".git", "fixtures" };
+        foreach (var file in Directory.EnumerateFiles(repo, "*.ps1"))
+            yield return file;
+        var pending = new Stack<string>(new[] { "scripts", "server", "src", "tools" }.Select(top => Path.Combine(repo, top)).Where(Directory.Exists));
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                var name = Path.GetFileName(child);
+                if (skipped.Contains(name) || name.StartsWith("bin-", StringComparison.OrdinalIgnoreCase)) continue;
+                pending.Push(child);
+            }
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                if (!extensions.Contains(Path.GetExtension(file))) continue;
+                if (Path.GetFileName(file).StartsWith("test-", StringComparison.OrdinalIgnoreCase)) continue;
+                yield return file;
+            }
+        }
     }
 
     [Test]
@@ -222,9 +292,6 @@ public sealed class RcFullTimingContractTests
 
         throw new InvalidOperationException("missing summary row " + testId);
     }
-
-    private static string Matrix(JsonElement observed, string name) =>
-        observed.GetProperty("matrix").GetProperty(name).GetString() ?? "";
 
     private static List<string> Suites(JsonElement observed, string name)
     {
@@ -542,101 +609,6 @@ public sealed class RcFullTimingContractTests
             antiphonJoined = [bool]$antiphonJoined
             e2eJoined = [bool]$e2eJoined
             rows = @($rows.ToArray())
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
-        """;
-
-    private const string HostScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        $path = Join-Path $lib 'qualification-host-stats.ps1'
-        $sampleCount = 0
-        $firstCpu = $null
-        $secondCpu = $null
-        $unavailable = 0
-        $readsAfter = 99
-        $matrix = [ordered]@{ desktop = 'missing'; net8 = 'missing'; net9 = 'missing' }
-        $desktopLoader = $true
-        $net8Loader = $true
-        $desktopAdmission = $true
-        $net8Admission = $true
-        $desktopDiagnostic = $false
-        $loaderWrapped = $false
-        $productionUnwired = $false
-        if (Test-Path -LiteralPath $path) {
-            . $path
-            $script:RcHostStopped = $false
-            $script:RcHostReads = 0
-            $script:RcHostReadsAfter = 0
-            $probe = {
-                if ($script:RcHostStopped) { $script:RcHostReadsAfter++; return $null }
-                $script:RcHostReads++
-                if ($script:RcHostReads -eq 1) {
-                    return [pscustomobject]@{ at = '2026-10-29T00:00:00.0000000Z'; cpuPercent = $null; cores = 4; memoryAvailableBytes = 10; memoryCommittedBytes = $null; diskQueue = $null }
-                }
-                return [pscustomobject]@{ at = '2026-10-29T00:00:30.0000000Z'; cpuPercent = 5; cores = 4; memoryAvailableBytes = $null; memoryCommittedBytes = $null; diskQueue = $null }
-            }
-            $sampled = Invoke-QualificationHostSampler -Probe $probe -SampleCount 2 -OwnerCompleted { $script:RcHostStopped = $true }
-            $sampleCount = @($sampled.samples).Count
-            if ($sampleCount -ge 1) { $firstCpu = $sampled.samples[0].cpuPercent }
-            if ($sampleCount -ge 2) {
-                $secondCpu = $sampled.samples[1].cpuPercent
-                $unavailable = $sampled.samples[1].memoryAvailableBytes
-            }
-            $readsAfter = [int]$script:RcHostReadsAfter
-            function Invoke-RcMatrix([string]$edition, [string]$framework) {
-                $script:RcMatrixCalled = $false
-                $result = Test-QualificationHostRuntime -Edition $edition -FrameworkDescription $framework -Loader { $script:RcMatrixCalled = $true; return 'loaded' }
-                return [pscustomobject]@{ decision = [string]$result.decision; loaderCalled = [bool]$script:RcMatrixCalled; admission = [bool]$result.measurementAdmission; diagnostic = [bool]$result.diagnosticComplete }
-            }
-            $desktop = Invoke-RcMatrix 'Desktop' '.NET Framework 4.8.1'
-            $net8 = Invoke-RcMatrix 'Core' '.NET 8.0.11'
-            $net9 = Invoke-RcMatrix 'Core' '.NET 9.0.8'
-            $matrix.desktop = $desktop.decision
-            $matrix.net8 = $net8.decision
-            $matrix.net9 = $net9.decision
-            $desktopLoader = $desktop.loaderCalled
-            $net8Loader = $net8.loaderCalled
-            $desktopAdmission = $desktop.admission
-            $net8Admission = $net8.admission
-            $desktopDiagnostic = $desktop.diagnostic
-            try {
-                $blown = New-QualificationHostStatsProvider -AssemblyPath (Join-Path $work 'probe.dll') -Edition 'Core' -FrameworkDescription '.NET 9.0.8' -Loader { throw 'loader-fault' }
-                if ([string]$blown.loadReason -eq 'loader-failed' -and -not [bool]$blown.measurementAdmission) { $loaderWrapped = $true }
-            } catch { $loaderWrapped = $false }
-            . (Join-Path $lib 'nightly-common.ps1')
-            . (Join-Path $lib 'test-phase-evidence.ps1')
-            . (Join-Path $lib 'nightly-tests-impl.ps1')
-            $implText = [IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
-            $productionUnwired = -not (Get-Command Start-NightlyHostSampling -ErrorAction SilentlyContinue)
-            if ($implText.Contains('qualification-host-stats.ps1')) { $productionUnwired = $false }
-            if ($implText.Contains('Antiphon.SessionRunner.dll')) { $productionUnwired = $false }
-            if ($implText.Contains('Add-Type')) { $productionUnwired = $false }
-        }
-        $problems = New-Object System.Collections.Generic.List[string]
-        if (-not $loaderWrapped) { $problems.Add('loader-fault-escaped') }
-        if (-not $productionUnwired) { $problems.Add('production-still-wired') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            sampleCount = [int]$sampleCount
-            firstCpu = $firstCpu
-            secondCpu = $secondCpu
-            unavailableMemory = $unavailable
-            readsAfterStop = [int]$readsAfter
-            matrix = $matrix
-            desktopLoaderCalled = [bool]$desktopLoader
-            net8LoaderCalled = [bool]$net8Loader
-            desktopAdmission = [bool]$desktopAdmission
-            net8Admission = [bool]$net8Admission
-            desktopDiagnosticComplete = [bool]$desktopDiagnostic
-            loaderWrapped = [bool]$loaderWrapped
-            productionUnwired = [bool]$productionUnwired
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
         """;

@@ -1509,10 +1509,11 @@ function Test-C1698_RunPrintsToolchainWarning {
     Assert-C487 -Cond $same -Name 'C1698 Run exit code unchanged by the warning' -Detail ('below=' + $below.Result.ExitCode + '/' + $below.Result.Phase + ' at=' + $at.Result.ExitCode + '/' + $at.Result.Phase)
 }
 
-# CARD-1698: a toolchain library that fails to load (a throw, or a file PowerShell cannot parse)
-# is the only failure that reaches the run core's wrapper. The run core dot-sources the library
-# from its own directory, so a child harness runs from a copied scripts tree whose library is
-# broken; the run keeps the at-floor exit code and phase and still hops to the tests.
+# CARD-1698, W2-nightly S03: the run core checks the floors with the compiled twin
+# (Antiphon.Nightly/ToolchainFloor.cs) and no longer loads toolchain-floor.ps1, which stays for
+# the restart chain. A child harness runs from a copied scripts tree whose library is broken (a
+# throw, or a file PowerShell cannot parse); the run prints no check-failed line, keeps the
+# at-floor exit code and phase and still hops to the tests.
 function Test-C1698_RunLibraryLoadFailure {
     $at = Invoke-C1698ToolchainRun -GitVersion '2.43.0'
     $repoRoot = Split-Path $here -Parent
@@ -1560,12 +1561,12 @@ function Test-C1698_RunLibraryLoadFailure {
             if ($hop -lt 0 -and $lines[$i] -match 'running .*nightly-tests\.ps1') { $hop = $i }
         }
         $ok = $null -ne $child -and $null -ne $at.Result -and [int]$child.exitCode -eq [int]$at.Result.ExitCode -and
-            [string]$child.phase -eq [string]$at.Result.Phase -and $w -ge 0 -and $hop -gt $w
+            [string]$child.phase -eq [string]$at.Result.Phase -and $w -lt 0 -and $hop -ge 0
         $detail = 'warning=' + $w + ' hop=' + $hop
         if ($child) { $detail += ' child=' + $child.exitCode + '/' + $child.phase }
         else { $detail += ' no child result: ' + $console }
         $detail += ' at=' + $at.Result.ExitCode + '/' + $at.Result.Phase
-        Assert-C487 -Cond $ok -Name ('C1698 Run survives a library that fails to load: ' + $b.Name) -Detail $detail
+        Assert-C487 -Cond $ok -Name ('C1698 Run does not load the toolchain library: ' + $b.Name) -Detail $detail
     }
 }
 

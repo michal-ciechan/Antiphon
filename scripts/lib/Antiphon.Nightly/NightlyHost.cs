@@ -284,32 +284,6 @@ namespace Antiphon.Nightly
         public NightlyProbeRow DiskFree() => new NightlyProbeRow { ExitCode = 0, FreeBytes = 50 * GiB, MinimumFreeBytes = 10 * GiB };
 
         /// <inheritdoc />
-        public string ToolVersion(string tool)
-        {
-            // Get-ToolchainFloorVersionText: git --version for git, dotnet --list-sdks for the SDK; stderr is dropped.
-            string[] command = tool == "git" ? new[] { "git", "--version" } : tool == "dotnet-sdk" ? new[] { "dotnet", "--list-sdks" } : null;
-            if (command == null) return "";
-            try
-            {
-                var start = new ProcessStartInfo(command[0])
-                {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                };
-                start.ArgumentList.Add(command[1]);
-                using var process = Process.Start(start);
-                if (process == null) return "";
-                var error = process.StandardError.ReadToEndAsync();
-                var text = process.StandardOutput.ReadToEnd();
-                process.WaitForExit();
-                error.GetAwaiter().GetResult();
-                return text;
-            }
-            catch (Exception e) when (e is System.ComponentModel.Win32Exception || e is InvalidOperationException || e is IOException)
-            {
-                return "";
-            }
-        }
+        public string ToolVersion(string tool) => ToolchainFloor.VersionText(tool);
     }
 }

@@ -152,13 +152,15 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Summary preflight block records the toolchain"
             ]);
 
+    /// <summary>W2-nightly S03: the run core checks with the compiled twin (ToolchainFloor.cs), so a broken
+    /// toolchain-floor.ps1 (kept for the restart chain) changes nothing in the run.</summary>
     [Test]
     public Task C1698_RunLibraryLoadFailure() =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1698",
             nameof(C1698_RunLibraryLoadFailure), 2,
             [
-                "C1698 Run survives a library that fails to load: throws",
-                "C1698 Run survives a library that fails to load: unparsable"
+                "C1698 Run does not load the toolchain library: throws",
+                "C1698 Run does not load the toolchain library: unparsable"
             ]);
 
     /// <summary>summary.json as a real Invoke-AntiphonNightlyTests run writes it to disk.</summary>
