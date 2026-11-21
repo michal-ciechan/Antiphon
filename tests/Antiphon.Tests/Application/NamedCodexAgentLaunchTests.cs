@@ -213,8 +213,8 @@ public class NamedCodexAgentLaunchTests
             ConfigureServices = services =>
             {
                 // A Codex-kind DEFAULT definition, which is what PeekProfileKindAsync reads when an
-                // agent has no TUI profile. cmd.exe stays the spawn-check target so nothing real is
-                // launched; the argv the chain composes is the whole subject.
+                // agent has no TUI profile. The test host satisfies the executable check on each
+                // platform. The registering adapter captures the composed argv.
                 services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
                     new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
                     {
@@ -224,7 +224,7 @@ public class NamedCodexAgentLaunchTests
                             ["fake"] = new AgentDefinition
                             {
                                 Kind = "Codex",
-                                Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                                Exe = Environment.ProcessPath ?? throw new InvalidOperationException("Test host path unavailable."),
                             },
                         },
                     }));
