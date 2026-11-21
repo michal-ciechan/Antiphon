@@ -5,7 +5,7 @@
 # HoldLift/HoldLiftRefused run the two deploy-temp server2-temp /drain/clear call
 # sites, also taken verbatim, against a fake runner HTTP layer (CARD-0948 hold lift).
 param(
-    [Parameter(Mandatory)][ValidateSet('Census', 'HostJq', 'HoldLift', 'HoldLiftRefused')][string]$Case,
+    [Parameter(Mandatory)][ValidateSet('Census', 'HostJq', 'HoldLift', 'HoldLiftRefused', 'AuditDiagnosis')][string]$Case,
     [Parameter(Mandatory)][string]$ResultsDirectory,
     [string]$Wrapper = ''
 )
@@ -41,7 +41,45 @@ function Describe-Output([object[]]$Items) {
     "count=$($Items.Count) types=$types"
 }
 
-if ($Case -ceq 'Census') {
+if ($Case -ceq 'AuditDiagnosis') {
+    . (Join-Path $root 'scripts/c590-real.ps1')
+    . ([scriptblock]::Create((Get-WrapperFunction 'Invoke-HostCase')))
+    $verifier = Join-Path $ResultsDirectory 'fake-verifier.ps1'
+    [IO.File]::WriteAllText($verifier, @'
+param([string]$Case, [string]$Manifest)
+$request = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
+$leaf = if ($env:W_LAYOUT -ceq 'exchange') { 'exchange-fixture' } else { $Case }
+$dir = Join-Path $request.evidenceRoot $leaf
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+@{ accepted = $false; diagnosis = $env:W_DIAGNOSIS } | ConvertTo-Json -Compress |
+    Set-Content -LiteralPath (Join-Path $dir 'c590-result.json')
+exit 2
+'@)
+    $env:C727_TEST_VERIFY_STUB = $verifier
+    $prefix = 'RecycleGitAuditUnknown audit check=worktree-status status=127 repo=/tmp/fixture stderr='
+    $failures = @()
+    foreach ($vector in @(
+        @{ Label='plus'; Value='missing-executable:helper++'; Safe=$true },
+        @{ Label='redacted'; Value='redacted'; Safe=$true },
+        @{ Label='free-text'; Value='password x'; Safe=$false },
+        @{ Label='credential'; Value='missing-executable:credential+helper'; Safe=$false }
+    )) {
+        $env:W_DIAGNOSIS = $prefix + $vector.Value
+        $actual = Test-C1008SafeAuditDiagnosis -Diagnosis $env:W_DIAGNOSIS
+        if ($actual -ne $vector.Safe) { $failures += "inventory/$($vector.Label)" }
+        foreach ($layout in @('case', 'exchange')) {
+            $env:W_LAYOUT = $layout
+            $evidenceRoot = Join-Path $ResultsDirectory ($layout + '-' + $vector.Label)
+            New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+            $actual = try { Invoke-HostCase -Case 'retire-temp-runner'; 'accepted' } catch { $_.Exception.Message }
+            $expected = 'HostCaseFailed retire-temp-runner exit=2'
+            if ($vector.Safe) { $expected += ' diagnosis=' + $env:W_DIAGNOSIS }
+            if ($actual -cne $expected) { $failures += "$layout/$($vector.Label)" }
+        }
+    }
+    if ($failures.Count -gt 0) { throw ('Audit diagnosis mismatches: ' + ($failures -join ', ')) }
+    Write-Output 'OUTPUT audit-diagnosis checks=12 passed=12'
+} elseif ($Case -ceq 'Census') {
     . (Join-Path $root 'scripts/c590-real.ps1')
     . (Join-Path $root 'scripts/c1609-read-packet.ps1')
     . ([scriptblock]::Create((Get-WrapperFunction 'Get-TempRetirementCensusRaw')))
