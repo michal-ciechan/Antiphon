@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -401,11 +402,14 @@ public class DispatchConcurrencyAdmissionTests
     [Timeout(180_000)]
     public async Task Concurrent_last_queue_slot_has_one_winner()
     {
-        await RaceLastSlotAsync("""{"mode":"SeparateQueues","maxParallel":4,"maxQueued":1}""", true, AgentTaskRole.Custom);
-        await RaceLastSlotAsync(
+        var ct = TestContext.Current!.Execution.CancellationToken;
+        await RaceLastSlotAsync("project queued cap",
+            """{"mode":"SeparateQueues","maxParallel":4,"maxQueued":1}""", true, AgentTaskRole.Custom, ct);
+        await RaceLastSlotAsync("role queued cap",
             """{"mode":"SeparateQueues","maxParallel":4,"maxQueued":4,"roles":{"Code":{"maxQueued":1}}}""",
-            true, AgentTaskRole.Code);
-        await RaceLastSlotAsync("""{"mode":"SeparateQueues","maxParallel":4,"maxQueued":1}""", false, AgentTaskRole.Plan);
+            true, AgentTaskRole.Code, ct);
+        await RaceLastSlotAsync("unscoped queued cap",
+            """{"mode":"SeparateQueues","maxParallel":4,"maxQueued":1}""", false, AgentTaskRole.Plan, ct);
     }
 
     [Test]
@@ -476,40 +480,137 @@ public class DispatchConcurrencyAdmissionTests
         open.Message.Contains(ConcurrencyLimitException.Coda, StringComparison.Ordinal).ShouldBeTrue("problem-capability");
     }
 
-    private static async Task RaceLastSlotAsync(string overrides, bool projectScope, AgentTaskRole role)
+    private static async Task RaceLastSlotAsync(
+        string scenario, string overrides, bool projectScope, AgentTaskRole role, CancellationToken testToken)
     {
-        await using var gate = await OpenAsync();
-        await InitAsync(gate.Shop);
-        await gate.Shop.PutGlobalAsync(1, overrides, "last slot");
-        Guid? project = projectScope ? gate.Shop.ProjectP : null;
-        var pause = new PauseMatchSaveInterceptor { Match = PauseMatchSaveInterceptor.AddedTask };
-        await using var left = gate.Shop.Db(pause);
-        await using var right = gate.Shop.Db(pause);
-        var goalA = Unique("a");
-        var goalB = Unique("b");
-        var runA = Service(gate.Shop, left).CreateAsync(Request(goalA, role, gate.Directory), Caller(gate.Directory, project), CancellationToken.None);
-        var started = await Task.WhenAny(pause.AtSave.Task, runA);
-        if (started == runA)
-            await runA;
-        pause.AtSave.Task.IsCompleted.ShouldBeTrue("one-create-winner");
-        var runB = Service(gate.Shop, right).CreateAsync(Request(goalB, role, gate.Directory), Caller(gate.Directory, project), CancellationToken.None);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(50));
+        var ct = deadline.Token;
+        var phase = "open isolated database and scratch repo";
+        // The scenario retains its fixture while canceled operations unwind.
+        var run = RunAsync();
         try
         {
-            await WaitForLockAsync(() => pause.Crossed, gate.Shop.ConnectionString, "create-B-crossed=false");
+            await run.WaitAsync(ct);
         }
-        finally
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            pause.Release.TrySetResult();
+            throw new TimeoutException($"Last queue slot ({scenario}): {Volatile.Read(ref phase)} did not complete.", ex);
         }
 
-        var outcomes = await Task.WhenAll(SettleAsync(runA), SettleAsync(runB));
-        outcomes.Count(item => item.Created is not null).ShouldBe(1, "one-create-winner");
-        outcomes.Count(item => item.Error is ConcurrencyLimitException).ShouldBe(1, "one-create-winner");
-        await using var verify = gate.Shop.Db();
-        var rows = await verify.AgentTasks.Where(t => t.Goal == goalA || t.Goal == goalB).ToListAsync();
-        rows.Count.ShouldBe(1, "one-create-winner");
-        (await verify.AgentTaskEvents.CountAsync(e => rows[0].Id == e.AgentTaskId && e.Type == AgentTaskEventType.Created))
-            .ShouldBe(1, "one-create-winner");
+        async Task RunAsync()
+        {
+            await using var gate = await OpenAsync();
+            var shop = gate.Shop;
+            phase = "initialize queue policy";
+            await using (var setup = shop.Db())
+            {
+                var settings = shop.Service(setup);
+                await settings.EnsureInitializedAsync(ct);
+                await settings.PutGlobalAsync(DispatchConcurrencyTestHost.Put(1, overrides, "last slot"), null, ct);
+            }
+
+            Guid? project = projectScope ? shop.ProjectP : null;
+            var pause = new PauseMatchSaveInterceptor { Match = PauseMatchSaveInterceptor.AddedTask };
+            await using var left = shop.Db(pause);
+            await using var right = shop.Db(pause);
+            phase = "open racer B connection";
+            await right.Database.OpenConnectionAsync(ct);
+            var goalA = Unique("a");
+            var goalB = Unique("b");
+            using var racers = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            phase = "racer A reaches its save pause";
+            var runA = Service(shop, left).CreateAsync(
+                Request(goalA, role, gate.Directory), Caller(gate.Directory, project), racers.Token);
+            Task<AgentTaskCreatedDto>? runB = null;
+            try
+            {
+                var started = await Task.WhenAny(pause.AtSave.Task, runA).WaitAsync(ct);
+                if (started == runA)
+                {
+                    var early = await SettleAsync(runA);
+                    throw new InvalidOperationException($"Last queue slot ({scenario}): racer A completed before its save pause.", early.Error);
+                }
+
+                phase = "racer B waits for racer A's create advisory lock";
+                var holder = ((NpgsqlConnection)left.Database.GetDbConnection()).ProcessID;
+                var waiter = ((NpgsqlConnection)right.Database.GetDbConnection()).ProcessID;
+                runB = Service(shop, right).CreateAsync(
+                    Request(goalB, role, gate.Directory), Caller(gate.Directory, project), racers.Token);
+                await AssertCreateLockWaitAsync(scenario, shop.ConnectionString, holder, waiter, runB, ct);
+                pause.Crossed.ShouldBeFalse($"create-B-crossed=false ({scenario})");
+                pause.Release.TrySetResult();
+
+                phase = "settle both racers after releasing racer A";
+                var outcomes = await Task.WhenAll(SettleAsync(runA), SettleAsync(runB)).WaitAsync(ct);
+                var failures = string.Join(", ", outcomes.Select(item => item.Error?.GetType().Name ?? "created"));
+                var verdict = $"one-create-winner ({scenario}): {failures}";
+                outcomes.Count(item => item.Created is not null).ShouldBe(1, verdict);
+                outcomes.Count(item => item.Error is ConcurrencyLimitException { Code: "concurrency_limit" }).ShouldBe(1, verdict);
+            }
+            finally
+            {
+                pause.Release.TrySetResult();
+                racers.Cancel();
+                // Return the contexts to the fixture only after their operations have unwound.
+                await SettleAsync(runA);
+                if (runB is not null)
+                    await SettleAsync(runB);
+            }
+
+            phase = "verify queued row and Created event";
+            await using var verify = shop.Db();
+            var rows = await verify.AgentTasks.Where(t => t.Goal == goalA || t.Goal == goalB).ToListAsync(ct);
+            rows.Count.ShouldBe(1, $"one-create-winner ({scenario})");
+            (await verify.AgentTaskEvents.CountAsync(
+                    e => rows[0].Id == e.AgentTaskId && e.Type == AgentTaskEventType.Created, ct))
+                .ShouldBe(1, $"one-create-winner ({scenario})");
+            phase = "dispose isolated fixture";
+        }
+    }
+
+    private static async Task AssertCreateLockWaitAsync(
+        string scenario, string connectionString, int holder, int waiter, Task<AgentTaskCreatedDto> runB, CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        var probeToken = deadline.Token;
+        try
+        {
+            // The observer must be able to connect while both racer connections are held.
+            var observer = new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false };
+            await using var connection = new NpgsqlConnection(observer.ConnectionString);
+            await connection.OpenAsync(probeToken);
+            await using var probe = new NpgsqlCommand(
+                """
+                SELECT locktype
+                FROM pg_locks
+                WHERE pid = @waiter AND NOT granted
+                  AND @holder = ANY(pg_blocking_pids(@waiter))
+                """, connection);
+            probe.Parameters.AddWithValue("holder", holder);
+            probe.Parameters.AddWithValue("waiter", waiter);
+            while (!runB.IsCompleted)
+            {
+                if (await probe.ExecuteScalarAsync(probeToken) is string lockType)
+                {
+                    lockType.ShouldBe("advisory", $"Last queue slot ({scenario}): racer B must wait for racer A's create advisory lock.");
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(25), probeToken);
+            }
+
+            var early = await SettleAsync(runB);
+            throw new InvalidOperationException(
+                $"Last queue slot ({scenario}): racer B completed before waiting for racer A's create advisory lock (create-B-crossed=false).", early.Error);
+        }
+        catch (OperationCanceledException ex) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Last queue slot ({scenario}): racer B's create advisory lock wait was not observed within the probe deadline.", ex);
+        }
     }
 
     private static async Task RaceCreateAgainstPutAsync(DispatchConcurrencyMode mode)
