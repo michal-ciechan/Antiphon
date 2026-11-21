@@ -7,11 +7,13 @@ Task `bc823630`, CARD-2040 through CARD-2042. Task base `ce0eb1c5fbccdf8b2918643
 - V-1 exercises the production deploy-time `c1609_temp_retirement_clearable` function and its retirement loader on Linux. The shell fixture uses a private `SERVER2_ROOT` and substitutes an absent volume census. Six receipt-less cases cover acceptance, matching live owner, Ready already published, close pending, symlinked lifecycle, and invalid operation directory name. The Ready and pending cases reach the shared exemption predicate.
 - V-2 exercises the PowerShell wrapper with fake `ssh`. Four unrecognized reasons must surface exactly `JournalUnknown`. Existing witnesses preserve `Daemon`, a named retained temp volume, empty stderr, punctuation rejection, and successful Close output.
 - V-3 reviews both documentation passages against `c1609_phase_begin`, `c1609_receiptless_preview_exempt`, and the owner start-ticks check.
+- V-4 covers the open CARD-2043 diagnostic advisories from Review `4f502d44`. The production inventory validator and `Invoke-HostCase` preserve the bounded diagnostic for a missing `helper++` or a redacted detail. The wrapper refuses free-text stderr and credential-shaped executable names for regular and exchange result files. The verifier is local and fake.
 - R-1 runs the two retirement fixture classes and the five deploy-order methods in `RemoteScriptContractTests`.
 - R-2 runs the nine-class guard union and the two Linux-only census/policy methods.
 - R-3 runs `DerivedImpactIndexTests` and verifies regeneration stability. If regeneration changes the index, commit the index last.
 - R-4 checks the full task evidence diff, the land verification graph, and a merge-tree against fetched `origin/master`.
 - R-5 recomputes and checks the live-lane input digest.
+- R-6 checks the committed OS-branch inventory. The diagnostic parsers are portable. The Linux fixture still drives the real shell clearable and Close transport functions.
 
 One isolated build per committed test group. Final reuses its build for each exact selection. No full assembly is needed. The invariant is that deployment refuses uncleared retirement state and Close surfaces only known reasons. Each affected test class is bounded below. Linux supplies `/proc` start ticks, file custody and a fake executable `ssh`; the same class remains covered by its existing Windows exclusion. The nightly and rc pipelines own the Unit lane.
 
@@ -25,10 +27,12 @@ One isolated build per committed test group. Final reuses its build for each exa
 | CP-4 | final | CP-2 | repository-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | all nine classes pass | 78 | 2 | true |
 | CP-5 | final | CP-2 | linux-census | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | R-2 | both methods pass | 2 | 2 | true |
 | CP-6 | final | CP-2 | derived-impact | `/*/*/DerivedImpactIndexTests/*` | R-3 | all selected cases pass | 27 | 3 | true |
-| CP-7 | final | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-4 | exit 0 | n/a | 2 | true |
+| CP-7 | final | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin/Debug/net10.0/Antiphon.LandGraphAudit.dll` | R-4 | exit 0 | n/a | 2 | true |
 | CP-8 | final | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef ce0eb1c5fbccdf8b2918643a319b88386435b761 -HeadRef HEAD` | R-4 | exit 0 | n/a | 1 | true |
 | CP-9 | final | n/a | pin-digest | `pwsh -NoProfile -Command '$digest = @(& ./scripts/test-live-lane-run.ps1 -PrintInputDigest)[-1].Trim(); $pin = [regex]::Match((Get-Content -Raw ./scripts/test-live-lane-run.ps1), "(?m)^\x24script:PinnedInputDigest = \x27([0-9a-f]{64})\x27$").Groups[1].Value; if ($digest -cne $pin -or $pin.Length -ne 64) { throw "live-lane input digest differs from pin" }; Write-Output $digest'` | R-5 | recomputed digest matches the pin | n/a | 1 | true |
+| CP-10 | red | n/a | audit-diagnosis-red | `pwsh -NoProfile -File scripts/fixtures/deploy-server2-output-witness.ps1 -Case AuditDiagnosis -ResultsDirectory .antiphon/close-advisories/audit-red` | V-4 | expected mismatches against the committed old validators | n/a | 1 | true |
+| CP-11 | final | n/a | audit-diagnosis | `pwsh -NoProfile -File scripts/fixtures/deploy-server2-output-witness.ps1 -Case AuditDiagnosis -ResultsDirectory .antiphon/close-advisories/audit-final` | V-4 | all 12 checks pass | n/a | 1 | true |
 
 ### Cost
 
-The provisional Code floor is 34 minutes (10 for committed red and 24 for Final), plus slot admission, index preparation and manual review. The native driver build uses a separate slot before index regeneration because the test project does not build the driver. The estimates use the prior Close Review's shared build and targeted rows as the baseline.
+The provisional Code floor is 36 minutes (11 for committed red and 25 for Final), plus slot admission and manual review. Build the index driver and the land-graph audit tool in their native outputs through separate build slots before Final. The former is needed by the index regeneration and CP-6. The latter gives CP-7 a current evaluator without triggering a nested build. The estimates use the prior Close and CARD-2043 reviews as the baseline.
