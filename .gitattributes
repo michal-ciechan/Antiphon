@@ -10,6 +10,10 @@ tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.ansi -text
 
 *.sh text eol=lf
 
+# The antiphon-scripts launchers: the extensionless one is a POSIX sh script (its shebang breaks on CR).
+scripts/antiphon text eol=lf
+scripts/antiphon.cmd text eol=crlf
+
 # C1361 compiles raw Bash strings and writes them verbatim to probe.sh.
 # Keep their source newlines LF on Windows as well as Linux.
 tests/Antiphon.Tests/Scripts/C1361CensusProbes.cs text eol=lf

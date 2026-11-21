@@ -2,15 +2,20 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 
 namespace Antiphon.Tests.Scripts;
 
-/// <summary>Owned, bounded children and object-only Git plumbing; borrowed objects are read-only.</summary>
+/// <summary>Owned, bounded children and object-only Git plumbing; borrowed objects are read-only. The guards
+/// (EvidencePolicy: antiphon-scripts evidence-diff and evidence-deletion) run in-process.</summary>
 internal sealed class EvidenceGitFixture : IAsyncDisposable
 {
+    /// <summary>A fault hook: stands in for the policy's git seam for one guard run; it may write FAULT-HIT to the guard's output.</summary>
+    internal delegate EvidenceGitResult GitHook(string repository, IReadOnlyList<string> arguments, TextWriter output);
+
     internal const string Anchor = "bb5fa774cd56f85ee6f0b1122c198192427e5ddf";
     internal string Root { get; } = Path.Combine(Path.GetTempPath(), "c1015-" + Guid.NewGuid().ToString("N"));
     internal string Repo => Path.Combine(Root, "repo");
@@ -73,9 +78,7 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
-        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(Root, "home", "empty-config");
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        foreach (var (name, value) in GitEnvironment) start.Environment[name] = value;
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         using var process = Process.Start(start) ?? throw new InvalidOperationException("owned child did not start");
         using var stdout = new MemoryStream();
@@ -137,27 +140,56 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
         foreach (var path in paths) await RemoveAsync(path);
         return await CommitIndexAsync([parent]);
     }
-    internal static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
-    internal Task<Result> HistoryAsync(string baseRef, string headRef, string? hook = null) =>
-        GuardAsync("check-evidence-diff.ps1", ["-BaseRef", baseRef, "-HeadRef", headRef], hook, "Invoke-EvidenceHistory");
+    // Every owned git child, the policy's included: no system or global configuration, no prompts.
+    private Dictionary<string, string> GitEnvironment => new(StringComparer.Ordinal)
+    {
+        ["GIT_CONFIG_NOSYSTEM"] = "1",
+        ["GIT_CONFIG_GLOBAL"] = Path.Combine(Root, "home", "empty-config"),
+        ["GIT_TERMINAL_PROMPT"] = "0",
+    };
+    /// <summary>The production git seam (EvidencePolicy.NativeGit) under the fixture's git configuration.</summary>
+    internal EvidenceGitResult Git(string repository, IReadOnlyList<string> arguments) => EvidencePolicy.NativeGit(repository, arguments, GitEnvironment);
+    /// <summary>The common fault: run git and, when the call matches, write FAULT-HIT and alter the result.</summary>
+    internal GitHook Fault(Func<IReadOnlyList<string>, bool> when, Func<EvidenceGitResult, EvidenceGitResult> alter) => (repository, arguments, output) =>
+    {
+        var result = Git(repository, arguments);
+        if (!when(arguments)) return result;
+        output.WriteLine("FAULT-HIT");
+        return alter(result);
+    };
+    internal static string Utf8(EvidenceGitResult result) => Encoding.UTF8.GetString(result.Bytes);
+    internal static EvidenceGitResult WithText(EvidenceGitResult result, string text) => new(result.ExitCode, Encoding.UTF8.GetBytes(text));
+    internal Task<Result> HistoryAsync(string baseRef, string headRef, GitHook? hook = null) =>
+        GuardAsync(new EvidenceHistoryRequest { BaseRef = baseRef, HeadRef = headRef }, hook);
     internal Task<Result> EventAsync(string eventName, object data, string? manualBase = null, string? manualHead = null)
     {
         var path = Path.Combine(Root, "event-" + Guid.NewGuid().ToString("N") + ".json");
         File.WriteAllText(path, JsonSerializer.Serialize(data));
-        return GuardAsync("check-evidence-diff.ps1", ["-EventPath", path, "-EventName", eventName, "-ManualBase", manualBase ?? "", "-ManualHead", manualHead ?? ""]);
+        return GuardAsync(new EvidenceHistoryRequest { EventPath = path, EventName = eventName, ManualBase = manualBase ?? "", ManualHead = manualHead ?? "" });
     }
     internal static object Push(string head, string before, string branch = "feat/fixture", object? deleted = null) =>
         new { @ref = "refs/heads/" + branch, before, after = head, deleted = deleted ?? false, repository = new { default_branch = "master" } };
-    internal async Task<Result> GuardAsync(string script, string[] args, string? hook = null, string? entry = null)
+    /// <summary>antiphon-scripts evidence-diff, in-process, over this repository.</summary>
+    internal Task<Result> GuardAsync(EvidenceHistoryRequest request, GitHook? hook = null)
     {
-        var path = Path.Combine(Source, "scripts", script);
-        File.Exists(path).ShouldBeTrue("c1015-policy-entry-installed");
-        if (hook is null)
-            return await RunAsync("pwsh", new[] { "-NoProfile", "-NonInteractive", "-File", path, "-Repository", Repo }.Concat(args));
-        var body = ". " + Quote(Path.Combine(Source, "scripts", "lib", "evidence-policy.ps1")) + "\n" + hook + "\n" +
-            "$code = " + entry + " -Repository " + Quote(Repo) + " " + string.Join(" ", args.Select((v, i) => i % 2 == 0 ? v : Quote(v))) + "\nexit $code\n";
-        return await RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
+        request.Repository = Repo;
+        return CaptureAsync((output, git) => EvidencePolicy.History(request, output, git), hook);
     }
+    /// <summary>antiphon-scripts evidence-deletion, in-process, over this repository.</summary>
+    internal Task<Result> GuardAsync(EvidenceDeletionRequest request, GitHook? hook = null)
+    {
+        request.Repository = Repo;
+        return CaptureAsync((output, git) => EvidencePolicy.Deletion(request, output, git), hook);
+    }
+    // The guard's stdout bytes as the CLI writes them (EvidencePolicy.OpenOutput).
+    private Task<Result> CaptureAsync(Func<TextWriter, EvidenceGit, int> guard, GitHook? hook) => Task.Run(() =>
+    {
+        using var stdout = new MemoryStream();
+        int exit;
+        using (var output = EvidencePolicy.OpenOutput(stdout))
+            exit = guard(output, hook is null ? Git : (repository, arguments) => hook(repository, arguments, output));
+        return new Result(exit, stdout.ToArray(), "");
+    });
     internal async Task<Entry[]> TreeAsync(string commit)
     {
         var r = await RunAsync("git", ["ls-tree", "-r", "-z", "-l", "--full-tree", commit]);
@@ -211,12 +243,12 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
         foreach (var e in inv.Delete) await RemoveAsync(e.Path);
         return await CommitIndexAsync([parent ?? baseRef], message ?? "remove rejected evidence\n\nAntiphon-Evidence-Deletion: CARD-1015");
     }
-    internal Task<Result> DeletionAsync(string inventoryRef, string head, Inventory inv, string? count = null, string? digest = null, string? bytes = null, string? hook = null) =>
-        GuardAsync("check-evidence-deletion.ps1", ["-InventoryRef", inventoryRef, "-HeadRef", head,
-            "-InventoryCount", count ?? inv.Delete.Length.ToString(), "-InventoryPathSha256", digest ?? inv.Digest,
-            "-InventoryBytes", bytes ?? inv.Bytes.ToString()], hook, "Invoke-EvidenceDeletion");
-    internal Task<Result> InventoryOnlyAsync(string inventoryRef, string? hook = null) =>
-        GuardAsync("check-evidence-deletion.ps1", ["-InventoryRef", inventoryRef, "-InventoryOnly"], hook, "Invoke-EvidenceDeletion");
+    internal Task<Result> DeletionAsync(string inventoryRef, string head, Inventory inv, string? count = null, string? digest = null, string? bytes = null, GitHook? hook = null) =>
+        GuardAsync(new EvidenceDeletionRequest { InventoryRef = inventoryRef, HeadRef = head,
+            InventoryCount = count ?? inv.Delete.Length.ToString(), InventoryPathSha256 = digest ?? inv.Digest,
+            InventoryBytes = bytes ?? inv.Bytes.ToString() }, hook);
+    internal Task<Result> InventoryOnlyAsync(string inventoryRef, GitHook? hook = null) =>
+        GuardAsync(new EvidenceDeletionRequest { InventoryRef = inventoryRef, InventoryOnly = true }, hook);
     public ValueTask DisposeAsync()
     {
         StartRefGit.DeleteDirectory(Root);

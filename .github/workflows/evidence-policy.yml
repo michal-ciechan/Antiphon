@@ -24,13 +24,17 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.head || github.event.after || github.sha }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          # antiphon-scripts targets net9.0; SDK 10.0.204 alone carries only the .NET 10 runtime.
+          dotnet-version: "9.0.x"
       - name: Check proposed evidence history
-        shell: pwsh
+        shell: bash
         env:
           EVIDENCE_EVENT_PATH: ${{ github.event_path }}
           EVIDENCE_EVENT_NAME: ${{ github.event_name }}
           EVIDENCE_MANUAL_BASE: ${{ inputs.base }}
           EVIDENCE_MANUAL_HEAD: ${{ inputs.head || github.sha }}
         run: |
-          & ./scripts/check-evidence-diff.ps1 -EventPath $env:EVIDENCE_EVENT_PATH -EventName $env:EVIDENCE_EVENT_NAME -ManualBase $env:EVIDENCE_MANUAL_BASE -ManualHead $env:EVIDENCE_MANUAL_HEAD
-          exit $LASTEXITCODE
+          ./scripts/antiphon evidence-diff --event-path "$EVIDENCE_EVENT_PATH" --event-name "$EVIDENCE_EVENT_NAME" --manual-base "$EVIDENCE_MANUAL_BASE" --manual-head "$EVIDENCE_MANUAL_HEAD"

@@ -6,7 +6,7 @@ CHECKPOINTS: Run the ### Checkpoints closed list via checkpoint tool per committ
 
 repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof selection; none required after green. Exceed only for a flake already demonstrated by Review; cite that Review, filter, reason and revised budget.
 
-SOURCE: Pass committed HEAD as expected SHA; keep actual tested SHA and unedited CHECKPOINT lines with verified provenance. Run scripts/check-evidence-diff.ps1 over full task base..HEAD.
+SOURCE: Pass committed HEAD as expected SHA; keep actual tested SHA and unedited CHECKPOINT lines with verified provenance. Run scripts/antiphon evidence-diff --base <full task base>.
 
 ROUND: Follow the brief. Final (default, first round): closed rows, named classes, not the whole lane, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
 

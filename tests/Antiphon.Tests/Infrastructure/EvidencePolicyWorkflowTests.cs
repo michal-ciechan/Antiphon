@@ -1,7 +1,5 @@
-using System.Text;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Scripts;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using YamlDotNet.RepresentationModel;
@@ -9,9 +7,13 @@ using YamlDotNet.RepresentationModel;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class EvidencePolicyWorkflowTests
 {
+    // The guard step's whole run body: one bash command (GitHub runs it with bash -eo pipefail, so its exit code is the
+    // step's), every value a double-quoted expansion of an env-bound variable.
+    private const string GuardCommand = "./scripts/antiphon evidence-diff --event-path \"$EVIDENCE_EVENT_PATH\" --event-name \"$EVIDENCE_EVENT_NAME\""
+        + " --manual-base \"$EVIDENCE_MANUAL_BASE\" --manual-head \"$EVIDENCE_MANUAL_HEAD\"";
+
     private static YamlMappingNode Read()
     {
         var path = Path.Combine(EvidenceGitFixture.Source, ".github", "workflows", "evidence-policy.yml");
@@ -27,18 +29,9 @@ public sealed class EvidencePolicyWorkflowTests
     private static YamlMappingNode Job(YamlMappingNode root) => (YamlMappingNode)Get((YamlMappingNode)Get(root, "jobs"), "evidence");
     private static YamlMappingNode[] Steps(YamlMappingNode root) => ((YamlSequenceNode)Get(Job(root), "steps")).Children.Cast<YamlMappingNode>().ToArray();
     private static YamlMappingNode Guard(YamlMappingNode root) => Steps(root).Single(s => Has(s, "run"));
-
-    private static async Task<JsonDocument> AstAsync(string source)
-    {
-        await using var f = await EvidenceGitFixture.CreateAsync();
-        var body = "$tokens=$null; $errors=$null; $ast=[System.Management.Automation.Language.Parser]::ParseInput(" + EvidenceGitFixture.Quote(source) + ",[ref]$tokens,[ref]$errors); " +
-            "@{errors=@($errors | ForEach-Object Message); commands=@($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.CommandAst]},$true) | ForEach-Object { ,@($_.CommandElements | ForEach-Object { $_.Extent.Text }) }); exits=@($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.ExitStatementAst]},$true) | ForEach-Object { $_.Pipeline.Extent.Text })} | ConvertTo-Json -Depth 8 -Compress";
-        var r = await f.RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
-        r.Exit.ShouldBe(0, r.Output);
-        var json = JsonDocument.Parse(r.Output);
-        json.RootElement.GetProperty("errors").GetArrayLength().ShouldBe(0, "real workflow body parses without execution");
-        return json;
-    }
+    private static YamlMappingNode Uses(YamlMappingNode root, string action) =>
+        Steps(root).Single(s => Has(s, "uses") && Scalar(Get(s, "uses")).StartsWith(action + "@", StringComparison.Ordinal));
+    private static string[] Words(YamlMappingNode guard) => Scalar(Get(guard, "run")).Trim().Split(' ');
 
     [Test]
     public void Workflow_selects_every_required_event()
@@ -60,7 +53,7 @@ public sealed class EvidencePolicyWorkflowTests
     [Test]
     public void Workflow_pins_full_history_and_event_head()
     {
-        var checkout = Steps(Read()).Single(s => Has(s, "uses"));
+        var checkout = Uses(Read(), "actions/checkout");
         Scalar(Get(checkout, "uses")).ShouldBe("actions/checkout@v4");
         var inputs = (YamlMappingNode)Get(checkout, "with");
         Scalar(Get(inputs, "fetch-depth")).ShouldBe("0", "c1015-full-history");
@@ -68,36 +61,54 @@ public sealed class EvidencePolicyWorkflowTests
     }
 
     [Test]
-    public async Task Workflow_calls_real_guard_and_propagates_failure()
+    public void Workflow_calls_real_guard_and_propagates_failure()
     {
         var root = Read(); var guard = Guard(root);
-        Scalar(Get(guard, "shell")).ShouldBe("pwsh");
-        using var ast = await AstAsync(Scalar(Get(guard, "run")));
-        var commands = ast.RootElement.GetProperty("commands").EnumerateArray().ToArray();
-        commands.Length.ShouldBe(1, "c1015-real-guard-call");
-        var elements = commands.Single().EnumerateArray().Select(e => e.GetString()).ToArray();
-        elements[0].ShouldBe("./scripts/check-evidence-diff.ps1", "c1015-real-guard-call");
-        elements.ShouldBe(new[] { "./scripts/check-evidence-diff.ps1", "-EventPath", "$env:EVIDENCE_EVENT_PATH", "-EventName", "$env:EVIDENCE_EVENT_NAME", "-ManualBase", "$env:EVIDENCE_MANUAL_BASE", "-ManualHead", "$env:EVIDENCE_MANUAL_HEAD" }, "c1015-real-guard-call");
-        elements[2].ShouldBe("$env:EVIDENCE_EVENT_PATH", "c1015-event-path-binding");
-        elements[4].ShouldBe("$env:EVIDENCE_EVENT_NAME", "c1015-event-name-binding");
-        ast.RootElement.GetProperty("exits").EnumerateArray().Select(e => e.GetString()).ToArray()
-            .ShouldBe(new[] { "$LASTEXITCODE" }, "c1015-exit-propagation");
+        Scalar(Get(guard, "shell")).ShouldBe("bash", "c1015-exit-propagation");
+        // The single command is the whole body: no `||`, `;`, `&`, pipe, trap or `exit` can replace its exit code.
+        Scalar(Get(guard, "run")).Trim().ShouldBe(GuardCommand, "c1015-real-guard-call");
+        Scalar(Get(guard, "run")).Trim().Split('\n').Length.ShouldBe(1, "c1015-exit-propagation");
+        var words = Words(guard);
+        words[0].ShouldBe("./scripts/antiphon", "c1015-real-guard-call");
+        words[1].ShouldBe("evidence-diff", "c1015-real-guard-call");
+        words[3].ShouldBe("\"$EVIDENCE_EVENT_PATH\"", "c1015-event-path-binding");
+        words[5].ShouldBe("\"$EVIDENCE_EVENT_NAME\"", "c1015-event-name-binding");
+        // The launcher the step runs is the real one: tracked, LF (a CR would break the shebang on the runner).
+        var launcher = File.ReadAllBytes(Path.Combine(EvidenceGitFixture.Source, "scripts", "antiphon"));
+        launcher.AsSpan().StartsWith("#!/bin/sh\n"u8).ShouldBeTrue("c1015-real-guard-call");
+        launcher.ShouldNotContain((byte)'\r', "c1015-real-guard-call");
+        // It builds antiphon-scripts with the pinned SDK, after the checkout.
+        var steps = Steps(root).ToList();
+        var setup = Uses(root, "actions/setup-dotnet");
+        Scalar(Get(setup, "uses")).ShouldBe("actions/setup-dotnet@v4");
+        Scalar(Get((YamlMappingNode)Get(setup, "with"), "global-json-file")).ShouldBe("global.json");
+        steps.IndexOf(Uses(root, "actions/checkout")).ShouldBeLessThan(steps.IndexOf(setup));
+        steps.IndexOf(setup).ShouldBeLessThan(steps.IndexOf(guard));
         Has(Job(root), "continue-on-error").ShouldBeFalse("c1015-no-error-waiver");
         foreach (var step in Steps(root)) Has(step, "continue-on-error").ShouldBeFalse("c1015-no-error-waiver");
     }
 
     [Test]
-    public async Task Workflow_uses_data_arguments_and_no_write_permissions()
+    public void Workflow_uses_data_arguments_and_no_write_permissions()
     {
         var root = Read(); var guard = Guard(root); var run = Scalar(Get(guard, "run"));
         run.ShouldNotContain("${{", customMessage: "c1015-no-event-shell");
-        using var ast = await AstAsync(run);
         var env = (YamlMappingNode)Get(guard, "env");
         Scalar(Get(env, "EVIDENCE_EVENT_PATH")).ShouldBe("${{ github.event_path }}", "c1015-event-path-binding");
         Scalar(Get(env, "EVIDENCE_EVENT_NAME")).ShouldBe("${{ github.event_name }}", "c1015-event-name-binding");
         Scalar(Get(env, "EVIDENCE_MANUAL_BASE")).ShouldBe("${{ inputs.base }}", "c1015-manual-base-binding");
-        var elements = ast.RootElement.GetProperty("commands").EnumerateArray().Single().EnumerateArray().Select(e => e.GetString()).ToArray();
-        elements[6].ShouldBe("$env:EVIDENCE_MANUAL_BASE", "c1015-manual-base-binding");
+        var words = Words(guard);
+        words[7].ShouldBe("\"$EVIDENCE_MANUAL_BASE\"", "c1015-manual-base-binding");
+        // Every argument after the subcommand is a flag followed by one double-quoted expansion of a variable this step
+        // binds: data only, no word splitting, globbing or command substitution.
+        (words.Length % 2).ShouldBe(0, "c1015-data-arguments");
+        for (var i = 2; i < words.Length; i += 2)
+        {
+            words[i].ShouldStartWith("--", customMessage: "c1015-data-arguments");
+            var value = Regex.Match(words[i + 1], "^\"\\$([A-Z_]+)\"$");
+            value.Success.ShouldBeTrue("c1015-data-arguments: " + words[i + 1]);
+            Has(env, value.Groups[1].Value).ShouldBeTrue("c1015-data-arguments: " + value.Groups[1].Value);
+        }
         var permissions = (YamlMappingNode)Get(root, "permissions");
         Scalar(Get(permissions, "contents")).ShouldBe("read", "c1015-read-permission");
         permissions.Children.Count.ShouldBe(1, "c1015-read-permission");

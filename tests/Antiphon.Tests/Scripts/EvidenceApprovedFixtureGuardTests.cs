@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -143,10 +144,9 @@ public sealed class EvidenceApprovedFixtureGuardTests
             inv.Delete.Select(x => x.Path).ShouldNotContain(FixturePath, "c1036-fixture-kept");
             inv.Delete.Select(x => x.Path).ShouldContain(receipt);
             inv.Delete.Select(x => x.Path).ShouldContain(log);
-            var supplemental = anchored ? Array.Empty<string>() : new[] { "-SupplementalCleanup", "CARD-1036" };
+            var supplemental = anchored ? null : "CARD-1036";
             var before = await f.SnapshotAsync();
-            var inventory = await f.GuardAsync("check-evidence-deletion.ps1",
-                new[] { "-InventoryRef", b, "-InventoryOnly" }.Concat(supplemental).ToArray());
+            var inventory = await f.GuardAsync(new EvidenceDeletionRequest { InventoryRef = b, InventoryOnly = true, SupplementalCleanup = supplemental });
             inventory.Exit.ShouldBe(0, "c1036-fixture-kept: " + inventory.Output);
             using var json = JsonDocument.Parse(inventory.Output.Split('\n').Single(x => x.StartsWith('{')));
             var root = json.RootElement;
@@ -167,9 +167,9 @@ public sealed class EvidenceApprovedFixtureGuardTests
                          ".antiphon/fixtures/new-group/later.approved.json", Text("{}")) })
             {
                 before = await f.SnapshotAsync();
-                var result = await f.GuardAsync("check-evidence-deletion.ps1", new[] {
-                    "-InventoryRef", b, "-HeadRef", head, "-InventoryCount", inv.Delete.Length.ToString(),
-                    "-InventoryPathSha256", inv.Digest, "-InventoryBytes", inv.Bytes.ToString() }.Concat(supplemental).ToArray());
+                var result = await f.GuardAsync(new EvidenceDeletionRequest {
+                    InventoryRef = b, HeadRef = head, InventoryCount = inv.Delete.Length.ToString(),
+                    InventoryPathSha256 = inv.Digest, InventoryBytes = inv.Bytes.ToString(), SupplementalCleanup = supplemental });
                 result.Exit.ShouldBe(0, "c1036-fixture-kept: " + result.Output);
                 result.Output.ShouldContain("finalTreeViolations=0");
                 result.Output.ShouldContain("recoverable=" + inv.Delete.Count(x => x.Type == "blob") + " violations=0");

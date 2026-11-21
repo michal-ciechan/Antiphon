@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -24,14 +25,14 @@ public sealed class EvidenceSupplementalDeletionGuardTests
     }
 
     private static Task<EvidenceGitFixture.Result> InventoryAsync(EvidenceGitFixture f, string b, string card = Card) =>
-        f.GuardAsync("check-evidence-deletion.ps1", ["-InventoryRef", b, "-SupplementalCleanup", card, "-InventoryOnly"]);
+        f.GuardAsync(new EvidenceDeletionRequest { InventoryRef = b, SupplementalCleanup = card, InventoryOnly = true });
 
     private static Task<EvidenceGitFixture.Result> ValidateAsync(EvidenceGitFixture f, string b, string head,
         EvidenceGitFixture.Inventory inv, string? count = null, string? digest = null, string? bytes = null,
-        string card = Card, string? hook = null) =>
-        f.GuardAsync("check-evidence-deletion.ps1", ["-InventoryRef", b, "-HeadRef", head,
-            "-InventoryCount", count ?? inv.Delete.Length.ToString(), "-InventoryPathSha256", digest ?? inv.Digest,
-            "-InventoryBytes", bytes ?? inv.Bytes.ToString(), "-SupplementalCleanup", card], hook, "Invoke-EvidenceDeletion");
+        string card = Card, EvidenceGitFixture.GitHook? hook = null) =>
+        f.GuardAsync(new EvidenceDeletionRequest { InventoryRef = b, HeadRef = head,
+            InventoryCount = count ?? inv.Delete.Length.ToString(), InventoryPathSha256 = digest ?? inv.Digest,
+            InventoryBytes = bytes ?? inv.Bytes.ToString(), SupplementalCleanup = card }, hook);
 
     private static void SingleViolation(EvidenceGitFixture.Result result, string reason)
     {
@@ -134,8 +135,13 @@ public sealed class EvidenceSupplementalDeletionGuardTests
         var blob = inv.Delete[0];
         var ownedBlob = Path.Combine(f.Repo, ".git", "objects", blob.Oid[..2], blob.Oid[2..]);
         File.Exists(ownedBlob).ShouldBeTrue("only remove this fixture's unique loose object");
-        var hook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
-            "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + deletion + "') { [IO.File]::SetAttributes(" + EvidenceGitFixture.Quote(ownedBlob) + ", [IO.FileAttributes]::Normal); [IO.File]::Delete(" + EvidenceGitFixture.Quote(ownedBlob) + "); Write-Host 'FAULT-HIT' }; return $r }";
+        // Windows marks loose objects read-only: clear the attribute at the fault cut before deleting.
+        var hook = f.Fault(a => a[0] == "ls-tree" && a[a.Count - 1] == deletion, g =>
+        {
+            File.SetAttributes(ownedBlob, FileAttributes.Normal);
+            File.Delete(ownedBlob);
+            return g;
+        });
         var result = await ValidateAsync(f, b, deletion, inv, hook: hook);
         result.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once after sizing");
         result.Exit.ShouldBe(2, "c1024-deleted-blob-recoverable");

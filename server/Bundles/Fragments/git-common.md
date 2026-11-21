@@ -7,4 +7,4 @@ INVARIANTS (stage rules may narrow, never widen):
 - A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch.
 - Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts; report it, never merge to resolve.
 - On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force.
-- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/check-evidence-diff.ps1 over base..HEAD.
+- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/antiphon evidence-diff --base <base>.

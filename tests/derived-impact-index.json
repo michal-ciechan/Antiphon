@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 12,
+      "classes": 13,
       "reason": "allowlist"
     },
     {

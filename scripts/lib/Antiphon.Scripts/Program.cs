@@ -26,11 +26,13 @@ namespace Antiphon.Scripts
             if (args.Length >= 1 && (args[0] == "rc-ledger-import" || args[0] == "rc-ledger-plan" || args[0] == "rc-ledger-status" || args[0] == "rc-input-census")) return RcLedgerCommand(args);
             // The post-land early warning answers every input itself: exit 0/1 outcome, 2 refused or usage, 3 not Linux.
             if (args.Length >= 1 && args[0] == PostLandCommand.Name) return PostLandCommand.Run(args);
+            // The evidence policy answers every input itself: exit 0 compliant, 1 violations, 2 unverifiable or usage.
+            if (args.Length >= 1 && (args[0] == EvidenceCommand.Diff || args[0] == EvidenceCommand.Deletion)) return EvidenceCommand.Run(args);
             try
             {
                 if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
                 Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage);
+                    + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage);
                 return Usage;
             }
             catch (NotHandledException e)

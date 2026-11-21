@@ -738,7 +738,7 @@ Patterns below are ordinal and case-sensitive. The first match wins for a path. 
 **Interim procedure (I-1..I-8), until FT-2 and FT-5 are mechanical.**
 
 1. **I-1.** Classify with `git diff --name-only origin/master...<branch>` against the tables above before dispatch. Any NORMAL path means the normal pipeline. Write the lane in the brief and put `[fast]` in the title only when the lane is fast. Record the lane and class on the card revision.
-2. **I-2. FAST-DOC.** Docs task, no checkpoint rows and no Code build. Automated check only: `scripts/check-evidence-diff.ps1`, `git merge-tree --write-tree origin/master HEAD`, and `checkpoint import --plan` when a `### Checkpoints` table changed. No Opus Review and no Review task. Report `next: land`. Plain `-Land`. The land still builds until FT-2.
+2. **I-2. FAST-DOC.** Docs task, no checkpoint rows and no Code build. Automated check only: `scripts/antiphon evidence-diff --base <base>`, `git merge-tree --write-tree origin/master HEAD`, and `checkpoint import --plan` when a `### Checkpoints` table changed. No Opus Review and no Review task. Report `next: land`. Plain `-Land`. The land still builds until FT-2.
 3. **I-3. FAST-DOC-CONTRACT.** Same as I-2, plus one row: the reader classes from `scripts/impacted-classes.ps1 -Range <base>..<tip>` (one build of `tests/Antiphon.Tests`). A capped path runs its first 25 classes and defers the rest (D-9).
 4. **I-4. FAST-TEST.** Code builds the touched test project and runs the touched classes (standing rule 8: one red witness plus one narrow green). Do not run `regenerate-derived-impact-index.ps1`, do not commit `tests/derived-impact-index.json`, and do not run the guard batch or DerivedImpactIndexTests. Review is a short Sonnet diff-only review, 15 minutes, no checkpoint rerun, aimed at whether the test can fail. Repairs of existing failing tests follow the fixture-only precedent and have no Review. The land build stays (D-6).
 5. **I-5.** After each landing wave, and always before an rc cut or a Merge batch, one small Code task runs the regenerator and DerivedImpactIndexTests and lands the index alone. That one regeneration replaces one replay per branch. Between waves, DerivedImpactIndexTests is red on master: declare it inherited in Merge and rc briefs.
@@ -751,7 +751,7 @@ Patterns below are ordinal and case-sensitive. The first match wins for a path. 
 
 A Merge verifies only: one build, each subject's own narrow witness rows (each under 10
 minutes), `land-graph -Check`, the pins recompute, the derived-index regeneration once, and
-`check-evidence-diff`. The one build is the subject's own test project, except when the batch
+`scripts/antiphon evidence-diff`. The one build is the subject's own test project, except when the batch
 touches `tests/Antiphon.Tests/TestHelpers/**` or any csproj that Compile-includes a file under
 `tests/Antiphon.Tests` (CARD-1996). Then the one build is `dotnet build Antiphon.sln` once,
 leased through `scripts/build-slot.ps1`, in the worktree's native default output, with

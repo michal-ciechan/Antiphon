@@ -24,9 +24,8 @@ bare Git repositories that are absent from a fixture's checkout registry. Fault 
 delete a loose Git object during assertions clear that object's attributes at the fault cut.
 The C578 fixture also uses its unique Fx.OutputPath for cancellation runs, so a prior completed
 case cannot supply their build output. The forced-Windows witnesses are
-`scripts/fixtures/c487-readonly-windows-witness.ps1`,
-`scripts/fixtures/checkpoint-output-windows-witness.ps1`, and
-`scripts/fixtures/evidence-supplemental-windows-witness.ps1`.
+`scripts/fixtures/c487-readonly-windows-witness.ps1` and
+`scripts/fixtures/checkpoint-output-windows-witness.ps1`.
 `scripts/fixtures/group76-native-diagnostics.ps1` records native runtime, line endings, build
 artifacts and classified TRX failures without launching tests. Its output is diagnostic;
 the Windows C1050 audits still require their native apphost and trusted checkpoint source stamp.
@@ -551,8 +550,8 @@ inside `fixtures/`; moving or renaming them does not confer fixture approval.
 Do not relocate generated payloads elsewhere to evade the rule; the
 canonical `.antiphon/reports/` store remains runtime-owned and ignored.
 
-Code and read-only Review run `scripts/check-evidence-diff.ps1 -BaseRef <recorded
-task base> -HeadRef <exact pushed SHA>` over the entire candidate history, including
+Code and read-only Review run `scripts/antiphon evidence-diff --base <recorded
+task base> --head <exact pushed SHA>` over the entire candidate history, including
 report-only commits. The checker reads pinned Git objects and every introduced
 commit, including side branches/root commits, using no-renames raw records. Exit
 0 proves compliance, 1 reports policy violations, and 2 means input/history/Git
@@ -573,10 +572,10 @@ copies evidence-class ignored files, byte-verified, to `WorktreeCleanup:Retained
 before removal; a protected name still refuses and preserves residue after publication. Completed-card whole-worktree removal is
 CARD-1017, outside this policy; raw artifacts gain no new durability guarantee.
 CARD-1015's separately marked normal deletion commit is checked by
-`check-evidence-deletion.ps1` against the independently recorded start-tree rule
+`scripts/antiphon evidence-deletion` against the independently recorded start-tree rule
 inventory, preserving allowed Markdown and proving historical object recovery.
-For a later cleanup, pass `-SupplementalCleanup CARD-nnnn` in both inventory and
-validation calls. This opt-in uses the later immutable `-InventoryRef` and the
+For a later cleanup, pass `--supplemental-cleanup CARD-nnnn` in both inventory and
+validation calls. This opt-in uses the later immutable `--inventory-ref` and the
 exact `Antiphon-Evidence-Deletion: CARD-nnnn` commit trailer, without requiring the
 original 108 entries at that base. It retains inventory count/bytes/digest, exact
 deletion-only set, old identities, kept Markdown, final-tree and blob-recovery

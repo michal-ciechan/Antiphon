@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -231,20 +232,16 @@ public sealed class EvidenceDiffGuardTests
         await using var f = await EvidenceGitFixture.CreateAsync();
         const string path = ".antiphon/a b\t\n\u00e9.json";
         var head = await f.AddCommitAsync(f.Base, path, Text("PAYLOAD-C1015-PRIVATE-CANARY"));
-        var policy = Path.Combine(EvidenceGitFixture.Source, "scripts", "lib", "evidence-policy.ps1");
-        // Windows pwsh leaves Console.OutputEncoding on the ANSI/OEM page. Simulate that
-        // before the policy loads so a guard that does not reassert UTF-8 loses U+00E9.
-        var body = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding('iso-8859-1')\n" +
-            "$OutputEncoding = [Console]::OutputEncoding\n" +
-            ". " + EvidenceGitFixture.Quote(policy) + "\n" +
-            "$code = Invoke-EvidenceHistory -Repository " + EvidenceGitFixture.Quote(f.Repo) +
-            " -BaseRef " + EvidenceGitFixture.Quote(f.Base) + " -HeadRef " + EvidenceGitFixture.Quote(head) + "\n" +
-            "exit $code\n";
-        var r = await f.RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand",
-            Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
+        // Windows leaves Console.OutputEncoding on the ANSI/OEM page, where U+00E9 is the single byte 0xE9. The CLI
+        // writes through EvidencePolicy.OpenOutput over the raw stdout stream, so the console encoding never applies:
+        // the fixture captures those exact bytes, which must be strict UTF-8 (C3 A9) without a BOM.
+        var r = await f.HistoryAsync(f.Base, head);
         r.Exit.ShouldBe(1, "c1015-legacy-encoding");
-        r.Output.ShouldNotContain("PAYLOAD-C1015-PRIVATE-CANARY", customMessage: "c1015-legacy-encoding");
-        var line = r.Output.Split('\n').Single(x => x.StartsWith("EVIDENCE violation ", StringComparison.Ordinal));
+        r.Bytes.AsSpan().StartsWith("EVIDENCE range "u8).ShouldBeTrue("c1015-legacy-encoding: no BOM");
+        r.Bytes.AsSpan().IndexOf(new byte[] { 0xC3, 0xA9 }).ShouldBeGreaterThan(0, "c1015-legacy-encoding: U+00E9 as UTF-8");
+        var text = new UTF8Encoding(false, true).GetString(r.Bytes);
+        text.ShouldNotContain("PAYLOAD-C1015-PRIVATE-CANARY", customMessage: "c1015-legacy-encoding");
+        var line = text.Split('\n').Single(x => x.StartsWith("EVIDENCE violation ", StringComparison.Ordinal));
         var encoded = line[(line.IndexOf("path=", StringComparison.Ordinal) + 5)..line.IndexOf(" bytes=", StringComparison.Ordinal)];
         JsonSerializer.Deserialize<string>(encoded).ShouldBe(path, "c1015-legacy-encoding");
     }
@@ -296,24 +293,23 @@ public sealed class EvidenceDiffGuardTests
         await using var f = await EvidenceGitFixture.CreateAsync();
         var head = await f.AddCommitAsync(f.Base, ".antiphon/report.md", Text());
         (await f.HistoryAsync(f.Base, head)).Exit.ShouldBe(0);
-        foreach (var (condition, alteration, label) in new[] {
-            ("$Arguments[0] -eq 'rev-list' -and $Arguments -contains '--reverse'", "$r.ExitCode=1; $r.Bytes=[byte[]]@()", "git-exit"),
-            ("$Arguments[0] -eq 'rev-parse' -and $Arguments -contains '--verify'", "$r.ExitCode=1", "git-exit-ref"),
-            ("$Arguments[0] -eq 'merge-base'", "$r.ExitCode=1", "git-exit-ancestry"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.ExitCode=1", "git-exit-diff"),
-            ("$Arguments[0] -eq 'cat-file'", "$r.ExitCode=1", "git-exit-size"),
-            ("$Arguments[0] -eq 'diff-tree'", "$s=$s.Replace(' A'+[char]0,' A extra'+[char]0); $r.Bytes=[Text.Encoding]::UTF8.GetBytes($s)", "raw-fields"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.Bytes=$r.Bytes[0..($r.Bytes.Length-2)]", "raw-terminator"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.Bytes=[Text.Encoding]::UTF8.GetBytes($s.Replace(' A'+[char]0,' Q'+[char]0))", "raw-status"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.Bytes=[Text.Encoding]::UTF8.GetBytes($s.Replace('100644','10064x'))", "raw-mode"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.Bytes=[Text.Encoding]::UTF8.GetBytes($s.Replace('0000000000000000000000000000000000000000','bad'))", "raw-object-id"),
-            ("$Arguments[0] -eq 'cat-file'", "$r.Bytes=[Text.Encoding]::UTF8.GetBytes('invalid')", "invalid-size"),
-            ("$Arguments[0] -eq 'cat-file'", "$r.Bytes=[byte[]]@()", "invalid-size-empty"),
-            ("$Arguments[0] -eq 'diff-tree'", "$r.Bytes[[Array]::IndexOf($r.Bytes,[byte]0)+1]=255", "raw-encoding") })
+        static EvidenceGitResult Replace(EvidenceGitResult g, string from, string to) => EvidenceGitFixture.WithText(g, EvidenceGitFixture.Utf8(g).Replace(from, to));
+        foreach (var (when, alter, label) in new (Func<IReadOnlyList<string>, bool>, Func<EvidenceGitResult, EvidenceGitResult>, string)[] {
+            (a => a[0] == "rev-list" && a.Contains("--reverse"), g => new(1, []), "git-exit"),
+            (a => a[0] == "rev-parse" && a.Contains("--verify"), g => new(1, g.Bytes), "git-exit-ref"),
+            (a => a[0] == "merge-base", g => new(1, g.Bytes), "git-exit-ancestry"),
+            (a => a[0] == "diff-tree", g => new(1, g.Bytes), "git-exit-diff"),
+            (a => a[0] == "cat-file", g => new(1, g.Bytes), "git-exit-size"),
+            (a => a[0] == "diff-tree", g => Replace(g, " A\0", " A extra\0"), "raw-fields"),
+            (a => a[0] == "diff-tree", g => new(g.ExitCode, g.Bytes[..^1]), "raw-terminator"),
+            (a => a[0] == "diff-tree", g => Replace(g, " A\0", " Q\0"), "raw-status"),
+            (a => a[0] == "diff-tree", g => Replace(g, "100644", "10064x"), "raw-mode"),
+            (a => a[0] == "diff-tree", g => Replace(g, new string('0', 40), "bad"), "raw-object-id"),
+            (a => a[0] == "cat-file", g => EvidenceGitFixture.WithText(g, "invalid"), "invalid-size"),
+            (a => a[0] == "cat-file", g => new(g.ExitCode, []), "invalid-size-empty"),
+            (a => a[0] == "diff-tree", g => { var b = g.Bytes.ToArray(); b[Array.IndexOf(b, (byte)0) + 1] = 255; return new(g.ExitCode, b); }, "raw-encoding") })
         {
-            var hook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
-                "if (" + condition + ") { Write-Host 'FAULT-HIT'; $s=[Text.Encoding]::UTF8.GetString($r.Bytes); " + alteration + " }; return $r }";
-            var r = await f.HistoryAsync(f.Base, head, hook);
+            var r = await f.HistoryAsync(f.Base, head, f.Fault(when, alter));
             r.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
             switch (label)
             {
@@ -350,17 +346,31 @@ public sealed class EvidenceDiffGuardTests
         (await f.SnapshotAsync()).ShouldBe(before, "c1015-read-only");
         (await f.HistoryAsync(f.Base, bad)).Exit.ShouldBe(1);
         (await f.SnapshotAsync()).ShouldBe(before, "c1015-read-only");
-        var hook = "function Get-EvidenceGitResult { param($Repository,$Arguments) " +
-            "if ($Arguments[0] -notin @('rev-parse','merge-base','rev-list','diff-tree','cat-file')) { throw 'forbidden write' }; " +
-            "$r=Invoke-EvidenceNativeGit $Repository $Arguments; if ($Arguments -contains 'moving-head^{commit}') { " +
-            "[void](Invoke-EvidenceNativeGit $Repository @('update-ref','refs/heads/moving-head'," + EvidenceGitFixture.Quote(bad) + ")); Write-Host 'FAULT-HIT' }; return $r }";
+        EvidenceGitFixture.GitHook hook = (repository, arguments, output) =>
+        {
+            if (!new[] { "rev-parse", "merge-base", "rev-list", "diff-tree", "cat-file" }.Contains(arguments[0])) throw new InvalidOperationException("forbidden write");
+            var result = f.Git(repository, arguments);
+            if (arguments.Contains("moving-head^{commit}"))
+            {
+                f.Git(repository, ["update-ref", "refs/heads/moving-head", bad]);
+                output.WriteLine("FAULT-HIT");
+            }
+            return result;
+        };
         var pinned = await f.HistoryAsync("moving-base", "moving-head", hook);
         pinned.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "head movement cut hit exactly once");
         pinned.Exit.ShouldBe(0, "c1015-pinned-head");
         pinned.Output.ShouldContain("head=" + head, customMessage: "c1015-pinned-head");
-        var baseHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
-            "if ($Arguments -contains 'moving-base^{commit}') { [void](Invoke-EvidenceNativeGit $Repository @('update-ref','refs/heads/moving-base'," +
-            EvidenceGitFixture.Quote(bad) + ")); Write-Host 'FAULT-HIT' }; return $r }";
+        EvidenceGitFixture.GitHook baseHook = (repository, arguments, output) =>
+        {
+            var result = f.Git(repository, arguments);
+            if (arguments.Contains("moving-base^{commit}"))
+            {
+                f.Git(repository, ["update-ref", "refs/heads/moving-base", bad]);
+                output.WriteLine("FAULT-HIT");
+            }
+            return result;
+        };
         var pinnedBase = await f.HistoryAsync("moving-base", head, baseHook);
         pinnedBase.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2);
         pinnedBase.Exit.ShouldBe(0, "c1015-pinned-base");
@@ -423,7 +433,7 @@ public sealed class EvidenceDiffGuardTests
         (await f.EventAsync("push", EvidenceGitFixture.Push(f.Base, f.Base, deleted: "false"))).Exit.ShouldBe(2, "c1015-deleted-type");
         (await f.EventAsync("push", EvidenceGitFixture.Push(new string('0', 40), f.Base, deleted: true))).Exit.ShouldBe(0);
         var malformed = Path.Combine(f.Root, "malformed.json"); File.WriteAllText(malformed, "{");
-        (await f.GuardAsync("check-evidence-diff.ps1", ["-EventPath", malformed, "-EventName", "push"])).Exit.ShouldBe(2);
+        (await f.GuardAsync(new EvidenceHistoryRequest { EventPath = malformed, EventName = "push" })).Exit.ShouldBe(2);
         var head = await f.AddCommitAsync(f.Base, "normal.txt", Text());
         File.WriteAllText(Path.Combine(f.Repo, ".git", "shallow"), f.Base + "\n");
         (await f.HistoryAsync(f.Base, head)).Exit.ShouldBe(2, "c1015-shallow-history");

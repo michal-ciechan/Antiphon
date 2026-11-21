@@ -44,8 +44,8 @@ public class InstructionBundleTests
         var composed = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code)).Text;
         foreach (var text in new[] { stage, composed })
         {
-            text.ShouldContain("check-evidence-diff.ps1", customMessage: "c1015-code-range");
-            text.ShouldContain("full task base..HEAD", customMessage: "c1015-code-range");
+            text.ShouldContain("scripts/antiphon evidence-diff", customMessage: "c1015-code-range");
+            text.ShouldContain("--base <full task base>", customMessage: "c1015-code-range");
             text.ShouldContain("actual tested SHA", customMessage: "c1015-code-source");
             text.ShouldContain("unedited CHECKPOINT lines", customMessage: "c1015-code-verbatim");
         }
@@ -60,8 +60,8 @@ public class InstructionBundleTests
         {
             text.ShouldContain("Read-only", customMessage: "c1015-review-read-only");
             text.ShouldContain("Read-only, including PCs; fix nothing.", customMessage: "c1015-review-read-only");
-            text.ShouldContain("check-evidence-diff.ps1", customMessage: "c1015-review-range");
-            text.ShouldContain("complete candidate base..HEAD", customMessage: "c1015-review-range");
+            text.ShouldContain("scripts/antiphon evidence-diff", customMessage: "c1015-review-range");
+            text.ShouldContain("--base <candidate base>", customMessage: "c1015-review-range");
         }
     }
 
@@ -1155,7 +1155,7 @@ public class InstructionBundleTests
         ("contract-review-freeze", "- A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
         ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts; report it, never merge to resolve."),
         ("contract-push-retry", "- On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force."),
-        ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/check-evidence-diff.ps1 over base..HEAD."),
+        ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/antiphon evidence-diff --base <base>."),
     ];
 
     [Test]
