@@ -5182,7 +5182,8 @@
       "path": "server/Application/Dtos/LandingEvidenceDto.cs",
       "classes": [
         "AgentTaskLandStageOutcomeTests",
-        "AgentTaskPipelineStatusTests"
+        "AgentTaskPipelineStatusTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
