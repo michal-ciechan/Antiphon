@@ -212,4 +212,54 @@ public class WriteBehindFileSystemTests
         }
         await Task.CompletedTask;
     }
+
+    /// <summary>
+    /// On Windows a reader that briefly holds the target open without delete sharing (an on-access scanner, the
+    /// indexer) denies the rename for a moment; the atomic rename waits it out and lands the new content.
+    /// </summary>
+    [Test]
+    public async Task Atomic_rename_waits_out_a_brief_open_of_the_target()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string dir = Path.Combine(Path.GetTempPath(), "write-behind-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string target = Path.Combine(dir, "target.json");
+            string temp = target + ".tmp";
+            File.WriteAllText(target, "old");
+            File.WriteAllText(temp, "new");
+            Task move;
+            using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                move = Task.Run(() => AtomicRename.MoveOver(temp, target));
+                await Task.Delay(50);
+                move.IsCompleted.ShouldBeFalse("the rename waits while the target is held open");
+            }
+            await move;
+            File.ReadAllText(target).ShouldBe("new");
+            File.Exists(temp).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>A failure that is not a sharing failure (here a missing source) is the rename's failure at once.</summary>
+    [Test]
+    public async Task Atomic_rename_does_not_retry_other_failures()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "write-behind-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Should.Throw<FileNotFoundException>(() => AtomicRename.MoveOver(Path.Combine(dir, "absent.tmp"), Path.Combine(dir, "target.json")));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+        await Task.CompletedTask;
+    }
 }

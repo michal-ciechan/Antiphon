@@ -223,7 +223,7 @@ internal sealed class WriteBehindQueue
         try
         {
             inner.File.WriteAllBytes(temp, content);
-            inner.File.Move(temp, path, overwrite: true);
+            AtomicRename.MoveOver(inner.File, temp, path);
         }
         catch
         {

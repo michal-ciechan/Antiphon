@@ -334,7 +334,7 @@ namespace Antiphon.Nightly
             }
             string temp = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
             System.IO.File.WriteAllText(temp, text ?? string.Empty, Utf8NoBom);
-            System.IO.File.Move(temp, full, true);
+            Antiphon.IO.WriteBehind.AtomicRename.MoveOver(temp, full);
         }
     }
 
