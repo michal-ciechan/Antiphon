@@ -295,14 +295,6 @@ try {
             $probe = Join-Path $PSScriptRoot 'fixtures/nightly/c487-probe'
             $trace = Join-Path $root 'trace.log'
             $childLog = Join-Path $root 'child.log'
-            $faultBin = Join-Path $root 'fault-bin'
-            [void][IO.Directory]::CreateDirectory($faultBin)
-            $gitStub = Join-Path $faultBin 'git'
-            [IO.File]::WriteAllText($gitStub, "#!/bin/sh`nexit 1`n")
-            [IO.File]::WriteAllText((Join-Path $faultBin 'git.cmd'), "@echo off`r`nexit /b 1`r`n")
-            if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
-                & chmod 755 $gitStub
-            }
             $seamPath = Join-Path $root 'seams.ps1'
             $seam = @"
 `$NightlySeams = @{
@@ -325,7 +317,9 @@ try {
             `$psi.RedirectStandardOutput = `$true
             `$psi.RedirectStandardError = `$true
             if (`$env:S6B_FAULT_CHILD_GIT -eq '1') {
-                `$psi.Environment['PATH'] = '$faultBin' + [IO.Path]::PathSeparator + [string]`$psi.Environment['PATH']
+                # UseShellExecute=false resolves git.exe on Windows, bypassing a PATH git.cmd shim.
+                # An invalid config count makes the real Git executable fail in this child only.
+                `$psi.Environment['GIT_CONFIG_COUNT'] = 'invalid'
             }
             foreach (`$arg in @(`$ArgumentList)) { [void]`$psi.ArgumentList.Add([string]`$arg) }
             `$proc = [System.Diagnostics.Process]::Start(`$psi)
