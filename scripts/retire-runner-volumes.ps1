@@ -61,12 +61,19 @@ function Get-CloseAuthority {
 
 function Get-CloseRemoteReason([string]$Text) {
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
-    $found = [regex]::Matches($Text, '(?m)^TempRetirementCloseRefused:\s*(.+?)\s*$')
+    $found = [regex]::Matches($Text, '(?m)^TempRetirementCloseRefused:[ \t]*([^\r\n]*)\r?$')
     if ($found.Count -eq 0) { return $null }
-    $reason = $found[$found.Count - 1].Groups[1].Value.Trim()
-    if ($reason.Length -gt 160) { $reason = $reason.Substring(0, 160).Trim() }
-    if ($reason -cnotmatch '^[A-Za-z][A-Za-z0-9._: -]{0,159}$') { return $null }
-    return $reason
+    $reason = $found[$found.Count - 1].Groups[1].Value
+    # Refusal words from c1609_close_host and the rollout/cache locks in its packet.
+    if ($reason -cin @('Authority', 'CacheMaintenanceBusy', 'CensusDrift', 'CensusUnknown',
+        'ChildrenUnknown', 'Context', 'Daemon', 'DigestMismatch', 'JournalUnknown', 'OwnerActive',
+        'ReasonFile', 'RecycleReceiptUnavailable', 'RecycleRolloutBusy', 'Targets', 'TempRetirementOwnerActive')) {
+        return $reason
+    }
+    if ($reason -cmatch '\ATempVolumesRetained antiphon-runner-temp_(?:dind-data|runner-state|runner-tmp|work)\z') {
+        return $reason
+    }
+    return $null
 }
 
 

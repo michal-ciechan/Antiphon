@@ -1159,6 +1159,13 @@ function Wait-RunnerStatus {
 
 function Invoke-HostCase {
     param([string]$Case, [string]$TempRetiredAt = '', [string]$RunnerId = '', $Recycle = $null, $Cleanup = $null)
+    function Test-HostCaseRefusalDiagnosis([string]$Diagnosis) {
+        if ($Diagnosis.Length -gt 300) { return $false }
+        if ($Diagnosis.IndexOf(' stderr=', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return (Test-C1008SafeAuditDiagnosis -Diagnosis $Diagnosis)
+        }
+        return $Diagnosis -cmatch '\A[A-Za-z][A-Za-z0-9 =._/:,-]{0,299}\z'
+    }
     $manifest = [ordered]@{
         evidenceRoot = $evidenceRoot
         sourceSha = $Sha
@@ -1180,7 +1187,7 @@ function Invoke-HostCase {
         if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
             try { $result = Get-Content -Raw -LiteralPath $resultFile | ConvertFrom-Json
                 if ($result.diagnosis -ceq 'TempContainerStillRunning') { $diagnosis = ' TempContainerStillRunning' }
-                elseif ($result.accepted -eq $false -and [string]$result.diagnosis -cmatch '^[A-Za-z][A-Za-z0-9 =._/:,-]{0,299}$') {
+                elseif ($result.accepted -eq $false -and (Test-HostCaseRefusalDiagnosis $result.diagnosis)) {
                     $diagnosis = ' diagnosis=' + [string]$result.diagnosis
                 }
             } catch { }
@@ -1192,7 +1199,7 @@ function Invoke-HostCase {
             if ($exchange.Count -eq 1) {
                 $exchangeResult = Join-Path $exchange[0].FullName 'c590-result.json'
                 try { $result = Get-Content -Raw -LiteralPath $exchangeResult -ErrorAction Stop | ConvertFrom-Json
-                    if ($result.accepted -eq $false -and [string]$result.diagnosis -cmatch '^[A-Za-z][A-Za-z0-9 =._/:,-]{0,299}$') {
+                    if ($result.accepted -eq $false -and (Test-HostCaseRefusalDiagnosis $result.diagnosis)) {
                         $diagnosis = ' diagnosis=' + [string]$result.diagnosis
                     }
                 } catch { }
