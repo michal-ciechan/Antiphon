@@ -1133,6 +1133,34 @@ public class AgentTaskPoolTests
     }
 
     [Test]
+    [Arguments(false, null, null, false)]
+    [Arguments(false, "gpt-6-astra", null, false)]
+    [Arguments(true, "gpt-6-astra", null, false)]
+    [Arguments(false, "gpt-6.2-astra", null, true)]
+    [Arguments(true, "gpt-6.2-astra", null, true)]
+    [Arguments(false, "gpt-6.2-astra", "gpt-6.2-astra", false)]
+    [Arguments(true, "gpt-6.2-astra", "gpt-6.2-astra", false)]
+    public async Task Frontier_Codex_reuse_requires_the_current_launch_model(
+        bool pinned, string? launchedModel, string? requestedAlias, bool reuse)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Frontier, idleMinutes: 10,
+            kind: AgentKind.Codex, connectionString: cs, effectiveModelId: launchedModel);
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Frontier, pinnedAgentId: pinned ? agentId : null,
+            kind: AgentKind.Codex, connectionString: cs, requestedModelAlias: requestedAlias);
+
+        (await dispatcher.TryReuseWarmAgentAsync(task, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(reuse ? AgentTaskDispatcher.ReuseOutcome.Reused : AgentTaskDispatcher.ReuseOutcome.SpawnFresh);
+        task.AgentSessionId.ShouldBe(reuse ? sessionId : (Guid?)null);
+    }
+
+    [Test]
     public async Task a_warm_alias_delegate_is_not_claimed_by_the_next_ladder_task()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -1657,7 +1685,7 @@ public class AgentTaskPoolTests
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
         string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null,
         Guid? projectId = null, AgentKind kind = AgentKind.ClaudeCode,
-        string? launchEnvJson = null, string? connectionString = null)
+        string? launchEnvJson = null, string? connectionString = null, string? effectiveModelId = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -1668,6 +1696,7 @@ public class AgentTaskPoolTests
             Id = sessionId,
             DefinitionName = "fake",
             AgentKind = kind,
+            EffectiveModelId = effectiveModelId,
             Status = SessionStatus.Running,
             Cwd = directory,
             Cols = 120,
