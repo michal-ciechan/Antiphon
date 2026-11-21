@@ -917,9 +917,8 @@ public sealed class LandingGitTests
         }
     }
 
-    // A root that exits 0 while a grandchild never closes stdout must fail inside
-    // LandingGit.SuccessPipeCloseBound. At the base this call stays in WhenAll until the
-    // holder is killed, so the witness is red until the drain is bounded.
+    // A root that exits 0 while a grandchild never closes stdout fails with git_pipe_timeout
+    // inside LandingGit.SuccessPipeCloseBound. The 8-second holder stays on the success path.
     [Test]
     [Timeout(90_000)]
     [NativeLinuxOnly("POSIX double-fork witness for a grandchild that never closes stdout.")]
@@ -939,22 +938,23 @@ public sealed class LandingGitTests
         var git = new NeverClosingPipeHolderGit(script);
         var call = git.RunAsync(repo.Path, ["push", "origin", "master"],
             new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct);
+        var limit = LandingGit.SuccessPipeCloseBound + TimeSpan.FromSeconds(15);
         var watch = Stopwatch.StartNew();
         try
         {
-            var finished = await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(45), ct));
+            var finished = await Task.WhenAny(call, Task.Delay(limit, ct));
             watch.Stop();
             finished.ShouldBe(call,
                 "git_pipe_timeout: a grandchild that never closes stdout must not hang RunAsync");
             var thrown = await Should.ThrowAsync<TimeoutException>(() => call);
             thrown.Message.ShouldBe("git_pipe_timeout");
-            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(45));
+            watch.Elapsed.ShouldBeLessThan(limit);
         }
         finally
         {
             watch.Stop();
             KillHolder(pidFile);
-            try { await call; } catch { /* the base has no bound; killing the holder lets it finish */ }
+            try { await call; } catch { /* observe a late failure so it is not unobserved */ }
         }
     }
 

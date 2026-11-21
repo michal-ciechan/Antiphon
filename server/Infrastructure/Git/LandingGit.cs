@@ -27,6 +27,12 @@ public class LandingGit : ILandingGit
     /// Past the bound the journal stays and the pool thread is released.</summary>
     internal static readonly TimeSpan AbandonedRootExitBound = TimeSpan.FromSeconds(30);
 
+    /// <summary>After a normal exit, wait at most this long for redirected stdout and stderr to
+    /// reach EOF. A grandchild that closes the pipe inside the bound still succeeds and must not
+    /// become <c>git_timeout</c>. A holder that never closes fails the call with
+    /// <c>git_pipe_timeout</c> so the host cannot sit out a chunk watchdog.</summary>
+    internal static readonly TimeSpan SuccessPipeCloseBound = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// CARD-0824 S4a round 3 Review B-1: a caller's live switch for one call, read after this class's own last await
     /// before a destructive step (a mutating child's start, the administrative entry's move). A non-null answer
@@ -360,10 +366,37 @@ public class LandingGit : ILandingGit
                     if (started is not null && identified) await started(process.Id, startTicks, ct);
                 }
                 await process.WaitForExitAsync(budget.Token);
-                // A normal exit waits for EOF with no second deadline. The budget bounds the kill
-                // path only: a grandchild that keeps a pipe open after success must not become
-                // git_timeout, and the journal stays until those pipes close.
-                await Task.WhenAll(output, error);
+                // A grandchild that closes the pipe inside SuccessPipeCloseBound still succeeds
+                // and must not become git_timeout (CARD-1076 D-2). A holder that never closes
+                // fails with git_pipe_timeout; the journal stays until those pipes close.
+                var pipeTimedOut = false;
+                try
+                {
+                    await Task.WhenAll(output, error).WaitAsync(SuccessPipeCloseBound);
+                }
+                catch (TimeoutException) when (!(output.IsCompletedSuccessfully && error.IsCompletedSuccessfully))
+                {
+                    pipeTimedOut = true;
+                    var pipeHandedOff = false;
+                    var pipeDrained = false;
+                    try
+                    {
+                        pipeHandedOff = await ReleaseChildAsync(process, owned, journal is null ? null : journal.StreamsClosed, null, output, error);
+                        pipeDrained = !pipeHandedOff;
+                    }
+                    catch
+                    {
+                        // The drain faulted before an abandon continuation existed. Leave the journal.
+                    }
+                    if (pipeHandedOff) disposeProcess = false;
+                    else if (pipeDrained && process.HasExited) journal?.Exited(process);
+                    _cardFiles?.NoteServerGit(repository, arguments);
+                }
+                if (pipeTimedOut) throw new TimeoutException("git_pipe_timeout");
+            }
+            catch (TimeoutException ex) when (ex.Message == "git_pipe_timeout")
+            {
+                throw;
             }
             catch
             {
