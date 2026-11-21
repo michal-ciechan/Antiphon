@@ -454,6 +454,7 @@ public sealed class RunScheduler
         DriverResult? result = null;
         var launched = false;
         var sourceOk = true;
+        var verificationParallelism = 1;
         var started = DateTimeOffset.UtcNow;
         try
         {
@@ -505,6 +506,7 @@ public sealed class RunScheduler
                 return;
             }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
+            verificationParallelism = intermediate is null ? 1 : cpu;
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
@@ -527,7 +529,7 @@ public sealed class RunScheduler
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log)
                 {
                     Ledger = ledger,
-                    GraphEvaluationParallelism = intermediate is null ? 1 : cpu,
+                    GraphEvaluationParallelism = verificationParallelism,
                 },
                 TimeSpan.FromMinutes(deadlineMinutes),
                 _buildTimeProvider,
@@ -541,7 +543,7 @@ public sealed class RunScheduler
             progress.AdmissionExitCode = ExitCodes.Timeout;
         }
 
-        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger) : null;
+        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger, verificationParallelism) : null;
         if (outside?.Kind is not null)
             ProcessDriver.AppendLog(log, outside.Detail);
         if (result is not null)

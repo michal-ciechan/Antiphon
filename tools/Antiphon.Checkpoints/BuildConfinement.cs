@@ -178,16 +178,33 @@ public static class BuildConfinement
         return new Admission(Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false), hashed);
     }
 
-    public static Settlement VerifyLedger(Ledger ledger)
+    public static Settlement VerifyLedger(Ledger ledger, int parallelism = 1)
     {
+        var entries = ledger.Files.ToArray();
+        var after = new string?[entries.Length];
+        void Read(int index)
+        {
+            var entry = entries[index];
+            if (!IsUnreadable(entry.Value))
+                after[index] = ledger.Stamp(Combine(ledger.Repository, entry.Key));
+        }
+
+        // Keep the complete content check after slot release. A warm compiler leaves
+        // enough time for this scan to dominate, especially with retained build products.
+        if (parallelism > 1)
+            Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, Read);
+        else
+            for (var index = 0; index < entries.Length; index++) Read(index);
+
         var changed = new List<string>();
         var unreadable = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var pair in ledger.Files)
+        for (var index = 0; index < entries.Length; index++)
         {
-            if (IsUnreadable(pair.Value))
+            var pair = entries[index];
+            if (after[index] is not { } current)
                 unreadable[pair.Key] = ReasonOf(pair.Value);
             else
-                Compare(pair.Key, pair.Value, ledger.Stamp(Combine(ledger.Repository, pair.Key)), changed, unreadable);
+                Compare(pair.Key, pair.Value, current, changed, unreadable);
         }
         return Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false);
     }
@@ -282,7 +299,7 @@ public static class BuildConfinement
         try
         {
             walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment,
-                cancellationToken, graphEvaluationParallelism);
+                cancellationToken, Math.Max(1, graphEvaluationParallelism));
         }
         catch (OperationCanceledException)
         {
