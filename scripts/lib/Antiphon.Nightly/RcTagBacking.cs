@@ -1,5 +1,5 @@
 // CARD-1820 S5. Test-RcTagBacking over an admission envelope chain.
-// CARD-1836 admission is still PowerShell (scripts/lib/rc-admission.ps1), so this
+// CARD-1836 admission is compiled beside it (Antiphon.Nightly.RcAdmission); this
 // policy lives in the Nightly core. No tag, publish, or promote caller. gateCredit
 // stays false: ledger-basis success is not publication credit.
 // ChainFormEnabled is false until a CARD-1836 D-8 producer exists. A chain with

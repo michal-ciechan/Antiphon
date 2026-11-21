@@ -2,6 +2,7 @@
 // the input is outside what this command answers exactly, nothing the caller relies on was written, and the
 // caller runs its PowerShell path. Exit 2: usage. The reason for NotHandled goes to stderr, one line.
 using System;
+using System.Linq;
 using Antiphon.Checkpoints;
 
 namespace Antiphon.Scripts
@@ -20,8 +21,9 @@ namespace Antiphon.Scripts
             if ((args.Length == 2 || args.Length == 3) && args[0] == "live-lane-evidence"
                 && Array.IndexOf(LiveLaneEvidence.Cases, args[1]) >= 0)
                 return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
-            // The ledger stamp answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
+            // The rc ledger commands answer every input themselves: exit 0 done, 1 refused (one stderr line), 2 usage.
             if (args.Length >= 1 && args[0] == "rc-ledger-stamp") return RcLedgerStamp(args);
+            if (args.Length >= 1 && (args[0] == "rc-ledger-import" || args[0] == "rc-ledger-plan" || args[0] == "rc-ledger-status" || args[0] == "rc-input-census")) return RcLedgerCommand(args);
             try
             {
                 if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
@@ -42,6 +44,86 @@ namespace Antiphon.Scripts
         }
 
         public const int Refused = 1;
+
+        private const string RcLedgerCommandsUsage =
+            "rc-ledger-import --source-run-root <dir> --evidence-root <dir> --repository <dir> --expected-sha <sha> --expected-run-id <id> [--current-manifest <json>]"
+            + " | rc-ledger-plan --request <json> --request-digest <sha256> --repository <dir> --expected-sha <sha> --plan <json>"
+            + " | rc-ledger-status --evidence-root <dir> --plan-digest <sha256> [--json]"
+            + " | rc-input-census [--repository <dir>] [--emit-rows] [--scan-only]";
+
+        // --name value flags (and bare switches) into a map; a repeated, unknown or valueless flag is malformed.
+        private static System.Collections.Generic.Dictionary<string, string> Flags(string[] args, string[] valued, string[] switches)
+        {
+            var flags = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            for (var i = 1; i < args.Length; i++)
+            {
+                var name = args[i];
+                if (Array.IndexOf(switches, name) >= 0 && !flags.ContainsKey(name)) { flags[name] = "true"; continue; }
+                if (Array.IndexOf(valued, name) < 0 || i + 1 >= args.Length || flags.ContainsKey(name)) return null;
+                flags[name] = args[++i];
+            }
+            return flags;
+        }
+
+        // CARD-1836: the S5b import, the S5c diagnostic plan and its status. None launches, activates or grants credit.
+        private static int RcLedgerCommand(string[] args)
+        {
+            System.Collections.Generic.Dictionary<string, string> flags;
+            string F(string name) => flags.TryGetValue(name, out var v) ? v : null;
+            try
+            {
+                switch (args[0])
+                {
+                    case "rc-ledger-import":
+                        flags = Flags(args, new[] { "--source-run-root", "--evidence-root", "--repository", "--expected-sha", "--expected-run-id", "--current-manifest" }, new string[0]);
+                        if (flags == null || F("--source-run-root") == null || F("--evidence-root") == null || F("--repository") == null || F("--expected-sha") == null || F("--expected-run-id") == null) break;
+                        var report = Antiphon.Nightly.RcLedgerImport.Run(F("--source-run-root"), F("--evidence-root"), F("--repository"), F("--expected-sha"), F("--expected-run-id"),
+                            F("--current-manifest"), RepositoryCheckout(F("--repository")));
+                        Console.WriteLine("RC IMPORT admitted=0 dirty=" + report["dirty"] + " unproven=" + report["unproven"] + " Full=true");
+                        return Handled;
+                    case "rc-ledger-plan":
+                        flags = Flags(args, new[] { "--request", "--request-digest", "--repository", "--expected-sha", "--plan" }, new string[0]);
+                        if (flags == null || new[] { "--request", "--request-digest", "--repository", "--expected-sha", "--plan" }.Any(n => F(n) == null)) break;
+                        var request = System.Text.Json.Nodes.JsonNode.Parse(Antiphon.Nightly.RcAdmission.ReadJson(F("--request"), F("--request-digest")).GetRawText());
+                        var plan = Antiphon.Nightly.RcIncrementalPlan.NewPlan(request, F("--repository"), F("--expected-sha"));
+                        Antiphon.Nightly.RcIncrementalPlan.WritePlan(F("--plan"), plan, RepositoryCheckout(F("--repository")));
+                        Console.WriteLine("RC PLAN diagnostic=true effective=Full required=" + plan["partition"]["required"].AsArray().Count + " carried=0 digest=" + plan["digest"]);
+                        return Handled;
+                    case "rc-input-census":
+                        // CARD-1820 S3: exit 1 names every under-selected pair, unanalysable listing and no-op conflict.
+                        flags = Flags(args, new[] { "--repository" }, new[] { "--emit-rows", "--scan-only" });
+                        if (flags == null) break;
+                        return Antiphon.Nightly.RcInputCensus.Run(F("--repository") ?? Environment.CurrentDirectory, F("--emit-rows") != null, F("--scan-only") != null, Console.Out);
+                    case "rc-ledger-status":
+                        flags = Flags(args, new[] { "--evidence-root", "--plan-digest" }, new[] { "--json" });
+                        if (flags == null || F("--evidence-root") == null || F("--plan-digest") == null) break;
+                        var status = Antiphon.Nightly.RcIncrementalPlan.ReadStatus(F("--evidence-root"), F("--plan-digest"));
+                        if (F("--json") != null) { Console.WriteLine(status.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true })); return Handled; }
+                        Console.WriteLine("RC STATUS effective=" + status["effectiveMode"] + " planned=" + status["planned"] + " executed=" + status["executed"] + " carried=" + status["carried"]
+                            + " sampled=" + status["sampled"] + " failed=" + status["failed"] + " unproven=" + status["unproven"] + " not-run=" + status["notRun"]);
+                        Console.WriteLine("coverageComplete=false gateCredit=false revision=" + status["sequence"] + " reasons="
+                            + string.Join(",", status["forcedReasons"].AsArray().Select(r => (string)r)));
+                        var proposed = status["proposed"];
+                        Console.WriteLine("UNVERIFIED PROPOSAL carried=" + proposed["carried"] + " unique-origin-chunks=" + proposed["uniqueOriginChunks"]
+                            + " historical-potential-wall-seconds=" + proposed["historicalPotentialWallSeconds"]);
+                        foreach (var origin in proposed["origins"].AsArray())
+                            Console.WriteLine("ORIGIN envelope=" + origin["envelopeDigest"] + " run=" + origin["runId"] + " source=" + origin["sourceSha"] + " suite=" + origin["suite"]
+                                + " chunk=" + origin["chunkId"]);
+                        return Handled;
+                }
+            }
+            catch (Exception e) when (e is Antiphon.Nightly.RcAdmissionRefusal || e is Antiphon.Nightly.RcLedgerRefusal || e is Antiphon.Nightly.RcChunkDigestRefusal
+                || e is Antiphon.Nightly.RcInputRefusal || e is Antiphon.Nightly.RcBoundaryRefusal || e is InvalidOperationException || e is System.IO.IOException)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+            Console.Error.WriteLine("usage: antiphon-scripts " + RcLedgerCommandsUsage);
+            return Usage;
+        }
+
+        // The checkout outputs must stay outside: the repository's own working tree.
+        private static string RepositoryCheckout(string repository) => System.IO.Path.GetFullPath(repository);
 
         private const string RcLedgerStampUsage =
             "rc-ledger-stamp <ledger.json> <output.json> [--timing <sidecar>]... [--trx <trx>]... [--include-host --host-id <id> --os <windows|linux>]";

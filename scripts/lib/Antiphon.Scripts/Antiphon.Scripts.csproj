@@ -16,7 +16,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../CheckpointProcessRunner.cs" Link="CheckpointProcessRunner.cs" />
-    <!-- Self-contained plain C#: the rc ledger (rc-ledger-stamp). -->
-    <Compile Include="../Antiphon.Nightly/RcLedger.cs" Link="RcLedger.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The rc commands call the compiled core's plain C# (ledger, admission, plans); PowerShell is never loaded. -->
+    <ProjectReference Include="../Antiphon.Nightly/Antiphon.Nightly.csproj" />
   </ItemGroup>
 </Project>

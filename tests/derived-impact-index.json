@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 340,
+      "classes": 339,
       "reason": "allowlist"
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 15,
+      "classes": 16,
       "reason": "allowlist"
     },
     {
@@ -158,18 +158,18 @@
     },
     {
       "path": "antiphon.areas.json",
-      "classes": 356,
+      "classes": 358,
       "reason": "cap",
-      "owed": 331,
+      "owed": 333,
       "first": [
+        "AgentTaskConcurrencyLimitTests",
+        "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDetailBlockedContextTests",
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskDispatchFailureTests",
         "AgentTaskEffectiveModelChipTests",
-        "AgentTaskInputFallbackTests",
-        "AgentTaskInputSpillTests",
-        "AgentTaskInternalDecisionLifecycleTests"
+        "AgentTaskInputFallbackTests"
       ]
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 10,
+      "classes": 12,
       "reason": "allowlist"
     },
     {
@@ -2056,9 +2056,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 135,
+      "classes": 134,
       "reason": "cap",
-      "owed": 110,
+      "owed": 109,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 72,
+      "classes": 65,
       "reason": "cap",
-      "owed": 47,
+      "owed": 40,
       "first": [
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
@@ -2162,18 +2162,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 49,
+      "classes": 41,
       "reason": "cap",
-      "owed": 24,
+      "owed": 16,
       "first": [
-        "RcInputManifestTests",
-        "RcInputOwnersMapTests",
-        "RcLedgerStatusTests",
-        "RcReleaseBaselineTests",
-        "ReleaseSelectionHopSeedTests",
-        "ScriptHarnessWindowsOwnershipTests",
-        "WatchQualEtaLineTests",
-        "ChangeAwareReleaseTests"
+        "AstraFixesBTests",
+        "ChangeAwareReleaseBudgetTests",
+        "DirectoryLinkFixtureWindowsTests",
+        "ScriptHarnessCancellationTests",
+        "C1514HostLoadScriptTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseSelectionCliTests",
+        "ClaudeEffortFixtureTraceTests"
       ]
     },
     {
@@ -2251,9 +2251,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 128,
+      "classes": 134,
       "reason": "cap",
-      "owed": 103,
+      "owed": 109,
       "first": [
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
@@ -2504,7 +2504,9 @@
     {
       "path": ".editorconfig",
       "classes": [
-        "LandVerificationFailureTests"
+        "LandVerificationFailureTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -2535,6 +2537,12 @@
         "ShellFixtureLineEndingContractTests",
         "SlowTestRegistryMergeTests",
         "WorktreeManagerGitIntegrationTests"
+      ]
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "classes": [
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -2598,12 +2606,19 @@
       ]
     },
     {
+      "path": "Antiphon.AppHost/Antiphon.AppHost.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "Antiphon.AppHost/Program.cs",
       "classes": [
         "HangfirePostgreSqlStorageTests",
         "HangfireStorageSelectionTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -2656,6 +2671,8 @@
         "ChannelOutboundIsolatedTests",
         "CustodyNamespaceBootstrapTests",
         "DockerStackContractTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests",
         "ServerImagePushCredentialTests"
       ]
     },
@@ -2721,15 +2738,21 @@
         "AgentTaskCheckScheduleTests",
         "AgentTaskCheckSweepTests",
         "AgentTaskCommitEndpointTests",
-        "AgentTaskConcurrencyLimitTests",
-        "AgentTaskDeadSessionReconciliationTests",
-        "AreaMapLoaderTests"
+        "AreaMapLoaderTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
       "path": "appsettings.json.example",
       "classes": [
         "AgentRegistrySettingsTests"
+      ]
+    },
+    {
+      "path": "client/package-lock.json",
+      "classes": [
+        "RcInputManifestTests"
       ]
     },
     {
@@ -2798,6 +2821,7 @@
       "path": "docker-compose.runner-grok.yml",
       "classes": [
         "CustodyNamespaceBootstrapTests",
+        "RcInputOwnersMapTests",
         "VerifyPhoneHomeGrokScriptTests"
       ]
     },
@@ -2933,7 +2957,8 @@
     {
       "path": "docker/session-runner-grok/antiphon-custody-enter.sh",
       "classes": [
-        "CustodyHelperContractTests"
+        "CustodyHelperContractTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -3420,6 +3445,7 @@
         "PerTaskFinalUnitLaneWitnessTests",
         "PipelineSpeedIntegrationTests",
         "ProviderEndpointProjectionTests",
+        "RcInputOwnersMapTests",
         "ReviewTestQualityChecklistWitnessTests",
         "RunnerPushCredentialDocsTests",
         "Server2StagingServerContractTests",
@@ -3489,6 +3515,7 @@
       "path": "scripts/build-slot.ps1",
       "classes": [
         "CheckpointManifestDocumentationTests",
+        "RcInputOwnersMapTests",
         "RunnerLinuxCompilerPolicyTests",
         "StableBuildOutputDocumentationTests"
       ]
@@ -3980,6 +4007,19 @@
       ]
     },
     {
+      "path": "scripts/lib/rc-input-owners.json",
+      "classes": [
+        "RcHistoricalAdmissionTests",
+        "RcReleaseBaselineTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/rc-input-reader-census.json",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "scripts/lib/release-gate.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
@@ -4193,14 +4233,6 @@
       "path": "scripts/test-live-startup-timing.ps1",
       "classes": [
         "StartupScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-rc-historical-evidence.ps1",
-      "classes": [
-        "C1677TempFamilyRegistryTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
       ]
     },
     {
@@ -7932,6 +7964,7 @@
       "classes": [
         "CardWorkTransitionServiceTests",
         "PipelineSpeedIntegrationTests",
+        "RcForcedFullTests",
         "ScheduleCardActionTests"
       ]
     },
@@ -20059,7 +20092,8 @@
     {
       "path": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
       "classes": [
-        "PlanCoverageBindingTests"
+        "PlanCoverageBindingTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -20531,6 +20565,18 @@
       ]
     },
     {
+      "path": "tests/Antiphon.CustodyTestChild/Antiphon.CustodyTestChild.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.CustodyTestChild/Program.cs",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.DockerStack.Fixture/DeliveryCaseIdentity.cs",
       "classes": [
         "DockerDeliveryObservationTests"
@@ -20601,7 +20647,8 @@
       "path": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
       "classes": [
         "E2ECopyOwnedPtyHostAppHostContractTests",
-        "NightlyPolicyTests"
+        "NightlyPolicyTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -20763,10 +20810,22 @@
       ]
     },
     {
+      "path": "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorkingTreeVerdictTests.cs",
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
         "DispatchConcurrencyAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -20807,6 +20866,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
       "classes": [
         "LandGraphEvaluationTests",
@@ -20839,7 +20904,8 @@
     {
       "path": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
       "classes": [
-        "LinkedTestHelperClosureTests"
+        "LinkedTestHelperClosureTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -20861,6 +20927,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.SessionRunner.Tests/AgentPinWorkspaceStoreTests.cs",
       "classes": [
         "WindowsUnitPlatformAdmissionTests"
@@ -20873,6 +20945,7 @@
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
         "LandNonCodeSkipTests",
+        "RcInputOwnersMapTests",
         "ReleaseImpactEvaluationTests"
       ]
     },
@@ -21607,7 +21680,8 @@
         "LiveClaudeIsolationWiringTests",
         "LiveLaneEvidenceTests",
         "LiveLaneExecutableTests",
-        "LiveLaneIsolationTests"
+        "LiveLaneIsolationTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -21880,6 +21954,7 @@
         "LandNonCodeSkipTests",
         "NightlyPolicyTests",
         "PlanCoverageBindingTests",
+        "RcInputOwnersMapTests",
         "ReleaseImpactRuntimeTests",
         "ReleaseImpactScriptTests"
       ]
@@ -23716,6 +23791,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+      "classes": [
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/StandingBootAttentionTests.cs",
       "classes": [
         "StandingBootDocumentationTests"
@@ -24506,11 +24587,44 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RcAdmissionEvidenceFixture.cs",
+      "classes": [
+        "RcHistoricalAdmissionTests",
+        "RcReleaseBaselineTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RcForcedFullTests.cs",
+      "classes": [
+        "LandingProtocolHarnessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/RcFullTimingContractTests.cs",
       "classes": [
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RcHistoricalEvidenceTests.cs",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RcInputFixtureRepository.cs",
+      "classes": [
+        "RcChunkInputDigestTests",
+        "RcHistoricalAdmissionTests",
+        "RcHistoricalEvidenceTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests",
+        "RcLedgerStatusTests",
+        "RcReleaseBaselineTests"
       ]
     },
     {
@@ -24636,6 +24750,7 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
         "C487ReadOnlyCleanupWitnessTests",
+        "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
@@ -24647,19 +24762,18 @@
         "NightlyScriptsTests",
         "QualificationEtaTests",
         "RcBoundaryPackTests",
-        "RcChunkInputDigestTests",
         "RcDirtyLaunchOrderTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
-        "RcForcedFullTests",
-        "RcHistoricalAdmissionTests",
-        "RcHistoricalEvidenceTests",
         "RcIncrementalShadowTests",
         "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
+        "ReleaseSelectionHopSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
-        "ScriptHarnessProcessContractTests"
+        "ScriptHarnessProcessContractTests",
+        "ScriptHarnessWindowsOwnershipTests",
+        "WatchQualEtaLineTests"
       ]
     },
     {
@@ -26018,7 +26132,8 @@
       "classes": [
         "ChannelReplyAttachmentReaderTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
-        "QualificationCheckoutSourceTests"
+        "QualificationCheckoutSourceTests",
+        "RcHistoricalEvidenceTests"
       ]
     },
     {
@@ -27269,6 +27384,7 @@
         "LandGraphAuditCleanupTests",
         "PostLandEarlyWarningTests",
         "QualificationCheckoutSourceTests",
+        "RcHistoricalEvidenceTests",
         "ReportBudgetWorkspacePortabilityTests",
         "TestTimingChokePointTests",
         "VolumeRetirementHostProofTests"
@@ -27352,6 +27468,8 @@
       "path": "tests/derived-impact-index.json",
       "classes": [
         "DerivedImpactIndexTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests",
         "ReleaseImpactEnvelopeTests"
       ]
     },
@@ -27372,7 +27490,9 @@
       "classes": [
         "DerivedImpactIndexTests",
         "ImpactedClassesSelectorTests",
-        "PostLandEarlyWarningTests"
+        "PostLandEarlyWarningTests",
+        "RcInputManifestTests",
+        "RcInputOwnersMapTests"
       ]
     },
     {
@@ -27425,6 +27545,12 @@
       "path": "tools/Antiphon.LandGraphAudit/Program.cs",
       "classes": [
         "LandAuditToolResolverTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.NativeLinuxMigrationAudit/Antiphon.NativeLinuxMigrationAudit.csproj",
+      "classes": [
+        "RcInputOwnersMapTests"
       ]
     },
     {

@@ -114,7 +114,7 @@ public sealed class RunnerTempSweep
             "tests/Antiphon.Tests/Application/RemoteWorkspacePreparerTests.cs", "\"antiphon-remote-prep-ws\"",
             "antiphon-remote-prep-wsabcdef"),
         new("rh", "^rh-[0-9a-f]{32}\\z",
-            "scripts/test-rc-historical-evidence.ps1", "'rh-'",
+            "tests/Antiphon.Tests/Scripts/RcHistoricalEvidenceTests.cs", "\"rh-\"",
             "rh-0123456789abcdef0123456789abcdef"),
         new("antiphon-owned", "^antiphon-owned-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/OwnedTempRoot.cs", "\"antiphon-owned-\"",
