@@ -6,6 +6,8 @@ param(
 $RepoRoot = $PSScriptRoot
 $AspireCommand = "D:\src\Mikeys.Tools\Mikey.AspireCommand"
 $ServerProject = "$RepoRoot\server\Antiphon.Server.csproj"
+$sourceRevision = ((& git -C $RepoRoot rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'restart-server: git rev-parse HEAD failed; refusing an unstamped server build.' }
 
 # CARD-1698: warn about a tool below its floor; never refuse, never change the exit code.
 try {
@@ -33,7 +35,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Building server..." -ForegroundColor Yellow
-dotnet build $ServerProject
+dotnet build $ServerProject "-p:SourceRevisionId=$sourceRevision"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Build failed! Aborting." -ForegroundColor Red
     exit 1

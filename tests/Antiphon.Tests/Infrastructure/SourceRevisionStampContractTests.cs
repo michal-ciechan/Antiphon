@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
-using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -40,43 +39,23 @@ public sealed class SourceRevisionStampContractTests
     }
 
     [Test]
-    [Arguments("dev-aspire.ps1", "-Label apphost-build -- dotnet build `\"-p:SourceRevisionId=$sourceRevision`\"")]
-    [Arguments("scripts/run-daemon.ps1", "$buildArgs += \"-p:SourceRevisionId=$sourceRevision\"")]
-    [Arguments("scripts/start-windows-phone-home-runner.ps1", "dotnet build $project -nologo -v:q \"-p:SourceRevisionId=$sourceRevision\"")]
-    [Arguments("dev-start.ps1", "dotnet run -p:SourceRevisionId=$sourceRevision")]
-    [Arguments("dev-upgrade.ps1", "dotnet build \"$root\\server\" \"-p:SourceRevisionId=$sourceRevision\"")]
-    [Arguments("restart-server.ps1", "dotnet build $ServerProject \"-p:SourceRevisionId=$sourceRevision\"")]
-    public void Deployed_builds_stamp_head(string script, string stampedBuild)
-    {
-        var text = DockerStackDocuments.Read(script);
-        text.ShouldContain("rev-parse HEAD");
-        text.ShouldContain("match '^[0-9a-f]{40}$'");
-        text.ShouldContain(stampedBuild);
-    }
+    public void Deployed_builds_stamp_head() => VerifyPowerShellCase("audit");
 
     [Test]
-    public void PowerShell_census_rejects_stamp_decoys()
+    public void PowerShell_census_rejects_stamp_decoys() => VerifyPowerShellCase("decoys");
+
+    private static void VerifyPowerShellCase(string testCase)
     {
-        var result = Run("pwsh", "-NoProfile -File scripts/test-source-revision-stamp.ps1 -Case decoys",
+        var result = Run("pwsh", "-NoProfile -File scripts/test-source-revision-stamp.ps1 -Case " + testCase,
             DockerStackDocuments.RepoRoot);
         result.Code.ShouldBe(0, result.Text);
     }
 
     [Test]
-    public Task Phone_home_no_build_warns_and_launches() =>
-        ScriptHarness.RunHarnessCaseAsync(
-            "test-windows-phone-home-runner.ps1", "C1744G3", "no-build-stamp", 2,
-            ["C1744G3 no-build-stamp.launch", "C1744G3 no-build-stamp.warning"],
-            ScriptHarnessOptions.Default with
-            {
-                AdditionalArguments = ["-RunnerAssembly", typeof(SessionRunner.RunnerBuildIdentity).Assembly.Location],
-            }, CancellationToken.None);
-
-    [Test]
-    public void Deploy_surfaces_stamp_every_product_build()
+    public void Docker_and_package_builds_stamp_source_revision()
     {
         var unstamped = new List<string>();
-        foreach (var relative in DeploySurfaces())
+        foreach (var relative in PackagingSurfaces())
         {
             var text = DockerStackDocuments.Read(relative);
             foreach (Match match in DeployInvocation.Matches(text))
@@ -90,10 +69,6 @@ public sealed class SourceRevisionStampContractTests
                 if (!invocation.Contains("SourceRevisionId", StringComparison.Ordinal))
                     unstamped.Add(relative + ": " + invocation);
             }
-
-            if (text.Contains("dotnet @", StringComparison.Ordinal)
-                && !text.Contains("-p:SourceRevisionId=", StringComparison.Ordinal))
-                unstamped.Add(relative + ": splatted dotnet has no -p:SourceRevisionId=");
         }
 
         unstamped.ShouldBeEmpty("a deploy build without SourceRevisionId ships an unstamped binary");
@@ -118,7 +93,6 @@ public sealed class SourceRevisionStampContractTests
 
         var aspire = DockerStackDocuments.Read("dev-aspire.ps1");
         aspire.ShouldContain("Set-Location '$appHostDir'");
-        aspire.ShouldContain("-Label apphost-build -- dotnet build -p:SourceRevisionId=$sourceRevision");
         var appHost = DockerStackDocuments.Read("Antiphon.AppHost/Antiphon.AppHost.csproj");
         appHost.ShouldContain("ProjectReference");
         appHost.ShouldContain("Antiphon.Server.csproj");
@@ -174,23 +148,10 @@ public sealed class SourceRevisionStampContractTests
         }
     }
 
-    private static IEnumerable<string> DeploySurfaces()
+    private static IEnumerable<string> PackagingSurfaces()
     {
         var root = DockerStackDocuments.RepoRoot;
-        yield return "dev-aspire.ps1";
         yield return "Dockerfile";
-        foreach (var path in Directory.EnumerateFiles(Path.Combine(root, "scripts"), "*.ps1"))
-        {
-            var name = Path.GetFileName(path);
-            if (name.StartsWith("restart-", StringComparison.Ordinal)
-                || name.StartsWith("deploy-", StringComparison.Ordinal)
-                || name.StartsWith("publish-", StringComparison.Ordinal)
-                || name.StartsWith("release-", StringComparison.Ordinal)
-                || name.StartsWith("promote-", StringComparison.Ordinal)
-                || name == "run-daemon.ps1"
-                || (name.StartsWith("start-", StringComparison.Ordinal) && name.EndsWith("-runner.ps1", StringComparison.Ordinal)))
-                yield return "scripts/" + name;
-        }
 
         foreach (var path in Directory.EnumerateFiles(Path.Combine(root, "docker"), "Dockerfile", SearchOption.AllDirectories))
             yield return Path.GetRelativePath(root, path).Replace('\\', '/');

@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using Antiphon.SessionRunner;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -12,6 +15,18 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class C1744G3PhoneHomeSupervisionTests
 {
+    [Test]
+    public Task Phone_home_no_build_warns_and_launches()
+    {
+        var runnerAssembly = typeof(RunnerBuildIdentity).Assembly.Location;
+        FileVersionInfo.GetVersionInfo(runnerAssembly).ProductVersion.ShouldNotBeNull().ShouldEndWith("+unknown");
+        return ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1", "C1744G3", "no-build-stamp", 2,
+            ["C1744G3 no-build-stamp.launch", "C1744G3 no-build-stamp.warning"],
+            ScriptHarnessOptions.Default with { AdditionalArguments = ["-RunnerAssembly", runnerAssembly] },
+            CancellationToken.None);
+    }
+
     [Test]
     public Task Env_table_matches_the_start_script() =>
         ScriptHarness.RunHarnessCaseAsync(
