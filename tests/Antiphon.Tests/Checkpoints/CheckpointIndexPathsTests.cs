@@ -191,7 +191,9 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         var blob = CheckpointFixtureProcess.Git(root, "hash-object", "-w", "a.txt").Trim();
         CheckpointFixtureProcess.Git(root, "update-index", "--add", "--cacheinfo", "120000," + blob + ",link");
         CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
-        var seeded = CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s");
+        static string GitStageListing(string at) =>
+            CheckpointFixtureProcess.Git(at, "-c", "core.quotepath=false", "ls-files", "-z", "-s");
+        var seeded = GitStageListing(root);
         seeded.ShouldContain("100755 ");
         seeded.ShouldContain("120000 ");
         string GitHead(string at) => CheckpointFixtureProcess.Git(at, "rev-parse", "HEAD").Trim();
@@ -200,7 +202,7 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
             CheckpointProcessRunner.ReadHead(at).ShouldBe(GitHead(at), label + " HEAD");
             var found = CheckpointProcessRunner.TopLevelRepository(at);
             found.ShouldNotBeNull(label);
-            CheckpointIndexPaths.StageListing(found[1]).ShouldBe(CheckpointFixtureProcess.Git(at, "ls-files", "-z", "-s"), label + " stage listing");
+            CheckpointIndexPaths.StageListing(found[1]).ShouldBe(GitStageListing(at), label + " stage listing");
         }
 
         Agrees(root, "loose branch ref");
@@ -268,8 +270,7 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
         run.Stdout.ShouldContain("HEAD=0:" + GitHead(root));
-        run.Stdout.ShouldContain("LISTING=0:" + Convert.ToHexString(
-            System.Text.Encoding.UTF8.GetBytes(CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s"))));
+        run.Stdout.ShouldContain("LISTING=0:" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(GitStageListing(root))));
         Directory.GetFiles(trace).ShouldBeEmpty("Invoke-CheckpointGit answered both reads from the repository's files");
     }
 
