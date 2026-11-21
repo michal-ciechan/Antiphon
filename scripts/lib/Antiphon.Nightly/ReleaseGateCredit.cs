@@ -1,7 +1,8 @@
 // The release gate's credit decision (moved from release-gate.ps1). D-2: a run earns master-scheduled or rc-release
 // credit from its own identity and real green flags, never a guessed kind. D-3: an RC earns credit only against the
 // SHA its candidate was pinned to, and a candidate ref is a legacy release/rc-<stamp> or a long-lived rc/YYYY-MM-DD.
-// nightly-run.ps1 and release-cut.ps1 run under pwsh and load this core.
+// nightly-run.ps1 and release-cut.ps1 run under pwsh and load this core. CreditVerdict and Verdict share one decision:
+// the first reads a state as PowerShell does, the second reads plain values, so C# calls it in-process.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -12,6 +13,18 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
+    /// <summary>
+    /// CreditVerdict's { CreditKind, Ok, Reasons, RequestedKind } in plain values. RequestedKind is "" when the state is
+    /// missing or its identity earns no credit kind.
+    /// </summary>
+    public sealed class ReleaseGateCreditVerdict
+    {
+        public string CreditKind { get; init; }
+        public bool Ok { get; init; }
+        public string[] Reasons { get; init; }
+        public string RequestedKind { get; init; }
+    }
+
     public static class ReleaseGateCredit
     {
         public const string DefaultReleaseRoot = @"C:\Antiphon\releases";
@@ -58,7 +71,26 @@ namespace Antiphon.Nightly
         /// </summary>
         public static PSObject CandidateRef(string reference, string sha)
         {
-            if (string.IsNullOrWhiteSpace(reference)) return Note("Ok", false, "Reason", "empty-ref", "Stamp", "", "CandidateId", "", "Ref", "", "Kind", "");
+            var parsed = ParseCandidateRef(reference, sha);
+            if (!parsed.Ok) return Note("Ok", false, "Reason", parsed.Reason, "Stamp", parsed.Stamp, "CandidateId", "", "Ref", "", "Kind", parsed.Kind);
+            return Note("Ok", true, "Reason", "", "Stamp", parsed.Stamp, "Kind", parsed.Kind, "CandidateId", parsed.CandidateId, "Ref", parsed.Ref,
+                "CutUtc", parsed.CutUtc);
+        }
+
+        private sealed class ParsedCandidateRef
+        {
+            public bool Ok;
+            public string Reason = "";
+            public string Stamp = "";
+            public string Kind = "";
+            public string CandidateId = "";
+            public string Ref = "";
+            public DateTime CutUtc;
+        }
+
+        private static ParsedCandidateRef ParseCandidateRef(string reference, string sha)
+        {
+            if (string.IsNullOrWhiteSpace(reference)) return new ParsedCandidateRef { Reason = "empty-ref" };
             var normalised = reference.StartsWith("refs/heads/", StringComparison.Ordinal) ? reference.Substring("refs/heads/".Length) : reference;
             const DateTimeStyles styles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
             var stampMatch = CandidateRefPattern.Match(normalised);
@@ -66,21 +98,25 @@ namespace Antiphon.Nightly
             {
                 var stamp = stampMatch.Groups["stamp"].Value;
                 if (!DateTime.TryParseExact(stamp, "yyyyMMddTHHmmssZ", CultureInfo.InvariantCulture, styles, out var cut))
-                    return Note("Ok", false, "Reason", "ref-timestamp", "Stamp", stamp, "CandidateId", "", "Ref", "", "Kind", "stamp");
-                return Note("Ok", true, "Reason", "", "Stamp", stamp, "Kind", "stamp", "CandidateId", "rc-" + stamp, "Ref", "release/rc-" + stamp,
-                    "CutUtc", cut.ToUniversalTime());
+                    return new ParsedCandidateRef { Reason = "ref-timestamp", Stamp = stamp, Kind = "stamp" };
+                return new ParsedCandidateRef
+                {
+                    Ok = true, Stamp = stamp, Kind = "stamp", CandidateId = "rc-" + stamp, Ref = "release/rc-" + stamp, CutUtc = cut.ToUniversalTime()
+                };
             }
             var dayMatch = LongLivedRefPattern.Match(normalised);
             if (dayMatch.Success)
             {
                 var dateText = dayMatch.Groups["y"].Value + "-" + dayMatch.Groups["m"].Value + "-" + dayMatch.Groups["d"].Value;
                 if (!DateTime.TryParseExact(dateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, styles, out var cut))
-                    return Note("Ok", false, "Reason", "ref-date", "Stamp", "", "CandidateId", "", "Ref", "", "Kind", "long-lived");
+                    return new ParsedCandidateRef { Reason = "ref-date", Kind = "long-lived" };
                 var candidateId = FullSha(sha) ? "rc-" + dateText + "-" + sha.Substring(0, 12) : "";
-                return Note("Ok", true, "Reason", "", "Stamp", "", "Kind", "long-lived", "CandidateId", candidateId, "Ref", "rc/" + dateText,
-                    "CutUtc", cut.ToUniversalTime());
+                return new ParsedCandidateRef
+                {
+                    Ok = true, Kind = "long-lived", CandidateId = candidateId, Ref = "rc/" + dateText, CutUtc = cut.ToUniversalTime()
+                };
             }
-            return Note("Ok", false, "Reason", "ref-shape", "Stamp", "", "CandidateId", "", "Ref", "", "Kind", "");
+            return new ParsedCandidateRef { Reason = "ref-shape" };
         }
 
 
@@ -125,7 +161,7 @@ namespace Antiphon.Nightly
                 return "master-scheduled";
             }
             if (t != "rc") return "";
-            return LanguagePrimitives.IsTrue(PsValue.Prop(CandidateRef(r, ""), "Ok")) ? "rc-release" : "";
+            return ParseCandidateRef(r, "").Ok ? "rc-release" : "";
         }
 
         /// <summary>
@@ -135,17 +171,8 @@ namespace Antiphon.Nightly
         public static PSObject GreenFlags(object state)
         {
             if (state == null) return Note("Ok", false, "Reasons", new object[] { "missing-state" });
-            var reasons = new List<object>();
-            foreach (var field in new[] { "coverageComplete", "testsPassed", "reportDelivered" })
-                if (!RealBoolean(PsValue.Prop(state, field))) reasons.Add("not-true-boolean:" + field);
-            var exit = PsValue.Prop(state, "exitCode");
-            var exitBase = PsOps.Base(exit);
-            if (exit == null) reasons.Add("missing-exitCode");
-            else if (!(exitBase is int) && !(exitBase is long) && !(exitBase is double)) reasons.Add("non-numeric-exitCode");
-            else if ((int)LanguagePrimitives.ConvertTo(exitBase, typeof(int), CultureInfo.InvariantCulture) != 0) reasons.Add("exitCode:" + PsValue.Str(exit));
-            if (string.IsNullOrWhiteSpace(PsValue.Str(PsValue.Prop(state, "runId")))) reasons.Add("missing-runId");
-            if (string.IsNullOrWhiteSpace(PsValue.Str(PsValue.Prop(state, "policyHash")))) reasons.Add("missing-policyHash");
-            return Note("Ok", reasons.Count == 0, "Reasons", reasons.ToArray());
+            var reasons = GreenReasons(new PsCreditState(state));
+            return Note("Ok", reasons.Count == 0, "Reasons", Objects(reasons));
         }
 
         /// <summary>
@@ -156,26 +183,118 @@ namespace Antiphon.Nightly
         public static PSObject CreditVerdict(object state)
         {
             if (state == null) return Note("CreditKind", "", "Ok", false, "Reasons", new object[] { "missing-state" });
-            var kind = CreditKind(PsValue.Str(PsValue.Prop(state, "profile")), PsValue.Str(PsValue.Prop(state, "trigger")), PsValue.Str(PsValue.Prop(state, "ref")));
-            if (string.IsNullOrWhiteSpace(kind)) return Note("CreditKind", "", "Ok", false, "Reasons", new object[] { "unknown-credit-identity" });
-            var reasons = new List<object>();
+            var verdict = Decide(new PsCreditState(state));
+            if (string.IsNullOrWhiteSpace(verdict.RequestedKind)) return Note("CreditKind", "", "Ok", false, "Reasons", Objects(verdict.Reasons));
+            return Note("CreditKind", verdict.CreditKind, "Ok", verdict.Ok, "Reasons", Objects(verdict.Reasons), "RequestedKind", verdict.RequestedKind);
+        }
+
+        /// <summary>
+        /// CreditVerdict over plain values: a key is present when the dictionary contains it, booleans and numbers are
+        /// themselves, and text fields read as invariant-culture strings.
+        /// </summary>
+        public static ReleaseGateCreditVerdict Verdict(IReadOnlyDictionary<string, object> state)
+        {
+            if (state == null) return new ReleaseGateCreditVerdict { CreditKind = "", Ok = false, Reasons = new[] { "missing-state" }, RequestedKind = "" };
+            return Decide(new PlainCreditState(state));
+        }
+
+        private static ReleaseGateCreditVerdict Decide(ICreditState state)
+        {
+            var kind = CreditKind(state.Text("profile"), state.Text("trigger"), state.Text("ref"));
+            if (string.IsNullOrWhiteSpace(kind))
+                return new ReleaseGateCreditVerdict { CreditKind = "", Ok = false, Reasons = new[] { "unknown-credit-identity" }, RequestedKind = "" };
+            var reasons = new List<string>();
             // Absent scope is the historical v1 Full record. Explicit scope must be Full.
-            var stateBase = PsOps.Base(state);
-            var scopePresent = stateBase is IDictionary d ? d.Contains("coverageScope") : PSObject.AsPSObject(state).Properties["coverageScope"] != null;
-            if (scopePresent && !(PsOps.Base(PsValue.Prop(state, "coverageScope")) is string scope && scope == "Full")) reasons.Add("full-credit-scope-required");
-            var flags = GreenFlags(state);
-            if (!LanguagePrimitives.IsTrue(PsValue.Prop(flags, "Ok"))) reasons.AddRange(PsValue.AsArray(PsValue.Prop(flags, "Reasons")));
+            if (state.Has("coverageScope") && !(state.Value("coverageScope") is string scope && scope == "Full")) reasons.Add("full-credit-scope-required");
+            reasons.AddRange(GreenReasons(state));
             if (kind == "rc-release")
             {
-                var sha = PsValue.Str(PsValue.Prop(state, "sha"));
-                var expected = PsValue.Str(PsValue.Prop(state, "expectedSha"));
+                var sha = state.Text("sha");
+                var expected = state.Text("expectedSha");
                 if (!FullSha(sha)) reasons.Add("rc-sha-not-full");
                 if (!FullSha(expected)) reasons.Add("rc-expected-sha-missing");
                 else if (!string.Equals(sha, expected, StringComparison.OrdinalIgnoreCase)) reasons.Add("rc-sha-mismatch");
-                if (string.IsNullOrWhiteSpace(PsValue.Str(PsValue.Prop(state, "candidateId")))) reasons.Add("rc-candidate-missing");
+                if (string.IsNullOrWhiteSpace(state.Text("candidateId"))) reasons.Add("rc-candidate-missing");
             }
-            if (reasons.Count > 0) return Note("CreditKind", "", "Ok", false, "Reasons", reasons.ToArray(), "RequestedKind", kind);
-            return Note("CreditKind", kind, "Ok", true, "Reasons", new object[0], "RequestedKind", kind);
+            if (reasons.Count > 0) return new ReleaseGateCreditVerdict { CreditKind = "", Ok = false, Reasons = reasons.ToArray(), RequestedKind = kind };
+            return new ReleaseGateCreditVerdict { CreditKind = kind, Ok = true, Reasons = new string[0], RequestedKind = kind };
+        }
+
+        private static List<string> GreenReasons(ICreditState state)
+        {
+            var reasons = new List<string>();
+            foreach (var field in new[] { "coverageComplete", "testsPassed", "reportDelivered" })
+                if (!(state.Value(field) is bool flag && flag)) reasons.Add("not-true-boolean:" + field);
+            var exit = state.Value("exitCode");
+            if (exit == null) reasons.Add("missing-exitCode");
+            else if (!(exit is int) && !(exit is long) && !(exit is double)) reasons.Add("non-numeric-exitCode");
+            else if (state.Int(exit) != 0) reasons.Add("exitCode:" + state.Text("exitCode"));
+            if (string.IsNullOrWhiteSpace(state.Text("runId"))) reasons.Add("missing-runId");
+            if (string.IsNullOrWhiteSpace(state.Text("policyHash"))) reasons.Add("missing-policyHash");
+            return reasons;
+        }
+
+        private static object[] Objects(IList<string> values)
+        {
+            var items = new object[values.Count];
+            for (var i = 0; i < items.Length; i++) items[i] = values[i];
+            return items;
+        }
+
+        /// <summary>How the decision reads one credit state.</summary>
+        private interface ICreditState
+        {
+            /// <summary>The state names the field.</summary>
+            bool Has(string name);
+
+            /// <summary>The field's value; null when absent.</summary>
+            object Value(string name);
+
+            /// <summary>[string] of the field; "" when absent.</summary>
+            string Text(string name);
+
+            /// <summary>[int] of a numeric field value (int, long or double).</summary>
+            int Int(object value);
+        }
+
+        /// <summary>PowerShell's reading: $state.name, its base object, and [string] / [int] casts.</summary>
+        private sealed class PsCreditState : ICreditState
+        {
+            private readonly object state;
+
+            public PsCreditState(object state) { this.state = state; }
+
+            public bool Has(string name) =>
+                PsOps.Base(state) is IDictionary d ? d.Contains(name) : PSObject.AsPSObject(state).Properties[name] != null;
+
+            public object Value(string name) => PsOps.Base(PsValue.Prop(state, name));
+
+            public string Text(string name) => PsValue.Str(PsValue.Prop(state, name));
+
+            public int Int(object value) => (int)LanguagePrimitives.ConvertTo(value, typeof(int), CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Plain values: the dictionary's own key comparison, invariant-culture text, Convert.ToInt32.</summary>
+        private sealed class PlainCreditState : ICreditState
+        {
+            private readonly IReadOnlyDictionary<string, object> state;
+
+            public PlainCreditState(IReadOnlyDictionary<string, object> state) { this.state = state; }
+
+            public bool Has(string name) => state.ContainsKey(name);
+
+            public object Value(string name) => state.TryGetValue(name, out var value) ? value : null;
+
+            public string Text(string name) => Value(name) switch
+            {
+                null => "",
+                string text => text,
+                bool flag => flag ? "True" : "False",
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture) ?? "",
+                var other => other.ToString() ?? "",
+            };
+
+            public int Int(object value) => Convert.ToInt32(value, CultureInfo.InvariantCulture);
         }
 
         /// <summary>Get-ReleaseGateCandidateRoot: releaseRoot (default C:\Antiphon\releases)\candidates\candidateId.</summary>

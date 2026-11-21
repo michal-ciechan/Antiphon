@@ -1,5 +1,5 @@
 // CARD-1836 S8b compiled shadow sample. Shadow only: effectiveMode stays Full and gateCredit stays false.
-// Behaviour matches scripts/lib/rc-shadow-sample.ps1 at the port base. No trust record is written.
+// Behaviour matches the pre-port PowerShell golden (card-1836-s6c-rc-port-golden.json). No trust record is written.
 #nullable disable
 using System;
 using System.Collections;

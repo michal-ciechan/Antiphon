@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 155,
+      "classes": 156,
       "reason": "cap",
-      "owed": 130,
+      "owed": 131,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 65,
+      "classes": 63,
       "reason": "cap",
-      "owed": 40,
+      "owed": 38,
       "first": [
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
@@ -2162,18 +2162,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 41,
+      "classes": 39,
       "reason": "cap",
-      "owed": 16,
+      "owed": 14,
       "first": [
-        "AstraFixesBTests",
-        "ChangeAwareReleaseBudgetTests",
         "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
-        "ClaudeEffortFixtureTraceTests"
+        "ClaudeEffortFixtureTraceTests",
+        "DirectoryLinkFixtureTests",
+        "NightlyCoreTests"
       ]
     },
     {
@@ -2251,9 +2251,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 134,
+      "classes": 135,
       "reason": "cap",
-      "owed": 109,
+      "owed": 110,
       "first": [
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
@@ -3938,9 +3938,27 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/DispatchSchedule.cs",
+      "classes": [
+        "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/RcDirtyOrder.cs",
+      "classes": [
+        "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/Baseline.cs",
       "classes": [
         "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Scripts/ReleaseSelection.cs",
+      "classes": [
+        "RcDirtyLaunchOrderTests"
       ]
     },
     {
@@ -4029,6 +4047,12 @@
       "path": "scripts/lib/release-impact.ps1",
       "classes": [
         "ReleaseImpactEnvelopeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/release-selection.ps1",
+      "classes": [
+        "RcDirtyLaunchOrderTests"
       ]
     },
     {
@@ -20819,7 +20843,8 @@
       "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorkingTreeVerdictTests.cs",
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
-        "DispatchConcurrencyAdmissionTests"
+        "DispatchConcurrencyAdmissionTests",
+        "RcDirtyLaunchOrderTests"
       ]
     },
     {
@@ -24619,8 +24644,10 @@
       "path": "tests/Antiphon.Tests/Scripts/RcInputFixtureRepository.cs",
       "classes": [
         "RcChunkInputDigestTests",
+        "RcDirtyLaunchOrderTests",
         "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
+        "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
         "RcLedgerStatusTests",
@@ -24749,7 +24776,9 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
+        "AstraFixesBTests",
         "C487ReadOnlyCleanupWitnessTests",
+        "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "LiveLaneAttestationTests",
@@ -24762,11 +24791,9 @@
         "NightlyScriptsTests",
         "QualificationEtaTests",
         "RcBoundaryPackTests",
-        "RcDirtyLaunchOrderTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
-        "RcIncrementalShadowTests",
         "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ReleaseSelectionHopSeedTests",
@@ -26212,6 +26239,7 @@
         "C1677TempSweepTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "OwnedTempLeakTests",
+        "RcIncrementalShadowTests",
         "TaskWorktreeRetirementTests",
         "TestClassificationPolicyTests"
       ]
