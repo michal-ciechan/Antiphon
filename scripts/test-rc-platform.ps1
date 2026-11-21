@@ -929,6 +929,7 @@ function Test-C1199_WindowsRequiredRoster {
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_directory'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_symlink'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.missing_receipt_is_not_negative_success'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_fixture_sdk_build_count'
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.local_output_property_tampering_is_reported'
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.intermediate_output_path_tampering_is_reported'
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.generated_target_file_tampering_is_reported'
@@ -942,6 +943,7 @@ function Test-C1199_WindowsRequiredRoster {
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_ignored_file_is_kept_and_indexed'
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.index_added_file_is_kept_and_indexed'
         'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.passing_script_requires_writable_source_receipt'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.baseline_staged_fixture_sdk_build_count'
         'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency'
         'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency'
         'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency'
@@ -949,7 +951,7 @@ function Test-C1199_WindowsRequiredRoster {
         'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.unevaluable_import_is_refused_before_the_build'
     )
     if ([string]::IsNullOrWhiteSpace($CompiledRosterPath) -or -not (Test-Path -LiteralPath $CompiledRosterPath -PathType Leaf)) {
-        foreach ($name in @('c1199-roster-35', 'c1199-windows-required', 'c1199-linux-required', 'c1199-each-gap-incomplete', 'c1199-all-passed-complete', 'c1199-residual-skips-exact')) {
+        foreach ($name in @('c1199-roster-37', 'c1199-windows-required', 'c1199-linux-required', 'c1199-each-gap-incomplete', 'c1199-all-passed-complete', 'c1199-residual-skips-exact')) {
             Assert-C1323 $false $name 'compiled roster path missing'
         }
         return
@@ -957,9 +959,9 @@ function Test-C1199_WindowsRequiredRoster {
     $parsed = Get-Content -LiteralPath $CompiledRosterPath -Raw | ConvertFrom-Json
     $roster = @($parsed | ForEach-Object { [string]$_ })
     $groups = @($roster | Group-Object -CaseSensitive)
-    $rosterOk = ($roster.Count -eq 35 -and $groups.Count -eq 35 -and (Same-C1323Set $roster $expected))
+    $rosterOk = ($roster.Count -eq 37 -and $groups.Count -eq 37 -and (Same-C1323Set $roster $expected))
     $legacy = @($roster | Where-Object { $_ -like '*.shape_conflict_rule' }).Count
-    Assert-C1323 $rosterOk 'c1199-roster-35' ("count=" + $roster.Count + " unique=" + $groups.Count + " shape_conflict_rule=" + $legacy)
+    Assert-C1323 $rosterOk 'c1199-roster-37' ("count=" + $roster.Count + " unique=" + $groups.Count + " shape_conflict_rule=" + $legacy)
 
     $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $exclusionCache = @{}
@@ -999,7 +1001,7 @@ function Test-C1199_WindowsRequiredRoster {
     $passed = @($expected | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
     $complete = New-C1199Verdict $passed
     $completeReason = @($complete.reasons) -join ','
-    Assert-C1323 ($complete.coverageComplete -and $complete.passed -eq 35 -and $completeReason -notlike '*unexecuted-outcome*') 'c1199-all-passed-complete' $completeReason
+    Assert-C1323 ($complete.coverageComplete -and $complete.passed -eq 37 -and $completeReason -notlike '*unexecuted-outcome*') 'c1199-all-passed-complete' $completeReason
 
     . "$PSScriptRoot/lib/checkpoint-usage.ps1"
     $census = Get-NamespaceCensus
