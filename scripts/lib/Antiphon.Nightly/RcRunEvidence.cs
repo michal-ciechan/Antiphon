@@ -1,10 +1,11 @@
 // CARD-1836 S6b. Shadow seals for source, build output, discovery and open chunk revisions.
 // Recording never grants gate credit and never publishes a closed green pointer.
+// Each call throws its refusal token (InvalidOperationException); RcRunEvidenceRecorder adds the off and suppressed
+// modes, the evidence root and the warn-once policy. Plain C#: no PowerShell types.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Management.Automation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +15,7 @@ namespace Antiphon.Nightly
 {
     public static class RcRunEvidence
     {
-        public static PSObject SourceSnapshot(string evidenceRoot, string repository, string[] inputPaths, string expectedSha)
+        public static RcRunEvidenceRecord SourceSnapshot(string evidenceRoot, string repository, string[] inputPaths, string expectedSha)
         {
             var root = RequireEvidence(evidenceRoot, repository);
             var repo = RequireRepo(repository, root);
@@ -24,11 +25,11 @@ namespace Antiphon.Nightly
                 var body = SourceJson(snap);
                 var path = Path.Combine(root, "source.json");
                 var digest = WriteOnce(path, body);
-                return Envelope(digest, "recording", "on", "sha", snap.Sha, "clean", snap.Clean);
+                return new RcRunEvidenceRecord { Digest = digest, Sha = snap.Sha, Clean = snap.Clean };
             }
         }
 
-        public static PSObject Build(string evidenceRoot, string suite, string command, string outputDirectory, string entry, string sourceDigest, string repository, string sha)
+        public static RcRunEvidenceRecord Build(string evidenceRoot, string suite, string command, string outputDirectory, string entry, string sourceDigest, string repository, string sha)
         {
             RequireToken(suite, "suite-refused");
             var root = RequireEvidence(evidenceRoot, repository);
@@ -42,11 +43,11 @@ namespace Antiphon.Nightly
                 var outputs = SealDirectory(dir, entry);
                 var body = BuildJson(suite, command, dir, entry, sourceDigest, outputs);
                 var digest = WriteOnce(path, body);
-                return Envelope(digest, "recording", "on", "suite", suite, "outputs", OutputNotes(outputs), "joined", false, "skipped", false);
+                return new RcRunEvidenceRecord { Digest = digest, Suite = suite, Outputs = OutputNotes(outputs) };
             }
         }
 
-        public static PSObject Discovery(string evidenceRoot, string suite, string discoveryPath, bool carry, bool skip)
+        public static RcRunEvidenceRecord Discovery(string evidenceRoot, string suite, string discoveryPath, bool carry, bool skip)
         {
             RequireToken(suite, "suite-refused");
             if (carry && skip) throw new InvalidOperationException("carry-cannot-skip-discovery");
@@ -69,11 +70,11 @@ namespace Antiphon.Nightly
                 obj["skipped"] = false;
                 obj["discoverySha256"] = discoveryDigest;
                 var digest = WriteOnce(path, Bytes(obj));
-                return Envelope(digest, "recording", "on", "suite", suite, "skipped", false, "joined", false);
+                return new RcRunEvidenceRecord { Digest = digest, Suite = suite };
             }
         }
 
-        public static PSObject Launch(string evidenceRoot, string suite, string chunk, string outputDirectory, string[] arguments, string buildDigest, string repository, string expectedSha)
+        public static RcRunEvidenceRecord Launch(string evidenceRoot, string suite, string chunk, string outputDirectory, string[] arguments, string buildDigest, string repository, string expectedSha)
         {
             RequireToken(suite, "suite-refused");
             RequireToken(chunk, "chunk-refused");
@@ -109,17 +110,12 @@ namespace Antiphon.Nightly
                     obj["outputDirectory"] = launchDir;
                     obj["joined"] = true;
                     var digest = WriteOnce(launchPath, Bytes(obj));
-                    return Envelope(digest, "recording", "on", "suite", suite, "joined", true, "skipped", false);
+                    return new RcRunEvidenceRecord { Digest = digest, Suite = suite, Joined = true };
                 }
             }
         }
 
-        public static PSObject ChunkRevision(string evidenceRoot, string suite, string chunk, string outcome, bool interrupt)
-        {
-            return ChunkRevision(evidenceRoot, suite, chunk, outcome, interrupt, null);
-        }
-
-        public static PSObject ChunkRevision(string evidenceRoot, string suite, string chunk, string outcome, bool interrupt, string reason)
+        public static RcRunEvidenceRecord ChunkRevision(string evidenceRoot, string suite, string chunk, string outcome, bool interrupt, string reason)
         {
             RequireToken(suite, "suite-refused");
             RequireToken(chunk, "chunk-refused");
@@ -160,11 +156,11 @@ namespace Antiphon.Nightly
                 index["state"] = "open";
                 index["pending"] = "none";
                 PublishIndex(root, Bytes(index));
-                return Envelope(digest, "recording", "on", "suite", suite, "state", "open", "sequence", next, "pending", "none");
+                return new RcRunEvidenceRecord { Digest = digest, Suite = suite, Sequence = next };
             }
         }
 
-        public static PSObject AssertInputs(string evidenceRoot, string repository, string expectedSha)
+        public static RcRunEvidenceRecord AssertInputs(string evidenceRoot, string repository, string expectedSha)
         {
             var root = RequireEvidence(evidenceRoot, repository);
             var repo = RequireRepo(repository, root);
@@ -172,11 +168,11 @@ namespace Antiphon.Nightly
             {
                 AssertCurrent(root, repo, expectedSha);
                 var digest = Sha(ReadCapped(Path.Combine(root, "source.json")));
-                return Envelope(digest, "recording", "on");
+                return new RcRunEvidenceRecord { Digest = digest };
             }
         }
 
-        public static PSObject Read(string evidenceRoot)
+        public static RcRunEvidenceRecord Read(string evidenceRoot)
         {
             var root = RequireEvidence(evidenceRoot, null);
             RejectReparseChain(root);
@@ -185,10 +181,10 @@ namespace Antiphon.Nightly
             if (index == null)
             {
                 if (string.Equals(pending, "not-run", StringComparison.Ordinal))
-                    return Envelope("", "recording", "on", "state", "open", "sequence", 0, "pending", "not-run");
+                    return new RcRunEvidenceRecord { Pending = "not-run" };
                 throw new InvalidOperationException("writer-interrupted");
             }
-            return Envelope(index.Sha256, "recording", "on", "state", "open", "sequence", index.Sequence, "pending", pending);
+            return new RcRunEvidenceRecord { Digest = index.Sha256, Sequence = index.Sequence, Pending = pending };
         }
 
         sealed class Gate : IDisposable
@@ -631,33 +627,12 @@ namespace Antiphon.Nightly
             return bytes;
         }
 
-        static PSObject[] OutputNotes(List<SealedFile> outputs)
+        static RcRunEvidenceOutput[] OutputNotes(List<SealedFile> outputs)
         {
-            var notes = new PSObject[outputs.Count];
+            var notes = new RcRunEvidenceOutput[outputs.Count];
             for (var i = 0; i < outputs.Count; i++)
-            {
-                var item = new PSObject();
-                item.Properties.Add(new PSNoteProperty("relativePath", outputs[i].RelativePath));
-                item.Properties.Add(new PSNoteProperty("sha256", outputs[i].Sha256));
-                item.Properties.Add(new PSNoteProperty("length", outputs[i].Length));
-                item.Properties.Add(new PSNoteProperty("role", outputs[i].Role));
-                notes[i] = item;
-            }
+                notes[i] = new RcRunEvidenceOutput(outputs[i].RelativePath, outputs[i].Sha256, outputs[i].Length, outputs[i].Role);
             return notes;
-        }
-
-        static PSObject Envelope(string digest, params object[] pairs)
-        {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("effectiveMode", "Full"));
-            o.Properties.Add(new PSNoteProperty("gateCredit", false));
-            o.Properties.Add(new PSNoteProperty("coverageComplete", false));
-            o.Properties.Add(new PSNoteProperty("bindingState", "diagnostic-only"));
-            o.Properties.Add(new PSNoteProperty("publish", false));
-            o.Properties.Add(new PSNoteProperty("digest", digest ?? ""));
-            for (var i = 0; i + 1 < pairs.Length; i += 2)
-                o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
         }
 
         static string WriteOnce(string path, byte[] bytes)
@@ -772,5 +747,50 @@ namespace Antiphon.Nightly
             if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("evidence-linked-path");
         }
+    }
+
+    /// <summary>
+    /// What one shadow evidence call recorded, or the idle answer of a call that recorded nothing (Recording off,
+    /// suppressed or unproven). The authority fields are constant: recording grants no gate credit, keeps Full mode
+    /// and never publishes.
+    /// </summary>
+    public sealed class RcRunEvidenceRecord
+    {
+        public string EffectiveMode => "Full";
+        public bool GateCredit => false;
+        public bool CoverageComplete => false;
+        public string BindingState => "diagnostic-only";
+        public bool Publish => false;
+        /// <summary>on, off, suppressed or unproven.</summary>
+        public string Recording { get; init; } = "on";
+        public string Digest { get; init; } = "";
+        public string Sha { get; init; } = "";
+        public bool Clean { get; init; }
+        public string Suite { get; init; } = "";
+        public bool Joined { get; init; }
+        public bool Skipped { get; init; }
+        public string State { get; init; } = "open";
+        public int Sequence { get; init; }
+        public string Pending { get; init; } = "none";
+        public RcRunEvidenceOutput[] Outputs { get; init; } = new RcRunEvidenceOutput[0];
+
+        public static RcRunEvidenceRecord Idle(string recording) => new RcRunEvidenceRecord { Recording = recording };
+    }
+
+    /// <summary>One sealed build output file (an entry, helper or dependency).</summary>
+    public sealed class RcRunEvidenceOutput
+    {
+        public RcRunEvidenceOutput(string relativePath, string sha256, int length, string role)
+        {
+            RelativePath = relativePath;
+            Sha256 = sha256;
+            Length = length;
+            Role = role;
+        }
+
+        public string RelativePath { get; }
+        public string Sha256 { get; }
+        public int Length { get; }
+        public string Role { get; }
     }
 }

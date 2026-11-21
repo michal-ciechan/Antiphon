@@ -54,14 +54,21 @@ namespace Antiphon.Nightly
         /// </summary>
         public static PSObject Fresh(string path, string runDirectory, DateTime notBeforeUtc, string invocationId)
         {
-            if (!Exists(path)) return Note("Ok", false, "Reason", "missing " + path);
-            if (!Contained(path, runDirectory)) return Note("Ok", false, "Reason", "wrong-run-directory");
+            var fresh = Freshness(path, runDirectory, notBeforeUtc, invocationId);
+            return Note("Ok", fresh.Ok, "Reason", fresh.Reason);
+        }
+
+        /// <summary>Fresh's check as plain values (no PowerShell types).</summary>
+        public static NightlyFreshness Freshness(string path, string runDirectory, DateTime notBeforeUtc, string invocationId)
+        {
+            if (!Exists(path)) return new NightlyFreshness(false, "missing " + path);
+            if (!Contained(path, runDirectory)) return new NightlyFreshness(false, "wrong-run-directory");
             var written = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : Directory.GetLastWriteTimeUtc(path);
-            if (written.Ticks < notBeforeUtc.AddSeconds(-1).Ticks) return Note("Ok", false, "Reason", "stale-timestamp");
+            if (written.Ticks < notBeforeUtc.AddSeconds(-1).Ticks) return new NightlyFreshness(false, "stale-timestamp");
             if (!string.IsNullOrWhiteSpace(invocationId)
                 && !Regex.IsMatch(File.ReadAllText(path), Regex.Escape(invocationId), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                return Note("Ok", false, "Reason", "previous-invocation");
-            return Note("Ok", true, "Reason", "");
+                return new NightlyFreshness(false, "previous-invocation");
+            return new NightlyFreshness(true, "");
         }
 
         /// <summary>Test-NightlyChunkMembership: every eligible class in exactly one chunk. { Ok, Duplicates, Missing }.</summary>
@@ -441,5 +448,18 @@ namespace Antiphon.Nightly
             return Note("AssemblyHash", PsValue.Prop(parsed, "AssemblyHash"), "Chunks", chunks, "RequiredUids", selectedOrder.ToArray(),
                 "Widened", unresolved.Length > 0, "UnresolvedUids", unresolved);
         }
+    }
+
+    /// <summary>Test-NightlyFreshEvidence's answer: Ok, or the Reason it is not fresh.</summary>
+    public sealed class NightlyFreshness
+    {
+        public NightlyFreshness(bool ok, string reason)
+        {
+            Ok = ok;
+            Reason = reason ?? "";
+        }
+
+        public bool Ok { get; }
+        public string Reason { get; }
     }
 }

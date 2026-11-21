@@ -119,6 +119,31 @@ namespace Antiphon.Nightly
             return read.Rows;
         }
 
+        /// <summary>
+        /// Read-NightlyTrxRunSummary over a loaded TRX: the ResultSummary outcome and its Counters. Not present
+        /// (counters -1) without a ResultSummary/Counters element or without integer total, executed and notExecuted
+        /// counters; passed and failed read 0 when they do not parse. Plain values: no PowerShell types.
+        /// </summary>
+        public static TrxRunSummaryRead RunSummary(XmlDocument doc)
+        {
+            if (!(doc?.SelectSingleNode("//*[local-name()=\"ResultSummary\"]") is XmlElement summary)) return TrxRunSummaryRead.Missing();
+            if (!(summary.SelectSingleNode("./*[local-name()=\"Counters\"]") is XmlElement counters)) return TrxRunSummaryRead.Missing();
+            int Read(string name, out bool ok)
+            {
+                ok = int.TryParse(counters.GetAttribute(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value);
+                return value;
+            }
+            var total = Read("total", out var totalOk);
+            var executed = Read("executed", out var executedOk);
+            var notExecuted = Read("notExecuted", out var notOk);
+            if (!totalOk || !executedOk || !notOk) return TrxRunSummaryRead.Missing();
+            return new TrxRunSummaryRead
+            {
+                Present = true, Outcome = summary.GetAttribute("outcome"), Total = total, Executed = executed,
+                Passed = Read("passed", out _), Failed = Read("failed", out _), NotExecuted = notExecuted,
+            };
+        }
+
         /// <summary>Error is the refusal Read-NightlyTrxIdentities would throw (empty when none); Rows its rows.</summary>
         public static PSObject IdentityRows(XmlDocument doc)
         {
@@ -182,5 +207,19 @@ namespace Antiphon.Nightly
     {
         public string Error { get; set; } = "";
         public TrxIdentity[] Rows { get; set; } = new TrxIdentity[0];
+    }
+
+    /// <summary>The TRX ResultSummary (Read-NightlyTrxRunSummary): counters are -1 when it is not present.</summary>
+    public sealed class TrxRunSummaryRead
+    {
+        public bool Present { get; set; }
+        public string Outcome { get; set; } = "";
+        public int Total { get; set; } = -1;
+        public int Executed { get; set; } = -1;
+        public int Passed { get; set; } = -1;
+        public int Failed { get; set; } = -1;
+        public int NotExecuted { get; set; } = -1;
+
+        public static TrxRunSummaryRead Missing() => new TrxRunSummaryRead();
     }
 }

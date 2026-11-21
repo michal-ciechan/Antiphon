@@ -246,21 +246,10 @@ namespace Antiphon.Nightly
                     doc.Load(stream);
             }
             catch (Exception) { return Missing(); }
-            if (!(doc.SelectSingleNode("//*[local-name()=\"ResultSummary\"]") is System.Xml.XmlElement summary)) return Missing();
-            if (!(summary.SelectSingleNode("./*[local-name()=\"Counters\"]") is System.Xml.XmlElement counters)) return Missing();
-            int Read(string name, out bool ok)
-            {
-                ok = int.TryParse(counters.GetAttribute(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value);
-                return value;
-            }
-            var total = Read("total", out var totalOk);
-            var executed = Read("executed", out var executedOk);
-            var notExecuted = Read("notExecuted", out var notOk);
-            if (!totalOk || !executedOk || !notOk) return Missing();
-            var passed = Read("passed", out _);
-            var failed = Read("failed", out _);
-            return Note("Present", true, "Outcome", summary.GetAttribute("outcome"), "Total", total, "Executed", executed, "Passed", passed,
-                "Failed", failed, "NotExecuted", notExecuted);
+            var read = NightlyTrx.RunSummary(doc);
+            if (!read.Present) return Missing();
+            return Note("Present", true, "Outcome", read.Outcome, "Total", read.Total, "Executed", read.Executed, "Passed", read.Passed,
+                "Failed", read.Failed, "NotExecuted", read.NotExecuted);
         }
 
         /// <summary>Read-NightlyTextTail: the last byteCount bytes of the file as UTF-8 ("" when missing, empty or unreadable).</summary>

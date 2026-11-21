@@ -8,15 +8,18 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
-. (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
-function Register-NightlyRcDiscoveryOnce {
-    param([string]$EvidenceRoot, [string]$LogRoot, [string]$RepoRoot, [string]$Suite, [string]$DiscoveryPath)
-    if ([string]::IsNullOrWhiteSpace($Suite)) { return }
-    if (-not $script:NightlyRcDiscoveryRecorded) { $script:NightlyRcDiscoveryRecorded = @{} }
-    if ($script:NightlyRcDiscoveryRecorded.ContainsKey($Suite)) { return }
-    $script:NightlyRcDiscoveryRecorded[$Suite] = $true
-    [void](Register-NightlyRcDiscoveryEvidence -EvidenceRoot $EvidenceRoot -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite $Suite -DiscoveryPath $DiscoveryPath)
+# S6b shadow run evidence (RcRunEvidenceRecorder): one recorder per tests run, made at its first use, after the
+# seams are imported. Off by ANTIPHON_RC_RUN_EVIDENCE, suppressed under the process or git seams unless it is
+# 'record'; a refusal prints one line per reason and never changes the verdict. Recording grants no gate credit.
+function Get-NightlyRcRunEvidence {
+    if ($null -eq $script:NightlyRcRunEvidence) {
+        $seams = $script:NightlySeams
+        $script:NightlyRcRunEvidence = [Antiphon.Nightly.RcRunEvidenceRecorder]::new([string]$env:ANTIPHON_RC_RUN_EVIDENCE,
+            [bool]($seams -and ($null -ne $seams.StartProcess -or $null -ne $seams.Git)), $false,
+            [Action[string]]{ param([string]$Line) Write-NightlyRunLine $Line })
+    }
+    return $script:NightlyRcRunEvidence
 }
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
@@ -798,7 +801,7 @@ function Prepare-NightlySuiteExecution {
             if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
             $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
             # S6b shadow: one discovery per suite. Carry cannot skip it. Recording grants no gate credit.
-            Register-NightlyRcDiscoveryOnce -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$suiteId) -DiscoveryPath $profileDiscoveryPath
+            [void](Get-NightlyRcRunEvidence).DiscoveryOnce($RcEvidenceRoot, $LogRoot, [string]$suiteId, $profileDiscoveryPath)
             if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
         } catch {
             if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }
@@ -963,7 +966,7 @@ function Invoke-NightlyScheduledChunk {
         }
         [void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt))
         # S6b shadow: join the build seal before the timed launch. A refusal stays unproven and does not change the verdict.
-        [void](Register-NightlyRcLaunchEvidence -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Arguments @($nativeArgs) -OutputDirectory ([IO.Path]::GetDirectoryName([string]$suiteHost.AssemblyPath)) -Sha ([string]$Sha))
+        [void](Get-NightlyRcRunEvidence).Launch($RcEvidenceRoot, $LogRoot, [string]$suiteId, [string]$chunk.id, [IO.Path]::GetDirectoryName([string]$suiteHost.AssemblyPath), [string[]]@($nativeArgs), '', $RepoRoot, [string]$Sha)
         $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
         try {
             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
@@ -1046,7 +1049,7 @@ function Invoke-NightlyScheduledChunk {
                 $chunkDiscWatch.Stop()
                 $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
                 $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-                Register-NightlyRcDiscoveryOnce -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$suiteId) -DiscoveryPath $discPath
+                [void](Get-NightlyRcRunEvidence).DiscoveryOnce($RcEvidenceRoot, $LogRoot, [string]$suiteId, $discPath)
             } catch {
                 $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
             }
@@ -1105,13 +1108,14 @@ function Invoke-NightlyScheduledChunk {
             $row.result = 'pass'
         }
     }
-    if ($recordNativeChunk) {
+    $rcEvidence = Get-NightlyRcRunEvidence
+    if ($recordNativeChunk -and $rcEvidence.Recording) {
+        # The shadow parse of this launch, bound to the native verdict and the log freshness above.
+        $chunkRecord = [Antiphon.Nightly.RcChunkOutcome]::Read($run.ExitCode, [bool]$run.OutputDrainTimedOut, $trxPath, $rcSkipRoster, [string]$platform)
         if ($isNative) {
-            $chunkRecord = Resolve-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform) -NativeVerdict $nativeVerdict -Fresh $fresh
-        } else {
-            $chunkRecord = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform)
+            $chunkRecord = [Antiphon.Nightly.RcChunkOutcome]::Bind($chunkRecord, $nativeVerdict.testsPassed, $nativeVerdict.coverageComplete, [string[]]@($nativeVerdict.reasons), $fresh.Ok, [string]$fresh.Reason)
         }
-        [void](Register-NightlyRcChunkRevision -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Outcome $chunkRecord.Outcome -Reason $chunkRecord.Reason)
+        [void]$rcEvidence.ChunkRevision($RcEvidenceRoot, $LogRoot, [string]$suiteId, [string]$chunk.id, $chunkRecord.Outcome, $chunkRecord.Reason, $false)
     }
     if ($suiteId -eq 'client') {
         if (-not (Test-Path -LiteralPath $jsonPath)) {
@@ -1374,8 +1378,7 @@ function Invoke-AntiphonNightlyTests {
         [switch]$WhatIf
     )
 
-    $script:RcRunEvidenceWarned = @{}
-    $script:NightlyRcDiscoveryRecorded = @{}
+    $script:NightlyRcRunEvidence = $null
     Import-NightlySeams -SeamsPath $SeamsPath
     $script:QualificationTimingRoot = ''
     try { $platform = Get-NightlyExecutionPlatform }
@@ -1417,6 +1420,7 @@ function Invoke-AntiphonNightlyTests {
     $reasons = @()
     $expectedSkipWarnings = @()
     $expectedSkipRoster = @()
+    $rcSkipRoster = @()
     $expectedSkipScan = $null
     $toleratedSkipRows = @()
     $harnessHangReason = ''
@@ -1696,12 +1700,13 @@ function Invoke-AntiphonNightlyTests {
             if ($evidenceSuite) { $evidenceAssembly = [string]$evidenceSuite.assembly }
             if ([string]::IsNullOrWhiteSpace($evidenceAssembly)) { continue }
             $evidenceOut = [IO.Path]::Combine($RepoRoot, 'tests', $evidenceAssembly, 'bin', 'Debug', 'net9.0')
-            [void](Register-NightlyRcBuildEvidence -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$evidenceSuiteId) -Command 'dotnet build Antiphon.sln -c Debug --nologo' -OutputDirectory $evidenceOut -Entry ($evidenceAssembly + '.dll') -Sha ([string]$Sha))
+            [void](Get-NightlyRcRunEvidence).Build($RcEvidenceRoot, $LogRoot, [string]$evidenceSuiteId, 'dotnet build Antiphon.sln -c Debug --nologo', $evidenceOut, ($evidenceAssembly + '.dll'), '', $RepoRoot, [string]$Sha)
         }
     }
             $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
             if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
                 $expectedSkipRoster = @([Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster($rosterFile))
+                $rcSkipRoster = @(foreach ($skipEntry in $expectedSkipRoster) { [Antiphon.Nightly.RcSkipEntry]::new([string]$skipEntry.test, [string]$skipEntry.platform, [string]$skipEntry.reasonPrefix, [string]$skipEntry.reasonClass) })
                 # The end-of-run skip scans read only tests/ and the roster: they run while the chunks do.
                 $expectedSkipScan = [Antiphon.Nightly.NightlyExpectedSkips]::Start($RepoRoot, $platform, $expectedSkipRoster)
             }

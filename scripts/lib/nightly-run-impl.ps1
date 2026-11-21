@@ -10,7 +10,6 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside
 # Invoke-AntiphonNightlyRunCore kept the function only for that call and left
@@ -194,7 +193,12 @@ function Invoke-AntiphonNightlyRunCore {
     $reportDelivered = $false
     $runDir = $null
     $rcEvidenceRoot = ''
-    $script:RcRunEvidenceWarned = @{}
+    # S6b shadow run evidence (RcRunEvidenceRecorder): off by ANTIPHON_RC_RUN_EVIDENCE, suppressed under the process
+    # or git seams unless it is 'record'; a refusal prints one line per reason and never changes the verdict.
+    $rcSeams = $script:NightlySeams
+    $rcEvidence = [Antiphon.Nightly.RcRunEvidenceRecorder]::new([string]$env:ANTIPHON_RC_RUN_EVIDENCE,
+        [bool]($rcSeams -and ($null -ne $rcSeams.StartProcess -or $null -ne $rcSeams.Git)), $false,
+        [Action[string]]{ param([string]$Line) Write-NightlyRunLine $Line })
     $phase = 'init'
     $hopped = $false
     $script:NightlyHopCommand = ''
@@ -628,7 +632,7 @@ function Invoke-AntiphonNightlyRunCore {
         $rcInputs = @()
         $policyRelative = 'tests/test-execution-policy.json'
         if (Test-Path -LiteralPath (Join-Path $CheckoutRoot $policyRelative) -PathType Leaf) { $rcInputs += $policyRelative }
-        [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'admission' -CheckoutRoot $CheckoutRoot -EvidenceRoot $rcEvidenceRoot -InputPaths $rcInputs -Sha ([string]$sha))
+        [void]$rcEvidence.SourceSnapshot($rcEvidenceRoot, '', $CheckoutRoot, [string[]]$rcInputs, [string]$sha)
         $stateObj.logDir = $runDir
         $stateObj.phase = $phase
         $stateObj.lastActivityAt = (Get-NightlyUtcNow).ToString('o')
@@ -769,7 +773,7 @@ function Invoke-AntiphonNightlyRunCore {
             # D-2: the state itself names the kind of credit it earns. Master green is the
             # only thing that ever reaches <StateRoot>\last-complete-green.json; RC green
             # lands in the candidate's own store and never touches master readiness.
-            [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'closure' -CheckoutRoot $CheckoutRoot -EvidenceRoot $rcEvidenceRoot -LogRoot $LogRoot -Sha ([string]$sha))
+            [void]$rcEvidence.AssertInputs($rcEvidenceRoot, $LogRoot, $CheckoutRoot, [string]$sha)
             $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($stateObj)
             $creditKind = [string]$verdict.CreditKind
             $result.CreditKind = $creditKind
