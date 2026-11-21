@@ -39,8 +39,8 @@ public sealed class IncrementalSelectionSoundnessTests
     {
         _ = LoadCorpus(RepoRoot());
         const string replay = "HistoricalSelectionSoundness";
-        return ScriptHarness.RunHarnessCaseAsync("test-rc-input-owners.ps1", "RIO", replay, 1,
-            ["RIO " + replay + ".contract"],
+        return ScriptHarness.RunHarnessCaseAsync("test-rc-input-owners.ps1", "RIO", replay, 3,
+            ["RIO " + replay + ".contract", "RIO " + replay + ".unowned", "RIO " + replay + ".composer-inputs"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     }
 
