@@ -15,6 +15,8 @@ $settingsFile = "$root\server\appsettings.json"
 $logDir       = "$root\server\logs"
 $backupDir    = "$root\backups"
 $worktreeDir  = 'C:\Antiphon\worktrees'   # outside repo — git worktrees can't live inside the repo
+$sourceRevision = ((& git -C $root rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'dev-start: git rev-parse HEAD failed; refusing an unstamped server launch.' }
 
 foreach ($d in @($logDir, "$logDir\sessions", $backupDir, $worktreeDir)) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
@@ -59,7 +61,7 @@ function Open-Tab([string]$Title, [string]$Cwd, [string]$Cmd) {
 
 # ── .NET API server ───────────────────────────────────────────────────────────
 Write-Host "▶ Launching .NET server (port 17281)..." -ForegroundColor Cyan
-Open-Tab 'Antiphon Server' "$root\server" "dotnet run --urls 'http://localhost:17281'"
+Open-Tab 'Antiphon Server' "$root\server" "dotnet run `"-p:SourceRevisionId=$sourceRevision`" --urls 'http://localhost:17281'"
 
 # ── React / Vite client ───────────────────────────────────────────────────────
 if (-not $NoClient -and -not $ServerOnly) {

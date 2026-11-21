@@ -26,9 +26,11 @@ if ($LASTEXITCODE -ne 0) { Write-Error "git pull failed — resolve conflicts an
 
 # 4. Build .NET server
 Write-Host "`n▶ Building .NET server..." -ForegroundColor Cyan
-dotnet build "$root\server" --configuration Release --no-restore
+$sourceRevision = ((& git -C $root rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'dev-upgrade: git rev-parse HEAD failed; refusing an unstamped server build.' }
+dotnet build "$root\server" "-p:SourceRevisionId=$sourceRevision" --configuration Release --no-restore
 if ($LASTEXITCODE -ne 0) {
-    dotnet build "$root\server" --configuration Release
+    dotnet build "$root\server" "-p:SourceRevisionId=$sourceRevision" --configuration Release
     if ($LASTEXITCODE -ne 0) { Write-Error "dotnet build failed." }
 }
 
