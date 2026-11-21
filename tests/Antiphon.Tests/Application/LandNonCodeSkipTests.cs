@@ -2708,9 +2708,7 @@ public sealed class LandNonCodeSkipTests
         op.VerificationSkipReason.ShouldBe("docs-skip-target-manifest");
         var command = op.VerificationCommand;
         command.ShouldNotBeNull();
-        command.ShouldContain("Skipped(docs-skip-target-manifest)");
-        command.ShouldContain("graph=" + manifest.Split('\n')[0]);
-        command.ShouldNotContain("graph=" + new string('B', 64));
+        command.ShouldBe($"Skipped(docs-skip-target-manifest); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={manifest.Split('\n')[0]}; trust=target-manifest");
         await using var db = h.CreateContext();
         var row = await db.StageOutcomes.SingleAsync(o => o.SubjectTaskId == h.Fixture.TaskId && o.Stage == OrchestrationStage.Verify);
         row.Outcome.ShouldBe(StageOutcomeKind.Skipped);
@@ -2817,6 +2815,7 @@ public sealed class LandNonCodeSkipTests
         var decision = await repo.DecideAsync(target, embedded: digest + "\n" + count.ToString(CultureInfo.InvariantCulture) + "\n");
         decision.Skip.ShouldBeTrue(decision.Reason);
         decision.Reason.ShouldBe("non-code");
+        decision.Graph.ShouldBe(digest);
     }
 
     private static async Task<LandingSafetyHarness> CreateAsync(bool force = false)

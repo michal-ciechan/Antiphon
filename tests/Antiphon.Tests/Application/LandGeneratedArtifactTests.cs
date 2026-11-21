@@ -118,6 +118,37 @@ public class LandGeneratedArtifactTests
     }
 
     [Test]
+    public async Task Missing_selected_sdk_names_toolchain_in_conflict_and_status()
+    {
+        const string reason = "index-regen-unavailable:dotnet-sdk";
+        await using var world = await World.CreateAsync("no-sdk", new DerivedImpactIndexRegenerator(null),
+            seedUnavailableSdk: true);
+        await File.WriteAllTextAsync(Path.Combine(world.Task.WorktreePath!, DerivedImpactIndexRegen.RelativePath), "candidate-index\n");
+        await RequiredGitAsync(world.Task.WorktreePath!, "add", DerivedImpactIndexRegen.RelativePath);
+        await RequiredGitAsync(world.Task.WorktreePath!, "commit", "-m", "candidate index");
+        await world.Repo.CommitFileAsync(DerivedImpactIndexRegen.RelativePath, "target-index\n");
+        await world.Repo.GitAsync("push", "origin", "master");
+        var target = (await RequiredGitAsync(world.Remote.Path, "rev-parse", "master")).Trim();
+        var (request, sourceSha, _, _, sourceFullRef) = await PublishAndRequestAsync(world.Land, world.Task);
+
+        (await world.Land.RunAsync(world.Task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+
+        var operation = await AssertBoundOperationAsync(world.Db, world.Task.Id, request.RequestId, sourceSha, sourceFullRef);
+        operation.Phase.ShouldBe(LandPhase.Refused);
+        operation.Publication.ShouldNotBe(LandPublicationOutcome.Landed);
+        LandingEvidenceDto.From(operation).Reason.ShouldBe(reason);
+        (await AssertRequestAsync(world.Db, world.Task.Id, request.RequestId, sourceSha, sourceFullRef)).State
+            .ShouldBe(LandRequestState.NeedsResolution);
+        var conflict = await world.Db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.AgentTaskId == world.Task.Id
+            && e.Type == AgentTaskEventType.Conflicted);
+        conflict.Detail.ShouldContain(reason);
+        var outcome = await world.Db.StageOutcomes.AsNoTracking().SingleAsync(o => o.SubjectTaskId == world.Task.Id
+            && o.Stage == OrchestrationStage.Rebase);
+        outcome.Detail.ShouldContain(reason);
+        (await RequiredGitAsync(world.Remote.Path, "rev-parse", "master")).Trim().ShouldBe(target);
+    }
+
+    [Test]
     public async Task Clean_rebase_does_not_regenerate()
     {
         var regenerator = new BuilderRegenerator();
@@ -186,7 +217,8 @@ public class LandGeneratedArtifactTests
             _schema = schema;
         }
 
-        public static async Task<World> CreateAsync(string name, IDerivedImpactIndexRegenerator regenerator)
+        public static async Task<World> CreateAsync(string name, IDerivedImpactIndexRegenerator regenerator,
+            bool seedUnavailableSdk = false)
         {
             var repo = new ScratchGitRepo("antiphon-ft5-" + name);
             var remote = new TemporaryDirectory("antiphon-ft5-" + name + "-remote");
@@ -199,6 +231,13 @@ public class LandGeneratedArtifactTests
                 await repo.CommitFileAsync("tests/SampleTests.cs", SampleTests);
                 await repo.CommitFileAsync(DerivedImpactIndexRegen.RelativePath, "base-index\n");
                 await repo.CommitFileAsync("notes.md", "base\n");
+                if (seedUnavailableSdk)
+                {
+                    await repo.CommitFileAsync("global.json", """{"sdk":{"version":"99.0.100","rollForward":"disable"}}""");
+                    Directory.CreateDirectory(Path.Combine(repo.Path, Path.GetDirectoryName(DerivedImpactIndexRegen.ProjectRelative)!));
+                    await repo.CommitFileAsync(DerivedImpactIndexRegen.ProjectRelative, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+                    await repo.CommitFileAsync(DerivedImpactIndexRegen.ScriptRelative, "throw 'PowerShell ran without the selected .NET SDK'\n");
+                }
                 await repo.GitAsync("remote", "add", "origin", remote.Path);
                 await repo.GitAsync("push", "-u", "origin", "master");
                 var (land, service) = CreateLand(db, repo, configureProtocol: protocol => protocol.IndexRegenerator = regenerator);
