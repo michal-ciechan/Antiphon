@@ -1045,13 +1045,13 @@
       "reason": "cap",
       "owed": 13,
       "first": [
+        "PoolProviderProjectionStampTests",
         "ReviewEvidenceRecoveryTests",
         "RunnerTaskSettlementTests",
         "SessionMessageQueueWedgedHeadTests",
         "SessionRuntimeActionRoutingTests",
         "AdvisoryChangePolicyTests",
         "AgentTaskLandHeldNotificationTests",
-        "AgentTaskLandPublicationTests",
         "AgentTaskLandReceiptTests"
       ]
     },
@@ -1847,7 +1847,7 @@
       "reason": "cap",
       "owed": 35,
       "first": [
-        "AgentTaskLandPublicationTests",
+        "StandingBootQueueWitnessTests",
         "AgentTaskLandQueueAgingTests",
         "AgentTaskWorktreeLockOutcomeTests",
         "C0824RefOnlyReceiptTests",
@@ -2253,8 +2253,8 @@
         "SessionMessageQueueSupervisionTests",
         "SessionRunnerEventPumpTests",
         "AgentSessionServiceIntegrationTests",
-        "C0824RefOnlyLandingTests",
-        "CapacityObsoleteQueueTests"
+        "AgentTaskLandPublicationTests",
+        "C0824RefOnlyLandingTests"
       ]
     },
     {
@@ -9687,6 +9687,7 @@
         "AgentTaskLandNotificationReconcileLoadTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandPublicationTests",
         "AgentTaskReplyIntegrationTests",
         "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
@@ -9703,7 +9704,6 @@
         "LandDeliveryFixtureProbeTests",
         "PendingSettlementDeliveryTests",
         "PipelineSpeedIntegrationTests",
-        "PoolProviderProjectionStampTests",
         "PostLandMutationDeliveryTests",
         "ReviewEvidenceResettlementTests",
         "TaskSupervisionReceiptTests",
@@ -18614,6 +18614,7 @@
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PromptSubmissionMatch.cs",
       "classes": [
+        "AgentTaskLandPublicationTests",
         "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
         "CheckCompactionReceiptTests",
@@ -18635,7 +18636,6 @@
         "RoutingExhaustedPlacementTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "SessionRunnerCpuTests",
-        "StandingBootQueueWitnessTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests",
         "VerificationRoundDeliveryTests"
