@@ -27,7 +27,8 @@ The phone-home launcher warns for an unverified existing build and still launche
   set `ANTIPHON_C1022_REQUIRE_DEPLOY_STAMP=1` and build the fixture with
   `SourceRevisionId` set to the full SHA. Native execution is pending.
 - V-3 / CP-5 and CP-8. Cover the nine standing guard classes, derived impact
-  index, and other assembly limiter rosters selected by the task diff.
+  index, and other assembly limiter rosters selected by the task diff. CP-9 also
+  covers the documentation and script classes selected by the derived index.
 - V-4 / CP-6. Evaluate the land graph, evidence diff and both nightly pins.
 - V-5 / CP-9 and manual. Check the touched script syntax and ASCII guards,
   the SHA refusal before startup/build, and the two activation instructions.
@@ -55,11 +56,11 @@ need Windows and the activation obligation needs the reviewed rc window.
 | CP-6 | S2 | n/a | land-evidence-and-pins | `env PATH="${ANTIPHON_CHECKPOINT_VERIFICATION_PATH:-$PATH}" pwsh -NoProfile -Command '& ./scripts/audit-land-verification-graph.ps1 -Check; $graphExit = $LASTEXITCODE; & ./scripts/check-evidence-diff.ps1 -BaseRef ce0eb1c5fbccdf8b2918643a319b88386435b761 -HeadRef HEAD; $evidenceExit = $LASTEXITCODE; . ./scripts/lib/nightly-common.ps1; . ./scripts/lib/nightly-core.ps1; if (-not (Test-NightlyCoreAvailable)) { throw "nightly core unavailable" }; $policy = [Antiphon.Nightly.NightlyPolicy]::Read((Get-Location).Path, ""); $lines = @(& pwsh -NoProfile -File ./scripts/test-live-lane-run.ps1 -PrintInputDigest); $d = ($lines \| Select-Object -Last 1).Trim(); $m = [regex]::Match((Get-Content -Raw ./scripts/test-live-lane-run.ps1), ("PinnedInputDigest = " + [char]39 + "([0-9a-f]{64})" + [char]39)); if (-not $m.Success -or $d -cne $m.Groups[1].Value) { throw ("input digest drift computed=" + $d) }; Write-Output ("policyHash=" + $policy.Hash); Write-Output ("inputDigest=" + $d); Write-Output ("graphExit=" + $graphExit + " evidenceExit=" + $evidenceExit); if ($graphExit -ne 0 -or $evidenceExit -ne 0) { exit 1 }'` | V-4 | exit 0, both pins match | n/a | 5 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-7 | S2 | CP-4 | runner-guards | `/*/*/(PtyHostDeploymentGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-2 | PtyHostDeploymentGuardTests,ProcessSpawnLimitTests | 5 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-8 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-sha-adv-pty/` | pty-limiter | `/*/*/ProcessSpawnLimitTests/*` | V-3 | ProcessSpawnLimitTests | 2 | 3 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
-| CP-9 | S2 | CP-3 | legacy-script-guards | `/*/*/(NightlyScriptsTests*)\|(ToolchainFloorWarningTests*)/(The_three_scripts_are_ascii_only*)\|(C1698_WindowsPowerShellSyntax*)` | V-5 | NightlyScriptsTests.The_three_scripts_are_ascii_only,ToolchainFloorWarningTests.C1698_WindowsPowerShellSyntax | 2 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-9 | S2 | CP-3 | impacted-scripts-and-docs | `/*/*/(DockerStackDocumentationTests*)\|(LinuxServerRestartGateTests*)\|(NightlyScriptsTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(ToolchainFloorWarningTests*)/*` | V-3, V-5 | DockerStackDocumentationTests,LinuxServerRestartGateTests,NightlyScriptsTests,StandingPipelinePolicyDocumentationTests,ToolchainFloorWarningTests | 71 | 4 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 
 ### Cost
 
-Estimated portable Final cost is 27 minutes before slot wait. Three isolated
+Estimated portable Final cost is 29 minutes before slot wait. Three isolated
 test-project builds reuse their output for later filters. Bootstrap of the
 checkpoint driver and regeneration of the committed impact index are separate
 build or generation work. Each test row requires fresh TRX identities and counts.
