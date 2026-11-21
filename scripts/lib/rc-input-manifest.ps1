@@ -515,6 +515,88 @@ function Skip-RcQuoted([string]$Text, [int]$Index) {
     return $Text.Length
 }
 
+function Skip-RcBraceHole([string]$Text, [int]$Index) {
+    # Index is the opening brace of an interpolation hole. Nested code is scanned.
+    $i=$Index+1
+    $depth=1
+    while ($i -lt $Text.Length -and $depth -gt 0) {
+        $skip=Skip-RcNonCode $Text $i
+        if ($skip -ge 0) { $i=$skip; continue }
+        $c=$Text[$i]
+        if ($c -eq '{') { $depth++ }
+        elseif ($c -eq '}') { $depth-- }
+        $i++
+    }
+    return $i
+}
+
+function Skip-RcVerbatimString([string]$Text, [int]$QuoteAt, [bool]$Interpolated) {
+    # C# verbatim: "" is one quote, a backslash is not an escape, @" is not a closer.
+    $i=$QuoteAt+1
+    while ($i -lt $Text.Length) {
+        $c=$Text[$i]
+        if ($Interpolated -and $c -eq '{') {
+            if (($i+1) -lt $Text.Length -and $Text[$i+1] -eq '{') { $i+=2; continue }
+            $i=Skip-RcBraceHole $Text $i
+            continue
+        }
+        if ($Interpolated -and $c -eq '}' -and ($i+1) -lt $Text.Length -and $Text[$i+1] -eq '}') { $i+=2; continue }
+        if ($c -eq '"') {
+            if (($i+1) -lt $Text.Length -and $Text[$i+1] -eq '"') { $i+=2; continue }
+            return $i+1
+        }
+        $i++
+    }
+    return $Text.Length
+}
+
+function Skip-RcRawHole([string]$Text, [int]$Index, [int]$Dollars) {
+    # Index is the first character of the expression, after the opening brace run.
+    $i=$Index
+    $depth=0
+    while ($i -lt $Text.Length) {
+        $skip=Skip-RcNonCode $Text $i
+        if ($skip -ge 0) { $i=$skip; continue }
+        if ($Text[$i] -eq '{') { $depth++; $i++; continue }
+        if ($Text[$i] -eq '}') {
+            if ($depth -gt 0) { $depth--; $i++; continue }
+            $run=0
+            while (($i+$run) -lt $Text.Length -and $Text[$i+$run] -eq '}') { $run++ }
+            if ($run -ge $Dollars) { return $i+$Dollars }
+            $i+=$run
+            continue
+        }
+        $i++
+    }
+    return $Text.Length
+}
+
+function Skip-RcRawString([string]$Text, [int]$QuoteAt, [int]$Dollars) {
+    # A raw literal's closer is the same run of quotes that opened it.
+    $quotes=0
+    while (($QuoteAt+$quotes) -lt $Text.Length -and $Text[$QuoteAt+$quotes] -eq '"') { $quotes++ }
+    if ($quotes -lt 3) { return -1 }
+    $i=$QuoteAt+$quotes
+    while ($i -lt $Text.Length) {
+        if ($Dollars -gt 0 -and $Text[$i] -eq '{') {
+            $run=0
+            while (($i+$run) -lt $Text.Length -and $Text[$i+$run] -eq '{') { $run++ }
+            if ($run -ge $Dollars) { $i=Skip-RcRawHole $Text ($i+$Dollars) $Dollars; continue }
+            $i+=$run
+            continue
+        }
+        if ($Text[$i] -eq '"') {
+            $run=0
+            while (($i+$run) -lt $Text.Length -and $Text[$i+$run] -eq '"') { $run++ }
+            if ($run -ge $quotes) { return $i+$quotes }
+            $i+=$run
+            continue
+        }
+        $i++
+    }
+    return $Text.Length
+}
+
 function Skip-RcNonCode([string]$Text, [int]$Index) {
     if ($Index -ge $Text.Length) { return -1 }
     $c=$Text[$Index]
@@ -531,23 +613,36 @@ function Skip-RcNonCode([string]$Text, [int]$Index) {
             return $end+2
         }
     }
-    if ($c -eq '@' -and ($Index+1) -lt $Text.Length -and $Text[$Index+1] -eq '"') {
-        $end=$Text.IndexOf('"@',$Index+2)
-        if ($end -lt 0) { return $Text.Length }
-        return $end+2
-    }
-    if ($c -eq '$' -and ($Index+2) -lt $Text.Length -and $Text[$Index+1] -eq '@' -and $Text[$Index+2] -eq '"') {
-        $end=$Text.IndexOf('"@',$Index+3)
-        if ($end -lt 0) { return $Text.Length }
-        return $end+2
-    }
-    if ($c -eq '$' -and ($Index+1) -lt $Text.Length -and $Text[$Index+1] -eq '"') { return Skip-RcQuoted $Text ($Index+1) }
-    if ($c -eq '"') {
-        if (($Index+2) -lt $Text.Length -and $Text[$Index+1] -eq '"' -and $Text[$Index+2] -eq '"') {
-            $end=$Text.IndexOf('"""',$Index+3)
-            if ($end -lt 0) { return $Text.Length }
-            return $end+3
+    if ($c -eq '@') {
+        $j=$Index+1
+        $interpolated=$false
+        if ($j -lt $Text.Length -and $Text[$j] -eq '$') { $interpolated=$true; $j++ }
+        if ($j -lt $Text.Length -and $Text[$j] -eq '"') {
+            $quotes=0
+            while (($j+$quotes) -lt $Text.Length -and $Text[$j+$quotes] -eq '"') { $quotes++ }
+            if ($quotes -ge 3) { return Skip-RcRawString $Text $j $(if ($interpolated) { 1 } else { 0 }) }
+            return Skip-RcVerbatimString $Text $j $interpolated
         }
+        return -1
+    }
+    if ($c -eq '$') {
+        $dollars=0
+        while (($Index+$dollars) -lt $Text.Length -and $Text[$Index+$dollars] -eq '$') { $dollars++ }
+        $j=$Index+$dollars
+        $verbatim=$false
+        if ($j -lt $Text.Length -and $Text[$j] -eq '@') { $verbatim=$true; $j++ }
+        if ($j -ge $Text.Length -or $Text[$j] -ne '"') { return -1 }
+        $quotes=0
+        while (($j+$quotes) -lt $Text.Length -and $Text[$j+$quotes] -eq '"') { $quotes++ }
+        if ($quotes -ge 3) { return Skip-RcRawString $Text $j $dollars }
+        if ($verbatim) { return Skip-RcVerbatimString $Text $j $true }
+        if ($dollars -eq 1) { return Skip-RcQuoted $Text $j }
+        return -1
+    }
+    if ($c -eq '"') {
+        $quotes=0
+        while (($Index+$quotes) -lt $Text.Length -and $Text[$Index+$quotes] -eq '"') { $quotes++ }
+        if ($quotes -ge 3) { return Skip-RcRawString $Text $Index 0 }
         return Skip-RcQuoted $Text $Index
     }
     if ($c -eq "'") { return Skip-RcQuoted $Text $Index }
@@ -637,11 +732,12 @@ function Try-RcMethodSignature([string]$Text, [int]$Index) {
 }
 
 function Get-RcArgumentInners([string]$AttrText) {
+    # [Arguments( and the comma-list form [Test, Arguments( are both rows.
     $rows=New-Object System.Collections.Generic.List[string]
     $i=0
     while ($i -lt $AttrText.Length) {
         $rel=$AttrText.Substring($i)
-        $found=[regex]::Match($rel,'\[Arguments\(')
+        $found=[regex]::Match($rel,'(?:\[|,)\s*Arguments\(')
         if (-not $found.Success) { break }
         $open=$i+$found.Index+$found.Length-1
         $close=Close-RcDelimiter $AttrText $open '(' ')'
@@ -678,6 +774,10 @@ function Get-RcTestIdentityParse([string]$Text) {
     $empty=@{identities=$counts; matched=0; capturedArguments=0; testAttributes=0; argumentOpeners=0}
     $source=Get-RcCommentStrippedText $Text
     if (-not $source) { return $empty }
+    # Counted on the comment-stripped text, not inside the scan, so a skipped
+    # region still shows as testAttributes or argumentOpeners above the capture.
+    $testAttributes=[regex]::Matches($source,'\[Test(?![A-Za-z0-9_])').Count
+    $argumentOpeners=[regex]::Matches($source,'(?:\[|,)\s*Arguments\(').Count
     $nsMatch=[regex]::Match($source,'namespace\s+([A-Za-z_][A-Za-z0-9_.]*)')
     $ns= if ($nsMatch.Success) { $nsMatch.Groups[1].Value } else { '' }
     $classNames=New-Object System.Collections.Generic.List[string]
@@ -686,8 +786,6 @@ function Get-RcTestIdentityParse([string]$Text) {
     $pending=$null
     $matched=0
     $captured=0
-    $testAttributes=0
-    $argumentOpeners=0
     $i=0
     while ($i -lt $source.Length) {
         $c=$source[$i]
@@ -726,8 +824,6 @@ function Get-RcTestIdentityParse([string]$Text) {
         }
         if (-not $any) { $i++; continue }
         $attrText=$attr.ToString()
-        $testAttributes+=[regex]::Matches($attrText,'\[Test(?![A-Za-z0-9_])').Count
-        $argumentOpeners+=[regex]::Matches($attrText,'\[Arguments\(').Count
         $isTest=$attrText -match '\[Test(?![A-Za-z0-9_])'
         $sig= if ($isTest) { Try-RcMethodSignature $source $pos } else { $null }
         if ($null -eq $sig) { $i=$pos; continue }
