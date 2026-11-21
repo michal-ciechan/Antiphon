@@ -7211,6 +7211,7 @@
         "AgentTuiLaunchResolverTests",
         "ApiKeyLaunchPathTests",
         "CardSpawnModelArgumentTests",
+        "CodexCliObservationTests",
         "LaunchEnvLayersIntegrationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
@@ -7225,6 +7226,7 @@
         "AgentTaskStandingAgentDispatchTests",
         "AgentTuiLaunchResolverTests",
         "ApiKeyLaunchPathTests",
+        "CodexCliObservationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
         "RolePolicyToolBundleDispatchTests"
@@ -7264,6 +7266,7 @@
         "AgentTuiProfileImporterBackfillTests",
         "AgentTuiProfileServiceTests",
         "ApiKeyLaunchPathTests",
+        "CodexCliObservationTests",
         "ExpectationObservationAdapterTests",
         "ExpectationWatchdogJobTests",
         "PinnedCodexProfileDispatchLaunchTests",
@@ -21676,6 +21679,7 @@
     {
       "path": "tests/Antiphon.Tests/AgentTui/AgentTuiLaunchResolverTests.cs",
       "classes": [
+        "CodexCliObservationTests",
         "PinnedCodexProfileDispatchLaunchTests",
         "PinnedProfileLaunchSpecTests",
         "RolePolicyToolBundleDispatchTests"
