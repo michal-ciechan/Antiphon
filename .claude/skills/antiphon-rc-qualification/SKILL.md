@@ -245,6 +245,9 @@ through a `1>` wrapper buffer; the run itself survived.
   `nightlyArguments` and the same value as `start-supervisor.ps1 -RunId`. The state root
   (default `C:\Antiphon\nightly`) is shared by every nightly and rc run, so `last-run.json`
   usually holds the previous run's `completedAt`; only the run id tells them apart.
+  Include the JSON argument pair `"-ReleaseRoot", "C:\\Antiphon\\releases"` in
+  `nightlyArguments` for the standard Windows layout. An omitted or blank root causes
+  exit 3 with `rc-release-root-required` in the final JSON's `refusal` field.
 - `launch-rc.ps1` needs PowerShell 7: the starter passes its own host to the supervisor and the
   launch, so start the starter with `pwsh`, not `powershell.exe` (5.1 fails safely, launching
   nothing). It reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
@@ -259,10 +262,13 @@ through a `1>` wrapper buffer; the run itself survived.
 - `preflight.ps1` is copied with this set and run on the checkout before `start-supervisor.ps1`.
   It refuses (exit 2) `longpaths-not-enabled` with the same fix command when local
   `core.longpaths` is not `true`. It does not change the checkout.
-- `start-supervisor.ps1 -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
+- `start-supervisor.ps1 -CheckoutRoot <checkout> -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
   <candidate>\logs -StateRoot <state-dir> -RunId <id>` starts `supervise-rc.ps1` with its **own
   hidden console** (setsid on Unix) and output in its own files, waits for
-  `supervisor-identity.json` and returns. Start the starter through `Win32_Process` Create to
+  `supervisor-identity.json` and returns. Use the launch record's `checkoutRoot` as
+  `-CheckoutRoot`. The starter passes that path to the supervisor and both load their
+  libraries from the checkout. For an older checkout without the switch, run its starter
+  and observer from the checkout and omit the switch. Start the starter through `Win32_Process` Create to
   leave the caller's Job Object. It refuses a task directory that already has a supervisor
   identity and a run id that `last-run.json`, `run.lock` or the task directory's
   `own-last-run.json` already names. observe, start-supervisor and supervise-rc read these
@@ -274,8 +280,9 @@ through a `1>` wrapper buffer; the run itself survived.
   `last-run.json` names its run id it copies it to `own-last-run.json` in the task directory, every
   poll and once more at child exit, because the next run overwrites the shared `last-run.json`. It
   only observes; it never stops anything.
-- `observe.ps1 -TaskRoot <task-dir> -StateRoot <state-dir>` is read-only and credits only the
-  run id in `supervisor-identity.json`. `completedAt` for that run id in `last-run.json`, or in
+- `observe.ps1 -CheckoutRoot <checkout> -TaskRoot <task-dir> -StateRoot <state-dir>` reads the
+  library from the same checkout and credits only the run id in `supervisor-identity.json`.
+  The observer is read-only. `completedAt` for that run id in `last-run.json`, or in
   `own-last-run.json` once another run has overwritten `last-run.json`, is the end signal, not
   `commission-exit.txt`. A gone supervisor or stale heartbeat while that run still owns
   `run.lock` (run id in `run.lock`, and in `last-run.json` or the copy) is `supervisor-lost-run-alive`

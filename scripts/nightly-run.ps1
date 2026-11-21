@@ -64,6 +64,7 @@
 .PARAMETER ReleaseRoot
     Producer-owned release state. Default C:\Antiphon\releases. RC green is written
     under <ReleaseRoot>\candidates\<candidate-id>, never to the master state root.
+    Required with -Profile rc. Pass C:\Antiphon\releases for the standard Windows layout.
 
 .PARAMETER CoordinationRoot
     CARD-0599 D-4: root of the shared native-run lock both lanes acquire.

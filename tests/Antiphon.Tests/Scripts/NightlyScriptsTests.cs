@@ -22,7 +22,7 @@ public sealed class NightlyScriptsTests
         ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C2044", nameof(C2044_RcReleaseRootRefusal), 3,
             "C2044 omitted ReleaseRoot is refused before recording a run and named in the final JSON",
             "C2044 blank ReleaseRoot is refused before recording a run and named in the final JSON",
-            "C2044 explicit ReleaseRoot reaches the test result");
+            "C2044 explicit ReleaseRoot creates the selection in the supplied root");
 
     [Test]
     public Task C1854_EolRepairHardening() =>

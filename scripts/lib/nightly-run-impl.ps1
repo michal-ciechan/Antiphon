@@ -427,6 +427,13 @@ function Invoke-AntiphonNightlyRunCore {
                 $result.ExitCode = 3
                 return [pscustomobject]$result
             }
+            if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
+                Write-Host 'REFUSED: rc profile requires an explicit -ReleaseRoot.'
+                $result.Refusal = 'rc-release-root-required'
+                $result.Phase = 'profile'
+                $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
         } elseif ($Trigger -eq 'rc') {
             Write-Host 'REFUSED: trigger rc requires the rc profile.'
             $result.Refusal = 'trigger-profile-mismatch'
@@ -969,7 +976,7 @@ function Invoke-AntiphonNightlyRunCore {
 
 function ConvertTo-NightlyResultRecord {
     # CARD-0545 D-10: the compact completion record Windmill takes as the job result. Key order is
-    # fixed. A refusal before the run started carries exitCode and empty identity; otherwise the
+    # fixed. A refusal carries exitCode and refusal with empty identity; otherwise the
     # durable last-run.json (written by this run or, after the self-update hop, by the child) is the
     # source so the line and the state file never disagree.
     param($Result)
@@ -991,7 +998,10 @@ function ConvertTo-NightlyResultRecord {
     }
     if ($null -eq $Result) { return $record }
     if ($null -ne $Result.ExitCode) { $record.exitCode = [int]$Result.ExitCode }
-    if (-not [string]::IsNullOrWhiteSpace([string]$Result.Refusal)) { return $record }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Result.Refusal)) {
+        $record.refusal = [string]$Result.Refusal
+        return $record
+    }
     $state = $null
     if (-not [string]::IsNullOrWhiteSpace([string]$Result.StateRoot)) {
         $last = Join-Path ([string]$Result.StateRoot) 'last-run.json'
