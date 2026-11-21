@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -28,11 +29,14 @@ public partial class C1022BackendLaunchTests
     [Test]
     public void Unknown_build_is_rejected_when_deploy_identity_is_required()
     {
+        const string known = "1.0.0+0123456789abcdef0123456789abcdef01234567";
         var runnerPath = typeof(SessionRunnerRuntime).Assembly.Location;
         var version = FileVersionInfo.GetVersionInfo(runnerPath).ProductVersion.ShouldNotBeNull();
         version.ShouldEndWith("+unknown");
         Should.Throw<ShouldAssertException>(() => DescribeBuild(runnerPath, version, requireDeployStamp: true))
-            .Message.ShouldContain("deployed build must report a commit SHA");
+            .Message.ShouldContain("expected deployed build must report a commit SHA");
+        Should.Throw<ShouldAssertException>(() => DescribeBuild(runnerPath, known, requireDeployStamp: true))
+            .Message.ShouldContain("loaded deployed build must report a commit SHA");
     }
 
     [Test]
@@ -98,8 +102,8 @@ public partial class C1022BackendLaunchTests
                 var hashes = ConPtyRedistributable.VerifyShippedHashes(dll);
                 hashes.Ok.ShouldBeTrue(hashes.Detail);
                 var build = RunnerBuildIdentity.Resolve();
-                // Same build, not a SHA: an ordinary test build is unstamped ("+unknown").
-                build.InformationalVersion.ShouldNotBeNullOrWhiteSpace();
+                var requireDeployStamp = build.CommitSha is not null ||
+                    Environment.GetEnvironmentVariable("ANTIPHON_C1022_REQUIRE_DEPLOY_STAMP") == "1";
                 var hostIdentity = owned.Captured.Single(p => p.Host).Process;
                 using var host = Process.GetProcessById(hostIdentity.Pid);
                 var loadedDll = host.Modules.Cast<ProcessModule>().Single(module =>
@@ -112,8 +116,12 @@ public partial class C1022BackendLaunchTests
                     architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                     sessionId, hostIdentity.Pid, hostIdentity.StartedUtc, hostIdentity.Image,
                     childPid = dto.Pid, childStartedUtc = dto.StartedAt,
-                    runnerBuild = DescribeBuild(typeof(SessionRunnerRuntime).Assembly.Location, build.InformationalVersion),
-                    hostBuild = DescribeBuild(Path.Combine(Path.GetDirectoryName(hostIdentity.Image)!, "Antiphon.PtyHost.dll"), build.InformationalVersion),
+                    runnerBuild = DescribeBuild(typeof(SessionRunnerRuntime).Assembly.Location),
+                    hostBuild = DescribeBuild(
+                        Path.Combine(Path.GetDirectoryName(hostIdentity.Image)!, "Antiphon.PtyHost.dll"),
+                        build.InformationalVersion,
+                        Path.Combine(settings.ResolvedPtyHostSourceDir, "Antiphon.PtyHost.dll"),
+                        requireDeployStamp),
                     loadedDll, openConsole = console.Process.Image, hashes = hashes.Detail,
                 }));
                 foreach (var cap in new[] { runtime.DescribeCapabilities(build, [SessionBackends.PtyHost], []),
@@ -144,12 +152,27 @@ public partial class C1022BackendLaunchTests
         }
     }
 
-    private static object DescribeBuild(string path, string expectedStamp, string? expectedPath = null,
+    private static object DescribeBuild(string path, string? expectedStamp = null, string? expectedPath = null,
         bool requireDeployStamp = false)
     {
         var version = FileVersionInfo.GetVersionInfo(path).ProductVersion;
-        version.ShouldNotBeNull().ShouldBe(expectedStamp, customMessage: "loaded host/runner build stamp");
+        version.ShouldNotBeNullOrWhiteSpace();
+        if (requireDeployStamp)
+        {
+            RunnerBuildIdentity.TryParseCommitSha(expectedStamp).ShouldNotBeNull("expected deployed build must report a commit SHA");
+            RunnerBuildIdentity.TryParseCommitSha(version).ShouldNotBeNull("loaded deployed build must report a commit SHA");
+        }
+        if (expectedStamp is not null)
+            version.ShouldBe(expectedStamp, customMessage: "loaded host/runner build stamp");
+        var sha256 = HashAssembly(path);
+        if (expectedPath is not null)
+            sha256.ShouldBe(HashAssembly(expectedPath), customMessage: "loaded host differs from the runner output");
+        return new { path, version, sha256 };
+    }
+
+    private static string HashAssembly(string path)
+    {
         using var stream = File.OpenRead(path);
-        return new { path, version, sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream)) };
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 }
