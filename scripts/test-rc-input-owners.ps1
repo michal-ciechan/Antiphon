@@ -587,6 +587,38 @@ switch ($Case) {
         Put $rows 'class ArgumentsE2EProbeTests { [Test] [Arguments("added-row")] void RowMethod() { int x = 2; } }'
         $s=Select-Manifest (Commit)
         Note ($s.dirtySuites.Count -eq 0) "e2e-identity-body-still-defers:$(& $shown $s)"
+        # A multi-line [Arguments] row, a new[] attribute and a generic method
+        # are roster changes. Dropping the form must still select every suite.
+        $multi='tests/Antiphon.E2E/MultiLineArgumentsProbeTests.cs'
+        Put $multi "class MultiLineArgumentsE2EProbeTests { [Test] void RowMethod() { int x = 1; } }"
+        $baseline=Commit
+        Put $multi @"
+class MultiLineArgumentsE2EProbeTests {
+    [Test]
+    [Arguments(
+        "b")]
+    void RowMethod() { int x = 1; }
+}
+"@
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-multiline-arguments-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-multiline-arguments-stays-shadow'
+        $array='tests/Antiphon.E2E/ArrayArgumentsProbeTests.cs'
+        Put $array 'class ArrayArgumentsE2EProbeTests { [Test] [Arguments(new[] { "a" })] void OriginalMethod() { int x = 1; } }'
+        $baseline=Commit
+        Put $array 'class ArrayArgumentsE2EProbeTests { [Test] [Arguments(new[] { "a" })] void RenamedMethod() { int x = 1; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-array-arguments-rename-selects-all:$(& $shown $s)"
+        $generic='tests/Antiphon.E2E/GenericProbeTests.cs'
+        Put $generic 'class GenericE2EProbeTests { [Test] Task A<T>() { return Task.CompletedTask; } }'
+        $baseline=Commit
+        Put $generic 'class GenericE2EProbeTests { [Test] Task B<T>() { return Task.CompletedTask; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-generic-rename-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-generic-rename-stays-shadow'
     }
     'OwnerLiteralPathsFailClosed' {
         # Every literal owner path, exceptPaths prefix and owner-glob prefix
@@ -645,6 +677,57 @@ switch ($Case) {
         Note $renamed "literal-rename-not-detected:$message"
         Note $prefixGone "literal-prefix-not-detected:$message"
         Note $exceptGone "literal-except-not-detected:$message"
+    }
+    'RealOwnerMapLiteralPathsExist' {
+        # The committed map is checked against this repository. A scratch copy
+        # of those literal prefixes must go red when the canary file is renamed.
+        $sourceRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+        $mapPath=Join-Path $sourceRoot 'scripts/lib/rc-input-owners.json'
+        $json=[IO.File]::ReadAllText($mapPath)
+        $live=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $sourceRoot -MapJson $json)
+        Note ($live.Count -eq 0) "real-owner-map:$($live -join ' | ')"
+        $census=Join-Path $sourceRoot 'scripts/rc-input-owner-path-census.ps1'
+        $censusOut=@(& pwsh -NoProfile -File $census | ForEach-Object { "$_" })
+        Note ($LASTEXITCODE -eq 0 -and (@($censusOut) -join "`n") -match 'missing-literal-path=0') "real-census-script:$LASTEXITCODE:$(@($censusOut) -join ' | ')"
+        $mapObj=ConvertFrom-Json -InputObject $json -AsHashtable
+        $canary=@($mapObj.roots | Where-Object { [string]$_.path -like '*ClaudeDialogWatchdogCanaryTests.cs' } | ForEach-Object { [string]$_.path })
+        Note ($canary.Count -eq 1) "real-canary-row:$($canary -join ',')"
+        $scratch=Join-Path $ResultsDirectory 'real-map-canary'
+        [void][IO.Directory]::CreateDirectory($scratch)
+        $patterns=New-Object System.Collections.Generic.List[string]
+        if ($mapObj.Contains('suiteProjects') -and $mapObj.suiteProjects) { $patterns.Add([string]$mapObj.suiteProjects) }
+        if ($mapObj.Contains('testOnly') -and $null -ne $mapObj.testOnly) {
+            foreach ($name in @('paths','exceptPaths')) {
+                if (-not $mapObj.testOnly.Contains($name)) { continue }
+                foreach ($item in @($mapObj.testOnly[$name])) { if ($item) { $patterns.Add([string]$item) } }
+            }
+        }
+        foreach ($rootRow in @($mapObj.roots)) {
+            if ($null -eq $rootRow -or -not $rootRow.path) { continue }
+            $patterns.Add([string]$rootRow.path)
+        }
+        foreach ($pattern in $patterns) {
+            $prefix=Get-RcLiteralPathPrefix $pattern
+            if (-not $prefix) { continue }
+            $full=Join-Path $scratch ($prefix -replace '/',[IO.Path]::DirectorySeparatorChar)
+            if ($pattern.IndexOfAny([char[]]@('*','?')) -ge 0) {
+                [void][IO.Directory]::CreateDirectory($full)
+                continue
+            }
+            $parent=Split-Path -Parent $full
+            if ($parent) { [void][IO.Directory]::CreateDirectory($parent) }
+            if (-not (Test-Path -LiteralPath $full)) { [IO.File]::WriteAllText($full,'x') }
+        }
+        $scratchIntact=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $scratch -MapJson $json)
+        Note ($scratchIntact.Count -eq 0) "scratch-map-intact:$($scratchIntact -join ' | ')"
+        if ($canary.Count -eq 1) {
+            $canaryFull=Join-Path $scratch ($canary[0] -replace '/',[IO.Path]::DirectorySeparatorChar)
+            $renamedFull=$canaryFull+'.renamed'
+            if (Test-Path -LiteralPath $canaryFull) { [IO.File]::Move($canaryFull,$renamedFull) }
+            $scratchMissing=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $scratch -MapJson $json)
+            $hit=@($scratchMissing | Where-Object { $_ -like ('missing-literal-path:*'+$canary[0]+'*') })
+            Note ($hit.Count -ge 1) "scratch-canary-rename:$($scratchMissing -join ' | ')"
+        }
     }
     'CanaryEditSelectsPtySuite' {
         # A body edit of the canary file selects the Pty suite that reads it.
