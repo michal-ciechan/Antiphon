@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -194,7 +195,7 @@ internal static class RcPortCorpus
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            GitFixtureCleanup.Delete(root);
         }
     }
 
