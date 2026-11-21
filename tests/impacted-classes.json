@@ -8,7 +8,6 @@
       "id": "codex-real-cli-boot",
       "globs": [
         "docker/session-runner-grok/Dockerfile",
-        "docker/session-runner-grok/**/codex*",
         "server/Application/Services/CodexLaunchArgs.cs",
         "server/Application/Services/SessionMessageQueueService*.cs",
         "server/Infrastructure/Agents/SessionRunner/RunnerCodexAdapter.cs",
