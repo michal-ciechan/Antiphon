@@ -1,0 +1,30 @@
+# CARD-1836 owner-map guard round 2
+
+Base `eb5e7ead43396148fe5b9f8f4c7b90d185e7258f`. Code task `5c78b016`. Round 1 review `fedbe0c8` identified B1 and B2. The inventory replay is shadow-only and conveys no gate credit.
+
+## Verification design
+
+- V-1 (B1). Replay one current path from `Read-RcInputInventory.unowned` in the Pty suite through the same status lookup used by the historical cases. Expect `missed`. The census enumerates tracked paths with no owning inventory row and excludes declared no-op paths. An empty census or missing Pty suite fails explicitly.
+- V-2 (B2). Run the presence/ownership predicate independently for each of the six Composer paths named in the round 1 review. Report each missing input by path. Presence requires a unique present record and excludes the fallback reasons. The historical Composer case also continues to expect `selected`.
+- R-1. Run both tests in `IncrementalSelectionSoundnessTests` on the exact merged tree. Keep all twelve historical expectations and the project-closure miss set.
+- R-2. Run the nine-class policy, mechanical, platform, layering and lane batch on that tree. Require fresh results for each named class and zero layering violations.
+- R-3. Build the native-output derived-index driver first. Run regeneration twice, recording both dispositions and the byte digest. Commit any changed index last. Run `DerivedImpactIndexTests` on the merged tree with its native-output driver available.
+- R-4. Audit the land graph with `-Check`, compare the nightly input and policy digests with their committed pins, and check evidence over the full task range. Run `git merge-tree --write-tree origin/master HEAD` against freshly fetched master. Verify the merged checkout's tree ID against that output before running its checkpoints.
+
+CP-1 deliberately expects the pre-fix harness to be missing both new contract rows. CP-2 requires all three named rows through the TUnit harness. The deliberate negative controls for the two repaired behaviors are PC-1, force the shared ownership lookup to return true for every path, and PC-2, remove only the `src/Antiphon.Agents.Pty/ComposerInputProbe.cs` row from the Pty inventory. Both apply to `/*/Antiphon.Tests.Scripts/IncrementalSelectionSoundnessTests/Recorded_owner_map_status_matches_the_committed_map`. PC-1 must fail the `unowned` row with `got selected`. PC-2 must fail the `composer-inputs` row naming that path while the other five inputs stay present. SourceLanding Mutation owns both deliberate red/restore/green cycles.
+
+## Performance budget
+
+One inventory read serves all three assertions. Round 1 measured 73 seconds for the inventory and 92 seconds for the soundness class. Keep the existing 120-second harness budget and 150-second TUnit timeout. The closed selection is bounded. The other cases in `RcInputOwnersMapTests` take a separate harness branch, and the full Unit lane is nightly/rc. The guard batch cost is provisionally two minutes from the round 1 sample of 76 seconds for its policy subset. The index class cost is provisionally two minutes. Plan for one cold shared test build at about five minutes and one short native driver build per needed checkout. Use the fresh checkpoint TRX and console logs for timings and counts. These rows use local files and Git, with no app host or database setup.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | red | n/a | owner-map-pre-fix | `out=$(pwsh -NoProfile -File scripts/test-rc-input-owners.ps1 -Case HistoricalSelectionSoundness) && printf '%s\n' "$out" && case "$out" in *HistoricalSelectionSoundness.unowned*) exit 2;; esac && case "$out" in *HistoricalSelectionSoundness.composer-inputs*) exit 2;; esac && case "$out" in *'C487: 1 passed, 0 failed, 1 rows'*) echo 'Expected red: both required witness rows are absent'; exit 1;; *) exit 2;; esac` | V-1, V-2 red test contract | command exits 1 and names both missing rows | n/a | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-2 | merged | `tests/Antiphon.Tests -> bin-owner-map-r2/` | owner-map-soundness | `/*/Antiphon.Tests.Scripts/IncrementalSelectionSoundnessTests/*` | V-1, V-2, R-1 | 2 executed, 0 failed or skipped | 2 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-3 | merged | CP-2 | owner-map-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | all nine classes, 0 failed or skipped | 81 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-4 | merged | CP-2 | owner-map-index | `/*/Antiphon.Tests.Scripts/DerivedImpactIndexTests/*` | R-3 | 0 failed or skipped | 27 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-5 | merged | n/a | owner-map-land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin/Debug/net10.0/Antiphon.LandGraphAudit.dll` | R-4 | exit 0 or record exact inherited graph refusal | n/a | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-6 | merged | n/a | owner-map-input-pin | `pwsh -NoProfile -Command '$computed = & ./scripts/test-live-lane-run.ps1 -PrintInputDigest; $pin = [regex]::Match((Get-Content -Raw ./scripts/test-live-lane-run.ps1), "PinnedInputDigest = .([0-9a-f]{64}).").Groups[1].Value; Write-Output "inputDigest=$computed pinnedInputDigest=$pin"; if (-not $pin -or $computed -cne $pin) { exit 1 }'` | R-4 | exit 0, live-lane input digest matches | n/a | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-7 | tip | n/a | owner-map-evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef eb5e7ead43396148fe5b9f8f4c7b90d185e7258f -HeadRef HEAD` | R-4 | exit 0, no violations | n/a | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
