@@ -11,7 +11,7 @@ Branch `feat/card-task-ae8b6243`. Final verification on Linux.
 - V-6. Task badges and pipeline rows show the new Frontier label. A recorded GPT-6 Astra retains its historical label.
 - R-1. The nine-class Linux guard union passes, including the layering guard. Record conditional skips.
 - R-2. Build the derived index driver in its native output through the build-slot gate before the closed run. Run the regenerator twice to check stability and commit an index change last. The separate driver build is necessary because DerivedImpactIndexTests invokes the regenerator with `-NoBuild`.
-- R-3. The dispatcher diff selects the `dispatcher-ref-only-composition` and `land-notification` rows from `tests/impacted-classes.json`.
+- R-3. The committed diff selects `dispatcher-ref-only-composition`, `land-notification`, `statement-budgets` and `test-lane-category` from `tests/impacted-classes.json`. The lane category class also belongs to the CP-6 guard union.
 - R-4. Check evidence policy over the complete task base to committed HEAD.
 - R-5. Audit the land graph. Compare any mismatch with the base graph and refresh only through the land-refresh script when a changed input requires it.
 - R-6. Recompute the nightly policy hash and live-lane input digest. Reseal only a changed protected input.
@@ -44,3 +44,4 @@ They remain pending for SourceLanding Mutation.
 | CP-15 | all | CP-1 | land-notification-follow-up | `/*/*/(AgentTaskLandNotificationParkFollowUpTests*)\|(AgentTaskLandNotificationRescanTests*)\|(ExpectationDebtTests*)\|(PreDispatchFailureDeliveryTests*)/*` | R-3 | 0 failed and every named class or method executed | 4 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-16 | all | CP-1 | land-notification-receipts | `/*/*/(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)\|(AgentTaskLandReceiptWatermarkTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | R-3 | 0 failed and every named class or method executed | 4 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-17 | all | CP-1 | land-notification-scan-cache | `/*/*/LandReceiptScanCacheTests/*` | R-3 | 0 failed and every named class or method executed | 1 | 1 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-18 | all | CP-1 | dispatch-statement-budgets | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | R-3 | 14 passed | 14 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
