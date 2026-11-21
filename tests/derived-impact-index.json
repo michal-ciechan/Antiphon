@@ -1752,10 +1752,11 @@
     },
     {
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
+        "C1307ToolRemovalTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointShadowCustodyTests",
         "HostCleanupCheckpointCustodyTests"
@@ -2099,9 +2100,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 88,
+      "classes": 89,
       "reason": "cap",
-      "owed": 63,
+      "owed": 64,
       "first": [
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
@@ -2115,9 +2116,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 91,
+      "classes": 92,
       "reason": "cap",
-      "owed": 66,
+      "owed": 67,
       "first": [
         "CheckpointIndexPathsTests",
         "CheckpointInheritedFileTests",
@@ -17363,6 +17364,7 @@
         "CheckpointRecoveryWindowsTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointToolCopyCleanupTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "EvidenceFolderTests",
@@ -17449,7 +17451,6 @@
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
       "classes": [
         "AnchoredPathDeleteWitnessTests",
-        "C1307ToolRemovalTests",
         "CheckpointAdmissionContractTests",
         "CheckpointBuildBindingPathTests",
         "CheckpointImportTests",
@@ -17461,6 +17462,7 @@
         "CheckpointSelectedOutputTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointToolCopyCleanupTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "EvidenceFolderTests",
