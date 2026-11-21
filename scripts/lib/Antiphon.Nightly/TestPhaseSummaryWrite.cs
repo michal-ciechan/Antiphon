@@ -6,7 +6,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -30,7 +29,9 @@ namespace Antiphon.Nightly
         private sealed class StringKeyComparer : IComparer<Entry>
         {
             private readonly CultureInfo _culture = CultureInfo.CurrentCulture;
-            public int Compare(Entry x, Entry y) => LanguagePrimitives.Compare(x.Key, y.Key, true, _culture);
+            public int Compare(Entry x, Entry y) => PsRuntime.Loaded
+                ? PsFields.Compare(x.Key, y.Key, true, _culture)
+                : _culture.CompareInfo.Compare((string)x.Key, (string)y.Key, CompareOptions.IgnoreCase);
         }
 
         // LanguagePrimitives.Compare on two numbers: Int64 with Int64 as Int64, otherwise both as Double (the
@@ -52,7 +53,7 @@ namespace Antiphon.Nightly
         {
             var entries = new List<Entry>();
             if (tests == null) return entries;
-            var baseObject = tests is PSObject ps ? ps.BaseObject : tests;
+            var baseObject = PsValue.BaseObject(tests);
             if (baseObject is IEnumerable enumerable && !(baseObject is string) && !(baseObject is IDictionary))
             {
                 foreach (var item in enumerable) entries.Add(new Entry { Item = item });
@@ -128,11 +129,11 @@ namespace Antiphon.Nightly
         // [long]$value
         private static long ToLong(object value, string field)
         {
-            if (value is PSObject ps) value = ps.BaseObject;
+            value = PsValue.BaseObject(value);
             if (value is long l) return l;
             if (value is int i) return i;
-            try { return (long)LanguagePrimitives.ConvertTo(value, typeof(long), CultureInfo.InvariantCulture); }
-            catch (Exception ex) when (ex is PSInvalidCastException || ex is InvalidCastException || ex is OverflowException || ex is FormatException)
+            try { return PsRuntime.Loaded ? PsFields.ToLong(value) : PlainValues.Long(value); }
+            catch (Exception ex) when (ex is InvalidCastException || ex is OverflowException || ex is FormatException || (PsRuntime.Loaded && PsFields.IsInvalidCast(ex)))
             {
                 throw new ArgumentException("phase summary: [long] cannot convert " + field + " (" + (value?.GetType().FullName ?? "null") + ")", ex);
             }
@@ -160,17 +161,16 @@ namespace Antiphon.Nightly
         {
             // ConvertTo-Json -Depth 50 turns a deeper object into its string; no summary comes near it.
             if (depth > 40) throw Unsupported("nesting deeper than 40");
-            if (value is PSObject ps)
+            if (PsValue.IsRecord(value))
             {
-                if (ps.BaseObject is PSCustomObject)
+                if (PsValue.IsCustomObject(value))
                 {
-                    WriteCustomObject(sb, ps, depth);
+                    WriteCustomObject(sb, value, depth);
                     return;
                 }
                 // ConvertTo-Json adds a wrapped value's extended (note, script, alias...) properties.
-                foreach (var property in ps.Properties)
-                    if (property.MemberType != PSMemberTypes.Property) throw Unsupported("a value with extended properties");
-                value = ps.BaseObject;
+                if (PsFields.HasExtendedProperty(value)) throw Unsupported("a value with extended properties");
+                value = PsValue.BaseObject(value);
             }
             switch (value)
             {
@@ -245,19 +245,17 @@ namespace Antiphon.Nightly
 
         // A [pscustomobject]: its properties in order, each value as ConvertTo-Json reads it (a property whose
         // getter throws is null).
-        private static void WriteCustomObject(StringBuilder sb, PSObject ps, int depth)
+        private static void WriteCustomObject(StringBuilder sb, object ps, int depth)
         {
             sb.Append('{');
             var first = true;
-            foreach (var property in ps.Properties)
+            foreach (var property in PsValue.Properties(ps))
             {
-                object propertyValue = null;
-                try { propertyValue = property.Value; } catch (Exception) { }
                 if (!first) sb.Append(',');
                 first = false;
-                WriteString(sb, property.Name);
+                WriteString(sb, property.Key);
                 sb.Append(':');
-                Write(sb, propertyValue, depth + 1);
+                Write(sb, property.Value, depth + 1);
             }
             sb.Append('}');
         }

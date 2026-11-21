@@ -5,7 +5,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -14,15 +13,15 @@ namespace Antiphon.Nightly
         private static readonly string[] StratumKeys =
             { "suite", "uidDigest", "costDigest", "executionDigest", "assemblyDigest", "os", "runtime", "host", "loadBand", "fixtureMode", "concurrency" };
 
-        private static PSObject Note(params object[] pairs)
+        private static object Note(params object[] pairs)
         {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
+            var properties = new (string Name, object Value)[pairs.Length / 2];
+            for (var i = 0; i < pairs.Length; i += 2) properties[i / 2] = ((string)pairs[i], pairs[i + 1]);
+            return PsValue.Record(properties);
         }
 
         // $Object.PSObject.Properties[$Name].Value: null when absent.
-        private static object Field(object o, string name) => o == null ? null : PSObject.AsPSObject(o).Properties[name]?.Value;
+        private static object Field(object o, string name) => o == null ? null : PsValue.Property(o, name, out _);
 
         private static bool TryFloat(object value, out double parsed) =>
             double.TryParse(PsValue.Str(value), NumberStyles.Float, CultureInfo.InvariantCulture, out parsed);
@@ -49,7 +48,7 @@ namespace Antiphon.Nightly
         /// set censored, as does an unknown plan. E95 is the nearest-rank 95th percentile of wall/plan, at least 1; Emax the
         /// largest, at least E95.
         /// </summary>
-        public static PSObject ErrorFactors(object samples, object plannedSeconds)
+        public static object ErrorFactors(object samples, object plannedSeconds)
         {
             var planned = 0.0;
             var plannedKnown = false;
@@ -117,12 +116,12 @@ namespace Antiphon.Nightly
         public static int PolicyWatchdogMilliseconds(object policyObject, string key, int fallback)
         {
             var watchdogs = PsValue.Prop(policyObject, "watchdogs");
-            if (!LanguagePrimitives.IsTrue(watchdogs)) return fallback;
+            if (!PsValue.IsTrue(watchdogs)) return fallback;
             // $watchdogs.'' (a blank key) reads nothing.
             if (string.IsNullOrEmpty(key)) return fallback;
             var value = PsValue.Prop(watchdogs, key);
-            if (!LanguagePrimitives.IsTrue(value)) return fallback;
-            return (int)LanguagePrimitives.ConvertTo(value, typeof(int), CultureInfo.InvariantCulture);
+            if (!PsValue.IsTrue(value)) return fallback;
+            return PsOps.ToInt(value);
         }
 
         /// <summary>Get-NightlySuiteWatchdogSeconds: the policy's suite watchdog, else 3600 s (7200 s for e2e).</summary>
@@ -154,11 +153,11 @@ namespace Antiphon.Nightly
         private static bool FiniteNumber(object value) =>
             value != null && TryFloat(value, out var parsed) && !double.IsNaN(parsed) && !double.IsInfinity(parsed);
 
-        private static PSObject Decision(bool admitted, double watchdogSeconds, string reason, double e95, double emax, int n) =>
+        private static object Decision(bool admitted, double watchdogSeconds, string reason, double e95, double emax, int n) =>
             Note("Admitted", admitted, "WatchdogSeconds", watchdogSeconds, "WatchdogMilliseconds", Convert.ToInt32(Math.Round(watchdogSeconds * 1000.0)),
                 "Reason", reason ?? "", "E95", e95, "Emax", emax, "N", n);
 
-        private static double Double(object value) => (double)LanguagePrimitives.ConvertTo(value, typeof(double), CultureInfo.InvariantCulture);
+        private static double Double(object value) => PsValue.Double(value);
 
         /// <summary>
         /// Resolve-NightlyLaunchWatchdog: { Admitted, WatchdogSeconds, WatchdogMilliseconds, Reason, E95, Emax, N }. Unmeasured
@@ -166,7 +165,7 @@ namespace Antiphon.Nightly
         /// uncensored samples bound to this policy hash and launch stratum, sane factors): the calibrated watchdog,
         /// refused over the calibrated bound or when it would exceed the policy maximum.
         /// </summary>
-        public static PSObject ResolveLaunch(string suiteId, object plannedSeconds, string basis, string policyHash, object launchStratum,
+        public static object ResolveLaunch(string suiteId, object plannedSeconds, string basis, string policyHash, object launchStratum,
             object calibration, object policyObject)
         {
             var suiteSeconds = SuiteWatchdogSeconds(policyObject, suiteId);
@@ -225,7 +224,7 @@ namespace Antiphon.Nightly
         /// Get-NightlyWatchdogTimeoutDisposition: a timed-out launch is incomplete and not passed (reason watchdog-timeout,
         /// or completed-but-hung when the tests had finished).
         /// </summary>
-        public static PSObject TimeoutDisposition(bool trxPresent, bool terminalAccounting, bool completedButHung) =>
+        public static object TimeoutDisposition(bool trxPresent, bool terminalAccounting, bool completedButHung) =>
             Note("CoverageComplete", false, "TestsPassed", false, "Incomplete", true, "Reason", completedButHung ? "completed-but-hung" : "watchdog-timeout", "Pass", false);
 
         // ---- completion and hang evidence ------------------------------------------------------------------------
@@ -235,9 +234,9 @@ namespace Antiphon.Nightly
         /// ResultSummary (read while the writer may still hold it). Not present (counters -1) for a missing or unreadable
         /// file, or without total, executed and notExecuted counters.
         /// </summary>
-        public static PSObject TrxRunSummary(string path)
+        public static object TrxRunSummary(string path)
         {
-            PSObject Missing() => Note("Present", false, "Outcome", "", "Total", -1, "Executed", -1, "Passed", -1, "Failed", -1, "NotExecuted", -1);
+            object Missing() => Note("Present", false, "Outcome", "", "Total", -1, "Executed", -1, "Passed", -1, "Failed", -1, "NotExecuted", -1);
             if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) return Missing();
             var doc = new System.Xml.XmlDocument { XmlResolver = null };
             try
@@ -283,10 +282,10 @@ namespace Antiphon.Nightly
         public static bool ExecutionFinished(string trxPath, string diagnosticPath)
         {
             var summary = TrxRunSummary(trxPath);
-            if (!(bool)summary.Properties["Present"].Value) return false;
-            if ((string)summary.Properties["Outcome"].Value != "Completed") return false;
-            var total = (int)summary.Properties["Total"].Value;
-            if ((int)summary.Properties["Executed"].Value != total || (int)summary.Properties["NotExecuted"].Value != 0) return false;
+            if (!(bool)PsValue.Prop(summary, "Present")) return false;
+            if ((string)PsValue.Prop(summary, "Outcome") != "Completed") return false;
+            var total = (int)PsValue.Prop(summary, "Total");
+            if ((int)PsValue.Prop(summary, "Executed") != total || (int)PsValue.Prop(summary, "NotExecuted") != 0) return false;
             var tail = TextTail(diagnosticPath, 16384);
             if (string.IsNullOrEmpty(tail)) return false;
             // $tail.IndexOf('...'): String.IndexOf(string), current culture, as PowerShell calls it.
@@ -323,7 +322,7 @@ namespace Antiphon.Nightly
         /// Resolve-NightlyCompletedHang: { CompletedButHung, Reason } - a launch that timed out after its tests finished is
         /// completed-but-hung (with its leftover children), anything else a watchdog timeout.
         /// </summary>
-        public static PSObject CompletedHang(bool timedOut, bool finished, string suiteId, string children)
+        public static object CompletedHang(bool timedOut, bool finished, string suiteId, string children)
         {
             if (timedOut && finished)
             {

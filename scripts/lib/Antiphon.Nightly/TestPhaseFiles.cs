@@ -5,7 +5,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Management.Automation;
 using System.Runtime.InteropServices;
 using Antiphon.TestPhase;
 
@@ -13,11 +12,9 @@ namespace Antiphon.Nightly
 {
     public static class TestPhaseFiles
     {
-        private static PSObject Identity(string kind, long size)
+        private static object Identity(string kind, long size)
         {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Kind", kind));
-            o.Properties.Add(new PSNoteProperty("Size", size));
+            var o = PsValue.Record(("Kind", kind), ("Size", size));
             return o;
         }
 
@@ -26,7 +23,7 @@ namespace Antiphon.Nightly
         /// 'regular' with its length. A queued evidence write is a regular file of its queued length. As
         /// Get-Item without -Force, a hidden or system file reports length 0.
         /// </summary>
-        public static PSObject PathIdentity(string path)
+        public static object PathIdentity(string path)
         {
             string kind = Kind(path, out long size);
             return Identity(kind, size);
@@ -90,13 +87,9 @@ namespace Antiphon.Nightly
             return "regular";
         }
 
-        private static PSObject Read(byte[] bytes, bool complete, bool refused, string kind)
+        private static object Read(byte[] bytes, bool complete, bool refused, string kind)
         {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Bytes", bytes));
-            o.Properties.Add(new PSNoteProperty("Complete", complete));
-            o.Properties.Add(new PSNoteProperty("Refused", refused));
-            o.Properties.Add(new PSNoteProperty("Kind", kind));
+            var o = PsValue.Record(("Bytes", bytes), ("Complete", complete), ("Refused", refused), ("Kind", kind));
             return o;
         }
 
@@ -106,7 +99,7 @@ namespace Antiphon.Nightly
         /// 'unreadable', or 'deferred-write-failed'. A queued evidence write is waited on first. A failed write
         /// refuses and leaves the failure stored, so the read is not the previous bytes reported as complete.
         /// </summary>
-        public static PSObject BoundedRead(string path, int maxBytes, int deadlineMilliseconds, Stopwatch watch)
+        public static object BoundedRead(string path, int maxBytes, int deadlineMilliseconds, Stopwatch watch)
         {
             if (maxBytes < 1) maxBytes = 1;
             if (deadlineMilliseconds < 1) deadlineMilliseconds = 1;

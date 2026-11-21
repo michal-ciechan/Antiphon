@@ -469,10 +469,10 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(HostTopConsumerUpgradeReplayTests*)|(ImpactedClassesSelectorTests*)"
         + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
         + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LinkedUnattemptedQueueWakeTests*)|(LiveLaneRunnerTests*)"
-        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreGoldenTests*)|(PendingSettlementDeliveryTests*)"
         + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
-        + "|(ReceiptScanDestinationIntegrationTests*)|(ReleaseImpactScriptTests*)"
+        + "|(RcRunEvidenceTests*)|(ReceiptScanDestinationIntegrationTests*)|(ReleaseImpactScriptTests*)"
         + "|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
         + "|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
@@ -1096,7 +1096,7 @@ public sealed partial class ImpactedClassesSelectorTests
             "nightly-live-lane",
             "LiveLaneRunnerTests",
             windows: false,
-            also: "NightlyCoreTests",
+            also: "NightlyCoreGoldenTests",
             windowsOnly: false,
             alsoWindowsOnly: false,
             mergeWindows: false,

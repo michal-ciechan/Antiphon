@@ -79,18 +79,18 @@
     },
     {
       "path": ".gitignore",
-      "classes": 156,
+      "classes": 157,
       "reason": "cap",
-      "owed": 131,
+      "owed": 132,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
+        "NightlyCoreGoldenTests",
         "ReportBudgetWorkspacePortabilityTests",
-        "WorkspaceParkPublicationTests",
-        "BlockedParkWireTests"
+        "WorkspaceParkPublicationTests"
       ]
     },
     {
@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 61,
+      "classes": 60,
       "reason": "cap",
-      "owed": 36,
+      "owed": 35,
       "first": [
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
@@ -2162,18 +2162,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 38,
+      "classes": 37,
       "reason": "cap",
-      "owed": 13,
+      "owed": 12,
       "first": [
         "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
-        "NightlyCoreTests",
         "ProcessSpawnLimitTests",
-        "QualificationGraphContractTests"
+        "QualificationGraphContractTests",
+        "RcFullWatchdogHarnessTests"
       ]
     },
     {
@@ -2251,18 +2251,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 135,
+      "classes": 136,
       "reason": "cap",
-      "owed": 110,
+      "owed": 111,
       "first": [
+        "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
         "AgentTaskLandTargetRaceTests",
         "AgentTaskLocalMergeSafetyTests",
         "AgentTaskProjectScopeTests",
         "AgentTaskScopeOverlapCreateTests",
         "AgentTaskWorktreeBaseCreateTests",
-        "AgentTaskWorktreeBaseResolverTests",
-        "AgentTaskWorktreeBaseSyncDebtTests"
+        "AgentTaskWorktreeBaseResolverTests"
       ]
     },
     {
@@ -24648,6 +24648,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/NightlyCoreGoldenTests.Support.cs",
+      "classes": [
+        "NightlyCoreGoldenTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/OuterRowBuildStamp.cs",
       "classes": [
         "C1008PlatformContractTests",
@@ -25774,8 +25780,8 @@
         "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemoteSourceRetentionATests",
         "AgentTaskLandRemoteSourceRetentionBTests",
-        "AgentTaskLandRemoteSourceRetentionCTests",
-        "CapacityAdmissionLifecycleTests"
+        "CapacityAdmissionLifecycleTests",
+        "NightlyCoreGoldenTests"
       ]
     },
     {

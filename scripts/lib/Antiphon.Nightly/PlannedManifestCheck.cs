@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -25,7 +24,7 @@ namespace Antiphon.Nightly
         /// against an InvariantCultureIgnoreCase set. Extra is listed in first-planned order: the PowerShell
         /// copy enumerated hashtable keys, whose order depends on the per-process string hash seed.
         /// </summary>
-        public static PSObject Check(List<string> plannedIds, object[] requiredUids)
+        public static object Check(List<string> plannedIds, object[] requiredUids)
         {
             var union = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unionOrder = new List<string>();
@@ -49,11 +48,7 @@ namespace Antiphon.Nightly
             var extra = new List<object>();
             foreach (var id in unionOrder)
                 if (!requiredSet.Contains(id)) extra.Add(id);
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Duplicate", duplicate));
-            o.Properties.Add(new PSNoteProperty("Missing", missing.ToArray()));
-            o.Properties.Add(new PSNoteProperty("Extra", extra.ToArray()));
-            return o;
+            return PsValue.Record(("Duplicate", duplicate), ("Missing", missing.ToArray()), ("Extra", extra.ToArray()));
         }
 
         /// <summary>

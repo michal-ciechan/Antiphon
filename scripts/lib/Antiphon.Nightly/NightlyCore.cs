@@ -9,53 +9,40 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
-using System.Management.Automation;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
-    /// <summary>PowerShell's own reading of values: property access, [string] casts and @() wrapping.</summary>
+    /// <summary>
+    /// PowerShell's own reading of values: property access, [string] casts and @() wrapping. With PowerShell loaded
+    /// each is the PowerShell reading (PsFields); otherwise the values are plain (PlainValues.cs).
+    /// </summary>
     public static class PsValue
     {
         /// <summary><c>$o.Name</c>: a note or adapted property, or a dictionary key; null when absent.</summary>
         public static object Prop(object o, string name)
         {
             if (o == null) return null;
-            if (o is PSObject ps)
-            {
-                if (ps.BaseObject is IDictionary wrapped && !(ps.BaseObject is PSCustomObject))
-                {
-                    var note = ps.Properties[name];
-                    return note != null ? note.Value : wrapped[name];
-                }
-                return ps.Properties[name]?.Value;
-            }
-            if (o is IDictionary d) return d.Contains(name) ? d[name] : null;
-            return PSObject.AsPSObject(o).Properties[name]?.Value;
+            return PsRuntime.Loaded ? PsFields.Prop(o, name) : PlainValues.Prop(o, name);
+        }
+
+        /// <summary>
+        /// A property only (<c>$o.PSObject.Properties[name]</c>): a dictionary's keys are not properties. Found is
+        /// false when there is no such property.
+        /// </summary>
+        public static object Property(object o, string name, out bool found)
+        {
+            found = false;
+            if (o == null) return null;
+            return PsRuntime.Loaded ? PsFields.Property(o, name, out found) : PlainValues.Property(o, name, out found);
         }
 
         /// <summary>ConvertTo-NightlyPolicyMap: a dictionary's keys or an object's note properties, first wins.</summary>
         public static System.Collections.Specialized.OrderedDictionary NoteMap(object o)
         {
-            var map = new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-            if (o == null) return map;
-            var bare = o is PSObject wrapper ? wrapper.BaseObject : o;
-            if (bare is IDictionary d)
-            {
-                foreach (DictionaryEntry e in d)
-                {
-                    var name = Str(e.Key);
-                    if (!string.IsNullOrWhiteSpace(name) && !map.Contains(name)) map.Add(name, e.Value);
-                }
-                return map;
-            }
-            foreach (var p in PSObject.AsPSObject(o).Properties)
-            {
-                if (!(p is PSNoteProperty) || string.IsNullOrWhiteSpace(p.Name) || map.Contains(p.Name)) continue;
-                map.Add(p.Name, p.Value);
-            }
-            return map;
+            if (o == null) return new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase);
+            return PsRuntime.Loaded ? PsFields.NoteMap(o) : PlainValues.NoteMap(o);
         }
 
         /// <summary><c>[string]$o</c>.</summary>
@@ -63,21 +50,102 @@ namespace Antiphon.Nightly
         {
             if (o == null) return "";
             if (o is string s) return s;
-            if (o is PSObject ps && ps.BaseObject is string b) return b;
-            return (string)LanguagePrimitives.ConvertTo(o, typeof(string), CultureInfo.InvariantCulture) ?? "";
+            return PsRuntime.Loaded ? PsFields.Str(o) : PlainValues.Str(o);
         }
 
         /// <summary><c>@($o)</c>: null is one null element, a scalar (string, dictionary) is one element.</summary>
         public static object[] AsArray(object o)
         {
             if (o == null) return new object[] { null };
-            var baseObject = o is PSObject ps ? ps.BaseObject : o;
-            if (baseObject is string || baseObject is IDictionary || !(baseObject is IEnumerable enumerable))
-                return new object[] { o };
-            var items = new List<object>();
-            foreach (var item in enumerable) items.Add(item);
-            return items.ToArray();
+            return PsRuntime.Loaded ? PsFields.AsArray(o) : PlainValues.AsArray(o);
         }
+
+        /// <summary><c>[bool]$o</c> (LanguagePrimitives.IsTrue).</summary>
+        public static bool IsTrue(object o) => PsRuntime.Loaded ? PsFields.IsTrue(o) : PlainValues.IsTrue(o);
+
+        /// <summary><c>[double]$o</c>.</summary>
+        public static double Double(object o) => PsRuntime.Loaded ? PsFields.Double(o) : PlainValues.Double(o);
+
+        /// <summary><c>first -eq second</c> (or -ceq) of two scalars, invariant culture.</summary>
+        public static bool Eq(object first, object second, bool ignoreCase) =>
+            PsRuntime.Loaded ? PsFields.Eq(first, second, ignoreCase) : PlainValues.Equal(first, second, ignoreCase);
+
+        /// <summary>A record the core returns: a PSObject of note properties, or a PlainObject without PowerShell.</summary>
+        public static object Record(params (string Name, object Value)[] properties) =>
+            PsRuntime.Loaded ? PsFields.NewObject(properties) : new PlainObject(properties);
+
+        /// <summary>Adds a note property to a record (Add-Member, not -Force).</summary>
+        public static void AddNote(object record, string name, object value)
+        {
+            if (PsRuntime.Loaded) PsFields.AddNote(record, name, value);
+            else ((PlainObject)record).Add(name, value);
+        }
+
+        /// <summary>Add-Member -Force: the old note (if any) is removed and the new one added last.</summary>
+        public static void SetNote(object record, string name, object value)
+        {
+            if (PsRuntime.Loaded) { PsFields.SetNote(record, name, value); return; }
+            var plain = (PlainObject)record;
+            plain.Remove(name);
+            plain.Add(name, value);
+        }
+
+        /// <summary>An array for records: PSObject[] with PowerShell loaded (the type PowerShell callers saw), else object[].</summary>
+        public static object[] RecordArray(int length) => PsRuntime.Loaded ? PsFields.NewObjectArray(length) : new object[length];
+
+        /// <summary>A record: any PSObject with PowerShell loaded, else a PlainObject.</summary>
+        public static bool IsRecord(object o) => o != null && (PsRuntime.Loaded ? PsFields.IsPsObject(o) : o is PlainObject);
+
+        /// <summary>The note properties of a value, in order (none for a plain value that is not a PlainObject).</summary>
+        public static List<KeyValuePair<string, object>> Notes(object o)
+        {
+            if (o == null) return new List<KeyValuePair<string, object>>();
+            if (PsRuntime.Loaded) return PsFields.Notes(o);
+            var notes = new List<KeyValuePair<string, object>>();
+            if (o is PlainObject plain) notes.AddRange(plain.Entries);
+            return notes;
+        }
+
+        /// <summary>A value as PowerShell's pipeline hands it on (PSObject.AsPSObject); a plain value is itself.</summary>
+        public static object Wrap(object o) => o != null && PsRuntime.Loaded ? PsFields.Wrap(o) : o;
+
+        /// <summary><c>New-Object</c>'s output: a new PSObject around the value; a plain value is itself.</summary>
+        public static object NewWrapper(object o) => PsRuntime.Loaded ? PsFields.NewWrapper(o) : o;
+
+        /// <summary>A wrapped value's base object, except that a custom object stays as it is.</summary>
+        public static object Unwrap(object o) => o != null && PsRuntime.Loaded ? PsFields.Base(o) : o;
+
+        /// <summary>Add-Member -NotePropertyName -NotePropertyValue -Force: an instance member is replaced, added last.</summary>
+        public static void AddMemberForce(object target, string name, object value)
+        {
+            if (PsRuntime.Loaded) { PsFields.AddMemberForce(target, name, value); return; }
+            var plain = (PlainObject)target;
+            plain.Remove(name);
+            plain.Add(name, value);
+        }
+
+        /// <summary>
+        /// Every property of a value in order (<c>$o.PSObject.Properties</c>): a PlainObject's values, else the public
+        /// instance properties; a getter that throws reads null.
+        /// </summary>
+        public static List<KeyValuePair<string, object>> Properties(object o)
+        {
+            if (o == null) return new List<KeyValuePair<string, object>>();
+            return PsRuntime.Loaded ? PsFields.AllProperties(o) : PlainValues.AllProperties(o);
+        }
+
+        /// <summary>The property names of a value (<c>$o.PSObject.Properties.Name</c>), in order.</summary>
+        public static string[] PropertyNames(object o)
+        {
+            if (o == null) return new string[0];
+            return PsRuntime.Loaded ? PsFields.Names(o) : PlainValues.PropertyNames(o);
+        }
+
+        /// <summary>A custom object (a PSCustomObject, or a PlainObject without PowerShell).</summary>
+        public static bool IsCustomObject(object o) => o != null && (PsRuntime.Loaded ? PsFields.IsCustomObject(o) : o is PlainObject);
+
+        /// <summary>A wrapped value's base object (PSObject.BaseObject); a plain value is itself.</summary>
+        public static object BaseObject(object o) => o != null && PsRuntime.Loaded ? PsFields.BaseObject(o) : o;
 
         public static bool IsWhite(string s) => string.IsNullOrWhiteSpace(s);
     }
@@ -324,7 +392,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Get-NightlyDiscoveryDisposition -ProfileAware: { Disposition, Reason, Owner, Uid }.</summary>
-        public PSObject Disposition(object node)
+        public object Disposition(object node)
         {
             var uid = PsValue.Str(PsValue.Prop(node, "Uid"));
             var entry = EntryOf(node);
@@ -348,21 +416,14 @@ namespace Antiphon.Nightly
     /// <summary>Per-node passes over a discovery document, from nightly-coverage.ps1 and nightly-tests-impl.ps1.</summary>
     public static class NightlyDiscovery
     {
-        internal static PSObject DispositionObject(string disposition, string reason, string owner, string uid)
-        {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Disposition", disposition));
-            o.Properties.Add(new PSNoteProperty("Reason", reason));
-            o.Properties.Add(new PSNoteProperty("Owner", owner));
-            o.Properties.Add(new PSNoteProperty("Uid", uid));
-            return o;
-        }
+        internal static object DispositionObject(string disposition, string reason, string owner, string uid) =>
+            PsValue.Record(("Disposition", disposition), ("Reason", reason), ("Owner", owner), ("Uid", uid));
 
         /// <summary>The default (non-profile) Test-NightlyDiscoveryExcluded: Excluded, or an OptIn/Explicit category.</summary>
         public static bool DefaultExcluded(object node)
         {
             if (node == null) return false;
-            if (LanguagePrimitives.IsTrue(PsValue.Prop(node, "Excluded"))) return true;
+            if (PsValue.IsTrue(PsValue.Prop(node, "Excluded"))) return true;
             foreach (var c in PsValue.AsArray(PsValue.Prop(node, "Categories")))
             {
                 var category = PsValue.Str(c);
@@ -376,11 +437,11 @@ namespace Antiphon.Nightly
         /// Get-NightlyProfileExecutionChunks' first pass for one chunk: the assigned nodes bucketed by bare class,
         /// keys case-insensitive and named by their first node, buckets in first-appearance order.
         /// </summary>
-        public static PSObject[] BucketByBareClass(object[] nodes, string[] requiredClasses, ProfileExclusionIndex index)
+        public static object[] BucketByBareClass(object[] nodes, string[] requiredClasses, ProfileExclusionIndex index)
         {
             var assignment = new ClassAssignment(requiredClasses);
-            var byBare = new Dictionary<string, PSObject>(StringComparer.OrdinalIgnoreCase);
-            var order = new List<PSObject>();
+            var byBare = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            var order = new List<object>();
             foreach (var node in nodes ?? Array.Empty<object>())
             {
                 var className = PsValue.Str(PsValue.Prop(node, "ClassName"));
@@ -389,17 +450,16 @@ namespace Antiphon.Nightly
                 var bare = NightlyClassNames.Bare(className) ?? "";
                 if (!byBare.TryGetValue(bare, out var bucket))
                 {
-                    bucket = new PSObject();
-                    bucket.Properties.Add(new PSNoteProperty("Bare", bare));
-                    bucket.Properties.Add(new PSNoteProperty("Nodes", new List<object>()));
-                    bucket.Properties.Add(new PSNoteProperty("Required", new List<object>()));
+                    bucket = PsValue.Record(("Bare", bare), ("Nodes", new List<object>()), ("Required", new List<object>()));
                     byBare[bare] = bucket;
                     order.Add(bucket);
                 }
-                ((List<object>)bucket.Properties["Nodes"].Value).Add(node);
-                if (index == null || !index.Excluded(node)) ((List<object>)bucket.Properties["Required"].Value).Add(node);
+                ((List<object>)PsValue.Prop(bucket, "Nodes")).Add(node);
+                if (index == null || !index.Excluded(node)) ((List<object>)PsValue.Prop(bucket, "Required")).Add(node);
             }
-            return order.ToArray();
+            var buckets = PsValue.RecordArray(order.Count);
+            order.CopyTo(buckets);
+            return buckets;
         }
 
         /// <summary>Get-NightlyRequiredDiscoveryUids.</summary>
@@ -423,7 +483,7 @@ namespace Antiphon.Nightly
         /// Get-NightlyDiscoveryCensus' per-node pass: rows split into required and excluded, duplicates kept.
         /// Rows are [ordered] dictionaries with the same keys as the PowerShell function built.
         /// </summary>
-        public static PSObject CensusRows(object[] nodes, ProfileExclusionIndex index)
+        public static object CensusRows(object[] nodes, ProfileExclusionIndex index)
         {
             var required = new List<object>();
             var excluded = new List<object>();
@@ -438,9 +498,9 @@ namespace Antiphon.Nightly
                 if (index != null)
                 {
                     var d = index.Disposition(n);
-                    disposition = (string)d.Properties["Disposition"].Value;
-                    reason = (string)d.Properties["Reason"].Value;
-                    owner = (string)d.Properties["Owner"].Value;
+                    disposition = (string)PsValue.Prop(d, "Disposition");
+                    reason = (string)PsValue.Prop(d, "Reason");
+                    owner = (string)PsValue.Prop(d, "Owner");
                 }
                 else if (DefaultExcluded(n)) { disposition = "excluded"; reason = "category-optin"; owner = "nightly-default"; }
                 else { disposition = "required"; reason = ""; owner = ""; }
@@ -456,18 +516,14 @@ namespace Antiphon.Nightly
                 };
                 if (disposition == "required") required.Add(row); else excluded.Add(row);
             }
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Required", required.ToArray()));
-            o.Properties.Add(new PSNoteProperty("Excluded", excluded.ToArray()));
-            o.Properties.Add(new PSNoteProperty("Duplicates", duplicates.ToArray()));
-            return o;
+            return PsValue.Record(("Required", required.ToArray()), ("Excluded", excluded.ToArray()), ("Duplicates", duplicates.ToArray()));
         }
 
         /// <summary>
         /// Get-NightlyDiscoveryIndexView's per-node pass: excluded flags, the class lookup (name or bare name of
         /// ClassName or Type, case-insensitive), required UIDs and required bare classes, in discovery order.
         /// </summary>
-        public static PSObject IndexView(object[] nodes, ProfileExclusionIndex index)
+        public static object IndexView(object[] nodes, ProfileExclusionIndex index)
         {
             nodes = nodes ?? Array.Empty<object>();
             var excluded = new bool[nodes.Length];
@@ -497,12 +553,7 @@ namespace Antiphon.Nightly
                 if (string.IsNullOrWhiteSpace(t)) t = NightlyClassNames.Bare(typeName);
                 if (!string.IsNullOrWhiteSpace(t) && seenClass.Add(t)) classes.Add(t);
             }
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Excluded", excluded));
-            o.Properties.Add(new PSNoteProperty("ByClass", byClass));
-            o.Properties.Add(new PSNoteProperty("RequiredUids", allRequired.ToArray()));
-            o.Properties.Add(new PSNoteProperty("Classes", classes.ToArray()));
-            return o;
+            return PsValue.Record(("Excluded", excluded), ("ByClass", byClass), ("RequiredUids", allRequired.ToArray()), ("Classes", classes.ToArray()));
         }
     }
 
@@ -570,7 +621,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Get-NightlyDiagnosticStateProperty: { Name, ExplanationStart }, Name '' when absent or ambiguous.</summary>
-        public static PSObject StateProperty(string record)
+        public static object StateProperty(string record)
         {
             record = record ?? "";
             var envelope = StateEnvelope.Match(record);
@@ -583,13 +634,8 @@ namespace Antiphon.Nightly
             return StateObject("", -1);
         }
 
-        private static PSObject StateObject(string name, int explanationStart)
-        {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Name", name));
-            o.Properties.Add(new PSNoteProperty("ExplanationStart", explanationStart));
-            return o;
-        }
+        private static object StateObject(string name, int explanationStart) =>
+            PsValue.Record(("Name", name), ("ExplanationStart", explanationStart));
 
         /// <summary>Get-NightlyDiagnosticStateName.</summary>
         public static string StateName(string propertyName)
@@ -629,22 +675,21 @@ namespace Antiphon.Nightly
         /// ConvertFrom-NightlyDiagnosticRecord without the failure message (which stays in PowerShell):
         /// { Node, Error }, Error being the refusal text the PowerShell function threw, in the same order.
         /// </summary>
-        public static PSObject ConvertRecord(string record, string state)
+        public static object ConvertRecord(string record, string state)
         {
             record = record ?? ""; state = state ?? "";
-            var result = new PSObject();
             var uidMatch = Uid.Match(record);
-            if (!uidMatch.Success) return Refusal(result, "truncated diagnostic record: missing uid");
+            if (!uidMatch.Success) return Refusal("truncated diagnostic record: missing uid");
             var uid = uidMatch.Groups["uid"].Value.Trim();
             var typeName = ""; var method = ""; var ns = ""; var assembly = "";
             var m = TypeName.Match(record); if (m.Success) typeName = m.Groups["type"].Value;
             m = MethodName.Match(record); if (m.Success) method = m.Groups["method"].Value;
             m = Namespace.Match(record); if (m.Success) ns = m.Groups["ns"].Value;
             m = AssemblyName.Match(record); if (m.Success) assembly = m.Groups["asm"].Value.Trim();
-            if (string.IsNullOrWhiteSpace(uid)) return Refusal(result, "truncated diagnostic record: missing uid");
+            if (string.IsNullOrWhiteSpace(uid)) return Refusal("truncated diagnostic record: missing uid");
             if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(method)
                 || !TypeNameComplete(typeName))
-                return Refusal(result, "truncated diagnostic record uid=" + uid);
+                return Refusal("truncated diagnostic record uid=" + uid);
             var categories = new List<object>();
             foreach (System.Text.RegularExpressions.Match c in Category.Matches(record)) categories.Add(c.Groups["key"].Value);
             var excluded = false;
@@ -654,21 +699,11 @@ namespace Antiphon.Nightly
                 if (string.Equals(category, "OptIn", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(category, "Explicit", StringComparison.OrdinalIgnoreCase)) excluded = true;
             }
-            var node = new PSObject();
-            node.Properties.Add(new PSNoteProperty("Uid", uid));
-            node.Properties.Add(new PSNoteProperty("Assembly", assembly));
-            node.Properties.Add(new PSNoteProperty("Namespace", ns));
-            node.Properties.Add(new PSNoteProperty("Type", typeName));
-            node.Properties.Add(new PSNoteProperty("Method", method));
-            node.Properties.Add(new PSNoteProperty("Signature", ""));
-            node.Properties.Add(new PSNoteProperty("State", state));
-            node.Properties.Add(new PSNoteProperty("Outcome", state));
-            node.Properties.Add(new PSNoteProperty("ClassName", string.IsNullOrWhiteSpace(ns) ? typeName : ns + "." + typeName));
-            node.Properties.Add(new PSNoteProperty("Excluded", excluded));
-            node.Properties.Add(new PSNoteProperty("Categories", categories.ToArray()));
-            result.Properties.Add(new PSNoteProperty("Node", node));
-            result.Properties.Add(new PSNoteProperty("Error", ""));
-            return result;
+            var node = PsValue.Record(("Uid", uid), ("Assembly", assembly), ("Namespace", ns), ("Type", typeName), ("Method", method),
+                ("Signature", ""), ("State", state), ("Outcome", state),
+                ("ClassName", string.IsNullOrWhiteSpace(ns) ? typeName : ns + "." + typeName), ("Excluded", excluded),
+                ("Categories", categories.ToArray()));
+            return PsValue.Record(("Node", node), ("Error", ""));
         }
 
         private static readonly Regex DiscoveredHeader = new Regex(@"(?<![A-Za-z])DiscoveredTestNodeStateProperty \{", Exact); // -cmatch
@@ -685,9 +720,8 @@ namespace Antiphon.Nightly
         /// record order. Failed lists { Node, Record, StateProperty } for the caller to attach failure messages,
         /// which never refuse.
         /// </summary>
-        public static PSObject ParseRecords(string text, string kind, string path)
+        public static object ParseRecords(string text, string kind, string path)
         {
-            var result = new PSObject();
             var nodes = new List<object>();
             var failed = new List<object>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -698,14 +732,14 @@ namespace Antiphon.Nightly
             foreach (var record in Records(text))
             {
                 var stateProperty = StateProperty(record);
-                var state = StateName((string)stateProperty.Properties["Name"].Value);
+                var state = StateName((string)PsValue.Prop(stateProperty, "Name"));
                 if (string.IsNullOrWhiteSpace(state))
                 {
                     if (discovery)
                     {
                         if (DiscoveredHeader.IsMatch(record))
                         {
-                            var refused = (string)ConvertRecord(record, "").Properties["Error"].Value;
+                            var refused = (string)PsValue.Prop(ConvertRecord(record, ""), "Error");
                             if (refused.Length > 0) { error = refused; break; }
                         }
                         error = "malformed discovery record: missing state " + path;
@@ -722,34 +756,19 @@ namespace Antiphon.Nightly
                         || string.Equals(state, "Discovered", StringComparison.OrdinalIgnoreCase)) continue;
                 }
                 var converted = ConvertRecord(record, state);
-                var convertError = (string)converted.Properties["Error"].Value;
+                var convertError = (string)PsValue.Prop(converted, "Error");
                 if (convertError.Length > 0) { error = convertError; break; }
-                var node = (PSObject)converted.Properties["Node"].Value;
+                var node = PsValue.Prop(converted, "Node");
                 if (string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase))
-                {
-                    var entry = new PSObject();
-                    entry.Properties.Add(new PSNoteProperty("Node", node));
-                    entry.Properties.Add(new PSNoteProperty("Record", record));
-                    entry.Properties.Add(new PSNoteProperty("StateProperty", stateProperty));
-                    failed.Add(entry);
-                }
-                var uid = (string)node.Properties["Uid"].Value;
+                    failed.Add(PsValue.Record(("Node", node), ("Record", record), ("StateProperty", stateProperty)));
+                var uid = (string)PsValue.Prop(node, "Uid");
                 if (!seen.Add(uid)) { error = "duplicate " + kind + " uid " + uid; break; }
                 nodes.Add(node);
             }
-            result.Properties.Add(new PSNoteProperty("Nodes", nodes.ToArray()));
-            result.Properties.Add(new PSNoteProperty("Failed", failed.ToArray()));
-            result.Properties.Add(new PSNoteProperty("Recognized", recognized));
-            result.Properties.Add(new PSNoteProperty("Error", error));
-            return result;
+            return PsValue.Record(("Nodes", nodes.ToArray()), ("Failed", failed.ToArray()), ("Recognized", recognized), ("Error", error));
         }
 
-        private static PSObject Refusal(PSObject result, string error)
-        {
-            result.Properties.Add(new PSNoteProperty("Node", null));
-            result.Properties.Add(new PSNoteProperty("Error", error));
-            return result;
-        }
+        private static object Refusal(string error) => PsValue.Record(("Node", null), ("Error", error));
     }
 
     /// <summary>
@@ -761,18 +780,13 @@ namespace Antiphon.Nightly
     {
         private static object[] Rows(object rows) => rows == null ? new object[] { null } : PsValue.AsArray(rows);
 
-        private static PSObject Result(params (string Name, object Value)[] properties)
-        {
-            var o = new PSObject();
-            foreach (var (name, value) in properties) o.Properties.Add(new PSNoteProperty(name, value));
-            return o;
-        }
+        private static object Result(params (string Name, object Value)[] properties) => PsValue.Record(properties);
 
         /// <summary>
         /// The outcome filters of ConvertTo-NightlyCoverageVerdict in one pass: Failed, Skipped, NotExecuted and
         /// Unknown rows in row order, and the Passed count.
         /// </summary>
-        public static PSObject ClassifyOutcomes(object terminalRows)
+        public static object ClassifyOutcomes(object terminalRows)
         {
             var failed = new List<object>(); var skipped = new List<object>();
             var unexecuted = new List<object>(); var unknown = new List<object>();
@@ -793,7 +807,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Test-NightlyExpandedRowsPresent: every required UID has an executed terminal row.</summary>
-        public static PSObject ExpandedRowsPresent(object terminalRows, string[] requiredUids)
+        public static object ExpandedRowsPresent(object terminalRows, string[] requiredUids)
         {
             var executed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in Rows(terminalRows))
@@ -816,10 +830,10 @@ namespace Antiphon.Nightly
         /// Test-NightlyTrxDiagnosticCrossCheck: the TRX rows and the diagnostic's terminal nodes hold the same
         /// multiset of (simple class, method) keys for the batch's classes; rows outside them are extra classes.
         /// </summary>
-        public static PSObject CrossCheck(object trxRows, object terminalNodes, string[] requiredClasses)
+        public static object CrossCheck(object trxRows, object terminalNodes, string[] requiredClasses)
         {
             var assignment = new ClassAssignment(requiredClasses);
-            var requiredTruthy = LanguagePrimitives.IsTrue(requiredClasses) && requiredClasses.Length > 0;
+            var requiredTruthy = PsValue.IsTrue(requiredClasses) && requiredClasses.Length > 0;
             var trxBag = new Hashtable(StringComparer.OrdinalIgnoreCase);
             var diagBag = new Hashtable(StringComparer.OrdinalIgnoreCase);
             var extra = new List<object>();
@@ -859,7 +873,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Test-NightlyRequiredClassesPresent: each required class (or its bare name) has a terminal row.</summary>
-        public static PSObject RequiredClassesPresent(object terminalRows, string[] requiredClasses)
+        public static object RequiredClassesPresent(object terminalRows, string[] requiredClasses)
         {
             if (requiredClasses == null || requiredClasses.Length == 0) return Result(("Ok", true), ("Missing", Array.Empty<object>()));
             var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1048,7 +1062,7 @@ namespace Antiphon.Nightly
         /// { Items (ArrayList), Seconds, Closed }. An item's seconds are Get-NightlyPackedItemSeconds: its
         /// Seconds property as [double], else defaultSeconds.
         /// </summary>
-        public static PSObject[] FirstFitBins(object[] items, double targetSeconds, int maxOperands, double defaultSeconds)
+        public static object[] FirstFitBins(object[] items, double targetSeconds, int maxOperands, double defaultSeconds)
         {
             var lists = new List<ArrayList>();
             var totals = new List<double>();
@@ -1057,10 +1071,9 @@ namespace Antiphon.Nightly
             {
                 foreach (var item in items)
                 {
-                    var property = item == null ? null : PSObject.AsPSObject(item).Properties["Seconds"];
-                    var add = property == null
-                        ? defaultSeconds
-                        : (double)LanguagePrimitives.ConvertTo(property.Value, typeof(double), CultureInfo.InvariantCulture);
+                    var found = false;
+                    var value = item == null ? null : PsValue.Property(item, "Seconds", out found);
+                    var add = !found ? defaultSeconds : PsValue.Double(value);
                     var placed = false;
                     if (add < targetSeconds)
                     {
@@ -1082,37 +1095,27 @@ namespace Antiphon.Nightly
                     }
                 }
             }
-            var bins = new PSObject[lists.Count];
+            var bins = PsValue.RecordArray(lists.Count);
             for (var b = 0; b < lists.Count; b++)
-            {
-                var bin = new PSObject();
-                bin.Properties.Add(new PSNoteProperty("Items", lists[b]));
-                bin.Properties.Add(new PSNoteProperty("Seconds", totals[b]));
-                bin.Properties.Add(new PSNoteProperty("Closed", closed[b]));
-                bins[b] = bin;
-            }
+                bins[b] = PsValue.Record(("Items", lists[b]), ("Seconds", totals[b]), ("Closed", closed[b]));
             return bins;
         }
 
         /// <summary>Get-NightlyBareTypeParts: { Bare, Namespace, Type } of a class name, or null.</summary>
-        public static PSObject BareTypeParts(string className)
+        public static object BareTypeParts(string className)
         {
             var bare = NightlyClassNames.Bare(className);
             if (string.IsNullOrWhiteSpace(bare)) return null;
             var dot = bare.LastIndexOf('.');
             if (dot < 1) return null;
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Bare", bare));
-            o.Properties.Add(new PSNoteProperty("Namespace", bare.Substring(0, dot)));
-            o.Properties.Add(new PSNoteProperty("Type", bare.Substring(dot + 1)));
-            return o;
+            return PsValue.Record(("Bare", bare), ("Namespace", bare.Substring(0, dot)), ("Type", bare.Substring(dot + 1)));
         }
 
         /// <summary>
         /// Get-NightlyLaunchClassCost: { NodeCount, Seconds, MeasuredPerNode, Heavy } with the per-node model of
         /// Get-NightlyLaunchNodeSeconds, summed in node order (so the double sum is the PowerShell one).
         /// </summary>
-        public static PSObject ClassCost(object nodes, string typeName, string bare, IDictionary costTable,
+        public static object ClassCost(object nodes, string typeName, string bare, IDictionary costTable,
             double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor)
         {
             var heavy = HeavyFamilyType(typeName);
@@ -1120,7 +1123,7 @@ namespace Antiphon.Nightly
                 || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0);
             object measured = null;
             if (!string.IsNullOrEmpty(bare) && costTable != null && costTable.Contains(bare))
-                measured = (double)LanguagePrimitives.ConvertTo(costTable[bare], typeof(double), CultureInfo.InvariantCulture);
+                measured = PsValue.Double(costTable[bare]);
             double NodeCost(object node)
             {
                 if (measured != null) return (double)measured;
@@ -1139,12 +1142,7 @@ namespace Antiphon.Nightly
                 seconds += NodeCost(node);
             }
             if (count == 0) { count = 1; seconds = NodeCost(null); }
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("NodeCount", count));
-            o.Properties.Add(new PSNoteProperty("Seconds", seconds));
-            o.Properties.Add(new PSNoteProperty("MeasuredPerNode", measured));
-            o.Properties.Add(new PSNoteProperty("Heavy", heavy));
-            return o;
+            return PsValue.Record(("NodeCount", count), ("Seconds", seconds), ("MeasuredPerNode", measured), ("Heavy", heavy));
         }
 
         private static readonly Regex GroupFilterShape = new Regex(@"^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$");
@@ -1166,8 +1164,8 @@ namespace Antiphon.Nightly
             var matched = MethodFilterShape.Match(methodFilter);
             if (!matched.Success) return false;
             var parts = BareTypeParts(list[0]);
-            if (parts == null || (string)parts.Properties["Namespace"].Value != matched.Groups[1].Value
-                || (string)parts.Properties["Type"].Value != matched.Groups[2].Value) return false;
+            if (parts == null || (string)PsValue.Prop(parts, "Namespace") != matched.Groups[1].Value
+                || (string)PsValue.Prop(parts, "Type") != matched.Groups[2].Value) return false;
             var operands = new List<string>();
             foreach (Match op in GroupFilterOperand.Matches(matched.Groups[3].Value)) operands.Add(op.Groups[1].Value);
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1199,8 +1197,8 @@ namespace Antiphon.Nightly
             foreach (var c in classList)
             {
                 var parts = BareTypeParts(c ?? "");
-                if (parts == null || !string.Equals((string)parts.Properties["Namespace"].Value, ns, StringComparison.Ordinal)) return false;
-                var type = (string)parts.Properties["Type"].Value;
+                if (parts == null || !string.Equals((string)PsValue.Prop(parts, "Namespace"), ns, StringComparison.Ordinal)) return false;
+                var type = (string)PsValue.Prop(parts, "Type");
                 have[type] = (have.TryGetValue(type, out var n) ? n : 0) + 1;
             }
             foreach (var op in operands) if (!have.TryGetValue(op, out var n) || n != 1) return false;
@@ -1217,7 +1215,7 @@ namespace Antiphon.Nightly
         /// bare class (ArrayList values), and each namespace's type names in node order (List[string] values).
         /// Both are @{}-style hashtables (OrdinalIgnoreCase).
         /// </summary>
-        public static PSObject IndexNodes(object discoveryNodes)
+        public static object IndexNodes(object discoveryNodes)
         {
             var nodesByBare = new Hashtable(StringComparer.OrdinalIgnoreCase);
             var universe = new Hashtable(StringComparer.OrdinalIgnoreCase);
@@ -1233,14 +1231,11 @@ namespace Antiphon.Nightly
                 }
                 var parts = BareTypeParts(className);
                 if (parts == null) continue;
-                var ns = (string)parts.Properties["Namespace"].Value;
+                var ns = (string)PsValue.Prop(parts, "Namespace");
                 if (!(universe[ns] is List<string> types)) universe[ns] = types = new List<string>();
-                types.Add((string)parts.Properties["Type"].Value);
+                types.Add((string)PsValue.Prop(parts, "Type"));
             }
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("NodesByBare", nodesByBare));
-            o.Properties.Add(new PSNoteProperty("Universe", universe));
-            return o;
+            return PsValue.Record(("NodesByBare", nodesByBare), ("Universe", universe));
         }
 
         /// <summary>Times <see cref="IndexBoundaryDiscovery"/> has built a boundary index in this process.</summary>
@@ -1251,7 +1246,7 @@ namespace Antiphon.Nightly
         /// full-class cost, and the namespace universe IndexNodes would have built. JsonByUid is the pwsh 7
         /// ConvertTo-Json -Compress sort key of [className, method, uid]. Error is a boundary-pack message, or null.
         /// </summary>
-        public static PSObject IndexBoundaryDiscovery(object[] discoveryNodes, IDictionary costTable,
+        public static object IndexBoundaryDiscovery(object[] discoveryNodes, IDictionary costTable,
             double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor)
         {
             BoundaryIndexBuilds++;
@@ -1276,9 +1271,9 @@ namespace Antiphon.Nightly
                     error = "boundary-pack: incomplete discovery identity";
                     break;
                 }
-                var bare = (string)parts.Properties["Bare"].Value;
-                var ns = (string)parts.Properties["Namespace"].Value;
-                var type = (string)parts.Properties["Type"].Value;
+                var bare = (string)PsValue.Prop(parts, "Bare");
+                var ns = (string)PsValue.Prop(parts, "Namespace");
+                var type = (string)PsValue.Prop(parts, "Type");
                 if (!seenUid.Add(uid)) { error = "boundary-pack: duplicate discovery UID"; break; }
                 if (classCase.TryGetValue(bare, out var existingBare) && !string.Equals(existingBare, bare, StringComparison.Ordinal))
                 {
@@ -1312,32 +1307,21 @@ namespace Antiphon.Nightly
                     var classNodes = builder.Nodes.ToArray();
                     var cost = ClassCost(classNodes, builder.Type, builder.Bare, costTable,
                         nodeSeconds, slowNodeSeconds, laneSlowNodeSeconds, heavyFactor);
-                    var rec = new PSObject();
-                    rec.Properties.Add(new PSNoteProperty("Bare", builder.Bare));
-                    rec.Properties.Add(new PSNoteProperty("Namespace", builder.Namespace));
-                    rec.Properties.Add(new PSNoteProperty("Type", builder.Type));
-                    rec.Properties.Add(new PSNoteProperty("Nodes", classNodes));
-                    rec.Properties.Add(new PSNoteProperty("NodeCount", cost.Properties["NodeCount"].Value));
-                    rec.Properties.Add(new PSNoteProperty("Seconds", cost.Properties["Seconds"].Value));
-                    classes[bare] = rec;
+                    classes[bare] = PsValue.Record(("Bare", builder.Bare), ("Namespace", builder.Namespace), ("Type", builder.Type),
+                        ("Nodes", classNodes), ("NodeCount", PsValue.Prop(cost, "NodeCount")), ("Seconds", PsValue.Prop(cost, "Seconds")));
                 }
             }
             var universeOut = new Hashtable(StringComparer.OrdinalIgnoreCase);
             foreach (DictionaryEntry entry in universe)
                 universeOut[entry.Key] = ((List<string>)entry.Value).ToArray();
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Error", error));
-            result.Properties.Add(new PSNoteProperty("Classes", classes));
-            result.Properties.Add(new PSNoteProperty("Universe", universeOut));
-            result.Properties.Add(new PSNoteProperty("JsonByUid", jsonByUid));
-            return result;
+            return PsValue.Record(("Error", error), ("Classes", classes), ("Universe", universeOut), ("JsonByUid", jsonByUid));
         }
 
         /// <summary>
         /// Case membership for one packed chunk. Non-empty chunk nodes win; otherwise the class records' nodes
         /// are taken in class order. Cases are ordered by <see cref="CaseSortKey"/>. Identities stay in member order.
         /// </summary>
-        public static PSObject ChunkMembershipForChunk(object chunkNodes, object classNames, object classes,
+        public static object ChunkMembershipForChunk(object chunkNodes, object classNames, object classes,
             object jsonByUid, HashSet<string> expected, HashSet<string> seen)
         {
             var members = new List<object>();
@@ -1354,8 +1338,8 @@ namespace Antiphon.Nightly
                 foreach (var nameObj in PsValue.AsArray(classNames))
                 {
                     var bare = PsValue.Str(nameObj);
-                    var rec = table == null ? null : table[bare] as PSObject;
-                    var nodes = rec == null ? null : rec.Properties["Nodes"].Value;
+                    var rec = table == null ? null : table[bare];
+                    var nodes = rec == null || !PsValue.IsRecord(rec) ? null : PsValue.Prop(rec, "Nodes");
                     if (nodes == null) return MembershipResult("boundary-pack: case partition mismatch", null, null);
                     foreach (var node in PsValue.AsArray(nodes)) if (node != null) members.Add(node);
                 }
@@ -1386,11 +1370,7 @@ namespace Antiphon.Nightly
             for (var i = 0; i < keyed.Count; i++)
             {
                 var row = keyed[i];
-                var item = new PSObject();
-                item.Properties.Add(new PSNoteProperty("className", row.ClassName));
-                item.Properties.Add(new PSNoteProperty("method", row.Method));
-                item.Properties.Add(new PSNoteProperty("uid", row.Uid));
-                cases[i] = item;
+                cases[i] = PsValue.Record(("className", row.ClassName), ("method", row.Method), ("uid", row.Uid));
             }
             return MembershipResult(null, cases, identities);
         }
@@ -1442,14 +1422,8 @@ namespace Antiphon.Nightly
             sb.Append('"');
         }
 
-        private static PSObject MembershipResult(string error, object cases, object identities)
-        {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Error", error));
-            o.Properties.Add(new PSNoteProperty("Cases", cases ?? new object[0]));
-            o.Properties.Add(new PSNoteProperty("Identities", identities ?? new object[0]));
-            return o;
-        }
+        private static object MembershipResult(string error, object cases, object identities) =>
+            PsValue.Record(("Error", error), ("Cases", cases ?? new object[0]), ("Identities", identities ?? new object[0]));
 
         private sealed class ClassNodes
         {
@@ -1500,7 +1474,7 @@ namespace Antiphon.Nightly
             if (outcomeRows == null) return 0;
             foreach (var row in outcomeRows)
             {
-                if (LanguagePrimitives.Equals(PsValue.Str(PsValue.Prop(row, "outcome")), "Passed", true, CultureInfo.InvariantCulture)) passed++;
+                if (PsValue.Eq(PsValue.Str(PsValue.Prop(row, "outcome")), "Passed", true)) passed++;
             }
             return passed;
         }
@@ -1531,9 +1505,9 @@ namespace Antiphon.Nightly
         {
             foreach (var item in PsValue.AsArray(rows))
             {
-                if (!(item is PSObject row)) continue;
-                SetNote(row, "GroupId", groupId ?? "");
-                SetNote(row, "Suite", suite ?? "");
+                if (!PsValue.IsRecord(item)) continue;
+                PsValue.SetNote(item, "GroupId", groupId ?? "");
+                PsValue.SetNote(item, "Suite", suite ?? "");
             }
         }
 
@@ -1565,17 +1539,12 @@ namespace Antiphon.Nightly
             return nativeMap;
         }
 
-        private static void SetNote(PSObject row, string name, object value)
-        {
-            if (row.Properties[name] != null) row.Properties.Remove(name);
-            row.Properties.Add(new PSNoteProperty(name, value));
-        }
 
         /// <summary>
         /// ConvertTo-TestPhaseSummaryRows' rows for TRX results no phase record claims: { Rows, PassedWithoutPhase }.
         /// A passing TRX row without phase evidence is 'unknown' and incomplete.
         /// </summary>
-        public static PSObject UnjoinedTrxRows(object trxRows, IDictionary joinedTrx, IDictionary completeTestIds)
+        public static object UnjoinedTrxRows(object trxRows, IDictionary joinedTrx, IDictionary completeTestIds)
         {
             var rows = new List<object>();
             var passedWithoutPhase = false;
@@ -1606,10 +1575,7 @@ namespace Antiphon.Nightly
                     { "overlapMs", 0 }, { "remainderMs", 0 }, { "droppedPhaseCount", 0 },
                 });
             }
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Rows", rows.ToArray()));
-            result.Properties.Add(new PSNoteProperty("PassedWithoutPhase", passedWithoutPhase));
-            return result;
+            return PsValue.Record(("Rows", rows.ToArray()), ("PassedWithoutPhase", passedWithoutPhase));
         }
 
         /// <summary>Get-TestPhaseNativeIds: ANTIPHON_TEST_PHASE_ID / C1514_NATIVE identities in a TRX row's output.</summary>
@@ -1690,8 +1656,7 @@ namespace Antiphon.Nightly
         {
             if (depth > 24 || value == null) { sb.Append("null"); return; }
             // -is tests see through the PSObject wrapper; note properties are read from the wrapper itself.
-            var wrapper = value as PSObject;
-            var raw = wrapper != null ? wrapper.BaseObject : value;
+            var raw = PsValue.BaseObject(value);
             if (raw is bool b) { sb.Append(b ? "true" : "false"); return; }
             if (raw is byte || raw is short || raw is int || raw is long || raw is decimal || raw is double || raw is float)
             {
@@ -1716,22 +1681,18 @@ namespace Antiphon.Nightly
                 sb.Append('}');
                 return;
             }
-            var properties = PSObject.AsPSObject(value).Properties;
-            var hasNote = false;
-            foreach (var property in properties)
-                if (property.MemberType == PSMemberTypes.NoteProperty) { hasNote = true; break; }
-            if (hasNote)
+            var notes = PsValue.Notes(value);
+            if (notes.Count > 0)
             {
                 sb.Append('{');
                 var first = true;
-                foreach (var property in properties)
+                foreach (var note in notes)
                 {
-                    if (property.MemberType != PSMemberTypes.NoteProperty) continue;
                     if (!first) sb.Append(',');
                     first = false;
-                    WriteString(sb, property.Name);
+                    WriteString(sb, note.Key);
                     sb.Append(':');
-                    Write(sb, property.Value, depth + 1);
+                    Write(sb, note.Value, depth + 1);
                 }
                 sb.Append('}');
                 return;

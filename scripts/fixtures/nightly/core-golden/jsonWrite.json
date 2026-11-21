@@ -1,0 +1,5 @@
+{
+  "note": "PowerShell 7: $value | ConvertTo-Json -Depth 8 | ConvertFrom-Json | ConvertTo-Json -Depth 14 -Compress (scripts/test-nightly-core.ps1 jsonWrite); offsetLocal as in jsonRead.",
+  "offsetLocal": "\"2026-11-17T08:00:00+00:00\"",
+  "reference": "{\"s\":\"q \\\" \\\\ / \\t é \\u2028 <&>\",\"i\":1,\"l\":5000000000,\"d\":1.0,\"d2\":0.1,\"m\":1.1,\"nan\":\"NaN\",\"big\":123456789012345678901234567890,\"t\":true,\"n\":null,\"dbn\":null,\"ch\":\"x\",\"utc\":\"2026-11-17T10:00:00.123Z\",\"none\":\"2026-11-17T10:00:00\",\"off\":\"2026-11-17T08:00:00+00:00\",\"enum\":2,\"h\":{\"a\":1},\"e\":[],\"one\":[1],\"nested\":[[1,2],[]],\"list\":[1,\"two\"],\"pso\":{\"z\":1,\"y\":{\"x\":[]}},\"rows\":[{\"id\":\"r1\",\"exclusions\":[{\"uid\":\"u1\"}]},{\"id\":\"r2\",\"exclusions\":[{\"uid\":\"u2\"}]},{\"id\":\"r3\",\"exclusions\":[{\"uid\":\"u3\"}]}]}"
+}

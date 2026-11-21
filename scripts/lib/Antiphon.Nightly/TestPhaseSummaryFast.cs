@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.Generic;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -16,7 +15,7 @@ namespace Antiphon.Nightly
             if (tests == null) return false;
             foreach (var test in tests)
             {
-                if (LanguagePrimitives.IsTrue(PsValue.Prop(test, "incomplete"))) return true;
+                if (PsValue.IsTrue(PsValue.Prop(test, "incomplete"))) return true;
             }
             return false;
         }

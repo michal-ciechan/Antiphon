@@ -1,7 +1,6 @@
 // Small text, path and digest helpers of the test-phase evidence (moved from test-phase-evidence.ps1).
 using System;
 using System.IO;
-using System.Management.Automation;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -74,7 +73,9 @@ namespace Antiphon.Nightly
         /// <summary>Get-TestPhaseEvidenceKey: suite|testId when the header names a suite, else testId.</summary>
         public static string EvidenceKey(object header, string testId)
         {
-            var suite = header != null && PSObject.AsPSObject(header).Properties["suite"] != null ? PsValue.Str(PsValue.Prop(header, "suite")) : "";
+            var hasSuite = false;
+            if (header != null) PsValue.Property(header, "suite", out hasSuite);
+            var suite = hasSuite ? PsValue.Str(PsValue.Prop(header, "suite")) : "";
             return string.IsNullOrWhiteSpace(suite) ? testId ?? "" : suite + "|" + (testId ?? "");
         }
     }

@@ -14,7 +14,6 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Text;
 
 namespace Antiphon.Nightly
@@ -52,7 +51,7 @@ namespace Antiphon.Nightly
         private static bool Append(StringBuilder sb, object value, int depth)
         {
             if (value == null) { sb.Append("null"); return true; }
-            if (value is PSObject) return false;
+            if (PsValue.IsRecord(value)) return false;
             if (value is string text) { AppendString(sb, text); return true; }
             if (value is bool flag) { sb.Append(flag ? "true" : "false"); return true; }
             if (depth >= MaxDepth) return false;

@@ -140,7 +140,7 @@ public sealed class PlatformTaxonomyDerivationTests
         ]);
         yield return (4, "RepositoryMutationLeaseTests", [Test(PlatformDeclaration.Unannotated)]);
         yield return (7, "C1677TempFamilyRegistryTests", [Test(PlatformDeclaration.Unannotated)]);
-        yield return (14, "NightlyCoreTests", [Test(PlatformDeclaration.Unannotated)]);
+        yield return (14, "NightlyCoreGoldenTests", [Test(PlatformDeclaration.Unannotated)]);
     }
 
     private static PlatformClassLabel Derive(params PlatformMember[] members) =>

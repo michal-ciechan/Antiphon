@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -52,10 +51,9 @@ namespace Antiphon.Nightly
             var entries = new List<PackEntry>(items.Length);
             foreach (var item in items)
             {
-                var property = item == null ? null : PSObject.AsPSObject(item).Properties["Seconds"];
-                var seconds = property == null
-                    ? defaultSeconds
-                    : (double)LanguagePrimitives.ConvertTo(property.Value, typeof(double), CultureInfo.InvariantCulture);
+                var found = false;
+                var value = item == null ? null : PsValue.Property(item, "Seconds", out found);
+                var seconds = !found ? defaultSeconds : PsValue.Double(value);
                 entries.Add(new PackEntry { Item = item, Seconds = seconds, Key = PsValue.Str(PsValue.Prop(item, "Key")) });
             }
             var compare = CultureInfo.CurrentCulture.CompareInfo;
@@ -71,7 +69,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Split-NightlyItemsBySeconds: <see cref="PackOrder"/> then <see cref="NightlyLaunchPlan.FirstFitBins"/>.</summary>
-        public static PSObject[] SplitBySeconds(object[] items, double targetSeconds, int maxOperands, double defaultSeconds) =>
+        public static object[] SplitBySeconds(object[] items, double targetSeconds, int maxOperands, double defaultSeconds) =>
             NightlyLaunchPlan.FirstFitBins(PackOrder(items, defaultSeconds), targetSeconds, maxOperands, defaultSeconds);
     }
 }

@@ -15,7 +15,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -44,7 +43,7 @@ namespace Antiphon.Nightly
         /// already carry their seconds, as they did. <paramref name="discoveryIndex"/> is $DiscoveryIndex (null:
         /// NightlyLaunchPlan.IndexNodes of the discovery); its Universe gains the class items' types, as it did.
         /// </summary>
-        public static PSObject ProfileLaunchGroups(object[] leaves, object[] discoveryNodes, object discoveryIndex,
+        public static object ProfileLaunchGroups(object[] leaves, object[] discoveryNodes, object discoveryIndex,
             IDictionary costTable, double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds,
             double heavyFactor, double targetSeconds, double loneClassBudgetSeconds, int maxOperands)
         {
@@ -69,30 +68,25 @@ namespace Antiphon.Nightly
                 {
                     var leafParts = NightlyLaunchPlan.BareTypeParts(FirstClass(leaf));
                     var leafCost = cost.Of(PsValue.AsArray(PsValue.Prop(leaf, "nodes")),
-                        leafParts == null ? "" : (string)leafParts.Properties["Type"].Value,
-                        leafParts == null ? "" : (string)leafParts.Properties["Bare"].Value);
+                        leafParts == null ? "" : (string)PsValue.Prop(leafParts, "Type"),
+                        leafParts == null ? "" : (string)PsValue.Prop(leafParts, "Bare"));
                     AddNoteForce(leaf, "seconds", Math.Round(leafCost.Seconds, 1));
                     exact.Add(leaf);
                     continue;
                 }
                 var parts = NightlyLaunchPlan.BareTypeParts(FirstClass(leaf));
                 if (parts == null) return Result("profile-discovery-namespace-required", null);
-                var bare = (string)parts.Properties["Bare"].Value;
-                var ns = (string)parts.Properties["Namespace"].Value;
-                var type = (string)parts.Properties["Type"].Value;
+                var bare = (string)PsValue.Prop(parts, "Bare");
+                var ns = (string)PsValue.Prop(parts, "Namespace");
+                var type = (string)PsValue.Prop(parts, "Type");
                 var byBare = nodesByBare as IDictionary;
                 if (byBare == null) return Result(NullMethodCall, null);
                 var known = new object[0];
                 if (byBare.Contains(bare)) known = ToObjectArray(byBare[bare]);
                 var classCost = cost.Of(known, type, bare);
                 var item = new ClassItem { Bare = bare, Namespace = ns, Type = type, NodeCount = classCost.NodeCount, Seconds = classCost.Seconds };
-                item.Ps = new PSObject();
-                item.Ps.Properties.Add(new PSNoteProperty("Bare", bare));
-                item.Ps.Properties.Add(new PSNoteProperty("Namespace", ns));
-                item.Ps.Properties.Add(new PSNoteProperty("Type", type));
-                item.Ps.Properties.Add(new PSNoteProperty("Key", bare));
-                item.Ps.Properties.Add(new PSNoteProperty("NodeCount", item.NodeCount));
-                item.Ps.Properties.Add(new PSNoteProperty("Seconds", item.Seconds));
+                item.Ps = PsValue.Record(("Bare", bare), ("Namespace", ns), ("Type", type), ("Key", bare), ("NodeCount", item.NodeCount),
+                    ("Seconds", item.Seconds));
                 // CARD-1584: lone E2E classes stay below 25 minutes.
                 var classBudget = loneClassBudgetSeconds;
                 if (string.Equals(ns, "Antiphon.E2E", StringComparison.Ordinal) || ns.StartsWith("Antiphon.E2E.", StringComparison.Ordinal)) classBudget = 1500;
@@ -115,7 +109,7 @@ namespace Antiphon.Nightly
             foreach (var item in classItems)
             {
                 // New-Object's output, stored as the PSObject it is.
-                if (!universe.Contains(item.Namespace)) universe[item.Namespace] = new PSObject(new List<string>());
+                if (!universe.Contains(item.Namespace)) universe[item.Namespace] = PsValue.NewWrapper(new List<string>());
                 var types = universe[item.Namespace];
                 if (types is List<string> typed) typed.Add(item.Type);
                 else if (Unwrap(types) is IList list) list.Add(item.Type);
@@ -129,7 +123,7 @@ namespace Antiphon.Nightly
         // The pack shared by both planners: per namespace (Sort-Object order) a first-fit bin pack of the classes
         // whose type prefixes no sibling, each prefix-unsafe class alone, then the oversized classes split into
         // exact-method chunks, then the exact leaves.
-        private static PSObject Pack(Hashtable byNs, List<object> exact, List<Oversized> oversized, string sourceId,
+        private static object Pack(Hashtable byNs, List<object> exact, List<Oversized> oversized, string sourceId,
             Func<string, HashSet<string>> unsafeFor, CostModel cost, double targetSeconds, int maxOperands, double nodeSeconds)
         {
             var compare = CultureInfo.CurrentCulture.CompareInfo;
@@ -155,8 +149,8 @@ namespace Antiphon.Nightly
                 var bins = new List<Bin>();
                 foreach (var packed in NightlyPlannerParts.SplitBySeconds(pool.ToArray(), targetSeconds, maxOperands, nodeSeconds))
                 {
-                    var bin = new Bin { Seconds = (double)packed.Properties["Seconds"].Value };
-                    foreach (var member in (ArrayList)packed.Properties["Items"].Value) bin.Classes.Add(byPs[member]);
+                    var bin = new Bin { Seconds = (double)PsValue.Prop(packed, "Seconds") };
+                    foreach (var member in (ArrayList)PsValue.Prop(packed, "Items")) bin.Classes.Add(byPs[member]);
                     bins.Add(bin);
                 }
                 alone.Sort((a, b) => byCulture(a.Bare, b.Bare));
@@ -205,7 +199,7 @@ namespace Antiphon.Nightly
         /// types come from the index universe and are computed once per namespace across one pack's boundaries
         /// (prefixCache). { Error, Groups }.
         /// </summary>
-        public static PSObject BoundaryPackedChunks(object[] leaves, IDictionary classes, IDictionary universe, IDictionary prefixCache,
+        public static object BoundaryPackedChunks(object[] leaves, IDictionary classes, IDictionary universe, IDictionary prefixCache,
             IDictionary costTable, double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor,
             double targetSeconds, double loneClassBudgetSeconds, int maxOperands)
         {
@@ -228,8 +222,8 @@ namespace Antiphon.Nightly
                 {
                     var leafParts = NightlyLaunchPlan.BareTypeParts(FirstClass(leaf));
                     var leafCost = cost.Of(PsValue.AsArray(PsValue.Prop(leaf, "nodes")),
-                        leafParts == null ? "" : (string)leafParts.Properties["Type"].Value,
-                        leafParts == null ? "" : (string)leafParts.Properties["Bare"].Value);
+                        leafParts == null ? "" : (string)PsValue.Prop(leafParts, "Type"),
+                        leafParts == null ? "" : (string)PsValue.Prop(leafParts, "Bare"));
                     AddNoteForce(leaf, "seconds", Math.Round(leafCost.Seconds, 1));
                     exact.Add(leaf);
                     continue;
@@ -239,16 +233,11 @@ namespace Antiphon.Nightly
                 {
                     Bare = PsValue.Str(PsValue.Prop(rec, "Bare")), Namespace = PsValue.Str(PsValue.Prop(rec, "Namespace")),
                     Type = PsValue.Str(PsValue.Prop(rec, "Type")),
-                    NodeCount = (int)LanguagePrimitives.ConvertTo(PsValue.Prop(rec, "NodeCount"), typeof(int), CultureInfo.InvariantCulture),
-                    Seconds = (double)LanguagePrimitives.ConvertTo(PsValue.Prop(rec, "Seconds"), typeof(double), CultureInfo.InvariantCulture),
+                    NodeCount = PsOps.ToInt(PsValue.Prop(rec, "NodeCount")),
+                    Seconds = PsValue.Double(PsValue.Prop(rec, "Seconds")),
                 };
-                item.Ps = new PSObject();
-                item.Ps.Properties.Add(new PSNoteProperty("Bare", item.Bare));
-                item.Ps.Properties.Add(new PSNoteProperty("Namespace", item.Namespace));
-                item.Ps.Properties.Add(new PSNoteProperty("Type", item.Type));
-                item.Ps.Properties.Add(new PSNoteProperty("Key", item.Bare));
-                item.Ps.Properties.Add(new PSNoteProperty("NodeCount", item.NodeCount));
-                item.Ps.Properties.Add(new PSNoteProperty("Seconds", item.Seconds));
+                item.Ps = PsValue.Record(("Bare", item.Bare), ("Namespace", item.Namespace), ("Type", item.Type), ("Key", item.Bare),
+                    ("NodeCount", item.NodeCount), ("Seconds", item.Seconds));
                 // CARD-1584: lone E2E classes stay below 25 minutes.
                 var classBudget = loneClassBudgetSeconds;
                 if (string.Equals(item.Namespace, "Antiphon.E2E", StringComparison.Ordinal) || item.Namespace.StartsWith("Antiphon.E2E.", StringComparison.Ordinal)) classBudget = 1500;
@@ -281,7 +270,7 @@ namespace Antiphon.Nightly
         /// Split-NightlyOversizedClass: exact-method chunks. Methods that prefix a sibling launch alone on the
         /// plain exact form; the rest pack into (Name*) OR groups.
         /// </summary>
-        private static List<PSObject> SplitOversizedClass(ClassItem parts, object[] nodes, string sourceId, ref int splitIndex,
+        private static List<object> SplitOversizedClass(ClassItem parts, object[] nodes, string sourceId, ref int splitIndex,
             CostModel cost, double targetSeconds, int maxOperands, double nodeSeconds, Comparison<string> byCulture)
         {
             var methodNames = new string[nodes.Length];
@@ -299,7 +288,7 @@ namespace Antiphon.Nightly
                     found.Add(group);
                 }
                 // Group-Object's input binding wraps each input object in a PSObject.
-                group.Nodes.Add(nodes[i] is PSObject ? nodes[i] : PSObject.AsPSObject(nodes[i]));
+                group.Nodes.Add(PsValue.Wrap(nodes[i]));
             }
             // Group-Object 7 emits the groups in a stable sort by key (the keys of distinct groups never tie).
             var ordered = new List<MethodGroup>(found);
@@ -313,12 +302,8 @@ namespace Antiphon.Nightly
             {
                 var methodNodes = group.Nodes.ToArray();
                 var item = new MethodItem { Method = group.Name, Nodes = methodNodes, Seconds = cost.Of(methodNodes, parts.Type, parts.Bare).Seconds, Unsafe = unsafeMethods.Contains(group.Name) };
-                item.Ps = new PSObject();
-                item.Ps.Properties.Add(new PSNoteProperty("Key", item.Method));
-                item.Ps.Properties.Add(new PSNoteProperty("Method", item.Method));
-                item.Ps.Properties.Add(new PSNoteProperty("Nodes", methodNodes));
-                item.Ps.Properties.Add(new PSNoteProperty("Seconds", item.Seconds));
-                item.Ps.Properties.Add(new PSNoteProperty("Unsafe", item.Unsafe));
+                item.Ps = PsValue.Record(("Key", item.Method), ("Method", item.Method), ("Nodes", methodNodes), ("Seconds", item.Seconds),
+                    ("Unsafe", item.Unsafe));
                 items.Add(item);
             }
             var byPs = new Dictionary<object, MethodItem>(ReferenceEqualityComparer.Instance);
@@ -333,8 +318,8 @@ namespace Antiphon.Nightly
             var bins = new List<MethodBin>();
             foreach (var packed in NightlyPlannerParts.SplitBySeconds(pool.ToArray(), targetSeconds, maxOperands, nodeSeconds))
             {
-                var bin = new MethodBin { Seconds = (double)packed.Properties["Seconds"].Value };
-                foreach (var member in (ArrayList)packed.Properties["Items"].Value) bin.Methods.Add(byPs[member]);
+                var bin = new MethodBin { Seconds = (double)PsValue.Prop(packed, "Seconds") };
+                foreach (var member in (ArrayList)PsValue.Prop(packed, "Items")) bin.Methods.Add(byPs[member]);
                 bins.Add(bin);
             }
             alone.Sort((a, b) => byCulture(a.Method, b.Method));
@@ -344,7 +329,7 @@ namespace Antiphon.Nightly
                 bin.Methods.Add(item);
                 bins.Add(bin);
             }
-            var chunks = new List<PSObject>();
+            var chunks = new List<object>();
             foreach (var bin in bins)
             {
                 var methods = new List<string>(bin.Methods.Count);
@@ -390,26 +375,18 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>The launch [pscustomobject] both packers emit, in its property order.</summary>
-        private static PSObject Launch(string id, object[] classes, string exactFilter, string groupFilter, string methodFilter,
+        private static object Launch(string id, object[] classes, string exactFilter, string groupFilter, string methodFilter,
             object[] nodes, object nodeCount, double seconds)
         {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("id", id));
-            o.Properties.Add(new PSNoteProperty("classes", classes));
-            o.Properties.Add(new PSNoteProperty("exactFilter", exactFilter));
-            o.Properties.Add(new PSNoteProperty("groupFilter", groupFilter));
-            o.Properties.Add(new PSNoteProperty("methodFilter", methodFilter));
-            o.Properties.Add(new PSNoteProperty("nodes", nodes));
-            o.Properties.Add(new PSNoteProperty("nodeCount", nodeCount));
-            o.Properties.Add(new PSNoteProperty("seconds", seconds));
-            return o;
+            return PsValue.Record(("id", id), ("classes", classes), ("exactFilter", exactFilter), ("groupFilter", groupFilter),
+                ("methodFilter", methodFilter), ("nodes", nodes), ("nodeCount", nodeCount), ("seconds", seconds));
         }
 
         /// <summary>Sort-Object's output collected by @(): each string in its own PSObject.</summary>
         private static object[] Wrapped(List<string> values)
         {
             var result = new object[values.Count];
-            for (var i = 0; i < result.Length; i++) result[i] = PSObject.AsPSObject(values[i]);
+            for (var i = 0; i < result.Length; i++) result[i] = PsValue.Wrap(values[i]);
             return result;
         }
 
@@ -447,16 +424,10 @@ namespace Antiphon.Nightly
             return names;
         }
 
-        private static object Unwrap(object value) => value is PSObject ps && !(ps.BaseObject is PSCustomObject) ? ps.BaseObject : value;
+        private static object Unwrap(object value) => PsValue.Unwrap(value);
 
         /// <summary>Add-Member -InputObject $target -NotePropertyName $name -NotePropertyValue $value -Force.</summary>
-        private static void AddNoteForce(object target, string name, object value)
-        {
-            var ps = PSObject.AsPSObject(target);
-            var previous = ps.Members[name];
-            if (previous != null && previous.IsInstance) ps.Members.Remove(name);
-            ps.Members.Add(new PSNoteProperty(name, value));
-        }
+        private static void AddNoteForce(object target, string name, object value) => PsValue.AddMemberForce(target, name, value);
 
         /// <summary>
         /// Get-NightlyProfileExecutionChunks: the launch leaves of a profile. Per chunk, the discovery nodes of its classes
@@ -506,14 +477,10 @@ namespace Antiphon.Nightly
             return leaves.ToArray();
         }
 
-        private static PSObject Leaf(string chunkId, int index, string bare, string exactFilter, object[] nodes)
+        private static object Leaf(string chunkId, int index, string bare, string exactFilter, object[] nodes)
         {
-            var leaf = new PSObject();
-            leaf.Properties.Add(new PSNoteProperty("id", chunkId + "-profile-" + index.ToString(CultureInfo.CurrentCulture)));
-            leaf.Properties.Add(new PSNoteProperty("classes", new object[] { bare }));
-            leaf.Properties.Add(new PSNoteProperty("exactFilter", exactFilter));
-            leaf.Properties.Add(new PSNoteProperty("nodes", nodes));
-            return leaf;
+            return PsValue.Record(("id", chunkId + "-profile-" + index.ToString(CultureInfo.CurrentCulture)), ("classes", new object[] { bare }),
+                ("exactFilter", exactFilter), ("nodes", nodes));
         }
 
         private sealed class ObjectGroup
@@ -538,7 +505,7 @@ namespace Antiphon.Nightly
                     byKey.Add(k, group);
                     found.Add(group);
                 }
-                group.Members.Add(item is PSObject ? item : PSObject.AsPSObject(item));
+                group.Members.Add(PsValue.Wrap(item));
             }
             var ordered = new List<ObjectGroup>(found);
             ordered.Sort((a, b) =>
@@ -549,12 +516,9 @@ namespace Antiphon.Nightly
             return ordered;
         }
 
-        private static PSObject Result(string error, object[] groups)
+        private static object Result(string error, object[] groups)
         {
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Error", error));
-            o.Properties.Add(new PSNoteProperty("Groups", groups ?? new object[0]));
-            return o;
+            return PsValue.Record(("Error", error), ("Groups", groups ?? new object[0]));
         }
 
         /// <summary>Get-NightlyLaunchClassCost with the planner's fixed prices.</summary>
@@ -569,13 +533,13 @@ namespace Antiphon.Nightly
             public (int NodeCount, double Seconds) Of(object[] nodes, string typeName, string bare)
             {
                 var cost = NightlyLaunchPlan.ClassCost(nodes, typeName, bare, Table, NodeSeconds, SlowNodeSeconds, LaneSlowNodeSeconds, HeavyFactor);
-                return ((int)cost.Properties["NodeCount"].Value, (double)cost.Properties["Seconds"].Value);
+                return ((int)PsValue.Prop(cost, "NodeCount"), (double)PsValue.Prop(cost, "Seconds"));
             }
         }
 
         private sealed class ClassItem
         {
-            public PSObject Ps;
+            public object Ps;
             public string Bare;
             public string Namespace;
             public string Type;
@@ -604,7 +568,7 @@ namespace Antiphon.Nightly
 
         private sealed class MethodItem
         {
-            public PSObject Ps;
+            public object Ps;
             public string Method;
             public object[] Nodes;
             public double Seconds;

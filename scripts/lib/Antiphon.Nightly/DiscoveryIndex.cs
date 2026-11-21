@@ -1,17 +1,16 @@
 // The discovery census and the per-suite discovery index (moved from nightly-coverage.ps1). D-5: every discovery UID
 // resolves to exactly one disposition, and a launch is judged against its suite's discovery: CARD-1419 parses and
 // censuses each discovery once and looks up only the launch's classes. Nodes are the discovery reader's PowerShell
-// objects, so this class uses PowerShell types.
+// objects (PlainObjects for a plain caller); records are built through PsValue.
 using System;
 using System.Collections.Generic;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
     /// <summary>One discovery file's parse: its document, its InProgress nodes, and one view per exclusion policy.</summary>
     public sealed class DiscoveryIndexEntry
     {
-        public PSObject Document { get; internal set; }
+        public object Document { get; internal set; }
         public object[] InProgress { get; internal set; } = new object[0];
         public Dictionary<string, object> Views { get; } = new Dictionary<string, object>(StringComparer.Ordinal);
     }
@@ -62,13 +61,9 @@ namespace Antiphon.Nightly
             var nodes = PsValue.AsArray(PsValue.Prop(PsValue.Prop(entry, "Document"), "Nodes"));
             var index = profileAware ? NightlyPolicy.ExclusionIndex(exclusions) : null;
             var pass = NightlyDiscovery.IndexView(nodes, index);
-            var view = new PSObject();
-            view.Properties.Add(new PSNoteProperty("Nodes", nodes));
-            view.Properties.Add(new PSNoteProperty("Excluded", PsValue.Prop(pass, "Excluded")));
-            view.Properties.Add(new PSNoteProperty("ByClass", PsValue.Prop(pass, "ByClass")));
-            view.Properties.Add(new PSNoteProperty("RequiredUids", PsValue.Prop(pass, "RequiredUids")));
-            view.Properties.Add(new PSNoteProperty("Classes", PsValue.Prop(pass, "Classes")));
-            view.Properties.Add(new PSNoteProperty("Census", NightlyCensus.Census(nodes, exclusions, profileAware)));
+            var view = PsValue.Record(("Nodes", nodes), ("Excluded", PsValue.Prop(pass, "Excluded")), ("ByClass", PsValue.Prop(pass, "ByClass")),
+                ("RequiredUids", PsValue.Prop(pass, "RequiredUids")), ("Classes", PsValue.Prop(pass, "Classes")),
+                ("Census", NightlyCensus.Census(nodes, exclusions, profileAware)));
             if (policyKey != null && views != null) views[policyKey] = view;
             return view;
         }
@@ -122,7 +117,7 @@ namespace Antiphon.Nightly
         /// Get-NightlyDiscoveryDisposition: { Disposition, Reason, Owner, Uid } - required, or excluded with the declaring
         /// row's reason and owner (the default lane: category-optin, nightly-default).
         /// </summary>
-        public static PSObject Disposition(object node, object exclusions, bool profileAware)
+        public static object Disposition(object node, object exclusions, bool profileAware)
         {
             if (!profileAware)
             {
@@ -139,22 +134,16 @@ namespace Antiphon.Nightly
         /// unclassified nodes are reported, never dropped. { Ok, Required, Excluded, Duplicates, Digest, RequiredCount,
         /// ExcludedCount }.
         /// </summary>
-        public static PSObject Census(object[] nodes, object exclusions, bool profileAware)
+        public static object Census(object[] nodes, object exclusions, bool profileAware)
         {
             var index = profileAware ? NightlyPolicy.ExclusionIndex(exclusions) : null;
             var rows = NightlyDiscovery.CensusRows(nodes ?? new object[0], index);
             var required = PsValue.AsArray(PsValue.Prop(rows, "Required"));
             var excluded = PsValue.AsArray(PsValue.Prop(rows, "Excluded"));
             var duplicates = PsValue.AsArray(PsValue.Prop(rows, "Duplicates"));
-            var census = new PSObject();
-            census.Properties.Add(new PSNoteProperty("Ok", duplicates.Length == 0 && required.Length > 0));
-            census.Properties.Add(new PSNoteProperty("Required", required));
-            census.Properties.Add(new PSNoteProperty("Excluded", excluded));
-            census.Properties.Add(new PSNoteProperty("Duplicates", duplicates));
-            census.Properties.Add(new PSNoteProperty("Digest", PlannedManifestCheck.CensusDigest(required, excluded)));
-            census.Properties.Add(new PSNoteProperty("RequiredCount", required.Length));
-            census.Properties.Add(new PSNoteProperty("ExcludedCount", excluded.Length));
-            return census;
+            return PsValue.Record(("Ok", duplicates.Length == 0 && required.Length > 0), ("Required", required), ("Excluded", excluded),
+                ("Duplicates", duplicates), ("Digest", PlannedManifestCheck.CensusDigest(required, excluded)),
+                ("RequiredCount", required.Length), ("ExcludedCount", excluded.Length));
         }
 
         /// <summary>Test-NightlyClassAssigned: no required classes assigns every class.</summary>
@@ -165,7 +154,7 @@ namespace Antiphon.Nightly
         public static bool ClassAssignedCached(ClassAssignment cache, string className, string typeName) => cache.Assigned(className, typeName);
 
         /// <summary>Get-NightlyDiscoveryDispositionIndexed: the disposition through a profile exclusion index.</summary>
-        public static PSObject DispositionIndexed(ProfileExclusionIndex index, object node) => index.Disposition(node);
+        public static object DispositionIndexed(ProfileExclusionIndex index, object node) => index.Disposition(node);
 
         /// <summary>Get-NightlyRequiredDiscoveryUids: the required UIDs of the classes (every class when none), in order.</summary>
         public static object[] RequiredUids(object[] nodes, string[] requiredClasses, object exclusions, bool profileAware) =>

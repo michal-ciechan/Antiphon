@@ -1,6 +1,7 @@
 // JSON files for the nightly scripts, read and written with System.Text.Json straight from and to UTF-8.
 //
-// ReadFile gives what ConvertFrom-Json gives for the file: objects are PSCustomObjects of note properties in
+// ReadFile gives what ConvertFrom-Json gives for the file: objects are PSCustomObjects of note properties (PlainObjects
+// for a plain caller) in
 // document order, arrays object[], integers Int64 (BigInteger past Int64), other numbers Double, ISO 8601
 // date-times DateTime (as ConvertFrom-Json's reader recognises them: 19-40 characters, a digit first, 'T' at index
 // 10; "Z" is UTC, an offset is converted to local time, no zone is unspecified), other strings, booleans and nulls.
@@ -23,7 +24,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Numerics;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -39,10 +39,10 @@ namespace Antiphon.Nightly
 
         /// <summary>The ConvertFrom-Json result for the file, or null when the caller must use ConvertFrom-Json.
         /// stripLeadingBom also drops a U+FEFF left after the UTF-8 byte-order mark (Read-NightlyHistoryText).</summary>
-        public static PSObject ReadFile(string path, bool stripLeadingBom) => ReadFile(path, stripLeadingBom, null);
+        public static object ReadFile(string path, bool stripLeadingBom) => ReadFile(path, stripLeadingBom, null);
 
         /// <summary>ReadFile without the properties at the omitted paths (dotted names, "[]" for array elements).</summary>
-        public static PSObject ReadFile(string path, bool stripLeadingBom, string[] omit)
+        public static object ReadFile(string path, bool stripLeadingBom, string[] omit)
         {
             var omitted = new HashSet<string>(omit ?? new string[0], StringComparer.Ordinal);
             byte[] buffer = null;
@@ -68,7 +68,7 @@ namespace Antiphon.Nightly
                 var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(buffer, start, length - start),
                     new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false, MaxDepth = 1024 });
                 if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
-                var root = (PSObject)ReadValue(ref reader, "", omitted, true);
+                var root = ReadValue(ref reader, "", omitted, true);
                 if (reader.Read()) return null;
                 return root;
             }
@@ -184,7 +184,7 @@ namespace Antiphon.Nightly
         }
 
         // allowComments is only the probe that decides a comment refusal. Callers discard that object.
-        private static PSObject TryParseDiscoveryObject(byte[] buffer, int start, int count, bool allowComments, out string reason)
+        private static object TryParseDiscoveryObject(byte[] buffer, int start, int count, bool allowComments, out string reason)
         {
             reason = "invalid-json";
             try
@@ -201,7 +201,7 @@ namespace Antiphon.Nightly
                     reason = "not-object";
                     return null;
                 }
-                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), true);
+                var root = ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), true);
                 if (reader.Read())
                 {
                     reason = "trailing-content";
@@ -222,13 +222,13 @@ namespace Antiphon.Nightly
         /// case-insensitively repeated property name, a non-finite number, nesting deeper than maxDepth): the
         /// sidecar is then unreadable.
         /// </summary>
-        public static PSObject ParseText(string text, int maxDepth) => ParseText(text, maxDepth, false);
+        public static object ParseText(string text, int maxDepth) => ParseText(text, maxDepth, false);
 
         /// <summary>
         /// ParseText with dates: as ConvertFrom-Json reads the text (ISO date-times become DateTime, as ReadFile
         /// describes); null wherever ConvertFrom-Json could read it differently, for the caller to run it.
         /// </summary>
-        public static PSObject ParseText(string text, int maxDepth, bool dates)
+        public static object ParseText(string text, int maxDepth, bool dates)
         {
             if (string.IsNullOrEmpty(text) || text[0] == (char)0xFEFF) return null;
             try
@@ -237,7 +237,7 @@ namespace Antiphon.Nightly
                 var reader = new Utf8JsonReader(bytes,
                     new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false, MaxDepth = maxDepth });
                 if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
-                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), dates);
+                var root = ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), dates);
                 if (reader.Read()) return null;
                 return HasNonFinite(root) ? null : root;
             }
@@ -251,7 +251,7 @@ namespace Antiphon.Nightly
         {
             if (value is double d) return double.IsNaN(d) || double.IsInfinity(d);
             if (value is object[] items) { foreach (var item in items) if (HasNonFinite(item)) return true; return false; }
-            if (value is PSObject ps) { foreach (var p in ps.Properties) if (HasNonFinite(p.Value)) return true; }
+            if (PsValue.IsRecord(value)) { foreach (var p in PsValue.Notes(value)) if (HasNonFinite(p.Value)) return true; }
             return false;
         }
 
@@ -264,19 +264,19 @@ namespace Antiphon.Nightly
             {
                 case JsonTokenType.StartObject:
                     {
-                        var result = new PSObject();
+                        var result = new List<(string Name, object Value)>();
                         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         while (true)
                         {
                             reader.Read();
-                            if (reader.TokenType == JsonTokenType.EndObject) return result;
+                            if (reader.TokenType == JsonTokenType.EndObject) return PsValue.Record(result.ToArray());
                             var name = reader.GetString();
                             // ConvertFrom-Json refuses these.
                             if (string.IsNullOrEmpty(name) || !names.Add(name)) throw new GiveUp();
                             reader.Read();
                             var child = at.Length == 0 ? name : at + "." + name;
                             if (omitted.Count != 0 && omitted.Contains(child)) { reader.Skip(); continue; }
-                            result.Properties.Add(new PSNoteProperty(name, ReadValue(ref reader, child, omitted, dates)));
+                            result.Add((name, ReadValue(ref reader, child, omitted, dates)));
                         }
                     }
                 case JsonTokenType.StartArray:
@@ -362,9 +362,8 @@ namespace Antiphon.Nightly
 
         private static void WriteValue(Utf8JsonWriter writer, object value, int depth, int maxDepth)
         {
-            if (value == null || ReferenceEquals(value, System.Management.Automation.Internal.AutomationNull.Value)) { writer.WriteNullValue(); return; }
-            var pso = value as PSObject;
-            var obj = pso != null ? pso.BaseObject : value;
+            if (value == null || (PsRuntime.Loaded && PsFields.IsAutomationNull(value))) { writer.WriteNullValue(); return; }
+            var obj = PsValue.BaseObject(value);
             switch (obj)
             {
                 case null: writer.WriteNullValue(); return;
@@ -391,6 +390,18 @@ namespace Antiphon.Nightly
             }
             if (obj == DBNull.Value || obj.GetType().FullName == "System.Management.Automation.Language.NullString") { writer.WriteNullValue(); return; }
             if (depth >= maxDepth + 1) throw new GiveUp();
+            // A custom object (never a dictionary or a list): its properties in order.
+            if (PsValue.IsCustomObject(value))
+            {
+                writer.WriteStartObject();
+                foreach (var property in PsRuntime.Loaded ? PsFields.GettableProperties(value) : ((PlainObject)value).Entries)
+                {
+                    writer.WritePropertyName(property.Key);
+                    WriteValue(writer, property.Value, depth + 1, maxDepth);
+                }
+                writer.WriteEndObject();
+                return;
+            }
             if (obj is IDictionary dictionary)
             {
                 writer.WriteStartObject();
@@ -409,18 +420,7 @@ namespace Antiphon.Nightly
                 writer.WriteEndArray();
                 return;
             }
-            if (obj is PSCustomObject && pso != null)
-            {
-                writer.WriteStartObject();
-                foreach (var property in pso.Properties)
-                {
-                    if (!property.IsGettable) continue;
-                    writer.WritePropertyName(property.Name);
-                    WriteValue(writer, property.Value, depth + 1, maxDepth);
-                }
-                writer.WriteEndObject();
-                return;
-            }
+
             // A core record writes itself.
             if (obj is IJsonWritable record) { record.WriteJson(writer); return; }
             // Arbitrary .NET objects: ConvertTo-Json's reflection walk.
@@ -441,10 +441,10 @@ namespace Antiphon.Nightly
     /// <summary>ReadDiscovery's document, or a refusal Reason when Document is null.</summary>
     public sealed class DiscoveryRead
     {
-        public PSObject Document { get; private set; }
+        public object Document { get; private set; }
         public string Reason { get; private set; }
 
-        internal static DiscoveryRead Ok(PSObject document) => new DiscoveryRead { Document = document, Reason = "" };
+        internal static DiscoveryRead Ok(object document) => new DiscoveryRead { Document = document, Reason = "" };
         internal static DiscoveryRead Fail(string reason) => new DiscoveryRead { Reason = string.IsNullOrEmpty(reason) ? "invalid-json" : reason };
     }
 }

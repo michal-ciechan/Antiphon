@@ -1,0 +1,49 @@
+{
+  "note": "SHA-256 of the JSON key (profile: + ConvertTo-Json -Depth 8 -Compress) of each exclusion list of scripts/test-nightly-core.ps1 Test-NCDiscoveryViewKey, and the node positions its $n.State -eq InProgress loop kept.",
+  "jsonKeys": {
+    "real": "7eb5fd1fdbf4809eac8cc14d4b9c2f252f73972013c68ba76412d29705ed749e",
+    "again": "7eb5fd1fdbf4809eac8cc14d4b9c2f252f73972013c68ba76412d29705ed749e",
+    "empty": "3aeb88d18740770b916561df3d04a1d361ec73bb691f1a32801437437f854406",
+    "null": "f3e1ec5ce74a2f690ca3b69be7c1ade6b71897683b184ad97df5b1e7ffa3cb7b",
+    "single": "372898ca3803beff268e71f6bf8c2d00ab7f42832507ba78918ddf19d595a9f1",
+    "reversed": "bb39de70ebbeecd6500bc537f53783f61f67e0743792a5e5e65c6e209791cee2",
+    "upper": "3488ee319eff25c7796cc56240cb213ff01b4b80112f9d96375a7a3bfb722807",
+    "added": "7eb5fd1fdbf4809eac8cc14d4b9c2f252f73972013c68ba76412d29705ed749e",
+    "removed": "bef5346650b3a93589a278e2b29512c7383b3ed89434371c3fbfe70dfaba041c",
+    "fewer": "6bc1c63b7387d49f5812e128dd0f15e64baa2f5a891f2b3007c4d2584a24791b",
+    "hash": "7eb5fd1fdbf4809eac8cc14d4b9c2f252f73972013c68ba76412d29705ed749e",
+    "m-none": "50dbed63656897f41b08961d142620e00f8319463a5736c6dbb5ea0cf5a2d5a4",
+    "m-empty": "094fdb0656657a3efb0f45e443db8ccaac7f656629c07cbcefd1d730f3e6933d",
+    "m-a": "81307549a106f5ae46be0c8dde6dea2627f39e9296694f2fbfd641219e4825f6",
+    "m-upperA": "006fd4e350d2fae846b9457b1ed939e9c445345ec6f96b792028b94601bad41e",
+    "m-scalar": "80dac35d10408668fca030d23ce02e9ff2828d1ea6aff829f0a22acd57a9389d",
+    "m-ab": "34c07a66a79a82bdb8995e3799464671faa4978bbe504f7b1fb007c5fa9a503f",
+    "m-ba": "6531a4854efa2d2221a2d3bc65eddf594a9ca8e525e45bae0fa7e30de3ac22aa",
+    "m-joined": "22ae1aca54ff38152ed2365fd22a1b1a34b6c1c91e30847aee004e0294174d58",
+    "m-int": "e8b98beb6e8ac0d5acc91105552972d18f839d7c619d4014c1c2e7cb458697bb",
+    "m-long": "e8b98beb6e8ac0d5acc91105552972d18f839d7c619d4014c1c2e7cb458697bb",
+    "m-text": "29efcb010072aa1902476f2e6721cfcefcffb7f25d046cc16679d6c86b497df8",
+    "m-true": "5a60044534a7e1f546f4f67a282b61bc151c11293deecade07df782b6f340356",
+    "m-nullItem": "0c6b3519c0c703d886acdef9d2da1bbdc94e7dee62251d3bf460473650e20a23",
+    "m-blank": "7ffcd2389dca7ac42a8adc82b952b5cf7326f035718e2372dffd21fd43584c28",
+    "m-quote": "936d63b17b9eceb3336d9fa9a7e6890d12a502a0871d4b92470bfad8b6cf1236",
+    "m-accent": "437b7098f7f5eebdc15848b10d3c51bff548ebecf0a5f619eb223622e6248558",
+    "m-nul": "4c9d25505c21e0f6c8df5b2fe8fc589fcd678079e8ad92450512f7f64ddf6bb7",
+    "m-highA": "82bd1e0bcb6a214915bc48aaa733c80d7ea7f54074a30c804ca376b044e4d86f",
+    "m-highB": "82bd1e0bcb6a214915bc48aaa733c80d7ea7f54074a30c804ca376b044e4d86f",
+    "m-list": "34c07a66a79a82bdb8995e3799464671faa4978bbe504f7b1fb007c5fa9a503f",
+    "m-enum": "e8b98beb6e8ac0d5acc91105552972d18f839d7c619d4014c1c2e7cb458697bb",
+    "m-wrapped": "81307549a106f5ae46be0c8dde6dea2627f39e9296694f2fbfd641219e4825f6",
+    "m-deep": "e1635c8c9ac669a05a0f5abaaf0e4c6f4fddaad299fbac57aa5711f6a310f406"
+  },
+  "inProgress": {
+    "mixed": [
+      0,
+      1,
+      6,
+      8
+    ],
+    "empty": [],
+    "null": []
+  }
+}

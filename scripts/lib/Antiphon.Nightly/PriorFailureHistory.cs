@@ -66,7 +66,7 @@ namespace Antiphon.Nightly
             return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : (DateTimeOffset?)null;
         }
 
-        private static PSObject ReadJson(string path, string[] omit) => NightlyJson.ReadFile(path, true, omit);
+        private static PSObject ReadJson(string path, string[] omit) => (PSObject)NightlyJson.ReadFile(path, true, omit);
 
         private static void Fields(object o, params string[] names)
         {

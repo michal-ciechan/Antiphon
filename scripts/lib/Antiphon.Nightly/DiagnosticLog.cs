@@ -1,11 +1,10 @@
 // The TUnit/MTP diagnostic and discovery documents (moved from nightly-coverage.ps1): the strict reader for pinned
 // TUnit 1.44 / MTP 2.2 diagnostic ToString() records and for the golden JSON forms, the discovery and execution
 // documents, and the discovery producer's document. Nodes are the PowerShell objects the record scanner (DiagScan)
-// builds, so this class uses PowerShell types; its callers are the nightly executor and the release evidence checks.
+// builds (PlainObjects for a plain caller); its callers are the nightly executor and the release evidence checks.
 using System;
 using System.Collections.Specialized;
 using System.IO;
-using System.Management.Automation;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
@@ -27,11 +26,11 @@ namespace Antiphon.Nightly
 
         private static NightlyRefusal Refuse(string reason) => new NightlyRefusal(reason);
 
-        private static PSObject Note(params object[] pairs)
+        private static object Note(params object[] pairs)
         {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
+            var properties = new (string Name, object Value)[pairs.Length / 2];
+            for (var i = 0; i < pairs.Length; i += 2) properties[i / 2] = ((string)pairs[i], pairs[i + 1]);
+            return PsValue.Record(properties);
         }
 
         /// <summary>The header of a pinned diagnostic log names TUnit 1.44.0 and MTP 2.2.2.</summary>
@@ -46,7 +45,7 @@ namespace Antiphon.Nightly
         /// ConvertFrom-NightlyDiagnosticLog: the diagnostic log at path as nodes ({ Nodes }), or - for a golden JSON log -
         /// the discovery or execution document it holds. kind: discovery or execution.
         /// </summary>
-        public static PSObject Read(string path, string kind)
+        public static object Read(string path, string kind)
         {
             if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !Directory.Exists(path))) throw Refuse("missing diagnostic " + path);
             var text = File.ReadAllText(path);
@@ -69,10 +68,10 @@ namespace Antiphon.Nightly
             foreach (var failed in PsValue.AsArray(PsValue.Prop(parsed, "Failed")))
             {
                 var message = FailureMessage(PsValue.Str(PsValue.Prop(failed, "Record")), PsValue.Prop(failed, "StateProperty"));
-                if (message != null) PSObject.AsPSObject(PsValue.Prop(failed, "Node")).Properties.Add(new PSNoteProperty("Message", message));
+                if (message != null) PsValue.AddNote(PsValue.Wrap(PsValue.Prop(failed, "Node")), "Message", message);
             }
             var nodes = PsValue.AsArray(PsValue.Prop(parsed, "Nodes"));
-            if (!LanguagePrimitives.IsTrue(PsValue.Prop(parsed, "Recognized"))) throw Refuse("unknown diagnostic format " + path);
+            if (!PsValue.IsTrue(PsValue.Prop(parsed, "Recognized"))) throw Refuse("unknown diagnostic format " + path);
             if (Same(kind, "discovery") && discoveredCount != nodes.Length)
                 throw Refuse("discovery-count-mismatch discovered=" + discoveredCount + " parsed=" + nodes.Length + " path=" + path);
             return Note("Nodes", nodes);
@@ -132,16 +131,16 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>ConvertFrom-NightlyDiagnosticRecord: one record as a node; a failed node gets its validated Message.</summary>
-        public static PSObject Record(string record, string state, object stateProperty)
+        public static object Record(string record, string state, object stateProperty)
         {
             var converted = NightlyDiagnostics.ConvertRecord(record, state);
             var error = PsValue.Str(PsValue.Prop(converted, "Error"));
             if (error.Length > 0) throw Refuse(error);
-            var node = PSObject.AsPSObject(PsValue.Prop(converted, "Node"));
+            var node = PsValue.Wrap(PsValue.Prop(converted, "Node"));
             if (Same(state, "Failed"))
             {
                 var message = FailureMessage(record, stateProperty);
-                if (message != null) node.Properties.Add(new PSNoteProperty("Message", message));
+                if (message != null) PsValue.AddNote(node, "Message", message);
             }
             return node;
         }
@@ -149,7 +148,7 @@ namespace Antiphon.Nightly
         // ---- documents ----------------------------------------------------------------------------------------
 
         /// <summary>ConvertFrom-NightlyDiscoveryDocument: { Format, TunitVersion, MtpVersion, AssemblyHash, Nodes }.</summary>
-        public static PSObject DiscoveryDocument(object document, string expectedFormat)
+        public static object DiscoveryDocument(object document, string expectedFormat)
         {
             if (document == null) throw Refuse("empty discovery document");
             var format = PsValue.Str(PsValue.Prop(document, "format"));
@@ -175,7 +174,7 @@ namespace Antiphon.Nightly
         /// </summary>
         public static long DiscoveryReads;
 
-        public static PSObject ReadDiscovery(string path)
+        public static object ReadDiscovery(string path)
         {
             System.Threading.Interlocked.Increment(ref DiscoveryReads);
             if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !Directory.Exists(path))) throw Refuse("missing discovery " + path);
@@ -189,7 +188,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>ConvertFrom-NightlyExecutionJson: the golden execution document's terminal nodes ({ Nodes }).</summary>
-        public static PSObject ExecutionJson(object document)
+        public static object ExecutionJson(object document)
         {
             var format = PsValue.Str(PsValue.Prop(document, "format"));
             if (!Same(format, ExecutionFormat)) throw Refuse("unknown execution format " + format);

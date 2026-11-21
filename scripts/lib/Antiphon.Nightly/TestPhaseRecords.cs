@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
-using System.Management.Automation;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -122,21 +121,20 @@ namespace Antiphon.Nightly
         /// Read-QualificationActiveChunkIdentity's checks on the parsed record (ConvertFrom-Json of the bytes): the
         /// record with identityDigest (SHA-256 of exactly those bytes) added, or null where the function returns null.
         /// </summary>
-        public static PSObject ActiveChunkIdentity(object record, byte[] bytes)
+        public static object ActiveChunkIdentity(object record, byte[] bytes)
         {
             try
             {
                 if (record == null || bytes == null) return null;
-                var ps = PSObject.AsPSObject(record);
-                var names = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var p in ps.Properties) names.Add(p.Name);
+                var ps = PsValue.Wrap(record);
+                var names = new HashSet<string>(PsValue.PropertyNames(ps), StringComparer.Ordinal);
                 foreach (var field in ActiveStringFields)
                 {
                     // -cnotcontains: the exact spelling; $record.$field: the value, whatever its case.
-                    if (!names.Contains(field) || !(ps.Properties[field]?.Value is string)) return null;
+                    if (!names.Contains(field) || !(PsValue.Property(ps, field, out _) is string)) return null;
                 }
-                string S(string name) => (string)ps.Properties[name].Value;
-                var generation = ps.Properties["generation"]?.Value;
+                string S(string name) => (string)PsValue.Property(ps, name, out _);
+                var generation = PsValue.Property(ps, "generation", out _);
                 if (!(generation is int) && !(generation is long)) return null;
                 if (!ActiveRunPattern.IsMatch(S("runId")) || !ActiveAttemptPattern.IsMatch(S("attempt")) || !ActiveChunkPattern.IsMatch(S("chunk"))) return null;
                 if (S("format") != "antiphon-qualification-active-chunk-v1" || (S("state") != "Active" && S("state") != "Idle")
@@ -144,8 +142,9 @@ namespace Antiphon.Nightly
                     || !ActiveSuitePattern.IsMatch(S("suite")) || S("chunk").Length == 0
                     || S("planFile") != "groups-planned-" + S("suite") + ".json" || !Sha256Pattern.IsMatch(S("planDigest"))) return null;
                 // Add-Member refuses an existing name (its error made the function return null).
-                if (ps.Properties["identityDigest"] != null) return null;
-                ps.Properties.Add(new PSNoteProperty("identityDigest", Sha256Hex(bytes)));
+                PsValue.Property(ps, "identityDigest", out var hasDigest);
+                if (hasDigest) return null;
+                PsValue.AddNote(ps, "identityDigest", Sha256Hex(bytes));
                 return ps;
             }
             catch (Exception)
@@ -332,7 +331,7 @@ namespace Antiphon.Nightly
             if (NotePresent(verdict, "jobEmpty", "JobEmpty", "JobEmptyObserved"))
             {
                 var jobValue = NoteValue(verdict, "jobEmpty", "JobEmpty", "JobEmptyObserved");
-                if (jobValue != null) job = LanguagePrimitives.IsTrue(jobValue);
+                if (jobValue != null) job = PsValue.IsTrue(jobValue);
             }
             var drain = DoubleNote(verdict, "drainMilliseconds", "DrainMilliseconds");
             var execution = DoubleNote(verdict, "executionMilliseconds", "ExecutionMilliseconds");
@@ -346,13 +345,13 @@ namespace Antiphon.Nightly
             if (NotePresent(verdict, "childrenExited", "ChildrenExited"))
             {
                 var value = NoteValue(verdict, "childrenExited", "ChildrenExited");
-                if (value != null) children = LanguagePrimitives.IsTrue(value);
+                if (value != null) children = PsValue.IsTrue(value);
             }
             var drained = false;
             if (NotePresent(verdict, "outputDrained", "OutputDrained"))
             {
                 var value = NoteValue(verdict, "outputDrained", "OutputDrained");
-                if (value != null) drained = LanguagePrimitives.IsTrue(value);
+                if (value != null) drained = PsValue.IsTrue(value);
             }
             var remaining = 0;
             var remainingValue = NoteValue(verdict, "remainingProcessCount", "RemainingProcessCount");
@@ -399,12 +398,12 @@ namespace Antiphon.Nightly
             return string.IsNullOrWhiteSpace(text) ? "unknown" : text;
         }
 
-        private static int ToInt(object value) => (int)LanguagePrimitives.ConvertTo(value, typeof(int), CultureInfo.InvariantCulture);
+        private static int ToInt(object value) => PsOps.ToInt(value);
 
         private static double DoubleNote(object o, params string[] names)
         {
             var value = NoteValue(o, names);
-            return value != null ? (double)LanguagePrimitives.ConvertTo(value, typeof(double), CultureInfo.InvariantCulture) : 0.0;
+            return value != null ? PsValue.Double(value) : 0.0;
         }
 
         // Test-TestPhaseNotePresent: one of the names is among $Object.PSObject.Properties.Name (-contains).
@@ -414,14 +413,13 @@ namespace Antiphon.Nightly
         private static object NoteValue(object o, params string[] names)
         {
             var name = FindNote(o, names);
-            return name == null ? null : PSObject.AsPSObject(o).Properties[name]?.Value;
+            return name == null ? null : PsValue.Property(o, name, out _);
         }
 
         private static string FindNote(object o, string[] names)
         {
             if (o == null) return null;
-            var present = new List<string>();
-            foreach (var p in PSObject.AsPSObject(o).Properties) present.Add(p.Name);
+            var present = PsValue.PropertyNames(o);
             foreach (var name in names)
             {
                 foreach (var have in present)

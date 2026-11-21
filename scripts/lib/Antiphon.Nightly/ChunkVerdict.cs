@@ -6,7 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Management.Automation;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
@@ -18,18 +17,23 @@ namespace Antiphon.Nightly
 
         private static NightlyRefusal Refuse(string reason) => new NightlyRefusal(reason);
 
-        private static PSObject Note(params object[] pairs)
+        private static object Note(params object[] pairs)
         {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
+            var properties = new (string Name, object Value)[pairs.Length / 2];
+            for (var i = 0; i < pairs.Length; i += 2) properties[i / 2] = ((string)pairs[i], pairs[i + 1]);
+            return PsValue.Record(properties);
         }
 
         // $o.Prop as a list: none for null (the PowerShell .Count of a missing property is 0).
         private static object[] Items(object o) => o == null ? new object[0] : PsValue.AsArray(o);
 
         // $o.PSObject.Properties.Name -contains name (case-insensitive).
-        private static bool Has(object o, string name) => o != null && PSObject.AsPSObject(o).Properties[name] != null;
+        private static bool Has(object o, string name)
+        {
+            if (o == null) return false;
+            PsValue.Property(o, name, out var found);
+            return found;
+        }
 
         private static bool Exists(string path) => !string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path));
 
@@ -52,7 +56,7 @@ namespace Antiphon.Nightly
         /// Test-NightlyFreshEvidence: the evidence exists inside the run directory, was written no earlier than a second
         /// before notBeforeUtc, and (when an invocation id is given) names that invocation. { Ok, Reason }.
         /// </summary>
-        public static PSObject Fresh(string path, string runDirectory, DateTime notBeforeUtc, string invocationId)
+        public static object Fresh(string path, string runDirectory, DateTime notBeforeUtc, string invocationId)
         {
             var fresh = Freshness(path, runDirectory, notBeforeUtc, invocationId);
             return Note("Ok", fresh.Ok, "Reason", fresh.Reason);
@@ -72,7 +76,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Test-NightlyChunkMembership: every eligible class in exactly one chunk. { Ok, Duplicates, Missing }.</summary>
-        public static PSObject ChunkMembership(string[] eligibleClasses, object chunks)
+        public static object ChunkMembership(string[] eligibleClasses, object chunks)
         {
             var assigned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var duplicates = new List<string>();
@@ -167,7 +171,7 @@ namespace Antiphon.Nightly
         /// explains them), the run is the expected sha, ref and policy; tests pass when no row failed or was unknown and the
         /// process exited 0 (exit 8 is tolerated when every present row is an expected skip).
         /// </summary>
-        public static PSObject CoverageVerdict(object[] terminalRows, int processExit, string sha, string expectedSha, string gitRef, string expectedRef,
+        public static object CoverageVerdict(object[] terminalRows, int processExit, string sha, string expectedSha, string gitRef, string expectedRef,
             string policyHash, string expectedPolicyHash, string[] requiredSkips, object[] discoveryNodes, bool usedDiscoveryAsExecution, string platform,
             object expectedSkipRoster, string[] knownTestIdentities)
         {
@@ -240,17 +244,17 @@ namespace Antiphon.Nightly
             && reportedFailed == Convert.ToInt32(PsValue.Prop(verdict, "failed"), System.Globalization.CultureInfo.InvariantCulture);
 
         /// <summary>Test-NightlyRequiredClassesPresent: no required classes is present.</summary>
-        public static PSObject RequiredClassesPresent(object[] terminalRows, string[] requiredClasses) =>
+        public static object RequiredClassesPresent(object[] terminalRows, string[] requiredClasses) =>
             requiredClasses == null || requiredClasses.Length == 0
                 ? Note("Ok", true, "Missing", new object[0])
                 : NightlyVerdicts.RequiredClassesPresent(terminalRows, requiredClasses);
 
         /// <summary>Test-NightlyExpandedRowsPresent: the required UIDs with no executed (Passed, Failed, Skipped) terminal row.</summary>
-        public static PSObject ExpandedRowsPresent(object[] discoveryNodes, object[] terminalRows, string[] requiredUids) =>
+        public static object ExpandedRowsPresent(object[] discoveryNodes, object[] terminalRows, string[] requiredUids) =>
             NightlyVerdicts.ExpandedRowsPresent(terminalRows, requiredUids);
 
         /// <summary>Test-NightlySuiteUidUnion: every required discovery UID ran in some chunk.</summary>
-        public static PSObject SuiteUidUnion(object[] discoveryNodes, object[] chunkTerminalNodes) =>
+        public static object SuiteUidUnion(object[] discoveryNodes, object[] chunkTerminalNodes) =>
             NightlyVerdicts.ExpandedRowsPresent(chunkTerminalNodes, NightlyCensus.RequiredUids(discoveryNodes, new string[0], null, false).Select(PsValue.Str).ToArray());
 
         /// <summary>
@@ -258,18 +262,18 @@ namespace Antiphon.Nightly
         /// execution diagnostic judged against the suite's discovery (through the discovery index) and its required
         /// classes. The TRX rows, terminal nodes, discovery nodes and census come back with the verdict.
         /// </summary>
-        public static PSObject NativeSuiteVerdict(string trxPath, string discoveryPath, string executionDiagnosticPath, string runDirectory, DateTime notBeforeUtc,
+        public static object NativeSuiteVerdict(string trxPath, string discoveryPath, string executionDiagnosticPath, string runDirectory, DateTime notBeforeUtc,
             int processExit, string sha, string expectedSha, string gitRef, string expectedRef, string policyHash, string expectedPolicyHash,
             string[] requiredClasses, object profileExclusions, bool profileAware, NightlyDiscoveryIndex discoveryIndex, string platform, object expectedSkipRoster)
         {
-            PSObject Refused(string reason, object rows = null, bool nodes = false) => nodes
+            object Refused(string reason, object rows = null, bool nodes = false) => nodes
                 ? Note("coverageComplete", false, "testsPassed", false, "reasons", new object[] { reason }, "rows", rows ?? new object[0], "terminalNodes", new object[0], "discoveryNodes", new object[0])
                 : Note("coverageComplete", false, "testsPassed", false, "reasons", new object[] { reason }, "rows", new object[0]);
             requiredClasses = requiredClasses ?? new string[0];
             if (!Exists(trxPath)) return Refused("missing-trx");
             if (TestPhaseFiles.Kind(trxPath, out _) != "regular") return Refused("refused-trx");
             var fresh = Fresh(trxPath, runDirectory, notBeforeUtc, "");
-            if (!LanguagePrimitives.IsTrue(PsValue.Prop(fresh, "Ok"))) return Refused(PsValue.Str(PsValue.Prop(fresh, "Reason")));
+            if (!PsValue.IsTrue(PsValue.Prop(fresh, "Ok"))) return Refused(PsValue.Str(PsValue.Prop(fresh, "Reason")));
             object[] rows;
             try { rows = NightlyTrx.ReadIdentities(trxPath); }
             catch (Exception ex) { return Refused(ex.Message); }
@@ -305,8 +309,8 @@ namespace Antiphon.Nightly
             // The coverage verdict reads discovery only for its InProgress nodes.
             var verdict = CoverageVerdict(rows, processExit, sha, expectedSha, gitRef, expectedRef, policyHash, expectedPolicyHash, new string[0],
                 discoveryEntry?.InProgress ?? new object[0], false, platform, expectedSkipRoster, null);
-            var coverageComplete = LanguagePrimitives.IsTrue(PsValue.Prop(verdict, "coverageComplete"));
-            var testsPassed = LanguagePrimitives.IsTrue(PsValue.Prop(verdict, "testsPassed"));
+            var coverageComplete = PsValue.IsTrue(PsValue.Prop(verdict, "coverageComplete"));
+            var testsPassed = PsValue.IsTrue(PsValue.Prop(verdict, "testsPassed"));
             reasons.AddRange(PsValue.AsArray(PsValue.Prop(verdict, "reasons")));
             object census = null;
             if (!discoveryPresent) coverageComplete = false;
@@ -332,13 +336,13 @@ namespace Antiphon.Nightly
                 else
                 {
                     var expanded = NightlyVerdicts.ExpandedRowsPresent(terminalNodes, requiredUids);
-                    if (!LanguagePrimitives.IsTrue(PsValue.Prop(expanded, "Ok")))
+                    if (!PsValue.IsTrue(PsValue.Prop(expanded, "Ok")))
                     {
                         coverageComplete = false;
                         reasons.Add("missing-expanded-row " + string.Join(",", Items(PsValue.Prop(expanded, "Missing")).Select(PsValue.Str)));
                     }
                     var cross = NightlyVerdicts.CrossCheck(rows, terminalNodes, requiredClasses);
-                    if (!LanguagePrimitives.IsTrue(PsValue.Prop(cross, "Ok")))
+                    if (!PsValue.IsTrue(PsValue.Prop(cross, "Ok")))
                     {
                         coverageComplete = false;
                         var mismatch = Items(PsValue.Prop(cross, "Mismatch"));
@@ -351,7 +355,7 @@ namespace Antiphon.Nightly
                 if (classReq.Length > 0)
                 {
                     var member = NightlyVerdicts.RequiredClassesPresent(rows, classReq);
-                    if (!LanguagePrimitives.IsTrue(PsValue.Prop(member, "Ok")))
+                    if (!PsValue.IsTrue(PsValue.Prop(member, "Ok")))
                     {
                         coverageComplete = false;
                         testsPassed = false;
@@ -361,7 +365,7 @@ namespace Antiphon.Nightly
             }
             return Note(
                 "coverageComplete", coverageComplete, "testsPassed", testsPassed, "reasons", reasons.ToArray(), "rows", rows, "terminalNodes", terminalNodes,
-                "discoveryNodes", discoveryNodes, "census", census, "processExitTolerated", LanguagePrimitives.IsTrue(PsValue.Prop(verdict, "processExitTolerated")),
+                "discoveryNodes", discoveryNodes, "census", census, "processExitTolerated", PsValue.IsTrue(PsValue.Prop(verdict, "processExitTolerated")),
                 "warnings", PsValue.AsArray(PsValue.Prop(verdict, "warnings")), "toleratedSkips", PsValue.AsArray(PsValue.Prop(verdict, "toleratedSkips")),
                 "rosterDigest", PsValue.Str(PsValue.Prop(verdict, "rosterDigest")));
         }
@@ -372,7 +376,7 @@ namespace Antiphon.Nightly
         /// Test-NightlyExactCoverage: exact membership is a multiset contract over expanded UIDs - every required UID ran
         /// once and passed, nothing else ran. { Ok, Reasons, Required, Executed }.
         /// </summary>
-        public static PSObject ExactCoverage(string[] requiredUids, object[] terminalNodes)
+        public static object ExactCoverage(string[] requiredUids, object[] terminalNodes)
         {
             var required = new HashSet<string>(StringComparer.Ordinal);
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -399,7 +403,7 @@ namespace Antiphon.Nightly
         /// to the whole assembly (unknown resources cannot run unattended). { AssemblyHash, Chunks, RequiredUids,
         /// Widened, UnresolvedUids }.
         /// </summary>
-        public static PSObject ExactRoster(object discovery, object[] members, string[] classifiedUids)
+        public static object ExactRoster(object discovery, object[] members, string[] classifiedUids)
         {
             var parsed = NightlyDiagnosticLog.DiscoveryDocument(discovery, NightlyDiagnosticLog.DiscoveryFormat);
             var nodes = PsValue.AsArray(PsValue.Prop(parsed, "Nodes"));

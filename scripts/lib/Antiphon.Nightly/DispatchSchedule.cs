@@ -774,47 +774,47 @@ namespace Antiphon.Nightly
         public NightlyRefusal(string message) : base(message) { }
     }
 
-    /// <summary>PowerShell's comparison operators as conditions.</summary>
+    /// <summary>PowerShell's comparison operators as conditions (PowerShell's LanguagePrimitives while it is loaded).</summary>
     internal static class PsOps
     {
-        internal static object Base(object o) => o is PSObject ps ? ps.BaseObject : o;
+        internal static object Base(object o) => PsValue.BaseObject(o);
 
         private static bool IsList(object o)
         {
             var b = Base(o);
-            return b is IEnumerable && !(b is string) && !(b is IDictionary);
+            return b is IEnumerable && !(b is string) && !(b is IDictionary) && !(b is PlainObject);
         }
 
         /// <summary><c>left -eq right</c> (ignoreCase) or <c>-ceq</c> as a condition; a list on the left filters.</summary>
         internal static bool Eq(object left, object right, bool ignoreCase)
         {
-            if (!IsList(left)) return LanguagePrimitives.Equals(left, right, ignoreCase, CultureInfo.InvariantCulture);
+            if (!IsList(left)) return PsValue.Eq(left, right, ignoreCase);
             var hits = new List<object>();
-            foreach (var item in (IEnumerable)Base(left)) if (LanguagePrimitives.Equals(item, right, ignoreCase, CultureInfo.InvariantCulture)) hits.Add(item);
-            return LanguagePrimitives.IsTrue(hits.ToArray());
+            foreach (var item in (IEnumerable)Base(left)) if (PsValue.Eq(item, right, ignoreCase)) hits.Add(item);
+            return PsValue.IsTrue(hits.ToArray());
         }
 
         /// <summary><c>left -ne right</c> (ignoreCase) or <c>-cne</c> as a condition; a list on the left filters.</summary>
         internal static bool Ne(object left, object right, bool ignoreCase)
         {
-            if (!IsList(left)) return !LanguagePrimitives.Equals(left, right, ignoreCase, CultureInfo.InvariantCulture);
+            if (!IsList(left)) return !PsValue.Eq(left, right, ignoreCase);
             var hits = new List<object>();
-            foreach (var item in (IEnumerable)Base(left)) if (!LanguagePrimitives.Equals(item, right, ignoreCase, CultureInfo.InvariantCulture)) hits.Add(item);
-            return LanguagePrimitives.IsTrue(hits.ToArray());
+            foreach (var item in (IEnumerable)Base(left)) if (!PsValue.Eq(item, right, ignoreCase)) hits.Add(item);
+            return PsValue.IsTrue(hits.ToArray());
         }
 
         /// <summary><c>item -in set</c> / <c>-cin</c>: each element compared with the item, element first.</summary>
         internal static bool In(object item, object[] set, bool ignoreCase)
         {
-            foreach (var element in set) if (LanguagePrimitives.Equals(element, item, ignoreCase, CultureInfo.InvariantCulture)) return true;
+            foreach (var element in set) if (PsValue.Eq(element, item, ignoreCase)) return true;
             return false;
         }
 
         /// <summary><c>collection -contains item</c> / <c>-ccontains</c>.</summary>
         internal static bool Contains(object collection, object item, bool ignoreCase)
         {
-            if (!IsList(collection)) return LanguagePrimitives.Equals(collection, item, ignoreCase, CultureInfo.InvariantCulture);
-            foreach (var element in (IEnumerable)Base(collection)) if (LanguagePrimitives.Equals(element, item, ignoreCase, CultureInfo.InvariantCulture)) return true;
+            if (!IsList(collection)) return PsValue.Eq(collection, item, ignoreCase);
+            foreach (var element in (IEnumerable)Base(collection)) if (PsValue.Eq(element, item, ignoreCase)) return true;
             return false;
         }
 
@@ -824,21 +824,21 @@ namespace Antiphon.Nightly
 
         /// <summary><c>$value -ceq 'text'</c> for a value that must be a scalar: a list is never equal.</summary>
         internal static bool StrEqValue(object value, string text) =>
-            !IsList(value) && LanguagePrimitives.Equals(value, text, false, CultureInfo.InvariantCulture);
+            !IsList(value) && PsValue.Eq(value, text, false);
 
         /// <summary><c>@($o.PSObject.Properties.Name) -ccontains $name</c>.</summary>
         internal static bool HasName(object o, string name)
         {
             if (o == null) return false;
-            var property = PSObject.AsPSObject(o).Properties[name];
-            return property != null && string.Equals(property.Name, name, StringComparison.Ordinal);
+            var actual = PsRuntime.Loaded ? PsFields.PropertyName(o, name) : PlainValues.PropertyName(o, name);
+            return actual != null && string.Equals(actual, name, StringComparison.Ordinal);
         }
 
         /// <summary><c>$o -is [array]</c>.</summary>
         internal static bool IsArray(object o) => Base(o) is Array;
 
         /// <summary><c>[int]$o</c>.</summary>
-        internal static int ToInt(object o) => (int)LanguagePrimitives.ConvertTo(o, typeof(int), CultureInfo.InvariantCulture);
+        internal static int ToInt(object o) => PsRuntime.Loaded ? PsFields.ToInt(o) : PlainValues.Int(o);
 
         /// <summary>Sort-Object's comparison of two ordinals (numbers compare as numbers; $null sorts first).</summary>
         internal static int CompareOrdinal(object a, object b)
@@ -846,7 +846,7 @@ namespace Antiphon.Nightly
             a = Base(a); b = Base(b);
             if (a == null || b == null) return a == null ? (b == null ? 0 : -1) : 1;
             if (a is int x && b is int y) return x.CompareTo(y);
-            return LanguagePrimitives.Compare(a, b, false, CultureInfo.CurrentCulture);
+            return PsRuntime.Loaded ? PsFields.Compare(a, b) : PlainValues.Compare(a, b);
         }
     }
 }

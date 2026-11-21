@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -37,8 +36,8 @@ namespace Antiphon.Nightly
         private static string ReasonClass(object entry)
         {
             var value = "";
-            var property = PSObject.AsPSObject(entry).Properties["reasonClass"];
-            if (property != null) value = PsValue.Str(property.Value);
+            var property = PsValue.Property(entry, "reasonClass", out var found);
+            if (found) value = PsValue.Str(property);
             if (string.IsNullOrWhiteSpace(value)) return "platform";
             if (value != "platform" && value != "live-context") return null;
             return value;

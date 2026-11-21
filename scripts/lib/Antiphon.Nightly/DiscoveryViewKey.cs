@@ -5,7 +5,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 using System.Text;
 
 namespace Antiphon.Nightly
@@ -52,13 +51,12 @@ namespace Antiphon.Nightly
         private static bool Append(StringBuilder sb, object value, int depth)
         {
             if (value == null) { sb.Append("n;"); return true; }
-            if ((value is PSObject wrapper ? wrapper.BaseObject : value) is ExclusionRow row)
+            if (PsValue.BaseObject(value) is ExclusionRow row)
             {
                 // A reader row converts like the five-note-property object it replaced (its properties in declaration
                 // order), unless members were added to this instance: its JSON would carry them.
                 if (depth > MaxContainerDepth) return false;
-                foreach (var property in PSObject.AsPSObject(value).Properties)
-                    if (property is PSNoteProperty) return false;
+                if (PsRuntime.Loaded && PsFields.HasNoteProperty(value)) return false;
                 sb.Append("o5{");
                 AppendText(sb, 'k', "Suite");
                 if (!Append(sb, row.Suite, depth + 1)) return false;
@@ -73,20 +71,17 @@ namespace Antiphon.Nightly
                 sb.Append('}');
                 return true;
             }
-            if (value is PSObject ps)
+            if (PsValue.IsRecord(value))
             {
-                if (!(ps.BaseObject is PSCustomObject)) return false;
+                if (!PsValue.IsCustomObject(value)) return false;
                 if (depth > MaxContainerDepth) return false;
-                var properties = new List<PSPropertyInfo>();
-                foreach (var property in ps.Properties)
-                {
-                    if (!(property is PSNoteProperty)) return false;
-                    properties.Add(property);
-                }
+                List<KeyValuePair<string, object>> properties;
+                if (PsRuntime.Loaded) { if (!PsFields.OnlyNoteProperties(value, out properties)) return false; }
+                else properties = new List<KeyValuePair<string, object>>(((PlainObject)value).Entries);
                 sb.Append('o').Append(properties.Count.ToString(CultureInfo.InvariantCulture)).Append('{');
                 foreach (var property in properties)
                 {
-                    AppendText(sb, 'k', property.Name ?? "");
+                    AppendText(sb, 'k', property.Key ?? "");
                     if (!Append(sb, property.Value, depth + 1)) return false;
                 }
                 sb.Append('}');
@@ -161,17 +156,17 @@ namespace Antiphon.Nightly
                 if (IsList(node)) return null;
                 var state = PsValue.Prop(node, "State");
                 if (state == null) continue;
-                if (state is PSObject wrapped) state = wrapped.BaseObject;
+                state = PsValue.BaseObject(state);
                 if (IsList(state)) return null;
-                if (LanguagePrimitives.Equals(state, "InProgress", true, CultureInfo.InvariantCulture)) hits.Add(node);
+                if (PsValue.Eq(state, "InProgress", true)) hits.Add(node);
             }
             return hits.ToArray();
         }
 
         private static bool IsList(object value)
         {
-            var baseObject = value is PSObject ps ? ps.BaseObject : value;
-            return baseObject is IEnumerable && !(baseObject is string) && !(baseObject is IDictionary);
+            var baseObject = PsValue.BaseObject(value);
+            return baseObject is IEnumerable && !(baseObject is string) && !(baseObject is IDictionary) && !(baseObject is PlainObject);
         }
     }
 }

@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
-using System.Management.Automation;
 using System.Text;
 
 namespace Antiphon.Nightly
@@ -15,13 +14,17 @@ namespace Antiphon.Nightly
     public static class NightlyDocuments
     {
         // $n.PSObject.Properties.Name -contains 'name' (case-insensitive; a dictionary's keys do not count).
-        private static bool HasProperty(object o, string name) =>
-            o != null && PSObject.AsPSObject(o).Properties[name] != null;
+        private static bool HasProperty(object o, string name)
+        {
+            if (o == null) return false;
+            PsValue.Property(o, name, out var found);
+            return found;
+        }
 
         private static object[] Categories(object node)
         {
             object raw = PsValue.Prop(node, "categories");
-            if (!LanguagePrimitives.IsTrue(raw)) return new object[0];
+            if (!PsValue.IsTrue(raw)) return new object[0];
             var list = new List<object>();
             foreach (object c in PsValue.AsArray(raw)) list.Add(PsValue.Str(c));
             return list.ToArray();
@@ -31,7 +34,7 @@ namespace Antiphon.Nightly
         /// The node loop of ConvertFrom-NightlyDiscoveryDocument: Error is the refusal it would throw (empty when
         /// none), Nodes the [pscustomobject] rows.
         /// </summary>
-        public static PSObject DiscoveryNodes(object nodes)
+        public static object DiscoveryNodes(object nodes)
         {
             var rows = new List<object>();
             var uids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -50,30 +53,18 @@ namespace Antiphon.Nightly
                 }
                 object[] categories = Categories(n);
                 bool excluded = false;
-                if (HasProperty(n, "excluded")) excluded = LanguagePrimitives.IsTrue(PsValue.Prop(n, "excluded"));
+                if (HasProperty(n, "excluded")) excluded = PsValue.IsTrue(PsValue.Prop(n, "excluded"));
                 foreach (object c in categories)
                 {
                     string text = (string)c;
                     if (string.Equals(text, "OptIn", StringComparison.OrdinalIgnoreCase) || string.Equals(text, "Explicit", StringComparison.OrdinalIgnoreCase)) excluded = true;
                 }
                 string ns = PsValue.Str(PsValue.Prop(n, "namespace"));
-                var row = new PSObject();
-                row.Properties.Add(new PSNoteProperty("Uid", uid));
-                row.Properties.Add(new PSNoteProperty("Assembly", PsValue.Str(PsValue.Prop(n, "assembly"))));
-                row.Properties.Add(new PSNoteProperty("Namespace", ns));
-                row.Properties.Add(new PSNoteProperty("Type", typeName));
-                row.Properties.Add(new PSNoteProperty("Method", method));
-                row.Properties.Add(new PSNoteProperty("Signature", PsValue.Str(PsValue.Prop(n, "signature"))));
-                row.Properties.Add(new PSNoteProperty("State", PsValue.Str(PsValue.Prop(n, "state"))));
-                row.Properties.Add(new PSNoteProperty("ClassName", string.IsNullOrWhiteSpace(ns) ? typeName : ns + "." + typeName));
-                row.Properties.Add(new PSNoteProperty("Excluded", excluded));
-                row.Properties.Add(new PSNoteProperty("Categories", categories));
-                rows.Add(row);
+                rows.Add(PsValue.Record(("Uid", uid), ("Assembly", PsValue.Str(PsValue.Prop(n, "assembly"))), ("Namespace", ns), ("Type", typeName),
+                    ("Method", method), ("Signature", PsValue.Str(PsValue.Prop(n, "signature"))), ("State", PsValue.Str(PsValue.Prop(n, "state"))),
+                    ("ClassName", string.IsNullOrWhiteSpace(ns) ? typeName : ns + "." + typeName), ("Excluded", excluded), ("Categories", categories)));
             }
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Error", error));
-            result.Properties.Add(new PSNoteProperty("Nodes", rows.ToArray()));
-            return result;
+            return PsValue.Record(("Error", error), ("Nodes", rows.ToArray()));
         }
 
         /// <summary>The node loop of ConvertTo-NightlyDiscoveryDocument: one [ordered] row per node.</summary>
@@ -86,7 +77,7 @@ namespace Antiphon.Nightly
                 if (string.IsNullOrWhiteSpace(state)) state = "Discovered";
                 object[] categories = Categories(n);
                 bool excluded = false;
-                if (HasProperty(n, "excluded")) excluded = LanguagePrimitives.IsTrue(PsValue.Prop(n, "excluded"));
+                if (HasProperty(n, "excluded")) excluded = PsValue.IsTrue(PsValue.Prop(n, "excluded"));
                 var row = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
                 row.Add("uid", PsValue.Str(PsValue.Prop(n, "uid")));
                 row.Add("assembly", PsValue.Str(PsValue.Prop(n, "assembly")));
@@ -115,7 +106,7 @@ namespace Antiphon.Nightly
         private static void Write(StringBuilder sb, object node)
         {
             if (node == null) { sb.Append("null"); return; }
-            object b = node is PSObject ps ? ps.BaseObject : node;
+            object b = PsValue.BaseObject(node);
             if (b is string s)
             {
                 sb.Append('"').Append(s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t")).Append('"');
@@ -160,16 +151,11 @@ namespace Antiphon.Nightly
                 return;
             }
             var map = new OrderedDictionary();
-            foreach (PSPropertyInfo p in PSObject.AsPSObject(node).Properties)
+            foreach (var p in PsValue.Properties(node))
             {
-                if (p.Name == "Count" && b is Array) continue;
-                if (Array.IndexOf(SkippedMembers, p.Name) >= 0) continue;
-                if (!map.Contains(p.Name))
-                {
-                    object v;
-                    try { v = p.Value; } catch { v = null; }
-                    map.Add(p.Name, v);
-                }
+                if (p.Key == "Count" && b is Array) continue;
+                if (Array.IndexOf(SkippedMembers, p.Key) >= 0) continue;
+                if (!map.Contains(p.Key)) map.Add(p.Key, p.Value);
             }
             Write(sb, map);
         }

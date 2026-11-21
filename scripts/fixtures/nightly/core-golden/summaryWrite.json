@@ -1,0 +1,17 @@
+{
+  "note": "PowerShell 7 output for scripts/test-nightly-core.ps1 Test-NCSummaryWrite and the [bool]$test.incomplete scan (TestPhaseSummaryFast.AnyIncomplete).",
+  "json": "{\"version\":1,\"complete\":false,\"quality\":[\"a\",\"b\"],\"none\":[],\"one\":[\"only\"],\"text\":\"q \\\" b \\\\ n \\n r \\r t \\t c \\u0001 u é \\u2028\",\"dbl\":0.30000000000000004,\"whole\":1.0,\"big\":1E+20,\"tiny\":5E-324,\"neg\":-2.5,\"nan\":\"NaN\",\"inf\":\"Infinity\",\"ninf\":\"-Infinity\",\"flt\":1.5,\"fltWhole\":3.0,\"dec\":1.1,\"decWhole\":5.0,\"i8\":200,\"u32\":7,\"u64\":18446744073709551615,\"i64\":-9223372036854775808,\"ch\":\"x\",\"dbnull\":null,\"pso\":{\"z\":1,\"y\":[1,[2]],\"x\":null,\"w\":{\"v\":\"in\"}},\"nested\":{\"a\":[1,2,null,[]],\"b\":[\"x\",{\"deep\":{\"k\":\"v\"}}]},\"tests\":[{\"testId\":\"b\",\"db\":1},{\"testId\":\"a\",\"joined\":true}]}",
+  "sorted": "/,a/5,a/9223372036854775807,ä/12,b/9223372036854775807,B/-9223372036854775808,c/12,C/-9223372036854775807",
+  "ranked": "a/9223372036854775807,b/9223372036854775807,a/5,ä/12,c/12,/,B/-9223372036854775808,C/-9223372036854775807",
+  "incomplete": [
+    false,
+    false,
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+    false
+  ]
+}

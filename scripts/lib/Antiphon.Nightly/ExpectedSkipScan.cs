@@ -7,7 +7,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -161,13 +160,11 @@ namespace Antiphon.Nightly
         /// Get-NightlyExpectedSkipRosterDrift: { Overlap, Mismatches } - the roster tests WindowsUnitSkipRoster.cs also
         /// names, and those of them whose reason there is not the roster's reasonPrefix.
         /// </summary>
-        public static PSObject RosterDrift(string repoRoot, object entries, ExpectedSkipScan scan)
+        public static object RosterDrift(string repoRoot, object entries, ExpectedSkipScan scan)
         {
             var task = Receive(scan, repoRoot, "", entries, true) ?? Now("drift", repoRoot, "", entries);
             if (!task.DriftDone) throw task.DriftError;
-            var o = new PSObject();
-            o.Properties.Add(new PSNoteProperty("Overlap", task.DriftOverlap));
-            o.Properties.Add(new PSNoteProperty("Mismatches", task.DriftMismatches));
+            var o = PsValue.Record(("Overlap", task.DriftOverlap), ("Mismatches", task.DriftMismatches));
             return o;
         }
     }

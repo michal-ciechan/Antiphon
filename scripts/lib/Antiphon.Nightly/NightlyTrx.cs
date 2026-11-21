@@ -7,7 +7,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Xml;
 
 namespace Antiphon.Nightly
@@ -145,28 +144,17 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>Error is the refusal Read-NightlyTrxIdentities would throw (empty when none); Rows its rows.</summary>
-        public static PSObject IdentityRows(XmlDocument doc)
+        public static object IdentityRows(XmlDocument doc)
         {
             var read = Identities(doc);
             var rows = new object[read.Rows.Length];
             for (var i = 0; i < rows.Length; i++)
             {
                 var source = read.Rows[i];
-                var row = new PSObject();
-                row.Properties.Add(new PSNoteProperty("TestId", source.TestId));
-                row.Properties.Add(new PSNoteProperty("Uid", ""));
-                row.Properties.Add(new PSNoteProperty("ClassName", source.ClassName));
-                row.Properties.Add(new PSNoteProperty("MethodName", source.MethodName));
-                row.Properties.Add(new PSNoteProperty("Display", source.Display));
-                row.Properties.Add(new PSNoteProperty("Outcome", source.Outcome));
-                row.Properties.Add(new PSNoteProperty("Identity", source.Identity));
-                row.Properties.Add(new PSNoteProperty("DebugTrace", source.DebugTrace));
-                rows[i] = row;
+                rows[i] = PsValue.Record(("TestId", source.TestId), ("Uid", ""), ("ClassName", source.ClassName), ("MethodName", source.MethodName),
+                    ("Display", source.Display), ("Outcome", source.Outcome), ("Identity", source.Identity), ("DebugTrace", source.DebugTrace));
             }
-            var result = new PSObject();
-            result.Properties.Add(new PSNoteProperty("Error", read.Error));
-            result.Properties.Add(new PSNoteProperty("Rows", rows));
-            return result;
+            return PsValue.Record(("Error", read.Error), ("Rows", rows));
         }
 
         /// <summary>Read-TestPhaseTrxRows' rows (test-phase-evidence.ps1): one
@@ -177,14 +165,8 @@ namespace Antiphon.Nightly
             for (var i = 0; i < rows.Length; i++)
             {
                 var source = read.Rows[i];
-                var row = new PSObject();
-                row.Properties.Add(new PSNoteProperty("TestId", source.TestId ?? ""));
-                row.Properties.Add(new PSNoteProperty("Outcome", source.Outcome ?? ""));
-                row.Properties.Add(new PSNoteProperty("Name", source.Name ?? ""));
-                row.Properties.Add(new PSNoteProperty("Duration", source.Duration ?? ""));
-                row.Properties.Add(new PSNoteProperty("StdOut", source.StdOut ?? ""));
-                row.Properties.Add(new PSNoteProperty("Path", path));
-                rows[i] = row;
+                rows[i] = PsValue.Record(("TestId", source.TestId ?? ""), ("Outcome", source.Outcome ?? ""), ("Name", source.Name ?? ""),
+                    ("Duration", source.Duration ?? ""), ("StdOut", source.StdOut ?? ""), ("Path", path));
             }
             return rows;
         }

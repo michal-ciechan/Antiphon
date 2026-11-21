@@ -178,7 +178,7 @@ namespace Antiphon.Nightly
                 var skip = false;
                 foreach (var part in full.Substring(root.Length).Split(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar))
                 {
-                    if (Same(part, "bin") || Same(part, "obj") || part.StartsWith("bin-", StringComparison.OrdinalIgnoreCase)) { skip = true; break; }
+                    if (Same(part, "bin") || Same(part, "obj") || part.StartsWith("bin-", StringComparison.Ordinal)) { skip = true; break; }
                 }
                 if (skip || !TestProjectMarker.IsMatch(File.ReadAllText(full))) continue;
                 hits.Add(full.Substring(root.Length).TrimStart('\\', '/').Replace('\\', '/'));

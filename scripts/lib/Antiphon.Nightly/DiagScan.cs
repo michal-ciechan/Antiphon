@@ -1,5 +1,4 @@
 using System;
-using System.Management.Automation;
 
 namespace Antiphon.Nightly
 {
@@ -33,11 +32,11 @@ namespace Antiphon.Nightly
         /// NightlyDiagnostics.ParseRecords plus a DiscoveredCount property (the raw marker count the caller
         /// checks the parse against), so the text crosses into .NET once.
         /// </summary>
-        public static PSObject ParseRecords(string text, string kind, string path)
+        public static object ParseRecords(string text, string kind, string path)
         {
             var count = DiscoveredMarkerCount(text);
             var parsed = NightlyDiagnostics.ParseRecords(text, kind, path);
-            parsed.Properties.Add(new PSNoteProperty("DiscoveredCount", count));
+            PsValue.AddNote(parsed, "DiscoveredCount", count);
             return parsed;
         }
     }

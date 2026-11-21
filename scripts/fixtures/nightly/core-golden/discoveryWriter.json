@@ -1,0 +1,6 @@
+{
+  "note": "SHA-256 and length of the UTF-8 bytes of PowerShell 7 ConvertTo-Json -Depth 12 of each discovery document of scripts/test-nightly-core.ps1 Test-NCDiscoveryWriterMatchesConvertToJson, CRLF written as LF.",
+  "weird": "sha256:cf853204b5ca87cad4a74ffd6298a899934c1b56333b15bea956ccd9f4c7516b bytes:4471",
+  "fixture": "sha256:4c13d8a664ffe29d4ef02b8bb568f5ebd302bd19e696ac94d1a0a0d620da6280 bytes:101175",
+  "empty": "sha256:2a83b02cba52be0f9d2b61d144fa26c8ae07233b4fcc9a46a6d69b6587c9ffc6 bytes:136"
+}

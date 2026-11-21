@@ -88,7 +88,7 @@ namespace Antiphon.Nightly
             NoLink(links, path, forceWindows);
             var digest = Sha(path);
             if (!string.IsNullOrEmpty(expectedDigest) && !string.Equals(digest, expectedDigest, StringComparison.Ordinal)) throw new NightlyRefusal("history-digest-mismatch");
-            var envelope = NightlyJson.ParseText(File.ReadAllText(path), 1024, true) ?? throw new NightlyRefusal("seed-schema");
+            var envelope = (PSObject)NightlyJson.ParseText(File.ReadAllText(path), 1024, true) ?? throw new NightlyRefusal("seed-schema");
             var payload = PsValue.Prop(envelope, "payload");
             if (!PsOps.StrEqValue(PsValue.Prop(envelope, "format"), Format) || !PsOps.StrEqValue(PsValue.Prop(envelope, "seedKind"), Kind)
                 || !Sha40.IsMatch(PsValue.Str(PsValue.Prop(envelope, "sourceSha")))
@@ -100,7 +100,7 @@ namespace Antiphon.Nightly
             try { actualHash = ContentHash(envelope); }
             catch (NightlyRefusal) { throw new NightlyRefusal("seed-hash-mismatch"); }
             if (!Sha64.IsMatch(contentHash) || !string.Equals(actualHash, contentHash, StringComparison.Ordinal)) throw new NightlyRefusal("seed-hash-mismatch");
-            var content = NightlyJson.ParseText(payloadText, 1024, true) ?? throw new NightlyRefusal("seed-schema");
+            var content = (PSObject)NightlyJson.ParseText(payloadText, 1024, true) ?? throw new NightlyRefusal("seed-schema");
             foreach (var field in new[] { "seedKind", "sourceRunId", "sourceCandidateId", "sourceSha" })
                 SetNote(content, field, PsValue.Str(PsValue.Prop(envelope, field)));
             SetNote(content, "createdAtUtc", PsValue.Prop(envelope, "createdAtUtc"));
@@ -185,7 +185,7 @@ namespace Antiphon.Nightly
                 if (text.Length > 0 && text[0] == (char)0xFEFF) text = text.Substring(1);
                 text = text.TrimEnd().TrimEnd(',');
                 if (!text.EndsWith("}", StringComparison.Ordinal)) text += "}";
-                var document = NightlyJson.ParseText(text, 1024, true) ?? throw new NightlyRefusal("seed-summary-header");
+                var document = (PSObject)NightlyJson.ParseText(text, 1024, true) ?? throw new NightlyRefusal("seed-summary-header");
                 return new Prefix { Document = document, Sha = TestPhaseRecords.Sha256Hex(prefix), Length = cut };
             }
         }
@@ -362,7 +362,7 @@ namespace Antiphon.Nightly
                 foreach (var ownerFile in files)
                 {
                     if (!string.Equals(ownerFile.DirectoryName, _root, StringComparison.Ordinal) || !OwnerFile.IsMatch(ownerFile.Name)) continue;
-                    var owner = NightlyJson.ParseText(ReadInput(ownerFile.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-owner-schema");
+                    var owner = (PSObject)NightlyJson.ParseText(ReadInput(ownerFile.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-owner-schema");
                     Claim(owner, "runId", ref SourceRunId);
                     Claim(owner, "candidateId", ref SourceCandidateId);
                     Claim(owner, "sha", ref SourceSha);
@@ -373,7 +373,7 @@ namespace Antiphon.Nightly
                 var plannedKeys = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var file in plans)
                 {
-                    var document = NightlyJson.ParseText(ReadInput(file.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-plan-schema");
+                    var document = (PSObject)NightlyJson.ParseText(ReadInput(file.FullName, false), 1024, true) ?? throw new NightlyRefusal("seed-plan-schema");
                     documents.Add(document);
                     foreach (var group in PsValue.AsArray(PsValue.Prop(document, "groups")))
                         plannedKeys.Add(PsValue.Str(PsValue.Prop(document, "suite")) + "/" + PsValue.Str(PsValue.Prop(group, "chunk")));
@@ -525,7 +525,7 @@ namespace Antiphon.Nightly
                     started = true;
                     try
                     {
-                        timing = NightlyJson.ParseText(ReadInput(timingPath, true), 1024, true) ?? throw new InvalidDataException("timing-json");
+                        timing = (PSObject)NightlyJson.ParseText(ReadInput(timingPath, true), 1024, true) ?? throw new InvalidDataException("timing-json");
                         _chunkInputs[timingPath] = key;
                         if (!PsOps.StrEqValue(PsValue.Prop(timing, "suite"), suite) || !PsOps.StrEqValue(PsValue.Prop(timing, "chunk"), chunk)) AddReason(reasons, "timing-identity");
                         else

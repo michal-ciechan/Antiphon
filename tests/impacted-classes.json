@@ -531,11 +531,11 @@
         "scripts/lib/nightly-*.ps1",
         "scripts/lib/Antiphon.Nightly/**",
         "tests/test-execution-policy.json",
-        "scripts/test-nightly-core.ps1"
+        "scripts/fixtures/nightly/core-golden/**"
       ],
       "classes": [
         "LiveLaneRunnerTests",
-        "NightlyCoreTests"
+        "NightlyCoreGoldenTests"
       ]
     },
     {

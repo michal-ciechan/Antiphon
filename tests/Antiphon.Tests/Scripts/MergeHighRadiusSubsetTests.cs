@@ -36,7 +36,7 @@ public sealed class MergeHighRadiusSubsetTests
     // keeps the fixed land rows and adds the nightly lane plus the lane guard to the tests row.
     private const string QuietTestsFilter =
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
-        + "|(LiveLaneRunnerTests*)|(NightlyCoreTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(LiveLaneRunnerTests*)|(NightlyCoreGoldenTests*)|(ReceiptScanDestinationIntegrationTests*)"
         + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
 
     // CARD-1819: a54a6d4f edits Antiphon.Tests sources, so the remote range adds the lane guard.
@@ -354,7 +354,7 @@ public sealed class MergeHighRadiusSubsetTests
         Names(root, "classes").ShouldBe(
             FixedClasses
                 .Append("LiveLaneRunnerTests")
-                .Append("NightlyCoreTests")
+                .Append("NightlyCoreGoldenTests")
                 .Append("ReleaseGatePlatformTests")
                 .Append("TestLaneCategoryGuardTests")
                 .Order(StringComparer.Ordinal)
