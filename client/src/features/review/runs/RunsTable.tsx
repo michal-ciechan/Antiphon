@@ -6,7 +6,7 @@ import { PersonChip } from '../components/PersonChip'
 import { ModelBadges, RunStatusBadge, StageText } from '../components/ReviewBadges'
 import { RoundPips } from '../components/RoundPips'
 import { BOT_ROUND_LIMIT, WAITING_ON_META } from '../reviewMeta'
-import { fmtAgo, prRef } from '../reviewFormat'
+import { fmtAgo, prRef, runCostSplit } from '../reviewFormat'
 
 export function OpenFindingsCell({ run }: { run: ReviewRunSummaryDto }) {
   if (run.openFindings === 0)
@@ -122,7 +122,7 @@ export function RunsTable({ runs, now }: { runs: ReviewRunSummaryDto[]; now: num
                   <ModelBadges models={r.models} max={4} />
                 </Table.Td>
                 <Table.Td ta="right">
-                  <CostText usd={r.costUsd} />
+                  <CostText usd={r.costUsd} split={runCostSplit(r)} />
                 </Table.Td>
                 <Table.Td ta="right">
                   <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>

@@ -96,6 +96,7 @@ export function ReviewRunsPage() {
   const inReview = allRuns.filter((r) => IN_REVIEW_STATUSES.includes(r.status)).length
   const atGate = allRuns.filter((r) => r.status === 'AtGate').length
   const total = rows.reduce((sum, r) => sum + r.costUsd, 0)
+  const totalSplit = { actual: rows.reduce((sum, r) => sum + r.costActualUsd, 0), estimate: rows.reduce((sum, r) => sum + r.costEstimatedUsd, 0) }
   const error = all.error ?? searched.error
 
   return (
@@ -177,7 +178,7 @@ export function ReviewRunsPage() {
           Cost in dollars: metered API calls are actual; seat models are an API-equivalent estimate (not billed). Hover a cost for the exact amount.
         </Text>
         <Text size="xs" ff="monospace">
-          Σ <CostText usd={total} /> over {rows.length} shown
+          Σ <CostText usd={total} split={totalSplit} /> over {rows.length} shown
         </Text>
       </Group>
     </Stack>

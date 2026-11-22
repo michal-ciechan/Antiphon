@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import { FAKE_DEFAULT_VIEWER_LOGIN, useFakeViewerStore } from './fake/fakeViewer'
 import { fakeReviewApi } from './reviewApi'
 import { ReviewStoryShell } from './ReviewStoryShell'
 import { EMPTY_RUNS_FILTERS, useReviewUiStore } from './useReviewUiStore'
-import { DEFAULT_REVIEW_VIEWER, useReviewViewerStore } from './useReviewViewerStore'
 
 /** The real /reviews page against the in-memory fake API. Click a run to open its page. */
 const meta: Meta = {
@@ -10,7 +10,7 @@ const meta: Meta = {
   parameters: { layout: 'fullscreen' },
   beforeEach: () => {
     fakeReviewApi.reset()
-    useReviewViewerStore.setState({ viewer: DEFAULT_REVIEW_VIEWER })
+    useFakeViewerStore.setState({ login: FAKE_DEFAULT_VIEWER_LOGIN })
     useReviewUiStore.setState({ runsView: 'table', runsFilters: EMPTY_RUNS_FILTERS })
   },
 }

@@ -1,5 +1,6 @@
 import type {
   BlastRadiusDto,
+  CodeOwnerDto,
   DismissScope,
   FindingAction,
   FindingEventDto,
@@ -12,6 +13,8 @@ import type {
   ReasonCategory,
   ReviewFindingDto,
   ReviewGateDto,
+  ReviewIterationDto,
+  ReviewIterationTrigger,
   ReviewRunDetailDto,
   ReviewRunStatus,
   ReviewStage,
@@ -21,13 +24,14 @@ import type {
   Transport,
   WaitingOn,
 } from '../../../api/reviewEngine'
-import { NODE_KIND_BY_ID } from './workflowSeed'
+import { DEFAULT_WORKFLOW, NODE_KIND_BY_ID } from './workflowSeed'
 
 /**
  * Seed data for the in-memory review API. Fictional org ("lumen"), people, PRs and incidents,
  * adapted from the review-engine proposal mocks. Times are minutes before `now`, so the data looks
  * live whenever the fake is created. Derived fields (open counts, models, cost) are left at zero
- * here and recomputed by the fake from the findings and node executions.
+ * here and recomputed by the fake from the findings and node executions; the viewer fields on
+ * gates (`viewerCanDecide` and its reason) are computed by the fake on every read.
  */
 
 // ---------------------------------------------------------------- ids
@@ -142,6 +146,10 @@ export interface IterationSpec {
   verifyModel: ModelKey
   outcome: IterationOutcome
   current: boolean
+  /** what started this iteration; derived from the previous outcome when omitted */
+  trigger?: ReviewIterationTrigger
+  /** what ended a past iteration's park (the next iteration's trigger): the park's outcome */
+  exit?: ReviewIterationTrigger
   /** per-node summary overrides */
   summaries?: Record<string, string>
 }
@@ -187,7 +195,7 @@ export function makeExec(
   status: NodeStatus,
   startMinAgo: number | null,
   durationMin: number | null,
-  extra: { model?: ModelKey; inputTokens?: number; outputTokens?: number; summary?: string | null } = {},
+  extra: { model?: ModelKey; inputTokens?: number; outputTokens?: number; summary?: string | null; itemKey?: string | null; outcome?: string | null } = {},
 ): NodeExecutionDto {
   const m = extra.model ? FAKE_MODELS[extra.model] : null
   const inputTokens = extra.inputTokens ?? 0
@@ -199,6 +207,8 @@ export function makeExec(
     iteration,
     kind: NODE_KIND_BY_ID[nodeId] ?? 'Code',
     status,
+    itemKey: extra.itemKey ?? null,
+    outcome: extra.outcome ?? null,
     provider: m?.provider ?? null,
     model: m?.model ?? null,
     transport: m?.transport ?? null,
@@ -251,10 +261,10 @@ export function synthIteration(f: ExecFactory, spec: IterationSpec, seed: string
   const o = spec.outcome
   const live = spec.current
 
-  const step = (nodeId: string, status: NodeStatus = 'Succeeded', summary?: string) => {
+  const step = (nodeId: string, status: NodeStatus = 'Succeeded', summary?: string, outcome?: string) => {
     const d = stepDetail(nodeId, spec, `${seed}:${it}:${nodeId}`)
     const dur = DURATION_MIN[nodeId] ?? 0.05
-    out.push(makeExec(f, nodeId, it, status, t, status === 'Running' || status === 'Waiting' ? null : dur, { ...d, summary: summary ?? d.summary }))
+    out.push(makeExec(f, nodeId, it, status, t, status === 'Running' || status === 'Waiting' ? null : dur, { ...d, summary: summary ?? d.summary, outcome }))
     t -= dur
   }
 
@@ -289,6 +299,7 @@ export function synthIteration(f: ExecFactory, spec: IterationSpec, seed: string
     out.push(
       makeExec(f, 'reviewer', it, status, reviewStart, status === 'Running' ? null : dur, {
         model: r.model,
+        itemKey: r.group,
         inputTokens: between(`${seed}:${it}:${r.group}:in`, 54_000, 62_000),
         outputTokens: status === 'Running' ? between(`${seed}:${it}:${r.group}:o`, 900, 2_400) : between(`${seed}:${it}:${r.group}:out`, 2_000, 3_200),
         summary:
@@ -319,46 +330,49 @@ export function synthIteration(f: ExecFactory, spec: IterationSpec, seed: string
       step(nodeId, 'Failed', o.summary)
       return out
     }
-    step(nodeId, 'Succeeded', nodeId === 'route' ? routeLabel : undefined)
+    step(nodeId, 'Succeeded', nodeId === 'route' ? routeLabel : undefined, nodeId === 'route' ? routeLabel : undefined)
   }
 
-  const park = (nodeId: string, waitingSummary: string, doneSummary: string, waitMin: number) => {
+  /** A wait or gate: Waiting while live; a past one ends with the event that resumed the run. */
+  const park = (nodeId: string, waitingSummary: string, doneSummary: string, waitMin: number, exit: string | null) => {
     if (live) {
       out.push(makeExec(f, nodeId, it, 'Waiting', t, null, { summary: waitingSummary }))
     } else {
-      out.push(makeExec(f, nodeId, it, 'Succeeded', t, waitMin, { summary: doneSummary }))
+      out.push(makeExec(f, nodeId, it, 'Succeeded', t, waitMin, { summary: doneSummary, outcome: exit }))
     }
     t -= waitMin
   }
+  const exit = spec.exit ?? 'push'
+  const verb = (d: GateDecision | undefined) => (d === 'AnotherRound' ? 'another-round' : (d ?? 'Approve').toLowerCase())
 
   switch (o.kind) {
     case 'findings':
-      park('await-fixes', 'parked until a push or recheck · no seat held', 'push after fixes', between(seed + 'aw', 120, 1_100))
+      park('await-fixes', 'parked until a push or recheck · no seat held', `${exit} after fixes`, between(seed + 'aw', 120, 1_100), exit)
       break
     case 'round-limit':
-      park('human-review', 'queue item open for the owning team', 'decided', 60)
+      park('human-review', 'queue item open for the owning team', 'decided', 60, 'another-round')
       break
     case 'human-approve':
-      step('needs-human-approval', 'Succeeded', 'yes (sticky for the rest of the PR)')
-      park('human-approve', 'queue item open for the owning team', `${o.decidedBy ?? 'a reviewer'} → ${o.decision === 'AnotherRound' ? 'another-round' : (o.decision ?? 'approve').toLowerCase()}`, between(seed + 'ha', 60, 300))
+      step('needs-human-approval', 'Succeeded', 'yes (sticky for the rest of the PR)', 'yes')
+      park('human-approve', 'queue item open for the owning team', `${o.decidedBy ?? 'a reviewer'} → ${verb(o.decision)}`, between(seed + 'ha', 60, 300), verb(o.decision))
       break
     case 'bot-approve':
-      step('needs-human-approval', 'Succeeded', 'no')
+      step('needs-human-approval', 'Succeeded', 'no', 'no')
       step('bot-approve', 'Succeeded', `antiphon/approval = success @ ${spec.headSha}`)
-      step('base-moved', 'Succeeded', 'unchanged')
-      if (o.merged) out.push(makeExec(f, 'await-merge', it, 'Succeeded', t, 30, { summary: 'merged by the author' }))
+      step('base-moved', 'Succeeded', 'unchanged', 'unchanged')
+      if (o.merged) out.push(makeExec(f, 'await-merge', it, 'Succeeded', t, 30, { summary: 'merged by the author', outcome: 'merge' }))
       else out.push(makeExec(f, 'await-merge', it, 'Waiting', t, null, { summary: 'holding the approval until merge or close' }))
       break
     case 'human-approved':
-      step('needs-human-approval', 'Succeeded', 'yes (sticky for the rest of the PR)')
-      out.push(makeExec(f, 'human-approve', it, 'Succeeded', t, 45, { summary: `${o.by} → approve` }))
+      step('needs-human-approval', 'Succeeded', 'yes (sticky for the rest of the PR)', 'yes')
+      out.push(makeExec(f, 'human-approve', it, 'Succeeded', t, 45, { summary: `${o.by} → approve`, outcome: 'approve' }))
       t -= 45
-      step('base-moved', 'Succeeded', 'unchanged')
-      if (o.merged) out.push(makeExec(f, 'await-merge', it, 'Succeeded', t, 30, { summary: 'merged by the author' }))
+      step('base-moved', 'Succeeded', 'unchanged', 'unchanged')
+      if (o.merged) out.push(makeExec(f, 'await-merge', it, 'Succeeded', t, 30, { summary: 'merged by the author', outcome: 'merge' }))
       else out.push(makeExec(f, 'await-merge', it, 'Waiting', t, null, { summary: 'holding the approval until merge or close' }))
       break
     case 'closed':
-      out.push(makeExec(f, 'await-fixes', it, 'Succeeded', t, 600, { summary: 'closed by the author' }))
+      out.push(makeExec(f, 'await-fixes', it, 'Succeeded', t, 600, { summary: 'closed by the author', outcome: 'close' }))
       break
     default:
       break
@@ -376,6 +390,9 @@ interface RunSeed {
   headRef: string
   author: string
   resolvedBy?: string
+  /** the account that opened the PR when it is not the (resolved) author, e.g. a service account */
+  openedBy?: string
+  /** CODEOWNERS style: a team name, or '@login' for a user */
   owners: string[]
   teamKey: string
   status: ReviewRunStatus
@@ -388,9 +405,13 @@ interface RunSeed {
   updatedMinAgo: number
   blast: BlastRadiusDto | null
   categories: string[]
-  iterations: Omit<IterationSpec, 'iteration' | 'current'>[]
+  iterations: Omit<IterationSpec, 'iteration' | 'current' | 'exit'>[]
   /** hand-written executions instead of synthesis (the rich run) */
   nodes?: (f: ExecFactory) => NodeExecutionDto[]
+  /** triggers per iteration, for hand-written executions */
+  triggers?: ReviewIterationTrigger[]
+  /** reviewed head per iteration, for hand-written executions */
+  heads?: string[]
 }
 
 const R = (group: string, model: ModelKey, status?: NodeStatus): ReviewerPlan => ({ group, model, status })
@@ -410,16 +431,18 @@ function run618Nodes(f: ExecFactory): NodeExecutionDto[] {
     x(f, 'group', 1, 'Succeeded', it1 - 0.5, 0.02, { summary: '4 groups' }),
     x(f, 'packs', 1, 'Succeeded', it1 - 0.6, 0.35, { summary: 'prefix 54.1k tokens · 18 files' }),
     x(f, 'review', 1, 'Succeeded', it1 - 1, 8.5, { summary: '4/4 reviewers done · policy all' }),
-    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 4.5, { model: 'opus', inputTokens: 57_100, outputTokens: 2_900, summary: 'security: 1 finding · 2/2 checks accounted' }),
-    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 8.5, { model: 'opus', inputTokens: 60_400, outputTokens: 3_400, summary: 'concurrency: 3 findings (1 major)' }),
-    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 3.6, { model: 'sonnet', inputTokens: 58_000, outputTokens: 2_700, summary: 'data: 3 findings (1 major) · 3/3 checks' }),
-    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 2.8, { model: 'sonnet', inputTokens: 55_300, outputTokens: 2_100, summary: 'general: 2 findings (minor)' }),
+    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 4.5, { model: 'opus', inputTokens: 57_100, outputTokens: 2_900, itemKey: 'security', summary: 'security: 1 finding · 2/2 checks accounted' }),
+    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 8.5, { model: 'opus', inputTokens: 60_400, outputTokens: 3_400, itemKey: 'concurrency', summary: 'concurrency: 3 findings (1 major)' }),
+    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 3.6, { model: 'sonnet', inputTokens: 58_000, outputTokens: 2_700, itemKey: 'data', summary: 'data: 3 findings (1 major) · 3/3 checks' }),
+    x(f, 'reviewer', 1, 'Succeeded', it1 - 1, 2.8, { model: 'sonnet', inputTokens: 55_300, outputTokens: 2_100, itemKey: 'general', summary: 'general: 2 findings (minor)' }),
     x(f, 'collate', 1, 'Succeeded', it1 - 9.6, 0.05, { summary: '9 → 7 after dedupe' }),
     x(f, 'verify', 1, 'Succeeded', it1 - 9.7, 0.7, { model: 'luna', inputTokens: 72_000, outputTokens: 4_100, summary: '1 disproved and dropped' }),
     x(f, 'publish', 1, 'Succeeded', it1 - 10.4, 0.1, { summary: 'review with 4 inline + summary; status failure' }),
-    x(f, 'route', 1, 'Succeeded', it1 - 10.5, 0.01, { summary: 'findings' }),
-    x(f, 'await-fixes', 1, 'Succeeded', it1 - 10.6, 1_170, { summary: 'push 4a77b10 after 19.5 wh · base moved once (drift recorded)' }),
+    x(f, 'route', 1, 'Succeeded', it1 - 10.5, 0.01, { summary: 'findings', outcome: 'findings' }),
+    // the base moved while waiting: drift recorded, back to waiting, then the author's push ends the park
+    x(f, 'await-fixes', 1, 'Succeeded', it1 - 10.6, 400 - 10.6, { summary: 'base moved while waiting', outcome: 'base-moved' }),
     x(f, 'record-drift', 1, 'Succeeded', it1 - 400, 0.01, { summary: 'base 1f20c9e..7b3e9d0 (3 commits) · no overlap with PR files · branch not updated' }),
+    x(f, 'await-fixes', 1, 'Succeeded', it1 - 400.01, it1 - 400.01 - it2, { summary: 'push 4a77b10 after 19.5 wh', outcome: 'push' }),
 
     x(f, 'intake', 2, 'Succeeded', it2, 0.1, { summary: 'head 4a77b10' }),
     x(f, 'delta', 2, 'Succeeded', it2 - 0.1, 0.15, { summary: '4 files changed since 8d3e012 · 3 findings re-anchored, 1 outdated' }),
@@ -428,14 +451,14 @@ function run618Nodes(f: ExecFactory): NodeExecutionDto[] {
     x(f, 'group', 2, 'Succeeded', it2 - 0.5, 0.02, { summary: '2 groups' }),
     x(f, 'packs', 2, 'Succeeded', it2 - 0.55, 0.15, { summary: 'prefix 38.0k · reused 61% of chunks' }),
     x(f, 'review', 2, 'Succeeded', it2 - 0.7, 5, { summary: '2/2 reviewers done · policy all' }),
-    x(f, 'reviewer', 2, 'Succeeded', it2 - 0.7, 5, { model: 'opus', inputTokens: 59_800, outputTokens: 2_600, summary: 'concurrency: 1 finding (major)' }),
-    x(f, 'reviewer', 2, 'Succeeded', it2 - 0.7, 3.2, { model: 'sonnet', inputTokens: 52_000, outputTokens: 1_900, summary: 'data: 0 findings · 3/3 checks' }),
+    x(f, 'reviewer', 2, 'Succeeded', it2 - 0.7, 5, { model: 'opus', inputTokens: 59_800, outputTokens: 2_600, itemKey: 'concurrency', summary: 'concurrency: 1 finding (major)' }),
+    x(f, 'reviewer', 2, 'Succeeded', it2 - 0.7, 3.2, { model: 'sonnet', inputTokens: 52_000, outputTokens: 1_900, itemKey: 'data', summary: 'data: 0 findings · 3/3 checks' }),
     x(f, 'collate', 2, 'Succeeded', it2 - 5.7, 0.04, { summary: '4 → 4' }),
     x(f, 'verify', 2, 'Succeeded', it2 - 5.8, 0.5, { model: 'haiku', inputTokens: 40_000, outputTokens: 2_000, summary: 'luna seat over quota → haiku · 0 dropped' }),
     x(f, 'publish', 2, 'Succeeded', it2 - 6.3, 0.1, { summary: '2 inline; summary edited' }),
-    x(f, 'route', 2, 'Succeeded', it2 - 6.4, 0.01, { summary: 'clean' }),
-    x(f, 'needs-human-approval', 2, 'Succeeded', it2 - 6.42, 0.01, { summary: 'yes: data 5, rollback 4 (sticky)' }),
-    x(f, 'human-approve', 2, 'Succeeded', it2 - 6.45, 252, { summary: 'Hugo Martin → another-round with a steer' }),
+    x(f, 'route', 2, 'Succeeded', it2 - 6.4, 0.01, { summary: 'clean', outcome: 'clean' }),
+    x(f, 'needs-human-approval', 2, 'Succeeded', it2 - 6.42, 0.01, { summary: 'yes: data 5, rollback 4 (sticky)', outcome: 'yes' }),
+    x(f, 'human-approve', 2, 'Succeeded', it2 - 6.45, 252, { summary: 'Hugo Martin → another-round with a steer', outcome: 'another-round' }),
 
     x(f, 'intake', 3, 'Succeeded', it3, 0.1, { summary: 'head e41b07c · steer from Hugo Martin' }),
     x(f, 'delta', 3, 'Succeeded', it3 - 0.1, 0.1, { summary: '2 files changed since 4a77b10 · 2 open findings still present' }),
@@ -444,10 +467,10 @@ function run618Nodes(f: ExecFactory): NodeExecutionDto[] {
     x(f, 'group', 3, 'Succeeded', it3 - 0.4, 0.02, { summary: '4 groups: security, concurrency, data, general' }),
     x(f, 'packs', 3, 'Succeeded', it3 - 0.45, 0.2, { summary: 'prefix 51.7k · 14 of 17 candidates included' }),
     x(f, 'review', 3, 'Running', it3 - 0.6, null, { summary: '3/4 reviewers done · policy all' }),
-    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 4.1, { model: 'opus', inputTokens: 58_300, outputTokens: 3_100, summary: 'security: 0 findings · 2/2 checks pass' }),
-    x(f, 'reviewer', 3, 'Running', it3 - 0.6, null, { model: 'opus', inputTokens: 61_900, outputTokens: 2_400, summary: 'concurrency: running · opened 2 files beyond the pack' }),
-    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 3.3, { model: 'sonnet', inputTokens: 59_200, outputTokens: 2_900, summary: 'data: 2 findings (1 major) · 3/3 checks accounted' }),
-    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 2.7, { model: 'sonnet', inputTokens: 56_100, outputTokens: 2_200, summary: 'general: 1 finding (minor, below bar) · 3/3 checks' }),
+    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 4.1, { model: 'opus', inputTokens: 58_300, outputTokens: 3_100, itemKey: 'security', summary: 'security: 0 findings · 2/2 checks pass' }),
+    x(f, 'reviewer', 3, 'Running', it3 - 0.6, null, { model: 'opus', inputTokens: 61_900, outputTokens: 2_400, itemKey: 'concurrency', summary: 'concurrency: running · opened 2 files beyond the pack' }),
+    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 3.3, { model: 'sonnet', inputTokens: 59_200, outputTokens: 2_900, itemKey: 'data', summary: 'data: 2 findings (1 major) · 3/3 checks accounted' }),
+    x(f, 'reviewer', 3, 'Succeeded', it3 - 0.6, 2.7, { model: 'sonnet', inputTokens: 56_100, outputTokens: 2_200, itemKey: 'general', summary: 'general: 1 finding (minor, below bar) · 3/3 checks' }),
   ]
 }
 
@@ -456,9 +479,10 @@ const FOUR = [R('security', 'opus'), R('concurrency', 'opus'), R('data', 'sonnet
 const RUN_SEEDS: RunSeed[] = [
   {
     n: 618, repo: 'lumen/payments-api', pr: 618, title: 'Ledger: reconcile partial refunds nightly', headRef: 'cwei/partial-refund-recon', author: 'cwei',
-    owners: ['payments-core', 'platform-sre'], teamKey: 'payments-core', status: 'Running', stage: 'Review', round: 3, botOnlyRounds: 0,
+    owners: ['payments-core', 'platform-sre', '@hmartin'], teamKey: 'payments-core', status: 'Running', stage: 'Review', round: 3, botOnlyRounds: 0,
     needsHumanApproval: true, waitingOn: 'Bot', startedMinAgo: 3 * 24 * 60 + 300, updatedMinAgo: 0.2,
-    blast: blast(3, 0.18, 0.93, 4, 3, 2), categories: ['feature', 'ledger', 'migration'], iterations: [], nodes: run618Nodes,
+    blast: blast(3, 0.18, 0.93, 4, 3, 2), categories: ['feature', 'ledger', 'migration'], iterations: [], nodes: run618Nodes, triggers: ['opened', 'push', 'another-round'],
+    heads: ['8d3e012', '4a77b10', 'e41b07c'],
   },
   {
     n: 1842, repo: 'lumen/antiphon', pr: 1842, title: 'Review executor: lease-based node scheduling', headRef: 'bokafor/review-executor-leases', author: 'bokafor',
@@ -474,7 +498,7 @@ const RUN_SEEDS: RunSeed[] = [
     iterations: [{ startMinAgo: 1, headSha: 'a07f5e2', reviewers: [], verifyModel: 'haiku', outcome: { kind: 'running', until: 'categorise' } }],
   },
   {
-    n: 621, repo: 'lumen/payments-api', pr: 621, title: 'Bump Npgsql from 9.0.3 to 9.0.4', headRef: 'renovate/npgsql-9.x', author: 'ksato', resolvedBy: 'Dependency owner in CODEOWNERS (/Directory.Packages.props)',
+    n: 621, repo: 'lumen/payments-api', pr: 621, title: 'Bump Npgsql from 9.0.3 to 9.0.4', headRef: 'renovate/npgsql-9.x', author: 'ksato', resolvedBy: 'Dependency owner in CODEOWNERS (/Directory.Packages.props)', openedBy: 'renovate[bot]',
     owners: ['payments-core'], teamKey: 'payments-core', status: 'Queued', stage: 'Intake', round: 1, botOnlyRounds: 0,
     needsHumanApproval: null, waitingOn: 'Bot', startedMinAgo: 1, updatedMinAgo: 1, blast: null, categories: [],
     iterations: [{ startMinAgo: 1, headSha: '5d20e8b', reviewers: [], verifyModel: 'haiku', outcome: { kind: 'queued' } }],
@@ -486,7 +510,7 @@ const RUN_SEEDS: RunSeed[] = [
     blast: blast(2, 0.34, 0.08, 2, 2, 3), categories: ['reliability'],
     iterations: [
       { startMinAgo: 7 * 60, headSha: 'a19f0c2', reviewers: [R('general', 'sonnet'), R('reliability', 'sonnet')], verifyModel: 'luna', outcome: { kind: 'findings' } },
-      { startMinAgo: 1, headSha: 'b812c3a', reviewers: [], verifyModel: 'luna', outcome: { kind: 'running', until: 'select' }, summaries: { delta: '2 files changed since a19f0c2 · recheck' } },
+      { startMinAgo: 1, headSha: 'b812c3a', reviewers: [], verifyModel: 'luna', outcome: { kind: 'running', until: 'select' }, trigger: 'push', summaries: { delta: '2 files changed since a19f0c2' } },
     ],
   },
   {
@@ -501,7 +525,7 @@ const RUN_SEEDS: RunSeed[] = [
   },
   {
     n: 2284, repo: 'lumen/web-portal', pr: 2284, title: 'Checkout: persist cart across sessions', headRef: 'icosta/cart-persist', author: 'icosta',
-    owners: ['web-experience'], teamKey: 'web-experience', status: 'AwaitingFixes', stage: 'AwaitingFixes', round: 1, botOnlyRounds: 1,
+    owners: ['web-experience', '@fhaddad'], teamKey: 'web-experience', status: 'AwaitingFixes', stage: 'AwaitingFixes', round: 1, botOnlyRounds: 1,
     needsHumanApproval: true, waitingOn: 'Author', startedMinAgo: 2 * 60 + 20, updatedMinAgo: 2 * 60,
     blast: blast(3, 0.22, 0.88, 3, 4, 5), categories: ['feature', 'persistence'],
     iterations: [{ startMinAgo: 2 * 60 + 15, headSha: 'f3e9a10', reviewers: [R('persistence', 'opus'), R('frontend', 'sonnet'), R('general', 'haiku')], verifyModel: 'haiku', outcome: { kind: 'findings' } }],
@@ -515,7 +539,7 @@ const RUN_SEEDS: RunSeed[] = [
   },
   {
     n: 612, repo: 'lumen/payments-api', pr: 612, title: 'Refunds: idempotency keys and partial refunds', headRef: 'asmith/refund-idempotency', author: 'asmith',
-    owners: ['payments-core', 'platform-sre'], teamKey: 'payments-core', status: 'AtGate', stage: 'HumanGate', round: 3, botOnlyRounds: 3,
+    owners: ['payments-core', 'platform-sre', '@hmartin'], teamKey: 'payments-core', status: 'AtGate', stage: 'HumanGate', round: 3, botOnlyRounds: 3,
     needsHumanApproval: true, waitingOn: 'Humans', startedMinAgo: 2 * 24 * 60 + 500, updatedMinAgo: 18,
     blast: blast(3, 0.91, 0.84, 4, 4, 4), categories: ['feature', 'public-api', 'migration'],
     iterations: [
@@ -535,14 +559,14 @@ const RUN_SEEDS: RunSeed[] = [
     ],
   },
   {
-    n: 617, repo: 'lumen/payments-api', pr: 617, title: 'Hotfix: correct VAT rounding on invoices', headRef: 'hotfix/vat-rounding', author: 'hmartin', resolvedBy: 'Co-authored-by trailer on 2/2 commits (PR opened by release-train)',
+    n: 617, repo: 'lumen/payments-api', pr: 617, title: 'Hotfix: correct VAT rounding on invoices', headRef: 'hotfix/vat-rounding', author: 'hmartin', resolvedBy: 'Co-authored-by trailer on 2/2 commits', openedBy: 'release-train',
     owners: ['payments-core'], teamKey: 'payments-core', status: 'AtGate', stage: 'HumanGate', round: 1, botOnlyRounds: 0,
     needsHumanApproval: true, waitingOn: 'Humans', startedMinAgo: 6 * 60 + 30, updatedMinAgo: 6 * 60,
     blast: blast(2, 0.2, 0.3, 1, 2, 4), categories: ['hotfix', 'invoicing'],
     iterations: [{ startMinAgo: 6 * 60 + 25, headSha: 'c40d1e7', reviewers: [R('correctness', 'sonnet')], verifyModel: 'haiku', outcome: { kind: 'human-approve' } }],
   },
   {
-    n: 1835, repo: 'lumen/antiphon', pr: 1835, title: 'Status checks: throttle progress descriptions', headRef: 'delegate/card-1860-status-throttle', author: 'grao', resolvedBy: 'Co-authored-by trailer on 4/4 commits (PR opened by antiphon-delegate)',
+    n: 1835, repo: 'lumen/antiphon', pr: 1835, title: 'Status checks: throttle progress descriptions', headRef: 'delegate/card-1860-status-throttle', author: 'grao', resolvedBy: 'Co-authored-by trailer on 4/4 commits', openedBy: 'antiphon-delegate',
     owners: ['platform-runtime'], teamKey: 'platform-runtime', status: 'AwaitingMerge', stage: 'BranchMaintenance', round: 2, botOnlyRounds: 2,
     needsHumanApproval: false, waitingOn: 'Author', startedMinAgo: 9 * 60, updatedMinAgo: 3 * 60,
     blast: blast(1, 0.1, 0.02, 1, 1, 2), categories: ['chore'],
@@ -601,7 +625,44 @@ interface FindingSeed {
   round?: number
   posted?: boolean
   events?: EventSeed[]
+  /** the diff hunk around the anchor; null when the anchor is in unchanged code; omitted → synthesised */
+  hunk?: string | null
 }
+
+/** A unified-diff hunk from its lines (header first; context lines start with a space). */
+const hunk = (...lines: string[]) => lines.join('\n')
+
+/** Default hunk: the anchor as the added line at `lineStart`, for seeds without a hand-written one. */
+function synthHunk(fs: FindingSeed): string | null {
+  if (!fs.anchor || !fs.lines) return null
+  return hunk(`@@ -${fs.lines[0] - 1},0 +${fs.lines[0]},1 @@`, `+${fs.anchor}`)
+}
+
+const IDEMPOTENCY_HUNK = hunk(
+  '@@ -39,6 +39,7 @@ public sealed class IdempotencyStore',
+  '     public async Task<RefundResult?> TryGetAsync(Merchant merchant, RefundRequest request, CancellationToken ct)',
+  '     {',
+  '-        var cacheKey = $"refund:{request.OrderId}";',
+  "+        // dedupe on the client's Idempotency-Key header",
+  '+        var cacheKey = $"refund:{request.IdempotencyKey}";',
+  '         var hit = await _cache.GetAsync<RefundResult>(cacheKey);',
+  '         return hit;',
+  '     }',
+)
+
+const CART_STORAGE_HUNK = hunk(
+  '@@ -0,0 +10,10 @@',
+  "+const KEY = 'cart'",
+  '+',
+  '+export function save(cart: Cart): void {',
+  "+  localStorage.setItem('cart', JSON.stringify(cart))",
+  '+}',
+  '+',
+  '+export function restore(): Cart | null {',
+  '+  const raw = localStorage.getItem(KEY)',
+  '+  return raw ? (JSON.parse(raw) as Cart) : null',
+  '+}',
+)
 
 interface EventSeed {
   action: FindingAction
@@ -624,6 +685,7 @@ const FINDING_SEEDS: FindingSeed[] = [
     body: "Two merchants that send the same `Idempotency-Key` read each other's cached response. Client SDKs that default the key to the order number make this likely, not theoretical. Merchant B would get Merchant A's refund id and amount back, and B's refund would never run.",
     suggestion: 'var cacheKey = $"refund:{merchant.Id}:{request.IdempotencyKey}";',
     checkWhy: "Added after INC-1873 (June 2025): a shared idempotency cache returned one merchant's refund confirmation to another. Any key that deduplicates requests must include the tenant.",
+    hunk: IDEMPOTENCY_HUNK,
     events: [{ action: 'Reply', by: BOT_LOGIN, minAgo: 24 * 60 + 380, text: 'Recheck at 7c1e9a2: still present. The key is built on line 42 without the merchant id.' }],
   },
   {
@@ -633,6 +695,14 @@ const FINDING_SEEDS: FindingSeed[] = [
     body: 'The `USING` clause converts minor units to decimal and drops the original. A rollback cannot restore it, and any reader still on the old build reads pounds as pence. Add `amount_decimal`, backfill, and swap readers in a later release.',
     suggestion: 'ALTER TABLE refunds ADD COLUMN amount_decimal numeric(12,2);\nUPDATE refunds SET amount_decimal = amount_minor / 100.0;',
     checkWhy: 'Destructive migrations cannot be rolled back with the release. Expand → migrate → contract keeps every step reversible.',
+    hunk: hunk(
+      '@@ -0,0 +9,5 @@',
+      '+ALTER TABLE refunds ADD COLUMN partial_amount numeric(12,2);',
+      '+ALTER TABLE refunds ADD COLUMN idempotency_key text;',
+      '+',
+      '+ALTER TABLE refunds ALTER COLUMN amount TYPE numeric(12,2) USING amount_minor / 100.0;',
+      '+ALTER TABLE refunds DROP COLUMN amount_minor;',
+    ),
     events: [
       { action: 'WillFix', by: 'asmith', minAgo: 2 * 24 * 60 + 200, text: 'Will split into add / backfill / swap.' },
       { action: 'Reply', by: BOT_LOGIN, minAgo: 24 * 60 + 380, text: 'Recheck at 7c1e9a2: still present. Tracking as will-fix; the next push is checked.' },
@@ -645,6 +715,20 @@ const FINDING_SEEDS: FindingSeed[] = [
     body: '`SaveChangesAsync` runs after the `using` block disposes the lock. Two concurrent partial refunds on one payment can both pass the remaining-balance check before either saves, so the payment is refunded twice.',
     suggestion: 'using (await _lock.AcquireAsync(refund.PaymentId))\n{\n    refund.Apply(request);\n    await _db.SaveChangesAsync(ct);\n}',
     checkWhy: 'Seen in three why-missed investigations. A lock that guards a read-modify-write must cover the save, not just the in-memory change.',
+    hunk: hunk(
+      '@@ -85,7 +85,10 @@ public async Task<RefundResult> RefundAsync(RefundRequest request, CancellationToken ct)',
+      '         var refund = await _db.Refunds.SingleAsync(r => r.PaymentId == request.PaymentId, ct);',
+      '         var remaining = refund.Payment.Amount - refund.Payment.RefundedAmount;',
+      '         if (request.PartialAmount > remaining) throw new OverRefundException(remaining);',
+      '-        refund.Apply(request);',
+      '+        using (await _lock.AcquireAsync(refund.PaymentId))',
+      '+        {',
+      '+            refund.Apply(request);',
+      '+        }',
+      '         await _db.SaveChangesAsync(ct);',
+      '         return RefundResult.From(refund);',
+      '     }',
+    ),
   },
   {
     run: 612, key: 'F4', severity: 'Major', checkId: 'CHK-0402', confidence: 0.84, round: 3, status: 'Fixed',
@@ -652,6 +736,15 @@ const FINDING_SEEDS: FindingSeed[] = [
     anchor: 'private static readonly TimeSpan KeyTtl = TimeSpan.FromHours(1);',
     body: 'The partner SDK retries a failed refund for up to 24 hours. After an hour the key has expired, so a late retry creates a second refund.',
     checkWhy: "The dedupe window must outlive every client's retry window, or late retries become duplicates.",
+    hunk: hunk(
+      '@@ -14,4 +14,6 @@ public sealed class IdempotencyStore',
+      '     private readonly IDistributedCache _cache;',
+      '     private readonly ILogger<IdempotencyStore> _logger;',
+      ' ',
+      '+    private static readonly TimeSpan KeyTtl = TimeSpan.FromHours(1);',
+      '+',
+      '     public IdempotencyStore(IDistributedCache cache, ILogger<IdempotencyStore> logger)',
+    ),
     events: [{ action: 'Fixed', by: 'asmith', minAgo: 40, text: 'Fixed in 3b81f0d: TTL is now 48h and read from RefundOptions.', sync: 'Failed' }],
   },
   {
@@ -660,12 +753,29 @@ const FINDING_SEEDS: FindingSeed[] = [
     anchor: 'public decimal? PartialAmount { get; init; }',
     body: 'web-portal checkout and two partner SDKs generate clients from `openapi.yaml`. The field is additive, but `info.version` is still 3.4.0, so generated clients will not pick it up and the changelog will miss it.',
     checkWhy: 'Consumers generate clients from openapi.yaml. Unversioned changes broke the partner SDK build twice in 2025.',
+    hunk: hunk(
+      '@@ -20,4 +20,6 @@ public sealed record RefundRequest',
+      '     public required string PaymentId { get; init; }',
+      '     public required decimal Amount { get; init; }',
+      ' ',
+      '+    public decimal? PartialAmount { get; init; }',
+      '+',
+      '     public string? Reason { get; init; }',
+    ),
   },
   {
     run: 612, key: 'F6', severity: 'Minor', checkId: null, confidence: 0.69, round: 2,
     title: 'Webhook reports the requested amount, not the settled amount', file: 'src/Refunds/RefundWebhookPublisher.cs', lines: [52, 52],
     anchor: 'await _publisher.PublishAsync(new RefundCompleted(refund.Id, request.PartialAmount ?? refund.Amount));',
     body: 'The PSP can settle a partial refund for less than requested (fees, FX rounding). `RefundCompleted` should carry `refund.SettledAmount`, or merchants reconcile against the wrong number.',
+    hunk: hunk(
+      '@@ -50,4 +50,4 @@ public async Task OnRefundSettledAsync(Refund refund, RefundRequest request, CancellationToken ct)',
+      '     {',
+      '         _logger.LogInformation("Refund {RefundId} settled", refund.Id);',
+      '-        await _publisher.PublishAsync(new RefundCompleted(refund.Id, refund.Amount));',
+      '+        await _publisher.PublishAsync(new RefundCompleted(refund.Id, request.PartialAmount ?? refund.Amount));',
+      '     }',
+    ),
     events: [
       { action: 'Question', by: 'cwei', minAgo: 24 * 60 + 250, text: 'Does the PSP actually do that for card refunds, or only for SEPA?' },
       { action: 'Reply', by: BOT_LOGIN, minAgo: 24 * 60 + 248, text: 'From the pack: `PspRefundResponse.SettledAmount` is documented as "may differ for FX and scheme fees", and both `SepaRefundAdapter` and `CardRefundAdapter` populate it. So both.' },
@@ -676,6 +786,7 @@ const FINDING_SEEDS: FindingSeed[] = [
     title: 'No metric for duplicate-key hits (raised by Hugo Martin)', file: 'src/Refunds/IdempotencyStore.cs', lines: [43, 43],
     anchor: 'var hit = await _cache.GetAsync<RefundResult>(cacheKey);',
     body: 'We need `refunds_idempotent_replay_total` so we can see replays in the dashboard before INC-style leaks happen.',
+    hunk: IDEMPOTENCY_HUNK,
     events: [{ action: 'Reply', by: 'hmartin', minAgo: 100, text: 'We need a counter on replay hits here.' }],
   },
   {
@@ -684,16 +795,39 @@ const FINDING_SEEDS: FindingSeed[] = [
     anchor: 'refund.RequestedAt = DateTime.UtcNow;', body: 'The rest of the service takes `TimeProvider`, which the tests fake.',
     suggestion: 'refund.RequestedAt = _time.GetUtcNow().UtcDateTime;',
     checkWhy: 'Tests fake time through TimeProvider; DateTime.UtcNow makes them flaky around midnight.',
+    hunk: hunk(
+      '@@ -110,4 +110,5 @@ private static Refund NewRefund(RefundRequest request)',
+      '         var refund = new Refund(request.PaymentId, request.PartialAmount ?? request.Amount);',
+      '         refund.Reason = request.Reason ?? RefundReason.Requested;',
+      '+        refund.RequestedAt = DateTime.UtcNow;',
+      '         return refund;',
+      '     }',
+    ),
   },
   {
     run: 612, key: 'F9', severity: 'Minor', checkId: 'CHK-0510', confidence: 0.58, round: 3, posted: false,
     title: 'Hard-coded 100 assumes two-decimal currencies (JPY has none)', file: 'src/Refunds/Money.cs', lines: [9, 9],
     anchor: 'return minor / 100.0m;', body: "Below this round's bar (round 3: major, ≥ 0.80). Stored, not posted.",
+    // Money.cs is unchanged in this PR: the reviewer read it as related code, so there is no hunk
+    hunk: null,
   },
   {
     run: 612, key: 'F10', severity: 'Minor', checkId: 'CHK-0219', confidence: 0.7, round: 1, status: 'Dismissed',
     title: 'Refund reason codes are not in the published enum', file: 'src/Api/Contracts/RefundReason.cs', lines: [5, 9],
     anchor: 'public enum RefundReason { Duplicate, Fraud, Requested, Other }', body: 'Partners validate against the published enum list.',
+    hunk: hunk(
+      '@@ -3,3 +3,9 @@ namespace Lumen.Payments.Api.Contracts;',
+      ' ',
+      ' [JsonConverter(typeof(JsonStringEnumConverter))]',
+      '-public enum RefundReason { Duplicate, Fraud, Requested }',
+      '+public enum RefundReason',
+      '+{',
+      '+    Duplicate,',
+      '+    Fraud,',
+      '+    Requested,',
+      '+    Other,',
+      '+}',
+    ),
     events: [{ action: 'Dismiss', by: 'asmith', minAgo: 2 * 24 * 60 + 100, reason: 'ByDesign', scope: 'Instance', text: 'Other is the documented catch-all; the list is published in 3.4.0.' }],
   },
 
@@ -703,12 +837,25 @@ const FINDING_SEEDS: FindingSeed[] = [
     title: 'Reconcile job reads refunds outside the ledger transaction', file: 'src/Ledger/RefundReconciler.cs', lines: [64, 71],
     anchor: 'var refunds = await _db.Refunds.Where(r => r.SettledAt >= since).ToListAsync(ct);',
     body: 'The reconciler loads settled refunds before opening the ledger transaction, so a refund that settles in between is counted twice on the next run.',
+    hunk: hunk(
+      '@@ -62,6 +62,8 @@ public async Task ReconcileAsync(CancellationToken ct)',
+      '     {',
+      '         var since = _time.GetUtcNow().AddDays(-1);',
+      '+        var refunds = await _db.Refunds.Where(r => r.SettledAt >= since).ToListAsync(ct);',
+      '+',
+      '         await using var tx = await _ledger.BeginTransactionAsync(ct);',
+      '-        foreach (var refund in await LoadSettledAsync(since, ct))',
+      '+        foreach (var refund in refunds)',
+      '             _ledger.Post(LedgerEntry.ForRefund(refund));',
+      '         await tx.CommitAsync(ct);',
+    ),
     events: [
       { action: 'Dispute', by: 'cwei', minAgo: 24 * 60 + 100, text: 'The reconciler runs at 02:00 with settlement paused (SettlementWindowGuard).' },
       { action: 'Reply', by: BOT_LOGIN, minAgo: 24 * 60 + 95, text: 'Adjudicator held: SettlementWindowGuard is opt-in and the nightly job does not register it.' },
     ],
   },
-  { run: 618, key: 'F2', severity: 'Minor', checkId: 'CHK-0510', confidence: 0.71, round: 3, title: 'Rounding mode differs from the invoicing service', file: 'src/Ledger/Money.cs', lines: [14, 14], anchor: 'Math.Round(amount, 2)', body: 'Invoicing uses banker’s rounding; the ledger uses away-from-zero, so totals drift by a cent.' },
+  { run: 618, key: 'F2', severity: 'Minor', checkId: 'CHK-0510', confidence: 0.71, round: 3, title: 'Rounding mode differs from the invoicing service', file: 'src/Ledger/Money.cs', lines: [14, 14], anchor: 'Math.Round(amount, 2)', body: 'Invoicing uses banker’s rounding; the ledger uses away-from-zero, so totals drift by a cent.',
+    hunk: hunk('@@ -13,3 +13,3 @@ public static class Money', '     public static decimal ToLedger(decimal amount) =>', '-        decimal.Round(amount, 2, MidpointRounding.ToEven);', '+        Math.Round(amount, 2);', ' ') },
   { run: 618, key: 'F3', severity: 'Major', checkId: 'CHK-0087', confidence: 0.86, round: 1, status: 'Fixed', flags: ['data-loss'], title: 'Backfill deletes rows it cannot map', file: 'db/migrations/20261115_refund_recon.sql', lines: [30, 34], anchor: 'DELETE FROM refund_recon WHERE ledger_id IS NULL;', body: 'Unmapped rows are deleted rather than parked.', events: [{ action: 'Fixed', by: 'cwei', minAgo: 2 * 24 * 60, text: 'Parked into refund_recon_unmapped instead.' }] },
   { run: 618, key: 'F4', severity: 'Minor', checkId: 'CHK-0033', confidence: 0.67, round: 1, status: 'Fixed', title: 'Use TimeProvider in the reconciler', file: 'src/Ledger/RefundReconciler.cs', lines: [22, 22], anchor: 'var since = DateTime.UtcNow.AddDays(-1);', body: 'Inject `TimeProvider`.', events: [{ action: 'Fixed', by: 'cwei', minAgo: 2 * 24 * 60 }] },
 
@@ -717,19 +864,49 @@ const FINDING_SEEDS: FindingSeed[] = [
   { run: 604, key: 'F2', severity: 'Minor', checkId: null, confidence: 0.69, round: 1, status: 'WillFix', title: 'Retry count is not logged on final failure', file: 'src/Webhooks/WebhookSender.cs', lines: [88, 88], anchor: '_logger.LogWarning("Webhook delivery failed");', body: 'Operators cannot tell a first failure from a final one.', events: [{ action: 'WillFix', by: 'lnovak', minAgo: 300 }] },
 
   // antiphon#1839 (waiting on author)
-  { run: 1839, key: 'F1', severity: 'Major', checkId: 'CHK-0702', confidence: 0.82, round: 2, title: 'Ledger rows are written after the pack is sealed', file: 'server/Application/Review/PackBuilder.cs', lines: [140, 152], anchor: 'pack.Seal(); await WriteLedgerAsync(pack, ct);', body: 'A reader that opens the sealed pack sees no ledger rows for the last related files.' },
+  { run: 1839, key: 'F1', severity: 'Major', checkId: 'CHK-0702', confidence: 0.82, round: 2, title: 'Ledger rows are written after the pack is sealed', file: 'server/Application/Review/PackBuilder.cs', lines: [140, 152], anchor: 'pack.Seal(); await WriteLedgerAsync(pack, ct);', body: 'A reader that opens the sealed pack sees no ledger rows for the last related files.',
+    hunk: hunk(
+      '@@ -138,5 +138,6 @@ public async Task<Pack> BuildAsync(PackRequest request, CancellationToken ct)',
+      '         foreach (var file in related)',
+      '             pack.Add(file, PackSection.Related);',
+      '         pack.Seal();',
+      '+        await WriteLedgerAsync(pack, ct);',
+      '         return pack;',
+      '     }',
+    ) },
   { run: 1839, key: 'F2', severity: 'Minor', checkId: 'CHK-0033', confidence: 0.7, round: 1, title: 'Ledger timestamps use DateTime.UtcNow', file: 'server/Application/Review/PackLedger.cs', lines: [18, 18], anchor: 'At = DateTime.UtcNow', body: 'Inject `TimeProvider`.' },
   { run: 1839, key: 'F3', severity: 'Minor', checkId: null, confidence: 0.66, round: 2, title: 'Related-file reason strings are not localised in the UI', file: 'client/src/features/review/PackViewer.tsx', lines: [55, 55], anchor: '{row.reason}', body: 'Reasons are raw enum names.' },
   { run: 1839, key: 'F4', severity: 'Nit', checkId: null, confidence: 0.6, round: 1, status: 'Fixed', title: 'Typo in PackLedger doc comment', file: 'server/Application/Review/PackLedger.cs', lines: [3, 3], anchor: '/// Ledgr row', body: 'Ledgr → Ledger.', events: [{ action: 'Fixed', by: 'jweber', minAgo: 20 * 60 }] },
 
   // web-portal#2284 (blocker, data-loss)
-  { run: 2284, key: 'F1', severity: 'Blocker', flags: ['data-loss'], checkId: 'CHK-0733', confidence: 0.9, round: 1, title: 'Cart state is persisted without a schema version', file: 'src/checkout/cartStorage.ts', lines: [12, 19], anchor: "localStorage.setItem('cart', JSON.stringify(cart))", body: 'Unversioned client storage cannot be migrated; the next cart shape change silently drops every saved cart.', checkWhy: 'Unversioned client storage cannot be migrated (INC-2210).' },
-  { run: 2284, key: 'F2', severity: 'Major', checkId: 'CHK-0618', confidence: 0.77, round: 1, title: 'Storage listener is never removed', file: 'src/checkout/useCart.ts', lines: [40, 46], anchor: "window.addEventListener('storage', onStorage)", body: 'Every mount adds another listener; carts update twice after a remount.' },
+  { run: 2284, key: 'F1', severity: 'Blocker', flags: ['data-loss'], checkId: 'CHK-0733', confidence: 0.9, round: 1, title: 'Cart state is persisted without a schema version', file: 'src/checkout/cartStorage.ts', lines: [12, 19], anchor: "localStorage.setItem('cart', JSON.stringify(cart))", body: 'Unversioned client storage cannot be migrated; the next cart shape change silently drops every saved cart.', checkWhy: 'Unversioned client storage cannot be migrated (INC-2210).', hunk: CART_STORAGE_HUNK },
+  { run: 2284, key: 'F2', severity: 'Major', checkId: 'CHK-0618', confidence: 0.77, round: 1, title: 'Storage listener is never removed', file: 'src/checkout/useCart.ts', lines: [40, 46], anchor: "window.addEventListener('storage', onStorage)", body: 'Every mount adds another listener; carts update twice after a remount.',
+    hunk: hunk(
+      '@@ -38,5 +38,9 @@ export function useCart() {',
+      '   const [cart, setCart] = useState<Cart>(() => restore() ?? emptyCart())',
+      ' ',
+      '+  useEffect(() => {',
+      "+    const onStorage = (e: StorageEvent) => e.key === 'cart' && setCart(restore() ?? emptyCart())",
+      "+    window.addEventListener('storage', onStorage)",
+      '+  }, [])',
+      '   useEffect(() => save(cart), [cart])',
+      ' ',
+      '   return { cart, setCart }',
+    ) },
   { run: 2284, key: 'F3', severity: 'Minor', checkId: null, confidence: 0.68, round: 1, title: 'Cart is restored before prices are refreshed', file: 'src/checkout/useCart.ts', lines: [22, 22], anchor: 'setCart(restore())', body: 'Users briefly see stale prices.' },
-  { run: 2284, key: 'F4', severity: 'Minor', checkId: null, confidence: 0.65, round: 1, title: 'No size limit on the stored cart', file: 'src/checkout/cartStorage.ts', lines: [14, 14], anchor: 'JSON.stringify(cart)', body: 'A large cart can exceed the storage quota and throw.' },
+  { run: 2284, key: 'F4', severity: 'Minor', checkId: null, confidence: 0.65, round: 1, title: 'No size limit on the stored cart', file: 'src/checkout/cartStorage.ts', lines: [13, 13], anchor: 'JSON.stringify(cart)', body: 'A large cart can exceed the storage quota and throw.', hunk: CART_STORAGE_HUNK },
 
   // antiphon#1846 (author unknown)
-  { run: 1846, key: 'F1', severity: 'Major', checkId: 'CHK-0741', confidence: 0.8, round: 1, title: 'Membership sync enqueues jobs inside the DB transaction', file: 'server/Application/Teams/TeamSyncService.cs', lines: [77, 84], anchor: 'BackgroundJob.Enqueue(() => NotifyAsync(team.Id));', body: 'The job can run before the commit is visible and read the old membership.' },
+  { run: 1846, key: 'F1', severity: 'Major', checkId: 'CHK-0741', confidence: 0.8, round: 1, title: 'Membership sync enqueues jobs inside the DB transaction', file: 'server/Application/Teams/TeamSyncService.cs', lines: [77, 84], anchor: 'BackgroundJob.Enqueue(() => NotifyAsync(team.Id));', body: 'The job can run before the commit is visible and read the old membership.',
+    hunk: hunk(
+      '@@ -75,4 +75,6 @@ public async Task SyncTeamAsync(GitHubTeam source, CancellationToken ct)',
+      '         await using var tx = await _db.Database.BeginTransactionAsync(ct);',
+      '         team.ReplaceMembers(source.Members);',
+      '+        await _db.SaveChangesAsync(ct);',
+      '+        BackgroundJob.Enqueue(() => NotifyAsync(team.Id));',
+      '         await tx.CommitAsync(ct);',
+      '     }',
+    ) },
   { run: 1846, key: 'F2', severity: 'Minor', checkId: null, confidence: 0.67, round: 1, title: 'Removed members keep their open queue items', file: 'server/Application/Teams/TeamSyncService.cs', lines: [101, 101], anchor: 'team.Members.Remove(member);', body: 'Their assigned gates are not returned to the team queue.' },
 
   // payments-api#617 (hotfix at gate)
@@ -758,8 +935,23 @@ interface GateSeed {
   assignee: string | null
   openedMinAgo: number
   reasons: string[]
-  passedBy?: string[]
-  decided?: { minAgo: number; decision: GateDecision; steer?: string }
+  passes?: { login: string; reason: string; minAgo: number }[]
+  /** overrides the decisions the gate's workflow node allows */
+  decisions?: GateDecision[]
+  decided?: { minAgo: number; decision: GateDecision; by: string; steer?: string }
+}
+
+const ALL_DECISIONS: GateDecision[] = ['Approve', 'AnotherRound', 'Close']
+const DECISION_BY_PARAM: Record<string, GateDecision> = { approve: 'Approve', 'another-round': 'AnotherRound', close: 'Close' }
+
+/** What a gate may decide: the workflow gate node's `decisions` param, or the kind's fixed set. */
+function allowedDecisionsFor(kind: GateKind): GateDecision[] {
+  if (kind === 'LearnProposal') return ['Approve', 'Close']
+  if (kind === 'DisputedFindings') return ALL_DECISIONS
+  const node = DEFAULT_WORKFLOW.nodes.find((n) => n.id === (kind === 'ReviewGate' ? 'human-review' : 'human-approve'))
+  const params = Array.isArray(node?.params.decisions) ? (node.params.decisions as string[]) : []
+  const mapped = params.map((d) => DECISION_BY_PARAM[d]).filter((d): d is GateDecision => !!d)
+  return mapped.length > 0 ? mapped : ALL_DECISIONS
 }
 
 const GATE_SEEDS: GateSeed[] = [
@@ -768,7 +960,8 @@ const GATE_SEEDS: GateSeed[] = [
     reasons: ['Bot-only rounds 3/3 → human-review gate', 'External contract 5 ≥ 4', 'Reversal after months 4 ≥ 4', 'Category: public-api'],
   },
   {
-    n: 2, run: 609, kind: 'ApprovalGate', status: 'Unassigned', teamKey: 'payments-core', assignee: null, openedMinAgo: 336, passedBy: ['cwei'],
+    n: 2, run: 609, kind: 'ApprovalGate', status: 'Unassigned', teamKey: 'payments-core', assignee: null, openedMinAgo: 336,
+    passes: [{ login: 'cwei', reason: 'Not familiar with this area: never touched settlement', minAgo: 290 }],
     reasons: ['Category: migration', 'Reversal after months 5 ≥ 4', 'Destructive migration, no Down step'],
   },
   {
@@ -785,7 +978,8 @@ const GATE_SEEDS: GateSeed[] = [
   },
   {
     n: 6, run: 617, kind: 'ApprovalGate', status: 'Assigned', teamKey: 'payments-core', assignee: 'asmith', openedMinAgo: 366,
-    reasons: ['Hotfix label → human required', 'Resolved author Hugo Martin is excluded from the pick'],
+    reasons: ['Hotfix label → human required', 'Resolved author Hugo Martin is excluded from the pick', 'Hotfix lane: approve or close only (no extra bot round)'],
+    decisions: ['Approve', 'Close'],
   },
   {
     n: 7, run: 2284, kind: 'ApprovalGate', status: 'Assigned', teamKey: 'web-experience', assignee: 'druiz', openedMinAgo: 118,
@@ -794,11 +988,11 @@ const GATE_SEEDS: GateSeed[] = [
   {
     n: 8, run: 618, kind: 'ApprovalGate', status: 'Done', teamKey: 'payments-core', assignee: 'hmartin', openedMinAgo: 24 * 60 + 174,
     reasons: ['Data 5 · rollback 4 (sticky)'],
-    decided: { minAgo: 24 * 60 - 78, decision: 'AnotherRound', steer: 'Check the refund ledger reconciliation path against the double-entry invariant in src/Ledger/README.md.' },
+    decided: { minAgo: 24 * 60 - 78, decision: 'AnotherRound', by: 'hmartin', steer: 'Check the refund ledger reconciliation path against the double-entry invariant in src/Ledger/README.md.' },
   },
   {
     n: 9, run: 2292, kind: 'ApprovalGate', status: 'Done', teamKey: 'web-experience', assignee: 'druiz', openedMinAgo: 100,
-    reasons: ['Exposure 4 · navigation copy on every page'], decided: { minAgo: 52, decision: 'Approve' },
+    reasons: ['Exposure 4 · navigation copy on every page'], decided: { minAgo: 52, decision: 'Approve', by: 'druiz' },
   },
 ]
 
@@ -822,6 +1016,41 @@ export function runIdFor(n: number): string {
   return seedGuid(ID_KIND.run, n)
 }
 
+const ownerOf = (o: string): CodeOwnerDto => (o.startsWith('@') ? { kind: 'User', name: o.slice(1) } : { kind: 'Team', name: o })
+
+/** What started each iteration when the seed does not say: a push after findings, another round after a gate. */
+function defaultTrigger(prev: IterationOutcome | undefined): ReviewIterationTrigger {
+  if (!prev) return 'opened'
+  if (prev.kind === 'round-limit' || (prev.kind === 'human-approve' && prev.decision === 'AnotherRound')) return 'another-round'
+  return 'push'
+}
+
+/**
+ * One row per iteration; round = position (no seed has an iteration that does not start a round).
+ * Base and head are what the iteration reviewed: null when intake has not pinned them.
+ */
+function iterationsFor(
+  nodes: NodeExecutionDto[],
+  triggers: ReviewIterationTrigger[],
+  heads: (string | null)[],
+  baseSha: string,
+  fallbackStart: string,
+): ReviewIterationDto[] {
+  const numbers = [...new Set(nodes.map((n) => n.iteration))].sort((a, b) => a - b)
+  return numbers.map((iteration, i) => {
+    const starts = nodes.filter((n) => n.iteration === iteration && n.startedAt).map((n) => Date.parse(n.startedAt!))
+    const headSha = heads[i] ?? null
+    return {
+      iteration,
+      round: i + 1,
+      trigger: triggers[i] ?? (i === 0 ? 'opened' : 'push'),
+      startedAt: starts.length ? new Date(Math.min(...starts)).toISOString() : fallbackStart,
+      baseSha: headSha ? baseSha : null,
+      headSha,
+    }
+  })
+}
+
 export function createSeed(now: number): FakeSeed {
   let counter = 1
   const nextId = () => seedGuid(ID_KIND.node, counter++)
@@ -842,16 +1071,18 @@ export function createSeed(now: number): FakeSeed {
       authorLogin: s.author,
       authorDisplayName: personName(s.author),
       authorResolvedBy: s.resolvedBy ?? null,
+      openedByLogin: s.openedBy ?? s.author,
       baseRef: 'main',
       headRef: s.headRef,
       baseSha: sha(`${s.n}:base`),
       headSha: last?.headSha ?? (s.n === 618 ? 'e41b07c' : sha(`${s.n}:head`)),
-      owners: s.owners,
+      owners: s.owners.map(ownerOf),
     }
+    const triggers = s.triggers ?? s.iterations.map((it, i) => it.trigger ?? defaultTrigger(s.iterations[i - 1]?.outcome))
     const nodes = s.nodes
       ? s.nodes(factory)
       : s.iterations.flatMap((it, i) =>
-          synthIteration(factory, { ...it, iteration: i + 1, current: i === s.iterations.length - 1 }, `${s.n}`),
+          synthIteration(factory, { ...it, iteration: i + 1, current: i === s.iterations.length - 1, exit: triggers[i + 1] }, `${s.n}`),
         )
     const gates: ReviewGateDto[] = GATE_SEEDS.filter((g) => g.run === s.n).map((g) => ({
       id: seedGuid(ID_KIND.gate, g.n),
@@ -860,12 +1091,18 @@ export function createSeed(now: number): FakeSeed {
       status: g.status,
       teamKey: g.teamKey,
       assigneeLogin: g.assignee,
+      assigneeDisplayName: g.assignee ? personName(g.assignee) : null,
       openedAt: iso(now, g.openedMinAgo),
       decidedAt: g.decided ? iso(now, g.decided.minAgo) : null,
+      decidedBy: g.decided?.by ?? null,
       decision: g.decided?.decision ?? null,
       steerPrompt: g.decided?.steer ?? null,
       reasons: g.reasons,
-      passedBy: g.passedBy ?? [],
+      allowedDecisions: g.decisions ?? allowedDecisionsFor(g.kind),
+      // computed per viewer by the fake on every read
+      viewerCanDecide: false,
+      viewerCannotDecideReason: null,
+      passes: (g.passes ?? []).map((p) => ({ login: p.login, reason: p.reason, at: iso(now, p.minAgo) })),
     }))
     runs.push({
       id,
@@ -879,12 +1116,21 @@ export function createSeed(now: number): FakeSeed {
       openBlockers: 0,
       models: [],
       costUsd: 0,
+      costActualUsd: 0,
+      costEstimatedUsd: 0,
+      blastRadius: s.blast,
       startedAt: iso(now, s.startedMinAgo),
       updatedAt: iso(now, s.updatedMinAgo),
       waitingOn: s.waitingOn,
-      blastRadius: s.blast,
       categories: s.categories,
-      workflowRevisionId: '5eed0007-0000-4000-8000-000000000001',
+      workflowRevisionId: DEFAULT_WORKFLOW.revisionId,
+      iterations: iterationsFor(
+        nodes,
+        triggers,
+        s.heads ?? s.iterations.map((it) => (it.outcome.kind === 'queued' ? null : it.headSha)),
+        subject.baseSha,
+        iso(now, s.startedMinAgo),
+      ),
       nodes,
       gates,
     })
@@ -929,6 +1175,7 @@ export function createSeed(now: number): FakeSeed {
       title: fs.title,
       body: fs.body ?? '',
       suggestion: fs.suggestion ?? null,
+      hunk: fs.hunk === undefined ? synthHunk(fs) : fs.hunk,
       status: fs.status ?? 'Open',
       roundRaised: fs.round ?? 1,
       posted,

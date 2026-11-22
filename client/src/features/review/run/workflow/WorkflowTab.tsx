@@ -8,26 +8,32 @@ import { getApiErrorMessage } from '../../../../api/client'
 import type { NodeKind, ReviewRunDetailDto, WorkflowGraphDto } from '../../../../api/reviewEngine'
 import { SectionLabel } from '../../components/SectionLabel'
 import { NODE_STATUS_META } from '../../reviewMeta'
-import { useDefaultReviewWorkflow, useValidateWorkflow } from '../../useReview'
+import { shaRange, triggerLabel } from '../../reviewFormat'
+import { useReviewWorkflow, useValidateWorkflow } from '../../useReview'
 import { useReviewUiStore } from '../../useReviewUiStore'
 import { NodeSidePanel, ValidationPanel } from './NodeSidePanel'
-import { backEdgeTaken, execsIn, forwardEdgeTaken, iterationsOf, rollupStatus } from './overlay'
+import { backEdgeTaken, edgeTakenIn, execsIn, groupByItem, iterationInfo, iterationsOf, rollupStatus } from './overlay'
 import { NODE_H, NODE_W, layoutWorkflow, sectionNodeId, type LaidEdge } from './workflowLayout'
 import { LaneEdgeView, SectionNodeView, StepNodeView, type LaneEdge, type SectionNode, type StepNode } from './WorkflowNodes'
 
 const nodeTypes: NodeTypes = { step: StepNodeView, section: SectionNodeView }
 const edgeTypes: EdgeTypes = { lane: LaneEdgeView }
 
-const EDGE_GREY = '#5c5f66'
-const EDGE_TAKEN = '#a6a7ab'
+const EDGE_GREY = '#4a4d53'
+/** the path the run took in the shown iteration */
+const EDGE_TAKEN = '#4dabf7'
 const BACK_COLOR: Partial<Record<NodeKind, string>> = { Wait: '#ffa92e', Gate: '#f06595' }
 
 function edgeColor(e: LaidEdge, graph: WorkflowGraphDto, taken: boolean): string {
+  if (taken) return EDGE_TAKEN
   if (e.isBackEdge) return BACK_COLOR[graph.nodes.find((n) => n.id === e.members[0].from)?.kind ?? 'Code'] ?? '#909296'
-  return taken ? EDGE_TAKEN : EDGE_GREY
+  return EDGE_GREY
 }
 
-/** The run overlaid on its workflow graph: status colours, fan-out counts, iteration badges on back edges. */
+/**
+ * The run overlaid on its workflow graph: status colours, fan-out items by `itemKey`, the edges the
+ * run took (from each execution's `outcome`) highlighted, and iteration counts on back edges.
+ */
 function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: WorkflowGraphDto; now: number }) {
   const iterations = useMemo(() => iterationsOf(run), [run])
   const latest = iterations[iterations.length - 1] ?? 1
@@ -40,15 +46,12 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const validate = useValidateWorkflow()
   const wide = useMediaQuery('(min-width: 1100px)', true)
 
-  // a section starts collapsed when nothing in it has run (the contract has no `collapsed` flag yet)
+  // the workflow's default (`collapsed`) until the viewer toggles a section
   const collapsed = useMemo(() => {
     const set = new Set<string>()
-    for (const s of graph.sections) {
-      const fallback = !run.nodes.some((n) => s.nodeIds.includes(n.nodeId))
-      if (stored?.[s.id] ?? fallback) set.add(s.id)
-    }
+    for (const s of graph.sections) if (stored?.[s.id] ?? s.collapsed) set.add(s.id)
     return set
-  }, [graph.sections, run.nodes, stored])
+  }, [graph.sections, stored])
   const collapseKey = [...collapsed].sort().join(',')
   const layout = useMemo(() => layoutWorkflow(graph, collapsed), [graph, collapsed])
   const execs = useMemo(() => execsIn(run, iteration), [run, iteration])
@@ -88,6 +91,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           def: n.def,
           status: rollupStatus(execs.get(n.id)),
           execs: execs.get(n.id) ?? [],
+          items: groupByItem(execs.get(n.id) ?? []).filter((g) => g.itemKey !== null),
           iterationsRun: new Set(run.nodes.filter((x) => x.nodeId === n.id).map((x) => x.iteration)).size,
           dir: n.dir,
           selected: selectedId === n.id,
@@ -101,7 +105,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const flowEdges = useMemo(() => {
     const out: Edge[] = []
     for (const e of layout.edges) {
-      const taken = e.members.some((m) => forwardEdgeTaken(execs, m))
+      const taken = e.members.some((m) => edgeTakenIn(run, execs, m))
       const color = edgeColor(e, graph, taken)
       const marker = { type: MarkerType.ArrowClosed, color, width: 14, height: 14 }
       const backLabel = e.isBackEdge
@@ -116,7 +120,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           sourceHandle: e.sourceHandle,
           targetHandle: e.targetHandle,
           markerEnd: marker,
-          style: { stroke: color, strokeWidth: 1.4, strokeDasharray: '5 4' },
+          style: { stroke: color, strokeWidth: taken ? 2 : 1.4, strokeDasharray: '5 4' },
           data: { laneX: e.lane.x, dropY: e.lane.dropY, label: backLabel ?? '', color },
         }
         out.push(lane)
@@ -131,9 +135,9 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
         targetHandle: e.targetHandle,
         markerEnd: marker,
         animated: taken && !e.isBackEdge && (execs.get(e.members[0].to) ?? []).some((x) => x.status === 'Running'),
-        style: { stroke: color, strokeWidth: taken || e.isBackEdge ? 1.6 : 1.1, strokeDasharray: e.isBackEdge ? '5 4' : undefined },
+        style: { stroke: color, strokeWidth: taken ? 2.2 : e.isBackEdge ? 1.4 : 1.1, strokeDasharray: e.isBackEdge ? '5 4' : undefined },
         label: backLabel ?? e.label ?? undefined,
-        labelStyle: { fill: e.isBackEdge ? color : '#c1c2c5', fontSize: 10 },
+        labelStyle: { fill: e.isBackEdge || taken ? color : '#909296', fontSize: 10, fontWeight: taken ? 700 : 400 },
         labelBgStyle: { fill: '#1a1b1e' },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
@@ -141,6 +145,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
     }
     return out
   }, [layout, execs, graph, run])
+  const shown = iterationInfo(run, iteration)
 
   const selectedDef = graph.nodes.find((n) => n.id === selectedId)
   const selectedExecs = run.nodes
@@ -185,6 +190,14 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
                 data={iterations.map((i) => ({ value: String(i), label: `it${i}` }))}
               />
             </>
+          )}
+          {shown && (
+            <Text size="xs" c="dimmed">
+              R{shown.round} · {triggerLabel(shown.trigger)} ·{' '}
+              <Text span size="xs" ff="monospace">
+                {shaRange(shown.baseSha, shown.headSha)}
+              </Text>
+            </Text>
           )}
           <Tooltip label="POST /api/review-workflows/validate: the cycle rule and section checks">
             <Button size="compact-xs" variant="light" color="teal" leftSection={<TbShieldCheck size={12} />} loading={validate.isPending} onClick={() => validate.mutate(graph)}>
@@ -241,6 +254,10 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
                   </Group>
                 ))}
                 <Group gap={6}>
+                  <Box w={18} h={3} style={{ background: EDGE_TAKEN, borderRadius: 2 }} />
+                  <Text size="xs">edge taken in this iteration (from each step's outcome)</Text>
+                </Group>
+                <Group gap={6}>
                   <Badge size="xs" variant="outline" color="orange" tt="none">
                     ↺ 1/20
                   </Badge>
@@ -259,11 +276,11 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
 }
 
 /**
- * The Workflow tab. The contract has no GET for a workflow revision yet, so the graph is the
- * default workflow even when the run snapshotted another revision (`workflowRevisionId`).
+ * The Workflow tab: the graph the run snapshotted (`workflowRevisionId`, fetched by revision), or
+ * the default workflow for a run without one.
  */
 export function WorkflowTab({ run, now }: { run: ReviewRunDetailDto; now: number }) {
-  const workflow = useDefaultReviewWorkflow()
+  const workflow = useReviewWorkflow(run.workflowRevisionId)
   if (workflow.isLoading)
     return (
       <Group justify="center" py="xl">
@@ -273,17 +290,8 @@ export function WorkflowTab({ run, now }: { run: ReviewRunDetailDto; now: number
   if (!workflow.data)
     return (
       <Alert color="danger" variant="light" title="Could not load the workflow">
-        {getApiErrorMessage(workflow.error, 'The review API did not return the default workflow.')}
+        {getApiErrorMessage(workflow.error, run.workflowRevisionId ? `The review API did not return workflow revision ${run.workflowRevisionId}.` : 'The review API did not return the default workflow.')}
       </Alert>
     )
-  return (
-    <Stack gap="xs">
-      {run.workflowRevisionId && workflow.data.revisionId && run.workflowRevisionId !== workflow.data.revisionId && (
-        <Alert color="warning" variant="light" p={6}>
-          <Text size="xs">This run started on revision {run.workflowRevisionId}; showing the current default workflow.</Text>
-        </Alert>
-      )}
-      <WorkflowGraph run={run} graph={workflow.data} now={now} />
-    </Stack>
-  )
+  return <WorkflowGraph run={run} graph={workflow.data} now={now} />
 }

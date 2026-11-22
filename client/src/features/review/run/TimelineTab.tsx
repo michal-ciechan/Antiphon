@@ -1,12 +1,12 @@
 import { Badge, Box, Group, Paper, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useMemo, useState } from 'react'
-import type { NodeExecutionDto, ReviewGateDto, ReviewRunDetailDto } from '../../../api/reviewEngine'
+import type { NodeExecutionDto, ReviewGateDto, ReviewIterationTrigger, ReviewRunDetailDto } from '../../../api/reviewEngine'
 import { CostText } from '../components/CostText'
 import { ModelBadge } from '../components/ReviewBadges'
 import { SectionLabel } from '../components/SectionLabel'
 import { NODE_STATUS_META, modelColor } from '../reviewMeta'
-import { costSplit, fmtDuration, fmtTokens } from '../reviewFormat'
-import { iterationsOf } from './workflow/overlay'
+import { costSplit, fmtDuration, fmtTokens, shaRange, triggerLabel, type CostSplit } from '../reviewFormat'
+import { iterationInfo, iterationsOf } from './workflow/overlay'
 
 const LABEL_W = 150
 const LANE_H = 18
@@ -14,6 +14,11 @@ const PARK_KINDS = new Set(['Wait', 'Gate'])
 
 interface Track {
   iteration: number
+  /** from `iterations[]`; null when the server sent no row for an iteration that has executions */
+  round: number | null
+  trigger: ReviewIterationTrigger | null
+  baseSha: string | null
+  headSha: string | null
   start: number
   bars: { exec: NodeExecutionDto; start: number; end: number; lane: number }[]
   parks: NodeExecutionDto[]
@@ -21,19 +26,29 @@ interface Track {
   during: NodeExecutionDto[]
   gates: ReviewGateDto[]
   cost: number
-  split: { actual: number; estimate: number }
+  split: CostSplit
   computeMin: number
   route: string | null
 }
 
+/** When an iteration started: its `iterations[]` row, or its earliest execution. */
+function iterationStart(run: ReviewRunDetailDto, iteration: number, now: number): number {
+  const info = iterationInfo(run, iteration)
+  const execStarts = run.nodes.filter((n) => n.iteration === iteration && n.startedAt).map((n) => Date.parse(n.startedAt!))
+  // never later than its first execution, so no bar starts before zero
+  return Math.min(info ? Date.parse(info.startedAt) : now, ...execStarts)
+}
+
+/** One track per iteration, from the run's `iterations[]` (round, trigger, start, base..head). */
 function buildTracks(run: ReviewRunDetailDto, now: number): Track[] {
   const iterations = iterationsOf(run)
   return iterations.map((iteration, i) => {
+    const info = iterationInfo(run, iteration)
     const execs = run.nodes.filter((n) => n.iteration === iteration)
     const timed = execs.filter((e) => e.startedAt)
-    const start = Math.min(...timed.map((e) => Date.parse(e.startedAt!)), now)
+    const start = iterationStart(run, iteration, now)
     const next = iterations[i + 1]
-    const nextStart = next === undefined ? Infinity : Math.min(...run.nodes.filter((n) => n.iteration === next && n.startedAt).map((n) => Date.parse(n.startedAt!)))
+    const nextStart = next === undefined ? Infinity : iterationStart(run, next, now)
     const parks = execs.filter((e) => PARK_KINDS.has(e.kind))
     const parkStart = Math.min(...parks.filter((p) => p.startedAt).map((p) => Date.parse(p.startedAt!)), Infinity)
     const duringPark = (e: NodeExecutionDto) => !PARK_KINDS.has(e.kind) && Date.parse(e.startedAt!) > parkStart
@@ -48,6 +63,10 @@ function buildTracks(run: ReviewRunDetailDto, now: number): Track[] {
     const gates = run.gates.filter((g) => g.decidedAt && Date.parse(g.decidedAt) >= start && Date.parse(g.decidedAt) < nextStart)
     return {
       iteration,
+      round: info?.round ?? null,
+      trigger: info?.trigger ?? null,
+      baseSha: info?.baseSha ?? null,
+      headSha: info?.headSha ?? null,
       start,
       bars,
       parks,
@@ -61,12 +80,20 @@ function buildTracks(run: ReviewRunDetailDto, now: number): Track[] {
   })
 }
 
+function decider(g: ReviewGateDto): string {
+  if (!g.decidedBy) return 'someone'
+  return g.decidedBy === g.assigneeLogin && g.assigneeDisplayName ? g.assigneeDisplayName : `@${g.decidedBy}`
+}
+
 function parkText(p: NodeExecutionDto, now: number): string {
   const how = p.status === 'Waiting' ? `parked ${fmtDuration(p.startedAt, null, now)} so far` : `parked ${fmtDuration(p.startedAt, p.completedAt, now)}`
   return `${how} on ${p.nodeId}${p.summary ? ` → ${p.summary}` : ''}`
 }
 
-/** Iterations and rounds: compute bars on one minute scale (parks compressed into pills), gate decisions, cost. */
+/**
+ * Iterations and rounds from `iterations[]` (round, trigger, start, the base..head reviewed): compute
+ * bars on one minute scale (parks compressed into pills), gate decisions, cost.
+ */
 export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number }) {
   const tracks = useMemo(() => buildTracks(run, now), [run, now])
   const [selected, setSelected] = useState<string | null>(null)
@@ -96,12 +123,25 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                   radius="sm"
                   style={{ flex: 1, border: `1px solid ${last ? '#3b7bf5' : 'var(--mantine-color-dark-4)'}`, background: last ? 'rgba(59,123,245,0.10)' : undefined }}
                 >
-                  <Text size="xs" fw={700}>
-                    it{t.iteration}{' '}
-                    <Text span size="xs" c="dimmed" fw={400}>
+                  <Group gap={6} wrap="wrap">
+                    <Text size="xs" fw={700}>
+                      it{t.iteration}
+                      {t.round !== null && ` · R${t.round}`}
+                    </Text>
+                    {t.trigger && (
+                      <Badge size="xs" variant="light" color={t.trigger === 'recheck' ? 'orange' : t.trigger === 'another-round' ? 'pink' : 'gray'} tt="none">
+                        {triggerLabel(t.trigger)}
+                      </Badge>
+                    )}
+                    <Text span size="xs" c="dimmed">
                       {new Date(t.start).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
                     </Text>
-                  </Text>
+                  </Group>
+                  <Tooltip label={t.headSha ? `Reviewed ${t.baseSha ?? '?'}..${t.headSha}` : 'Intake has not pinned the SHAs yet'}>
+                    <Text size="xs" ff="monospace" c="dimmed" w="fit-content">
+                      {shaRange(t.baseSha, t.headSha)}
+                    </Text>
+                  </Tooltip>
                   <Text size="xs" c="dimmed">
                     {t.computeMin.toFixed(1)} min compute · {t.route ? `route: ${t.route}` : last && run.status === 'Running' ? 'running' : 'no route yet'}
                   </Text>
@@ -120,7 +160,7 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                     ))}
                     {t.gates.map((g) => (
                       <Text key={g.id} size="10px" ta="center" c="dimmed">
-                        @{g.assigneeLogin ?? '?'} → {g.decision === 'AnotherRound' ? 'another round' : g.decision?.toLowerCase()}
+                        {decider(g)} → {g.decision === 'AnotherRound' ? 'another round' : g.decision?.toLowerCase()}
                         {g.steerPrompt ? ` · steer: "${g.steerPrompt}"` : ''}
                       </Text>
                     ))}
@@ -131,7 +171,7 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
           })}
         </Group>
         <Text size="xs" c="dimmed" mt={6}>
-          Round {run.round} now · bot-only rounds {run.botOnlyRounds}. The contract does not map iterations to rounds yet; a gate's "another round" and a push each start one.
+          Round {run.round} now · bot-only rounds {run.botOnlyRounds}. Each iteration shows its round, what started it, and the base..head it reviewed; a push or another round starts a new round, a recheck repeats the round on the same head.
         </Text>
       </Paper>
 
@@ -152,6 +192,12 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                 <Box pos="absolute" left={0} top={4} w={LABEL_W - 10}>
                   <Text size="xs" fw={700}>
                     it{t.iteration}
+                    {t.round !== null && (
+                      <Text span size="xs" c="dimmed" fw={400}>
+                        {' '}
+                        R{t.round}
+                      </Text>
+                    )}
                   </Text>
                   <CostText usd={t.cost} split={t.split} />
                 </Box>
@@ -159,14 +205,14 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                   const e = b.exec
                   const w = Math.max(6, (b.end - b.start) * scale)
                   const color = e.model ? `var(--mantine-color-${modelColor(e.model)}-7)` : 'var(--mantine-color-gray-7)'
-                  const label = e.kind === 'Agent' ? (e.summary?.split(':')[0] ?? e.nodeId) : e.nodeId
+                  const label = e.itemKey ?? e.nodeId
                   return (
                     <Tooltip
                       key={e.id}
                       withArrow
                       multiline
                       w={300}
-                      label={`${e.nodeId} · ${NODE_STATUS_META[e.status].label} · ${fmtDuration(e.startedAt, e.completedAt, now)}${e.model ? ` · ${e.model}` : ''}${e.summary ? `\n${e.summary}` : ''}`}
+                      label={`${e.nodeId}${e.itemKey ? ` (${e.itemKey})` : ''} · ${NODE_STATUS_META[e.status].label} · ${fmtDuration(e.startedAt, e.completedAt, now)}${e.model ? ` · ${e.model}` : ''}${e.summary ? `\n${e.summary}` : ''}`}
                     >
                       <UnstyledButton
                         onClick={() => setSelected(e.id)}
@@ -220,7 +266,7 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                 {fmtTokens(sel.inputTokens)} in · {fmtTokens(sel.outputTokens)} out
               </Text>
             )}
-            <CostText usd={sel.costUsd} />
+            <CostText usd={sel.costUsd} split={costSplit([sel])} />
             <Text size="xs" c="dimmed">
               {sel.summary}
             </Text>

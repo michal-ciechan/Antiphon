@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Code, Group, Modal, Stack, Table, Text, Textarea 
 import { useState, type ReactNode } from 'react'
 import { TbInfoCircle } from 'react-icons/tb'
 import type { DismissScope, ReasonCategory, ReviewFindingDto, ReviewSubjectDto } from '../../../../api/reviewEngine'
+import { OwnerChips } from '../../components/OwnerChips'
 import { REASON_META } from '../../reviewMeta'
 import { ruleFor } from './drafts'
 
@@ -56,6 +57,7 @@ export function WideScopeModal({
             <Row k="Target" v={rule.target} />
             <Row k="Rule" v={`${rule.kind} · reason: ${REASON_META[reason].label.toLowerCase()}`} />
             <Row k="File it changes" v={<Code fz={11}>{rule.file}</Code>} />
+            <Row k="Code owners" v={<OwnerChips owners={subject.owners} />} />
             {scope === 'Path' && <Row k="Paths" v={<Code fz={11}>{rule.dir}</Code>} />}
             {team && (
               <Row

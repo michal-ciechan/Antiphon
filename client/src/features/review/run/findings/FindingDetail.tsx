@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { TbChevronDown, TbChevronRight, TbCloudOff, TbExternalLink, TbFileCode, TbRefresh } from 'react-icons/tb'
 import type { FindingEventDto, ReviewFindingDto, ReviewSubjectDto } from '../../../../api/reviewEngine'
 import { RenderedMarkdown } from '../../../../shared/RenderedMarkdown'
+import { DiffHunk } from '../../components/DiffHunk'
 import { PersonChip } from '../../components/PersonChip'
 import { FindingStatusBadge, FlagBadges, SeverityBadge, SyncBadge } from '../../components/ReviewBadges'
 import { ACTION_META, REASON_META, SCOPE_META } from '../../reviewMeta'
@@ -74,7 +75,10 @@ function WhyCheck({ f }: { f: ReviewFindingDto }) {
   )
 }
 
-/** The middle pane: the finding, its anchor and suggestion, the check's @humans text, the thread and the composer. */
+/**
+ * The middle pane: the finding, its diff hunk at the reviewed head (or the bare anchor when the
+ * anchor is in unchanged code), the suggestion, the check's @humans text, the thread and the composer.
+ */
 export function FindingDetail({
   finding: f,
   subject,
@@ -150,11 +154,15 @@ export function FindingDetail({
         </Alert>
       )}
 
-      {f.anchor && (
-        <Code block fz={12}>
-          {f.lineStart !== null ? `${f.lineStart}  ` : ''}
-          {f.anchor}
-        </Code>
+      {f.hunk ? (
+        <DiffHunk hunk={f.hunk} highlight={{ start: f.lineStart, end: f.lineEnd }} />
+      ) : (
+        f.anchor && (
+          <Code block fz={12}>
+            {f.lineStart !== null ? `${f.lineStart}  ` : ''}
+            {f.anchor}
+          </Code>
+        )
       )}
       <Box fz="sm">
         <RenderedMarkdown>{f.body}</RenderedMarkdown>

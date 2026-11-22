@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import { FAKE_DEFAULT_VIEWER_LOGIN, useFakeViewerStore } from './fake/fakeViewer'
 import { runIdFor } from './fake/seed'
 import { fakeReviewApi } from './reviewApi'
 import { ReviewStoryShell } from './ReviewStoryShell'
 import { useReviewUiStore } from './useReviewUiStore'
-import { DEFAULT_REVIEW_VIEWER, FAKE_VIEWERS, useReviewViewerStore } from './useReviewViewerStore'
 
 /** The real /reviews/:runId page against the in-memory fake API. Use the banner's "Viewing as" to switch people. */
 const meta: Meta = {
@@ -11,7 +11,7 @@ const meta: Meta = {
   parameters: { layout: 'fullscreen' },
   beforeEach: () => {
     fakeReviewApi.reset()
-    useReviewViewerStore.setState({ viewer: DEFAULT_REVIEW_VIEWER })
+    useFakeViewerStore.setState({ login: FAKE_DEFAULT_VIEWER_LOGIN })
     useReviewUiStore.setState({ sectionCollapse: {} })
   },
 }
@@ -21,7 +21,7 @@ type Story = StoryObj
 
 const run = (n: number, tab?: string) => `/reviews/${runIdFor(n)}${tab ? `?tab=${tab}` : ''}`
 const asHugo = () => {
-  useReviewViewerStore.setState({ viewer: FAKE_VIEWERS.find((v) => v.login === 'hmartin')! })
+  useFakeViewerStore.setState({ login: 'hmartin' })
 }
 
 /** payments-api#612 at the human-review gate, seen by its author: replies allowed, gate decision disabled. */
@@ -33,10 +33,13 @@ export const FindingsAsGateReviewer: Story = { beforeEach: asHugo, render: () =>
 /** payments-api#618 mid fan-out (iteration 3, reviewers 3/4) on the workflow graph. */
 export const WorkflowLive: Story = { render: () => <ReviewStoryShell initialPath={run(618, 'workflow')} /> }
 
-/** A failed run (a reviewer lost its seat) on the workflow graph. */
+/** A failed run (a reviewer lost its seat) on the workflow graph; the header shows the failed step's summary. Refresh rechecks it. */
 export const WorkflowFailed: Story = { render: () => <ReviewStoryShell initialPath={run(1851, 'workflow')} /> }
 
-/** payments-api#618's three iterations: compute on one scale, parks and the gate's steer. */
+/** payments-api#617, the hotfix gate: approve or close only (`allowedDecisions`), opened by a service account. */
+export const HotfixGateAsAssignee: Story = { render: () => <ReviewStoryShell initialPath={run(617)} /> }
+
+/** payments-api#618's three iterations from `iterations[]`: round, trigger, base..head, compute on one scale, parks and the gate's steer. */
 export const Timeline: Story = { render: () => <ReviewStoryShell initialPath={run(618, 'timeline')} /> }
 
 /** An unknown run id: the 404 state. */

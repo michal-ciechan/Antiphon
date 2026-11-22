@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import { FAKE_DEFAULT_VIEWER_LOGIN, useFakeViewerStore } from './fake/fakeViewer'
 import { fakeReviewApi } from './reviewApi'
 import { ReviewStoryShell } from './ReviewStoryShell'
 import { useReviewUiStore } from './useReviewUiStore'
-import { DEFAULT_REVIEW_VIEWER, useReviewViewerStore } from './useReviewViewerStore'
 
 /** The real /review-queue page against the in-memory fake API. */
 const meta: Meta = {
@@ -10,7 +10,7 @@ const meta: Meta = {
   parameters: { layout: 'fullscreen' },
   beforeEach: () => {
     fakeReviewApi.reset()
-    useReviewViewerStore.setState({ viewer: DEFAULT_REVIEW_VIEWER })
+    useFakeViewerStore.setState({ login: FAKE_DEFAULT_VIEWER_LOGIN })
     useReviewUiStore.setState({ queueScope: 'Mine' })
   },
 }

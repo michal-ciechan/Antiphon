@@ -4,17 +4,19 @@ import { useMemo, useState } from 'react'
 import { TbArrowsShuffle } from 'react-icons/tb'
 import { Link, useNavigate } from 'react-router'
 import { getApiErrorMessage } from '../../api/client'
-import type { GateKind, QueueItemDto, QueueScope } from '../../api/reviewEngine'
+import type { GateKind, QueueItemDto, QueueScope, ReviewViewerDto } from '../../api/reviewEngine'
 import { FakeApiBanner } from './components/FakeApiBanner'
+import { GatePasses } from './components/GatePasses'
+import { OwnerChips } from './components/OwnerChips'
 import { PersonChip } from './components/PersonChip'
 import { GateKindBadge, QueueStatusBadge } from './components/ReviewBadges'
 import { NotMeButton } from './queue/NotMeButton'
 import { useReviewLiveUpdates } from './reviewApi'
 import { GATE_KIND_META, SLA_META } from './reviewMeta'
-import { fmtWorkingMinutes, prRef } from './reviewFormat'
-import { useAssignGate, usePassGate, useReviewQueue } from './useReview'
+import { fmtWorkingMinutes, personLabel, prRef, slaPressure } from './reviewFormat'
+import { useNow } from './useNow'
+import { useAssignGate, usePassGate, useReviewMe, useReviewQueue } from './useReview'
 import { useReviewUiStore } from './useReviewUiStore'
-import { useReviewViewerStore, type ReviewViewer } from './useReviewViewerStore'
 
 const SCOPES: { value: QueueScope; label: string }[] = [
   { value: 'Mine', label: 'Mine' },
@@ -22,22 +24,33 @@ const SCOPES: { value: QueueScope; label: string }[] = [
   { value: 'All', label: 'All' },
 ]
 
+/** Age against the team's SLA, both in working time: the colour comes from `ageWorkingMinutes / slaWorkingMinutes`. */
 function SlaCell({ item }: { item: QueueItemDto }) {
-  const m = SLA_META[item.slaState]
+  const { ratio, state } = slaPressure(item.ageWorkingMinutes, item.slaWorkingMinutes, item.slaState)
+  const m = SLA_META[state]
+  const of = item.slaWorkingMinutes > 0 ? ` of ${fmtWorkingMinutes(item.slaWorkingMinutes)} SLA (${Math.round((ratio ?? 0) * 100)}%)` : ''
   return (
-    <Tooltip label={`${fmtWorkingMinutes(item.ageWorkingMinutes)} in working time · ${m.label}. Weekends and out-of-hours don't count.`}>
-      <Group gap={6} wrap="nowrap">
-        <Box w={8} h={8} style={{ borderRadius: 4, background: `var(--mantine-color-${m.color}-6)` }} />
-        <Text size="xs" ff="monospace" c={item.slaState === 'Ok' ? 'dimmed' : `${m.color}.4`} style={{ whiteSpace: 'nowrap' }}>
-          {fmtWorkingMinutes(item.ageWorkingMinutes)}
-          {item.slaState === 'Breached' ? ' · breached' : item.slaState === 'Warn' ? ' · near' : ''}
-        </Text>
-      </Group>
+    <Tooltip label={`${fmtWorkingMinutes(item.ageWorkingMinutes)} in working time${of} · ${m.label}. Weekends and out-of-hours don't count.`}>
+      <Box>
+        <Group gap={6} wrap="nowrap">
+          <Box w={8} h={8} style={{ borderRadius: 4, background: `var(--mantine-color-${m.color}-6)` }} />
+          <Text size="xs" ff="monospace" c={state === 'Ok' ? 'dimmed' : `${m.color}.4`} style={{ whiteSpace: 'nowrap' }}>
+            {fmtWorkingMinutes(item.ageWorkingMinutes)}
+            {item.slaWorkingMinutes > 0 && ` / ${fmtWorkingMinutes(item.slaWorkingMinutes)}`}
+            {state === 'Breached' ? ' · breached' : state === 'Warn' ? ' · near' : ''}
+          </Text>
+        </Group>
+        {ratio !== null && (
+          <Box mt={3} h={3} w={96} style={{ borderRadius: 2, background: 'var(--mantine-color-dark-4)', overflow: 'hidden' }}>
+            <Box h="100%" w={`${Math.min(100, ratio * 100)}%`} style={{ background: `var(--mantine-color-${m.color}-6)` }} />
+          </Box>
+        )}
+      </Box>
     </Tooltip>
   )
 }
 
-function QueueRow({ item, viewer }: { item: QueueItemDto; viewer: ReviewViewer }) {
+function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewViewerDto; now: number }) {
   const navigate = useNavigate()
   const assign = useAssignGate()
   const pass = usePassGate()
@@ -70,32 +83,30 @@ function QueueRow({ item, viewer }: { item: QueueItemDto; viewer: ReviewViewer }
             </Tooltip>
           )}
         </Group>
-        {gate.passedBy.length > 0 && (
-          <Text size="xs" c="warning.4" truncate>
-            Passed by {gate.passedBy.map((p) => `@${p}`).join(', ')}
-          </Text>
-        )}
+        <GatePasses passes={gate.passes} now={now} note={false} />
       </Table.Td>
       <Table.Td>
         <Text size="xs" fw={600}>
           {gate.teamKey ?? '—'}
         </Text>
-        <Text size="xs" c="dimmed" truncate>
-          {run.subject.owners.join(', ')}
-        </Text>
+        <OwnerChips owners={run.subject.owners} max={3} />
       </Table.Td>
       <Table.Td>
         <PersonChip login={run.subject.authorLogin} displayName={run.subject.authorDisplayName} size="xs" />
-        {run.subject.authorResolvedBy && (
-          <Tooltip multiline w={300} label={run.subject.authorResolvedBy}>
+        {(run.subject.authorResolvedBy || run.subject.openedByLogin !== run.subject.authorLogin) && (
+          <Tooltip
+            multiline
+            w={300}
+            label={`${run.subject.openedByLogin !== run.subject.authorLogin ? `Opened by @${run.subject.openedByLogin}. ` : ''}Author resolved via ${run.subject.authorResolvedBy ?? 'an unknown rule'}.`}
+          >
             <Text size="10px" c="grape.4">
-              resolved author
+              {run.subject.openedByLogin !== run.subject.authorLogin ? `opened by @${run.subject.openedByLogin}` : 'resolved author'}
             </Text>
           </Tooltip>
         )}
       </Table.Td>
       <Table.Td>
-        <PersonChip login={gate.assigneeLogin} displayName={mine ? viewer.displayName : null} size="xs" />
+        <PersonChip login={gate.assigneeLogin} displayName={gate.assigneeDisplayName} size="xs" />
         <QueueStatusBadge status={gate.status} />
       </Table.Td>
       <Table.Td>
@@ -124,7 +135,7 @@ function QueueRow({ item, viewer }: { item: QueueItemDto; viewer: ReviewViewer }
           <NotMeButton
             teamKey={gate.teamKey}
             disabled={!notMeAllowed}
-            disabledReason={gate.assigneeLogin ? `Assigned to @${gate.assigneeLogin}` : 'Not in your team'}
+            disabledReason={gate.assigneeLogin ? `Assigned to ${personLabel(gate.assigneeLogin, gate.assigneeDisplayName)}` : 'Not in your team'}
             loading={pass.isPending}
             onConfirm={(reason) =>
               pass.mutate(
@@ -149,8 +160,8 @@ function QueueRow({ item, viewer }: { item: QueueItemDto; viewer: ReviewViewer }
                     onSuccess: (g) =>
                       notifications.show({
                         color: 'active',
-                        title: `Assigned to @${g.assigneeLogin}`,
-                        message: `Random from ${g.teamKey ?? 'the team'}; excluded the author${g.passedBy.length ? ` and ${g.passedBy.map((p) => `@${p}`).join(', ')}` : ''}.`,
+                        title: `Assigned to ${personLabel(g.assigneeLogin, g.assigneeDisplayName)}`,
+                        message: `Random from ${g.teamKey ?? 'the team'}; excluded the author${g.passes.length ? ` and ${[...new Set(g.passes.map((p) => `@${p.login}`))].join(', ')}` : ''}.`,
                       }),
                     onError: fail('No one to assign'),
                   },
@@ -166,10 +177,8 @@ function QueueRow({ item, viewer }: { item: QueueItemDto; viewer: ReviewViewer }
   )
 }
 
-/** /review-queue — gates waiting on people: Mine / My teams / All, sorted by SLA pressure. */
-export function ReviewQueuePage() {
-  useReviewLiveUpdates()
-  const viewer = useReviewViewerStore((s) => s.viewer)
+function QueueBody({ viewer }: { viewer: ReviewViewerDto }) {
+  const now = useNow()
   const scope = useReviewUiStore((s) => s.queueScope)
   const setScope = useReviewUiStore((s) => s.setQueueScope)
   const [kinds, setKinds] = useState<string[]>([])
@@ -181,15 +190,14 @@ export function ReviewQueuePage() {
   const rows = useMemo(() => (current.data?.items ?? []).filter((i) => kinds.length === 0 || kinds.includes(i.gate.kind)), [current.data, kinds])
 
   return (
-    <Stack gap="sm" p="md">
-      <FakeApiBanner />
+    <>
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Box>
           <Text fw={700} size="lg">
             Review queue
           </Text>
           <Text size="xs" c="dimmed">
-            {viewer.displayName} · {viewer.teams.join(', ')} · ages in working time · sorted by SLA pressure
+            {personLabel(viewer.login, viewer.displayName)} · {viewer.teams.length ? viewer.teams.join(', ') : 'no teams'} · ages in working time · sorted by SLA pressure
           </Text>
         </Box>
         <Chip.Group multiple value={kinds} onChange={setKinds}>
@@ -241,7 +249,7 @@ export function ReviewQueuePage() {
                 </Table.Tr>
               )}
               {rows.map((item) => (
-                <QueueRow key={item.gate.id} item={item} viewer={viewer} />
+                <QueueRow key={item.gate.id} item={item} viewer={viewer} now={now} />
               ))}
               {!current.isLoading && rows.length === 0 && (
                 <Table.Tr>
@@ -260,6 +268,28 @@ export function ReviewQueuePage() {
         "Mine" is what is assigned to you plus unassigned items from your teams that you haven't passed. "Take" is disabled on your own PRs. Passes and
         reassignments count as passes in stats, not as decisions.
       </Text>
+    </>
+  )
+}
+
+/** /review-queue — gates waiting on people: Mine / My teams / All, sorted by SLA pressure, for the `GET /api/review-me` viewer. */
+export function ReviewQueuePage() {
+  useReviewLiveUpdates()
+  const me = useReviewMe()
+  return (
+    <Stack gap="sm" p="md">
+      <FakeApiBanner />
+      {me.isLoading ? (
+        <Group justify="center" py="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : me.data ? (
+        <QueueBody viewer={me.data} />
+      ) : (
+        <Alert color="danger" variant="light" title="Could not tell who you are">
+          {getApiErrorMessage(me.error, 'GET /api/review-me did not answer, so the queue cannot be scoped to you.')}
+        </Alert>
+      )}
     </Stack>
   )
 }

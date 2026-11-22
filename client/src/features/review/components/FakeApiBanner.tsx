@@ -1,16 +1,19 @@
 import { Alert, Button, Group, Select, Text } from '@mantine/core'
+import { useQueryClient } from '@tanstack/react-query'
 import { TbFlask } from 'react-icons/tb'
 import { setReviewApiOverride } from '../../../api/reviewEngine'
-import { REVIEW_API_MODE, fakeReviewApi } from '../reviewApi'
-import { FAKE_VIEWERS, useReviewViewerStore } from '../useReviewViewerStore'
+import { FAKE_VIEWERS, useFakeViewerStore } from '../fake/fakeViewer'
+import { REVIEW_API_MODE, fakeReviewApi, switchFakeViewer } from '../reviewApi'
 
 /**
  * Shown only while the review pages run on the in-memory fake: says so, lets the operator act as
- * another person (author vs reviewer views), reset the data, or switch to the HTTP API.
+ * another person (author vs reviewer views), reset the data, or switch to the HTTP API. "Viewing
+ * as" drives the fake's viewer (`fakeViewer.ts`); the pages then read it back from
+ * `GET /api/review-me` like they do in HTTP mode, so every viewer-dependent query is refetched.
  */
 export function FakeApiBanner() {
-  const viewer = useReviewViewerStore((s) => s.viewer)
-  const setViewer = useReviewViewerStore((s) => s.setViewer)
+  const queryClient = useQueryClient()
+  const login = useFakeViewerStore((s) => s.login)
   if (REVIEW_API_MODE !== 'fake') return null
   return (
     <Alert color="grape" variant="light" p={6} icon={<TbFlask size={16} />}>
@@ -28,11 +31,10 @@ export function FakeApiBanner() {
             w={150}
             aria-label="Viewing as"
             data={FAKE_VIEWERS.map((v) => ({ value: v.login, label: v.displayName }))}
-            value={viewer.login}
+            value={login}
             allowDeselect={false}
-            onChange={(login) => {
-              const next = FAKE_VIEWERS.find((v) => v.login === login)
-              if (next) setViewer(next)
+            onChange={(next) => {
+              if (next && next !== login) switchFakeViewer(queryClient, next)
             }}
           />
           <Button size="compact-xs" variant="subtle" color="grape" onClick={() => fakeReviewApi.reset()}>

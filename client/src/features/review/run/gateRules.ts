@@ -1,19 +1,27 @@
 import type { GateDecision, GateKind, ReviewGateDto, ReviewRunDetailDto } from '../../../api/reviewEngine'
-import { RUN_STATUS_META } from '../reviewMeta'
-import { prRef } from '../reviewFormat'
-import type { ReviewViewer } from '../useReviewViewerStore'
 
 /**
- * Why the viewer cannot decide this gate, or null when they can. A UI hint only: the server is
- * the authority (design §11.10). Trust thresholds are not in this slice, so they are not checked.
+ * Why the viewer cannot decide this gate, or null when they can. The server computes it for the
+ * current viewer (`viewerCanDecide` and `viewerCannotDecideReason`, contract v0.1) and refuses a
+ * decision with the same reason, so the client never works it out itself.
  */
-export function gateBlockReason(run: ReviewRunDetailDto, gate: ReviewGateDto, viewer: ReviewViewer): string | null {
-  if (viewer.login === run.subject.authorLogin)
-    return `You're the author of ${prRef(run.subject)}: authors can't decide their own gate. Your replies still count as human involvement.`
-  if (gate.kind !== 'DisputedFindings' && run.status !== 'AtGate')
-    return `Pre-assigned while the run is ${RUN_STATUS_META[run.status].label.toLowerCase()}: the decision opens when the run reaches the gate.`
-  if (gate.assigneeLogin && gate.assigneeLogin !== viewer.login) return `Assigned to @${gate.assigneeLogin}. Take it from the queue to decide it.`
-  return null
+export function viewerBlockReason(gate: ReviewGateDto): string | null {
+  if (gate.viewerCanDecide) return null
+  return gate.viewerCannotDecideReason ?? "You can't decide this gate."
+}
+
+const DECISION_ORDER: GateDecision[] = ['Approve', 'AnotherRound', 'Close']
+
+/** The decisions this gate offers (`allowedDecisions`), in display order. */
+export function gateDecisions(gate: ReviewGateDto): GateDecision[] {
+  return DECISION_ORDER.filter((d) => gate.allowedDecisions.includes(d))
+}
+
+/** The most recently decided gate, for "last decision" when none is open. */
+export function lastDecidedGate(run: ReviewRunDetailDto): ReviewGateDto | undefined {
+  return run.gates
+    .filter((g) => g.status === 'Done' && g.decidedAt)
+    .sort((a, b) => Date.parse(b.decidedAt!) - Date.parse(a.decidedAt!))[0]
 }
 
 export function openGate(run: ReviewRunDetailDto): ReviewGateDto | undefined {

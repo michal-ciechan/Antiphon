@@ -1,7 +1,7 @@
 import { apiGet, apiPost } from './client'
 
 /**
- * Review engine API (docs/features/012-review-engine/api.md, contract v0). Types mirror the
+ * Review engine API (docs/features/012-review-engine/api.md, contract v0.2). Types mirror the
  * contract exactly; enums are the server's PascalCase strings. The client builds against the
  * `ReviewApi` seam so the in-memory fake (features/review/fake) and the HTTP implementation below
  * are interchangeable. Selection lives in `reviewApiMode()`; the hooks are in features/review.
@@ -57,6 +57,16 @@ export type Transport = 'Http' | 'Seat' | 'OneShot'
 export type WaitingOn = 'Author' | 'Humans' | 'Bot'
 export type SlaState = 'Ok' | 'Warn' | 'Breached'
 export type QueueScope = 'Mine' | 'Teams' | 'All'
+export type CodeOwnerKind = 'Team' | 'User'
+export type DiagnosticSeverity = 'Error' | 'Warning'
+/**
+ * What started an iteration. Open-ended on the wire; these are the values the engine emits today:
+ * `manual` is a manual intake, `push` a Refresh (or webhook) that saw a new head, `recheck` a
+ * Refresh of a failed run with the same head.
+ */
+export type ReviewIterationTrigger = 'opened' | 'manual' | 'push' | 'recheck' | 'another-round' | 'base-moved' | (string & {})
+/** Problem Details `code` on a 503 from intake or Refresh when the code host fails (contract v0.2). */
+export type ReviewCodeHostErrorCode = 'review_code_host_rejected' | 'review_code_host_rate_limited' | 'review_code_host_unavailable' | 'review_code_host_too_large'
 
 // ---------------------------------------------------------------- DTOs
 
@@ -72,12 +82,19 @@ export interface ReviewSubjectDto {
   authorDisplayName: string | null
   /** e.g. 'Co-authored-by' when the PR author was a service account */
   authorResolvedBy: string | null
+  /** the account that opened the PR; differs from authorLogin when the author was resolved */
+  openedByLogin: string
   baseRef: string
   headRef: string
   baseSha: string
   headSha: string
-  /** code-owner teams/users of the changed paths */
-  owners: string[]
+  /** code owners of the changed paths */
+  owners: CodeOwnerDto[]
+}
+
+export interface CodeOwnerDto {
+  kind: CodeOwnerKind
+  name: string
 }
 
 /** 1-5 each. The whole object is null while the run is not categorised. */
@@ -102,7 +119,13 @@ export interface ReviewRunSummaryDto {
   openBlockers: number
   /** distinct resolved models used, e.g. 'jev-1.14.0', 'gpt-5.6-luna' */
   models: string[]
+  /** actual + estimated */
   costUsd: number
+  /** metered API calls */
+  costActualUsd: number
+  /** seat API-equivalent (not billed) */
+  costEstimatedUsd: number
+  blastRadius: BlastRadiusDto | null
   startedAt: string
   updatedAt: string
   waitingOn: WaitingOn | null
@@ -114,6 +137,10 @@ export interface NodeExecutionDto {
   iteration: number
   kind: NodeKind
   status: NodeStatus
+  /** fan-out item, e.g. the reviewer group 'security' */
+  itemKey: string | null
+  /** the outgoing edge label taken, e.g. 'moved', 'clean' */
+  outcome: string | null
   provider: string | null
   model: string | null
   transport: Transport | null
@@ -125,6 +152,12 @@ export interface NodeExecutionDto {
   summary: string | null
 }
 
+export interface GatePassDto {
+  login: string
+  reason: string
+  at: string
+}
+
 export interface ReviewGateDto {
   id: string
   runId: string
@@ -132,19 +165,37 @@ export interface ReviewGateDto {
   status: QueueItemStatus
   teamKey: string | null
   assigneeLogin: string | null
+  assigneeDisplayName: string | null
   openedAt: string
   decidedAt: string | null
+  decidedBy: string | null
   decision: GateDecision | null
   steerPrompt: string | null
   /** why a human is needed */
   reasons: string[]
-  passedBy: string[]
+  allowedDecisions: GateDecision[]
+  /** computed by the server for the current viewer (`GET /api/review-me`) */
+  viewerCanDecide: boolean
+  /** e.g. 'You are the author'; null when the viewer can decide */
+  viewerCannotDecideReason: string | null
+  /** "not me" passes, oldest first; passers are excluded from the next random pick */
+  passes: GatePassDto[]
+}
+
+export interface ReviewIterationDto {
+  iteration: number
+  round: number
+  trigger: ReviewIterationTrigger
+  startedAt: string
+  /** what this iteration reviewed (null until intake pins it); the next delta starts from headSha */
+  baseSha: string | null
+  headSha: string | null
 }
 
 export interface ReviewRunDetailDto extends ReviewRunSummaryDto {
-  blastRadius: BlastRadiusDto | null
   categories: string[]
   workflowRevisionId: string | null
+  iterations: ReviewIterationDto[]
   /** every execution across iterations */
   nodes: NodeExecutionDto[]
   gates: ReviewGateDto[]
@@ -182,6 +233,8 @@ export interface ReviewFindingDto {
   title: string
   body: string
   suggestion: string | null
+  /** unified-diff hunk around the anchor at the reviewed head */
+  hunk: string | null
   status: FindingStatus
   roundRaised: number
   posted: boolean
@@ -208,7 +261,14 @@ export interface QueueItemDto {
   gate: ReviewGateDto
   run: ReviewRunSummaryDto
   ageWorkingMinutes: number
+  slaWorkingMinutes: number
   slaState: SlaState
+}
+
+export interface ReviewViewerDto {
+  login: string
+  displayName: string | null
+  teams: string[]
 }
 
 export interface ModelUsageDto {
@@ -232,6 +292,8 @@ export interface WorkflowSectionDto {
   id: string
   title: string
   nodeIds: string[]
+  /** default display state; the viewer's own toggles win */
+  collapsed: boolean
 }
 
 export interface WorkflowNodeDto {
@@ -260,6 +322,7 @@ export interface WorkflowGraphDto {
 }
 
 export interface WorkflowDiagnosticDto {
+  severity: DiagnosticSeverity
   code: string
   message: string
   nodeIds: string[]
@@ -309,7 +372,11 @@ export interface ReviewApi {
   passGate(gateId: string, reason: string): Promise<ReviewGateDto>
   decideGate(gateId: string, request: GateDecisionRequest): Promise<ReviewRunDetailDto>
   getDefaultWorkflow(): Promise<WorkflowGraphDto>
+  /** The snapshot a run used (`workflowRevisionId`). */
+  getWorkflowRevision(revisionId: string): Promise<WorkflowGraphDto>
   validateWorkflow(graph: WorkflowGraphDto): Promise<WorkflowValidationDto>
+  /** Who the server acts as; mutations record this viewer as the actor. */
+  getMe(): Promise<ReviewViewerDto>
 }
 
 function query(params: Record<string, string | undefined>): string {
@@ -339,7 +406,9 @@ export const httpReviewApi: ReviewApi = {
   passGate: (gateId, reason) => apiPost(`/review-gates/${enc(gateId)}/pass`, { reason }),
   decideGate: (gateId, request) => apiPost(`/review-gates/${enc(gateId)}/decision`, request),
   getDefaultWorkflow: () => apiGet('/review-workflows/default'),
+  getWorkflowRevision: (revisionId) => apiGet(`/review-workflows/revisions/${enc(revisionId)}`),
   validateWorkflow: (graph) => apiPost('/review-workflows/validate', graph),
+  getMe: () => apiGet('/review-me'),
 }
 
 // ---------------------------------------------------------------- selection
@@ -391,6 +460,9 @@ export const reviewEngineKeys = {
   queueScope: (scope: QueueScope, login: string | undefined) => ['reviewQueue', scope, login ?? null] as const,
   kpis: ['reviewKpis'] as const,
   defaultWorkflow: ['reviewWorkflows', 'default'] as const,
+  workflowRevision: (revisionId: string) => ['reviewWorkflows', 'revisions', revisionId] as const,
+  /** not in the SignalR list: the viewer changes only with identity (or the fake's viewer switch) */
+  me: ['reviewMe'] as const,
 }
 
 /** `ReviewRunChanged { runId }` → the keys it invalidates (contract, SignalR section). */

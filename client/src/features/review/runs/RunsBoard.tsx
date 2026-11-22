@@ -4,7 +4,7 @@ import type { ReviewRunSummaryDto } from '../../../api/reviewEngine'
 import { CostText } from '../components/CostText'
 import { ModelBadges, StageText } from '../components/ReviewBadges'
 import { RoundPips } from '../components/RoundPips'
-import { fmtAgo, prRef } from '../reviewFormat'
+import { fmtAgo, prRef, runCostSplit } from '../reviewFormat'
 import { RUN_STATUS_META } from '../reviewMeta'
 import { AuthorLine, OpenFindingsCell } from './RunsTable'
 import { BOARD_COLUMNS } from './runFilters'
@@ -39,7 +39,7 @@ function BoardCard({ run, now }: { run: ReviewRunSummaryDto; now: number }) {
         </Box>
         <Group justify="space-between" mt={6} wrap="nowrap" gap={4}>
           <ModelBadges models={run.models} max={3} />
-          <CostText usd={run.costUsd} />
+          <CostText usd={run.costUsd} split={runCostSplit(run)} />
         </Group>
         <Text size="xs" c="dimmed" mt={2}>
           {fmtAgo(run.updatedAt, now)}
@@ -57,6 +57,7 @@ export function RunsBoard({ runs, now }: { runs: ReviewRunSummaryDto[]; now: num
         {BOARD_COLUMNS.map((col) => {
           const items = runs.filter((r) => col.statuses.includes(r.status))
           const cost = items.reduce((sum, r) => sum + r.costUsd, 0)
+          const split = { actual: items.reduce((sum, r) => sum + r.costActualUsd, 0), estimate: items.reduce((sum, r) => sum + r.costEstimatedUsd, 0) }
           return (
             <Stack key={col.key} gap={6}>
               <Paper p={6} radius="sm" bg="dark.6" style={{ borderTop: `3px solid var(--mantine-color-${col.color}-6)` }}>
@@ -69,7 +70,7 @@ export function RunsBoard({ runs, now }: { runs: ReviewRunSummaryDto[]; now: num
                   </Badge>
                 </Group>
                 <Group gap={4}>
-                  <CostText usd={cost} dimmed />
+                  <CostText usd={cost} split={split} dimmed />
                   <Text size="xs" c="dimmed">
                     · {col.statuses.map((s) => RUN_STATUS_META[s].label.toLowerCase()).join(', ')}
                   </Text>

@@ -17,13 +17,17 @@ import type {
   ReviewKpisDto,
   ReviewRunDetailDto,
   ReviewRunFilter,
+  ReviewIterationTrigger,
   ReviewRunSummaryDto,
   ReviewStage,
+  ReviewViewerDto,
   RunFindingResponse,
   SlaState,
   WorkflowGraphDto,
   WorkflowValidationDto,
 } from '../../../api/reviewEngine'
+import { prRef } from '../reviewFormat'
+import { RUN_STATUS_META } from '../reviewMeta'
 import {
   BOT_LOGIN,
   FAKE_MODELS,
@@ -45,8 +49,11 @@ import { validateWorkflowGraph } from './validateWorkflow'
  * The in-memory review API. It implements the contract's `ReviewApi` against seeded data and keeps
  * state: responses change finding status and add events that go Pending → Synced; gate decisions
  * move the run (AnotherRound → round + 1 with the steer stored, Approve → awaiting merge, Close →
- * closed); assign and pass change the queue; KPIs are recomputed on every read. Errors are
- * `ApiError`s shaped like the server's Problem Details (404 / 409 / 422).
+ * closed); assign and pass change the queue; Refresh retries failed syncs and rechecks a failed
+ * run (a `recheck` iteration on the same head); KPIs are recomputed on every read. Viewer fields
+ * (`GET /api/review-me`, each gate's `viewerCanDecide` and its reason) are computed against
+ * `actor()` on every read, and decisions are refused with the same reason. Errors are `ApiError`s
+ * shaped like the server's Problem Details (404 / 409 / 422).
  *
  * `subscribe` is the fake's stand-in for SignalR `ReviewRunChanged { runId }`: it fires on every
  * change, including the delayed sync flips, so the UI invalidates exactly as it will in HTTP mode.
@@ -121,8 +128,6 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
   let counter = 1
   const timers = new Set<ReturnType<typeof setTimeout>>()
   const listeners = new Set<(event: ReviewRunChangedEvent) => void>()
-  /** "Not me" reasons. The contract's ReviewGateDto only carries `passedBy`. */
-  const passReasons = new Map<string, { login: string; reason: string }[]>()
 
   const nextId = (kind: number) => seedGuid(kind, counter++)
   const factory = (): ExecFactory => ({ nextId: () => nextId(ID_KIND.node), now: now() })
@@ -134,7 +139,6 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     findings = s.findings
     meta = s.meta
     counter = s.nextN
-    passReasons.clear()
     for (const r of runs.values()) recompute(r)
   }
 
@@ -172,6 +176,8 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     return findings.filter((f) => f.runId === runId)
   }
 
+  const round4 = (usd: number) => Math.round(usd * 10_000) / 10_000
+
   function recompute(run: ReviewRunDetailDto) {
     const fs = findingsOf(run.id)
     run.openFindings = fs.filter((f) => OPEN_STATUSES.includes(f.status)).length
@@ -179,7 +185,12 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     const models: string[] = []
     for (const n of run.nodes) if (n.model && !models.includes(n.model)) models.push(n.model)
     run.models = models
-    run.costUsd = Math.round(run.nodes.reduce((sum, n) => sum + n.costUsd, 0) * 10_000) / 10_000
+    // metered HTTP calls are actual spend; seat (and one-shot) models are an API-equivalent estimate
+    const actual = run.nodes.filter((n) => n.transport === 'Http').reduce((sum, n) => sum + n.costUsd, 0)
+    const estimated = run.nodes.filter((n) => n.transport !== 'Http').reduce((sum, n) => sum + n.costUsd, 0)
+    run.costActualUsd = round4(actual)
+    run.costEstimatedUsd = round4(estimated)
+    run.costUsd = round4(actual + estimated)
   }
 
   function touch(run: ReviewRunDetailDto) {
@@ -200,6 +211,9 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
       openBlockers: run.openBlockers,
       models: run.models,
       costUsd: run.costUsd,
+      costActualUsd: run.costActualUsd,
+      costEstimatedUsd: run.costEstimatedUsd,
+      blastRadius: run.blastRadius,
       startedAt: run.startedAt,
       updatedAt: run.updatedAt,
       waitingOn: run.waitingOn,
@@ -227,7 +241,42 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
   }
 
   function currentIteration(run: ReviewRunDetailDto): number {
-    return run.nodes.reduce((max, n) => Math.max(max, n.iteration), 0)
+    return Math.max(0, ...run.iterations.map((i) => i.iteration), ...run.nodes.map((n) => n.iteration))
+  }
+
+  // ---------------------------------------------------------------- the viewer
+
+  function viewer(): ReviewViewerDto {
+    const login = actor()
+    const person = FAKE_PEOPLE.find((p) => p.login === login)
+    return { login, displayName: person?.name ?? null, teams: person?.teams ?? [] }
+  }
+
+  const who = (login: string) => personName(login) ?? `@${login}`
+
+  /**
+   * Why `login` cannot decide the gate, or null. The server's rule for this slice: not the author
+   * (the solo-owner exception is not modelled), not before the run reaches the gate (an escalated
+   * dispute is decidable at once), not while it is assigned to someone else.
+   */
+  function cannotDecide(run: ReviewRunDetailDto, gate: ReviewGateDto, login: string): string | null {
+    if (gate.status === 'Done') return `Already decided${gate.decidedBy ? ` by ${who(gate.decidedBy)}` : ''}.`
+    if (login === run.subject.authorLogin)
+      return `You're the author of ${prRef(run.subject)}: authors can't decide their own gate. Your replies still count as human involvement.`
+    if (gate.kind !== 'DisputedFindings' && run.status !== 'AtGate')
+      return `Pre-assigned while the run is ${RUN_STATUS_META[run.status].label.toLowerCase()}: the decision opens when the run reaches the gate.`
+    if (gate.assigneeLogin && gate.assigneeLogin !== login) return `Assigned to ${who(gate.assigneeLogin)}. Take it from the queue to decide it.`
+    return null
+  }
+
+  /** A gate as the current viewer sees it. */
+  function viewGate(run: ReviewRunDetailDto, gate: ReviewGateDto): ReviewGateDto {
+    const reason = cannotDecide(run, gate, actor())
+    return { ...gate, viewerCanDecide: reason === null, viewerCannotDecideReason: reason }
+  }
+
+  function viewRun(run: ReviewRunDetailDto): ReviewRunDetailDto {
+    return { ...run, gates: run.gates.map((g) => viewGate(run, g)) }
   }
 
   // ---------------------------------------------------------------- findings
@@ -338,7 +387,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
       run.stage = 'Review'
       run.nodes.push(exec('review', iteration, 'Running', { summary: `0/${plan.length} reviewers done · policy all` }))
       const reviewers = plan.map((r) =>
-        exec('reviewer', iteration, 'Running', { model: r.model, inputTokens: 57_000, outputTokens: 1_100, summary: `${r.group}: running` }),
+        exec('reviewer', iteration, 'Running', { model: r.model, inputTokens: 57_000, outputTokens: 1_100, itemKey: r.group, summary: `${r.group}: running` }),
       )
       run.nodes.push(...reviewers)
       touch(run)
@@ -354,7 +403,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
       if (!run || currentIteration(run) !== iteration) return
       const n = run.nodes.find((x) => x.id === ids[0])
       if (n && n.status === 'Running') {
-        const group = n.summary?.split(':')[0] ?? 'group'
+        const group = n.itemKey ?? 'group'
         n.outputTokens = 2_600
         n.costUsd = Math.round(((n.inputTokens * FAKE_MODELS[modelKeyOf(n.model)].inPerM + n.outputTokens * FAKE_MODELS[modelKeyOf(n.model)].outPerM) / 1e6) * 10_000) / 10_000
         complete(n, `${group}: 0 findings · every assigned check accounted for`)
@@ -373,8 +422,10 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     return hit ?? 'sonnet'
   }
 
-  function startRound(run: ReviewRunDetailDto) {
+  /** A new iteration of the current round: recorded in `iterations[]`, then walked by `progress`. */
+  function startIteration(run: ReviewRunDetailDto, trigger: ReviewIterationTrigger) {
     const iteration = currentIteration(run) + 1
+    run.iterations.push({ iteration, round: run.round, trigger, startedAt: isoNow(), baseSha: run.subject.baseSha, headSha: run.subject.headSha })
     run.nodes.push(exec('intake', iteration, 'Running', { summary: 'running' }))
     progress(run.id, iteration, 0)
   }
@@ -395,8 +446,10 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     const sla = FAKE_TEAM_SLA_MINUTES[gate.teamKey ?? ''] ?? 480
     const ratio = age / sla
     const slaState: SlaState = ratio >= 1 ? 'Breached' : ratio >= 0.75 ? 'Warn' : 'Ok'
-    return { gate, run: summaryOf(run), ageWorkingMinutes: age, slaState }
+    return { gate: viewGate(run, gate), run: summaryOf(run), ageWorkingMinutes: age, slaWorkingMinutes: sla, slaState }
   }
+
+  const passed = (gate: ReviewGateDto, login: string) => gate.passes.some((p) => p.login === login)
 
   // ---------------------------------------------------------------- the API
 
@@ -426,7 +479,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
           .filter(
             (r) =>
               !q ||
-              `${r.subject.repo}#${r.subject.prNumber} ${r.subject.title} ${r.subject.authorLogin} ${r.subject.authorDisplayName ?? ''} ${r.subject.headRef}`
+              `${r.subject.repo}#${r.subject.prNumber} ${r.subject.title} ${r.subject.authorLogin} ${r.subject.authorDisplayName ?? ''} ${r.subject.openedByLogin} ${r.subject.headRef}`
                 .toLowerCase()
                 .includes(q),
           )
@@ -481,6 +534,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
             authorLogin: login,
             authorDisplayName: personName(login),
             authorResolvedBy: null,
+            openedByLogin: login,
             baseRef: 'main',
             headRef: 'manual',
             baseSha: request.baseSha ?? '0000000',
@@ -496,23 +550,26 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
           openBlockers: 0,
           models: [],
           costUsd: 0,
+          costActualUsd: 0,
+          costEstimatedUsd: 0,
+          blastRadius: null,
           startedAt: isoNow(),
           updatedAt: isoNow(),
           waitingOn: 'Bot',
-          blastRadius: null,
           categories: [],
           workflowRevisionId: DEFAULT_WORKFLOW.revisionId,
+          iterations: [],
           nodes: [],
           gates: [],
         }
         meta[id] = { teamKey: '', reviewers: [{ group: 'general', model: 'sonnet' }], verifyModel: 'haiku', headSha: run.subject.headSha }
         runs.set(id, run)
-        startRound(run)
+        startIteration(run, 'manual')
         emit(id)
-        return run
+        return viewRun(run)
       }),
 
-    getRun: (runId) => respond(() => requireRun(runId)),
+    getRun: (runId) => respond(() => viewRun(requireRun(runId))),
 
     listFindings: (runId, status) =>
       respond((): ListResult<ReviewFindingDto> => {
@@ -526,6 +583,13 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     refreshRun: (runId) =>
       respond(() => {
         const run = requireRun(runId)
+        // contract v0.2: a failed run with an unchanged head (the fake never sees a push) is rechecked
+        if (run.status === 'Failed') {
+          run.status = 'Running'
+          run.stage = 'Intake'
+          run.waitingOn = 'Bot'
+          startIteration(run, 'recheck')
+        }
         for (const f of findingsOf(runId)) {
           const failed = f.events.filter((e) => e.syncState === 'Failed')
           if (failed.length === 0) continue
@@ -594,12 +658,12 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
             const include =
               scope === 'All' ||
               (scope === 'Teams' && inTeam) ||
-              (scope === 'Mine' && (gate.assigneeLogin === who || (gate.assigneeLogin === null && inTeam && !gate.passedBy.includes(who))))
+              (scope === 'Mine' && (gate.assigneeLogin === who || (gate.assigneeLogin === null && inTeam && !passed(gate, who))))
             if (include) items.push(queueItem(run, gate))
           }
         }
-        const sla = (i: QueueItemDto) => i.ageWorkingMinutes / (FAKE_TEAM_SLA_MINUTES[i.gate.teamKey ?? ''] ?? 480)
-        items.sort((a, b) => sla(b) - sla(a))
+        const pressure = (i: QueueItemDto) => i.ageWorkingMinutes / Math.max(1, i.slaWorkingMinutes)
+        items.sort((a, b) => pressure(b) - pressure(a))
         return { items, total: items.length }
       }),
 
@@ -612,15 +676,16 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         if (pick) {
           if (pick === author) throw problem(409, "Authors can't be assigned their own gate.")
         } else {
-          const pool = teamMembers(gate.teamKey).filter((m) => m !== author && !gate.passedBy.includes(m) && m !== gate.assigneeLogin)
+          const pool = teamMembers(gate.teamKey).filter((m) => m !== author && !passed(gate, m) && m !== gate.assigneeLogin)
           if (pool.length === 0) throw problem(409, `Nobody in ${gate.teamKey ?? 'the team'} is eligible: the author and everyone who passed are excluded.`)
           pick = pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))]
         }
         gate.assigneeLogin = pick
+        gate.assigneeDisplayName = personName(pick)
         gate.status = 'Assigned'
         touch(run)
         emit(run.id)
-        return gate
+        return viewGate(run, gate)
       }),
 
     passGate: (gateId, reason) =>
@@ -630,13 +695,13 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         if (gate.status === 'Done') throw problem(409, 'This gate is already decided.')
         const who = actor()
         if (gate.assigneeLogin && gate.assigneeLogin !== who) throw problem(409, `This gate is assigned to ${gate.assigneeLogin}.`)
-        if (!gate.passedBy.includes(who)) gate.passedBy.push(who)
-        passReasons.set(gate.id, [...(passReasons.get(gate.id) ?? []), { login: who, reason: reason.trim() }])
+        gate.passes.push({ login: who, reason: reason.trim(), at: isoNow() })
         gate.assigneeLogin = null
+        gate.assigneeDisplayName = null
         gate.status = 'Unassigned'
         touch(run)
         emit(run.id)
-        return gate
+        return viewGate(run, gate)
       }),
 
     decideGate: (gateId, request: GateDecisionRequest) =>
@@ -644,13 +709,19 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         const { run, gate } = findGate(gateId)
         if (gate.status === 'Done') throw problem(409, 'This gate is already decided.')
         const who = actor()
-        if (who === run.subject.authorLogin) throw problem(409, "You're the author: authors can't decide their own gate.")
-        if (gate.kind !== 'DisputedFindings' && run.status !== 'AtGate') throw problem(409, "The run hasn't reached this gate yet; the decision opens when it does.")
+        const refused = cannotDecide(run, gate, who)
+        if (refused) throw problem(409, refused)
+        if (!gate.allowedDecisions.includes(request.decision))
+          throw problem(422, `${request.decision} is not allowed on this gate (allowed: ${gate.allowedDecisions.join(', ')}).`, { Decision: [`${request.decision} is not allowed on this gate.`] })
         const name = personName(who) ?? who
         gate.status = 'Done'
         gate.decision = request.decision
         gate.decidedAt = isoNow()
-        gate.assigneeLogin = gate.assigneeLogin ?? who
+        gate.decidedBy = who
+        if (!gate.assigneeLogin) {
+          gate.assigneeLogin = who
+          gate.assigneeDisplayName = personName(who)
+        }
         gate.steerPrompt = request.decision === 'AnotherRound' ? request.steerPrompt?.trim() || null : null
 
         if (gate.kind === 'DisputedFindings') {
@@ -659,15 +730,18 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
           }
           touch(run)
           emit(run.id)
-          return run
+          return viewRun(run)
         }
 
         const gateNode = gateNodeOf(run)
         const verb = request.decision === 'AnotherRound' ? 'another-round' : request.decision.toLowerCase()
-        if (gateNode) complete(gateNode, `${name} → ${verb}${gate.steerPrompt ? ' with a steer' : ''}`)
+        if (gateNode) {
+          complete(gateNode, `${name} → ${verb}${gate.steerPrompt ? ' with a steer' : ''}`)
+          gateNode.outcome = verb
+        }
         const it = currentIteration(run)
         if (request.decision === 'Approve') {
-          run.nodes.push(exec('base-moved', it, 'Succeeded', { summary: 'unchanged' }))
+          run.nodes.push(exec('base-moved', it, 'Succeeded', { summary: 'unchanged', outcome: 'unchanged' }))
           run.nodes.push(exec('await-merge', it, 'Waiting', { summary: 'holding the approval until merge or close' }))
           run.status = 'AwaitingMerge'
           run.stage = 'BranchMaintenance'
@@ -678,7 +752,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
           run.status = 'Running'
           run.stage = 'Intake'
           run.waitingOn = 'Bot'
-          startRound(run)
+          startIteration(run, 'another-round')
         } else {
           run.status = 'Closed'
           run.stage = 'Done'
@@ -686,12 +760,21 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         }
         touch(run)
         emit(run.id)
-        return run
+        return viewRun(run)
       }),
 
     getDefaultWorkflow: () => respond((): WorkflowGraphDto => DEFAULT_WORKFLOW),
 
+    getWorkflowRevision: (revisionId) =>
+      respond((): WorkflowGraphDto => {
+        // the fake has one revision: every seeded run snapshotted the default workflow
+        if (revisionId !== DEFAULT_WORKFLOW.revisionId) throw problem(404, `No workflow revision ${revisionId}.`)
+        return DEFAULT_WORKFLOW
+      }),
+
     validateWorkflow: (graph) => respond((): WorkflowValidationDto => validateWorkflowGraph(graph)),
+
+    getMe: () => respond(viewer),
   }
 
   return api

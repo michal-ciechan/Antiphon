@@ -84,7 +84,8 @@ export function ruleFor(f: ReviewFindingDto, subject: ReviewSubjectDto, reason: 
   const suppress = SUPPRESSING.includes(reason)
   const dir = `${f.filePath.split('/').slice(0, -1).join('/') || '.'}/**`
   const repo = subject.repo.split('/').pop() ?? subject.repo
-  const team = subject.owners[0] ?? 'owning-team'
+  // a team layer belongs to a team: the first team among the code owners (users have no layer)
+  const team = subject.owners.find((o) => o.kind === 'Team')?.name ?? 'owning-team'
   const check = f.checkId ?? `unprompted:${f.key}`
   const target = scope === 'Team' ? `${team} team layer` : `${repo} repo layer · .antiphon/review/ in ${subject.repo}`
   const file =

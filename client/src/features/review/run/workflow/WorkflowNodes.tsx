@@ -50,6 +50,8 @@ export type StepData = {
   def: WorkflowNodeDto
   status: NodeStatus
   execs: NodeExecutionDto[]
+  /** a fan-out child's executions grouped by `itemKey` (e.g. reviewer groups); empty otherwise */
+  items: { itemKey: string | null; execs: NodeExecutionDto[]; status: NodeStatus }[]
   /** how many iterations ran this node */
   iterationsRun: number
   dir: Dir
@@ -58,13 +60,14 @@ export type StepData = {
 export type StepNode = Node<StepData, 'step'>
 
 export function StepNodeView({ data }: NodeProps<StepNode>) {
-  const { def, status, execs, dir, selected, iterationsRun } = data
+  const { def, status, execs, items, dir, selected, iterationsRun } = data
   const meta = NODE_STATUS_META[status]
   const kind = NODE_KIND_META[def.kind]
   const dashed = status === 'NotReached' || status === 'Pending' || status === 'Skipped'
   const side = `${selected ? 2 : 1.5}px ${dashed ? 'dashed' : 'solid'} ${selected ? '#fff' : meta.hex}`
-  const fan = execs.length > 1
-  const done = execs.filter((e) => e.status === 'Succeeded').length
+  const fan = items.length > 0 || execs.length > 1
+  const units = items.length > 0 ? items : execs
+  const done = units.filter((u) => u.status === 'Succeeded').length
   const model = execs.find((e) => e.model)?.model ?? null
   const tokens = execs.reduce((s, e) => s + e.inputTokens, 0)
   return (
@@ -104,12 +107,32 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
           </Tooltip>
         )}
       </Group>
-      <Text size="10px" c="dimmed" truncate>
-        {def.run ?? kind.label}
-      </Text>
+      {items.length > 0 ? (
+        <Group gap={3} wrap="nowrap" mt={3} mb={1} style={{ overflow: 'hidden' }}>
+          {items.map((it) => (
+            <Tooltip key={it.itemKey ?? '-'} label={`${it.itemKey} · ${NODE_STATUS_META[it.status].label}${it.execs[0]?.model ? ` · ${modelShort(it.execs[0].model)}` : ''}`} openDelay={100}>
+              <Box
+                h={9}
+                style={{
+                  flex: '1 1 0',
+                  maxWidth: 34,
+                  borderRadius: 2,
+                  background: it.status === 'NotReached' ? 'transparent' : NODE_STATUS_META[it.status].hex,
+                  border: '1px solid #5c5f66',
+                  animation: it.status === 'Running' ? 'reviewPulse 1.6s infinite' : undefined,
+                }}
+              />
+            </Tooltip>
+          ))}
+        </Group>
+      ) : (
+        <Text size="10px" c="dimmed" truncate>
+          {def.run ?? kind.label}
+        </Text>
+      )}
       <Group gap={4} wrap="nowrap" mt={2}>
         <Text size="10px" fw={600} style={{ color: status === 'NotReached' ? undefined : meta.hex }} c={status === 'NotReached' ? 'dimmed' : undefined}>
-          {fan ? `×${execs.length} · ${done}/${execs.length} done` : meta.label}
+          {fan ? `×${units.length} · ${done}/${units.length} done` : meta.label}
         </Text>
         {model && (
           <Text size="10px" ff="monospace" c={`${modelColor(model)}.4`} truncate>

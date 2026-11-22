@@ -3,7 +3,7 @@ import type { NodeKind, WorkflowEdgeDto, WorkflowGraphDto, WorkflowNodeDto } fro
 /**
  * The default `pr-review` workflow from design.md §3.3, as the server would serve it from
  * GET /api/review-workflows/default. Descriptions are the human one-liners from the design (never
- * sent to models). Fake data only.
+ * sent to models). Section `collapsed` is the workflow's default display state. Fake data only.
  */
 
 const node = (
@@ -27,14 +27,16 @@ export const DEFAULT_WORKFLOW: WorkflowGraphDto = {
   revisionId: '5eed0007-0000-4000-8000-000000000001',
   hash: 'sha256:9c41e2b07d3a5f18c6e0b2a4d97f13e85a0c6b2d4e1f7a9038b5c2d6e4f1a7b3',
   sections: [
-    { id: 'intake', title: 'Intake', nodeIds: ['intake', 'delta', 'categorise', 'select', 'group', 'packs'] },
-    { id: 'review', title: 'Review', nodeIds: ['review', 'reviewer', 'collate', 'verify', 'publish'] },
+    { id: 'intake', title: 'Intake', nodeIds: ['intake', 'delta', 'categorise', 'select', 'group', 'packs'], collapsed: false },
+    { id: 'review', title: 'Review', nodeIds: ['review', 'reviewer', 'collate', 'verify', 'publish'], collapsed: false },
     {
       id: 'decide',
       title: 'Decide',
       nodeIds: ['route', 'await-fixes', 'record-drift', 'needs-human-approval', 'bot-approve', 'human-approve', 'human-review'],
+      collapsed: false,
     },
-    { id: 'branch', title: 'Branch maintenance', nodeIds: ['base-moved', 'base-drift', 'update-branch', 'await-merge'] },
+    // branch maintenance only matters after an approval, so the workflow shows it folded by default
+    { id: 'branch', title: 'Branch maintenance', nodeIds: ['base-moved', 'base-drift', 'update-branch', 'await-merge'], collapsed: true },
   ],
   nodes: [
     node('intake', 'Code', 'Intake', 'Pins base and head SHAs, fetches the mirror, reads policy and checks at the base SHA, and adds code-only tags.'),

@@ -4,8 +4,10 @@ Status: backlog for the client slice (2026-11-22). The slice shipped with one Vi
 `client/src/features/review/fake/fakeReviewApi.test.ts`, which covers the fake's state transitions
 (batch response with Pending → Synced and recomputed counts; AnotherRound moving the run to
 round + 1 with the steer stored and the author refused; assign random excluding the author and
-passers; "not me" returning the item). Everything below is still to write. Owner of this file:
-the review UI track.
+passers; "not me" returning the item with its `passes` entry). The pages moved to contract v0.2
+on 2026-11-22 (viewer from `GET /api/review-me`, gate viewer fields, iterations, outcomes, owners,
+hunks, the cost split, SLA minutes, diagnostic severity) without new tests. Everything below is
+still to write. Owner of this file: the review UI track.
 
 ## API seam (`client/src/api/reviewEngine.ts`)
 
@@ -17,7 +19,11 @@ the review UI track.
   are omitted, ids are URL-encoded, `assignGate` without a login sends `{}`.
 - Problem Details from the HTTP API surface through `getApiErrorMessage` on every page (404 run,
   409 decided gate, 422 dismissal without a scope).
-- `reviewRunChangedKeys` equals the contract's SignalR list, with and without a `runId`.
+- `reviewRunChangedKeys` equals the contract's SignalR list, with and without a `runId`; `me` is
+  not in it.
+- `getWorkflowRevision` and `getMe` hit `/review-workflows/revisions/{id}` and `/review-me`.
+- `useReviewWorkflow(null)` uses the default-workflow key; with a revision id it uses the revision
+  key and never refetches (staleTime Infinity).
 - `useSignalRInvalidation`: `ReviewRunChanged { runId }` invalidates exactly those keys; a payload
   without `runId` still refreshes the lists, queue and KPIs.
 
@@ -38,7 +44,23 @@ the review UI track.
 - `validateWorkflowGraph`: the default graph is valid; removing `maxIterations` from
   `await-fixes → intake` does not invalidate it (await-fixes is a Wait); an unbounded cycle of code
   nodes is `cycle-unbounded`; unknown edge ends; a node in two sections; missing description is a
-  `warn.` code and keeps `valid: true`.
+  `Warning` (`severity`) and keeps `valid: true`; an empty section and an unlabelled edge out of a
+  branching node are warnings; every other code is an `Error`.
+- Viewer fields: `getMe` answers the actor; each gate's `viewerCanDecide` and
+  `viewerCannotDecideReason` follow the actor (author, pre-assigned before the gate, assigned to
+  someone else, already decided) and a decision is refused with the same reason.
+- `decideGate` with a decision outside `allowedDecisions` → 422 (the #617 hotfix gate refuses
+  AnotherRound); `decidedBy` and `assigneeDisplayName` are set; the gate node gets an `outcome`.
+- `passGate` appends `{ login, reason, at }`; a second pass by the same person adds a second entry;
+  passers are excluded from Mine and from the random pick.
+- Cost split: `costActualUsd` sums Http executions, `costEstimatedUsd` the rest, and they add up to
+  `costUsd` after a new reviewer finishes.
+- Iterations: `createRun` records a `manual` iteration with base and head; another round records
+  `another-round` at the new round; Refresh of a Failed run (#1851) records a `recheck` iteration
+  in the same round on the same head; the seeded #618 iterations are opened / push /
+  another-round with heads 8d3e012, 4a77b10, e41b07c; a Queued run has no iteration.
+- Seeded node `outcome`s match an outgoing edge label of their node in the default workflow (a
+  guard that the overlay can highlight every seeded path).
 
 ## Runs page
 
@@ -57,10 +79,26 @@ the review UI track.
 - `?tab=` deep links each tab; an unknown tab falls back to Findings; the gate strip appears on the
   other tabs only when a gate is open.
 - 404 run id shows "No such review run" with the back link.
-- Header: blast mini chart is "pending" when `blastRadius` is null; cost tooltip splits actual
-  (Http) from estimate (Seat).
+- Header: blast mini chart is "pending" when `blastRadius` is null; cost tooltip splits
+  `costActualUsd` from `costEstimatedUsd`.
+- Header owners: one chip per owner, team icon for `Team`, user icon and "@" for `User`; "none
+  resolved" for an empty list.
+- Header author: when `openedByLogin` differs from `authorLogin` the line reads "opened by
+  @release-train, author resolved via …" (#617); otherwise only the "resolved author" badge when
+  `authorResolvedBy` is set.
+- A Failed run shows the latest Failed execution's node, iteration and `summary` (#1851); a run
+  with no Failed execution shows the fallback text.
+- The viewer: the page waits for `review-me`; when it fails the Findings tab shows the error and
+  the other tabs still render.
+- Fake banner: "Viewing as" sets the fake viewer and refetches every `review*` query (the gate panel
+  flips from the author's reason to enabled when switching Alice → Hugo on #612).
 
 ### Findings tab
+
+- Finding detail: `hunk` renders numbered lines from the `@@` header (new-file numbers; removed
+  lines use old-file numbers), `+` green and `-` red, the anchor range marked; a null hunk falls
+  back to the anchor block (#612 F9); CRLF hunks and a trailing newline parse the same.
+- The rule preview's team layer is the first `Team` owner, never a `User` owner.
 
 - Grouping: Open, Tracking (WillFix, Deferred, or any posted finding whose sync is Pending or
   Failed), Not posted inline, Closed; worst severity first.
@@ -78,8 +116,13 @@ the review UI track.
 
 ### Gate panel
 
-- Disabled with the right reason for: the author; a pre-assigned gate on a run not at the gate;
-  a gate assigned to someone else. Enabled for the assignee and for an unassigned gate.
+- Disabled with the server's `viewerCannotDecideReason` whenever `viewerCanDecide` is false (and a
+  fallback text when the reason is null); enabled otherwise, with no client-side rule.
+- Only `allowedDecisions` are offered, in Approve / Another round / Close order, with a "not offered"
+  note (#617: approve or close).
+- Assignee chip uses `assigneeDisplayName`; passes list login, reason and relative time (absolute
+  in the tooltip).
+- With no open gate the rail shows the last decided gate: decision, `decidedBy`, time and steer.
 - Another round shows the steer box; the button reads "Start round N+1 with steer" only when a
   steer is typed; the request omits an empty steer.
 - Approve copy mentions open blockers recorded as accepted risk; DisputedFindings uses its own
@@ -92,20 +135,33 @@ the review UI track.
   section produces one box and no member nodes; edges into a collapsed section merge (labels
   joined, back flag kept); back edges into an earlier band get distinct lanes; a cycle without
   `isBackEdge` flags still lays out (DFS fallback).
-- Default collapse: a section with no executions starts collapsed; the viewer's toggles win and
-  persist per workflow name; Expand all / Collapse all.
+- Default collapse: each section starts at the workflow's `collapsed` (Branch maintenance folded);
+  the viewer's toggles win and persist per workflow name; Expand all / Collapse all.
+- The graph is the run's `workflowRevisionId` revision; a 404 revision shows the error naming it.
 - Overlay: `rollupStatus` precedence (Running > Failed > Waiting > Pending > Succeeded > Skipped);
-  fan-out shows "×n · k/n done"; the iteration selector changes statuses, not the layout;
-  `backEdgeTaken` counts on payments-api#618 (await-fixes 1, human-approve 1).
+  fan-out items are grouped by `itemKey` (one pill per reviewer group, "×n · k/n done" counts
+  items); the iteration selector changes statuses and the R/trigger/base..head line, not the
+  layout; `backEdgeTaken` counts on payments-api#618 (await-fixes 1, human-approve 1).
+- `edgeTakenIn`: a labelled edge is taken only when a source execution's `outcome` is one of its
+  labels ("push | recheck" splits); an execution with no outcome falls back to timing; on #618 it1
+  both `await-fixes → record-drift` and `await-fixes → intake` are taken, `route → human-review`
+  is not.
+- Side panel: Item and Took columns appear only when an execution has `itemKey` / `outcome`.
+- Validation panel groups diagnostics by `severity` (errors first) with counts, and lists the
+  affected nodes and edge.
 - Clicking a step opens the side panel with parameters and every execution; pane click clears.
 - Validate posts the graph and shows diagnostics.
 - React Flow is rendered only while the tab is visible (hidden containers measure 0).
 
 ### Timeline tab
 
+- Tracks come from `iterations[]`: round, trigger badge, start time and `base..head` short SHAs
+  ("—" before intake pins them); an iteration with executions but no row still renders.
+- Bars never start before zero when `startedAt` is later than the first execution.
 - Steps that start after a park began are listed under the park, not as bars (record-drift).
 - One minute scale across iterations; tick spacing ≥ 44 px; running bars extend to now.
-- Gate decisions land under the park of the iteration they ended; the steer is quoted.
+- Gate decisions land under the park of the iteration they ended, named by `decidedBy`; the steer
+  is quoted.
 
 ## Queue page
 
@@ -115,7 +171,13 @@ the review UI track.
 - Take disabled for the author; "Not me" enabled only when assigned to me or unassigned in my
   team; the reason (plus optional note) is sent; success notification names the team.
 - Assign random notification names the pick and the exclusions; 409 "nobody eligible" shows.
-- SLA cell colour and "near / breached" text per `slaState`.
+- SLA cell colour, bar and "near / breached" text from `ageWorkingMinutes / slaWorkingMinutes`
+  (warn at 75%, breached at 100%); falls back to `slaState` when `slaWorkingMinutes` is 0.
+- Passes show under the item (login, reason, time); owners as chips (max 3, "+n" tooltip); the
+  author cell shows "opened by @login" when the PR was opened by another account.
+- The page waits for `review-me`; an error shows instead of an unscoped queue.
+- Cost formatting: `fmtCostTotal` adds "≈" only when the estimate is non-zero; the board column and
+  the runs total carry the summed split.
 
 ## Stories and wiring
 

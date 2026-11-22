@@ -78,7 +78,8 @@ describe('fake review API state transitions', () => {
     expect(assignedToMe.run.subject.prNumber).toBe(617)
 
     const passed = await api.passGate(assignedToMe.gate.id, 'Out / at capacity today')
-    expect(passed).toMatchObject({ status: 'Unassigned', assigneeLogin: null, passedBy: ['asmith'] })
+    expect(passed).toMatchObject({ status: 'Unassigned', assigneeLogin: null, assigneeDisplayName: null })
+    expect(passed.passes.map((p) => [p.login, p.reason])).toEqual([['asmith', 'Out / at capacity today']])
     expect((await api.getQueue('Mine', 'asmith')).items.some((i) => i.gate.id === passed.id)).toBe(false)
     expect((await api.getQueue('Teams', 'asmith')).items.some((i) => i.gate.id === passed.id)).toBe(true)
 

@@ -6,27 +6,30 @@ import { FakeApiBanner } from './components/FakeApiBanner'
 import { GateKindBadge } from './components/ReviewBadges'
 import { useReviewLiveUpdates } from './reviewApi'
 import { FindingsTab } from './run/findings/FindingsTab'
-import { gateBlockReason, openGate } from './run/gateRules'
+import { openGate, viewerBlockReason } from './run/gateRules'
 import { RunHeader } from './run/RunHeader'
 import { TimelineTab } from './run/TimelineTab'
 import { WorkflowTab } from './run/workflow/WorkflowTab'
 import { useNow } from './useNow'
-import { useRefreshReviewRun, useReviewFindings, useReviewRun } from './useReview'
-import { useReviewViewerStore } from './useReviewViewerStore'
+import { personLabel } from './reviewFormat'
+import { useRefreshReviewRun, useReviewFindings, useReviewMe, useReviewRun } from './useReview'
 
 const TABS = ['findings', 'workflow', 'timeline'] as const
 type Tab = (typeof TABS)[number]
 
 const PULSE_CSS = '@keyframes reviewPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(59,123,245,0.55); } 50% { box-shadow: 0 0 0 5px rgba(59,123,245,0); } }'
 
-/** /reviews/:runId — one run: header, gate, and the Findings / Workflow / Timeline tabs (?tab=). */
+/**
+ * /reviews/:runId — one run: header, gate, and the Findings / Workflow / Timeline tabs (?tab=). The
+ * viewer is `GET /api/review-me`; what they may decide comes from each gate's `viewerCanDecide`.
+ */
 export function ReviewRunPage() {
   useReviewLiveUpdates()
   const { runId } = useParams<{ runId: string }>()
   const [params, setParams] = useSearchParams()
   const tab: Tab = TABS.find((t) => t === params.get('tab')) ?? 'findings'
   const now = useNow()
-  const viewer = useReviewViewerStore((s) => s.viewer)
+  const me = useReviewMe()
   const run = useReviewRun(runId)
   const findings = useReviewFindings(runId)
   const refresh = useRefreshReviewRun(runId ?? '')
@@ -40,7 +43,7 @@ export function ReviewRunPage() {
       { replace: true },
     )
 
-  if (run.isLoading)
+  if (run.isLoading || me.isLoading)
     return (
       <Group justify="center" py="xl">
         <Loader size="sm" />
@@ -76,10 +79,10 @@ export function ReviewRunPage() {
             <Group gap={6} wrap="wrap">
               <GateKindBadge kind={gate.kind} />
               <Text size="xs">
-                open · {gate.assigneeLogin ? `assigned to @${gate.assigneeLogin}` : `unassigned in ${gate.teamKey ?? 'the team queue'}`}
+                open · {gate.assigneeLogin ? `assigned to ${personLabel(gate.assigneeLogin, gate.assigneeDisplayName)}` : `unassigned in ${gate.teamKey ?? 'the team queue'}`}
               </Text>
               <Text size="xs" c="dimmed">
-                {gateBlockReason(r, gate, viewer) ?? 'You can decide it.'}
+                {viewerBlockReason(gate) ?? 'You can decide it.'}
               </Text>
             </Group>
             <Button size="compact-xs" variant="light" color="pink" onClick={() => setTab('findings')}>
@@ -105,12 +108,16 @@ export function ReviewRunPage() {
             <Alert color="danger" variant="light" title="Could not load findings">
               {getApiErrorMessage(findings.error, 'The review API did not answer.')}
             </Alert>
+          ) : !me.data ? (
+            <Alert color="danger" variant="light" title="Could not tell who you are">
+              {getApiErrorMessage(me.error, 'GET /api/review-me did not answer, so replies and gate decisions are unavailable.')}
+            </Alert>
           ) : findings.isLoading ? (
             <Group justify="center" py="xl">
               <Loader size="sm" />
             </Group>
           ) : (
-            <FindingsTab key={r.id} run={r} findings={items} viewer={viewer} now={now} />
+            <FindingsTab key={r.id} run={r} findings={items} viewer={me.data} now={now} />
           )}
         </Tabs.Panel>
         <Tabs.Panel value="workflow" pt="sm">

@@ -63,8 +63,25 @@ export function useReviewQueue(scope: QueueScope, login: string | undefined) {
   })
 }
 
-export function useDefaultReviewWorkflow() {
-  return useQuery({ queryKey: reviewEngineKeys.defaultWorkflow, queryFn: () => reviewApi.getDefaultWorkflow(), staleTime: 5 * 60_000 })
+/**
+ * The workflow graph a run used: its snapshotted revision (immutable, so cached for good), or the
+ * default workflow when the run has no revision id.
+ */
+export function useReviewWorkflow(revisionId: string | null) {
+  return useQuery({
+    queryKey: revisionId ? reviewEngineKeys.workflowRevision(revisionId) : reviewEngineKeys.defaultWorkflow,
+    queryFn: () => (revisionId ? reviewApi.getWorkflowRevision(revisionId) : reviewApi.getDefaultWorkflow()),
+    staleTime: revisionId ? Infinity : 5 * 60_000,
+  })
+}
+
+/**
+ * Who the review UI acts as (`GET /api/review-me`). In HTTP mode the server resolves it (identity,
+ * or `Review:DefaultViewerLogin` until identity lands); in fake mode it is the banner's "Viewing
+ * as" person. Gate permissions come from each gate's `viewerCanDecide`, not from this.
+ */
+export function useReviewMe() {
+  return useQuery({ queryKey: reviewEngineKeys.me, queryFn: () => reviewApi.getMe(), staleTime: REVIEW_API_MODE === 'http' ? 5 * 60_000 : 0 })
 }
 
 /** One submitted review: every drafted reply on the run, posted together (one code-host notification). */
