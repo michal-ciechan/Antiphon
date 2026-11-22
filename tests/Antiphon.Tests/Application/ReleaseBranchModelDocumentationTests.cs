@@ -9,13 +9,15 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public sealed class ReleaseBranchModelDocumentationTests
 {
+    private const string ReleaseGatesPath = "docs/release-gates.md";
+
     private static string Read(params string[] relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, Path.Combine(relative)));
 
     [Test]
     public void C1311_ReleaseGatesNameTheLongLivedRcBranch()
     {
-        var text = Read("docs", "release-gates.md");
+        var text = Read(ReleaseGatesPath);
         text.ShouldContain("rc/YYYY-MM-DD", Case.Sensitive);
         text.ShouldContain("vYYYY.MM.DD.N-rc.K", Case.Sensitive);
         text.ShouldContain("merge commit", Case.Sensitive);
@@ -44,9 +46,11 @@ public sealed class ReleaseBranchModelDocumentationTests
     [Test]
     public void C1199_FinalClosureDocumentation()
     {
-        var text = Read("docs", "release-gates.md");
-        text.ShouldContain("CARD-1199 runtime skip census: 0 of 35.", Case.Sensitive,
-            "c1199-doc-runtime-closure: S-C2 removed the last three runtime gates");
+        var text = Read(ReleaseGatesPath);
+        text.ShouldContain("The original CARD-1199 census had 35 checkpoint identities and zero runtime skips", Case.Sensitive,
+            "c1199-doc-runtime-closure: the original roster had no runtime skips after S-C2");
+        text.ShouldContain("All 37 checkpoint identities are required on both platforms with no policy exclusions.", Case.Sensitive,
+            "c1199-doc-current-roster: the two portable CARD-2006 cases are required on both platforms");
         text.ShouldContain("Native Windows verification remains owed", Case.Sensitive,
             "c1199-doc-native-incomplete: gate removal is not a native execution receipt");
         text.ShouldContain("S-F-cost requires S3 admission on its target base", Case.Sensitive,
