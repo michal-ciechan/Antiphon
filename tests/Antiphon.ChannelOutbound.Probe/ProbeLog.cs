@@ -3,7 +3,8 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 // The child's only voice on stderr. Lines carry milliseconds since process start so a
-// parent can place a stall. The config holds a database password: exception messages are
+// parent can place a stall; in the test host (an in-process recovery) that is the host's age, and a stall is
+// placed by the run-start line instead. The config holds a database password: exception messages are
 // never written, only exception types, SQL states and stack frames.
 internal sealed class ProbeLog : ILoggerProvider, ILogger
 {

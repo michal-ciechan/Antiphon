@@ -223,22 +223,47 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // A recovery's clock: past every lease the parent or a dead child holds (300 s, or 60 s with a converter).
     private int RecoveryOffset(int? offset) => offset ?? (ConverterId == Guid.Empty ? 600 : 120);
 
+    // An in-process recovery's own deadline: 2x the measured max, 2810 ms (p50 331, p95 1278, n=328; HP laptop on
+    // battery beside a landing run, 2026-11-22). The max is a first recovery in the process, which also pays the
+    // graph's JIT and EF warm-up; 2x the p95 would cut it.
+    private static readonly TimeSpan InProcessRecoveryDeadline = TimeSpan.FromSeconds(6);
+
     // A restart's recovery: the probe's own unified recovery graph (UnifiedRecoveryProbe: its own services, clock,
     // producer and store over the durable rows and files only; no parent event or in-memory signal reaches it), run
-    // in this process. The same host and code as a recovery child, without a child's runtime start, JIT and EF
-    // warm-up (about 6 s of each 6-7 s recovery child on the HP laptop). Every death is still a real killed child
-    // (StartProbeAsync), and the first recovery after one is a fresh child too (ChildRecoverAsync).
+    // in this process. The same host and code as a recovery child, on this process's runtime EF model (a child loads
+    // the compiled model ProbeModelComparison pins to it), without a child's runtime start, JIT and EF warm-up (about
+    // 6 s of each 6-7 s recovery child on the HP laptop). Every death is still a real killed child (StartProbeAsync),
+    // and the first recovery after a death or an operator retry is a fresh child too (ChildRecoverAsync).
     public async Task RecoverAsync(int? offset = null)
     {
         var started = Stopwatch.StartNew();
         var marker = Path.Combine(H.TempRoot, "recover-" + Guid.NewGuid().ToString("N") + ".json");
-        var code = await UnifiedRecoveryProbe.RunAsync(
-            ProbeConfigFor(marker, null, RecoveryOffset(offset), false, "unified", null, null, null));
+        var config = ProbeConfigFor(marker, null, RecoveryOffset(offset), false, "unified", null, null, null)
+            with { DeadlineSeconds = (int)InProcessRecoveryDeadline.TotalSeconds };
+        int code;
+        try
+        {
+            code = await UnifiedRecoveryProbe.RunAsync(config);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // As a child reports (its config holds the database password): exception types and frames, no messages.
+            throw new InvalidOperationException($"In-process recovery failed after {started.ElapsedMilliseconds} ms: "
+                + ExceptionTypes(ex) + Environment.NewLine + ex.StackTrace);
+        }
         code.ShouldBe(0);
         Console.WriteLine($"c519-probe recover in-process {started.ElapsedMilliseconds} ms");
     }
 
-    // A recovery in a fresh child process: the first one after a real child death.
+    private static string ExceptionTypes(Exception exception)
+    {
+        var types = new List<string>();
+        for (var ex = exception; ex is not null; ex = ex.InnerException)
+            types.Add(ex is System.Data.Common.DbException { SqlState: { } state } ? $"{ex.GetType().Name}({state})" : ex.GetType().Name);
+        return string.Join(" > ", types);
+    }
+
+    // A recovery in a fresh child process: the first one after a real child death or an operator retry.
     public async Task ChildRecoverAsync(int? offset = null)
     {
         await using var child = await StartProbeAsync(null, RecoveryOffset(offset));

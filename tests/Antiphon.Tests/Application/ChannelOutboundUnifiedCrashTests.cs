@@ -157,7 +157,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
                 await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
                     service.RetryUncertainAsync(deliveryId, false, default));
                 await service.RetryUncertainAsync(deliveryId, true, default);
-                await w.RecoverAsync();
+                // The republish after the operator's retry is a fresh child's.
+                await w.ChildRecoverAsync();
                 await w.AssertReceiptAsync(accepted ? 2 : 1);
                 (await w.DeliveryAsync(kind))!.PublicationAttempts.ShouldBe(2);
                 await AssertSourceAsync(w, kind, true);

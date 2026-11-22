@@ -123,7 +123,13 @@ internal static class UnifiedRecoveryProbe
         await host.StartAsync(ct);
         ProbeLog.Phase("host-started");
         try { await completed.Task.WaitAsync(ct); }
-        finally { await host.StopAsync(ct); }
+        finally
+        {
+            // Its own bounded stop, never the deadline token (already cancelled after a stall), so the cycle in flight
+            // ends before the provider and producer are disposed: in the test process as in a child.
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await host.StopAsync(stop.Token);
+        }
         return 0;
     }
 
