@@ -5,7 +5,7 @@
 // diagnostic), an owner and a reason; Matrix checks it (LiveLaneInventoryTests.EveryLiveGateHasDisposition) and
 // WriteCatalog rewrites it (antiphon-scripts live-lane-scan-gates).
 //
-// Each method decides what the PowerShell function it replaces decided, on the same inputs:
+// The file walk, case rules and catalog layout follow the PowerShell implementation:
 // - The file walk is Get-ChildItem -Recurse -File -Filter *.cs (PowerShell 7): a directory's files, then each
 //   subdirectory in turn, in the file system's order, hidden entries left out and links not followed; a path with a
 //   bin, obj or bin-* part (ignoring case) is left out.
@@ -151,7 +151,10 @@ namespace Antiphon.Nightly
         private static readonly Regex ExplicitAttr = new Regex(@"\[Explicit(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex TestAttr = new Regex(@"\[Test(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex GateShapeAttr = new Regex(@"\[GateShape\(", RegexOptions.IgnoreCase);
-        private static readonly Regex Headed = new Regex("ANTIPHON_HEADED_TESTS", RegexOptions.IgnoreCase);
+        // The source stripper removes ordinary string delimiters. Match the flag as the argument of a lookup.
+        private static readonly Regex HeadedRead = new Regex(
+            @"\bEnvironment\s*\.\s*GetEnvironmentVariable\s*\(\s*ANTIPHON_HEADED_TESTS\s*[,)]",
+            RegexOptions.IgnoreCase);
         private static readonly Regex SkipIf = new Regex("SkipIfNotEligible", RegexOptions.IgnoreCase);
         private static readonly Regex RealCli = new Regex("RealCliStub", RegexOptions.IgnoreCase);
         private static readonly Regex ArgumentsRx = new Regex(@"Arguments\(([^)]*)\)");
@@ -301,7 +304,7 @@ namespace Antiphon.Nightly
                     }
                     var shapes = new List<string>();
                     if (classExplicit || ExplicitAttr.IsMatch(attrs)) shapes.Add("Explicit");
-                    if (Headed.IsMatch(body)) shapes.Add("ANTIPHON_HEADED_TESTS");
+                    if (HeadedRead.IsMatch(body)) shapes.Add("ANTIPHON_HEADED_TESTS");
                     if (SkipIf.IsMatch(body) && !Same(method, "SkipIfNotEligible")) shapes.Add("SkipIfNotEligible");
                     if (RealCli.IsMatch(body)) shapes.Add("RealCliStub");
                     if (GateShapeAttr.IsMatch(attrs))

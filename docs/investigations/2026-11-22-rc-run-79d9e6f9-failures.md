@@ -19,3 +19,10 @@ The [g132 retrospective](2026-11-10-why-missed-g132-windowsunitplatformadmission
 The [read-only Git fixture sweep](2026-11-22-why-missed-git-fixture-readonly-delete.md) (Debug `62b60ff2`) landed as `fd1a0c831415b5d76b42bb949311ecf75849cdf9` and added `test-fixture-cleanup` for `tests/**/*.cs`. Both historical ranges match that glob.
 The sweep's short pre-land scope centered on fixture teardown and its guard. Merge runs the subject's narrow witness rows, which left the Unit `MergeHighRadiusSubsetTests` outside the selection until Windows Full.
 When `tests/impacted-classes.json` changes, run the two historical range methods in `MergeHighRadiusSubsetTests` and the two historical kind-list methods in `ImpactedClassesSelectorTests`. The same coverage gap caused the [group 135 failure](2026-11-16-why-missed-g135-merge-subset-kinds.md).
+
+## Group 138 live-gate inventory
+
+W2-nightly S15 (`75d96a8c7d9a0252ffcaf9f9f05fb98536ed6a0b`) added `NightlyTestsRunTests.C487_G044`, which seeds the headed opt-in flag to verify that the child launcher clears it.
+The PowerShell scanner and its S23 port both cataloged mentions of the flag as headed gates. The same rule had cataloged `ReleaseGateE2EEvidenceTests.C599_EnvironmentIsolation`.
+Short Merge replays each subject's named witnesses. The S15 plan selected the nightly runner and related harness classes, leaving the inventory class outside its witness set.
+Include `/*/Antiphon.Tests.Scripts/LiveLaneInventoryTests/*` when changes to either scanned test project introduce a gate marker or when `LiveLaneGateScan.cs` changes.
