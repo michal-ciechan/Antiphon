@@ -132,8 +132,11 @@ public sealed class ChannelOutboundUnifiedCrashTests
             }
             for (var restart = 0; restart < 2; restart++)
             {
-                // The first restart after the death (a fresh child for the main kind); the second runs in process.
-                await (restart == 0 ? w.FirstRecoveryAsync(kind) : w.RecoverAsync());
+                // The first restart after the death (a fresh child for the main kind, and for every kind at the first
+                // attempt cut, so each kind's uncertain marking and failure recorder also run in a cold process on the
+                // compiled model); the second runs in process.
+                await (restart > 0 ? w.RecoverAsync()
+                    : cut == "publishing-committed" ? w.ChildRecoverAsync() : w.FirstRecoveryAsync(kind));
                 var row = (await w.DeliveryAsync(kind))!;
                 row.Id.ShouldBe(deliveryId);
                 row.State.ShouldBe(published ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.PublishUncertain);
