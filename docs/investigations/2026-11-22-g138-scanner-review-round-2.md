@@ -1,0 +1,14 @@
+# Group 138 scanner review, round 2
+
+Return to Code. The Unit category and the one-argument named lookup from round 1 are fixed. Two cases still give the wrong disposition verdict at `006e9536fe29aa7f6bb4dc93dcb337fc70265f86`.
+
+| Where | Failure | Why it matters | Fix |
+|---|---|---|---|
+| `scripts/lib/Antiphon.Nightly/LiveLaneGateScan.cs:156`, a real call with reordered named arguments | `Environment.GetEnvironmentVariable(target: EnvironmentVariableTarget.Process, variable: "ANTIPHON_HEADED_TESTS")` refused the compiled test with the flag absent and admitted it at `1`. The scanner omitted it with zero unresolved gates. | The production inventory matrix accepted this method without a disposition. The task base detected it. The round-1 omission persists for this overload. | Recognize the argument bound to `variable` in either legal position. Add a regression that requires the inventory to reject the uncataloged method. |
+| `LiveLaneGateScan.cs:307`, matching against a method body after the source stripper has removed ordinary string delimiters | `Console.WriteLine("Environment.GetEnvironmentVariable(variable: ANTIPHON_HEADED_TESTS)")` ran in both flag states. The scanner classified the printed text as a headed read. | The inventory matrix demands a disposition for an ordinary test. The round-1 scanner accepted this same diagnostic. The optional named-argument match introduced the regression. | Distinguish executable invocations from lookup text inside string literals. Assert the ordinary method stays out of the scan and the inventory accepts it. |
+
+The probe compiled each method and checked its runtime behavior with the flag absent and set. It then passed each case separately through the production matrix with the committed catalog and policy. Positional calls, the one-argument named call, the eligibility helper and `[Explicit]` retained their expected shapes. Catalog regeneration matched all committed bytes at 148 gates and zero unresolved.
+
+The three Final rows executed 143 distinct cases in 13m41s. CP-1 passed 6/6, CP-2 passed 52/52 and CP-3 passed 84/85. The sole failure was the inherited cleanup guard at `NightlyRunTests.cs:51`, independently reproduced at the task base. At pre-fix commit `d897574cb95d57ef8ccc0a41ccf35fa4aebcaee9` the named lookup and category assertions both failed for the expected reason. Both passed at the reviewed tip. The three impacted kinds were covered, the downgrade selector matched zero rows, and evidence-diff found zero violations. The investigation note retains Groups 134, 137 and 138. The merge-tree check passed against `3798d9117afc88995e2c453894baf86445eae34c`.
+
+The inherited cleanup failure keeps Final validation incomplete. Positive controls and the integrated Windows rc replay remain pending. The Code landing owner is `2920c586-f792-4df4-b2d9-2921e9fab9f9`.
