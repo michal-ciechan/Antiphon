@@ -90,6 +90,21 @@
     },
     {
       "platform": "windows",
+      "test": "Antiphon.Tests.Checkpoints.CheckpointSourceStateTests.tool_snapshot_of_a_non_utf8_name_is_unknown_not_stamped_absent",
+      "reasonPrefix": "non-UTF-8 file names need a byte-named filesystem"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.Hostile_files_keep_the_publication_inside_the_budget",
+      "reasonPrefix": "FIFOs and unix mode 000 are POSIX properties"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.A_fifo_journal_is_never_opened",
+      "reasonPrefix": "FIFOs are POSIX properties"
+    },
+    {
+      "platform": "windows",
       "test": "Antiphon.Tests.Application.LandGraphEvaluationTests.EvaluationBudgetRefusesSlowDotnet",
       "reasonPrefix": "The slow evaluator is a PATH shim named dotnet; Windows process start resolves dotnet.exe."
     },
