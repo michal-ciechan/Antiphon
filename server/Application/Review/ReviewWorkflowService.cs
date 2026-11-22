@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Review.Workflows;
 
 namespace Antiphon.Server.Application.Review;
@@ -14,6 +16,17 @@ public sealed class ReviewWorkflowService
     public string DefaultHash => _defaultHash.Value;
 
     public WorkflowGraphDto GetDefault() => ToDto(Default, revisionId: null);
+
+    /// <summary>How a revision's graph is stored (<c>ReviewWorkflowRevisions.GraphJson</c>).</summary>
+    public static readonly JsonSerializerOptions GraphJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    /// <summary>A stored revision's graph as a definition, for the executor's walk.</summary>
+    public static WorkflowDefinition FromStoredGraph(string graphJson) =>
+        FromDto(JsonSerializer.Deserialize<WorkflowGraphDto>(graphJson, GraphJsonOptions)
+            ?? throw new InvalidOperationException("The stored workflow revision holds no graph."));
 
     public WorkflowValidationDto Validate(WorkflowGraphDto graph)
     {

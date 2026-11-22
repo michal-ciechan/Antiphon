@@ -192,6 +192,7 @@ try
                     host.Token = builder.Configuration[host.TokenConfigKey];
             }
         });
+    builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
     builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
@@ -1003,6 +1004,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<CodeHostRouter>();
     builder.Services.AddScoped<ReviewIntake>();
     builder.Services.AddSingleton<ReviewExecutorSignal>();
+    builder.Services.AddHostedService<ReviewWorkflowExecutor>();
     builder.Services.AddHttpClient<GitHubIssuesTracker>();
     builder.Services.AddHttpClient<LinearTracker>();
     builder.Services.AddHttpClient<JiraTracker>();
