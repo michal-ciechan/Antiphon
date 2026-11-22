@@ -2092,19 +2092,6 @@
     },
     {
       "project": "Antiphon.Tests",
-      "namespace": "Antiphon.Tests.Scripts",
-      "class": "ReleaseGateE2EEvidenceTests",
-      "method": "C599_EnvironmentIsolation",
-      "arguments": [],
-      "shapes": [
-        "ANTIPHON_HEADED_TESTS"
-      ],
-      "disposition": "diagnostic",
-      "owner": "CARD-1545",
-      "reason": "live-claude diagnostic gate"
-    },
-    {
-      "project": "Antiphon.Tests",
       "namespace": "Antiphon.Tests.TestHelpers",
       "class": "RcManifestScaleTests",
       "method": "ScaleReplay",
