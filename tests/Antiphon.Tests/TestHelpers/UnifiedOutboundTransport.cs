@@ -181,6 +181,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
         TimeProvider? clock = null, int warmProbes = 0)
     {
+        await AwaitEarlierTeardownsAsync();
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var topic = "c519-" + Guid.NewGuid().ToString("N");
         using (var admin = new AdminClientBuilder(new AdminClientConfig
@@ -427,26 +428,68 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         while (!predicate()) await Task.Delay(25, timeout.Token);
     }
 
-    // A world's teardown (its spare, the gateway's stop, the bridge harness, the schema, the store and the topic: about
-    // 0.6 s a world on the HP laptop on AC) runs in the background, so the next world's setup overlaps it. Each world
-    // keeps its own schema, topic, Slack fake and gateway, so a teardown still running touches nothing the next one
-    // uses. Every class that builds worlds drains them after each test (DrainDisposalsAsync in an After(Test) hook):
-    // no world outlives its test, and a teardown failure still fails the test that made it.
-    private static readonly System.Collections.Concurrent.ConcurrentQueue<Task> PendingDisposals = new();
+    // A world's teardown after its spare (the gateway's stop, the bridge harness, the schema, the store and the topic:
+    // about 0.6 s a world on the HP laptop on AC) runs in the background, so the next world's setup overlaps it. The
+    // spare, a process, is stopped before DisposeAsync returns, so probe children never overlap across worlds. Each
+    // world keeps its own schema, topic, Slack fake and gateway, so a teardown still running touches nothing the next
+    // one uses, and a new world first waits for every teardown but the latest (AwaitEarlierTeardownsAsync), so at most
+    // one overlaps it: a failure of this test's own world is raised there, a world later, naming the failed world. Every class that builds worlds drains its test's teardowns after each test (DrainDisposalsAsync in an
+    // After(Test) hook): no world outlives its test, and a teardown failure fails the test that made it, never another.
+    // Timings a world records (reach, recovery) may include one earlier world's teardown running beside them.
+    private static readonly object TeardownGate = new();
+    private static readonly List<(string Owner, string World, Task Teardown)> Teardowns = [];
+    private int _disposed;
 
-    public ValueTask DisposeAsync()
+    private static string CurrentTest => TUnit.Core.TestContext.Current?.Metadata.TestDetails.TestId ?? "";
+
+    public async ValueTask DisposeAsync()
     {
-        PendingDisposals.Enqueue(Task.Run(DisposeNowAsync));
-        return ValueTask.CompletedTask;
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        await StopSpareAsync();
+        var world = Topic;
+        var teardown = Task.Run(async () =>
+        {
+            try { await DisposeNowAsync(); }
+            catch (Exception ex) { throw new InvalidOperationException($"World {world} teardown failed", ex); }
+        });
+        lock (TeardownGate) Teardowns.Add((CurrentTest, world, teardown));
     }
 
+    // Before a world is built: every teardown but the latest has ended (that one may overlap the new world). This test's
+    // own failure is raised (and taken off the list); another test's is left for that test's drain.
+    private static async Task AwaitEarlierTeardownsAsync()
+    {
+        (string Owner, string World, Task Teardown)[] earlier;
+        lock (TeardownGate) earlier = [.. Teardowns.Take(Math.Max(0, Teardowns.Count - 1))];
+        var current = CurrentTest;
+        foreach (var entry in earlier)
+        {
+            try { await entry.Teardown; }
+            catch (Exception) when (entry.Owner != current) { continue; }
+            catch (Exception)
+            {
+                lock (TeardownGate) Teardowns.Remove(entry);
+                throw;
+            }
+            lock (TeardownGate) Teardowns.Remove(entry);
+        }
+    }
+
+    // After each test: this test's teardowns, every failure collected (none left behind for another test to report).
     public static async Task DrainDisposalsAsync()
     {
-        var failures = new List<Exception>();
-        while (PendingDisposals.TryDequeue(out var disposal))
+        var current = CurrentTest;
+        (string Owner, string World, Task Teardown)[] own;
+        lock (TeardownGate)
         {
-            try { await disposal; }
-            catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+            own = Teardowns.Where(t => t.Owner == current).ToArray();
+            Teardowns.RemoveAll(t => t.Owner == current);
+        }
+        var failures = new List<Exception>();
+        foreach (var entry in own)
+        {
+            try { await entry.Teardown; }
+            catch (Exception ex) { failures.Add(ex); }
         }
         if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
         if (failures.Count > 1) throw new AggregateException("World teardowns failed", failures);
@@ -456,7 +499,6 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     {
         try
         {
-            await StopSpareAsync();
             if (_gatewayStarted) await Gateway.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
             Gateway.Dispose(); Producer.Dispose(); Http.Dispose();
             await Slack.DisposeAsync(); await H.DisposeAsync(); await Schema.DisposeAsync();

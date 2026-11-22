@@ -36,11 +36,11 @@ public sealed class ChannelOutboundUnifiedCrashTests
     // broker, and each publication cut asks for it again (the reuse probe runs before every cut).
     private static SharedRedpandaBroker SharedBroker => SharedRedpandaBroker.C519;
 
-    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
     // World teardowns run in the background (UnifiedOutboundTransport.DisposeAsync); none outlives its test.
     [After(Test)]
     public Task DrainWorldDisposalsAsync() => UnifiedOutboundTransport.DrainDisposalsAsync();
 
+    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
     [Before(Class)]
     public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
 
