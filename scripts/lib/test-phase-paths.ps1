@@ -57,5 +57,5 @@ function Get-TestPhasePathIdentity {
     }
     $kind = ([uint32]$stat.Mode) -band 61440
     if ($kind -eq 32768) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$stat.Size } }
-    return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]$stat.Size }
+    return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]0 }
 }
