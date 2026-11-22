@@ -17325,6 +17325,7 @@
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "HostCleanupCheckpointCompatibilityTests",
         "HostCleanupCheckpointExtractionTests",
+        "OutputCleanupTests",
         "ReapedProcStatIdentityTests",
         "TempRootSweepAnchoredDeleteTests",
         "UnsafeDeleteRecoveryTests"
@@ -17526,6 +17527,7 @@
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "HostCleanupCheckpointCustodyTests",
         "HostCleanupCheckpointExtractionTests",
+        "OutputCleanupTests",
         "PreflightCommandLineBudgetTests",
         "SafeDeleteProcessBoundaryTests"
       ]
@@ -17603,6 +17605,12 @@
         "EvidenceFolderTests",
         "HostCleanupCheckpointAuthorityTests",
         "HostCleanupCheckpointCompatibilityTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.HostCleanup/Checkpoints/TrackedIndexScope.cs",
+      "classes": [
+        "OutputCleanupTests"
       ]
     },
     {
