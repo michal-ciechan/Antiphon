@@ -22,5 +22,6 @@ public enum AuditEventType
     WorkflowCompleted = 14,
     WorkflowOpened = 15,
     WorkflowClosed = 16,
-    SessionDisconnected = 17
+    SessionDisconnected = 17,
+    BootPromptDelivery = 18,
 }

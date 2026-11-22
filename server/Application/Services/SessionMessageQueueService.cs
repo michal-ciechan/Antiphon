@@ -1713,10 +1713,12 @@ public sealed partial class SessionMessageQueueService
                 throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (await CancelExpiredBriefsAsync(db, [message], ct))
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            var startedAt = UtcNow();
+            await BootPromptDeliveryHistory.RecordAttemptAsync(db, message, startedAt, ct);
             message.Status = QueuedMessageStatus.Sent;
-            message.SentAt = UtcNow();
+            message.SentAt = startedAt;
             message.DeliveryAttempts++;
-            message.LastDeliveryStartedAt = UtcNow();
+            message.LastDeliveryStartedAt = startedAt;
             message.LastDeliveryGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             ClearAttemptVerdict(message);
@@ -1752,6 +1754,7 @@ public sealed partial class SessionMessageQueueService
             {
                 // A pre-body refusal did not consume this attempt. Restore every scalar, including
                 // the OLD baseline/verdict and spill, rather than clearing prior delivery evidence.
+                BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, message);
                 db.Entry(message).CurrentValues.SetValues(beforeCall);
                 await db.SaveChangesAsync(CancellationToken.None);
                 throw PhoneHomeInputUnavailable();
@@ -2442,6 +2445,7 @@ public sealed partial class SessionMessageQueueService
             && m.ExecutionDeadlineAt <= UtcNow()).ToList();
         foreach (var message in expired)
         {
+            BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, message);
             message.Status = QueuedMessageStatus.Pending;
             message.SentAt = null;
             message.DeliveryAttempts = 0;
@@ -2963,6 +2967,7 @@ public sealed partial class SessionMessageQueueService
                 m.RulesDeadlineAt = now.AddSeconds(m.RulesRefreshKey.StartsWith("launch:", StringComparison.Ordinal)
                     ? rulesSettings.InitializationTimeoutSeconds : rulesSettings.RefreshTimeoutSeconds);
             }
+            await BootPromptDeliveryHistory.RecordAttemptAsync(db, m, now, ct);
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = now;
             m.DeliveryAttempts++;
@@ -3082,6 +3087,7 @@ public sealed partial class SessionMessageQueueService
             // gate (FlushResult.Nothing, zero attempts charged).
             foreach (var m in run)
             {
+                BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, m);
                 m.Status = QueuedMessageStatus.Pending;
                 m.SentAt = null;
                 if (m.DeliveryAttempts > 0)
@@ -3500,6 +3506,7 @@ public sealed partial class SessionMessageQueueService
             m.SentAt = null;
             if (refundUnwrittenPointer)
             {
+                BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, m);
                 m.DeliveryAttempts--;
                 m.LastDeliveryStartedAt = null;
                 m.LastDeliveryGeneration = null;
@@ -3825,7 +3832,10 @@ public sealed partial class SessionMessageQueueService
         // Enter-only cycle that can repeat without bound. The boundary below is the observation seam
         // for that ordering; production installs the no-op base class.
         foreach (var message in run)
+        {
+            await BootPromptDeliveryHistory.RecordAttemptAsync(db, message, UtcNow(), ct);
             message.DeliveryAttempts++;
+        }
         await db.SaveChangesAsync(ct);
         using (var boundaryScope = _scopeFactory.CreateScope())
             if (boundaryScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } chargeBoundary)
@@ -4087,7 +4097,7 @@ public sealed partial class SessionMessageQueueService
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
-        DeliveryVerdict.NoComposerEvidence => "required composer evidence was not observed",
+        DeliveryVerdict.NoComposerEvidence => BootPromptDeliveryHistory.MissingComposerEvidence,
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
         DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
@@ -5466,6 +5476,9 @@ public sealed partial class SessionMessageQueueService
                         || !SessionGeneration.Equal(accepted, pointerSession.StartedAt)
                         || await ReadWorkingAsync(db, sessionId, ct)))))
                 {
+                    if (verdict == DeliveryVerdict.NoComposerEvidence)
+                        foreach (var pointer in pointers)
+                            await BootPromptDeliveryHistory.RecordComposerFailureAsync(db, pointer, UtcNow(), refunded: false, ct);
                     await DeferPointersAsync(db, sessionId, pointers, ct);
                     return;
                 }
@@ -5514,10 +5527,10 @@ public sealed partial class SessionMessageQueueService
                     var now = UtcNow();
                     foreach (var message in reverting)
                     {
-                        if (message.LastDeliveryBaselineSequence is not null
-                            || message.DeliveryAttempts <= 0
-                            || now - message.CreatedAt >= grace)
-                            continue;
+                        var refund = message.LastDeliveryBaselineSequence is null
+                            && message.DeliveryAttempts > 0 && now - message.CreatedAt < grace;
+                        await BootPromptDeliveryHistory.RecordComposerFailureAsync(db, message, now, refund, ct);
+                        if (!refund) continue;
 
                         message.DeliveryAttempts--;
                         refunded++;

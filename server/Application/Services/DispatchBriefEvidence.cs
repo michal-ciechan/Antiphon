@@ -189,7 +189,7 @@ internal static class DispatchBriefEvidence
         row.AgentSessionId == request.SessionId && InWindow(row.CreatedAt, request.DispatchedAt)
         && IsRecognized(row, request.TaskId, DelegationReportFormatter.TaskMarker(request.TaskId));
 
-    private static bool IsRecognized(DispatchBriefRowEvidence row, Guid taskId, string marker)
+    internal static bool IsRecognized(DispatchBriefRowEvidence row, Guid taskId, string marker)
     {
         if (row.Origin != QueuedMessageOrigin.Delegation || row.SourceLandNotificationId is not null)
             return false;
