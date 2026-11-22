@@ -330,7 +330,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             result.ShouldNotBeNull();
             result!.Rows.Single().State.ShouldBe("green",
                 string.Join(Environment.NewLine, result.Rows.Select(item => item.Line + Environment.NewLine + item.Output)));
-            driver.Calls.ShouldContain(CheckpointFixtures.IsBuild);
+            driver.Calls.Any(CheckpointFixtures.IsBuild).ShouldBeTrue();
             driver.Calls.Where(CheckpointFixtures.IsBuild).ShouldAllBe(call =>
                 call.Arguments.All(arg => !arg.Contains("AntiphonCheckpointIntermediateRoot", StringComparison.Ordinal)));
         }
