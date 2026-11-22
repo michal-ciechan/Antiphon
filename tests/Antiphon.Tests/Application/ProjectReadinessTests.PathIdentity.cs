@@ -1,5 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
@@ -141,6 +143,35 @@ public partial class ProjectReadinessTests
         (await LookupAsync(service, $"/srv/c-{u}/team/repo")).ShouldBe(lower.Id);
         (await LookupAsync(service, $"/srv/c-{u}/team\\repo")).ShouldBe(slashed.Id);
         (await LookupAsync(service, $"/srv/c-{u}/TEAM/repo")).ShouldBeNull();
+    }
+
+    [Test]
+    public async Task candidate_prefilter_runs_in_postgres_as_one_filtered_scan()
+    {
+        await using var db = CreateContext();
+        var probe = $"/srv/plan-{Guid.NewGuid():N}/";
+        var query = db.Agents.AsNoTracking()
+            .Where(a => !a.IsPoolDelegate)
+            .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe));
+
+        var sql = query.ToQueryString();
+        sql.ShouldContain("rtrim(lower(replace(");
+        sql.ShouldContain("= lower(@");
+
+        await using var command = query.CreateDbCommand();
+        command.CommandText = "EXPLAIN " + command.CommandText;
+        await db.Database.OpenConnectionAsync();
+        var plan = new List<string>();
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+                plan.Add(reader.GetString(0));
+        }
+
+        Console.WriteLine(string.Join(Environment.NewLine, plan));
+        plan[0].ShouldContain("on \"Agents\"");
+        plan.ShouldContain(line => line.Contains("Filter:") && line.Contains("rtrim"));
+        plan.ShouldNotContain(line => line.Contains("Join") || line.Contains("SubPlan"));
     }
 
     private static (string Project, string Other) Tokenise(string projectSpelling, string otherSpelling)

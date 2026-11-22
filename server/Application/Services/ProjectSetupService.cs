@@ -126,17 +126,17 @@ public sealed class ProjectSetupService
 
         if (!string.IsNullOrWhiteSpace(project.LocalRepositoryPath))
         {
-            // Agent paths may have been stored on a different OS. Compare one separator style on
-            // both sides instead of depending on this process's Path.DirectorySeparatorChar
-            // (same rule as AgentService.FindProjectForWorkingDirectoryAsync).
-            var normalized = project.LocalRepositoryPath.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
-            var pathMatched = await _db.Agents
+            // Agent paths may have been stored by a Windows or a Linux host: match them with the
+            // host-independent rule shared with AgentService.FindProjectForWorkingDirectoryAsync
+            // (translatable prefilter in SQL, exact identity on the returned candidates).
+            var projectPath = project.LocalRepositoryPath;
+            var candidates = await _db.Agents
                 .AsNoTracking()
                 .Include(a => a.TuiProfile)
                 .Where(a => !a.IsPoolDelegate)
-                .Where(a => a.WorkingDirectory.Replace("\\", "/").ToLower() == normalized)
+                .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, projectPath))
                 .ToListAsync(ct);
-            foreach (var agent in pathMatched)
+            foreach (var agent in candidates.Where(a => WorkingDirectoryIdentity.Same(a.WorkingDirectory, projectPath)))
             {
                 if (standingAgents.Any(existing => existing.Id == agent.Id))
                     continue;
