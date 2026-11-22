@@ -155,10 +155,10 @@ public sealed class RcRunEvidenceTests
     }
 
     // The call sites: the nightly tests run (W2-nightly S17: NightlyTests.cs; nightly-tests-impl.ps1 is deleted), the run core
-    // (still PowerShell), the chunk runner (W2-nightly S12: the launch, the chunk record and its shadow parse) and the suite
+    // (W2-nightly S20: NightlyRun.cs; nightly-run-impl.ps1 is deleted), the chunk runner (W2-nightly S12: the launch, the chunk record and its shadow parse) and the suite
     // runner (W2-nightly S13: the suite's discovery record moved there with the suite preparation).
     private const string TestsImpl = "scripts/lib/Antiphon.Nightly/NightlyTests.cs";
-    private const string RunImpl = "scripts/lib/nightly-run-impl.ps1";
+    private const string RunImpl = "scripts/lib/Antiphon.Nightly/NightlyRun.cs";
     private const string ChunkRunner = "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs";
     private const string SuiteRunner = "scripts/lib/Antiphon.Nightly/NightlySuiteRunner.cs";
     private const string BuildCall = "rcEvidence.Build(";
@@ -195,17 +195,24 @@ public sealed class RcRunEvidenceTests
         var suiteRunner = ReadSource(SuiteRunner);
         Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && suiteRunner.Contains(DiscoveryCall, StringComparison.Ordinal)
             && chunkRunner.Contains(LaunchCall, StringComparison.Ordinal) && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
-        Note(runImpl.Contains("$rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("$rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
+        Note(runImpl.Contains("rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
         Note(!testsImpl.Contains("publish-release.ps1", StringComparison.OrdinalIgnoreCase) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");
         Contract(nameof(OneBuildAndDiscoveryPerSuite));
     }
 
-    // ---- CARD-1836 S6b follow-up: the real nightly-run path, twice, on one log root ------------------------------
+    // ---- CARD-1836 S6b follow-up: the run path, three times, on one log root ------------------------------------
 
-    private sealed record EntryRun(string RunId, int ExitCode, string Phase, string LogDir, string NativeRunId, string Output);
-
+    /// <summary>
+    /// The run core (NightlyRun.Run, in-process since W2-nightly S20; it ran the PowerShell entry on seams) records its shadow
+    /// evidence with ANTIPHON_RC_RUN_EVIDENCE=record: one evidence root per run on a shared log root, the checkout's
+    /// changed-input snapshot, the tests run's build, discovery, launch and chunk revision records joined Full and without
+    /// gate credit. The tests hop runs NightlyTests.Run in this process with its own recorder; the test host is faked from
+    /// the c487 probe's diagnostics and TRX; the host's git answers the fixture sha. A third run whose tests child sees a
+    /// repository where every real git call fails (its copy with a broken .git: the GIT_CONFIG_PARAMETERS fault of the
+    /// PowerShell case, which a process-wide variable would leak into other tests) keeps the first run's verdict and warns once.
+    /// </summary>
     [Test, Timeout(420_000)]
-    public async Task OneEvidenceRootPerRun(CancellationToken token)
+    public void OneEvidenceRootPerRun(CancellationToken token)
     {
         using var fixture = new RcInputFixtureRepository("re-");
         var root = Dir(fixture, "e2e");
@@ -243,50 +250,99 @@ public sealed class RcRunEvidenceTests
         var sha = Git(repo, "rev-parse", "HEAD");
         Git(repo, "remote", "add", "origin", "https://github.com/michal-ciechan/Antiphon");
         Git(repo, "config", "core.longpaths", "true");
-        // The checkout runs its own scripts/lib (bin and obj left out: the nightly-tests command's sources and the C487 harness),
-        // and the core's WriteBehind sources, as Copy-C487NightlyCoreDependency copied them.
-        var scripts = Path.Combine(repo, "scripts");
-        Directory.CreateDirectory(scripts);
-        CopyTree(Path.Combine(source, "scripts", "lib"), Path.Combine(scripts, "lib"), top: true);
-        var writeBehind = Path.Combine(repo, "src", "Antiphon.IO.WriteBehind");
-        Directory.CreateDirectory(writeBehind);
-        foreach (var file in Directory.GetFiles(Path.Combine(source, "src", "Antiphon.IO.WriteBehind")))
-        {
-            var extension = Path.GetExtension(file);
-            if (extension == ".cs" || extension == ".csproj") File.Copy(file, Path.Combine(writeBehind, Path.GetFileName(file)), true);
-        }
         NewOutputs(Path.Combine(repo, "tests", "Probe", "bin", "Debug", "net9.0"), "Probe.dll", "helper.dll");
         File.WriteAllText(Path.Combine(repo, ".antiphon-nightly-owned"), "{\"origin\":\"https://github.com/michal-ciechan/Antiphon\",\"kind\":\"nightly-clone\"}");
         var probe = Path.Combine(source, "scripts", "fixtures", "nightly", "c487-probe");
-        var trace = Path.Combine(root, "trace.log");
-        var childLog = Path.Combine(root, "child.log");
-        var seamPath = Path.Combine(root, "seams.ps1");
-        File.WriteAllText(seamPath, Seams(trace, childLog, probe, sha), Encoding.ASCII);
+        // The fault run's tests child: the same files, a .git that names no repository.
+        var faulted = Path.Combine(root, "faulted-checkout");
+        CopyTree(repo, faulted, top: false);
+        Directory.Delete(Path.Combine(faulted, ".git"), true);
+        File.WriteAllText(Path.Combine(faulted, ".git"), "gitdir: " + Path.Combine(root, "no-such-git-dir") + "\n");
 
-        string[] Arguments(string runId) =>
-        [
-            "-NoSync", "-NoReport", "-CheckoutRoot", repo, "-StateRoot", state, "-LogRoot", logs, "-CoordinationRoot", coord,
-            "-RemoteUrl", "https://github.com/michal-ciechan/Antiphon", "-Ref", "master", "-Trigger", "scheduled", "-Profile", "nightly",
-            "-SelectionMode", "Full", "-SeamsPath", seamPath, "-Suites", "probe", "-Repository", "michal-ciechan/Antiphon", "-RunId", runId,
-        ];
-        var record = new Dictionary<string, string> { ["ANTIPHON_RC_RUN_EVIDENCE"] = "record" };
-        var first = await RunEntryAsync(source, state, "s6bfol01", Arguments("s6bfol01"), record, token);
-        var second = await RunEntryAsync(source, state, "s6bfol02", Arguments("s6bfol02"), record, token);
-        var firstDir = first.LogDir;
-        var secondDir = second.LogDir;
+        var childLines = new List<string>();
+        var faultChild = false;
+        var processes = new Nightly.FakeProcessTable();
+        processes.Start(processes.CurrentPid, Nightly.NightlyRunWorld.ProcessStart);
+        var output = new StringWriter();
+        NightlyHost host = null!;
+        NightlyLaunchResult Answer(NightlyLaunch launch)
+        {
+            if (Nightly.NightlyRunHops.IsTestsHop(launch))
+            {
+                var options = Nightly.NightlyRunHops.TestsOptions(launch);
+                if (faultChild) options.RepoRoot = faulted;
+                Directory.CreateDirectory(options.LogRoot);
+                var recorder = new RcRunEvidenceRecorder("record", false, false, line => { lock (childLines) childLines.Add(line); });
+                var tests = NightlyTests.Run(options, host, new NightlyTestsBindings { RcEvidence = recorder });
+                return Nightly.NightlyTestsWorld.Result(tests.ProcessExitCode, "");
+            }
+            var args = launch.Arguments.ToList();
+            string Take(string name) => args.IndexOf(name) is var i and >= 0 && i + 1 < args.Count ? args[i + 1] : "";
+            if (args.Contains("--list-tests") && Take("--diagnostic-output-directory") is { Length: > 0 } discovery)
+            {
+                Directory.CreateDirectory(discovery);
+                File.Copy(Path.Combine(probe, "discovery.diag"), Path.Combine(discovery, "discovery.diag"), true);
+            }
+            else if (args.Any(a => a.StartsWith("--report-trx", StringComparison.Ordinal)))
+            {
+                if (Take("--diagnostic-output-directory") is { Length: > 0 } diag)
+                {
+                    Directory.CreateDirectory(diag);
+                    File.Copy(Path.Combine(probe, "execution.diag"), Path.Combine(diag, "execution.diag"), true);
+                }
+                if (Take("--results-directory") is { Length: > 0 } results && Take("--report-trx-filename") is { Length: > 0 } trx)
+                {
+                    Directory.CreateDirectory(results);
+                    File.Copy(Path.Combine(probe, "all.trx"), Path.Combine(results, trx), true);
+                }
+            }
+            return Nightly.NightlyTestsWorld.Result(0);
+        }
+        host = new NightlyHost
+        {
+            Clock = TimeProvider.System,
+            Git = (_, arguments) =>
+            {
+                if (arguments.Contains("--get") && arguments.Contains("core.longpaths")) return new NightlyGitResult(0, "true");
+                return arguments.Contains("rev-parse") ? new NightlyGitResult(0, sha) : new NightlyGitResult(0, "");
+            },
+            Launcher = new Nightly.RecordingLauncher(Answer),
+            Processes = processes,
+            Probe = new Nightly.FakeHostProbe(),
+            Out = output,
+            Error = output,
+            Trace = TextWriter.Null,
+        };
+        EntryRun Run(string runId)
+        {
+            var result = NightlyRun.Run(new NightlyRunOptions
+            {
+                NoSync = true, NoReport = true, CheckoutRoot = repo, StateRoot = state, LogRoot = logs, CoordinationRoot = coord, RemoteUrl = "https://github.com/michal-ciechan/Antiphon",
+                Ref = "master", Trigger = "scheduled", Profile = "nightly", SelectionMode = "Full", Suites = ["probe"], Repository = "michal-ciechan/Antiphon", RunId = runId,
+            }, host, new NightlyRunBindings
+            {
+                CliPath = Nightly.NightlyRunWorld.StagedCli, RcEvidence = new RcRunEvidenceRecorder("record", false, false, line => { lock (childLines) childLines.Add(line); }),
+            });
+            var record = NightlyRun.ResultRecord(result);
+            var last = JsonNode.Parse(File.ReadAllText(Path.Combine(state, "last-run.json")));
+            var phase = (string?)last?["runId"] == runId ? (string?)last?["phase"] ?? "" : "";
+            var logDir = (string?)last?["runId"] == runId ? (string?)last?["logDir"] ?? "" : "";
+            return new EntryRun(runId, result.ExitCode, phase, logDir, PsValue.Str(record["nativeRunId"]), output.ToString());
+        }
+        var first = Run("s6bfol01");
+        var second = Run("s6bfol02");
         var detail = $"first={first.Phase}/{first.ExitCode} second={second.Phase}/{second.ExitCode}";
-        if (File.Exists(childLog)) Console.WriteLine(string.Join(Environment.NewLine, File.ReadAllLines(childLog).TakeLast(40)));
+        Console.WriteLine(string.Join(Environment.NewLine, childLines.TakeLast(40)));
         Console.WriteLine(detail);
-        Note(firstDir.Length > 0, "run-dir:" + detail + " " + first.Output);
-        var one = firstDir.Length > 0 ? ReadRunEvidence(firstDir) : null;
-        var two = secondDir.Length > 0 ? ReadRunEvidence(secondDir) : null;
+        Note(first.LogDir.Length > 0, "run-dir:" + detail + " " + first.Output);
+        var one = first.LogDir.Length > 0 ? ReadRunEvidence(first.LogDir) : null;
+        var two = second.LogDir.Length > 0 ? ReadRunEvidence(second.LogDir) : null;
         Note(one?.Join is not null && one.Join["joined"]?.GetValue<bool>() == true, "missing-join-record");
         var inputs = one?.Source?["inputs"]?.AsArray();
         Note(inputs is { Count: >= 1 } && (string?)inputs[0]!["path"] == "tests/test-execution-policy.json", "changed-input-snapshot");
         Note(one is { Revisions: >= 1 }, "chunk-revision");
         Note(one is { Discovery: >= 1 }, "discovery-revision");
         Note(one is not null && two is not null && one.Evidence != two.Evidence, "second-run-own-root");
-        // A refusal ends with an empty nativeRunId on the entry's result line.
         Note(second.NativeRunId == second.RunId && two?.Source is not null, "second-run-refused");
         if (one?.Join is not null)
             Note((string?)one.Join["effectiveMode"] == "Full" && one.Join["gateCredit"]?.GetValue<bool>() == false, "shadow-stays-full");
@@ -297,10 +353,12 @@ public sealed class RcRunEvidenceTests
         Note(CountFiles(offRoot) == before, "off-switch-writes-nothing");
         // Every real git call of the tests child fails; the verdict stays and one warning line is printed.
         const string warning = "rc-run-evidence: git-failed";
-        var warningsBefore = Occurrences(childLog, warning);
-        var faulted = new Dictionary<string, string> { ["ANTIPHON_RC_RUN_EVIDENCE"] = "record", ["S6B_FAULT_CHILD_GIT"] = "1" };
-        var fault = await RunEntryAsync(source, state, "s6bfol03", Arguments("s6bfol03"), faulted, token);
-        var warnings = Occurrences(childLog, warning) - warningsBefore;
+        int Warnings() { lock (childLines) return childLines.Count(l => l.Contains(warning, StringComparison.Ordinal)); }
+        var warningsBefore = Warnings();
+        faultChild = true;
+        var fault = Run("s6bfol03");
+        faultChild = false;
+        var warnings = Warnings() - warningsBefore;
         Console.WriteLine($"fault={fault.Phase}/{fault.ExitCode} warnings={warnings}");
         Note(fault.Phase == first.Phase && fault.ExitCode == first.ExitCode, "fault-verdict");
         Note(warnings == 1, "fault-one-warning");
@@ -310,6 +368,7 @@ public sealed class RcRunEvidenceTests
         Contract(nameof(OneEvidenceRootPerRun));
     }
 
+    private sealed record EntryRun(string RunId, int ExitCode, string Phase, string LogDir, string NativeRunId, string Output);
     private sealed record RunEvidence(string Evidence, JsonNode? Join, JsonNode? Source, int Revisions, int Discovery);
 
     private static RunEvidence ReadRunEvidence(string runDirectory)
@@ -338,114 +397,6 @@ public sealed class RcRunEvidenceTests
         var count = 0;
         for (var at = all.IndexOf(text, StringComparison.Ordinal); at >= 0; at = all.IndexOf(text, at + text.Length, StringComparison.Ordinal)) count++;
         return count;
-    }
-
-    private static string Quote(string path) => path.Replace("'", "''");
-
-    // The nightly-run seams (a PowerShell file the production entry dot-sources). The tests hop (W2-nightly S17: the
-    // nightly-tests command, which takes no seams) runs for real in this process on the same seams (Invoke-C487NightlyTestsHop
-    // of the checkout's scripts/lib/c487-nightly-tests.ps1), its output in the child log; S6B_FAULT_CHILD_GIT=1 gives it a git
-    // configuration every real git call refuses. The test host is faked from the c487 probe's diagnostics and TRX.
-    private static string Seams(string trace, string childLog, string probe, string sha) => $$"""
-        $NightlySeams = @{
-            TracePath = '{{Quote(trace)}}'
-            Git = {
-                param($WorkingDirectory, $Arguments)
-                if ($Arguments -contains '--get' -and $Arguments -contains 'core.longpaths') { return @{ ExitCode = 0; Output = 'true' } }
-                if ($Arguments -contains 'rev-parse') { return @{ ExitCode = 0; Output = '{{sha}}' } }
-                return @{ ExitCode = 0; Output = '' }
-            }
-            StartProcess = {
-                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-                $joined = @($ArgumentList) -join ' '
-                Add-Content -LiteralPath '{{Quote(trace)}}' -Value (('EXEC {0} {1}' -f $FilePath, $joined)) -Encoding ASCII
-                if ([string]$FilePath -eq 'antiphon-scripts' -and [string]@($ArgumentList)[0] -eq 'nightly-tests') {
-                    . (Join-Path $WorkingDirectory 'scripts/lib/c487-nightly-tests.ps1')
-                    $savedGit = $env:GIT_CONFIG_PARAMETERS
-                    if ($env:S6B_FAULT_CHILD_GIT -eq '1') { $env:GIT_CONFIG_PARAMETERS = 'fault' }
-                    try { $hop = Invoke-C487NightlyTestsHop -Seams $script:NightlySeams -ArgumentList @($ArgumentList) -WorkingDirectory $WorkingDirectory -LogPath '{{Quote(childLog)}}' }
-                    finally { $env:GIT_CONFIG_PARAMETERS = $savedGit }
-                    return @{ ExitCode = [int]$hop.ExitCode; TimedOut = $false; Pid = $PID; ChildrenExited = $true; CleanupComplete = $true; OutputDrainTimedOut = $false; LogText = '' }
-                }
-                $list = @($ArgumentList)
-                function Take([string]$name) {
-                    $index = [array]::IndexOf($list, $name)
-                    if ($index -ge 0 -and ($index + 1) -lt $list.Count) { return [string]$list[$index + 1] }
-                    return ''
-                }
-                if ($list -contains '--list-tests') {
-                    $diag = Take '--diagnostic-output-directory'
-                    if ($diag) {
-                        New-Item -ItemType Directory -Path $diag -Force | Out-Null
-                        Copy-Item -LiteralPath '{{Quote(probe)}}/discovery.diag' -Destination (Join-Path $diag 'discovery.diag') -Force
-                    }
-                } elseif ($list -contains '--report-trx') {
-                    $diag = Take '--diagnostic-output-directory'
-                    if ($diag) {
-                        New-Item -ItemType Directory -Path $diag -Force | Out-Null
-                        Copy-Item -LiteralPath '{{Quote(probe)}}/execution.diag' -Destination (Join-Path $diag 'execution.diag') -Force
-                    }
-                    $results = Take '--results-directory'
-                    $trx = Take '--report-trx-filename'
-                    if ($results -and $trx) {
-                        New-Item -ItemType Directory -Path $results -Force | Out-Null
-                        Copy-Item -LiteralPath '{{Quote(probe)}}/all.trx' -Destination (Join-Path $results $trx) -Force
-                    }
-                }
-                $stamp = 'C487_INVOCATION fake'
-                if ($Environment -and $Environment.Contains('C487_INVOCATION')) { $stamp = 'C487_INVOCATION=' + [string]$Environment['C487_INVOCATION'] }
-                return @{ ExitCode = 0; TimedOut = $false; Pid = 2; ChildrenExited = $true; CleanupComplete = $true; OutputDrainTimedOut = $false; LogText = $stamp }
-            }
-            IsProcessAlive = { param($ProcessId) return ($ProcessId -gt 0) }
-            DockerInfo = { return @{ exitCode = 0; version = 'fake'; detail = 'ok' } }
-            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-            ToolchainVersions = { param($tool) if ($tool -eq 'git') { 'git version 2.42.0' } else { '10.0.204 [/fake/sdk]' } }
-        }
-
-        """;
-
-    // scripts/nightly-run.ps1 under pwsh, as Windmill starts it: exit code, the phase and run directory its state file
-    // (last-run.json) records for this run, and the nativeRunId of its result line.
-    private static async Task<EntryRun> RunEntryAsync(string source, string stateRoot, string runId, string[] arguments,
-        IReadOnlyDictionary<string, string> environment, CancellationToken token)
-    {
-        var start = new ProcessStartInfo(ScriptHarnessProcess.ResolvePowerShell())
-        {
-            // The fixture root, not the source checkout.
-            WorkingDirectory = Path.GetDirectoryName(stateRoot)!, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(source, "scripts", "nightly-run.ps1") }) start.ArgumentList.Add(arg);
-        foreach (var arg in arguments) start.ArgumentList.Add(arg);
-        start.Environment.Remove("ANTIPHON_RC_RUN_EVIDENCE");
-        foreach (var (name, value) in environment) start.Environment[name] = value;
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync(token);
-        var stderr = process.StandardError.ReadToEndAsync(token);
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(TimeSpan.FromSeconds(120));
-        try { await process.WaitForExitAsync(budget.Token); }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            throw new TimeoutException("nightly-run.ps1 " + runId + " did not exit within 120 s");
-        }
-        var output = await stdout + Environment.NewLine + await stderr;
-        var nativeRunId = "";
-        foreach (var line in output.Split('\n').Select(l => l.Trim()).Where(l => l.StartsWith("{\"nativeRunId\"", StringComparison.Ordinal)))
-            nativeRunId = (string?)JsonNode.Parse(line)?["nativeRunId"] ?? "";
-        var phase = "";
-        var logDir = "";
-        var lastRun = Path.Combine(stateRoot, "last-run.json");
-        if (File.Exists(lastRun))
-        {
-            var lastState = JsonNode.Parse(File.ReadAllText(lastRun));
-            if ((string?)lastState?["runId"] == runId)
-            {
-                phase = (string?)lastState?["phase"] ?? "";
-                logDir = (string?)lastState?["logDir"] ?? "";
-            }
-        }
-        return new EntryRun(runId, process.ExitCode, phase, logDir, nativeRunId, output);
     }
 
     private static string Git(string root, params string[] args)

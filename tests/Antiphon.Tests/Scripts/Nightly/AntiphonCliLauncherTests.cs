@@ -348,4 +348,132 @@ public sealed class AntiphonCliLauncherTests
         refused.Stderr.Trim().ShouldBe("nightly-health: seams-path-unsupported");
         Directory.Exists(refusedRoot).ShouldBeFalse("a refusal evaluates nothing and writes nothing");
     }
+
+    // ---- W2-nightly S20: scripts/nightly-run.ps1, the launcher Windmill's nightly job, release-cut and launch-rc run ----
+
+    /// <summary>A temporary checkout root holding scripts/nightly-run.ps1 beside scripts/lib/antiphon-cli.ps1 (its bin-launcher stays there).</summary>
+    private static NightlyFixture RunCheckout()
+    {
+        var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-run.ps1"), fixture.PathOf("scripts", "nightly-run.ps1"));
+        return fixture;
+    }
+
+    /// <summary>The whole parameter block as Windmill's 5.1 binds it, each value distinct, and the switches.</summary>
+    private static readonly (string Name, string? Value)[] EveryParameter =
+    [
+        ("-Suites", "client,scripts"), ("-NoReport", null), ("-NoSync", null), ("-CheckoutRoot", @"C:\fixture root\checkout"), ("-LogRoot", @"C:\fixture root\logs"),
+        ("-Ref", "rc/2026-11-30"), ("-RemoteUrl", "https://example.invalid/fixture.git"), ("-StateRoot", @"C:\fixture root\state"), ("-SelectionMode", "Shadow"),
+        ("-Repository", "fixture/repository"), ("-BaselineSha", new string('b', 40)), ("-BaselineReceiptPath", @"C:\fixture root\receipt.json"),
+        ("-QualificationPath", @"C:\fixture root\claim.json"), ("-TimingRoot", @"C:\fixture root\timing"), ("-TrainManifestPath", @"C:\fixture root\train.json"),
+        ("-ReleaseIntentPath", @"C:\fixture root\intent.json"), ("-SelectionAttemptPath", @"C:\fixture root\attempt.json"), ("-SelectionAttemptDigest", new string('c', 64)),
+        ("-SelectionPath", @"C:\fixture root\selection.json"), ("-SelectionDigest", new string('d', 64)), ("-Attempt", "3"), ("-PriorFailuresPath", @"C:\fixture root\seed.json"),
+        ("-PriorFailuresDigest", new string('e', 64)), ("-AcceptCrossCandidateSeed", null), ("-SeedSourceCandidateId", "rc-2026-10-27-cde8def41638"), ("-Trigger", "rc"),
+        ("-Profile", "rc"), ("-ExpectedSha", new string('a', 40)), ("-CandidateId", "rc-2026-11-30-aaaaaaaaaaaa"), ("-ReleaseRoot", @"C:\fixture root\releases"),
+        ("-CoordinationRoot", @"C:\fixture root\coord"), ("-RunId", "s20-launcher"), ("-ContinueRunId", "s20-parent"), ("-ContinueParentPid", "4242"),
+        ("-ContinueParentStartedAt", "2026-09-01T06:00:00.0000000Z"), ("-WhatIf", null),
+    ];
+
+    [Test]
+    public async Task Nightly_run_launcher_passes_every_parameter_as_its_flag_and_keeps_the_defaults()
+    {
+        using var fixture = RunCheckout();
+        var entry = fixture.PathOf("scripts", "nightly-run.ps1");
+
+        var every = await NightlyRunHops.LauncherEcho(entry, EveryParameter.SelectMany(p => p.Value == null ? new[] { p.Name } : new[] { p.Name, p.Value }), fixture.Root);
+        every.ExitCode.ShouldBe(0, every.Stderr);
+        var received = every.Options.ShouldNotBeNull(every.Stdout + every.Stderr);
+        // The options the same flags parse to directly: the launcher's translation, value for value (the result file is its own).
+        var expected = NightlyRunOptions.Parse(EveryParameter.SelectMany(p => p.Value == null ? new[] { NightlyRunHops.Kebab(p.Name) } : new[] { NightlyRunHops.Kebab(p.Name), p.Value }).ToArray());
+        received.ResultFile.ShouldNotBeNullOrWhiteSpace("the launcher always asks for the result record");
+        received.ResultFile = "";
+        JsonSerializer.Serialize(received).ShouldBe(JsonSerializer.Serialize(expected));
+        expected.Suites.ShouldBe(["client", "scripts"]);
+
+        var defaults = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root);
+        defaults.ExitCode.ShouldBe(0, defaults.Stderr);
+        var bound = defaults.Options.ShouldNotBeNull(defaults.Stdout + defaults.Stderr);
+        bound.CheckoutRoot.ShouldBe(@"C:\Antiphon\nightly\checkout");
+        bound.StateRoot.ShouldBe(@"C:\Antiphon\nightly");
+        (bound.Ref, bound.RemoteUrl, bound.Repository, bound.SelectionMode, bound.Trigger, bound.Profile, bound.Attempt)
+            .ShouldBe(("master", "https://github.com/michal-ciechan/Antiphon", "michal-ciechan/Antiphon", "Full", "scheduled", "nightly", 1));
+        (bound.NoSync, bound.NoReport, bound.WhatIf, bound.AcceptCrossCandidateSeed, bound.ContinueParentPid, bound.Suites).ShouldBe((false, false, false, false, 0, (string[]?)null));
+
+        // The parameter block, the 5.1 header and the help text stay as Windmill and the operators know them.
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-run.ps1"));
+        text.ShouldStartWith("#requires -Version 5.1");
+        text.ShouldContain("    [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',\n");
+        text.ShouldContain("    [string]$CheckoutRoot = 'C:\\Antiphon\\nightly\\checkout',\n");
+        text.ShouldContain("origin/master");
+        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-run.ps1")).All(b => b < 128).ShouldBeTrue("ASCII only");
+    }
+
+    [Test]
+    public async Task Nightly_run_launcher_refuses_a_seams_path_and_still_prints_the_record()
+    {
+        using var fixture = RunCheckout();
+        var entry = fixture.PathOf("scripts", "nightly-run.ps1");
+        var state = fixture.PathOf("state");
+        var expected = NightlyRun.RecordLine(new NightlyRunResult { ExitCode = 3, Refusal = "seams-path-unsupported" });
+
+        var refused = await RunScript(fixture, entry, ["-StateRoot", state, "-SeamsPath", "seams.ps1"], new Dictionary<string, string>());
+        refused.Exit.ShouldBe(3, refused.Stderr);
+        refused.Stdout.Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1].ShouldBe(expected);
+        refused.Stderr.Trim().ShouldBe("nightly-run: seams-path-unsupported");
+        Directory.Exists(state).ShouldBeFalse("a refusal runs nothing and writes nothing");
+
+        // -PassThru (release-cut's call) returns the run-core names instead of exiting.
+        File.WriteAllText(fixture.PathOf("passthru.ps1"), """
+            param([string]$Entry, [string]$StateRoot)
+            $r = & $Entry -StateRoot $StateRoot -SeamsPath 'seams.ps1' -PassThru
+            [Console]::Out.WriteLine('after')
+            [Console]::Out.WriteLine((@($r.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
+            [Console]::Out.WriteLine([string]$r.ExitCode + '|' + [string]$r.Refusal)
+            """);
+        var passThru = await RunScript(fixture, fixture.PathOf("passthru.ps1"), ["-Entry", entry, "-StateRoot", state], new Dictionary<string, string>());
+        passThru.Exit.ShouldBe(0, passThru.Stderr);
+        var lines = passThru.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines.ShouldBe([expected, "after", string.Join(",", new NightlyRunResult().ToRecord().Keys.Cast<string>()), "3|seams-path-unsupported"]);
+    }
+
+    [Test]
+    public async Task Nightly_run_launcher_that_cannot_start_the_cli_exits_9_with_a_record()
+    {
+        using var fixture = RunCheckout();
+        var run = await RunScript(fixture, fixture.PathOf("scripts", "nightly-run.ps1"), ["-StateRoot", fixture.PathOf("state")],
+            new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        run.Exit.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+        run.Stdout.Trim().ShouldBe(NightlyRun.RecordLine(new NightlyRunResult { ExitCode = 9, Refusal = "nightly-run-cli-unavailable" }));
+    }
+
+    /// <summary>
+    /// release-cut.ps1's call: in-process `&amp;` with its splat and -PassThru under pwsh, through the real nightly-run command (the
+    /// staged build). The run refuses (an unknown profile, before anything is written); the caller reads .ExitCode and .Refusal,
+    /// keeps running, and the completion record reached stdout.
+    /// </summary>
+    [Test]
+    public async Task Nightly_run_launcher_passthru_serves_release_cut()
+    {
+        using var fixture = RunCheckout();
+        var entry = fixture.PathOf("scripts", "nightly-run.ps1");
+        var state = fixture.PathOf("state");
+        File.WriteAllText(fixture.PathOf("cut.ps1"), """
+            param([string]$Entry, [string]$StateRoot)
+            $runArgs = @{ RunId = 's20-cut'; CheckoutRoot = (Join-Path $StateRoot 'checkout'); StateRoot = $StateRoot; Profile = 'turbo'; Trigger = 'rc'; SeamsPath = ''; PassThru = $true; WhatIf = $false }
+            $run = & $Entry @runArgs
+            [Console]::Out.WriteLine('tested=' + ([int]$run.ExitCode -eq 0) + '|' + [int]$run.ExitCode + '|' + [string]$run.Refusal + '|' + [string]$run.RunId)
+            """);
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", fixture.PathOf("cut.ps1"), "-Entry", entry, "-StateRoot", state }) start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start"));
+        run.Exit.ShouldBe(0, run.Stderr);
+        var lines = run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines[^1].ShouldBe("tested=False|3|unknown-profile|s20-cut");
+        using var record = JsonDocument.Parse(lines[^2]);
+        record.RootElement.GetProperty("refusal").GetString().ShouldBe("unknown-profile");
+        record.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(3);
+        File.Exists(Path.Combine(state, "last-run.json")).ShouldBeFalse("refused before any state");
+    }
 }

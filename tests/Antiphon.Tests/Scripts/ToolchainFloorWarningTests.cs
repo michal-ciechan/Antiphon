@@ -116,7 +116,7 @@ public sealed class ToolchainFloorWarningTests
     [Test]
     public Task C1698_WindowsPowerShellSyntax() =>
         ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_WindowsPowerShellSyntax), 17,
+            nameof(C1698_WindowsPowerShellSyntax), 16,
             [
                 "C1698 Syntax scan flags ternary",
                 "C1698 Syntax scan flags null-coalescing",
@@ -127,7 +127,7 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Windows PowerShell 5.1 syntax: scripts/lib/toolchain-floor.ps1",
                 "C1698 Windows PowerShell 5.1 syntax: restart-server.ps1",
                 "C1698 Windows PowerShell 5.1 syntax: scripts/session-runner-restart-health.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-run-impl.ps1",
+                "C1698 Windows PowerShell 5.1 syntax: scripts/nightly-run.ps1",
                 "C1698 Windows PowerShell 5.1 syntax: scripts/lib/antiphon-cli.ps1"
             ]);
 
@@ -208,16 +208,46 @@ public sealed class ToolchainFloorWarningTests
             "C1698 Summary preflight block records the toolchain");
     }
 
-    /// <summary>W2-nightly S03: the run core checks with the compiled twin (ToolchainFloor.cs), so a broken
-    /// toolchain-floor.ps1 (kept for the restart chain) changes nothing in the run.</summary>
+    /// <summary>
+    /// W2-nightly S03: the run core checks with the compiled twin (ToolchainFloor.cs), so a broken toolchain-floor.ps1 (kept
+    /// for the restart chain) changes nothing in the run. Since W2-nightly S20 the run core is C# and there is no PowerShell run
+    /// core left to load the library (the deleted scripts/test-nightly-run.ps1 case copied the scripts tree with a broken
+    /// library and ran the PowerShell entry); the equivalent in-process: NightlyRun.Run on a clone whose
+    /// scripts/lib/toolchain-floor.ps1 throws or does not parse prints no check-failed line, keeps the intact clone's exit
+    /// code and phase, and still hops to the tests.
+    /// </summary>
     [Test]
-    public Task C1698_RunLibraryLoadFailure() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1698",
-            nameof(C1698_RunLibraryLoadFailure), 2,
-            [
-                "C1698 Run does not load the toolchain library: throws",
-                "C1698 Run does not load the toolchain library: unparsable"
-            ]);
+    public void C1698_RunLibraryLoadFailure()
+    {
+        (string[] Lines, Antiphon.Nightly.NightlyRunResult Result) Run(string? library)
+        {
+            using var w = new Antiphon.Tests.Scripts.Nightly.NightlyRunWorld("c1698-library");
+            var repo = Antiphon.Tests.Scripts.Nightly.NightlyPlanCases.Repo;
+            Directory.CreateDirectory(Path.Combine(w.Clone, "docker"));
+            File.Copy(Path.Combine(repo, "docker", "git-minimum-version.sh"), Path.Combine(w.Clone, "docker", "git-minimum-version.sh"));
+            File.Copy(Path.Combine(repo, "global.json"), Path.Combine(w.Clone, "global.json"));
+            if (library != null)
+            {
+                Directory.CreateDirectory(Path.Combine(w.Clone, "scripts", "lib"));
+                File.WriteAllText(Path.Combine(w.Clone, "scripts", "lib", "toolchain-floor.ps1"), library);
+            }
+            w.Probe.Versions["git"] = "git version 2.43.0";
+            var result = w.Run(o => o.NoSync = true);
+            return (w.OutLines, result);
+        }
+        var at = Run(null);
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        foreach (var (name, text) in new[] { ("throws", "throw 'C1698 toolchain lib load failure'"), ("unparsable", "function Get-C1698Broken {\n    $x = 1\n") })
+        {
+            var broken = Run(text);
+            var warning = Array.FindIndex(broken.Lines, l => l.Contains("WARNING: the toolchain floor check failed", StringComparison.Ordinal));
+            var hop = Array.FindIndex(broken.Lines, l => Regex.IsMatch(l, "running antiphon-scripts nightly-tests"));
+            rows.Check(warning < 0 && hop >= 0 && broken.Result.ExitCode == at.Result.ExitCode && broken.Result.Phase == at.Result.Phase,
+                "C1698 Run does not load the toolchain library: " + name,
+                "warning=" + warning + " hop=" + hop + " broken=" + broken.Result.ExitCode + "/" + broken.Result.Phase + " at=" + at.Result.ExitCode + "/" + at.Result.Phase);
+        }
+        rows.ShouldAllPass(2, "C1698 Run does not load the toolchain library: throws", "C1698 Run does not load the toolchain library: unparsable");
+    }
 
     /// <summary>
     /// W2-nightly S15, in-process (was the scripts/test-nightly-tests.ps1 case): summary.json as a real NightlyTests.Run writes

@@ -7,7 +7,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1386, in-process since W2-nightly S18: the run core's lock (Antiphon.Nightly/NightlyRunLock.cs) against a planted
 /// run.lock, with the process table, boot id and host id Write-C1386Seams set. The cases ran the whole nightly run
-/// before; the run core refuses with Phase "lock" and the lock's reason (nightly-run-impl.ps1), so "leaves the lock
+/// before; the run core refuses with Phase "lock" and the lock's reason (NightlyRun.cs; nightly-run-impl.ps1 until W2-nightly S20), so "leaves the lock
 /// phase" is an Ok lock result and the refusal is its Reason.
 /// </summary>
 [Category("Integration")]

@@ -16,8 +16,8 @@ namespace Antiphon.Tests.Scripts;
 // ("SS <case>.contract", its condition and detail). The seed export, reader, ingress, resolver, schedule and merge are the
 // compiled core's. The operator commands run in-process through their handler (NightlySeedCommands.Run with the CLI argv, W2-nightly
 // S26): antiphon-scripts export-nightly-stopped-run-seed (SiblingTimingFromSummary) and merge-nightly-seeds (the CLI legs of
-// CumulativeMergeUnion and CumulativeMergePrintsDigest). The still-PowerShell entries nightly-run.ps1 / nightly-run-impl.ps1 are
-// launched where a case is about them (PublicHopsForwardAcknowledgement); its executor hop is the nightly-tests command.
+// CumulativeMergeUnion and CumulativeMergePrintsDigest). The run core is C# since W2-nightly S20 (NightlyRun.Run in-process in
+// PublicHopsForwardAcknowledgement); only its Windows PowerShell 5.1 launcher, scripts/nightly-run.ps1, is launched, against the echo CLI.
 // The seed statics (the link cache, the Windows identity switch, the read barrier) are process-wide: one case at a time.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -264,72 +264,43 @@ public sealed class RcStoppedRunSeedTests
         return (ok, "stale or wholly unmappable seed restores complete original plan");
     });
 
-    // nightly-run-impl.ps1's run core (Invoke-AntiphonNightlyRun on C487 seams: the self hop to nightly-run.ps1 and the
-    // executor hop, W2-nightly S17 the nightly-tests command) and the real nightly-run.ps1 parameter block, in one pwsh child:
-    // still-PowerShell entries; the nightly-tests command's own parser (NightlyTestsOptions) reads the executor's flags.
-    private const string PublicHopsScript = """
-        param([string]$HopsRepo, [string]$Root, [string]$SeedPath, [string]$HopsOut)
-        $ErrorActionPreference = 'Stop'
-        $hopScripts = Join-Path $HopsRepo 'scripts'
-        foreach ($name in 'nightly-common','nightly-coverage','c487-harness') { . (Join-Path $hopScripts ('lib/' + $name + '.ps1')) }
-        $result = [ordered]@{ selfHop = $false; executorHop = $false; wrappers = $false; history = $false; error = '' }
-        try {
-            . (Join-Path $hopScripts 'lib/nightly-run-impl.ps1')
-            $fxRoot=Join-Path $Root 'hops';[void][IO.Directory]::CreateDirectory($fxRoot)
-            $clone=New-C487OwnedClone $fxRoot
-            $state=Join-Path $fxRoot 'state';$trace=Join-Path $fxRoot 'trace.log';$seams=Join-Path $fxRoot 'seams.ps1'
-            Write-C487Seams -Path $seams -TracePath $trace -GitOutput ('b'*40)
-            $runArgs=@{CheckoutRoot=$clone;StateRoot=$state;LogRoot=(Join-Path $fxRoot 'logs');SeamsPath=$seams;NoReport=$true;Trigger='manual';Ref='master';CoordinationRoot=(Join-Path $fxRoot 'coord');PassThru=$true;PriorFailuresPath=$SeedPath;AcceptCrossCandidateSeed=$true;SeedSourceCandidateId='rc-synthetic-old'}
-            $hop=Invoke-AntiphonNightlyRun @runArgs
-            $text=[IO.File]::ReadAllText($trace)
-            $result.selfHop=[bool]($text -match 'EXEC.*nightly-run.ps1.*-AcceptCrossCandidateSeed.*-SeedSourceCandidateId rc-synthetic-old')
-            $runArgs.NoSync=$true;$runArgs.RunId='synthetic-new-nosync'
-            $direct=Invoke-AntiphonNightlyRun @runArgs
-            $text=[IO.File]::ReadAllText($trace)
-            $result.executorHop=[bool]($text -match 'EXEC antiphon-scripts nightly-tests .*--seed-source-candidate-id rc-synthetic-old.*--accept-cross-candidate-seed')
-            # Exercise both real wrapper parameter blocks and splats, replacing only their final implementation function in
-            # a private copied fixture.
-            $wrappers=$true
-            foreach($kind in @('run')){
-                $wrapperRoot=Join-Path $fxRoot ('wrapper-'+$kind);$lib=Join-Path $wrapperRoot 'lib';[void][IO.Directory]::CreateDirectory($lib)
-                Copy-Item -LiteralPath (Join-Path $hopScripts ('nightly-'+$kind+'.ps1')) -Destination $wrapperRoot
-                foreach($name in @('nightly-common','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
-                $function='Invoke-AntiphonNightly'+$(if($kind -eq 'run'){'Run'}else{'Tests'})
-                $command=Get-Command $function
-                $parameterBlock=$command.ScriptBlock.Ast.Body.ParamBlock
-                if($null -eq $parameterBlock -or $parameterBlock.Extent.Text -notmatch 'switch.*AcceptCrossCandidateSeed'){throw 'wrapper fixture requires a real parameter block'}
-                $body=$parameterBlock.Extent.Text
-                $fake='function '+$function+' { '+$body+'; return [pscustomobject]@{Accepted=[bool]$AcceptCrossCandidateSeed;Source=$SeedSourceCandidateId;Path=$PriorFailuresPath;ExitCode=0} }'
-                [IO.File]::WriteAllText((Join-Path $lib ('nightly-'+$kind+'-impl.ps1')),$fake)
-                $received=& (Join-Path $wrapperRoot ('nightly-'+$kind+'.ps1')) -PriorFailuresPath $SeedPath -AcceptCrossCandidateSeed -SeedSourceCandidateId rc-synthetic-old -PassThru
-                $wrappers=$wrappers -and $received.Accepted -and $received.Source -ceq 'rc-synthetic-old' -and $received.Path -ceq $SeedPath
-            }
-            $tests=[Antiphon.Nightly.NightlyTestsOptions]::Parse([string[]]@('--prior-failures-path',$SeedPath,'--accept-cross-candidate-seed','--seed-source-candidate-id','rc-synthetic-old'))
-            $wrappers=$wrappers -and $tests.AcceptCrossCandidateSeed -and $tests.SeedSourceCandidateId -ceq 'rc-synthetic-old' -and $tests.PriorFailuresPath -ceq $SeedPath
-            $result.wrappers=[bool]$wrappers
-            $result.history=[IO.Directory]::Exists((Join-Path $state 'history'))
-        } catch { $result.error = (Get-NightlyRefusalText $_) }
-        [IO.File]::WriteAllText($HopsOut, ($result | ConvertTo-Json -Compress))
-        """;
-
+    /// <summary>
+    /// The public hops forward the seed acknowledgement. W2-nightly S20: the run core is C# (NightlyRun.Run in-process on the
+    /// C487-shaped NightlyRunWorld): a synced run's self-update hop and a -NoSync run's tests hop both carry
+    /// -AcceptCrossCandidateSeed / --accept-cross-candidate-seed and the seed source; the real launcher (scripts/nightly-run.ps1,
+    /// Windows PowerShell 5.1, against the echo CLI) hands the nightly-run command the seed path, the acknowledgement and the
+    /// source; the nightly-tests parser reads them back; the run kept its own copy of the seed under the state's history.
+    /// </summary>
     [Test, Timeout(300_000)]
     public Task PublicHopsForwardAcknowledgement(CancellationToken token) => Case(nameof(PublicHopsForwardAcknowledgement), async w =>
     {
-        var script = w.PathOf("public-hops.ps1");
-        File.WriteAllText(script, PublicHopsScript, new UTF8Encoding(false));
-        var outPath = w.PathOf("public-hops.json");
-        var run = await Pwsh.Run(["-NoProfile", "-NonInteractive", "-File", script, "-HopsRepo", Repo, "-Root", w.Root, "-SeedPath", w.SeedPath, "-HopsOut", outPath],
-            TimeSpan.FromSeconds(240));
-        if (!File.Exists(outPath)) return (false, "no result: exit=" + run.Code + "\n" + run.Text);
-        using var result = JsonDocument.Parse(File.ReadAllText(outPath));
-        var r = result.RootElement;
-        bool Flag(string name) => r.GetProperty(name).ValueKind == JsonValueKind.True;
-        var selfHop = Flag("selfHop");
-        var executorHop = Flag("executorHop");
-        var wrappers = Flag("wrappers");
-        var error = r.GetProperty("error").GetString() ?? "";
-        return (selfHop && executorHop && wrappers && Flag("history"),
-            "sync=" + B(selfHop) + " nosync=" + B(executorHop) + " wrappers=" + B(wrappers) + (error.Length == 0 ? "" : " error=" + error + "\n" + run.Text));
+        using var world = new NightlyRunWorld("public-hops") { Git = new FakeGit(new string('b', 40)) };
+        Directory.CreateDirectory(Path.Combine(world.Clone, "scripts"));
+        File.WriteAllText(Path.Combine(world.Clone, "scripts", "nightly-run.ps1"), "# the clone's launcher\n");
+        void Seed(NightlyRunOptions o)
+        {
+            o.Trigger = "manual";
+            o.PriorFailuresPath = w.SeedPath;
+            o.AcceptCrossCandidateSeed = true;
+            o.SeedSourceCandidateId = "rc-synthetic-old";
+        }
+        world.Run(Seed);
+        var selfHop = world.Launcher.Launches.FirstOrDefault(NightlyRunHops.IsSelfHop)?.Arguments.ToArray() ?? [];
+        var selfOk = selfHop.Contains("-AcceptCrossCandidateSeed") && Array.IndexOf(selfHop, "-SeedSourceCandidateId") is var s and >= 0 && selfHop[s + 1] == "rc-synthetic-old";
+        world.Run(o => { Seed(o); o.NoSync = true; o.RunId = "synthetic-new-nosync"; });
+        var executor = world.Launcher.Launches.LastOrDefault(NightlyRunHops.IsTestsHop);
+        var tests = executor == null ? null : NightlyRunHops.TestsOptions(executor);
+        var executorOk = tests is { AcceptCrossCandidateSeed: true, SeedSourceCandidateId: "rc-synthetic-old" };
+        var echoed = await NightlyRunHops.LauncherEcho(Path.Combine(Repo, "scripts", "nightly-run.ps1"),
+            ["-PriorFailuresPath", w.SeedPath, "-AcceptCrossCandidateSeed", "-SeedSourceCandidateId", "rc-synthetic-old", "-StateRoot", w.PathOf("launcher-state")], w.Root);
+        var received = echoed.Options;
+        var parsed = NightlyTestsOptions.Parse(["--prior-failures-path", w.SeedPath, "--accept-cross-candidate-seed", "--seed-source-candidate-id", "rc-synthetic-old"]);
+        var wrappers = received is { AcceptCrossCandidateSeed: true, SeedSourceCandidateId: "rc-synthetic-old" } && received.PriorFailuresPath == w.SeedPath
+            && parsed.AcceptCrossCandidateSeed && parsed.SeedSourceCandidateId == "rc-synthetic-old" && parsed.PriorFailuresPath == w.SeedPath;
+        var history = Directory.Exists(Path.Combine(world.State, "history"));
+        return (selfOk && executorOk && wrappers && history,
+            "sync=" + B(selfOk) + " nosync=" + B(executorOk) + " wrappers=" + B(wrappers) + " history=" + B(history) + " hop=" + string.Join(" ", selfHop)
+            + "\nlauncher exit=" + echoed.ExitCode + " " + echoed.Stdout + echoed.Stderr + "\n" + world.Fixture.Out + world.Fixture.Error);
     });
 
     [Test, Timeout(300_000)]

@@ -325,7 +325,7 @@ function Test-C1698_WindowsPowerShellSyntax {
     Assert-C487 -Cond ($none.Count -eq 0) -Name 'C1698 Syntax scan passes the 5.1 spellings' -Detail ($none -join '; ')
 
     $files = @('scripts/lib/toolchain-floor.ps1', 'restart-server.ps1', 'scripts/restart-session-runner.ps1',
-        'scripts/session-runner-restart-health.ps1', 'scripts/nightly-run.ps1', 'scripts/lib/nightly-run-impl.ps1',
+        'scripts/session-runner-restart-health.ps1', 'scripts/nightly-run.ps1',
         'scripts/lib/antiphon-cli.ps1')
     foreach ($f in $files) {
         $path = Join-Path $repo $f

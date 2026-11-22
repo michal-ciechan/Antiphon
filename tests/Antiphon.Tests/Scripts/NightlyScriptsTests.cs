@@ -17,12 +17,44 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyScriptsTests
 {
-    [Test]
-    public Task C2044_RcReleaseRootRefusal() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C2044", nameof(C2044_RcReleaseRootRefusal), 3,
-            "C2044 omitted ReleaseRoot is refused before recording a run and named in the final JSON",
+    /// <summary>
+    /// CARD-2044, in-process since W2-nightly S20 (was the scripts/test-nightly-run.ps1 case on the PowerShell entry and its
+    /// seams): an rc run (-NoSync -WhatIf on a committed candidate) without -ReleaseRoot, or with a blank one, refuses before
+    /// recording a run and names the refusal in the completion record; an explicit root receives the selection.
+    /// </summary>
+    [Test, Timeout(120_000)]
+    public void C2044_RcReleaseRootRefusal(CancellationToken token)
+    {
+        using var chain = new Antiphon.Tests.Scripts.Nightly.NightlyRcChain("c2044", "rc/2026-11-30").Publish();
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        (Antiphon.Nightly.NightlyRunResult Result, System.Text.Json.JsonElement Record, string State) Run(string row, string? releaseRoot)
+        {
+            var options = chain.Options("c2044-" + row, o => o.ReleaseRoot = releaseRoot ?? "");
+            var before = chain.Fixture.Out.ToString().Length;
+            var result = chain.Run(options);
+            var last = chain.Fixture.Out.ToString()[before..].Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1];
+            using var record = System.Text.Json.JsonDocument.Parse(last);
+            var state = Path.Combine(options.StateRoot, "last-run.json");
+            return (result, record.RootElement.Clone(), File.Exists(state) ? File.ReadAllText(state) : "");
+        }
+        foreach (var (row, root) in new[] { ("omitted", (string?)null), ("blank", "   ") })
+        {
+            var run = Run(row, root);
+            rows.Check(run.Result.ExitCode == 3 && run.Record.GetProperty("exitCode").GetInt32() == 3 && run.Record.GetProperty("refusal").GetString() == "rc-release-root-required"
+                && run.Record.GetProperty("nativeRunId").GetString() == "" && run.State.Length == 0,
+                "C2044 " + row + " ReleaseRoot is refused before recording a run and named in the final JSON", run.Record.ToString());
+        }
+        var release = chain.Fixture.PathOf("rc-releases");
+        var explicitRun = Run("explicit", release);
+        var id = chain.CandidateId();
+        rows.Check(explicitRun.Result.ExitCode == 0 && explicitRun.Record.GetProperty("exitCode").GetInt32() == 0
+            && explicitRun.Record.GetProperty("nativeRunId").GetString() == "c2044-explicit" && explicitRun.State.Length > 0 && System.Text.Json.Nodes.JsonNode.Parse(explicitRun.State)?["profile"]?.GetValue<string>() == "rc"
+            && File.Exists(Path.Combine(release, "candidates", id, "attempts", "c2044-explicit", "selection.json")),
+            "C2044 explicit ReleaseRoot creates the selection in the supplied root", explicitRun.Record + " " + explicitRun.Result.Refusal);
+        rows.ShouldAllPass(3, "C2044 omitted ReleaseRoot is refused before recording a run and named in the final JSON",
             "C2044 blank ReleaseRoot is refused before recording a run and named in the final JSON",
             "C2044 explicit ReleaseRoot creates the selection in the supplied root");
+    }
 
     /// <summary>
     /// CARD-1854, in-process since W2-nightly S19 (was the scripts/test-nightly-run.ps1 case): real tracked files, with only
@@ -161,11 +193,11 @@ public sealed class NightlyScriptsTests
         foreach (var name in new[]
                  {
                      "nightly-run.ps1", "nightly-health.ps1",
-                     "test-nightly-run.ps1",
                      "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
                      Path.Combine("lib", "nightly-common.ps1"),
                      Path.Combine("lib", "nightly-coverage.ps1"),
-                     Path.Combine("lib", "nightly-run-impl.ps1"),
+                     // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).
+                     Path.Combine("lib", "Antiphon.Scripts", "NightlyRunCommand.cs"),
                      // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted) and the
                      // C487 harness's in-process run.
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyTests.cs"),
@@ -229,20 +261,22 @@ public sealed class NightlyScriptsTests
     [Test]
     public void Offline_run_harness_gives_every_fixture_a_private_coordination_root()
     {
-        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-run.ps1");
-        var text = File.ReadAllText(path, Encoding.UTF8);
-
-        // The fixture owns a coordination root under its own result root.
-        text.ShouldContain("Coordination = (Join-Path $root 'coord')");
-        // In-process runs receive it.
-        text.ShouldContain("CoordinationRoot = $Fx.Coordination");
-        // It is never the machine-global verification root.
-        text.ShouldNotContain(@"C:\Antiphon\verification");
-
-        // Every out-of-process nightly-run.ps1 launch passes one too.
-        var launches = Regex.Matches(text, @"'-File',\s*\$runPs1").Count;
-        launches.ShouldBeGreaterThan(0);
-        Regex.Matches(text, @"'-CoordinationRoot'").Count.ShouldBe(launches);
+        // W2-nightly S20: the run fixtures are C# (scripts/test-nightly-run.ps1 is deleted). Each world's options name a
+        // coordination root under the world's own root, never the machine-global verification root.
+        using (var world = new Antiphon.Tests.Scripts.Nightly.NightlyRunWorld("c616-coord"))
+        {
+            var options = world.Options();
+            options.CoordinationRoot.ShouldStartWith(world.Root, Case.Insensitive);
+            options.CoordinationRoot.ShouldNotContain(@"C:\Antiphon\verification", Case.Insensitive);
+        }
+        using (var chain = new Antiphon.Tests.Scripts.Nightly.NightlyRcChain("c616-coord-rc"))
+        {
+            var options = chain.Options("run");
+            options.CoordinationRoot.ShouldStartWith(chain.Root, Case.Insensitive);
+        }
+        foreach (var name in new[] { "NightlyRunWorld.cs", "NightlyRunHops.cs" })
+            File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "tests", "Antiphon.Tests", "Scripts", "Nightly", name), Encoding.UTF8)
+                .ShouldNotContain(@"C:\Antiphon\verification");
     }
 
     [Test]

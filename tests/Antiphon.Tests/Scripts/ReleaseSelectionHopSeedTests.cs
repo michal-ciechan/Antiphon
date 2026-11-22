@@ -11,10 +11,9 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// The seeded rc tests-hop witness. W2-nightly S17: the tests hop is the nightly-tests command, never the selection hop
 /// (Invoke-ReleaseSelectionHop and its switch helpers are deleted), so SeededRcHopBinds and SwitchDriftGuard are in-process
-/// on the command's own argument builder (NightlyRunParts.TestsHopOptions) and parser (NightlyTestsOptions); the child of
-/// SeededRcHopBinds is the production hop (Invoke-NightlyTestsHop of nightly-run-impl.ps1) through the checkout's launcher
-/// (antiphon-cli.ps1) to the script harness host echoing the argv it received (CLI_ECHO_COMMAND). HopFailureRecord is the
-/// scripts/test-release-selection-hop-seed.ps1 case (Write-NightlyHopFailure is nightly-run-impl.ps1's until S20). The
+/// on the command's own argument builder (NightlyRunParts.TestsHopOptions) and parser (NightlyTestsOptions); since W2-nightly
+/// S20 the production hop of SeededRcHopBinds is the C# run core's (NightlyRun.Run, in-process), and HopFailureRecord is
+/// in-process on NightlyRun.WriteHopFailure and the run's catch (scripts/test-release-selection-hop-seed.ps1 is deleted). The
 /// operator list is the Windows Full launch (Profile rc, Trigger rc, Ref, ExpectedSha, CandidateId, PriorFailuresPath,
 /// PriorFailuresDigest, AcceptCrossCandidateSeed, SeedSourceCandidateId) plus the selection the rc profile binds.
 /// </summary>
@@ -28,10 +27,6 @@ public sealed class ReleaseSelectionHopSeedTests
     private const string Candidate = "rc-2026-11-01-87f4a868a86c";
     private const string Sha = "87f4a868a86ce594d6dc9d1f1365315cb3f86df9";
     private const string RunId = "8dc9e695e8f445498bdb7fdd660028c2";
-
-    private static Task Run(string name, int rows, CancellationToken token, params string[] required) =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-selection-hop-seed.ps1", "HS", name, rows, required,
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10)), token);
 
     /// <summary>The seeded rc hop's request (New-HsRcTestsArguments' values).</summary>
     private static TestsHopRequest Request(string root) => new()
@@ -52,22 +47,15 @@ public sealed class ReleaseSelectionHopSeedTests
         return false;
     }
 
-    // The production hop in a pwsh child: nightly-run-impl.ps1's Invoke-NightlyTestsHop with the built flags, in the checkout.
-    private const string Driver = """
-        param([string]$Request)
-        $ErrorActionPreference = 'Stop'
-        $r = [IO.File]::ReadAllText($Request) | ConvertFrom-Json
-        $lib = [string]$r.lib
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-        . (Join-Path $lib 'nightly-run-impl.ps1')
-        $flags = New-Object System.Collections.Generic.List[string]
-        foreach ($a in @($r.arguments)) { $flags.Add([string]$a) }
-        exit (Invoke-NightlyTestsHop -ArgumentList $flags.ToArray() -CheckoutRoot ([string]$r.checkout))
-        """;
-
-    [Test, Timeout(120_000)]
-    public async Task SeededRcHopBinds(CancellationToken token)
+    /// <summary>
+    /// The argument builder's shape, then the production hop in-process (W2-nightly S20; it was nightly-run-impl.ps1's
+    /// Invoke-NightlyTestsHop in a pwsh child): NightlyRun.Run of a -NoSync rc run with the seed flags over a committed
+    /// candidate (NightlyRcChain, the selection bound by the staged CLI), its tests hop recorded as `dotnet exec &lt;cli&gt;
+    /// nightly-tests ...` and parsed with the command's own parser. The seed input is a fixture path that does not exist,
+    /// so the run keeps it as given (the failed-first fallback) and the hop must still forward it.
+    /// </summary>
+    [Test, Timeout(180_000)]
+    public void SeededRcHopBinds(CancellationToken token)
     {
         using var fixture = NightlyFixture.Create("hs-seeded");
         var rows = new NightlyCaseRows();
@@ -78,34 +66,23 @@ public sealed class ReleaseSelectionHopSeedTests
             && flags.Contains("--accept-cross-candidate-seed");
         rows.Check(shape, "HS SeededRcHopBinds argument shape", string.Join(" | ", flags));
 
-        // The checkout the hop runs in holds its own launcher, so the run copy (bin-launcher) stays in this fixture.
-        var checkout = fixture.PathOf("checkout");
-        Directory.CreateDirectory(Path.Combine(checkout, "scripts", "lib"));
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "antiphon-cli.ps1"), Path.Combine(checkout, "scripts", "lib", "antiphon-cli.ps1"));
-        var request = fixture.PathOf("request.json");
-        File.WriteAllText(request, JsonSerializer.Serialize(new { lib = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib"), checkout, arguments = flags }));
-        var driver = fixture.PathOf("drive.ps1");
-        File.WriteAllText(driver, Driver);
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = fixture.Root };
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", driver, "-Request", request }) start.ArgumentList.Add(argument);
-        start.Environment["ANTIPHON_SCRIPTS_DLL"] = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
-        start.Environment["CLI_ECHO_COMMAND"] = "nightly-tests";
-        start.Environment["CLI_ECHO_EXIT"] = "0";
-        var ran = await C1514Support.RunProcess(start, token);
-        var line = ran.Text.Split('\n').Select(text => text.Trim()).FirstOrDefault(text => text.StartsWith("{\"arguments\"", StringComparison.Ordinal));
-        rows.Check(ran.ExitCode == 0 && line != null, "HS SeededRcHopBinds child exit", ran.ExitCode + " " + ran.Text);
-        NightlyTestsOptions? bound = null;
-        if (line != null)
+        using var chain = new NightlyRcChain("hs-seeded-run", "rc/2026-11-01").Publish();
+        chain.TestsAnswer = _ => 0;
+        var prior = chain.Fixture.PathOf("seeds", "d47848cc.json");
+        var run = chain.Run(chain.Options(RunId, o =>
         {
-            using var echo = JsonDocument.Parse(line);
-            bound = NightlyTestsOptions.Parse(echo.RootElement.GetProperty("arguments").EnumerateArray().Select(a => a.GetString()!).ToArray());
-        }
-        rows.Check(bound?.PriorFailuresPath == PriorPath, "HS SeededRcHopBinds PriorFailuresPath", bound?.PriorFailuresPath ?? "");
+            o.WhatIf = false; o.NoReport = true; o.PriorFailuresPath = prior; o.PriorFailuresDigest = PriorDigest; o.AcceptCrossCandidateSeed = true; o.SeedSourceCandidateId = SeedSource;
+        }));
+        var launch = chain.Launcher.Launches.FirstOrDefault(NightlyRunHops.IsTestsHop);
+        rows.Check(launch != null && launch.Arguments[1] == NightlyRunWorld.StagedCli, "HS SeededRcHopBinds the run launches the nightly-tests command",
+            run.ExitCode + " " + run.Phase + " " + run.Refusal + " " + string.Join(" | ", chain.Launcher.Lines));
+        var bound = launch == null ? null : NightlyRunHops.TestsOptions(launch);
+        rows.Check(bound?.PriorFailuresPath == prior, "HS SeededRcHopBinds PriorFailuresPath", bound?.PriorFailuresPath ?? "");
         rows.Check(bound?.PriorFailuresDigest == PriorDigest, "HS SeededRcHopBinds PriorFailuresDigest", bound?.PriorFailuresDigest ?? "");
         rows.Check(bound?.AcceptCrossCandidateSeed == true, "HS SeededRcHopBinds AcceptCrossCandidateSeed", bound?.AcceptCrossCandidateSeed.ToString() ?? "");
         rows.Check(bound?.SeedSourceCandidateId == SeedSource, "HS SeededRcHopBinds SeedSourceCandidateId", bound?.SeedSourceCandidateId ?? "");
-        rows.Check(bound is { Profile: "rc", Trigger: "rc", CandidateId: Candidate, ExpectedSha: Sha, GitRef: "origin/rc/2026-11-01" },
-            "HS SeededRcHopBinds rc identity", bound == null ? "" : bound.Profile + "/" + bound.Trigger + "/" + bound.CandidateId);
+        rows.Check(bound != null && bound.Profile == "rc" && bound.Trigger == "rc" && bound.CandidateId == chain.CandidateId() && bound.ExpectedSha == chain.Sha
+            && bound.GitRef == "origin/rc/2026-11-01", "HS SeededRcHopBinds rc identity", bound == null ? "" : bound.Profile + "/" + bound.Trigger + "/" + bound.CandidateId);
         rows.ShouldAllPass(7, "HS SeededRcHopBinds argument shape", "HS SeededRcHopBinds PriorFailuresPath", "HS SeededRcHopBinds PriorFailuresDigest",
             "HS SeededRcHopBinds AcceptCrossCandidateSeed", "HS SeededRcHopBinds SeedSourceCandidateId");
     }
@@ -165,10 +142,44 @@ public sealed class ReleaseSelectionHopSeedTests
         rows.ShouldAllPass(3, "HS SwitchDriftGuard refuses the hand list", "HS SwitchDriftGuard every target switch keeps its value");
     }
 
-    [Test, Timeout(90_000)]
-    public Task HopFailureRecord(CancellationToken token) => Run(nameof(HopFailureRecord), 6, token,
-        "HS HopFailureRecord log has the exception",
-        "HS HopFailureRecord log has the command",
-        "HS HopFailureRecord last-run error",
-        "HS HopFailureRecord catch writes the failure");
+    /// <summary>
+    /// In-process since W2-nightly S20 (was the scripts/test-release-selection-hop-seed.ps1 case on Write-NightlyHopFailure):
+    /// NightlyRun.WriteHopFailure puts the exception and the command in the log directory's hop-failure.txt and in the state
+    /// (error, command, exitCode 1), and the run's catch writes it: a tests hop that throws leaves both, with the hop's command.
+    /// </summary>
+    [Test]
+    public void HopFailureRecord()
+    {
+        using var fixture = NightlyFixture.Create("hs-hop-failure");
+        var rows = new NightlyCaseRows();
+        var log = fixture.PathOf("empty-log");
+        var statePath = fixture.PathOf("last-run.json");
+        var state = new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase) { ["phase"] = "tests", ["runId"] = RunId, ["exitCode"] = 1 };
+        const string message = "Exception calling \"GetBytes\" with \"1\" argument(s): \"Value cannot be null. (Parameter 'chars')\"";
+        var command = @"antiphon-scripts nightly-tests --repo-root C:\Antiphon\releases\checkout-250a07fb --seed-source-candidate-id " + SeedSource + " --accept-cross-candidate-seed";
+        NightlyRun.WriteHopFailure(fixture.Host(), state, statePath, log, message, command);
+        var failurePath = Path.Combine(log, "hop-failure.txt");
+        var text = File.Exists(failurePath) ? File.ReadAllText(failurePath) : "";
+        rows.Check(text.Contains(message, StringComparison.Ordinal), "HS HopFailureRecord log has the exception", text);
+        rows.Check(text.Contains(command, StringComparison.Ordinal), "HS HopFailureRecord log has the command", text);
+        using (var written = JsonDocument.Parse(File.ReadAllText(statePath)))
+        {
+            var root = written.RootElement;
+            rows.Check(root.GetProperty("error").GetString() == message, "HS HopFailureRecord last-run error", root.GetProperty("error").GetString() ?? "");
+            rows.Check(root.GetProperty("command").GetString() == command, "HS HopFailureRecord last-run command", root.GetProperty("command").GetString() ?? "");
+            rows.Check(root.GetProperty("exitCode").GetInt32() == 1, "HS HopFailureRecord last-run exit", root.GetProperty("exitCode").ToString());
+        }
+
+        // The run's catch: the tests hop throws; the state names the error and the hop's command, and the run directory has the log.
+        using var w = new NightlyRunWorld("hs-hop-catch") { Behaviour = launch => throw new InvalidOperationException(message) };
+        var run = w.Run(o => o.NoSync = true);
+        var last = NightlyRunWorld.Json(w.LastRunPath);
+        var hop = w.Launcher.Launches.FirstOrDefault(NightlyRunHops.IsTestsHop);
+        var logDir = last?.GetProperty("logDir").GetString() ?? "";
+        rows.Check(run.ExitCode == 1 && hop != null && last?.GetProperty("error").GetString() == message && last?.GetProperty("command").GetString() == hop.CommandText
+            && File.Exists(Path.Combine(logDir, "hop-failure.txt")) && File.ReadAllText(Path.Combine(logDir, "hop-failure.txt")).Contains(hop.CommandText, StringComparison.Ordinal),
+            "HS HopFailureRecord catch writes the failure", run.ExitCode + " " + last?.ToString());
+        rows.ShouldAllPass(6, "HS HopFailureRecord log has the exception", "HS HopFailureRecord log has the command", "HS HopFailureRecord last-run error",
+            "HS HopFailureRecord catch writes the failure");
+    }
 }

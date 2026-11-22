@@ -298,39 +298,11 @@ function Test-C1313_ParameterHops {
     $q.ReleaseIntentPath=Join-Path $fx.Release 'future intent.json';$q.TrainManifestPath=Join-Path $fx.Release 'future train.json'
     Write-Fx $fx.Release 'future train.json' '{"fixture":"opaque input only"}'
     $bound=Bind-Request $q
-    $args=@{ReleaseRoot=$fx.Release;CoordinationRoot=(Join-Path $fx.Root 'coord');RemoteUrl=$fx.Origin;Repository=$fx.Repository;Ref=$fx.Ref
-        RunId=$q.RunId;SelectionMode=$q.SelectionMode;BaselineSha=$q.BaselineSha;TimingRoot=$q.TimingRoot
-        BaselineReceiptPath=$q.BaselineReceiptPath;QualificationPath=$q.QualificationPath;ReleaseIntentPath=$q.ReleaseIntentPath;TrainManifestPath=$q.TrainManifestPath;SeamsPath=$fx.Seams;SkipPublish=$true;PassThru=$true}
-    $cut=& "$PSScriptRoot/release-cut.ps1" @args
-    $summaryFiles=@(Get-ChildItem (Join-Path $fx.Release 'candidates') -Filter summary.json -Recurse)
-    # Timing also writes summary.json. Only run records carry the consumed selection.
-    $summaries=@($summaryFiles | Where-Object {
-        $record=Get-Content $_.FullName -Raw|ConvertFrom-Json
-        $null -ne $record.PSObject.Properties['runId']
-    })
-    $consumed=$null;if($summaries.Count -eq 1){$consumed=(Get-Content $summaries[0].FullName -Raw|ConvertFrom-Json).selection}
-    $bindingEvidence=Join-Path $ResultsDirectory 'hop-bindings'
-    [void][IO.Directory]::CreateDirectory($bindingEvidence)
-    Write-NightlyAtomicJson (Join-Path $bindingEvidence 'bound.json') $bound.Selection
-    $summaryInventory=@();$index=0
-    foreach($file in $summaryFiles){
-        $document=Get-Content $file.FullName -Raw|ConvertFrom-Json
-        Copy-Item $file.FullName (Join-Path $bindingEvidence ("summary-$index.json"))
-        $summaryInventory+=@{path=$file.FullName;runId=$document.runId;hasSelection=($null -ne $document.selection)};$index++
-        if($document.selection){
-            foreach($field in @('baselineSha','candidateSha','runId','timingRoot','baselineReceiptPath','qualificationPath','releaseIntentPath','trainManifestPath','trainDigest','selectionDigest')){
-                Write-Host ("C1313 hop-binding {0}={1} actual={2} expected={3}" -f $field,($document.selection.$field -ceq $bound.Selection.$field),$document.selection.$field,$bound.Selection.$field)
-            }
-        }
-    }
-    Write-NightlyAtomicJson (Join-Path $bindingEvidence 'inventory.json') $summaryInventory
-    Write-Host ("C1313 hop-summary-count={0}" -f $summaries.Count)
-    Assert-Fx ($consumed -and $consumed.baselineSha -ceq $fx.B -and $consumed.candidateSha -ceq $fx.A -and
-        $consumed.runId -ceq $q.RunId -and $consumed.timingRoot -ceq $q.TimingRoot -and
-        $consumed.baselineReceiptPath -ceq $q.BaselineReceiptPath -and $consumed.qualificationPath -ceq $q.QualificationPath -and
-        $consumed.releaseIntentPath -ceq $q.ReleaseIntentPath -and $consumed.trainManifestPath -ceq $q.TrainManifestPath -and
-        $consumed.trainDigest -ceq (Get-NightlyFileSha256 $q.TrainManifestPath) -and $consumed.selectionDigest -ceq $bound.SelectionDigest) 'hop-baseline-bound' ($cut|ConvertTo-Json -Depth 10 -Compress)
-    if(-not $consumed){return}
+    # W2-nightly S20: the hop itself (release-cut's splat through the launcher, the self-update hop and the tests hop, the
+    # child consuming this bound selection) is in-process in ChangeAwareReleaseTests.C1313_ParameterHops on NightlyRun.Run,
+    # with the AST check that release-cut's splat keys are the launcher's parameters. The executed roster runs on the bound
+    # selection that hop consumes (hop-baseline-bound there proves the two are the same document).
+    $consumed=$bound.Selection
     $discovery=Get-FxDiscovery
     Assert-Fx (Invoke-FxRoster $consumed $discovery 'hop-native') 'hop-executed-full'
     $same=New-ReleaseSelectionAttempt $q

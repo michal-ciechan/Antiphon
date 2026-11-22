@@ -341,8 +341,9 @@ __HOP__
 }
 
 function Test-C1323_PlatformExecution {
-    # W2-nightly S17: the direct runs are NightlyTests.Run in this process on the seams (c487-nightly-tests.ps1).
-    . "$PSScriptRoot/lib/nightly-run-impl.ps1"
+    # W2-nightly S17: the direct runs are NightlyTests.Run in this process on the seams (c487-nightly-tests.ps1). W2-nightly
+    # S20: the run half (the run core's state, record and credit on each platform's summary) is in-process in
+    # ReleaseGatePlatformTests.C1323_PlatformRunCredit on NightlyRun.Run.
     $fx = New-C1323ExecutionFixture
     $linuxSeams = Write-C1323ExecutionSeams $fx 'linux'
     $linux = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $fx.Clone; LogRoot = "$($fx.Root)/linux-direct"; Profile = 'rc'; Sha = $fx.Sha; SeamsPath = $linuxSeams }
@@ -369,31 +370,9 @@ function Test-C1323_PlatformExecution {
     $summary = Get-Content $windows.SummaryPath -Raw | ConvertFrom-Json
     Assert-C1323 ($windows.ExitCode -eq 0 -and $summary.testsPassed -and $summary.coverageComplete -and $summary.coverageScope -ceq 'Full' -and $summary.platform -ceq 'windows' -and $summary.reasons.Count -eq 0) 'windows-summary-remains-full' ($summary | ConvertTo-Json -Depth 8 -Compress)
 
-    $releaseRoot = "$($fx.Root)/releases"
-    $candidateId = ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-20', $fx.Sha)).CandidateId
-    $green = "$releaseRoot/candidates/$candidateId/complete-green.json"
-    $masterGreen = "$($fx.Root)/master/last-complete-green.json"
-    Write-C1323File $fx.Root "releases/candidates/$candidateId/complete-green.json" 'candidate sentinel'
-    Write-C1323File $fx.Root 'master/last-complete-green.json' 'master sentinel'
-    foreach ($platform in @('linux', 'windows')) {
-        $runId = "offline-$platform"
-        $stateRoot = "$($fx.Root)/state-$platform"
-        $request = @{ RepositoryRoot = $fx.Clone; CandidateSha = $fx.Sha; CandidateRef = 'rc/2026-10-20'; Repository = 'fixture/c1323'; Profile = 'rc'; ReleaseRoot = $releaseRoot; CandidateId = $candidateId; RunId = $runId; SelectionMode = 'Full'; Attempt = 1 }
-        $bound = New-ReleaseSelectionAttemptCore $request
-        $run = Invoke-AntiphonNightlyRunCore -NoSync -CheckoutRoot $fx.Clone -StateRoot $stateRoot -LogRoot "$($fx.Root)/run-$platform" -RemoteUrl 'https://github.com/fixture/c1323' -Ref 'rc/2026-10-20' -Profile rc -Trigger rc -ExpectedSha $fx.Sha -CandidateId $candidateId -Repository 'fixture/c1323' -ReleaseRoot $releaseRoot -CoordinationRoot "$($fx.Root)/coordination" -RunId $runId -SeamsPath "$($fx.Root)/$platform.ps1" -SelectionAttemptPath $bound.SelectionAttemptPath -SelectionAttemptDigest $bound.SelectionAttemptDigest -SelectionPath $bound.SelectionPath -SelectionDigest $bound.SelectionDigest
-        $state = Get-Content "$stateRoot/last-run.json" -Raw | ConvertFrom-Json
-        if ($platform -eq 'linux') {
-            $record = ConvertTo-NightlyResultRecord $run
-            Assert-C1323 ($state.testsPassed -and -not $state.coverageComplete -and $state.coverageScope -ceq 'PlatformDiagnostic' -and $state.platform -ceq 'linux' -and $state.reasons -contains 'windows-rc-obligations-outstanding' -and $record.coverageScope -ceq 'PlatformDiagnostic' -and $record.reasons -contains 'windows-rc-obligations-outstanding') 'linux-state-is-diagnostic' ($state | ConvertTo-Json -Depth 4 -Compress)
-            Assert-C1323 ($run.CreditKind -eq '' -and ([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($state)).Reasons -contains 'full-credit-scope-required') 'linux-credit-refuses'
-            Assert-C1323 ([IO.File]::ReadAllText($green) -ceq 'candidate sentinel' -and [IO.File]::ReadAllText($masterGreen) -ceq 'master sentinel') 'linux-leaves-green-files-identical'
-        } else {
-            Assert-C1323 ($run.ExitCode -eq 0 -and $state.coverageComplete -and $state.coverageScope -ceq 'Full' -and $state.platform -ceq 'windows' -and $run.CreditKind -ceq 'rc-release' -and [IO.File]::ReadAllText($green) -cne 'candidate sentinel') 'windows-state-preserves-full-behavior' ($state | ConvertTo-Json -Depth 4 -Compress)
-        }
-    }
     $unknownSeams = Write-C1323ExecutionSeams $fx 'unknown'
     $unknown = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $fx.Clone; LogRoot = "$($fx.Root)/unknown"; Profile = 'rc'; Sha = $fx.Sha; SeamsPath = $unknownSeams }
-    $refusalRecord = ConvertTo-Json (ConvertTo-NightlyResultRecord $unknown) -Compress
+    $refusalRecord = [Antiphon.Nightly.NightlyRun]::RecordLine([Antiphon.Nightly.NightlyRunResult]@{ ExitCode = [int]$unknown.ExitCode; Refusal = [string]$unknown.Refusal })
     $expectedRefusal = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":"","refusal":"unsupported-host-platform"}'
     Assert-C1323 ($unknown.ExitCode -eq 3 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log") -and $refusalRecord -ceq $expectedRefusal) 'unknown-platform-launches-nothing'
     Assert-C1323 ($linux.coverageScope -ceq 'PlatformDiagnostic' -and $linux.reasons -contains 'windows-rc-obligations-outstanding') 'diagnostic-return-value'

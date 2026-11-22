@@ -683,6 +683,8 @@ public sealed class WorktreeDefaultCallerTests
         start.ArgumentList.Add(Guid.NewGuid().ToString("N"));
         if (whatIf)
             start.ArgumentList.Add("-WhatIf");
+        // W2-nightly S20: the launcher runs the staged antiphon-scripts build (the nightly-run command) instead of building one.
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll");
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
         var stdout = process.StandardOutput.ReadToEndAsync();

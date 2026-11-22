@@ -1,496 +1,293 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Antiphon.Nightly;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
-using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
-/// W2-nightly S19: the two implementations of the nightly run side by side, for this slice only (S20 deletes the PowerShell
-/// and this class). One pwsh child runs the production entry scripts/nightly-run.ps1 (-PassThru, its Write-Host lines
-/// captured) on the C487 seams (Write-C487Seams of scripts/lib/c487-harness.ps1 plus each scenario's lines) for every
-/// scenario; then NightlyRun.Run runs each in-process on a twin NightlyRunWorld. Compared: the result object and its JSON, the
-/// last stdout line (the completion record), the exit code, the launches (the tests hop, the self hop and the report), the
-/// git calls, and every file under the state, coordination and release roots and the clone (not its .git). Folded: each
-/// side's root, timestamps, the continuing pid, and the hop's spelling: the PowerShell tests hop is the StartProcess seam's
-/// antiphon-scripts nightly-tests call (W2-nightly S17: the command, never the selection hop), the C# one
-/// `dotnet exec &lt;cli&gt; nightly-tests`, both with --kebab flags and compared as the nightly-tests options they parse to; the
-/// self hop drops the PowerShell's -SeamsPath (seams never cross a process in C#); the report is the StartProcess seam's
-/// antiphon-scripts nightly-report call on one side and the report binding's call on the other.
+/// W2-nightly S20: the nightly run's two production paths side by side, on fixture roots only (no seams: they never cross a
+/// process). One is the Windmill entry, scripts/nightly-run.ps1 under Windows PowerShell 5.1 (pwsh elsewhere) with the staged
+/// antiphon-scripts build (ANTIPHON_SCRIPTS_DLL), and its -PassThru under pwsh as release-cut.ps1 calls it; the other is
+/// NightlyRun.Run in this process on the production host and NightlyRunBindings.Production over the same staged CLI. Each
+/// scenario gets a twin fixture per side. Compared: the exit code, the last stdout line (the completion record), the
+/// -PassThru object against the result's run-core record, and every file under the state, coordination, release and log
+/// roots (folded: each side's root, timestamps, 64-hex digests and the stamp of a run directory). The S19 class compared the
+/// deleted PowerShell run core with the C# on the C487 seams; HEAD's PowerShell was compared once more with the launcher
+/// before it was deleted (the S20 parity run).
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyRunParityTests
 {
-    private const string UtcNow = "2026-09-17T23:35:00Z";
-    private const string RcRef = "rc/2026-11-30";
-    private const string LivePid = "999999";
-    private const string OwnerStart = "2026-09-01T06:00:00.0000000Z";
-
-    private static readonly string Green = NightlyRunWorld.C545Summary(true);
-    private static readonly string Red = NightlyRunWorld.C545Summary(false);
-
-    private const string EolLine = "i/lf    w/crlf  attr/text eol=lf \tsel.ps1\n";
-
-    /// <summary>One scenario: the run's options, the seams on both sides and any setup of the two worlds.</summary>
     private sealed class Scenario
     {
         public required string Name { get; init; }
-        public Action<NightlyRunOptions, NightlyRunWorld>? Args { get; init; }
-        public string? Summary { get; init; }
-        public int TestExit { get; init; }
-        public int ReportExit { get; init; }
-        public int GitExit { get; init; }
-        public bool Eol { get; init; }
+        public bool Prepared { get; init; } = true;
         public bool Rc { get; init; }
-        public bool Hop { get; init; }
-        public Action<NightlyRunWorld>? Setup { get; init; }
-        public NightlyRunWorld? Ps { get; set; }
-        public NightlyRunWorld? Cs { get; set; }
-        public string Sha { get; set; } = NightlyRunWorld.Sha;
+        public required Func<Side, IReadOnlyList<(string Name, string? Value)>> Parameters { get; init; }
+        public Action<Side>? Setup { get; init; }
     }
 
-    [Test]
-    [Timeout(900_000)]
-    public async Task PowerShell_and_CSharp_runs_match_on_the_C487_seams(CancellationToken cancellationToken)
+    /// <summary>One side's fixture: the roots, an origin and (prepared) an owned clone of it.</summary>
+    private sealed class Side : IDisposable
     {
-        var scenarios = new List<Scenario>
+        public Side(string prefix, string origin, bool prepared)
         {
-            new() { Name = "green", Summary = Green, Args = (o, _) => { o.NoSync = true; o.NoReport = false; } },
-            new() { Name = "red-tests", Summary = Green, TestExit = 2, Args = (o, _) => { o.NoSync = true; o.NoReport = false; o.Suites = ["client"]; } },
-            new() { Name = "report-failure", Summary = Green, ReportExit = 3, Args = (o, _) => { o.NoSync = true; o.NoReport = false; } },
-            new() { Name = "no-summary", TestExit = 0, Args = (o, _) => { o.NoSync = true; o.Attempt = 2; } },
-            new()
+            Fixture = NightlyFixture.Create(prefix);
+            Origin = origin;
+            Directory.CreateDirectory(State);
+            if (!prepared) return;
+            NightlyRcChain.Git(Fixture.Root, "clone", "-q", origin, Clone);
+            NightlyRcChain.Git(Clone, "config", "--local", "core.longpaths", "true");
+            File.WriteAllText(Path.Combine(Clone, ".antiphon-nightly-owned"), "{\"origin\":" + JsonSerializer.Serialize(origin) + ",\"kind\":\"nightly-clone\"}");
+        }
+
+        public NightlyFixture Fixture { get; }
+        public string Root => Fixture.Root;
+        public string Origin { get; }
+        public string State => Fixture.PathOf("state");
+        public string Logs => Fixture.PathOf("logs");
+        public string Coord => Fixture.PathOf("coord");
+        public string Releases => Fixture.PathOf("releases");
+        public string Clone => Fixture.PathOf("checkout");
+        public string Sha => NightlyRcChain.Git(Clone, "rev-parse", "HEAD").Trim();
+        public void Dispose() => Fixture.Dispose();
+    }
+
+    [Test, Timeout(900_000)]
+    public async Task Launcher_and_in_process_runs_match_on_fixture_roots(CancellationToken cancellationToken)
+    {
+        using var origins = NightlyFixture.Create("s20-parity-origins");
+        var plain = Origin(origins, "plain", seed => File.WriteAllText(Path.Combine(seed, "readme.txt"), "fixture\n"));
+        var rc = Origin(origins, "rc", seed =>
+        {
+            foreach (var file in new[] { "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1" })
             {
-                Name = "lock-refusal", Summary = Green, Args = (o, _) => o.NoSync = true,
-                Setup = w => File.WriteAllText(Path.Combine(w.State, "run.lock"), "{\"pid\":" + LivePid + ",\"startedAt\":\"" + OwnerStart + "\",\"runId\":\"live1\"}"),
-            },
-            new()
+                var target = Path.Combine(seed, file.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(Path.Combine(NightlyPlanCases.Repo, file.Replace('/', Path.DirectorySeparatorChar)), target, true);
+            }
+        });
+        var rcSha = NightlyRcChain.Git(rc, "rev-parse", "HEAD").Trim();
+        using var me = Process.GetCurrentProcess();
+        var meStart = me.StartTime.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+
+        var scenarios = new List<(Scenario Scenario, string Origin)>
+        {
+            (new Scenario { Name = "tests-refused", Parameters = s => [("-NoSync", null), ("-NoReport", null), ("-Trigger", "manual")] }, plain),
+            (new Scenario { Name = "whatif", Parameters = s => [("-NoSync", null), ("-WhatIf", null), ("-Trigger", "manual")] }, plain),
+            (new Scenario
             {
-                Name = "shared-lock-refusal", Summary = Green, Args = (o, _) => o.NoSync = true,
-                Setup = w =>
+                Name = "shared-lock-refusal", Parameters = s => [("-NoSync", null), ("-NoReport", null)],
+                Setup = s =>
                 {
-                    Directory.CreateDirectory(w.Coordination);
-                    File.WriteAllText(Path.Combine(w.Coordination, "native-run.lock"), "{\"pid\":" + LivePid + ",\"processStartedAt\":\"" + OwnerStart
-                        + "\",\"runId\":\"other\",\"lane\":\"master\",\"continuationId\":\"\",\"acquiredAt\":\"" + OwnerStart + "\"}");
+                    Directory.CreateDirectory(s.Coord);
+                    File.WriteAllText(Path.Combine(s.Coord, "native-run.lock"), "{\"pid\":" + Environment.ProcessId + ",\"processStartedAt\":\"" + meStart
+                        + "\",\"runId\":\"other\",\"lane\":\"master\",\"continuationId\":\"\",\"acquiredAt\":\"" + meStart + "\"}");
                 },
-            },
-            new()
+            }, plain),
+            (new Scenario { Name = "candidate-moved", Prepared = false, Parameters = s => [("-NoReport", null), ("-Trigger", "manual"), ("-ExpectedSha", new string('b', 40))] }, plain),
+            (new Scenario
             {
-                Name = "continuation", Summary = Green,
-                Args = (o, _) => { o.NoSync = true; o.ContinueRunId = "parity-continuation"; o.ContinueParentPid = int.Parse(LivePid); o.ContinueParentStartedAt = OwnerStart; },
-                Setup = w =>
-                {
-                    File.WriteAllText(Path.Combine(w.State, "run.lock"), "{\"pid\":" + LivePid + ",\"processStartedAt\":\"" + OwnerStart + "\",\"startedAt\":\"" + OwnerStart
-                        + "\",\"runId\":\"parity-continuation\",\"parentPid\":0,\"parentStartedAt\":null}");
-                    Directory.CreateDirectory(w.Coordination);
-                    File.WriteAllText(Path.Combine(w.Coordination, "native-run.lock"), "{\"pid\":" + LivePid + ",\"processStartedAt\":\"" + OwnerStart
-                        + "\",\"runId\":\"parity-continuation\",\"lane\":\"master\",\"continuationId\":\"\",\"acquiredAt\":\"" + OwnerStart + "\"}");
-                },
-            },
-            new() { Name = "sync-failure", Summary = Green, GitExit = 1 },
-            new() { Name = "candidate-moved", Summary = Green, Args = (o, _) => o.ExpectedSha = new string('b', 40) },
-            new()
+                Name = "rc-release-root-required",
+                Parameters = s => [("-NoSync", null), ("-WhatIf", null), ("-Profile", "rc"), ("-Trigger", "rc"), ("-Ref", "rc/2026-11-30"), ("-ExpectedSha", new string('a', 40))],
+            }, plain),
+            (new Scenario
             {
-                Name = "eol-repair", Summary = Green, Eol = true,
-                Setup = w => File.WriteAllText(Path.Combine(w.Clone, "sel.ps1"), "a\r\nb\r\n"),
-            },
-            new() { Name = "whatif", Summary = Green, Args = (o, _) => { o.WhatIf = true; o.Trigger = "manual"; } },
-            new()
-            {
-                Name = "product-root-hop", Summary = Green, Hop = true, Args = (o, _) => { o.Suites = ["client"]; o.NoReport = false; },
-                Setup = w =>
-                {
-                    Directory.CreateDirectory(Path.Combine(w.Clone, "scripts"));
-                    File.WriteAllText(Path.Combine(w.Clone, "scripts", "nightly-run.ps1"), "# the clone's launcher\n");
-                },
-            },
-            new()
-            {
-                Name = "rc-expected-sha", Rc = true, Summary = Green,
-                Args = (o, w) => { o.NoSync = true; o.WhatIf = true; o.Profile = "rc"; o.Trigger = "rc"; o.Ref = RcRef; o.ReleaseRoot = w.Releases; },
-            },
-            new()
-            {
-                Name = "selection-hop", Rc = true, Summary = Green,
-                Args = (o, w) => { o.NoSync = true; o.Profile = "rc"; o.Trigger = "rc"; o.Ref = RcRef; o.ReleaseRoot = w.Releases; },
-            },
+                Name = "rc-whatif-selection", Rc = true,
+                Parameters = s => [("-NoSync", null), ("-WhatIf", null), ("-Profile", "rc"), ("-Trigger", "rc"), ("-Ref", "rc/2026-11-30"), ("-ExpectedSha", rcSha),
+                    ("-ReleaseRoot", s.Releases), ("-Repository", "fixture/repository")],
+            }, rc),
+            (new Scenario { Name = "unknown-profile", Parameters = s => [("-NoSync", null), ("-Profile", "turbo")] }, plain),
         };
 
-        using var shared = NightlyFixture.Create("s19-parity");
-        try
+        var rows = new NightlyCaseRows();
+        foreach (var (scenario, origin) in scenarios)
         {
-            foreach (var scenario in scenarios)
+            var differences = new List<string>();
+            using var launched = NewSide(scenario, origin, "launcher");
+            using var inProcess = NewSide(scenario, origin, "in-process");
+            var direct = await Launch(scenario, launched, pwsh: false, cancellationToken);
+            var (result, last) = RunInProcess(scenario, inProcess);
+            if (direct.ExitCode != result.ExitCode) differences.Add("exit: launcher=" + direct.ExitCode + " in-process=" + result.ExitCode);
+            var launchedLast = direct.Stdout.Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1];
+            Compare("last line", Canonical(launchedLast, launched.Root), Canonical(last, inProcess.Root), differences);
+            CompareFiles(launched, inProcess, differences);
+            using var passLaunched = NewSide(scenario, origin, "passthru");
+            var pass = await Launch(scenario, passLaunched, pwsh: true, cancellationToken);
+            Compare("passthru", Canonical(pass.PassThru ?? "null", passLaunched.Root), Canonical(NightlyJson.Text(result.ToRecord(), 32) ?? "{}", inProcess.Root), differences);
+            if (differences.Count > 0) differences.Add("launcher stderr: " + direct.Stderr.Trim());
+            rows.Check(differences.Count == 0, "S20 parity " + scenario.Name, string.Join("\n  ", differences.Take(20)));
+        }
+        rows.ShouldAllPass(scenarios.Count);
+    }
+
+    // ---- the sides -----------------------------------------------------------------------------------------------
+
+    private static string Origin(NightlyFixture origins, string name, Action<string> fill)
+    {
+        var seed = origins.PathOf("seed-" + name);
+        Directory.CreateDirectory(seed);
+        NightlyRcChain.Git(seed, "init", "-q", "-b", "master");
+        NightlyRcChain.Git(seed, "config", "core.autocrlf", "false");
+        fill(seed);
+        NightlyRcChain.Git(seed, "add", "--all");
+        NightlyRcChain.Git(seed, "-c", "user.name=S20 parity", "-c", "user.email=s20@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seed " + name);
+        var origin = origins.PathOf("origin-" + name + ".git");
+        NightlyRcChain.Git(origins.Root, "clone", "-q", "--bare", seed, origin);
+        return origin;
+    }
+
+    private static Side NewSide(Scenario scenario, string origin, string side)
+    {
+        var s = new Side("s20-parity-" + side, origin, scenario.Prepared);
+        scenario.Setup?.Invoke(s);
+        return s;
+    }
+
+    /// <summary>The scenario's launcher parameters: the side's roots, a fixed run id, then the scenario's own.</summary>
+    private static List<(string Name, string? Value)> Parameters(Scenario scenario, Side s)
+    {
+        var list = new List<(string Name, string? Value)>
+        {
+            ("-CheckoutRoot", s.Clone), ("-StateRoot", s.State), ("-LogRoot", s.Logs), ("-CoordinationRoot", s.Coord), ("-RemoteUrl", s.Origin), ("-RunId", "s20-" + scenario.Name),
+        };
+        list.AddRange(scenario.Parameters(s));
+        return list;
+    }
+
+    private sealed record Launched(int ExitCode, string Stdout, string Stderr, string? PassThru);
+
+    /// <summary>The launcher: -File directly (5.1), or -PassThru from a pwsh caller that splats the same parameters (release-cut's way).</summary>
+    private static async Task<Launched> Launch(Scenario scenario, Side s, bool pwsh, CancellationToken token)
+    {
+        var entry = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-run.ps1");
+        var parameters = Parameters(scenario, s);
+        var start = new ProcessStartInfo(pwsh || !OperatingSystem.IsWindows() ? "pwsh" : "powershell.exe") { WorkingDirectory = s.Root };
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = NightlyRunWorld.StagedCli;
+        start.Environment.Remove("ANTIPHON_RC_RUN_EVIDENCE");
+        var passThru = s.Fixture.PathOf("passthru.json");
+        if (!pwsh)
+        {
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", entry }) start.ArgumentList.Add(argument);
+            foreach (var (name, value) in parameters)
             {
-                scenario.Ps = NewWorld(scenario, "ps");
-                scenario.Cs = NewWorld(scenario, "cs");
+                start.ArgumentList.Add(name);
+                if (value != null) start.ArgumentList.Add(value);
             }
-            var request = new JsonObject { ["scenarios"] = new JsonArray(scenarios.Select(PsScenario).ToArray()) };
-            var requestPath = shared.PathOf("request.json");
-            var resultPath = shared.PathOf("ps-results.json");
-            File.WriteAllText(requestPath, request.ToJsonString());
-            var runner = shared.PathOf("parity-runner.ps1");
-            File.WriteAllText(runner, RunnerScript.Replace("__REPO__", NightlyPlanCases.Repo));
-            var start = new ProcessStartInfo("pwsh") { WorkingDirectory = shared.Root };
-            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", runner, "-RequestPath", requestPath, "-ResultPath", resultPath })
+        }
+        else
+        {
+            var splat = new JsonObject();
+            foreach (var (name, value) in parameters) splat[name.TrimStart('-')] = value == null ? JsonValue.Create(true) : JsonValue.Create(value);
+            var splatPath = s.Fixture.PathOf("splat.json");
+            File.WriteAllText(splatPath, splat.ToJsonString());
+            var driver = s.Fixture.PathOf("passthru.ps1");
+            File.WriteAllText(driver, """
+                param([string]$Entry, [string]$SplatPath, [string]$Out)
+                $s = Get-Content -LiteralPath $SplatPath -Raw | ConvertFrom-Json -AsHashtable
+                $invoke = @{}
+                foreach ($k in $s.Keys) { $v = $s[$k]; if ($v -is [bool]) { $v = [switch]$v }; $invoke[$k] = $v }
+                $r = & $Entry @invoke -PassThru
+                [IO.File]::WriteAllText($Out, (ConvertTo-Json -InputObject $r -Depth 32))
+                exit 0
+                """);
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", driver, "-Entry", entry, "-SplatPath", splatPath, "-Out", passThru })
                 start.ArgumentList.Add(argument);
-            var ran = await C1514Support.RunProcess(start, cancellationToken);
-            File.Exists(resultPath).ShouldBeTrue("the PowerShell runner wrote no results (exit " + ran.ExitCode + ")\n" + ran.Text);
-            using var psResults = JsonDocument.Parse(File.ReadAllText(resultPath));
-
-            var rows = new NightlyCaseRows();
-            foreach (var scenario in scenarios)
-            {
-                var ps = psResults.RootElement.GetProperty(scenario.Name);
-                var differences = new List<string>();
-                if (!ps.GetProperty("ok").GetBoolean()) differences.Add("powershell threw: " + ps.GetProperty("error").GetString());
-                NightlyRunResult? result = null;
-                var cs = scenario.Cs!;
-                try { result = NightlyRun.Run(Options(scenario, cs), cs.Host(), cs.Bindings()); }
-                catch (Exception ex) { differences.Add("c# threw: " + ex); }
-                if (result != null && ps.GetProperty("ok").GetBoolean())
-                {
-                    CompareResult(ps.GetProperty("result"), result, scenario, differences);
-                    var psLast = FoldText(ps.GetProperty("last").GetString() ?? "", scenario.Ps!.Root);
-                    var csLast = FoldText(cs.OutLines[^1], cs.Root);
-                    if (psLast != csLast) differences.Add("last line: ps=" + Clip(psLast) + " c#=" + Clip(csLast));
-                    var psExit = ps.GetProperty("exit").GetInt32();
-                    if (psExit != result.ExitCode) differences.Add("exit: ps=" + psExit + " c#=" + result.ExitCode);
-                    CompareLines("launch", PsLaunches(scenario.Ps!), CsLaunches(cs), differences);
-                    CompareLines("git", GitLines(scenario.Ps!), GitLines(cs), differences);
-                    CompareFiles(scenario, differences);
-                }
-                rows.Check(differences.Count == 0, "S19 parity " + scenario.Name, string.Join("\n  ", differences.Take(25)));
-            }
-            Console.WriteLine(ran.Text);
-            rows.ShouldAllPass(scenarios.Count);
         }
-        finally
-        {
-            foreach (var scenario in scenarios)
-            {
-                scenario.Ps?.Dispose();
-                scenario.Cs?.Dispose();
-            }
-        }
+        start.UseShellExecute = false;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync(token);
+        var stderr = process.StandardError.ReadToEndAsync(token);
+        await process.WaitForExitAsync(token);
+        return new Launched(process.ExitCode, await stdout, await stderr, File.Exists(passThru) ? File.ReadAllText(passThru) : null);
     }
 
-    // ---- the worlds ----------------------------------------------------------------------------------------------
-
-    private static NightlyRunWorld NewWorld(Scenario scenario, string side)
+    /// <summary>NightlyRun.Run in this process: the production host and bindings over the staged CLI, the launcher's options.</summary>
+    private static (NightlyRunResult Result, string Last) RunInProcess(Scenario scenario, Side s)
     {
-        var world = new NightlyRunWorld("s19-parity-" + side) { Clock = NightlyRunWorld.At(UtcNow), ReportExit = scenario.ReportExit };
-        scenario.Setup?.Invoke(world);
-        if (scenario.Rc) scenario.Sha = RcRepository(world);
-        world.Git = new FakeGit(scenario.Sha, scenario.GitExit);
-        if (scenario.Eol) world.Git.Reply("ls-files", new NightlyGitResult(0, EolLine));
-        world.Behaviour = scenario.Summary == null
-            ? (launch => NightlyTestsWorld.Result(launch.Arguments.Contains("nightly-tests") ? scenario.TestExit : 0))
-            : NightlyRunWorld.TestsHop(scenario.Summary, scenario.TestExit);
-        if (scenario.Hop) world.ProductRoot = NightlyPlanCases.Repo;
-        return world;
-    }
-
-    /// <summary>The C2044 rc fixture: the selection inputs committed in the clone (fixed dates, so both worlds share one sha).</summary>
-    private static string RcRepository(NightlyRunWorld world)
-    {
-        foreach (var file in new[] { "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1" })
+        var flags = new List<string>();
+        foreach (var (name, value) in Parameters(scenario, s))
         {
-            var target = Path.Combine(world.Clone, file.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(Path.Combine(NightlyPlanCases.Repo, file.Replace('/', Path.DirectorySeparatorChar)), target, true);
+            flags.Add(NightlyRunHops.Kebab(name));
+            if (value != null) flags.Add(value);
         }
-        NightlyRunWorld.FixtureGit(world.Clone, "init", "-q");
-        NightlyRunWorld.FixtureGit(world.Clone, "add", "--", "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/select-test-rosters.ps1",
-            "scripts/lib/test-selection.ps1");
-        NightlyRunWorld.FixtureGit(world.Clone, "-c", "user.name=C2044", "-c", "user.email=c2044@example.invalid", "-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false",
-            "commit", "-qm", "rc fixture selection inputs");
-        return NightlyRunWorld.FixtureGit(world.Clone, "rev-parse", "HEAD").Trim();
-    }
-
-    /// <summary>The scenario's options on a world: Invoke-FxRun's defaults, a fixed run id, then the scenario's.</summary>
-    private static NightlyRunOptions Options(Scenario scenario, NightlyRunWorld world)
-    {
-        var options = world.Options(o => o.RunId = "parity-" + scenario.Name);
-        scenario.Args?.Invoke(options, world);
-        if (scenario.Rc) options.ExpectedSha = scenario.Sha;
-        return options;
-    }
-
-    private static JsonObject PsScenario(Scenario scenario)
-    {
-        var world = scenario.Ps!;
-        var options = Options(scenario, world);
-        var args = new JsonObject();
-        var defaults = new NightlyRunOptions();
-        foreach (var property in typeof(NightlyRunOptions).GetProperties())
-        {
-            if (property.Name == nameof(NightlyRunOptions.ResultFile)) continue;
-            var value = property.GetValue(options);
-            if (Equals(JsonSerializer.Serialize(value), JsonSerializer.Serialize(property.GetValue(defaults))) && property.Name != nameof(NightlyRunOptions.StateRoot)) continue;
-            args[property.Name] = JsonSerializer.SerializeToNode(value);
-        }
-        var seams = Path.Combine(world.Root, "seams.ps1");
-        args["SeamsPath"] = seams;
-        var extra = SeamsExtra
-            .Replace("__TRACE__", world.TracePath)
-            .Replace("__LAUNCHES__", Path.Combine(world.Root, "launches.jsonl"))
-            .Replace("__REPORT__", scenario.ReportExit.ToString())
-            .Replace("__TESTEXIT__", scenario.TestExit.ToString())
-            .Replace("__SUMMARY__", scenario.Summary ?? "")
-            .Replace("__UTCNOW__", UtcNow);
-        if (scenario.Eol) extra += "\n" + EolGitSeam.Replace("__TRACE__", world.TracePath).Replace("__SHA__", scenario.Sha);
-        return new JsonObject
-        {
-            ["name"] = scenario.Name, ["seams"] = seams, ["trace"] = world.TracePath, ["sha"] = scenario.Sha, ["gitExit"] = scenario.GitExit, ["extra"] = extra, ["args"] = args,
-        };
+        var options = NightlyRunOptions.Parse(flags);
+        var output = new StringWriter();
+        var host = NightlyHost.Production(output, new StringWriter());
+        var bindings = NightlyRunBindings.Production(host, NightlyRunWorld.StagedCli);
+        bindings.RcEvidence = new RcRunEvidenceRecorder("off", false, false, null);
+        var result = NightlyRun.Run(options, host, bindings);
+        return (result, output.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1]);
     }
 
     // ---- the comparisons -----------------------------------------------------------------------------------------
 
-    private static void CompareResult(JsonElement ps, NightlyRunResult result, Scenario scenario, List<string> differences)
+    private static void Compare(string kind, string launcher, string inProcess, List<string> differences)
     {
-        var json = NightlyJson.Text(result.ToRecord(), 32) ?? "{}";
-        using var cs = JsonDocument.Parse(json);
-        var psNames = ps.EnumerateObject().Select(p => p.Name).ToArray();
-        var csNames = cs.RootElement.EnumerateObject().Select(p => p.Name).ToArray();
-        foreach (var name in psNames.Except(csNames, StringComparer.OrdinalIgnoreCase)) differences.Add("result." + name + " missing in C#");
-        foreach (var name in csNames.Except(psNames, StringComparer.OrdinalIgnoreCase)) differences.Add("result." + name + " only in C#");
-        foreach (var property in ps.EnumerateObject())
-        {
-            var match = cs.RootElement.EnumerateObject().FirstOrDefault(p => string.Equals(p.Name, property.Name, StringComparison.OrdinalIgnoreCase));
-            if (match.Value.ValueKind == JsonValueKind.Undefined) continue;
-            var a = Canonical(Fold(JsonNode.Parse(property.Value.GetRawText()), scenario.Ps!.Root));
-            var b = Canonical(Fold(JsonNode.Parse(match.Value.GetRawText()), scenario.Cs!.Root));
-            if (a != b) differences.Add("result." + property.Name + ": ps=" + Clip(a) + " c#=" + Clip(b));
-        }
+        if (launcher != inProcess) differences.Add(kind + "\n    launcher=" + Clip(launcher) + "\n    in-process=" + Clip(inProcess));
     }
 
-    private static void CompareLines(string kind, IReadOnlyList<string> ps, IReadOnlyList<string> cs, List<string> differences)
+    private static void CompareFiles(Side a, Side b, List<string> differences)
     {
-        if (ps.SequenceEqual(cs)) return;
-        for (var i = 0; i < Math.Max(ps.Count, cs.Count); i++)
-        {
-            var a = i < ps.Count ? ps[i] : "<none>";
-            var b = i < cs.Count ? cs[i] : "<none>";
-            if (a != b) { differences.Add(kind + " " + (i + 1) + " " + FirstDifference(a, b)); break; }
-        }
+        var left = Files(a);
+        var right = Files(b);
+        foreach (var name in left.Keys.Except(right.Keys)) differences.Add("file only from the launcher: " + name);
+        foreach (var name in right.Keys.Except(left.Keys)) differences.Add("file only in-process: " + name);
+        foreach (var name in left.Keys.Intersect(right.Keys))
+            if (left[name] != right[name]) differences.Add("file " + name + "\n    launcher=" + Clip(left[name]) + "\n    in-process=" + Clip(right[name]));
     }
 
-    private static string[] GitLines(NightlyRunWorld world) =>
-        world.TraceText.Replace("\r\n", "\n").Split('\n').Where(l => l.StartsWith("GIT ", StringComparison.Ordinal)).Select(l => FoldText(l, world.Root)).ToArray();
-
-    // The PowerShell launches (the StartProcess seam's record: file and argv, one JSON line each).
-    private static string[] PsLaunches(NightlyRunWorld world)
-    {
-        var path = Path.Combine(world.Root, "launches.jsonl");
-        if (!File.Exists(path)) return [];
-        return File.ReadAllLines(path).Where(l => l.Trim().Length > 0).Select(line =>
-        {
-            using var doc = JsonDocument.Parse(line);
-            var file = doc.RootElement.GetProperty("file").GetString() ?? "";
-            var args = doc.RootElement.GetProperty("args").ValueKind == JsonValueKind.Array
-                ? doc.RootElement.GetProperty("args").EnumerateArray().Select(a => a.GetString() ?? "").ToArray()
-                : [doc.RootElement.GetProperty("args").GetString() ?? ""];
-            return NormalLaunch(file, args, world.Root);
-        }).ToArray();
-    }
-
-    // The C# launches, then the report calls (the report runs after the tests hop).
-    private static string[] CsLaunches(NightlyRunWorld world) =>
-        world.Launcher.Launches.Select(l => NormalLaunch(l.FileName, l.Arguments.ToArray(), world.Root))
-            .Concat(world.Reports.Select(r => FoldText("nightly-report --summary " + r.Summary + (string.IsNullOrWhiteSpace(r.PreviousSummary) ? "" : " --previous-summary " + r.PreviousSummary), world.Root)))
-            .ToArray();
-
-
-    /// <summary>One launch in the spelling both sides share (see the class comment).</summary>
-    private static string NormalLaunch(string file, string[] args, string root)
-    {
-        var fileIndex = Array.IndexOf(args, "-File");
-        if (file == "dotnet" && args.Length >= 3 && args[2] == "nightly-tests")
-            return FoldText("nightly-tests " + string.Join(" ", NightlyTestsOptions.Parse(args.Skip(3).ToArray()).ToArguments()), root);
-        if (file == "antiphon-scripts" && args.Length >= 1 && args[0] == "nightly-tests")
-            return FoldText("nightly-tests " + string.Join(" ", NightlyTestsOptions.Parse(args.Skip(1).ToArray()).ToArguments()), root);
-        if (file == "antiphon-scripts") return FoldText(string.Join(" ", args), root);
-        var kept = new List<string>();
-        for (var i = 0; i < args.Length; i++)
-        {
-            if (args[i] == "-SeamsPath") { i++; continue; }
-            kept.Add(args[i]);
-            if (args[i] == "-ContinueParentPid" && i + 1 < args.Length) { kept.Add("<PID>"); i++; }
-        }
-        return FoldText(file + " " + string.Join(" ", kept), root);
-    }
-
-    private static void CompareFiles(Scenario scenario, List<string> differences)
-    {
-        var ps = Files(scenario.Ps!);
-        var cs = Files(scenario.Cs!);
-        foreach (var name in ps.Keys.Except(cs.Keys)) differences.Add("file only in ps: " + name);
-        foreach (var name in cs.Keys.Except(ps.Keys)) differences.Add("file only in c#: " + name);
-        foreach (var name in ps.Keys.Intersect(cs.Keys))
-        {
-            var a = Content(ps[name], scenario.Ps!.Root);
-            var b = Content(cs[name], scenario.Cs!.Root);
-            if (a != b) differences.Add("file " + name + " differs: " + FirstDifference(a, b));
-        }
-    }
-
-    private static Dictionary<string, string> Files(NightlyRunWorld world)
+    private static Dictionary<string, string> Files(Side s)
     {
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var root in new[] { world.State, world.Coordination, world.Releases, world.Clone })
+        foreach (var root in new[] { s.State, s.Coord, s.Logs, s.Releases })
         {
             if (!Directory.Exists(root)) continue;
             foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
-                var relative = Path.GetRelativePath(world.Root, path).Replace('\\', '/');
-                if (relative.StartsWith("checkout/.git/", StringComparison.Ordinal)) continue;
-                files[FoldText(relative, world.Root)] = path;
+                var text = File.ReadAllText(path);
+                var trimmed = text.TrimStart();
+                files[Fold(Path.GetRelativePath(s.Root, path).Replace('\\', '/'), s.Root)] =
+                    trimmed.StartsWith('{') || trimmed.StartsWith('[') ? Canonical(text, s.Root) : Fold(text, s.Root);
             }
         }
         return files;
     }
 
-    private static string Content(string path, string root)
-    {
-        var text = File.ReadAllText(path).Replace("\r\n", "\n");
-        var trimmed = text.TrimStart();
-        if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
-        {
-            try { return Canonical(Fold(JsonNode.Parse(text), root)); }
-            catch (JsonException) { }
-        }
-        return FoldText(text, root);
-    }
-
     private static readonly Regex Stamp = new(@"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?", RegexOptions.CultureInvariant);
-
-    // A file digest: the attempt's names each side's root, so its digest differs; its bytes are compared folded.
     private static readonly Regex Hex64 = new("(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", RegexOptions.CultureInvariant);
+    private static readonly Regex RunDirectory = new(@"\d{4}-\d\d-\d\d-\d{4}-", RegexOptions.CultureInvariant);
 
-    private static string FoldText(string text, string root)
+    private static string Fold(string text, string root)
     {
-        text = text.Replace(root, "<ROOT>", StringComparison.OrdinalIgnoreCase).Replace(root.Replace("\\", "\\\\"), "<ROOT>", StringComparison.OrdinalIgnoreCase)
-            .Replace(root.Replace('\\', '/'), "<ROOT>", StringComparison.OrdinalIgnoreCase);
-        return Hex64.Replace(Stamp.Replace(text, "<TS>"), "<H64>");
+        foreach (var form in new[] { root, root.Replace("\\", "\\\\"), root.Replace('\\', '/') })
+            text = text.Replace(form, "<ROOT>", StringComparison.OrdinalIgnoreCase);
+        return RunDirectory.Replace(Hex64.Replace(Stamp.Replace(text.Replace("\r\n", "\n"), "<TS>"), "<H64>"), "<STAMP>-");
     }
 
-    private static JsonNode? Fold(JsonNode? node, string root)
+    private static string Canonical(string json, string root)
     {
-        switch (node)
-        {
-            case JsonObject obj:
-            {
-                var copy = new JsonObject();
-                foreach (var pair in obj.OrderBy(p => p.Key, StringComparer.Ordinal)) copy[pair.Key] = Fold(pair.Value?.DeepClone(), root);
-                return copy;
-            }
-            case JsonArray array:
-                return new JsonArray(array.Select(item => Fold(item?.DeepClone(), root)).ToArray());
-            case JsonValue value when value.TryGetValue<string>(out var text):
-                return JsonValue.Create(FoldText(text, root));
-            default:
-                return node?.DeepClone();
-        }
+        JsonNode? node;
+        try { node = JsonNode.Parse(json); }
+        catch (JsonException) { return Fold(json, root); }
+        return Fold(Sorted(node), root);
     }
 
-    private static string Canonical(JsonNode? node) => node == null ? "null" : node.ToJsonString();
-
-    private static string FirstDifference(string a, string b)
+    private static string Sorted(JsonNode? node) => node switch
     {
-        var i = 0;
-        while (i < a.Length && i < b.Length && a[i] == b[i]) i++;
-        var from = Math.Max(0, i - 60);
-        return "at " + i + ": ps=..." + Clip(a.Substring(from, Math.Min(200, a.Length - from))) + " c#=..." + Clip(b.Substring(from, Math.Min(200, b.Length - from)));
-    }
+        JsonObject o => "{" + string.Join(",", o.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => JsonSerializer.Serialize(p.Key) + ":" + Sorted(p.Value))) + "}",
+        JsonArray a => "[" + string.Join(",", a.Select(Sorted)) + "]",
+        null => "null",
+        _ => node.ToJsonString(),
+    };
 
-    private static string Clip(string text) => text.Length > 400 ? text[..400] + "..." : text;
-
-    // ---- the PowerShell side ---------------------------------------------------------------------------------------
-
-    /// <summary>
-    /// The scenario lines after Write-C487Seams: the pinned clock and the toolchain versions FakeHostProbe answers; a
-    /// StartProcess that records each launch (the trace's EXEC line and one JSON line), answers the report with its exit and
-    /// the tests hop (antiphon-scripts nightly-tests) by writing the scenario's summary into its --log-root.
-    /// </summary>
-    private const string SeamsExtra = """
-        $NightlySeams.UtcNow = { return [datetime]::Parse('__UTCNOW__', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
-        $NightlySeams.ToolchainVersions = { param($tool) if ($tool -eq 'git') { 'git version 2.42.0' } else { '10.0.204 [/fake/sdk]' } }
-        $NightlySeams.StartProcess = {
-            param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-            $a = @($ArgumentList)
-            Add-Content -LiteralPath '__TRACE__' -Value (('EXEC {0} {1}' -f $FilePath, ($a -join ' '))) -Encoding ASCII
-            Add-Content -LiteralPath '__LAUNCHES__' -Value (ConvertTo-Json -Compress -InputObject ([ordered]@{ file = [string]$FilePath; args = [string[]]$a })) -Encoding UTF8
-            if ([string]$FilePath -eq 'antiphon-scripts' -and $a.Count -ge 1 -and [string]$a[0] -eq 'nightly-tests') {
-                $logIdx = [array]::IndexOf($a, '--log-root')
-                if ('__SUMMARY__' -and $logIdx -ge 0) {
-                    $dir = [string]$a[$logIdx + 1]
-                    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-                    [System.IO.File]::WriteAllText((Join-Path $dir 'summary.json'), '__SUMMARY__')
-                }
-                return @{ ExitCode = __TESTEXIT__; TimedOut = $false; Pid = 2 }
-            }
-            if ([string]$FilePath -eq 'antiphon-scripts') { return @{ ExitCode = __REPORT__; TimedOut = $false; Pid = 2 } }
-            return @{ ExitCode = 0; TimedOut = $false; Pid = 2 }
-        }
-        """;
-
-    /// <summary>The line-ending scenario's git: ls-files names one stale file; everything else as Write-C487Seams answers.</summary>
-    private const string EolGitSeam = """
-        $NightlySeams.Git = {
-            param($WorkingDirectory, $Arguments)
-            Add-Content -LiteralPath '__TRACE__' -Value (('GIT {0}' -f ($Arguments -join ' '))) -Encoding ASCII
-            if ($Arguments -contains 'ls-files') { return @{ ExitCode = 0; Output = "i/lf    w/crlf  attr/text eol=lf `tsel.ps1`n" } }
-            if ($Arguments -contains '--get' -and $Arguments -contains 'core.longpaths') { return @{ ExitCode = 0; Output = 'true' } }
-            return @{ ExitCode = 0; Output = '__SHA__' }
-        }
-        """;
-
-    /// <summary>
-    /// Every scenario through the production entry: its seams (Write-C487Seams, then its lines), then
-    /// scripts/nightly-run.ps1 @args -PassThru with its Write-Host lines captured; the result, the last line and the exit the
-    /// entry would have returned. The selection attempt goes to the release-selection worker (the compiled select-release
-    /// would first need a build of the CLI in this pwsh).
-    /// </summary>
-    private const string RunnerScript = """
-        param([string]$RequestPath, [string]$ResultPath)
-        $ErrorActionPreference = 'Continue'
-        $repo = '__REPO__'
-        $entry = Join-Path $repo 'scripts/nightly-run.ps1'
-        . (Join-Path $repo 'scripts/lib/c487-harness.ps1')
-        $env:ANTIPHON_SCRIPTS_CLI = 'off'
-        $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json -AsHashtable -DateKind String
-        $results = [ordered]@{}
-        foreach ($scenario in $request.scenarios) {
-            $name = [string]$scenario.name
-            try {
-                Write-C487Seams -Path $scenario.seams -TracePath $scenario.trace -GitOutput ([string]$scenario.sha) -GitExit ([int]$scenario.gitExit)
-                Add-Content -LiteralPath $scenario.seams -Value ([string]$scenario.extra) -Encoding ASCII
-                $invoke = @{}
-                foreach ($key in $scenario.args.Keys) {
-                    $value = $scenario.args[$key]
-                    if ($key -eq 'Suites') { $value = [string[]]@($value) }
-                    elseif ($value -is [bool]) { $value = [switch]$value }
-                    $invoke[$key] = $value
-                }
-                $out = @(& $entry @invoke -PassThru 6>&1)
-                $lines = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { [string]$_.MessageData })
-                $result = @($out | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] }) | Select-Object -Last 1
-                $code = 1
-                if ($null -ne $result -and $null -ne $result.ExitCode) { $code = [int]$result.ExitCode }
-                $last = ''
-                if ($lines.Count -gt 0) { $last = $lines[$lines.Count - 1] }
-                $results[$name] = [ordered]@{ ok = $true; result = $result; last = $last; exit = $code }
-            } catch {
-                $results[$name] = [ordered]@{ ok = $false; error = ($_ | Out-String) }
-            }
-        }
-        $results | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
-        """;
+    private static string Clip(string text) => text.Length > 600 ? text[..600] + "..." : text;
 }

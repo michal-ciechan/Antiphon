@@ -17,13 +17,96 @@ public sealed partial class ReleaseGatePlatformTests
             "C1323 schema4-selector-admitted", "C1323 pinned-authority-validates-windows",
             "C1323 complete-synthetic-ledger-validates", "C1323 missing-windows-uid-refuses");
 
+    /// <summary>The tests half: NightlyTests.Run per platform on the offline e2e fixture (test-rc-platform.ps1, the C# executor on its seams).</summary>
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public Task C1323_PlatformExecution() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1323_PlatformExecution", 12,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1323_PlatformExecution", 8,
             "C1323 linux-launches-only-portable-cases", "C1323 windows-retains-delivery-cases",
-            "C1323 linux-summary-is-diagnostic", "C1323 linux-state-is-diagnostic",
-            "C1323 linux-leaves-green-files-identical", "C1323 unknown-platform-launches-nothing");
+            "C1323 linux-summary-is-diagnostic", "C1323 unknown-platform-launches-nothing");
+
+    /// <summary>
+    /// The run half (in-process since W2-nightly S20; it ran the PowerShell run core on the platform seams): NightlyRun.Run of a
+    /// -NoSync rc run with the selection bound, its tests hop answered with what the tests half writes on each platform. A Linux
+    /// run keeps the executor's PlatformDiagnostic scope and reasons in last-run.json and the completion record, earns no credit
+    /// (full-credit-scope-required) and leaves both green files as they were; a Windows run stays Full and earns rc credit.
+    /// </summary>
+    [Test, Timeout(300_000)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1323_PlatformRunCredit(CancellationToken token)
+    {
+        const string candidateRef = "rc/2026-10-20";
+        using var chain = new Antiphon.Tests.Scripts.Nightly.NightlyRcChain("c1323-run", candidateRef).Publish();
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var releaseRoot = chain.Fixture.PathOf("releases");
+        var candidateId = chain.CandidateId();
+        var green = Path.Combine(releaseRoot, "candidates", candidateId, "complete-green.json");
+        var masterGreen = chain.Fixture.PathOf("master", "last-complete-green.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(green)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(masterGreen)!);
+        File.WriteAllText(green, "candidate sentinel");
+        File.WriteAllText(masterGreen, "master sentinel");
+        foreach (var platform in new[] { "linux", "windows" })
+        {
+            var linux = platform == "linux";
+            chain.TestsAnswer = options =>
+            {
+                Directory.CreateDirectory(options.LogRoot);
+                var summary = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["runId"] = options.RunId, ["sha"] = options.Sha, ["profile"] = options.Profile, ["testsPassed"] = true, ["coverageComplete"] = !linux,
+                    ["coverageScope"] = linux ? "PlatformDiagnostic" : "Full", ["platform"] = platform,
+                    ["reasons"] = linux ? new System.Text.Json.Nodes.JsonArray("windows-rc-obligations-outstanding") : new System.Text.Json.Nodes.JsonArray(),
+                    ["policyHash"] = "c1323-policy", ["reportDelivered"] = true,
+                };
+                File.WriteAllText(Path.Combine(options.LogRoot, "summary.json"), summary.ToJsonString());
+                return 0;
+            };
+            var state = chain.Fixture.PathOf("state-" + platform);
+            var run = chain.Run(chain.Options("offline-" + platform, o =>
+            {
+                o.WhatIf = false; o.NoReport = false; o.CandidateId = candidateId; o.Repository = "fixture/c1323"; o.ReleaseRoot = releaseRoot;
+                o.StateRoot = state; o.LogRoot = chain.Fixture.PathOf("run-" + platform); o.CoordinationRoot = chain.Fixture.PathOf("coordination");
+            }));
+            var last = Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Json(Path.Combine(state, "last-run.json"))!.AsObject();
+            string Text(string name) => last[name]?.GetValue<string>() ?? "";
+            bool Flag(string name) => last[name]?.GetValue<bool>() == true;
+            var reasons = last["reasons"]?.AsArray().Select(r => r?.GetValue<string>() ?? "").ToArray() ?? [];
+            if (linux)
+            {
+                var record = NightlyRunRecord(run);
+                rows.Check(Flag("testsPassed") && !Flag("coverageComplete") && Text("coverageScope") == "PlatformDiagnostic" && Text("platform") == "linux"
+                    && reasons.Contains("windows-rc-obligations-outstanding") && record.Scope == "PlatformDiagnostic" && record.Reasons.Contains("windows-rc-obligations-outstanding"),
+                    "C1323 linux-state-is-diagnostic", last.ToJsonString());
+                var verdict = Antiphon.Nightly.ReleaseGateCredit.Verdict(last.ToDictionary(p => p.Key, p => Plain(p.Value)));
+                rows.Check(run.CreditKind == "" && verdict.Reasons.Contains("full-credit-scope-required"), "C1323 linux-credit-refuses", string.Join(",", verdict.Reasons));
+                rows.Check(File.ReadAllText(green) == "candidate sentinel" && File.ReadAllText(masterGreen) == "master sentinel", "C1323 linux-leaves-green-files-identical");
+            }
+            else
+            {
+                rows.Check(run.ExitCode == 0 && Flag("coverageComplete") && Text("coverageScope") == "Full" && Text("platform") == "windows" && run.CreditKind == "rc-release"
+                    && File.ReadAllText(green) != "candidate sentinel", "C1323 windows-state-preserves-full-behavior", last.ToJsonString() + " " + run.Refusal + "\n" + chain.Fixture.Out);
+            }
+        }
+        rows.ShouldAllPass(4, "C1323 linux-state-is-diagnostic", "C1323 linux-credit-refuses", "C1323 linux-leaves-green-files-identical", "C1323 windows-state-preserves-full-behavior");
+    }
+
+    private static (string Scope, string[] Reasons) NightlyRunRecord(Antiphon.Nightly.NightlyRunResult run)
+    {
+        var record = Antiphon.Nightly.NightlyRun.ResultRecord(run);
+        var reasons = (record["reasons"] as object[] ?? []).Select(r => Antiphon.Nightly.PsValue.Str(r)).ToArray();
+        return (Antiphon.Nightly.PsValue.Str(record["coverageScope"]), reasons);
+    }
+
+    private static object? Plain(System.Text.Json.Nodes.JsonNode? node) => node switch
+    {
+        System.Text.Json.Nodes.JsonValue v when v.TryGetValue<bool>(out var b) => b,
+        System.Text.Json.Nodes.JsonValue v when v.TryGetValue<int>(out var i) => i,
+        System.Text.Json.Nodes.JsonValue v when v.TryGetValue<string>(out var s) => s,
+        System.Text.Json.Nodes.JsonArray a => a.Select(Plain).ToArray(),
+        null => null,
+        _ => node.ToJsonString(),
+    };
 
     // C1415_SkipExclusions and LinuxSessionRunnerAdmission: ReleaseGatePlatformTests.Plan.cs (in-process since W2-nightly S11).
 

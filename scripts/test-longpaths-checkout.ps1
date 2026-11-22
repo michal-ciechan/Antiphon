@@ -16,7 +16,6 @@ if ([string]::IsNullOrWhiteSpace($env:TEMP)) {
 . (Join-Path $here 'lib/nightly-common.ps1')
 . (Join-Path $here 'lib/nightly-coverage.ps1')
 . (Join-Path $here 'lib/release-gate.ps1')
-. (Join-Path $here 'lib/nightly-run-impl.ps1')
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 
 function Remove-LpTree {
@@ -51,11 +50,6 @@ function New-LpGitRepo {
     return [pscustomobject]@{ Path = $clone; Head = $head }
 }
 
-function Write-LpNightlyMarker {
-    param([string]$Clone, [string]$Origin)
-    $json = '{"origin":"' + $Origin + '","kind":"nightly-clone"}'
-    [IO.File]::WriteAllText((Join-Path $Clone '.antiphon-nightly-owned'), $json)
-}
 
 function Invoke-LpChild {
     param([string]$File, [string[]]$Arguments, [hashtable]$Environment)
@@ -97,13 +91,6 @@ function Get-LpCaptured {
         elseif ($null -ne $item) { $lines.Add([string]$item) }
     }
     return [pscustomobject]@{ Result = $result; Text = ($lines -join "`n") }
-}
-
-function Invoke-LpNoSync {
-    param([string]$Clone, [string]$Root, [string]$Origin)
-    $runId = 'lp' + [guid]::NewGuid().ToString('N')
-    $captured = @(Invoke-AntiphonNightlyRunCore -NoSync -WhatIf -CheckoutRoot $Clone -StateRoot (Join-Path $Root 'state') -LogRoot (Join-Path $Root 'logs') -CoordinationRoot (Join-Path $Root 'coord') -RemoteUrl $Origin -Ref 'master' -Trigger 'scheduled' -Profile 'nightly' -SelectionMode 'Full' -RunId $runId 6>&1)
-    return (Get-LpCaptured $captured)
 }
 
 function Write-LpGitShim {
@@ -241,48 +228,7 @@ function Test-LP_LaunchRefuses {
     Assert-C487 (-not $goodText.Contains('longpaths-not-enabled')) 'LP launch with longpaths does not refuse longpaths' ($detail + ' ' + $goodText)
 }
 
-function Test-LP_NoSyncRefuses {
-    $origin = 'https://example.invalid/antiphon.git'
-    $root = New-LpDirectory ('lp-nosync-' + [guid]::NewGuid().ToString('N'))
-    $bad = $null
-    $good = $null
-    $detail = ''
-    try {
-        $repo = New-LpGitRepo -Root $root -Origin $origin
-        Write-LpNightlyMarker -Clone $repo.Path -Origin $origin
-        foreach ($name in @('state', 'logs', 'coord')) { New-Item -ItemType Directory -Path (Join-Path $root $name) -Force | Out-Null }
-        $bad = Invoke-LpNoSync -Clone $repo.Path -Root $root -Origin $origin
-        & git -C $repo.Path config --local core.longpaths true
-        $good = Invoke-LpNoSync -Clone $repo.Path -Root $root -Origin $origin
-    } catch {
-        $detail = $_.ToString()
-    } finally {
-        Remove-LpTree $root
-    }
-    $badText = ''
-    $badCode = -1
-    $badRefusal = ''
-    if ($null -ne $bad -and $null -ne $bad.Result) {
-        $badText = [string]$bad.Text
-        $badCode = [int]$bad.Result.ExitCode
-        $badRefusal = [string]$bad.Result.Refusal
-    } elseif ($null -ne $bad) { $badText = [string]$bad.Text }
-    $goodText = ''
-    $goodCode = -1
-    $goodPhase = ''
-    $goodRefusal = 'unset'
-    if ($null -ne $good -and $null -ne $good.Result) {
-        $goodText = [string]$good.Text
-        $goodCode = [int]$good.Result.ExitCode
-        $goodPhase = [string]$good.Result.Phase
-        $goodRefusal = [string]$good.Result.Refusal
-    }
-    $fixNamed = $badText.Contains('config --local core.longpaths true') -and $badText.Contains('git -C ')
-    Assert-C487 ($badCode -eq 3 -and $badRefusal -ceq 'longpaths-not-enabled' -and $badText.Contains('longpaths-not-enabled')) 'LP nosync refuses longpaths-not-enabled' ($detail + ' exit=' + $badCode + ' refusal=' + $badRefusal + ' ' + $badText)
-    Assert-C487 $fixNamed 'LP nosync names the fix command' ($detail + ' ' + $badText)
-    Assert-C487 ($goodCode -eq 0 -and $goodPhase -eq 'whatif') 'LP nosync with longpaths reaches whatif' ($detail + ' exit=' + $goodCode + ' phase=' + $goodPhase + ' ' + $goodText)
-    Assert-C487 ($goodRefusal -eq '') 'LP nosync with longpaths has an empty refusal' ($detail + ' refusal=' + $goodRefusal)
-}
+# W2-nightly S20: LP_NoSyncRefuses runs NightlyRun.Run in-process (LongPathsCheckoutScriptTests).
 
 function Test-LP_PreflightRefuses {
     $root = New-LpDirectory ('lp-preflight-' + [guid]::NewGuid().ToString('N'))
