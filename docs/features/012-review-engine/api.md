@@ -150,6 +150,7 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | GET | `/api/review-runs` | `?status=&repo=&stage=&q=` | `{ items: ReviewRunSummaryDto[], total }` |
 | GET | `/api/review-runs/kpis` | | `ReviewKpisDto` |
 | POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake through `ICodeHost`). `GitHub` needs `prNumber`. `Local` needs `baseSha` (any ref); `headSha` defaults to `HEAD`. The title defaults to the PR or commit title. | `ReviewRunDetailDto` (201) |
+| POST | `/api/review-runs/demo` | | `{ items: ReviewRunSummaryDto[], total }`. Seeds about 10 realistic runs. Enabled only when `Review:DemoSeedEnabled` is true (on in Development); otherwise 404, which the UI uses to hide "Load demo data". The executor never picks up demo runs. |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
 | POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
