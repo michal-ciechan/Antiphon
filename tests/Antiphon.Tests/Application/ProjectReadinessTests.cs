@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0032 slice 1 — <c>GET /api/projects/{id}/readiness</c> projection.</summary>
 [Category("Integration")]
-public class ProjectReadinessTests
+public partial class ProjectReadinessTests
 {
     [Test]
     public async Task unknown_project_is_not_found()
