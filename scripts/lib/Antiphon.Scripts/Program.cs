@@ -47,6 +47,8 @@ namespace Antiphon.Scripts
             [Antiphon.Nightly.NightlySeedCommands.ExportStoppedRunSeed] = NightlySeedCommand.Run,
             // The seed merge takes the operator's argv: exit 0 merged, 2 refused, 3 merged under -Strict with an identity unplaced or open.
             [Antiphon.Nightly.NightlySeedCommands.MergeSeeds] = NightlySeedCommand.Run,
+            // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
+            ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The release selection answers exactly or hands back NotHandled (exit 10).
             ["select-release"] = SelectRelease,
         };
@@ -71,7 +73,7 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
             return Usage;
         }
 
@@ -80,6 +82,31 @@ namespace Antiphon.Scripts
             if ((args.Length == 2 || args.Length == 3) && Array.IndexOf(LiveLaneEvidence.Cases, args[1]) >= 0)
                 return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
             return WriteUsage();
+        }
+
+        private const string LiveLaneScanGatesUsage = "live-lane-scan-gates [--repository <dir>]";
+
+        // W2-nightly S23: the ScanGates case of scripts/test-live-lane-manifest.ps1. Rewrites the gates of the
+        // repository's tests/live-lanes.json from the gate scan and prints "gates=<n> unresolved=<n>".
+        private static int LiveLaneScanGates(string[] args)
+        {
+            var flags = Flags(args, new[] { "--repository" }, new string[0]);
+            if (flags == null)
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneScanGatesUsage);
+                return Usage;
+            }
+            try
+            {
+                var written = Antiphon.Nightly.LiveLaneGateScan.WriteCatalog(flags.TryGetValue("--repository", out var repository) ? repository : Environment.CurrentDirectory);
+                Console.WriteLine("gates=" + written.Count + " unresolved=" + written.Unresolved);
+                return Handled;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
         }
 
         private static int SelectRelease(string[] args)

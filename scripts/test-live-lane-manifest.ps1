@@ -1,5 +1,8 @@
 # CARD-1545 S1a live-lane manifest driver. ASCII-only.
 # Diagnostic inventory only. No provider call, no live Claude, no policy edit.
+# The gate scan is compiled (W2-nightly S23, scripts/lib/Antiphon.Nightly/LiveLaneGateScan.cs): its cases left
+# this driver. LiveLaneInventoryTests.EveryLiveGateHasDisposition runs the gate matrix in-process, and
+# "scripts/antiphon live-lane-scan-gates" rewrites the gates of tests/live-lanes.json (the old ScanGates case).
 param(
     [string]$Case = '',
     [string]$AssemblyPath = '',
@@ -530,12 +533,6 @@ switch ($Case) {
         if ($decoyFailures.Count -ne 0) { exit 1 }
         exit 0
     }
-    'EveryLiveGateHasDisposition' {
-        $manifest = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
-        $failures = @(Invoke-LiveLaneGateMatrix -RepoRoot $RepoRoot -Manifest $manifest)
-        Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
-        exit 0
-    }
     'CensusAdditiveIdentity' {
         $failures = @(Invoke-LiveLaneAdditiveIdentityWitness -RepoRoot $RepoRoot)
         Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
@@ -584,11 +581,6 @@ switch ($Case) {
             }
         }
         exit $exitCode
-    }
-    'ScanGates' {
-        $written = Write-LiveLaneGateCatalog -RepoRoot $RepoRoot
-        [Console]::Out.WriteLine(('gates=' + $written.Count + ' unresolved=' + $written.Unresolved))
-        exit 0
     }
     'BindManifest' {
         $capture = $CaptureDir

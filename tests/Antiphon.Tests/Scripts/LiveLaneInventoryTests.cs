@@ -10,12 +10,14 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-1545 S1a. Ordinary Unit roster for the six live identities.
 /// Classification is Unit, not Integration: the method is parameterless inventory
 /// and does not host a session. Matrices stay inside this one method.
+/// The gate matrix runs in-process (W2-nightly S23: the gate scan is compiled,
+/// LiveLaneGateScan.cs); the other cases still run the manifest driver.
 /// </summary>
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LiveLaneInventoryTests
 {
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task ExactCoreRoster()
     {
         var result = await LiveLaneProcess.RunAsync("ExactCoreRoster", "Antiphon.Tests").ConfigureAwait(false);
@@ -23,13 +25,14 @@ public sealed class LiveLaneInventoryTests
     }
 
     [Test]
-    public async Task EveryLiveGateHasDisposition()
+    public void EveryLiveGateHasDisposition()
     {
-        var result = await LiveLaneProcess.RunAsync("EveryLiveGateHasDisposition", "Antiphon.Tests").ConfigureAwait(false);
-        result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
+        var failures = Antiphon.Nightly.LiveLaneGateScan.Matrix(LiveLaneProcess.FindRepo());
+        failures.ShouldBeEmpty(string.Join('\n', failures));
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task CensusAdditiveIdentity()
     {
         var result = await LiveLaneProcess.RunAsync("CensusAdditiveIdentity", "Antiphon.Tests").ConfigureAwait(false);
@@ -37,6 +40,7 @@ public sealed class LiveLaneInventoryTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task CensusTargetScope()
     {
         var result = await LiveLaneProcess.RunAsync("CensusTargetScope", "Antiphon.Tests").ConfigureAwait(false);
@@ -142,7 +146,7 @@ public sealed class LiveLaneInventoryTests
             return trimmed.Length <= 1200 ? trimmed : trimmed[^1200..];
         }
 
-        private static string FindRepo()
+        internal static string FindRepo()
         {
             foreach (var start in new[] { Directory.GetCurrentDirectory(), Path.GetDirectoryName(typeof(LiveLaneInventoryTests).Assembly.Location) })
             {
