@@ -828,6 +828,12 @@ public sealed class VolumeRetirementContentTests
     [Arguments("checkout")]
     [Arguments("edited-content")]
     [Arguments("mixed-line-endings")]
+    [Arguments("trailing-byte")]
+    [Arguments("truncated")]
+    [Arguments("empty")]
+    [Arguments("extra-cr")]
+    [Arguments("symlink")]
+    [Arguments("directory")]
     [Arguments("unattributed-crlf")]
     [Arguments("other-declared-crlf")]
     [Arguments("common-info-attributes")]
@@ -847,35 +853,42 @@ public sealed class VolumeRetirementContentTests
             set -euo pipefail
             cd {{q(outer)}}
             git config core.autocrlf false
-            mkdir scripts other
-            printf 'scripts/antiphon.cmd text eol=crlf\nother/antiphon.cmd text eol=crlf\n' > .gitattributes
+            mkdir scripts
+            printf 'scripts/antiphon.cmd text eol=crlf\n' > .gitattributes
             printf '@echo ok\nrem line\nrem eof' > scripts/antiphon.cmd
-            printf '@echo other\n' > other/antiphon.cmd
             printf 'plain\n' > plain.cmd
-            if [ {{q(vector)}} = oversized-crlf ]; then
-                printf 'large.cmd text eol=crlf\n' >> .gitattributes
-                # An indexed blob exactly 16 MiB crosses the limit when Git adds one CR.
-                { head -c 16777215 /dev/zero | tr '\000' x; printf '\n'; } > large.cmd
-                git add large.cmd
+            if [ {{q(vector)}} = other-declared-crlf ]; then
+                mkdir other
+                printf 'other/antiphon.cmd text eol=crlf\n' >> .gitattributes
+                printf '@echo other\n' > other/antiphon.cmd
+                git add other/antiphon.cmd
+                cmp other/antiphon.cmd <(git show :other/antiphon.cmd)
             fi
-            git add .gitattributes scripts/antiphon.cmd other/antiphon.cmd plain.cmd
+            if [ {{q(vector)}} = symlink ]; then
+                printf '@echo ok\r\nrem line\r\nrem eof' > scripts/launcher-copy
+                git add scripts/launcher-copy
+            fi
+            if [ {{q(vector)}} = oversized-crlf ]; then
+                # An indexed blob exactly 16 MiB crosses the limit when Git adds one CR.
+                { head -c 16777215 /dev/zero | tr '\000' x; printf '\n'; } > scripts/antiphon.cmd
+            fi
+            git add .gitattributes scripts/antiphon.cmd plain.cmd
             git commit -qm 'published line-ending fixtures'
             git push -q origin HEAD
             git worktree add -q --detach {{q(linked)}}
             # Keep the primary checkout's raw bytes equal to the blob so the
             # preview's result is attributable to the linked checkout.
             cmp scripts/antiphon.cmd <(git show HEAD:scripts/antiphon.cmd)
-            cmp other/antiphon.cmd <(git show HEAD:other/antiphon.cmd)
             cd {{q(linked)}}
             git ls-files --eol -- scripts/antiphon.cmd
-            cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
+            if [ {{q(vector)}} != oversized-crlf ]; then
+                cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
+            fi
             test -z "$(git status --porcelain)"
             if [ {{q(vector)}} = other-declared-crlf ]; then
                 cmp other/antiphon.cmd <(printf '@echo other\r\n')
                 git ls-files --eol -- other/antiphon.cmd |
                     grep -Eq 'i/lf[[:space:]]+w/crlf[[:space:]]+attr/text eol=crlf[[:space:]]+other/antiphon\.cmd$'
-            else
-                git show HEAD:other/antiphon.cmd > other/antiphon.cmd
             fi
             case {{q(vector)}} in
                 edited-content)
@@ -883,6 +896,28 @@ public sealed class VolumeRetirementContentTests
                     ;;
                 mixed-line-endings)
                     printf '@echo ok\r\nrem line\nrem eof' > scripts/antiphon.cmd
+                    ;;
+                trailing-byte)
+                    printf '!' >> scripts/antiphon.cmd
+                    ;;
+                truncated)
+                    printf '@echo ok\r\nrem line\r\nrem eo' > scripts/antiphon.cmd
+                    ;;
+                empty)
+                    : > scripts/antiphon.cmd
+                    ;;
+                extra-cr)
+                    printf '@echo ok\r\r\nrem line\r\nrem eof' > scripts/antiphon.cmd
+                    ;;
+                symlink)
+                    rm -- scripts/antiphon.cmd
+                    ln -s launcher-copy scripts/antiphon.cmd
+                    test -L scripts/antiphon.cmd
+                    cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
+                    ;;
+                directory)
+                    rm -- scripts/antiphon.cmd
+                    mkdir scripts/antiphon.cmd
                     ;;
                 unattributed-crlf)
                     printf 'plain\r\n' > plain.cmd
@@ -897,7 +932,8 @@ public sealed class VolumeRetirementContentTests
                 linked-info-attributes)
                     admin="$(git rev-parse --absolute-git-dir)"
                     mkdir "$admin/info"
-                    printf 'scripts/antiphon.cmd -text\n' > "$admin/info/attributes"
+                    printf 'plain.cmd text eol=crlf\n' > "$admin/info/attributes"
+                    printf 'plain\r\n' > plain.cmd
                     ;;
                 staged-attributes)
                     git check-attr --cached text eol -- plain.cmd
@@ -907,9 +943,10 @@ public sealed class VolumeRetirementContentTests
                     git check-attr --cached text eol -- plain.cmd
                     ;;
                 oversized-crlf)
-                    test "$(git cat-file -s HEAD:large.cmd)" = 16777216
-                    test "$(stat -c %s large.cmd)" = 16777217
-                    git ls-files --eol -- large.cmd | grep -Eq 'i/lf[[:space:]]+w/crlf[[:space:]]+attr/text eol=crlf[[:space:]]+large\.cmd$'
+                    test "$(git cat-file -s HEAD:scripts/antiphon.cmd)" = 16777216
+                    test "$(stat -c %s scripts/antiphon.cmd)" = 16777217
+                    git ls-files --eol -- scripts/antiphon.cmd |
+                        grep -Eq 'i/lf[[:space:]]+w/crlf[[:space:]]+attr/text eol=crlf[[:space:]]+scripts/antiphon\.cmd$'
                     ;;
             esac
             """);
