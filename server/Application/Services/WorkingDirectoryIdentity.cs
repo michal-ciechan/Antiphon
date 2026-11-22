@@ -1,5 +1,7 @@
+using System.Collections.Frozen;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
@@ -34,14 +36,21 @@ namespace Antiphon.Server.Application.Services;
 /// </list>
 /// <para>
 /// SQL side: <see cref="CandidateFilter{T}"/> is a translatable superset predicate evaluated by
-/// PostgreSQL: backslashes as slashes, all trailing slashes trimmed, compared case-insensitively
-/// with <c>ILIKE</c> against the probe's escaped <see cref="CandidateSpelling"/>. Callers then keep
-/// only the returned candidates for which <see cref="Same"/> holds. Every pair that is the same
-/// under this rule has the same <see cref="CandidateKey"/>, so the prefilter loses nothing
-/// (identical spellings always pass because the database folds case on both sides; non-ASCII case
-/// variants of a Windows path pass as far as the database's case folding agrees with invariant
-/// lower-casing), and only the rows that share a loose spelling with the probe are evaluated in
-/// process. LIKE wildcards in a path are escaped, so they match only themselves.
+/// PostgreSQL that does not depend on the database's collation or ctype:
+/// <c>lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>. Under
+/// the <c>C</c> collation <c>lower</c> folds only ASCII letters, on every server, and <c>LIKE</c>
+/// compares code points (<c>_</c> matches exactly one). The pattern (<see cref="CandidatePattern"/>)
+/// is the probe's loose spelling (backslashes as slashes, trailing slashes trimmed) with each ASCII
+/// character lower-cased and escaped, and with the one-character wildcard <c>_</c> in place of every
+/// character whose case the database cannot fold the way <c>ToLowerInvariant</c> does: every
+/// non-ASCII code point, and every ASCII letter that some non-ASCII code point lower-cases to (the
+/// Kelvin sign lower-cases to <c>k</c>). <c>ToLowerInvariant</c> maps each code point to exactly one
+/// code point, so two spellings with equal <see cref="Key"/>s have loose spellings with the same
+/// number of code points that agree, after ASCII lower-casing, wherever the pattern keeps a
+/// literal. The prefilter therefore admits every pair <see cref="Same"/> accepts, whatever the
+/// database locale (Review 0d322ed5: an <c>ILIKE</c> under a C-locale database did not). Callers
+/// keep only the returned candidates for which <see cref="Same"/> holds. LIKE wildcards in a path
+/// are escaped, so they match only themselves.
 /// </para>
 /// </summary>
 public static class WorkingDirectoryIdentity
@@ -79,34 +88,64 @@ public static class WorkingDirectoryIdentity
         return string.Equals(Key(left), Key(right), StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// The in-process model of the loose key the SQL prefilter compares: lower-cased, backslashes
-    /// as slashes and every trailing slash trimmed. A function of <see cref="Key"/>, so equal keys
-    /// give equal candidate keys; distinct directories may share one, which is why candidates are
-    /// refined with <see cref="Same"/>.
-    /// </summary>
-    public static string CandidateKey(string path) => LooseSpelling(path).ToLowerInvariant();
-
     /// <summary>The escape character of <see cref="CandidatePattern"/>.</summary>
     public const string CandidatePatternEscape = "!";
 
-    /// <summary>
-    /// The <c>ILIKE</c> pattern for <paramref name="path"/>: its loose spelling (backslashes as
-    /// slashes, trailing slashes trimmed) with <c>!</c>, <c>%</c> and <c>_</c> escaped by
-    /// <see cref="CandidatePatternEscape"/>, so the pattern matches exactly that spelling up to case.
-    /// </summary>
-    public static string CandidatePattern(string path) =>
-        LooseSpelling(path)
-            .Replace("!", "!!", StringComparison.Ordinal)
-            .Replace("%", "!%", StringComparison.Ordinal)
-            .Replace("_", "!_", StringComparison.Ordinal);
+    /// <summary>The collation the prefilter folds and matches under: ASCII-only folding on every server.</summary>
+    public const string CandidateCollation = "C";
 
     /// <summary>
-    /// A PostgreSQL-translatable predicate selecting the rows whose stored path has the same loose
-    /// spelling as <paramref name="path"/> up to case
-    /// (<c>rtrim(replace(col, '\', '/'), '/') ILIKE @pattern ESCAPE '!'</c>, with the pattern
-    /// sent as a parameter). It is server-only: it cannot be evaluated in process. Refine the
-    /// result with <see cref="Same"/>; never treat a candidate as a match on its own.
+    /// The <c>LIKE</c> pattern for <paramref name="path"/>, matched against the stored path's loose
+    /// spelling lower-cased under the <c>C</c> collation. Each code point of the probe's loose
+    /// spelling becomes its ASCII lower case (with <c>!</c>, <c>%</c> and <c>_</c> escaped by
+    /// <see cref="CandidatePatternEscape"/>), or <c>_</c> when it is not ASCII or is an ASCII
+    /// character that a non-ASCII code point lower-cases to. The pattern never uses <c>%</c> as a
+    /// wildcard, so it matches only loose spellings with the same number of code points.
+    /// </summary>
+    public static string CandidatePattern(string path)
+    {
+        var loose = LooseSpelling(path);
+        var pattern = new StringBuilder(loose.Length);
+        foreach (var rune in loose.EnumerateRunes())
+        {
+            if (!rune.IsAscii)
+            {
+                pattern.Append('_');
+                continue;
+            }
+
+            var lower = (char)rune.Value is >= 'A' and <= 'Z' ? (char)(rune.Value + 32) : (char)rune.Value;
+            if (NonAsciiFoldTargets.Contains(lower))
+            {
+                pattern.Append('_');
+                continue;
+            }
+
+            if (lower is '!' or '%' or '_')
+                pattern.Append(CandidatePatternEscape);
+            pattern.Append(lower);
+        }
+
+        return pattern.ToString();
+    }
+
+    /// <summary>
+    /// The ASCII characters that some non-ASCII code point lower-cases to under
+    /// <c>ToLowerInvariant</c>, the folding <see cref="Key"/> uses (for example <c>k</c> from the
+    /// Kelvin sign). The <c>C</c> collation cannot fold those code points, so the pattern wildcards
+    /// their ASCII targets. Only BMP code points can lower-case to a single ASCII character, because
+    /// invariant casing never changes the UTF-16 length.
+    /// </summary>
+    internal static readonly FrozenSet<char> NonAsciiFoldTargets = ComputeNonAsciiFoldTargets();
+
+    /// <summary>
+    /// A PostgreSQL-translatable predicate selecting a superset of the rows whose stored path is the
+    /// same directory as <paramref name="path"/>
+    /// (<c>lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>, with
+    /// the pattern sent as a parameter). The explicit <c>C</c> collation gives the same result
+    /// whatever the database's collation and ctype are. It is server-only: it cannot be evaluated in
+    /// process. Refine the result with <see cref="Same"/>; never treat a candidate as a match on its
+    /// own.
     /// </summary>
     public static Expression<Func<T, bool>> CandidateFilter<T>(
         Expression<Func<T, string?>> storedPath, string path)
@@ -118,11 +157,14 @@ public static class WorkingDirectoryIdentity
             Expression.Call(column, StringReplace, Expression.Constant("\\"), Expression.Constant("/")),
             StringTrimEnd,
             Expression.Constant('/'));
+        var folded = Expression.Call(
+            Expression.Call(Collate, Expression.Constant(EF.Functions), loose, Expression.Constant(CandidateCollation)),
+            StringToLower);
         var pattern = Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Pattern));
         var matches = Expression.Call(
-            ILike,
+            Like,
             Expression.Constant(EF.Functions),
-            loose,
+            folded,
             pattern,
             Expression.Constant(CandidatePatternEscape));
         var body = Expression.AndAlso(
@@ -145,16 +187,38 @@ public static class WorkingDirectoryIdentity
         return end == path.Length ? path : path[..end];
     }
 
+    private static FrozenSet<char> ComputeNonAsciiFoldTargets()
+    {
+        var targets = new HashSet<char>();
+        for (var value = 0x80; value <= 0xFFFF; value++)
+        {
+            if (value is >= 0xD800 and <= 0xDFFF)
+                continue;
+            var lower = ((char)value).ToString().ToLowerInvariant();
+            if (lower.Length == 1 && lower[0] < 0x80)
+                targets.Add(lower[0]);
+        }
+
+        return targets.ToFrozenSet();
+    }
+
     private static readonly MethodInfo StringReplace =
         typeof(string).GetMethod(nameof(string.Replace), [typeof(string), typeof(string)])!;
 
-    private static readonly MethodInfo ILike =
-        typeof(NpgsqlDbFunctionsExtensions).GetMethod(
-            nameof(NpgsqlDbFunctionsExtensions.ILike),
-            [typeof(DbFunctions), typeof(string), typeof(string), typeof(string)])!;
-
     private static readonly MethodInfo StringTrimEnd =
         typeof(string).GetMethod(nameof(string.TrimEnd), [typeof(char)])!;
+
+    private static readonly MethodInfo StringToLower =
+        typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!;
+
+    private static readonly MethodInfo Like =
+        typeof(DbFunctionsExtensions).GetMethod(
+            nameof(DbFunctionsExtensions.Like),
+            [typeof(DbFunctions), typeof(string), typeof(string), typeof(string)])!;
+
+    private static readonly MethodInfo Collate =
+        typeof(RelationalDbFunctionsExtensions).GetMethod(nameof(RelationalDbFunctionsExtensions.Collate))!
+            .MakeGenericMethod(typeof(string));
 
     // A member access on a closure-like object, so EF Core sends the pattern as a SQL parameter
     // instead of inlining it as a literal.
