@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "17d3a57b9e55f1503c51b77732da69ca0d962e87fd85c0459cfbaddd8ed12f4d",
+  "policyHash": "f5f58b1fec885eb468fd178af528a2c9906b8044a71967ef67cfcbd7407fa313",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1562,7 +1562,6 @@
           "suite": "antiphon",
           "class": "PosixHarnessToolTests",
           "methods": [
-            "Capture_identity_resolves_git_sh_instead_of_hard_coded_bin_sh",
             "Cutover_window_completes_without_cat_grep_or_tr_on_path"
           ],
           "platform": "windows",
