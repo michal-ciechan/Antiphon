@@ -20,6 +20,14 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundUnifiedPathTests
 {
+    // World teardowns run in the background (World.DisposeAsync); none outlives its test.
+    [After(Test)]
+    public Task DrainWorldTeardownsAsync() => World.DrainTeardownsAsync();
+
+    // A teardown a test's drain gave up on (hung) is still awaited before the class ends.
+    [After(Class)]
+    public static Task DrainHungWorldTeardownsAsync() => World.DrainTeardownsAsync();
+
     [Test]
     public async Task C519_Every_agent_shape_is_captured()
     {
@@ -183,12 +191,27 @@ public sealed class ChannelOutboundUnifiedPathTests
     public Task C519_Deferred_runtime_releases_without_claiming_publication() =>
         new AgentTaskReplyIntegrationTests().VerifyDeferredRuntimeAsync();
 
+    // A world's teardown (its harness and its cloned database: about 0.1 s of each ~0.35 s world on the HP laptop on AC)
+    // runs in the background while the next world is built and used. A world starts no process and has its own schema
+    // and harness, so a teardown still running touches nothing the next one uses. A new world first waits for every
+    // teardown but the latest, so at most one overlaps it. After each test every teardown is awaited (the class's
+    // After(Test) hook; the class is NotInParallel): no world outlives its test, and every teardown failure (each one,
+    // harness and schema both) fails the test that made it, naming the world.
     private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key, Guid projectId) : IAsyncDisposable
     {
+        // A hang bound, not a budget (a teardown normally takes about 0.1 s): long enough for a loaded host's database
+        // drop, short enough to name a stuck world well inside the test's own timeout.
+        private static readonly TimeSpan TeardownHung = TimeSpan.FromSeconds(30);
+        private static readonly List<(string World, Task Teardown)> Teardowns = [];
+        private int _disposed;
+
         public BridgeQueueHarness H => harness;
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(harness.ConnectionString));
         public static async Task<World> CreateAsync(bool allowSystem = false, string profile = "none", bool attachmentsOnly = false)
         {
+            (string World, Task Teardown)[] earlier;
+            lock (Teardowns) earlier = [.. Teardowns.Take(Math.Max(0, Teardowns.Count - 1))];
+            await AwaitAsync(earlier);
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var settings = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true };
             var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
@@ -257,6 +280,45 @@ public sealed class ChannelOutboundUnifiedPathTests
         }
         public Task<ChannelReplyDispatchResult> DispatchAsync() => H.Dispatcher.OnTurnEndAsync(H.SessionId, default);
         public async Task DrainAsync() { await H.TickOutboundAsync(); await H.TickOutboundAsync(); }
-        public async ValueTask DisposeAsync() { await H.DisposeAsync(); await schema.DisposeAsync(); }
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return ValueTask.CompletedTask;
+            var world = schema.ConnectionString.Split(';').FirstOrDefault(p => p.StartsWith("Database=", StringComparison.OrdinalIgnoreCase)) ?? "world";
+            var teardown = Task.Run(async () =>
+            {
+                var failures = new List<Exception>();
+                try { await H.DisposeAsync(); }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                try { await schema.DisposeAsync(); }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                if (failures.Count > 0)
+                    throw new InvalidOperationException($"World {world} teardown failed",
+                        failures.Count == 1 ? failures[0] : new AggregateException(failures));
+            });
+            lock (Teardowns) Teardowns.Add((world, teardown));
+            return ValueTask.CompletedTask;
+        }
+
+        public static async Task DrainTeardownsAsync()
+        {
+            (string World, Task Teardown)[] all;
+            lock (Teardowns) all = [.. Teardowns];
+            await AwaitAsync(all);
+        }
+
+        // Every failure collected; an entry leaves the list only once it has ended, so a hung one is still awaited later.
+        private static async Task AwaitAsync((string World, Task Teardown)[] entries)
+        {
+            var failures = new List<Exception>();
+            foreach (var entry in entries)
+            {
+                try { await entry.Teardown.WaitAsync(TeardownHung); }
+                catch (TimeoutException) { failures.Add(new TimeoutException($"World {entry.World} teardown still running after {TeardownHung.TotalSeconds:0} s")); continue; }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                lock (Teardowns) Teardowns.Remove(entry);
+            }
+            if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures.Count > 1) throw new AggregateException("World teardowns failed", failures);
+        }
     }
 }
