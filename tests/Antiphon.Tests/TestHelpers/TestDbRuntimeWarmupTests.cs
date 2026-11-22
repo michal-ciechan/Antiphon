@@ -5,6 +5,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -14,7 +15,7 @@ namespace Antiphon.Tests.TestHelpers;
 // that the real provider/model was initialized once, outside every timed test body.
 internal sealed class RuntimeModelObserver : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>
 {
-    private static readonly ConcurrentBag<(IModel Model, bool OutsideBody)> Initialized = [];
+    private static readonly ConcurrentBag<(string Fixture, IModel Model, bool OutsideBody)> Initialized = [];
     private static readonly ConcurrentBag<IDisposable> Subscriptions = [];
 
     [ModuleInitializer]
@@ -30,7 +31,8 @@ internal sealed class RuntimeModelObserver : IObserver<DiagnosticListener>, IObs
         Subscriptions.Add(DiagnosticListener.AllListeners.Subscribe(new RuntimeModelObserver()));
     }
 
-    public static (IModel Model, bool OutsideBody)[] Snapshot() => Initialized.ToArray();
+    public static (IModel Model, bool OutsideBody)[] Snapshot(string fixture = "db-runtime") =>
+        [.. Initialized.Where(i => i.Fixture == fixture).Select(i => (i.Model, i.OutsideBody))];
 
     public void OnNext(DiagnosticListener listener)
     {
@@ -41,10 +43,11 @@ internal sealed class RuntimeModelObserver : IObserver<DiagnosticListener>, IObs
     public void OnNext(KeyValuePair<string, object?> value)
     {
         if (value.Value is ContextInitializedEventData { Context: AppDbContext context }
-            && Activity.Current?.GetTagItem("antiphon.fixture") as string == "db-runtime")
+            && Activity.Current?.GetTagItem("antiphon.fixture") is "db-runtime" or "harness-runtime")
             // TUnit keeps the first test ambient while awaiting assembly hooks. Its concrete
             // assembly-hook scope, rather than TestContext presence, identifies this boundary.
-            Initialized.Add((context.Model, AssemblyHookContext.Current?.Assembly == typeof(TestDbFixture).Assembly));
+            Initialized.Add(((string)Activity.Current!.GetTagItem("antiphon.fixture")!, context.Model,
+                AssemblyHookContext.Current?.Assembly == typeof(TestDbFixture).Assembly));
     }
 
     public void OnCompleted() { }
@@ -68,5 +71,22 @@ public sealed class TestDbRuntimeWarmupTests
             "consumers must reuse the exact warmed model with their normal Npgsql options");
         context.Model.FindEntityType("Antiphon.Server.Domain.Entities.AgentTask").ShouldNotBeNull();
         RuntimeModelObserver.Snapshot().Length.ShouldBe(1, "consumer contexts must not rerun assembly warm-up");
+    }
+
+    [Test]
+    public async Task Harness_model_is_ready_before_the_timed_body()
+    {
+        var options = TestDbFixture.CreateDbContextOptions();
+        var warmed = RuntimeModelObserver.Snapshot("harness-runtime");
+        warmed.Length.ShouldBe(1, "one harness-shaped EF context must initialize in the assembly runtime warm-up");
+        warmed[0].OutsideBody.ShouldBeTrue("assembly setup must finish outside the test's timeout");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        using var scope = h.Provider.CreateScope();
+        var model = scope.ServiceProvider.GetRequiredService<AppDbContext>().Model;
+        ReferenceEquals(warmed[0].Model, model).ShouldBeTrue("a harness context must reuse the model warmed for it");
+        using var fixtureContext = new AppDbContext(options);
+        ReferenceEquals(fixtureContext.Model, model).ShouldBeFalse(
+            "the harness's options build a second model; if they share the fixture's, BridgeQueueHarness.WarmModel is redundant");
     }
 }

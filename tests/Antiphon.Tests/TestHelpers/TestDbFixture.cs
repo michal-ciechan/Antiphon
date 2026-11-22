@@ -47,9 +47,11 @@ public class TestDbFixture
 					_ = db.Database.ProviderName;
 				}
 			}),
+			// Its own fixture id: "db-runtime" is this fixture's one warmed context (TestDbRuntimeWarmupTests).
+			// The two builds and PostgreSQL's start overlap, so their FixtureSetup spans sum past wall time.
 			Task.Run(() =>
 			{
-				using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "harness-model"))
+				using (TestTiming.BeginFixturePhase("harness-runtime", TestPhaseKind.FixtureSetup, "harness-model"))
 					BridgeQueueHarness.WarmModel();
 			}));
 		Exception? startFailure = null;

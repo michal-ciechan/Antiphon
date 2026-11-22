@@ -184,13 +184,17 @@ public sealed class ChannelOutboundUnifiedPathTests
             w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("valid companion after the withheld window");
         })));
 
+    // The case a world belongs to, when a test's cases run side by side (EachConcurrentlyAsync).
+    private static readonly AsyncLocal<string?> CaseName = new();
+
     // A test's cases run side by side. Each has its own world (cloned database, harness, temp root, service provider,
     // messaging fake and settings), none starts a process, and the harness keeps no mutable static state, so a case
     // sees exactly what it saw run alone; BridgeQueueHarness worlds already run concurrently across classes. Every
-    // case runs to its end, and every failure is reported, labelled with its case.
+    // case runs to its end, and every failure is reported, labelled with its case; a case's world teardowns are its
+    // own (CaseName), so no case waits on, or is charged with, a sibling's.
     private static async Task EachConcurrentlyAsync(IEnumerable<(string Case, Func<Task> Run)> cases)
     {
-        var started = cases.Select(c => (c.Case, Run: Task.Run(c.Run))).ToArray();
+        var started = cases.Select(c => (c.Case, Run: Task.Run(() => { CaseName.Value = c.Case; return c.Run(); }))).ToArray();
         try { await Task.WhenAll(started.Select(c => c.Run)); }
         catch
         {
@@ -214,13 +218,14 @@ public sealed class ChannelOutboundUnifiedPathTests
     // A world's teardown (its harness and its cloned database: about 0.1 s of each ~0.35 s world on the HP laptop on AC)
     // runs in the background while the next world is built and used. A world starts no process and has its own schema
     // and harness, so a teardown still running touches nothing the next one uses. Each teardown belongs to the test
-    // that made it (its TUnit test id). A new world first waits for every teardown of its test but the latest, so at
-    // most one of its test's teardowns overlaps it; after each test its teardowns are awaited (After(Test); the class
-    // is NotInParallel), and every failure (harness and schema both) fails the test that made it, naming the world.
+    // and case that made it (its TUnit test id, and CaseName when the test's cases run side by side). A new world first
+    // waits for every teardown of its test and case but the latest, so at most one of its case's teardowns overlaps it;
+    // after each test its teardowns, every case's, are awaited (After(Test); the class is NotInParallel), and every
+    // failure (harness and schema both) fails the test that made it, naming the world and its case.
     // Only a teardown that hangs past TeardownHung outlives its test: its test reports it once and hands it to the class
     // drain, so it may run beside later tests' worlds until the class ends (After(Class), which awaits it unbounded but
     // for TUnit's hook timeout, and reports again only how it finally failed). Phase timings a world records may
-    // include one earlier world's teardown running beside them.
+    // include an earlier world's teardown and, in a test whose cases run side by side, its sibling cases' worlds.
     private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key, Guid projectId) : IAsyncDisposable
     {
         // A hang bound, not a budget, and only ever spent on a hang: a teardown here measured about 0.1 s (25 worlds,
@@ -229,7 +234,7 @@ public sealed class ChannelOutboundUnifiedPathTests
         private static readonly TimeSpan TeardownHung = TimeSpan.FromMinutes(2);
         // The owner of a hung teardown handed to the class drain: never a TUnit test id, nor the "" of no test context.
         private const string HandedOff = "<hung>";
-        private static readonly List<(string Owner, string World, Task Teardown)> Teardowns = [];
+        private static readonly List<(string Owner, string Case, string World, Task Teardown)> Teardowns = [];
         private int _disposed;
 
         private static string CurrentTest => TUnit.Core.TestContext.Current?.Metadata.TestDetails.TestId ?? "";
@@ -238,11 +243,11 @@ public sealed class ChannelOutboundUnifiedPathTests
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(harness.ConnectionString));
         public static async Task<World> CreateAsync(bool allowSystem = false, string profile = "none", bool attachmentsOnly = false)
         {
-            var current = CurrentTest;
-            (string Owner, string World, Task Teardown)[] earlier;
+            var (current, currentCase) = (CurrentTest, CaseName.Value ?? "");
+            (string Owner, string Case, string World, Task Teardown)[] earlier;
             lock (Teardowns)
             {
-                var own = Teardowns.Where(t => t.Owner == current).ToArray();
+                var own = Teardowns.Where(t => t.Owner == current && t.Case == currentCase).ToArray();
                 earlier = own.Take(Math.Max(0, own.Length - 1)).ToArray();
             }
             await AwaitAsync(earlier);
@@ -343,7 +348,9 @@ public sealed class ChannelOutboundUnifiedPathTests
         public ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return ValueTask.CompletedTask;
-            var world = new Npgsql.NpgsqlConnectionStringBuilder(schema.ConnectionString).Database ?? "world";
+            var worldCase = CaseName.Value ?? "";
+            var database = new Npgsql.NpgsqlConnectionStringBuilder(schema.ConnectionString).Database ?? "world";
+            var world = worldCase.Length == 0 ? database : $"{database} (case {worldCase})";
             var teardown = Task.Run(async () =>
             {
                 var failures = new List<Exception>();
@@ -358,7 +365,7 @@ public sealed class ChannelOutboundUnifiedPathTests
                     throw new InvalidOperationException($"World {world} teardown failed",
                         failures.Count == 1 ? failures[0] : new AggregateException(failures));
             });
-            lock (Teardowns) Teardowns.Add((CurrentTest, world, teardown));
+            lock (Teardowns) Teardowns.Add((CurrentTest, worldCase, world, teardown));
             return ValueTask.CompletedTask;
         }
 
@@ -366,7 +373,7 @@ public sealed class ChannelOutboundUnifiedPathTests
         public static async Task DrainOwnTeardownsAsync()
         {
             var current = CurrentTest;
-            (string Owner, string World, Task Teardown)[] own;
+            (string Owner, string Case, string World, Task Teardown)[] own;
             lock (Teardowns) own = Teardowns.Where(t => t.Owner == current).ToArray();
             await AwaitAsync(own);
         }
@@ -375,7 +382,7 @@ public sealed class ChannelOutboundUnifiedPathTests
         // its test already reported as still running is reported again only if it then fails, with its real cause.
         public static async Task DrainEveryTeardownAsync()
         {
-            (string Owner, string World, Task Teardown)[] all;
+            (string Owner, string Case, string World, Task Teardown)[] all;
             lock (Teardowns) all = [.. Teardowns];
             var failures = new List<Exception>();
             foreach (var entry in all)
@@ -390,7 +397,7 @@ public sealed class ChannelOutboundUnifiedPathTests
         // Every entry awaited, under one TeardownHung deadline for them all, and every failure collected. An ended entry
         // leaves the list; one still running at the deadline is reported and handed to the class drain (taken off its
         // test, so no later wait of a test reports it again).
-        private static async Task AwaitAsync((string Owner, string World, Task Teardown)[] entries)
+        private static async Task AwaitAsync((string Owner, string Case, string World, Task Teardown)[] entries)
         {
             var failures = new List<Exception>();
             var waited = System.Diagnostics.Stopwatch.StartNew();
@@ -404,7 +411,7 @@ public sealed class ChannelOutboundUnifiedPathTests
                     lock (Teardowns)
                     {
                         Teardowns.Remove(entry);
-                        Teardowns.Add((HandedOff, entry.World, entry.Teardown));
+                        Teardowns.Add((HandedOff, entry.Case, entry.World, entry.Teardown));
                     }
                     continue;
                 }
