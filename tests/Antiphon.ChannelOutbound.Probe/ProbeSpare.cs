@@ -15,8 +15,9 @@ internal static class ProbeSpare
     // each, plus its 30 s idle wait) is under 5 minutes; a spare older than that is no world's.
     private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(5);
 
-    // The probe's first EF read: about 1.5 s on the HP laptop on AC and 3.5 s on battery (2026-11-22 phase logs);
-    // 10 s is about 3x the slower. A timed-out read only leaves the probe colder.
+    // The probe's first EF read: about 1.5 s on the HP laptop on AC and 3.5 s on battery (2026-11-22 phase logs). Not a
+    // failure budget, so not 2x a p95: a read that runs out only leaves the probe colder, and the bound only keeps a
+    // stuck read from holding the spare's warm-up open.
     private static readonly TimeSpan WarmupRead = TimeSpan.FromSeconds(10);
 
     public static async Task<string?> WaitAsync(string warmPath, string configPath, int parentId)
@@ -49,7 +50,7 @@ internal static class ProbeSpare
             }
             await Task.Delay(10);
         }
-        // Taken, before the config is read: the parent relies on this order to withdraw an untaken config safely.
+        // Taken, before anything runs: the parent relies on this order (UnifiedOutboundTransport.HandToSpareAsync).
         await File.WriteAllTextAsync(configPath + ".taken", "");
         stop.Cancel();
         if (await warmup is { } late) ProbeLog.Phase("spare-warmup-failed-after-taken " + late);
@@ -93,7 +94,8 @@ internal static class ProbeSpare
         }
     }
 
-    // A parent that cannot be read (access denied) counts as alive: Abandoned still ends the spare.
+    // Gone when no process has that id or it has exited (ArgumentException, InvalidOperationException); a parent that
+    // cannot be read (access denied) counts as alive, and Abandoned still ends the spare.
     private static bool ParentAlive(int parentId)
     {
         try
@@ -101,11 +103,11 @@ internal static class ProbeSpare
             using var parent = Process.GetProcessById(parentId);
             return !parent.HasExited;
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             return false;
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
+        catch (System.ComponentModel.Win32Exception)
         {
             return true;
         }
