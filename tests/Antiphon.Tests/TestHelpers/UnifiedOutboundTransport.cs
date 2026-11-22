@@ -257,6 +257,12 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         Console.WriteLine($"c519-probe recover in-process {started.ElapsedMilliseconds} ms");
     }
 
+    // The first recovery after a real child death or an operator retry, for a test run once per source kind: a fresh
+    // child for the main kind, in process for trailing and machine. Every cut keeps its cross-process recovery (the
+    // main kind's: the compiled model, a cold process), and the kind changes the source a recovery publishes, which
+    // the in-process recovery runs on the same code, not how a fresh process starts.
+    public Task FirstRecoveryAsync(string kind) => kind == "main" ? ChildRecoverAsync() : RecoverAsync();
+
     // A recovery in a fresh child process: the first one after a real child death or an operator retry.
     public async Task ChildRecoverAsync(int? offset = null)
     {

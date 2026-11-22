@@ -68,8 +68,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
         }
         if (cut == "input-stage-complete")
             await File.WriteAllBytesAsync(w.SourcePath, "replacement must never escape"u8.ToArray());
-        // The first recovery after the death is a fresh child; the repeat restart runs in process.
-        await w.ChildRecoverAsync();
+        // The first recovery after the death (a fresh child for the main kind); the repeat restart runs in process.
+        await w.FirstRecoveryAsync(kind);
         await w.AssertReceiptAsync();
         var published = (await w.DeliveryAsync(kind))!;
         published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
@@ -132,8 +132,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
             }
             for (var restart = 0; restart < 2; restart++)
             {
-                // The first restart after the death is a fresh child; the second runs in process.
-                await (restart == 0 ? w.ChildRecoverAsync() : w.RecoverAsync());
+                // The first restart after the death (a fresh child for the main kind); the second runs in process.
+                await (restart == 0 ? w.FirstRecoveryAsync(kind) : w.RecoverAsync());
                 var row = (await w.DeliveryAsync(kind))!;
                 row.Id.ShouldBe(deliveryId);
                 row.State.ShouldBe(published ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.PublishUncertain);
@@ -157,8 +157,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
                 await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
                     service.RetryUncertainAsync(deliveryId, false, default));
                 await service.RetryUncertainAsync(deliveryId, true, default);
-                // The republish after the operator's retry is a fresh child's.
-                await w.ChildRecoverAsync();
+                // The republish after the operator's retry (a fresh child's for the main kind).
+                await w.FirstRecoveryAsync(kind);
                 await w.AssertReceiptAsync(accepted ? 2 : 1);
                 (await w.DeliveryAsync(kind))!.PublicationAttempts.ShouldBe(2);
                 await AssertSourceAsync(w, kind, true);
