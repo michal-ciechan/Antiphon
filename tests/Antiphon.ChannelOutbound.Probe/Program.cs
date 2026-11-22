@@ -210,10 +210,13 @@ internal sealed class ProbeClock : TimeProvider
             ? base.CreateTimer(callback, state, dueTime, period)
             : new ScaledTimer(base.CreateTimer(callback, state, Scale(dueTime), Scale(period)), this);
 
-    // Zero and infinite (negative) spans keep their meaning; a positive one stays at least 1 ms (a 0 period would
-    // mean "do not repeat").
+    // Zero, infinite (negative) and sub-millisecond spans keep their meaning; one of 1 ms or more stays at least 1 ms
+    // (a 0 period would mean "do not repeat"). A span past the system timer's limit is not refused here; the host's
+    // 1 s scan interval is far inside it.
     private TimeSpan Scale(TimeSpan span) =>
-        span <= TimeSpan.Zero ? span : TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, (long)(span.Ticks * _timerScale)));
+        span < TimeSpan.FromMilliseconds(1)
+            ? span
+            : TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, (long)(span.Ticks * _timerScale)));
 
     // Both the spans a timer is created with and any later Change (PeriodicTimer's Period setter) are scaled.
     private sealed class ScaledTimer(ITimer inner, ProbeClock clock) : ITimer
