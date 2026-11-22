@@ -72,7 +72,7 @@ namespace Antiphon.Nightly
         /// <summary>The free-disk preflight row.</summary>
         NightlyProbeRow DiskFree();
 
-        /// <summary>Get-ToolchainFloorVersionText: the raw version text of "git" or "dotnet-sdk"; empty for another tool or when the tool cannot run.</summary>
+        /// <summary>ToolchainFloor.VersionText: the raw version text of "git" or "dotnet-sdk"; empty for another tool or when the tool cannot run.</summary>
         string ToolVersion(string tool);
     }
 

@@ -57,7 +57,10 @@ public class RunnerRestartScriptCompatibilityTests
     public async Task Touched_scripts_parse_as_ascii_on_both_shells(string shell)
     {
         using var f = new RestartFixture();
-        foreach (var file in new[] { "restart-session-runner.ps1", "session-runner-restart-health.ps1", "run-daemon.ps1", "nightly-health.ps1", "lib/nightly-common.ps1" })
+        // 2026-11-22: the restart chain runs antiphon-scripts toolchain-floor through lib/antiphon-cli.ps1, and
+        // restart-server.ps1 does too (both were in the deleted CARD-1698 syntax scan of scripts/test-toolchain-floor.ps1).
+        foreach (var file in new[] { "restart-session-runner.ps1", "session-runner-restart-health.ps1", "run-daemon.ps1", "nightly-health.ps1", "lib/nightly-common.ps1",
+                     "lib/antiphon-cli.ps1", "../restart-server.ps1" })
         {
             var path = Path.Combine(RestartFixture.Repo, "scripts", file); File.ReadAllBytes(path).All(b => b <= 127).ShouldBeTrue(file);
             var r = await f.Script($"$e=$null; $t=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile('{RestartFixture.Quote(path)}',[ref]$t,[ref]$e); if($e.Count) {{ $e; exit 1 }}", shell);

@@ -24,7 +24,7 @@ public sealed class ReleaseImpactScriptTests
     private const string Selection = Project + "::Antiphon.Tests.Scripts.TestSelectionTests";
     private const string Publication = Project + "::Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests";
     private const string Contract = Project + "::Antiphon.Tests.Scripts.ReleaseGateAuthorityContractTests";
-    private const string Twin = Project + "::Antiphon.Tests.Scripts.Nightly.ToolchainFloorTwinTests";
+    private const string Launcher = Project + "::Antiphon.Tests.Scripts.Nightly.AntiphonCliLauncherTests";
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
     private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicProbe";
@@ -91,17 +91,19 @@ public sealed class ReleaseImpactScriptTests
         AssertIncomplete(result);
     }
 
-    // W2-nightly S27: NativeLinuxPolicyMatcherParityTests runs in-process and scripts/lib/nightly-coverage.ps1 is deleted;
-    // the embedded path is the toolchain floor library the twin test's pwsh script dot-sources (it stays PowerShell).
+    // W2-nightly S27: NativeLinuxPolicyMatcherParityTests runs in-process and scripts/lib/nightly-coverage.ps1 is deleted.
+    // 2026-11-22 (remaining-ps1 plan, units 1 and 2): the toolchain floor and test timing twins are deleted with their ps1,
+    // so no twin test embeds a script path any more. The embedded path is the 5.1 launcher, which stays PowerShell (end
+    // state 5): the launcher test's driver script, a C# raw string, dot-sources scripts/lib/antiphon-cli.ps1.
     [Test]
-    public async Task EmbeddedPathReachesTwinTest()
+    public async Task EmbeddedPathReachesLauncherTest()
     {
         var result = Case(await Shared.Value, "real");
-        Kinds(result, "scripts/lib/toolchain-floor.ps1", Twin).ShouldContain("script:embedded");
-        Chain(result, "scripts/lib/toolchain-floor.ps1", Twin).ShouldBe(
-            [Tests + "Nightly/ToolchainFloorTwinTests.cs", "scripts/lib/toolchain-floor.ps1"]);
+        Kinds(result, "scripts/lib/antiphon-cli.ps1", Launcher).ShouldContain("script:embedded");
+        Chain(result, "scripts/lib/antiphon-cli.ps1", Launcher).ShouldBe(
+            [Tests + "Nightly/AntiphonCliLauncherTests.cs", "scripts/lib/antiphon-cli.ps1"]);
         // Similar prose and near-miss names are not executable paths.
-        Classes(result, "scripts/lib/toolchain-floor.ps1").ShouldNotContain(Harmless);
+        Classes(result, "scripts/lib/antiphon-cli.ps1").ShouldNotContain(Harmless);
         Paths(result, Harmless).ShouldBeEmpty();
         AssertIncomplete(result);
     }
@@ -255,7 +257,7 @@ public sealed class ReleaseImpactScriptTests
         {
             Project, Tests + "ScriptHarness.cs", Tests + "ReleaseSelectionCliTests.cs", Tests + "TestSelectionTests.cs",
             Tests + "ReleaseGatePublicationAuthorityTests.cs", Tests + "ReleaseGateAuthorityContractTests.cs",
-            Tests + "Nightly/ToolchainFloorTwinTests.cs",
+            Tests + "Nightly/AntiphonCliLauncherTests.cs",
         })
             files[path] = File.ReadAllText(Path.Combine(root, path));
         foreach (var (path, text) in ChainFixture()) files[path] = text;
@@ -266,7 +268,7 @@ public sealed class ReleaseImpactScriptTests
         };
         foreach (var name in new[] { "ReleaseSelectionCliTests", "TestSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
-        consumers.Add(Consumer(Twin, Tests + "Nightly/ToolchainFloorTwinTests.cs"));
+        consumers.Add(Consumer(Launcher, Tests + "Nightly/AntiphonCliLauncherTests.cs"));
         return new { name = "real", files, consumers, maxVisits = 0 };
     }
 
@@ -279,9 +281,9 @@ public sealed class ReleaseImpactScriptTests
             {
                 public void Runs()
                 {
-                    var prose = "the toolchain-floor report runs later";
-                    var nearMiss = "scripts/lib/toolchain-floor.ps1.orig";
-                    var suffix = "see 'scripts/lib/toolchain-floor.ps1x' for details";
+                    var prose = "the antiphon-cli launcher runs later";
+                    var nearMiss = "scripts/lib/antiphon-cli.ps1.orig";
+                    var suffix = "see 'scripts/lib/antiphon-cli.ps1x' for details";
                 }
             }
             """,

@@ -9,10 +9,11 @@ $ServerProject = "$RepoRoot\server\Antiphon.Server.csproj"
 $sourceRevision = ((& git -C $RepoRoot rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
 if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'restart-server: git rev-parse HEAD failed; refusing an unstamped server build.' }
 
-# CARD-1698: warn about a tool below its floor; never refuse, never change the exit code.
+# CARD-1698: warn about a tool below its floor (antiphon-scripts toolchain-floor); never refuse, never change the exit code.
 try {
-    . (Join-Path $RepoRoot (Join-Path "scripts" (Join-Path "lib" "toolchain-floor.ps1")))
-    Write-ToolchainFloorWarnings -RepoRoot $RepoRoot
+    . (Join-Path $RepoRoot (Join-Path "scripts" (Join-Path "lib" "antiphon-cli.ps1")))
+    $floorExit = Invoke-AntiphonCli -Command 'toolchain-floor' -Arguments @('--repo-root', $RepoRoot)
+    if ($floorExit -ne 0) { Write-Host ("WARNING: the toolchain floor check failed: antiphon-scripts toolchain-floor exited " + $floorExit) -ForegroundColor Yellow }
 } catch {
     Write-Host ("WARNING: the toolchain floor check failed: " + $_.Exception.Message) -ForegroundColor Yellow
 }

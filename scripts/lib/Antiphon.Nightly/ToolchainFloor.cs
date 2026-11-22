@@ -1,8 +1,8 @@
-// W2-nightly S03: the C# twin of scripts/lib/toolchain-floor.ps1 (CARD-1698 host toolchain floors; plan
-// 2026-11-21-w2-nightly-port-slices.md). Warn, never refuse (operator decision 2026-11-03). The ps1 stays: the restart
-// chain (session-runner-restart-health.ps1, restart-server.ps1) dot-sources it and must not depend on the compiled
-// core. The run core (NightlyRun.cs) and the tests run (NightlyTests.cs) call this twin; ToolchainFloorTwinTests holds the two to the
-// same rows and warnings on the same inputs.
+// CARD-1698 host toolchain floors. Warn, never refuse (operator decision 2026-11-03). W2-nightly S03 ported
+// scripts/lib/toolchain-floor.ps1 here; the 2026-11-22 plan (2026-11-22-remaining-ps1-to-csharp.md, unit 1) deleted it.
+// The run core (NightlyRun.cs) and the tests run (NightlyTests.cs) call Warnings and Report in-process; the restart chain
+// (restart-server.ps1, session-runner-restart-health.ps1) runs `antiphon-scripts toolchain-floor` (Run) through
+// scripts/lib/antiphon-cli.ps1.
 //
 // The manifest names where each floor is declared; it restates no version number.
 // - git: docker/git-minimum-version.sh (GIT_MINIMUM_VERSION=, CARD-1260), the same file both images run at build time.
@@ -22,7 +22,7 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
-    /// <summary>One Get-ToolchainFloorManifest row: where the tool's floor is declared and what an old tool breaks.</summary>
+    /// <summary>One manifest row: where the tool's floor is declared and what an old tool breaks.</summary>
     public sealed record ToolchainFloorEntry(string Tool, string Source, bool Enforced, string Impact, string FixWindows, string FixOther);
 
     /// <summary>One report row. Status: ok, below-floor, version-unreadable, floor-unreadable or not-enforced.</summary>
@@ -31,10 +31,29 @@ namespace Antiphon.Nightly
     /// <summary>One warning: the row's tool, found version and floor, the manifest's impact and the host's fix, the status as Reason, and the printed Message.</summary>
     public sealed record ToolchainFloorWarning(string Tool, string Found, string Floor, string Impact, string Fix, string Reason, string Message);
 
-    /// <summary>Get-ToolchainFloorReport: one row per manifest entry, and the warnings of the rows that need one.</summary>
+    /// <summary>The report: one row per manifest entry, and the warnings of the rows that need one.</summary>
     public sealed record ToolchainFloorReport(IReadOnlyList<ToolchainFloorRow> Tools, IReadOnlyList<ToolchainFloorWarning> Warnings);
 
-    /// <summary>The toolchain floor checks of toolchain-floor.ps1.</summary>
+    /// <summary>The toolchain-floor command's options: the checkout whose floor files are read.</summary>
+    public sealed class ToolchainFloorOptions
+    {
+        /// <summary>The CLI's usage line.</summary>
+        public const string Usage = "toolchain-floor --repo-root <dir>";
+
+        private static readonly string[] Valued = { "--repo-root" };
+
+        /// <summary>The checkout root that holds docker/git-minimum-version.sh and global.json.</summary>
+        public string RepoRoot { get; init; } = "";
+
+        /// <summary>The arguments after the command name; NightlyUsageException for a malformed line or a missing --repo-root.</summary>
+        public static ToolchainFloorOptions Parse(IReadOnlyList<string> arguments)
+        {
+            var flags = NightlyArgs.Parse(arguments, Valued, Array.Empty<string>());
+            return new ToolchainFloorOptions { RepoRoot = flags.Required("--repo-root") };
+        }
+    }
+
+    /// <summary>The toolchain floor checks (CARD-1698).</summary>
     public static class ToolchainFloor
     {
         private static readonly Regex VersionPrefix = new Regex(@"^(\d+)\.(\d+)(?:\.(\d+))?", RegexOptions.IgnoreCase);
@@ -59,13 +78,27 @@ namespace Antiphon.Nightly
             new ToolchainFloorEntry("docker", "", false, "", "", ""),
         };
 
-        /// <summary>Get-ToolchainFloorManifest: git, dotnet-sdk (enforced), then pwsh, node and docker (listed, not enforced).</summary>
+        /// <summary>The manifest: git, dotnet-sdk (enforced), then pwsh, node and docker (listed, not enforced).</summary>
         public static IReadOnlyList<ToolchainFloorEntry> Manifest() => Entries;
 
-        /// <summary>Test-ToolchainFloorWindowsHost: the fix column the warnings name.</summary>
+        /// <summary>Whether this host is Windows: the fix column the warnings name.</summary>
         public static bool IsWindowsHost() => OperatingSystem.IsWindows();
 
-        /// <summary>ConvertTo-ToolchainFloorVersion: major.minor[.build] from the start of the text (build 0 when absent); null when it does not start so.</summary>
+        /// <summary>
+        /// The toolchain-floor command (it replaced Write-ToolchainFloorWarnings): each warning's message on host.Out, one
+        /// line per tool, nothing else. The versions come from host.Probe.ToolVersion and the fix column from
+        /// host.Probe.Platform(). Never throws for a floor or version it cannot read; returns the warnings written.
+        /// </summary>
+        public static IReadOnlyList<ToolchainFloorWarning> Run(ToolchainFloorOptions options, NightlyHost host)
+        {
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            if (host == null) throw new ArgumentNullException(nameof(host));
+            var warnings = Warnings(options.RepoRoot, tool => host.Probe.ToolVersion(tool), host.Probe.Platform() == "windows");
+            foreach (var warning in warnings) host.Out.WriteLine(warning.Message);
+            return warnings;
+        }
+
+        /// <summary>major.minor[.build] from the start of the text (build 0 when absent); null when it does not start so.</summary>
         public static Version ParseVersion(string text)
         {
             var match = VersionPrefix.Match(text ?? "");
@@ -75,9 +108,9 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Get-ToolchainFloorValue: git's GIT_MINIMUM_VERSION (major.minor) from docker/git-minimum-version.sh, the SDK's
-        /// sdk.version (major.minor.patch) from global.json; empty when the file is missing, does not declare it, cannot be
-        /// read, or the tool has no floor source.
+        /// The floor: git's GIT_MINIMUM_VERSION (major.minor) from docker/git-minimum-version.sh, the SDK's sdk.version
+        /// (major.minor.patch, the keys spelled exactly so) from global.json; empty when the file is missing, does not
+        /// declare it, cannot be read, or the tool has no floor source.
         /// </summary>
         public static string Value(string repoRoot, string tool)
         {
@@ -97,25 +130,23 @@ namespace Antiphon.Nightly
                     if (!File.Exists(path)) return "";
                     var options = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
                     using var document = JsonDocument.Parse(File.ReadAllText(path), options);
-                    var sdk = Property(document.RootElement, "sdk");
-                    if (sdk == null || sdk.Value.ValueKind != JsonValueKind.Object) return "";
-                    var version = Property(sdk.Value, "version");
-                    if (version == null || version.Value.ValueKind != JsonValueKind.String) return "";
-                    var text = version.Value.GetString() ?? "";
+                    if (document.RootElement.ValueKind != JsonValueKind.Object
+                        || !document.RootElement.TryGetProperty("sdk", out var sdk) || sdk.ValueKind != JsonValueKind.Object) return "";
+                    if (!sdk.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.String) return "";
+                    var text = version.GetString() ?? "";
                     return SdkPin.IsMatch(text) ? text : "";
                 }
             }
             catch (Exception)
             {
-                // The ps1's catch-all: a floor that cannot be read is a warning, never an error.
+                // A floor that cannot be read is a warning, never an error.
             }
             return "";
         }
 
         /// <summary>
-        /// Get-ToolchainFloorVersionText: the raw version text, `git --version` for git and `dotnet --list-sdks` for the
-        /// SDK, as Out-String gives it (each stdout line followed by a newline; stderr dropped). Empty for another tool or
-        /// when the tool cannot run.
+        /// The raw version text, `git --version` for git and `dotnet --list-sdks` for the SDK: each stdout line followed by
+        /// a newline; stderr dropped. Empty for another tool or when the tool cannot run.
         /// </summary>
         public static string VersionText(string tool)
         {
@@ -149,7 +180,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Get-ToolchainFloorFound: git's "git version x.y[.z]" at the start of the text; for the SDK, the highest
+        /// The found version: git's "git version x.y[.z]" at the start of the text; for the SDK, the highest
         /// "x.y.z[suffix] [path]" line of the floor's major, else the highest of any major. Null when none is read or the
         /// tool has no reader.
         /// </summary>
@@ -178,13 +209,13 @@ namespace Antiphon.Nightly
             return null;
         }
 
-        /// <summary>Get-ToolchainFloorReport on this host (IsWindowsHost picks the fix column).</summary>
+        /// <summary>The report on this host (IsWindowsHost picks the fix column).</summary>
         public static ToolchainFloorReport Report(string repoRoot, Func<string, string> versionSource = null) =>
             Report(repoRoot, versionSource, IsWindowsHost());
 
         /// <summary>
-        /// Get-ToolchainFloorReport: versionSource(tool) gives the raw version text (null: VersionText, the real probes); a
-        /// source that throws leaves the version unread, and the warning quotes its message. windowsHost picks the fix.
+        /// The report: versionSource(tool) gives the raw version text (null: VersionText, the real probes); a source that
+        /// throws leaves the version unread, and the warning quotes its message. windowsHost picks the fix.
         /// </summary>
         public static ToolchainFloorReport Report(string repoRoot, Func<string, string> versionSource, bool windowsHost)
         {
@@ -236,25 +267,18 @@ namespace Antiphon.Nightly
             return new ToolchainFloorReport(rows, warnings);
         }
 
-        /// <summary>Get-ToolchainFloorWarnings: the report's warnings; never throws (a failed check is one check-failed warning).</summary>
-        public static IReadOnlyList<ToolchainFloorWarning> Warnings(string repoRoot, Func<string, string> versionSource = null)
+        /// <summary>The report's warnings on this host; never throws (a failed check is one check-failed warning).</summary>
+        public static IReadOnlyList<ToolchainFloorWarning> Warnings(string repoRoot, Func<string, string> versionSource = null) =>
+            Warnings(repoRoot, versionSource, IsWindowsHost());
+
+        /// <summary>The report's warnings, windowsHost picking the fix; never throws (a failed check is one check-failed warning).</summary>
+        public static IReadOnlyList<ToolchainFloorWarning> Warnings(string repoRoot, Func<string, string> versionSource, bool windowsHost)
         {
-            try { return Report(repoRoot, versionSource).Warnings; }
+            try { return Report(repoRoot, versionSource, windowsHost).Warnings; }
             catch (Exception e)
             {
                 return new[] { new ToolchainFloorWarning("toolchain", "", "", "", "", "check-failed", "WARNING: the toolchain floor check failed: " + e.Message) };
             }
-        }
-
-        // PowerShell's member access on ConvertFrom-Json output: the first property of that name, ignoring case.
-        private static JsonElement? Property(JsonElement element, string name)
-        {
-            if (element.ValueKind != JsonValueKind.Object) return null;
-            foreach (var property in element.EnumerateObject())
-            {
-                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) return property.Value;
-            }
-            return null;
         }
     }
 }

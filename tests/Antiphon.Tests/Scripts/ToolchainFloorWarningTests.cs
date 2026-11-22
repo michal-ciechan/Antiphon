@@ -1,135 +1,197 @@
 using System.Text.RegularExpressions;
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1698 slice 1. Each method runs one Test-C1698_* case of scripts/test-toolchain-floor.ps1
-/// (Get-ToolchainFloorWarnings with an injected version source, and the restart entry points with
-/// a fake git), or of the nightly run/tests harnesses for the summary and run wiring.
+/// CARD-1698 slice 1, in-process. The Test-C1698_* cases of the deleted scripts/test-toolchain-floor.ps1 (plan
+/// 2026-11-22-remaining-ps1-to-csharp.md, unit 1) call ToolchainFloor.Warnings with an injected version source and
+/// ToolchainFloor.Run (the toolchain-floor command) on a fake host; the restart entry points' call is read as source
+/// text, because no test launches a .ps1. The nightly run and tests cases below it were already in-process.
+/// Not ported: the cases that ran restart-server.ps1 and restart-session-runner.ps1 with a fake git and dotnet
+/// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output
+/// and the call block's shape below), the library-load-failure cases (the library is gone; a CLI that cannot be built or
+/// started exits 9 with one stderr line, AntiphonCliLauncherTests, and the block only warns on a non-zero exit), and the
+/// pwsh-7-only syntax scan (PowerShell mechanics: RunnerRestartScriptCompatibilityTests parses the restart chain, the
+/// launcher and restart-server.ps1 with powershell.exe 5.1 and pwsh).
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ToolchainFloorWarningTests
 {
-    [Test]
-    public Task C1698_GitBelowFloor() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_GitBelowFloor), 8,
-            [
-                "C1698 Below names the tool",
-                "C1698 Below names the found version",
-                "C1698 Below names the floor",
-                "C1698 Below names what stops working",
-                "C1698 Below names the fix command",
-                "C1698 Below message carries all five fields"
-            ]);
+    private static string Repo => NightlyPlanCases.Repo;
+
+    private static Func<string, string> Source(string git, string sdks = "10.0.204 [/fake/sdk]") =>
+        tool => tool == "git" ? git : tool == "dotnet-sdk" ? sdks : "";
+
+    private static ToolchainFloorEntry Entry(string tool) => ToolchainFloor.Manifest().Single(entry => entry.Tool == tool);
+
+    private static string HostFix(string tool) => ToolchainFloor.IsWindowsHost() ? Entry(tool).FixWindows : Entry(tool).FixOther;
 
     [Test]
-    public Task C1698_GitAtOrAboveFloor() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_GitAtOrAboveFloor), 5,
-            [
-                "C1698 AtOrAbove no warning git version 2.43",
-                "C1698 AtOrAbove no warning git version 2.43.0",
-                "C1698 AtOrAbove no warning git version 2.100.1"
-            ]);
+    public void C1698_GitBelowFloor()
+    {
+        var w = ToolchainFloor.Warnings(Repo, Source("git version 2.42.0.windows.1"));
+        var x = w.ShouldHaveSingleItem("C1698 Below one warning");
+        x.Tool.ShouldBe("git", "C1698 Below names the tool");
+        x.Found.ShouldBe("2.42.0", "C1698 Below names the found version");
+        x.Floor.ShouldBe("2.43", "C1698 Below names the floor");
+        x.Impact.ShouldContain("lands will fail", customMessage: "C1698 Below names what stops working");
+        x.Impact.ShouldContain("show-ref --exists", customMessage: "C1698 Below names what stops working");
+        if (ToolchainFloor.IsWindowsHost()) x.Fix.ShouldBe("winget upgrade Git.Git", "C1698 Below names the fix command");
+        else x.Fix.ShouldContain("install Git", customMessage: "C1698 Below names the fix command");
+        x.Message.ShouldStartWith("WARNING: git 2.42.0 is below the minimum 2.43; lands will fail", customMessage: "C1698 Below message carries all five fields");
+        x.Message.ShouldContain("Fix: " + x.Fix, customMessage: "C1698 Below message carries all five fields");
+        var below = ToolchainFloor.Warnings(Repo, Source("git version 2.9.5"));
+        below.ShouldHaveSingleItem("C1698 Below compares by version not string (2.9.5)").Reason.ShouldBe("below-floor");
+    }
 
     [Test]
-    public Task C1698_UnreadableVersion() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_UnreadableVersion), 6,
-            [
-                "C1698 Unreadable warns, never throws: garbage",
-                "C1698 Unreadable warns, never throws: empty",
-                "C1698 Unreadable warns, never throws: throwing source",
-                "C1698 Unreadable message carries floor, impact and fix: garbage",
-                "C1698 Unreadable message carries floor, impact and fix: empty",
-                "C1698 Unreadable message carries floor, impact and fix: throwing source"
-            ]);
+    public void C1698_GitAtOrAboveFloor()
+    {
+        foreach (var v in new[] { "git version 2.43", "git version 2.43.0", "git version 2.56.0.windows.1", "git version 2.100.1", "git version 3.0.0" })
+            ToolchainFloor.Warnings(Repo, Source(v)).Select(w => w.Message).ShouldBeEmpty("C1698 AtOrAbove no warning " + v);
+    }
 
     [Test]
-    public Task C1698_SdkFloor() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_SdkFloor), 4,
-            [
-                "C1698 Sdk 11.0.100 [/x]",
-                "C1698 Sdk 9.0.300 [/x] 10.0.204 [/x]"
-            ]);
+    public void C1698_UnreadableVersion()
+    {
+        var git = Entry("git");
+        foreach (var (name, source, raw) in new (string, Func<string, string>, string)[]
+                 {
+                     ("garbage", Source("garbage"), "garbage"), ("empty", Source(""), ""),
+                     ("throwing source", _ => throw new InvalidOperationException("git: command not found"), "git: command not found"),
+                 })
+        {
+            var w = ToolchainFloor.Warnings(Repo, source).Where(item => item.Tool == "git").ToArray();
+            var x = w.ShouldHaveSingleItem("C1698 Unreadable warns, never throws: " + name);
+            (x.Reason, x.Floor).ShouldBe(("version-unreadable", "2.43"), "C1698 Unreadable warns, never throws: " + name);
+            // The whole message: the floor, what stops working and the host fix, as the below-floor message carries them.
+            x.Message.ShouldBe("WARNING: the git version could not be read ('" + raw + "'); the minimum is 2.43; if it is older, " + git.Impact + ". Fix: " + HostFix("git"),
+                "C1698 Unreadable message carries floor, impact and fix: " + name);
+        }
+    }
 
     [Test]
-    public Task C1698_ManifestSources() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_ManifestSources), 5,
-            [
-                "C1698 Manifest git floor is the image guard declaration",
-                "C1698 Manifest SDK floor is global.json",
-                "C1698 Manifest pwsh node docker are listed, not enforced",
-                "C1698 Manifest missing floor sources warn, not throw"
-            ]);
+    public void C1698_SdkFloor()
+    {
+        foreach (var (sdks, warn, found) in new[]
+                 {
+                     ("9.0.300 [/x]\n10.0.100 [/x]", true, "10.0.100"), ("11.0.100 [/x]", true, "11.0.100"),
+                     ("9.0.300 [/x]\r\n10.0.204 [/x]", false, "10.0.204"), ("10.1.100-preview.1 [/x]", false, "10.1.100"),
+                 })
+        {
+            var report = ToolchainFloor.Report(Repo, Source("git version 2.47.3", sdks));
+            var sdk = report.Tools.Single(row => row.Tool == "dotnet-sdk");
+            var name = "C1698 Sdk " + Regex.Replace(sdks, @"\s+", " ");
+            (report.Warnings.Count(w => w.Tool == "dotnet-sdk") == 1).ShouldBe(warn, name);
+            (sdk.Found, sdk.Floor).ShouldBe((found, "10.0.204"), name);
+        }
+    }
 
     [Test]
-    public Task C1698_RestartServerUnchanged() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_RestartServerUnchanged), 5,
-            [
-                "C1698 RestartServer prints the warning",
-                "C1698 RestartServer exit 0 with a warning",
-                "C1698 RestartServer same stop build start with a warning",
-                "C1698 RestartServer build failure still exit 1 with a warning"
-            ]);
+    public void C1698_ManifestSources()
+    {
+        var report = ToolchainFloor.Report(Repo, Source("git version 2.47.3"));
+        var declared = Regex.Match(File.ReadAllText(Path.Combine(Repo, "docker", "git-minimum-version.sh")), @"(?m)^GIT_MINIMUM_VERSION=(\d+\.\d+)\r?$").Groups[1].Value;
+        var git = report.Tools.Single(row => row.Tool == "git");
+        declared.ShouldNotBeEmpty();
+        (git.Floor, git.Source).ShouldBe((declared, "docker/git-minimum-version.sh"), "C1698 Manifest git floor is the image guard declaration");
+        using var global = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(Repo, "global.json")));
+        var pin = global.RootElement.GetProperty("sdk").GetProperty("version").GetString();
+        var sdk = report.Tools.Single(row => row.Tool == "dotnet-sdk");
+        (sdk.Floor, sdk.Source).ShouldBe((pin, "global.json"), "C1698 Manifest SDK floor is global.json");
+        string.Join(",", report.Tools.Where(row => !row.Enforced).Select(row => row.Tool + "=" + row.Floor + "/" + row.Status))
+            .ShouldBe("pwsh=to decide/not-enforced,node=to decide/not-enforced,docker=to decide/not-enforced", "C1698 Manifest pwsh node docker are listed, not enforced");
+        report.Warnings.ShouldBeEmpty("C1698 Manifest no warning at the pins");
+        using var empty = NightlyFixture.Create("c1698-no-floors");
+        string.Join(",", ToolchainFloor.Warnings(empty.Root, Source("git version 2.47.3")).Select(w => w.Tool + ":" + w.Reason))
+            .ShouldBe("git:floor-unreadable,dotnet-sdk:floor-unreadable", "C1698 Manifest missing floor sources warn, not throw");
+    }
 
+    /// <summary>
+    /// The toolchain-floor command (ToolchainFloor.Run, what the restart entry points run): the warning lines on stdout and
+    /// nothing else, none at the floor, the fix of the host the probe names, and the usage refusals of its one flag.
+    /// </summary>
     [Test]
-    public Task C1698_RestartRunnerUnchanged() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_RestartRunnerUnchanged), 4,
-            [
-                "C1698 RestartRunner prints the warning",
-                "C1698 RestartRunner same result with a warning",
-                "C1698 RestartRunner same exit code with a warning"
-            ]);
+    public void C1698_CommandPrintsTheWarnings()
+    {
+        string[] Lines(StringWriter writer) => writer.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var options = ToolchainFloorOptions.Parse(["--repo-root", Repo]);
+        options.RepoRoot.ShouldBe(Repo);
 
-    /// <summary>A toolchain library that throws or cannot be parsed when dot-sourced (the only failure
-    /// that reaches the entry wrapper) leaves restart-server at exit 0 with the same calls.</summary>
-    [Test]
-    public Task C1698_RestartServerLibraryLoadFailure() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_RestartServerLibraryLoadFailure), 2,
-            [
-                "C1698 RestartServer survives a library that fails to load: throws",
-                "C1698 RestartServer survives a library that fails to load: unparsable"
-            ]);
+        using var below = NightlyFixture.Create("c1698-command");
+        var probe = new FakeHostProbe();
+        probe.Versions["git"] = "git version 2.42.0";
+        var written = ToolchainFloor.Run(options, below.Host(probe: probe));
+        written.Select(w => w.Reason).ShouldBe(new[] { "below-floor" });
+        Lines(below.Out).ShouldBe(new[] { "WARNING: git 2.42.0 is below the minimum 2.43; " + Entry("git").Impact + ". Fix: winget upgrade Git.Git" },
+            "C1698 Command prints the warning");
+        below.Error.ToString().ShouldBeEmpty();
 
-    [Test]
-    public Task C1698_RestartRunnerLibraryLoadFailure() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_RestartRunnerLibraryLoadFailure), 2,
-            [
-                "C1698 RestartRunner survives a library that fails to load: throws",
-                "C1698 RestartRunner survives a library that fails to load: unparsable"
-            ]);
+        using var at = NightlyFixture.Create("c1698-command");
+        probe.Versions["git"] = "git version 2.43.0";
+        ToolchainFloor.Run(options, at.Host(probe: probe)).ShouldBeEmpty();
+        at.Out.ToString().ShouldBeEmpty("C1698 Command prints none at the floor");
 
-    /// <summary>A pwsh 7 only construct (ternary, ??, ?., pipeline chains, -Parallel) in the library
-    /// or its entry callers; the controls prove the scan flags each one. A real powershell.exe 5.1
-    /// parse on Windows is the fuller proof.</summary>
+        using var linux = NightlyFixture.Create("c1698-command");
+        var other = new FakeHostProbe { PlatformName = "linux" };
+        other.Versions["dotnet-sdk"] = "no sdks";
+        ToolchainFloor.Run(options, linux.Host(probe: other));
+        Lines(linux.Out).ShouldBe(new[]
+        {
+            "WARNING: git 2.42.0 is below the minimum 2.43; " + Entry("git").Impact + ". Fix: " + Entry("git").FixOther,
+            "WARNING: the dotnet-sdk version could not be read ('no sdks'); the minimum is 10.0.204; if it is older, " + Entry("dotnet-sdk").Impact + ". Fix: "
+                + Entry("dotnet-sdk").FixOther,
+        }, "C1698 Command names the fix of the host the probe names");
+
+        Should.Throw<NightlyUsageException>(() => ToolchainFloorOptions.Parse([])).Message.ShouldBe("missing --repo-root");
+        Should.Throw<NightlyUsageException>(() => ToolchainFloorOptions.Parse(["--repo-root", ""])).Message.ShouldBe("missing --repo-root");
+        Should.Throw<NightlyUsageException>(() => ToolchainFloorOptions.Parse(["--repo-root", Repo, "--json"])).Message.ShouldBe("unknown flag --json");
+    }
+
+    /// <summary>
+    /// restart-server.ps1 and session-runner-restart-health.ps1 (restart-session-runner.ps1's platform) run the command
+    /// through Invoke-AntiphonCli inside a try whose catch only warns, and a non-zero exit (9: the CLI could not be built or
+    /// started) is one more WARNING line, never an exit: the restart goes on as when the library only warned. The server
+    /// restart warns before it stops the server.
+    /// </summary>
     [Test]
-    public Task C1698_WindowsPowerShellSyntax() =>
-        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_WindowsPowerShellSyntax), 16,
-            [
-                "C1698 Syntax scan flags ternary",
-                "C1698 Syntax scan flags null-coalescing",
-                "C1698 Syntax scan flags null-conditional member",
-                "C1698 Syntax scan flags pipeline chain and",
-                "C1698 Syntax scan flags ForEach-Object -Parallel",
-                "C1698 Syntax scan passes the 5.1 spellings",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/toolchain-floor.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: restart-server.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/session-runner-restart-health.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/nightly-run.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/antiphon-cli.ps1"
-            ]);
+    public void C1698_RestartEntriesRunTheCommandAndOnlyWarn()
+    {
+        foreach (var (path, root, quote) in new[] { ("restart-server.ps1", "$RepoRoot", "\""), (Path.Combine("scripts", "session-runner-restart-health.ps1"), "$Root", "'") })
+        {
+            var text = File.ReadAllText(Path.Combine(Repo, path)).Replace("\r\n", "\n");
+            text.ShouldNotContain("toolchain-floor.ps1", customMessage: path);
+            text.ShouldNotContain("Write-ToolchainFloorWarnings", customMessage: path);
+            var call = "$floorExit = Invoke-AntiphonCli -Command 'toolchain-floor' -Arguments @('--repo-root', " + root + ")";
+            var load = ". (Join-Path " + root + " (Join-Path " + quote + "scripts" + quote + " (Join-Path " + quote + "lib" + quote + " " + quote + "antiphon-cli.ps1" + quote + ")))";
+            var at = text.IndexOf(call, StringComparison.Ordinal);
+            at.ShouldBeGreaterThan(0, path + " runs the command");
+            var open = text.LastIndexOf("try {\n", at, StringComparison.Ordinal);
+            var close = text.IndexOf("} catch {\n", at, StringComparison.Ordinal);
+            open.ShouldBeGreaterThan(0, path);
+            close.ShouldBeGreaterThan(at, path);
+            var block = text[open..close];
+            block.ShouldContain(load, customMessage: path + " loads the launcher from the checkout root");
+            block.IndexOf(load, StringComparison.Ordinal).ShouldBeLessThan(block.IndexOf(call, StringComparison.Ordinal), path);
+            block.ShouldContain("if ($floorExit -ne 0) { Write-Host (" + quote + "WARNING: the toolchain floor check failed: antiphon-scripts toolchain-floor exited " + quote
+                + " + $floorExit) -ForegroundColor Yellow }", customMessage: path + " warns on a non-zero exit");
+            var leaves = new Regex(@"(?<![\w$-])(exit|throw|return)(?!\w)");
+            leaves.IsMatch(block).ShouldBeFalse(path + ": the block never exits, throws or returns");
+            var handler = text[close..text.IndexOf("}\n", close + "} catch {\n".Length, StringComparison.Ordinal)];
+            handler.ShouldContain("Write-Host (" + quote + "WARNING: the toolchain floor check failed: " + quote + " + $_.Exception.Message) -ForegroundColor Yellow",
+                customMessage: path + " catches a launcher that throws and warns");
+            leaves.IsMatch(handler).ShouldBeFalse(path + ": the handler only warns");
+            if (path == "restart-server.ps1") at.ShouldBeLessThan(text.IndexOf("Write-Host \"Stopping server...\"", StringComparison.Ordinal), "the warning precedes the stop");
+        }
+        File.Exists(Path.Combine(Repo, "scripts", "lib", "toolchain-floor.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(Repo, "scripts", "test-toolchain-floor.ps1")).ShouldBeFalse();
+    }
 
     /// <summary>
     /// W2-nightly S19, in-process (was the scripts/test-nightly-run.ps1 case): NightlyRun.Run prints a toolchain floor warning
@@ -206,47 +268,6 @@ public sealed class ToolchainFloorWarningTests
         rows.Check(call > disk && disk > 0 && write > call, "C1698 Summary preflight block records the toolchain", "disk=" + disk + " call=" + call + " write=" + write);
         rows.ShouldAllPass(4, "C1698 Summary records the git version and floor", "C1698 Summary records the SDK version", "C1698 Summary records the warning",
             "C1698 Summary preflight block records the toolchain");
-    }
-
-    /// <summary>
-    /// W2-nightly S03: the run core checks with the compiled twin (ToolchainFloor.cs), so a broken toolchain-floor.ps1 (kept
-    /// for the restart chain) changes nothing in the run. Since W2-nightly S20 the run core is C# and there is no PowerShell run
-    /// core left to load the library (the deleted scripts/test-nightly-run.ps1 case copied the scripts tree with a broken
-    /// library and ran the PowerShell entry); the equivalent in-process: NightlyRun.Run on a clone whose
-    /// scripts/lib/toolchain-floor.ps1 throws or does not parse prints no check-failed line, keeps the intact clone's exit
-    /// code and phase, and still hops to the tests.
-    /// </summary>
-    [Test]
-    public void C1698_RunLibraryLoadFailure()
-    {
-        (string[] Lines, Antiphon.Nightly.NightlyRunResult Result) Run(string? library)
-        {
-            using var w = new Antiphon.Tests.Scripts.Nightly.NightlyRunWorld("c1698-library");
-            var repo = Antiphon.Tests.Scripts.Nightly.NightlyPlanCases.Repo;
-            Directory.CreateDirectory(Path.Combine(w.Clone, "docker"));
-            File.Copy(Path.Combine(repo, "docker", "git-minimum-version.sh"), Path.Combine(w.Clone, "docker", "git-minimum-version.sh"));
-            File.Copy(Path.Combine(repo, "global.json"), Path.Combine(w.Clone, "global.json"));
-            if (library != null)
-            {
-                Directory.CreateDirectory(Path.Combine(w.Clone, "scripts", "lib"));
-                File.WriteAllText(Path.Combine(w.Clone, "scripts", "lib", "toolchain-floor.ps1"), library);
-            }
-            w.Probe.Versions["git"] = "git version 2.43.0";
-            var result = w.Run(o => o.NoSync = true);
-            return (w.OutLines, result);
-        }
-        var at = Run(null);
-        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
-        foreach (var (name, text) in new[] { ("throws", "throw 'C1698 toolchain lib load failure'"), ("unparsable", "function Get-C1698Broken {\n    $x = 1\n") })
-        {
-            var broken = Run(text);
-            var warning = Array.FindIndex(broken.Lines, l => l.Contains("WARNING: the toolchain floor check failed", StringComparison.Ordinal));
-            var hop = Array.FindIndex(broken.Lines, l => Regex.IsMatch(l, "running antiphon-scripts nightly-tests"));
-            rows.Check(warning < 0 && hop >= 0 && broken.Result.ExitCode == at.Result.ExitCode && broken.Result.Phase == at.Result.Phase,
-                "C1698 Run does not load the toolchain library: " + name,
-                "warning=" + warning + " hop=" + hop + " broken=" + broken.Result.ExitCode + "/" + broken.Result.Phase + " at=" + at.Result.ExitCode + "/" + at.Result.Phase);
-        }
-        rows.ShouldAllPass(2, "C1698 Run does not load the toolchain library: throws", "C1698 Run does not load the toolchain library: unparsable");
     }
 
     /// <summary>

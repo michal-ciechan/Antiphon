@@ -119,7 +119,7 @@ public sealed class TestTimingsTwinTests
         var output = fixture.PathOf("observed.json");
         var script = fixture.PathOf("twin.ps1");
         File.WriteAllText(script, Script, new UTF8Encoding(false));
-        await ToolchainFloorTwinTests.RunPwshAsync(script, [repo, input, output], cancellationToken);
+        await RunPwshAsync(script, [repo, input, output], cancellationToken);
         using var observed = JsonDocument.Parse(File.ReadAllText(output));
 
         // Each step: the same outcome from the ps1, the twin from PowerShell, and the twin from C#.
@@ -286,6 +286,33 @@ public sealed class TestTimingsTwinTests
                 kind.ShouldBe("json", label);
                 TestTimings.NodeJson(node).ShouldBe(text, label);
                 return;
+        }
+    }
+
+    private static async Task RunPwshAsync(string script, string[] arguments, CancellationToken cancellationToken)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script }.Concat(arguments)) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        try
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken);
+            var text = await stdout + await stderr;
+            process.ExitCode.ShouldBe(0, text);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            }
         }
     }
 

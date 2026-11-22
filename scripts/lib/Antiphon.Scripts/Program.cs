@@ -52,6 +52,8 @@ namespace Antiphon.Scripts
             [Antiphon.Nightly.NightlySeedCommands.ExportStoppedRunSeed] = NightlySeedCommand.Run,
             // The seed merge takes the operator's argv: exit 0 merged, 2 refused, 3 merged under -Strict with an identity unplaced or open.
             [Antiphon.Nightly.NightlySeedCommands.MergeSeeds] = NightlySeedCommand.Run,
+            // The toolchain floor warnings answer every input themselves: exit 0 whatever the warnings, 2 usage.
+            [ToolchainFloorCommand.Name] = ToolchainFloorCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -90,7 +92,7 @@ namespace Antiphon.Scripts
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
-                + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
+                + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage);
             return Usage;
         }
 

@@ -63,10 +63,11 @@ public class AntiphonRestartTcpOwner {
 }
 '@
     }
-    # CARD-1698: warn about a tool below its floor during read-only setup; never refuse.
+    # CARD-1698: warn about a tool below its floor during read-only setup (antiphon-scripts toolchain-floor); never refuse.
     try {
-        . (Join-Path $Root (Join-Path 'scripts' (Join-Path 'lib' 'toolchain-floor.ps1')))
-        Write-ToolchainFloorWarnings -RepoRoot $Root
+        . (Join-Path $Root (Join-Path 'scripts' (Join-Path 'lib' 'antiphon-cli.ps1')))
+        $floorExit = Invoke-AntiphonCli -Command 'toolchain-floor' -Arguments @('--repo-root', $Root)
+        if ($floorExit -ne 0) { Write-Host ('WARNING: the toolchain floor check failed: antiphon-scripts toolchain-floor exited ' + $floorExit) -ForegroundColor Yellow }
     } catch {
         Write-Host ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message) -ForegroundColor Yellow
     }
