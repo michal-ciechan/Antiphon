@@ -29,7 +29,12 @@ public sealed class GrokStartupReadyOrderingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedRunner();
-        var factory = new Factory(runner);
+        // Readiness here is released only by ReleaseReady(), after the test has observed the
+        // starting screen and flushed the queue. A short adapter deadline raced that DB work and
+        // failed the launch on a loaded Windows host (rc run 557cdb63); keep the deadline past the
+        // test budget so the 25 s token, not the clock, bounds a hang. Expiry is covered by
+        // Unready_launch_cleans_up_and_keeps_work_pending.
+        var factory = new Factory(runner) { MaxWaitMs = 60_000 };
         await using var h = await CreateHarness(schema.ConnectionString, runner, factory);
         factory.CaptureDirectory = h.TempRoot;
         await Prepare(h);
