@@ -4195,13 +4195,6 @@
       ]
     },
     {
-      "path": "scripts/lib/nightly-coverage.ps1",
-      "classes": [
-        "LiveLaneCensusTests",
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
       "path": "scripts/lib/rc-input-owners.json",
       "classes": [
         "RcHistoricalAdmissionTests",
@@ -4240,12 +4233,6 @@
       ]
     },
     {
-      "path": "scripts/lib/test-phase-paths.ps1",
-      "classes": [
-        "TestPhaseSummaryTests"
-      ]
-    },
-    {
       "path": "scripts/lib/test-selection.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4259,6 +4246,12 @@
         "ReleaseImpactScriptTests",
         "ReleaseSelectionHopSeedTests",
         "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/toolchain-floor.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -4313,6 +4306,12 @@
       "path": "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj",
       "classes": [
         "LandGeneratedArtifactTests"
+      ]
+    },
+    {
+      "path": "scripts/release-cut.ps1",
+      "classes": [
+        "TestPhaseSummaryTests"
       ]
     },
     {
@@ -25252,12 +25251,6 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyExecutionTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyMatcherParityTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
       ]
