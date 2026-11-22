@@ -2237,14 +2237,14 @@
       "reason": "cap",
       "owed": 124,
       "first": [
+        "CompactionRecoveryTests",
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
         "PolledCompletionNoteShrinkTests",
         "SubscriptionUsageMonitorTests",
         "AgentSessionLaunchQueueOwnershipTests",
         "AgentTaskAnswerTests",
-        "AgentTaskReplyIntegrationTests",
-        "CapacityRecoveryQueueTests"
+        "AgentTaskReplyIntegrationTests"
       ]
     },
     {
@@ -25850,10 +25850,10 @@
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundDispatchIntegrationTests",
         "ChannelOutboundTrailingRecoveryTests",
+        "ChannelOutboundUnifiedPathTests",
         "ChannelReplyDurabilityTests",
         "ChannelReplyLateConfirmDispatchTests",
         "CodexStartupDeliveryTests",
-        "CompactionRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "NamedCodexAgentLaunchTests",
         "OrchestratorInstructionsRefreshTests",
