@@ -70,17 +70,29 @@ namespace Antiphon.Nightly
         public static string LfText(string text) => text == null ? "" : text.Replace("\r\n", "\n").Replace("\r", "\n");
 
         /// <summary>
-        /// Get-TestSelectionSorted: the distinct values (each as [string]) in ordinal order; null values are dropped. A
-        /// string or a dictionary is one value; null is none.
+        /// Get-TestSelectionSorted: the distinct values (each as [string]) in ordinal order; null values are dropped. The
+        /// values are bound as its [object[]] parameter bound them: a list (an array, a List, an ordered dictionary's
+        /// keys) is its items, null is none, anything else (a string, a dictionary, a HashSet) one value.
         /// </summary>
         public static string[] Sorted(object values)
         {
             var set = new SortedSet<string>(StringComparer.Ordinal);
-            foreach (var value in Elements(values)) if (value != null) set.Add(PsValue.Str(value));
+            foreach (var value in Bound(values)) if (value != null) set.Add(PsValue.Str(value));
             return set.ToArray();
         }
 
-        /// <summary>A value bound to an [object[]] parameter: null is none, a string, dictionary or scalar one element, an enumerable its items.</summary>
+        private static IEnumerable<object> Bound(object values)
+        {
+            if (values == null) yield break;
+            if (!(PsValue.BaseObject(values) is IList items))
+            {
+                yield return values;
+                yield break;
+            }
+            foreach (var item in items) yield return item;
+        }
+
+        /// <summary>A value as foreach enumerates it: null is none, a string or dictionary one item, another enumerable its items, a scalar itself.</summary>
         internal static IEnumerable<object> Elements(object values)
         {
             if (values == null) yield break;
@@ -152,18 +164,19 @@ namespace Antiphon.Nightly
                     text.Append(flag ? "true" : "false");
                     return;
                 case IDictionary dictionary:
-                    // [string[]]@($Value.Keys) sorted ordinally; each key's own canonical text, then its value.
-                    var pairs = new List<KeyValuePair<string, object>>();
-                    foreach (DictionaryEntry entry in dictionary) pairs.Add(new KeyValuePair<string, object>(PsValue.Str(entry.Key), entry.Value));
+                    // [string[]]@($Value.Keys) sorted ordinally; each key's own canonical text, then $Value[$key] (looked up
+                    // by that string: a key that is not a string reads as null).
+                    var keys = new List<string>();
+                    foreach (var key in dictionary.Keys) keys.Add(PsValue.Str(key));
                     text.Append('{');
                     var first = true;
-                    foreach (var pair in pairs.OrderBy(p => p.Key, StringComparer.Ordinal))
+                    foreach (var key in keys.OrderBy(k => k, StringComparer.Ordinal))
                     {
                         if (!first) text.Append(',');
                         first = false;
-                        WriteString(text, pair.Key);
+                        WriteString(text, key);
                         text.Append(':');
-                        Write(text, pair.Value);
+                        Write(text, dictionary[key]);
                     }
                     text.Append('}');
                     return;
