@@ -50,3 +50,9 @@ In a test, a product deadline should be shorter than a test-controlled gate only
 `DelegationScopeHoldTests.a_worktree_task_dispatches_over_a_shared_holder_with_one_warning` asserted that the recording launch sink held exactly one session. The dispatcher tick dispatches every Queued row in the shared fixture database, so the sink also recorded launches for Queued tasks left or written by other suites. In the seeded Windows Full order that was three launches. On Linux, with the method alone, the result was green 3/3. One foreign Queued row seeded on purpose reproduces the failure deterministically (2 launches, `e71acf78e`).
 No product change in `39ac64c90..ecc9bfaa5` touches the dispatcher. The failure depends on which suites share the database at the time of the tick, so a new seed exposed it and short Merge could not.
 The repair (`e0512e864`) records each launch's `Cwd` and asserts one launch under the test's own workspace. This applies to this test and `two_worktree_tasks_in_one_area_both_run`. A dispatcher test that counts launches, events or rows against the shared database has to scope that count to rows it created.
+
+## Gate 9 · Retirement audit and CRLF checkouts
+
+The audit fixtures seeded plain LF content. Their linked-checkout cases exercised Git directory layout with the same bytes in the worktree and index.
+The Windows launcher added an indexed LF blob with `text eol=crlf`, so a real Git checkout on Linux first exposed the false dirty result on the rollout volume.
+For future checkout conversions, commit the attribute and let Git create the linked checkout. Check the byte difference and require Ready for the clean checkout and refusal for both a content edit and the same conversion on an undeclared path.
