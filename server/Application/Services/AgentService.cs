@@ -1301,13 +1301,13 @@ public sealed class AgentService
 
     internal async Task<Project?> FindProjectForWorkingDirectoryAsync(string workingDirectory, CancellationToken ct)
     {
-        // Project paths may have been stored on a different OS. Compare one separator style on
-        // both sides instead of depending on this process's Path.DirectorySeparatorChar.
-        var normalized = workingDirectory.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
-        return await _db.Projects.FirstOrDefaultAsync(
-            p => p.LocalRepositoryPath != null
-                && p.LocalRepositoryPath.Replace("\\", "/").ToLower() == normalized,
-            ct);
+        // Project paths may have been stored by a Windows or a Linux host: match them with the
+        // host-independent rule shared with project readiness (translatable prefilter in SQL,
+        // exact identity on the returned candidates).
+        var candidates = await _db.Projects
+            .Where(WorkingDirectoryIdentity.CandidateFilter<Project>(p => p.LocalRepositoryPath, workingDirectory))
+            .ToListAsync(ct);
+        return candidates.FirstOrDefault(p => WorkingDirectoryIdentity.Same(p.LocalRepositoryPath, workingDirectory));
     }
 
     private async Task<Project> CreateProjectForWorkingDirectoryAsync(
