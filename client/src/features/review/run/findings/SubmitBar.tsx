@@ -67,7 +67,14 @@ export function SubmitBar({
               signed "— {actorName} via Antiphon"
             </Text>
           </Tooltip>
-          <Button size="xs" leftSection={<TbSend size={14} />} disabled={n === 0 || invalid.length > 0} loading={submitting} onClick={onSubmit}>
+          <Button
+            size="xs"
+            leftSection={<TbSend size={14} />}
+            disabled={n === 0 || invalid.length > 0}
+            loading={submitting}
+            onClick={onSubmit}
+            data-testid="review-submit-replies"
+          >
             Post {n} {n === 1 ? 'reply' : 'replies'} to {hostLabel} as {actorName} via Antiphon
           </Button>
         </Group>

@@ -45,6 +45,7 @@ export function ResponseComposer({
         {actionsFor(finding).map((a) => (
           <Button
             key={a}
+            data-testid={`review-action-${a}`}
             size="compact-xs"
             disabled={locked}
             variant={d?.action === a ? 'filled' : 'default'}

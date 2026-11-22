@@ -15,7 +15,7 @@ import { decisionCopy, gateDecisions, viewerBlockReason } from './gateRules'
 function DecidedGate({ gate, now }: { gate: ReviewGateDto; now: number }) {
   const copy = decisionCopy(gate.kind)
   return (
-    <Stack gap={4}>
+    <Stack gap={4} data-testid="review-gate-decided">
       <Group gap={6} wrap="wrap">
         <TbCircleCheck size={14} color="var(--mantine-color-success-5)" />
         <Text size="xs" fw={700}>
@@ -101,7 +101,7 @@ export function GatePanel({
           : 'Pick a decision'
 
   return (
-    <Paper withBorder p="xs" radius="md" style={{ borderTop: `2px solid var(--mantine-color-${done ? 'success' : 'pink'}-6)` }}>
+    <Paper withBorder p="xs" radius="md" data-testid="review-gate-panel" style={{ borderTop: `2px solid var(--mantine-color-${done ? 'success' : 'pink'}-6)` }}>
       <SectionLabel right={<GateKindBadge kind={gate.kind} />}>{done ? 'Last gate decision' : 'Gate decision'}</SectionLabel>
       <Group gap={4} mb={4} wrap="wrap">
         <Text size="xs" c="dimmed">
@@ -180,7 +180,7 @@ export function GatePanel({
                   </Button>
                 </Box>
               </Tooltip>
-              <Text size="xs" c="dimmed" mt={4} fs="italic">
+              <Text size="xs" c="dimmed" mt={4} fs="italic" data-testid="review-gate-blocked">
                 {blocked}
               </Text>
             </Box>
@@ -193,6 +193,7 @@ export function GatePanel({
               disabled={!decision}
               loading={decide.isPending}
               onClick={submit}
+              data-testid="review-gate-decide"
             >
               {buttonLabel}
             </Button>

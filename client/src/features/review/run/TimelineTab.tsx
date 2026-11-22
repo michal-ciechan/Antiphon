@@ -121,6 +121,7 @@ export function TimelineTab({ run, now }: { run: ReviewRunDetailDto; now: number
                 <Paper
                   p={6}
                   radius="sm"
+                  data-testid={`review-iteration-${t.iteration}`}
                   style={{ flex: 1, border: `1px solid ${last ? '#3b7bf5' : 'var(--mantine-color-dark-4)'}`, background: last ? 'rgba(59,123,245,0.10)' : undefined }}
                 >
                   <Group gap={6} wrap="wrap">

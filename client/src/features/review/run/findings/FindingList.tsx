@@ -26,6 +26,7 @@ export function FindingList({
             return (
               <UnstyledButton
                 key={f.id}
+                data-testid={`review-finding-${f.key}`}
                 w="100%"
                 onClick={() => onSelect(f.id)}
                 p={6}

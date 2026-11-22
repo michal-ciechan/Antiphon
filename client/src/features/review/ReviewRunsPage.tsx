@@ -75,7 +75,7 @@ function NoReviewsYet({ onNew }: { onNew: () => void }) {
   const seed = useSeedReviewDemo()
   const demoUnavailable = useReviewUiStore((s) => s.demoSeedUnavailable)
   return (
-    <Paper withBorder radius="md" p="xl">
+    <Paper withBorder radius="md" p="xl" data-testid="review-runs-empty">
       <Stack align="center" gap="xs">
         <Text fw={700} size="lg">
           No reviews yet
@@ -84,11 +84,11 @@ function NoReviewsYet({ onNew }: { onNew: () => void }) {
           Start a review of a GitHub pull request or a local commit range. Runs appear here as Antiphon works through them.
         </Text>
         <Group gap="xs" mt="xs">
-          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={onNew}>
+          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={onNew} data-testid="review-runs-empty-new">
             New review
           </Button>
           {!demoUnavailable && (
-            <Button size="xs" variant="default" leftSection={<TbDatabaseImport size={14} />} loading={seed.isPending} onClick={() => seed.mutate()}>
+            <Button size="xs" variant="default" leftSection={<TbDatabaseImport size={14} />} loading={seed.isPending} onClick={() => seed.mutate()} data-testid="review-runs-load-demo">
               Load demo data
             </Button>
           )}
@@ -162,7 +162,7 @@ export function ReviewRunsPage() {
         </Box>
         <Group gap="xs" wrap="wrap">
           <FakeDataSwitch />
-          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={() => setIntakeOpen(true)}>
+          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={() => setIntakeOpen(true)} data-testid="review-runs-new">
             New review
           </Button>
           <TextInput

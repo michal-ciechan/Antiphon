@@ -61,7 +61,7 @@ function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewVie
   const notMeAllowed = mine || (gate.assigneeLogin === null && inTeam)
 
   return (
-    <Table.Tr>
+    <Table.Tr data-testid={`review-queue-row-${run.id}`}>
       <Table.Td style={{ minWidth: 130 }}>
         <GateKindBadge kind={gate.kind} />
       </Table.Td>

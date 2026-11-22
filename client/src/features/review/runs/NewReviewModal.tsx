@@ -32,6 +32,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
 
   return (
     <form
+      data-testid="review-intake-form"
       onSubmit={(e) => {
         e.preventDefault()
         if (!ready) return
@@ -60,6 +61,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
           description={host === 'Local' ? 'A repo configured under Review:CodeHosts:Repos with its local path.' : undefined}
           required
           data-autofocus
+          data-testid="review-intake-repo"
           value={repo}
           onChange={(e) => setRepo(e.currentTarget.value)}
           error={fieldError(fields, 'repo')}
@@ -85,6 +87,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
               label="Base ref"
               placeholder="main or a SHA"
               required
+              data-testid="review-intake-base"
               value={baseRef}
               onChange={(e) => setBaseRef(e.currentTarget.value)}
               error={fieldError(fields, 'baseSha')}
@@ -93,6 +96,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
               size="xs"
               label="Head ref"
               placeholder="HEAD"
+              data-testid="review-intake-head"
               value={headRef}
               onChange={(e) => setHeadRef(e.currentTarget.value)}
               error={fieldError(fields, 'headSha')}
@@ -113,7 +117,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
           <Button size="xs" variant="subtle" color="gray" onClick={onDone}>
             Cancel
           </Button>
-          <Button size="xs" type="submit" disabled={!ready} loading={create.isPending}>
+          <Button size="xs" type="submit" disabled={!ready} loading={create.isPending} data-testid="review-intake-submit">
             Start review
           </Button>
         </Group>

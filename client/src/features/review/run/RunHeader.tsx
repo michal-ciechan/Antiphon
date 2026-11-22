@@ -18,7 +18,7 @@ export function RunHeader({ run, now, onRefresh, refreshing }: { run: ReviewRunD
   const openedByOther = s.openedByLogin !== s.authorLogin
   const failed = run.status === 'Failed' ? failedExecution(run) : undefined
   return (
-    <Stack gap={6}>
+    <Stack gap={6} data-testid="review-run-header">
       <Anchor component={Link} to="/reviews" size="xs" c="dimmed">
         <Group gap={4}>
           <TbArrowLeft size={12} /> Review runs
@@ -78,7 +78,7 @@ export function RunHeader({ run, now, onRefresh, refreshing }: { run: ReviewRunD
         </Box>
         <Paper withBorder radius="md" p="xs">
           <Group gap="lg" wrap="wrap" align="flex-start">
-            <Box>
+            <Box data-testid="review-run-round">
               <Text size="10px" c="dimmed" tt="uppercase" fw={700} mb={2}>
                 Round
               </Text>
@@ -102,7 +102,7 @@ export function RunHeader({ run, now, onRefresh, refreshing }: { run: ReviewRunD
               </Text>
               <ModelBadges models={run.models} max={5} />
             </Box>
-            <Button size="xs" variant="default" leftSection={<TbRefresh size={14} />} loading={refreshing} onClick={onRefresh}>
+            <Button size="xs" variant="default" leftSection={<TbRefresh size={14} />} loading={refreshing} onClick={onRefresh} data-testid="review-run-refresh">
               Refresh
             </Button>
           </Group>

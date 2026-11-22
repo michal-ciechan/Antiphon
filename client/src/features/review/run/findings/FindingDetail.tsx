@@ -101,7 +101,7 @@ export function FindingDetail({
   refreshing: boolean
 }) {
   return (
-    <Stack gap="sm">
+    <Stack gap="sm" data-testid="review-finding-detail">
       <Box>
         <Group gap={6} wrap="wrap">
           <SeverityBadge severity={f.severity} />
@@ -185,7 +185,7 @@ export function FindingDetail({
           No replies yet.
         </Text>
       ) : (
-        <Box>
+        <Box data-testid="review-finding-thread">
           {f.events.map((e) => (
             <EventRow key={e.id} e={e} now={now} />
           ))}
