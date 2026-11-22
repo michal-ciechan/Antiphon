@@ -179,6 +179,8 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 
 | v0.2 | Server-track increment:<br>- iteration `baseSha` and `headSha`, and the `manual`, `push` and `recheck` triggers<br>- intake rules for `GitHub` and `Local`<br>- Refresh behaviour<br>- 403 and 503 codes<br><br>Planned, not served yet:<br>- a run-level `failureReason` (today it is in the failed node's `summary`)<br>- the all-repos `POST /api/review/refresh` (design §8.5) |
 
+| v0.3 | The executor now walks the whole workflow to merge:<br>- a gate decision returns the run while the executor resumes it, so Approve on a walked run reads `Queued` until the next node runs<br>- Refresh is asynchronous: its 202 can return before the new `push` iteration exists, and the client follows `ReviewRunChanged`<br>- a response's `syncState` moves from `Pending` to `Synced` once the executor posts it, to `NotApplicable` on hosts without threads, or to `Failed`<br><br>Planned, not served yet:<br>- node-execution `outputs` (JSON)<br>- a finding `placement` (`Inline`, `SummaryOnly` or `BelowBar`)<br>- update-branch opt-in and recheck routes<br>- a run-level `failureReason` |
+
 ## Not in this slice
 
 Trust scores, teams/org sync, checks catalogue, pack viewer, stats rollups, prompt layers, the learn
