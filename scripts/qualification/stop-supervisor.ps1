@@ -18,7 +18,7 @@ For a task-directory copy, pass -CheckoutRoot to load qualification-stop.ps1 and
 The checkout root (-CheckoutRoot, or two levels above this script when omitted) must be an
 existing directory with a .git file or directory at its root (a checkout or linked worktree)
 that holds scripts/qualification/qualification-stop.ps1 and scripts/lib/qualification-supervisor.ps1.
-Otherwise the script exits 6 before it loads any helper, and does not stop a process or change a file.
+A supplied blank or whitespace -CheckoutRoot is refused, not defaulted. Otherwise the script exits 6 before it loads any helper, and does not stop a process or change a file.
 Exit codes: 0 stopped, 2 dry run or refused, 3 incomplete, 4 lock retained, 5 non-Windows,
 6 checkout root refused.
 Do not point this at a live qualification unless the operator has decided to stop that run.
@@ -34,9 +34,13 @@ param(
     [string]$CheckoutRoot
 )
 $ErrorActionPreference = 'Stop'
-if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
 $checkoutRefusal = $null
-if (-not (Test-Path -LiteralPath $CheckoutRoot -PathType Container)) { $checkoutRefusal = 'not an existing directory' }
+if ($PSBoundParameters.ContainsKey('CheckoutRoot')) {
+    if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $checkoutRefusal = 'blank value' }
+}
+else { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
+if ($null -ne $checkoutRefusal) { }
+elseif (-not (Test-Path -LiteralPath $CheckoutRoot -PathType Container)) { $checkoutRefusal = 'not an existing directory' }
 else {
     $CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
     $dotGit = Join-Path $CheckoutRoot '.git'
