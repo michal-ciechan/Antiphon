@@ -204,8 +204,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             return null;
         }
 
-        var stat = OutputCustody.Stat(path);
-        if (stat is null)
+        if (OutputCustody.Stat(path) is not { } stat)
             return "unreadable-link-count";
         if (stat.IsDirectory)
             return "directory";
