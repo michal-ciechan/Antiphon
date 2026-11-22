@@ -3329,7 +3329,8 @@
     {
       "path": "docs/release-gates.md",
       "classes": [
-        "PerTaskFinalUnitLaneWitnessTests"
+        "PerTaskFinalUnitLaneWitnessTests",
+        "ReleaseBranchModelDocumentationTests"
       ]
     },
     {
