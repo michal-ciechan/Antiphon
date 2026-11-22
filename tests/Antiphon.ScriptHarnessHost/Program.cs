@@ -12,6 +12,8 @@ if (args.Length >= 1 && args[0] == "cli-echo")
     return CliEcho(args);
 if (args.Length >= 5 && args[0] == "post-land-slot")
     return PostLandSlot(args);
+if (args.Length == 9 && args[0] == "post-land-lock")
+    return PostLandLock(args);
 if (args.Length >= 3 && args[0] == "fixture-child")
     return await FixtureChild(args[1], args[2]);
 if (args.Length >= 3 && args[0] == "fixture-grandchild")
@@ -213,6 +215,49 @@ static int C1375OwnedTree(string role, string directory, string nonce)
     File.Move(path + ".tmp", path);
     next?.WaitForExit();
     while (true) Thread.Sleep(1000);
+}
+
+// Two-process owner publication for PostLandEarlyWarningTests:
+// post-land-lock <lockPath> <runId> <readyPath> <goPath> <ownArmed> <peerArmed> <resultPath> <releasePath>
+// Writes ready, spins until go exists, arms, spins until the peer is armed, then calls
+// production EnterLock. Publishes true or false, then stays alive until release exists so the
+// winner's pid is still live when the loser inspects the owner record. Does not call ExitLock.
+static int PostLandLock(string[] args)
+{
+    var lockPath = args[1];
+    var runId = args[2];
+    var readyPath = args[3];
+    var goPath = args[4];
+    var ownArmed = args[5];
+    var peerArmed = args[6];
+    var resultPath = args[7];
+    var releasePath = args[8];
+    File.WriteAllText(readyPath, "ready\n");
+    if (!SpinUntil(goPath, 20_000))
+        return 3;
+    File.WriteAllText(ownArmed, "armed\n");
+    if (!SpinUntil(peerArmed, 5_000))
+        return 4;
+    var won = Antiphon.Nightly.PostLandEarlyWarning.EnterLock(lockPath, runId, 0);
+    var temp = resultPath + ".tmp";
+    File.WriteAllText(temp, won ? "true\n" : "false\n");
+    File.Move(temp, resultPath);
+    Console.WriteLine(won ? "acquired=true" : "acquired=false");
+    if (!SpinUntil(releasePath, 20_000))
+        return 5;
+    return 0;
+}
+
+static bool SpinUntil(string path, int budgetMs)
+{
+    var deadline = Environment.TickCount64 + budgetMs;
+    while (!File.Exists(path))
+    {
+        if (Environment.TickCount64 > deadline)
+            return false;
+        Thread.SpinWait(64);
+    }
+    return true;
 }
 
 // A fake build slot for PostLandEarlyWarningTests: post-land-slot <marker> <trx> <build-exit> <shard-exit> -Label <label>

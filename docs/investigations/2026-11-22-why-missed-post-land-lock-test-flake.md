@@ -45,15 +45,29 @@ same owner record.
 
 `tests/Antiphon.Tests/Scripts/PostLandEarlyWarningTests.cs` and
 `scripts/lib/Antiphon.Nightly/PostLandLane.cs` ->
-`/*/*/PostLandEarlyWarningTests/Second_run_refuses_while_the_lane_holds_the_lock`
+`/*/*/PostLandEarlyWarningTests/Two_processes_publish_exactly_one_owner`
 
-The fixture starts the contender only after the winning lane reaches its selector.
-The first lane stays at that selector until the contender returns its marker. The
-assertions name each parent, check lock cleanup and require one build. A separate
-two-entrant acquisition probe checks the initial owner-publication race directly.
+`Second_run_refuses_while_the_lane_holds_the_lock` starts the second lane only
+after the first has published lock.json and reached its selector. Both lanes are
+tasks in one process. That method checks a live owner, lock cleanup and one build.
+It does not open the absent-file publication window.
+
+`Two_processes_publish_exactly_one_owner` is the committed witness. It runs 24
+trials. Each trial starts two OS processes through the script-harness-host
+`post-land-lock` mode. Both spin until a shared go file exists, arm, spin until
+the peer is armed, then each calls production `EnterLock` on the same absent
+`lock.json`. Each process stays alive until both results are recorded, so the
+loser observes the winner's live pid. Neither process calls `ExitLock`. The
+test requires exactly one true result per trial. The class carries
+`[ParallelLimiter<ProcessSpawnLimit>]` and `[Category("Unit")]`.
+
 The lane serializes publication, stale reclamation and owner-checked release with
 a named mutex keyed by the full lock path. The mutex is released before planning
 and running the tests.
+
+The Debug task's 1,000 cross-process trials and 1,000 in-process trials were a
+one-off probe. They are not a committed test and they are not in the retained
+evidence.
 
 ## Exemption
 
