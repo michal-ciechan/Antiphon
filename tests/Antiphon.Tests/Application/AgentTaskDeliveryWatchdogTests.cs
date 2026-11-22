@@ -82,6 +82,87 @@ public partial class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
+    public async Task Refunded_boot_prompt_attempts_are_reported_with_the_first_start_and_composer_failure()
+    {
+        await using var queue = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ClockSpeed = 5,
+            ClaudeDialogObservation = true,
+        });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11, existingSessionId: queue.SessionId);
+        var body = DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.";
+        queue.Adapter.EchoTypedInputToScreen = false;
+        var (watchdog, _) = CreateHarness();
+
+        try
+        {
+            await queue.Queue.EnqueueAsync(queue.SessionId, body, MessageSendMode.WhenIdle,
+                CancellationToken.None, QueuedMessageOrigin.Delegation, executionTaskId: task.Id);
+
+            await using var db = CreateContext();
+            var first = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == task.Id);
+            first.Status.ShouldBe(QueuedMessageStatus.Pending);
+            first.DeliveryAttempts.ShouldBe(0);
+            first.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoComposerEvidence);
+            var firstStart = first.LastDeliveryStartedAt.ShouldNotBeNull();
+
+            await queue.Queue.OnTurnEndAsync(queue.SessionId, CancellationToken.None);
+
+            var second = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == first.Id);
+            second.Status.ShouldBe(QueuedMessageStatus.Pending);
+            second.DeliveryAttempts.ShouldBe(0);
+            second.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoComposerEvidence);
+            second.LastDeliveryStartedAt.ShouldNotBeNull().ShouldBeGreaterThan(firstStart);
+            queue.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+            await watchdog.FailNeverStartedAsync(CancellationToken.None);
+
+            var failed = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            var detail = await db.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)
+                .Select(e => e.Detail).SingleAsync();
+            foreach (var diagnostic in new[] { failed.FailureReason, detail })
+            {
+                diagnostic.ShouldContain("attempted 2 times");
+                diagnostic.ShouldContain("refunded");
+                diagnostic.ShouldContain("required composer evidence was not observed");
+                diagnostic.ShouldContain($"first attempt at {firstStart:O}");
+                diagnostic.ShouldNotContain("never attempted");
+            }
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task A_boot_prompt_with_no_attempt_still_reports_never_attempted()
+    {
+        var (watchdog, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        try
+        {
+            await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
+
+            await watchdog.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var db = CreateContext();
+            var failed = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldContain("was never attempted");
+            var detail = await db.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)
+                .Select(e => e.Detail).SingleAsync();
+            detail.ShouldContain("was never attempted");
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
     public async Task a_real_user_prompt_after_dispatch_means_the_task_is_left_alone()
     {
         // Slow work is the stall scan's business; a real prompt after dispatch proves delivery happened.
@@ -2396,26 +2477,30 @@ public partial class AgentTaskDeliveryWatchdogTests
         int dispatchedMinutesAgo,
         AgentKind kind = AgentKind.ClaudeCode,
         SessionStatus sessionStatus = SessionStatus.Running,
-        DateTime? launchResumedAt = null)
+        DateTime? launchResumedAt = null,
+        Guid? existingSessionId = null)
     {
-        var sessionId = Guid.NewGuid();
+        var sessionId = existingSessionId ?? Guid.NewGuid();
         var id = Guid.NewGuid();
         var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
         await using var db = CreateContext();
-        db.AgentSessions.Add(new AgentSession
+        if (existingSessionId is null)
         {
-            Id = sessionId,
-            DefinitionName = "fake",
-            AgentKind = kind,
-            Status = sessionStatus,
-            Cwd = Path.GetTempPath(),
-            Cols = 120,
-            Rows = 30,
-            CreatedAt = dispatched,
-            StartedAt = dispatched,
-            LastSeenAt = dispatched,
-            LaunchResumedAt = launchResumedAt,
-        });
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "fake",
+                AgentKind = kind,
+                Status = sessionStatus,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = dispatched,
+                StartedAt = dispatched,
+                LastSeenAt = dispatched,
+                LaunchResumedAt = launchResumedAt,
+            });
+        }
         var task = new AgentTask
         {
             Id = id,
