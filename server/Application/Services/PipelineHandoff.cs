@@ -43,6 +43,16 @@ public static class PipelineHandoff
             ["none"] = PipelineHandoffKind.None,
         };
 
+    /// <summary>
+    /// The alias lookup behind <see cref="Result.Kind"/>: trimmed, <c>OrdinalIgnoreCase</c>. The ABF
+    /// legacy profile (docs/specs/block-format/v1.md 6.4) reads <c>next</c> through this.
+    /// </summary>
+    public static bool TryParseKind(string? token, out PipelineHandoffKind kind)
+    {
+        kind = default;
+        return !string.IsNullOrWhiteSpace(token) && Aliases.TryGetValue(token.Trim(), out kind);
+    }
+
     public readonly record struct Result(
         bool Found,
         PipelineHandoffKind? Kind,
