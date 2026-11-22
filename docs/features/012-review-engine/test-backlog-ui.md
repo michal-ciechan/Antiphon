@@ -9,8 +9,9 @@ on 2026-11-22 (viewer from `GET /api/review-me`, gate viewer fields, iterations,
 hunks, the cost split, SLA minutes, diagnostic severity) without new tests. The HTTP API became
 the default the same day; `client/src/features/review/reviewApiMode.test.ts` covers the mode
 selection (HTTP by default, fake only from `VITE_REVIEW_API=fake` or localStorage, a stored `http`
-beating a fake build, throwing storage, and `forceReviewApiMode`). Everything below is still to
-write. Owner of this file: the review UI track.
+beating a fake build, throwing storage, and `forceReviewApiMode`). A browser E2E against the real
+server landed the same day (see [Browser E2E against the real server](#browser-e2e-against-the-real-server)).
+Everything else below is still to write. Owner of this file: the review UI track.
 
 ## API seam (`client/src/api/reviewEngine.ts`)
 
@@ -237,3 +238,38 @@ write. Owner of this file: the review UI track.
   features) replace the fake in page tests; the fake keeps the same shapes (a fixture-vs-fake shape
   test).
 - E2E: respond to a finding, see Pending → Synced via SignalR; decide a gate; pass and assign.
+  Responding and deciding are covered on a Local host (next section); Pending → Synced needs a
+  GitHub-shaped host with threads, and pass and assign are still open.
+
+## Browser E2E against the real server
+
+`tests/Antiphon.E2E/ReviewEngineE2ETests.cs` boots the real server (Kestrel, Postgres testcontainer,
+isolated runner, built `client/dist`) with the real workflow executor and the real
+`LocalGitCodeHost` over a throwaway git repo (`main` base, `feature` head). Only the model seams
+are scripted (`tests/Antiphon.E2E/Fixtures/ReviewEngineScenario.cs`: decisions, reviewer agents,
+verifier). The viewer is `Review:DefaultViewerLogin` (`dana`, the author of a Local run); a second
+browser context sends `X-Review-Viewer: lee` (`Review:AllowViewerHeader`). Run it after
+`npm run build` in `client/`, under a build slot:
+`dotnet run --project tests/Antiphon.E2E --no-build -- --treenode-filter "/*/*/ReviewEngineE2ETests/*"`.
+
+Covered, in one test (`A_local_change_is_reviewed_fixed_and_approved_by_a_non_author`):
+
+- Empty runs page → New review → Local git with repo, base and head refs; the title defaults to the
+  head commit's subject; the page navigates to `/reviews/{id}`.
+- Round 1 reaches Awaiting fixes (waiting on author, round 1, `feature → main @ head`) with the
+  scripted major F1 at `src/Lease.cs:12`, its hunk, and "not posted inline" (a local host takes no
+  reviews).
+- The composer: Will fix with text, the submit bar's label, "Posted 1 reply", the thread shows the
+  reply, the row reads "will fix"; the API shows the event settle `Pending` → `NotApplicable`.
+- A pushed fix commit and Refresh: round 2 is clean, F1 becomes fixed (`still_present`), the run is
+  At gate (waiting on humans) on an Approval gate with the blast-radius reason; the author's gate
+  panel is disabled with "You are the author", and the API refuses the author with 403.
+- Timeline: it1 · R1 manual intake (`base..head`) and it2 · R2 push (`..fixed head`).
+- The other viewer: the All queue lists the gate, the row opens the run, Approve `<sha>` records the
+  decision, the run walks to Awaiting merge (base unchanged, await-merge waiting) and the decided
+  gate names `lee`; the author's open page follows to Awaiting merge.
+
+Not covered yet: GitHub-shaped hosts (posted findings, thread sync, statuses), Another round with a
+steer, Close, dismiss and dispute flows, pass and assign from the queue, demo data, and failure
+states (a failed run and Refresh's recheck).
+
