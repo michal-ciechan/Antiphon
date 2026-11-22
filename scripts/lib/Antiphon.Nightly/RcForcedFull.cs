@@ -104,8 +104,9 @@ namespace Antiphon.Nightly
         /// <summary>
         /// Forced Full and its ordinally sorted reasons. Any reason forces Full: an explicit request; an unknown or
         /// changed input contract field (or a field outside the reviewed contract on either side); unproven baseline,
-        /// admission chain, history, global ownership or shadow; a Full anchor that is unproven, of unknown or future
-        /// time, or seven days old. The anchor is returned as given, never renewed.
+        /// admission chain, history, global ownership or shadow; a Full anchor that is unproven (including one that is not
+        /// a Windows Full, CARD-1872), of unknown or future time, or seven days old. The anchor is returned as given, never
+        /// renewed.
         /// </summary>
         public static RcForcedFullDecision Decision(JsonElement currentContract, JsonElement baselineContract, JsonElement evidence, JsonElement fullAnchor,
             DateTimeOffset utcNow, bool forceFull)
@@ -137,7 +138,8 @@ namespace Antiphon.Nightly
             if (IsText(shadow, "discrepancy")) reasons.Add("shadow-discrepancy");
             else if (!IsText(shadow, "clean")) reasons.Add("shadow-unproven");
             var anchorKnown = IsText(Field(fullAnchor, "kind"), "executed-full") && IsText(Field(fullAnchor, "admissionState"), "verified")
-                && IsSourceSha(Text(Field(fullAnchor, "sourceSha"))) && IsDigest(Field(fullAnchor, "closureDigest"));
+                && IsSourceSha(Text(Field(fullAnchor, "sourceSha"))) && IsDigest(Field(fullAnchor, "closureDigest"))
+                && IsText(Field(fullAnchor, "platform"), "windows");
             if (!anchorKnown) reasons.Add("full-anchor-unproven");
             else
             {
@@ -152,8 +154,9 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// A verified, complete Full closure with sane counts (no carries, failures or unexpected skips; executed plus
-        /// expected skips cover the required set), a known origin and a UTC completion not in the future becomes an
-        /// executed-full anchor. Pre-run forced-Full reasons are carried as history; they never veto a fresh Full nor are
+        /// expected skips cover the required set), a known origin, a Windows platform (a Linux Full never renews the
+        /// Windows anchor, CARD-1872) and a UTC completion not in the future becomes an executed-full anchor carrying
+        /// that platform. Pre-run forced-Full reasons are carried as history; they never veto a fresh Full nor are
         /// cleared to make one.
         /// </summary>
         public static RcExecutedFullAnchor ExecutedFullAnchor(JsonElement closure, DateTimeOffset utcNow)
@@ -180,6 +183,7 @@ namespace Antiphon.Nightly
                 if (counts["unexpectedSkipCount"] != 0) reasons.Add("closure-unexpected-skip");
             }
             if (!IsSourceSha(Text(Field(closure, "sourceSha"))) || !IsDigest(Field(closure, "closureDigest"))) reasons.Add("closure-origin-unknown");
+            if (!IsText(Field(closure, "platform"), "windows")) reasons.Add("closure-not-windows");
             var completed = UtcTime(Field(closure, "completedAtUtc"));
             if (completed == null) reasons.Add("closure-time-unknown");
             else if (completed.Value > utcNow) reasons.Add("closure-time-future");
@@ -193,6 +197,7 @@ namespace Antiphon.Nightly
                     {
                         ["kind"] = "executed-full", ["admissionState"] = "verified", ["completedAtUtc"] = Text(Field(closure, "completedAtUtc")),
                         ["sourceSha"] = Text(Field(closure, "sourceSha")), ["closureDigest"] = Text(Field(closure, "closureDigest")),
+                        ["platform"] = "windows",
                     }
                     : null,
                 ForcedFull = prior.ValueKind == JsonValueKind.Undefined || prior.ValueKind == JsonValueKind.Null ? Array.Empty<JsonElement>()
