@@ -527,7 +527,8 @@ internal static partial class InProcessGitReads
                 break;
             }
             var next = Path.Combine(current, part);
-            // The name itself as the search pattern (IsPlainRef keeps wildcards out): no whole-directory listing.
+            // The name itself as the search pattern (IsPlainRef keeps wildcards out); the ordinal compare then keeps
+            // only the exact on-disk spelling (.NET still reads the directory and filters it).
             var exact = Directory.EnumerateFileSystemEntries(current, part)
                 .Any(entry => string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
             if (!exact)
