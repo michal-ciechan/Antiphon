@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -160,9 +161,193 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    public void linked_run_lock_stays_one_inode_and_both_runs_go_cold()
+    {
+        var root = TempDir();
+        var source = Arrange(root);
+        var outside = Path.Combine(root, "outside-sentinel.txt");
+        var home = Path.Combine(root, ".antiphon", "checkpoint-obj", "obj");
+        var lockPath = Path.Combine(home, "run.lock");
+        Directory.CreateDirectory(home);
+        File.WriteAllBytes(outside, "outside-lock-sentinel"u8.ToArray());
+        try
+        {
+            NativeHardLink.Create(lockPath, outside);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        {
+            Skip.Test("hard links are unavailable on this volume (" + ex.GetType().Name + ")");
+        }
+
+        var before = File.ReadAllBytes(outside);
+        var mtime = File.GetLastWriteTimeUtc(outside);
+        var identity = NativeHardLink.Observe(lockPath);
+        using (var first = CheckpointIntermediateCache.TryOpen(root, source, source.Commit))
+            first.ShouldBeNull("a multiply linked lock is not a cache gate");
+        File.ReadAllBytes(outside).ShouldBe(before);
+        File.GetLastWriteTimeUtc(outside).ShouldBe(mtime);
+        var after = NativeHardLink.Observe(lockPath);
+        after.FileId.ShouldBe(identity.FileId, "the lock name stays on the planted inode");
+        after.Links.ShouldBe(identity.Links);
+
+        using (var second = CheckpointIntermediateCache.TryOpen(root, source, source.Commit))
+            second.ShouldBeNull("a second executor stays off that same lock");
+        NativeHardLink.Observe(lockPath).FileId.ShouldBe(identity.FileId);
+        File.ReadAllBytes(outside).ShouldBe(before);
+
+        var heldRoot = TempDir();
+        var heldSource = Arrange(heldRoot);
+        var holder = CheckpointIntermediateCache.TryOpen(heldRoot, heldSource, heldSource.Commit);
+        try
+        {
+            holder.ShouldNotBeNull();
+            var heldLock = Path.Combine(heldRoot, ".antiphon", "checkpoint-obj", "obj", "run.lock");
+            var alias = Path.Combine(heldRoot, "lock-alias");
+            NativeHardLink.Create(alias, heldLock);
+            var aliasBytes = File.ReadAllBytes(alias);
+            var aliasId = NativeHardLink.Observe(alias);
+            using var contender = CheckpointIntermediateCache.TryOpen(heldRoot, heldSource, heldSource.Commit);
+            contender.ShouldBeNull("a contender does not take a second lock inode");
+            File.ReadAllBytes(alias).ShouldBe(aliasBytes);
+            NativeHardLink.Observe(alias).FileId.ShouldBe(aliasId.FileId);
+        }
+        finally
+        {
+            holder?.Dispose();
+        }
+
+        var heldLockAfter = Path.Combine(heldRoot, ".antiphon", "checkpoint-obj", "obj", "run.lock");
+        var aliasAfter = Path.Combine(heldRoot, "lock-alias");
+        NativeHardLink.Observe(heldLockAfter).FileId.ShouldBe(NativeHardLink.Observe(aliasAfter).FileId);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public void fifo_seal_falls_back_cold_without_hanging()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("FIFO seal requires Linux mkfifo");
+        var root = TempDir();
+        var source = Arrange(root);
+        const string project = "App/App.csproj";
+        Directory.CreateDirectory(Path.Combine(root, "App"));
+        var forwarded = BuildStep.PropertyArguments(new Dictionary<string, string> { ["UseAppHost"] = "false" },
+            OperatingSystem.IsWindows());
+        using var cache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
+        cache.ShouldNotBeNull();
+        var seal = CheckpointIntermediateCache.PathFor(root, project, forwarded, source) + ".seal";
+        Directory.CreateDirectory(Path.GetDirectoryName(seal)!);
+        try
+        {
+            MkFifo(seal, 0x180).ShouldBe(0, "mkfifo errno " + Marshal.GetLastPInvokeError());
+            Exception? crash = null;
+            CheckpointIntermediateCache.Entry? entry = null;
+            try
+            {
+                entry = cache.Prepare(project, forwarded);
+            }
+            catch (Exception ex)
+            {
+                crash = ex;
+            }
+
+            crash.ShouldBeNull(crash?.ToString() ?? "");
+            entry.ShouldBeNull("a non-regular seal cannot seed a verified build");
+        }
+        finally
+        {
+            try { File.Delete(seal); }
+            catch (Exception deleteFailure) when (deleteFailure is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task read_only_lock_directory_falls_back_cold_without_failing_the_row()
+    {
+        var root = TempDir();
+        var source = Arrange(root);
+        var lockPath = Path.Combine(root, ".antiphon", "checkpoint-obj", "obj", "run.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        Directory.CreateDirectory(lockPath);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(lockPath, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        Exception? openCrash = null;
+        CheckpointIntermediateCache? cache = null;
+        try
+        {
+            try
+            {
+                cache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
+            }
+            catch (Exception ex)
+            {
+                openCrash = ex;
+            }
+
+            openCrash.ShouldBeNull(openCrash?.ToString() ?? "");
+            cache.ShouldBeNull("an unusable lock directory is not a cache gate");
+
+            const string project = "App/App.csproj";
+            Directory.CreateDirectory(Path.Combine(root, "App"));
+            var manifest = new CheckpointManifest();
+            manifest.Builds.Add(new BuildSpec { Id = "bin-cold", Project = project, OutputPath = "bin-cold/" });
+            var row = CheckpointFixtures.Row("CP-1", "bin-cold");
+            row.Expect = [];
+            manifest.Checkpoints.Add(row);
+            var driver = new FakeDriver();
+            driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+            driver.When(CheckpointFixtures.IsRun, (request, _) =>
+            {
+                CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+                return Task.FromResult(new DriverResult(0, "", ""));
+            });
+            Exception? rowCrash = null;
+            SchedulerResult? result = null;
+            try
+            {
+                result = await new RunScheduler(driver, new FakePlatform { IsWindows = OperatingSystem.IsWindows() }).RunAsync(new SchedulerRequest
+                {
+                    Manifest = manifest,
+                    Rows = manifest.Checkpoints,
+                    RunDirectory = root,
+                    WorkingDirectory = root,
+                    State = new RunState { RunId = "cold-lock", StartedAt = DateTimeOffset.UtcNow },
+                    Slots = new FixedSlotClient("granted"),
+                    Commit = source.Commit,
+                    ExpectedSourceSha = source.Commit,
+                    Width = 1,
+                    TotalTimeout = TimeSpan.FromMinutes(5),
+                    IntermediateCache = cache,
+                }, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                rowCrash = ex;
+            }
+
+            rowCrash.ShouldBeNull(rowCrash?.ToString() ?? "");
+            result.ShouldNotBeNull();
+            result!.Rows.Single().State.ShouldBe("green",
+                string.Join(Environment.NewLine, result.Rows.Select(item => item.Line + Environment.NewLine + item.Output)));
+            driver.Calls.ShouldContain(CheckpointFixtures.IsBuild);
+            driver.Calls.Where(CheckpointFixtures.IsBuild).ShouldAllBe(call =>
+                call.Arguments.All(arg => !arg.Contains("AntiphonCheckpointIntermediateRoot", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            cache?.Dispose();
+            if (!OperatingSystem.IsWindows() && Directory.Exists(lockPath))
+                File.SetUnixFileMode(lockPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
     private static SourceObservation Arrange(string root)
     {
         LibGit2Sharp.Repository.Init(root);
         return new SourceObservation(new string('a', 40), 0, "source fingerprint", DateTimeOffset.UtcNow, "known");
     }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MkFifo(string path, uint mode);
 }
