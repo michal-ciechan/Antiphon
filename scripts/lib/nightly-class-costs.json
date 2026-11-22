@@ -160,6 +160,12 @@
       "basis": "conservative-bound",
       "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
+    "Antiphon.E2E.ReviewEngineE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. feat/review-engine adds A_local_change_is_reviewed_fixed_and_approved_by_a_non_author (local development runs: about 62 s cold, 30 s warm, 98 s with startup; not release-owned timing). Denominator: committed expanded source census 197 total, 190 required, seven policy-excluded."
+    },
     "Antiphon.E2E.ScheduleCliE2ETests": {
       "nodes": 1,
       "seconds": 300,

@@ -5,6 +5,7 @@
 # e2e-split-7 adds two enqueue-error probes on LandDeliveryFixtureProbeTests (194).
 # CARD-2004 A-1 adds the copied-delegate caller helper (195).
 # The C467 checkout SHA probe adds one identity (196).
+# feat/review-engine adds the review engine browser E2E (197).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
@@ -184,6 +185,7 @@ Antiphon.E2E.ReleaseGateIsolationTests|C599_OwnedServices|
 Antiphon.E2E.ReleaseGateIsolationTests|C599_RefusingAdapters|
 Antiphon.E2E.ReleaseGateReportDeliveryTests|C599_ReportReadback|
 Antiphon.E2E.ReleaseGateReportDeliveryTests|C599_ReportRecovery|
+Antiphon.E2E.ReviewEngineE2ETests|A_local_change_is_reviewed_fixed_and_approved_by_a_non_author|
 Antiphon.E2E.ScheduleCliE2ETests|The_cli_round_trips_new_list_preview_disable_remove|
 Antiphon.E2E.SmokeE2ETests|Full_stack_smoke_test_browser_to_api_to_db|
 Antiphon.E2E.SmokeE2ETests|Health_endpoint_returns_ok_via_http_client|

@@ -186,6 +186,13 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.E2E.ReviewEngineE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.E2E.ScheduleCliE2ETests": {
       "seconds": 300,
       "basis": "conservative-bound",

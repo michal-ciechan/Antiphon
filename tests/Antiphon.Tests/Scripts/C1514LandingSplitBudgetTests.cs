@@ -74,8 +74,9 @@ public sealed class C1514LandingSplitBudgetTests
             var exclusions = Exclusions(policy, "rc", "e2e", "windows");
             var required = nodes.Where(n => !NightlyCensus.Excluded(n, exclusions, true)).ToArray();
             var reasons = new List<string>();
-            // Exact census of the committed roster, including the C467 checkout SHA probe. Windows rc excludes seven.
-            if (nodes.Count != 196 || required.Length != 189) reasons.Add("source-census");
+            // Exact census of the committed roster, including the C467 checkout SHA probe and the review engine
+            // browser E2E. Windows rc excludes seven.
+            if (nodes.Count != 197 || required.Length != 190) reasons.Add("source-census");
             // Independent conservative per-expanded-case bounds. 600 s is 1.72x the slowest supplied Windows
             // observation (348.1 s), not a p95.
             var bounds = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
