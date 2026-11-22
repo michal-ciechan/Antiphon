@@ -18,6 +18,10 @@ public sealed class AgentReportStore(
     GitWorkspaceService git, IOptions<DelegationSettings> settings, ILogger<AgentReportStore> logger)
     : IAgentReportStore
 {
+    // Bound publication coordination without retaining a semaphore for every completed task.
+    private static readonly SemaphoreSlim[] PublicationGates =
+        Enumerable.Range(0, 64).Select(static _ => new SemaphoreSlim(1, 1)).ToArray();
+
     internal Func<CancellationToken, Task>? BeforePublishAsync { get; set; }
     internal Func<string, CancellationToken, Task>? BeforeIoAsync { get; set; }
 
@@ -107,9 +111,24 @@ public sealed class AgentReportStore(
             Enter("publish");
             if (BeforePublishAsync is not null) await BeforePublishAsync(token);
             if (BeforeIoAsync is not null) await BeforeIoAsync("publish", token);
-            token.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: true);
-            temporary = null;
+            var gate = PublicationGates[Math.Abs(task.Id.GetHashCode() % PublicationGates.Length)];
+            await gate.WaitAsync(token);
+            try
+            {
+                // Another attempt may have published while this one was staging its bytes.
+                if (File.Exists(path) && await IsUsableAsync(path, raw, token))
+                {
+                    token.ThrowIfCancellationRequested();
+                    outcome = "reused";
+                    return new(path, null);
+                }
+
+                token.ThrowIfCancellationRequested();
+                File.Move(temporary, path, overwrite: true);
+                temporary = null;
+            }
+            finally { gate.Release(); }
+
             Enter("readback");
             if (BeforeIoAsync is not null) await BeforeIoAsync("readback", token);
             if (!await IsUsableAsync(path, raw, token)) return Refuse("verification-failed");
