@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using Antiphon.E2E.Fixtures;
+using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -7,6 +9,8 @@ using Antiphon.Server.Application.Services;
 using Antiphon.TestSupport;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Antiphon.Server.Infrastructure.Orchestration;
@@ -18,6 +22,29 @@ namespace Antiphon.E2E;
 [NotInParallel("C467LandDelivery")]
 public class LandDeliveryFixtureProbeTests
 {
+    [Test]
+    public async Task Owned_land_host_reports_checkout_sha_and_real_capabilities()
+    {
+        var root = AntiphonAppFixture.FindRepositoryRoot();
+        using var checkout = new LibGit2Sharp.Repository(root);
+        var expectedSha = checkout.Head.Tip.Sha;
+
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.WebHost.UseTestServer();
+        // Register the verifier that the fixture decorates. Version requests do not resolve it.
+        builder.Services.AddSingleton<ILandingVerifier>(_ => throw new InvalidOperationException("Unexpected landing verification"));
+        new LandDeliveryOptions(root).ConfigureServices(builder.Services);
+        await using var host = builder.Build();
+        host.MapVersionEndpoints();
+        await host.StartAsync();
+
+        using var client = host.GetTestClient();
+        var version = await client.GetFromJsonAsync<AntiphonVersionDto>("/api/version");
+        version.ShouldNotBeNull();
+        version.Capabilities.ShouldContain(AntiphonCapabilities.LandV2);
+        version.Version.ShouldBe(expectedSha);
+    }
+
     [Test]
     public async Task Polling_attention_accepts_the_actual_collapsed_aged_receipt()
     {
