@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 352,
+      "classes": 353,
       "reason": "allowlist"
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 19,
+      "classes": 23,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 28,
+      "classes": 32,
       "reason": "allowlist"
     },
     {
@@ -1735,10 +1735,19 @@
       ]
     },
     {
-      "path": "src/Antiphon.Agents.Pty/PtyAgentRunner.cs",
-      "classes": 63,
+      "path": "src/Antiphon.Agents.Pty/ClaudeDetectors.cs",
+      "classes": 26,
       "reason": "cap",
-      "owed": 38,
+      "owed": 1,
+      "first": [
+        "TestSelectionDependencyTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Agents.Pty/PtyAgentRunner.cs",
+      "classes": 64,
+      "reason": "cap",
+      "owed": 39,
       "first": [
         "Card1619UnixExitTests",
         "Card1619WindowsExitTests",
@@ -2088,9 +2097,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 141,
+      "classes": 142,
       "reason": "cap",
-      "owed": 116,
+      "owed": 117,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
@@ -2179,13 +2188,15 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 28,
+      "classes": 30,
       "reason": "cap",
-      "owed": 3,
+      "owed": 5,
       "first": [
+        "ReleaseSelectionHopSeedTests",
         "ToolchainFloorTwinTests",
         "ExpectedPlatformSkipRosterTests",
-        "NightlySummaryWitnessTests"
+        "NightlySummaryWitnessTests",
+        "TestSelectionCatalogTests"
       ]
     },
     {
@@ -2200,29 +2211,28 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 43,
+      "classes": 39,
       "reason": "cap",
-      "owed": 18,
+      "owed": 14,
       "first": [
-        "QualificationEtaTests",
         "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcProjectSelectionTests",
         "ReleaseGateAuthorityContractTests",
         "ReleaseGateE2EEvidenceTests",
-        "ReleaseGateFollowupTests"
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePolicyTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 28,
+      "classes": 27,
       "reason": "cap",
-      "owed": 3,
+      "owed": 2,
       "first": [
         "ReleaseGateFollowupTests",
-        "ReleaseGatePlatformTests",
-        "TestSelectionExecutionTests"
+        "ReleaseGatePlatformTests"
       ]
     },
     {
@@ -2845,7 +2855,11 @@
         "DelegationScopeHoldTests",
         "DelegationScopeLeaseTests",
         "ProcessSpawnLimitTests",
-        "SharedWriterLeaseProjectionTests"
+        "SharedWriterLeaseProjectionTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -3814,6 +3828,10 @@
         "RollingVolumeRecycleScriptTests",
         "Server2ProductionServerContractTests",
         "Server2StagingServerContractTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementReceiptTests",
@@ -4022,6 +4040,12 @@
       ]
     },
     {
+      "path": "scripts/fixtures/nightly/c1375-probe/Probe.csproj",
+      "classes": [
+        "TestSelectionCatalogTests"
+      ]
+    },
+    {
       "path": "scripts/impacted-classes.ps1",
       "classes": [
         "ImpactedClassesSelectorTests",
@@ -4128,6 +4152,82 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/TestSelection.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "ChangeAwareReleaseTests",
+        "NightlyRunParityTests",
+        "NightlyScriptsTests",
+        "RcStoppedRunSeedTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePlatformTests",
+        "ReleaseGateRunTests",
+        "ReleaseSelectionHopSeedTests",
+        "SelectorLineEndingAttributeTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "ChangeAwareReleaseTests",
+        "NightlyRunParityTests",
+        "NightlyScriptsTests",
+        "RcStoppedRunSeedTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePlatformTests",
+        "ReleaseGateRunTests",
+        "ReleaseSelectionHopSeedTests",
+        "SelectorLineEndingAttributeTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "ChangeAwareReleaseTests",
+        "NightlyRunParityTests",
+        "NightlyScriptsTests",
+        "RcStoppedRunSeedTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePlatformTests",
+        "ReleaseGateRunTests",
+        "ReleaseSelectionHopSeedTests",
+        "SelectorLineEndingAttributeTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
+      "classes": [
+        "AntiphonCliLauncherTests",
+        "ChangeAwareReleaseTests",
+        "NightlyRunParityTests",
+        "NightlyScriptsTests",
+        "RcStoppedRunSeedTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePlatformTests",
+        "ReleaseGateRunTests",
+        "ReleaseSelectionHopSeedTests",
+        "SelectorLineEndingAttributeTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/Baseline.cs",
       "classes": [
         "ReleaseImpactScriptTests"
@@ -4162,14 +4262,7 @@
     {
       "path": "scripts/lib/checkpoint-file-reader.ps1",
       "classes": [
-        "CheckpointReadStallWitnessTests",
-        "SelectorLineEndingAttributeTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/checkpoint-process-runner.ps1",
-      "classes": [
-        "SelectorLineEndingAttributeTests"
+        "CheckpointReadStallWitnessTests"
       ]
     },
     {
@@ -4193,7 +4286,7 @@
       "path": "scripts/lib/nightly-common.ps1",
       "classes": [
         "LiveLaneCensusTests",
-        "SelectorLineEndingAttributeTests"
+        "TestSelectionDependencyTests"
       ]
     },
     {
@@ -4201,7 +4294,6 @@
       "classes": [
         "ImpactedClassesSelectorTests",
         "ReleaseImpactScriptTests",
-        "SelectorLineEndingAttributeTests",
         "SourceRevisionStampContractTests"
       ]
     },
@@ -4217,6 +4309,12 @@
       "classes": [
         "IncrementalSelectionSoundnessTests",
         "RcInputOwnersMapTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/rc-project-selection.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -4241,22 +4339,6 @@
       "path": "scripts/lib/runner-operator-token.ps1",
       "classes": [
         "HostJqFixtureClosureTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/test-selection.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "ChangeAwareReleaseTests",
-        "NightlyRunParityTests",
-        "NightlyScriptsTests",
-        "RcStoppedRunSeedTests",
-        "ReleaseGateFollowupTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseGateRunTests",
-        "ReleaseImpactScriptTests",
-        "ReleaseSelectionHopSeedTests",
-        "SelectorLineEndingAttributeTests"
       ]
     },
     {
@@ -4285,7 +4367,8 @@
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
-        "ReleaseSelectionHopSeedTests"
+        "ReleaseSelectionHopSeedTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -4361,21 +4444,6 @@
       "path": "scripts/runner-slots.ps1",
       "classes": [
         "DockerStackContractTests"
-      ]
-    },
-    {
-      "path": "scripts/select-test-rosters.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "ChangeAwareReleaseTests",
-        "NightlyRunParityTests",
-        "NightlyScriptsTests",
-        "RcStoppedRunSeedTests",
-        "ReleaseGateFollowupTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseGateRunTests",
-        "ReleaseSelectionHopSeedTests",
-        "SelectorLineEndingAttributeTests"
       ]
     },
     {
@@ -4483,6 +4551,12 @@
       ]
     },
     {
+      "path": "scripts/test-rc-project-selection.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
+      ]
+    },
+    {
       "path": "scripts/test-release-gate.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
@@ -4490,12 +4564,6 @@
     },
     {
       "path": "scripts/test-release-selection-cli.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-test-selection.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
       ]
@@ -16898,7 +16966,11 @@
         "OutputDistillationApplyRaceTests",
         "OutputDistillationDeliveryTests",
         "ReleaseImpactRuntimeTests",
-        "ScopeResolverAreaTests"
+        "ScopeResolverAreaTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -17440,7 +17512,8 @@
         "GrokRulesHerdrAcceptanceTests",
         "GrokRulesNativeReadWireTests",
         "HerdrGrokNativeSessionLiveTests",
-        "SpecialistToolPolicyTests"
+        "SpecialistToolPolicyTests",
+        "TestSelectionDependencyTests"
       ]
     },
     {
@@ -18161,6 +18234,15 @@
       "classes": [
         "EfInboxReceiptStoreTests",
         "InboxConversationMigrationTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Messaging.Service/Program.cs",
+      "classes": [
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -21163,6 +21245,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Checkpoints.FilterHost/FilterHostTests.cs",
+      "classes": [
+        "TestSelectionDependencyTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj",
       "classes": [
         "HostCleanupCheckpointExtractionTests"
@@ -21477,7 +21565,8 @@
         "FakeServerPortTests",
         "KafkaOutboundPayloadTests",
         "SlackChannelAdapterTests",
-        "SlackResilienceTests"
+        "SlackResilienceTests",
+        "TestSelectionDependencyTests"
       ]
     },
     {
@@ -21508,7 +21597,8 @@
       "path": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
       "classes": [
         "IncrementalSelectionSoundnessTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "TestSelectionCatalogTests"
       ]
     },
     {
@@ -22271,6 +22361,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj",
+      "classes": [
+        "TestSelectionCatalogTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/AgentTui/AgentTuiLaunchResolverTests.cs",
       "classes": [
         "CodexCliObservationTests",
@@ -22359,7 +22455,11 @@
       "path": "tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs",
       "classes": [
         "ChangeAwareReleaseBudgetTests",
-        "ChangeAwareReleaseTests"
+        "ChangeAwareReleaseTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -22620,7 +22720,8 @@
         "RcInputOwnersMapTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseImpactRuntimeTests",
-        "ReleaseImpactScriptTests"
+        "ReleaseImpactScriptTests",
+        "TestSelectionCatalogTests"
       ]
     },
     {
@@ -25337,7 +25438,10 @@
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
         "NightlyTestsParityTests",
-        "NightlyTestsRunTests"
+        "NightlyTestsRunTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -25364,7 +25468,7 @@
         "RcFailureHistoryTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateRunTests",
-        "ReleaseSelectionHopSeedTests",
+        "TestSelectionExecutionTests",
         "TestTimingReportTests",
         "TestTimingsTwinTests",
         "ToolchainFloorWarningTests"
@@ -25428,7 +25532,8 @@
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
-        "ReleaseSelectionHopSeedTests"
+        "ReleaseSelectionHopSeedTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -25686,6 +25791,7 @@
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
         "NightlyVerificationContractTests",
+        "QualificationEtaTests",
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
         "ReleaseBranchModelGateTests",
@@ -25693,8 +25799,7 @@
         "ReleaseSelectionCliTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
-        "ScriptHarnessProcessContractTests",
-        "TestSelectionCatalogTests"
+        "ScriptHarnessProcessContractTests"
       ]
     },
     {
@@ -25782,6 +25887,14 @@
       "path": "tests/Antiphon.Tests/Scripts/TaskCeilingScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs",
+      "classes": [
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests"
       ]
     },
     {
@@ -28567,6 +28680,10 @@
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests",
         "TimeoutAuditTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
@@ -28583,7 +28700,11 @@
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
-        "ReleaseSelectionHopSeedTests"
+        "ReleaseSelectionHopSeedTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -28616,6 +28737,15 @@
       "path": "tools/Antiphon.LandGraphAudit/Program.cs",
       "classes": [
         "LandAuditToolResolverTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.MarkdownPdf/MarkdownPdfRenderer.cs",
+      "classes": [
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
