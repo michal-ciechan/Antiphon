@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 86,
+      "classes": 85,
       "reason": "cap",
-      "owed": 61,
+      "owed": 60,
       "first": [
         "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -1694,9 +1694,9 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 66,
+      "classes": 65,
       "reason": "cap",
-      "owed": 41,
+      "owed": 40,
       "first": [
         "LandNonCodeSkipTests",
         "RunnerSettlementSyncTests",
@@ -16023,6 +16023,7 @@
         "C0824RefOnlySyncTests",
         "RefOnlyProductionCompositionTests",
         "ReviewEvidenceRebindingTests",
+        "ReviewEvidenceResettlementTests",
         "RunnerSettlementSyncTests",
         "RunnerSyncLeaseFairnessTests",
         "ServerImagePushCredentialTests",

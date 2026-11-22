@@ -46,7 +46,7 @@ public sealed class ReviewEvidenceResettlementTests
         try
         {
             var timeout = await Should.ThrowAsync<TimeoutException>(() =>
-                AwaitGitAsync(child, nameof(LandingGit.RunAsync), TimeSpan.FromSeconds(2))
+                AwaitGitAsync(child, nameof(git.RunAsync), TimeSpan.FromSeconds(2))
                     .WaitAsync(TimeSpan.FromSeconds(8), ct));
             File.Exists(Path.Combine(directory.FullName, "ready")).ShouldBeTrue();
             git.Root.ShouldNotBeNull().HasExited.ShouldBeTrue("the fake Git root exited");
@@ -62,7 +62,7 @@ public sealed class ReviewEvidenceResettlementTests
         }
     }
 
-    private sealed class PipeHolderGit : LandingGit
+    private sealed class PipeHolderGit : TaskProgressGit
     {
         public Process? Root { get; private set; }
 
