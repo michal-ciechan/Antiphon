@@ -165,6 +165,54 @@ public class AgentReportStoreTests
     }
 
     [Test]
+    public async Task Concurrent_publication_preserves_the_verified_winner_with_open_readers()
+    {
+        await using var w = new ReportWorkspace();
+        await w.InitializeAsync();
+        var task = w.Task("exact full report é🙂");
+        var path = w.Expected(task);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var staged = w.Store();
+        staged.BeforePublishAsync = async ct =>
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        };
+        var pending = staged.StoreAsync(task, CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            File.Exists(path).ShouldBeFalse();
+
+            var publisher = w.Store();
+            var winner = await publisher.StoreAsync(task, CancellationToken.None);
+            winner.Path.ShouldBe(path, winner.Reason);
+            // Mark the verified file so replacement with identical bytes is observable on Linux too.
+            var published = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(path, published);
+            await using var reader = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.Read | FileShare.Delete);
+
+            release.TrySetResult();
+            var second = await pending;
+            second.Path.ShouldBe(path, second.Reason);
+            File.GetLastWriteTimeUtc(path).ShouldBe(published, "the staged writer must reuse the verified file");
+            var expected = Encoding.UTF8.GetBytes(task.Result!);
+            var bytes = new byte[expected.Length];
+            await reader.ReadExactlyAsync(bytes);
+            bytes.ShouldBe(expected);
+            (await publisher.IsUsableAsync(path, task.Result!, CancellationToken.None)).ShouldBeTrue();
+            Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await pending;
+        }
+    }
+
+    [Test]
     public async Task Paths_over_the_persisted_limit_are_unavailable()
     {
         await using var w = new ReportWorkspace(); await w.InitializeAsync();
