@@ -1,0 +1,47 @@
+{
+  "source": "Built for spec 6.2 (ABF-1): a reviewer quotes a next-stage example in a fenced finding body and forgets its own block. The legacy scan skips the document, so no block is found; PipelineHandoff, which reads the whole text and does not track fences, reads next: plan.",
+  "envelope": "report",
+  "legacy": {
+    "abf": 1,
+    "type": "legacy",
+    "version": null,
+    "records": [],
+    "diagnostics": []
+  },
+  "values": {
+    "next-stage": {
+      "found": false,
+      "kind": null,
+      "rawToken": null,
+      "handoff": null,
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  },
+  "currentParsers": {
+    "next-stage": {
+      "found": true,
+      "kind": "plan",
+      "rawToken": "plan",
+      "handoff": "replan the slice",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": false,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": null,
+      "scope": "Unknown",
+      "reviewedSourceClean": null
+    }
+  }
+}

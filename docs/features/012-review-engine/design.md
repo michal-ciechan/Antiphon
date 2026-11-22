@@ -1,7 +1,9 @@
 # Review engine (design)
 
-Status: draft for operator review, 2026-11-21. No card is bound yet; phase cards are filed after this
-review. Companion spec: [Antiphon Block Format v1](../../specs/block-format/v1.md).
+Status: draft for operator review, 2026-11-22, with the operator's second- and third-round
+decisions (D-18 to D-39). No card is bound yet. Phase cards are filed only once card claims exist (section 22, D-36).
+Companion spec: [Antiphon Block Format v1](../../specs/block-format/v1.md) (a draft: breaking changes
+are allowed until v1 is declared settled).
 
 Scope: a server-run, multi-stage code review for pull requests and commit ranges in **any registered
 repository**, Antiphon included. Cheap models categorise the change and choose which checks apply.
@@ -66,13 +68,21 @@ The operator gave this direction over one brainstorming session:
 - Enterprise day 1: Jev through the company LiteLLM proxy at `/v1/systemone`, using the existing
   proxy key.
 
+Later the same day the operator settled a second round of points: base drift, cost display, blockers
+and trust, gates and code ownership, where settings live, graph sections, the ABF draft status, Jev at
+work, events, deployment, promotion, prompt sources, wide-scope dismissals, bypass categories and card
+claims. They are D-18 to D-36. On 2026-11-22 the operator answered the open points that followed
+(D-37 to D-39, and changes to D-2, D-28, D-33 and D-35). Where one refines a line above (blocker
+dismissal, prompt layers), the D-n row wins.
+
 ## Summary
 
 1. **One engine, several workflows.** A graph executor stored in Postgres runs workflows defined in
    `.antiphon/review/workflow.yaml`. Node kinds are code, decision, completion, agent, fan-out, join,
    gate and wait. Every cycle passes through a gate or wait or is closed by a loop edge with an
    iteration limit, and every loop edge has one (3.2). The engine runs these workflows: PR review, recheck (the same graph in delta
-   mode), comment handling, seeding, branch updates and author resolution.
+   mode), comment handling, seeding, branch updates and author resolution. Named `sections` group
+   nodes into collapsible blocks in the UI (3.3).
 2. **Pluggable edges.** `ICodeHost` covers PRs, threads and statuses; GitHub with a PAT is v1, plus a
    local-git host. `IDecisionModel` covers typed choice, score and yes/no questions with
    probabilities, in Jev's shape. `ICompletionModel` covers text. Each provider runs over a
@@ -92,48 +102,86 @@ The operator gave this direction over one brainstorming session:
    - a `checks` record accounts for every assigned check;
    - a `context` record lists files the reviewer opened and files it found missing.
 6. **Rounds.** The posting bar rises each round (severity × confidence), and nits appear only in
-   round 1. Bypass categories (`security`, `data-loss`) ignore the bar. After 3 bot-only rounds a
-   human gate opens. A clean round goes to bot approval or human approval, as the categorisation
-   decides.
+   round 1. Bypass categories (a configurable list; `security` and `data-loss` on by default) ignore
+   the bar, can't be conceded by the adjudicator alone, and route to the owning team's queue (another
+   team, such as a security group, is an override). After 3 bot-only rounds a human gate opens. A clean round goes to bot approval
+   or human approval, as the categorisation decides.
 7. **Humans.**
    - The Antiphon review UI posts back to the PR with attribution.
-   - Queues exist per user, per team and overall. Routing uses CODEOWNERS, then random assignment
-     among opted-in members other than the author.
+   - Queues exist per user, per team and overall. Routing uses code ownership (many-to-many, from
+     CODEOWNERS), then random assignment among eligible members other than the author.
    - Findings go to the resolved author.
+   - The bot never approves while a blocker is open. A human clears a blocker with a reason; the
+     clear counts alone only when that person's **trust score** for the scope is at or above the
+     threshold, otherwise a second trusted human confirms (11.6, 11.8).
+   - Trust scores are kept per user per scope, recomputed nightly, adjustable by authorised people
+     with an audit trail, and gate a fixed list of actions (11.8, 11.9).
    - Stats reward outcomes, not volume.
-8. **Checks and prompts are files.**
+8. **Checks, prompts, workflow and policy are files; scoring settings are not.**
    - One markdown file per check under `.antiphon/review/checks/`. `# @model:` sections go to the
      model; `# @humans:` and `# @maintainers:` sections never do.
-   - Prompts come in layers (common repos → team → org → repo), recorded in a lock file. An agent
-     merges real conflicts, and the result arrives as a PR.
+   - Prompts come in layers, configured per instance and resolved company → team → instance → repo.
+     The company and team layers are folders in the instance-wide `.antiphon` unless a separate
+     source repo is set. Layers are recorded in a lock file. An agent merges real conflicts, and the
+     result arrives as a PR (section 10).
+   - Leaderboard and impact weights, trust weights and trust thresholds live in the database:
+     instance defaults plus team overrides, with revision history (D-26).
 9. **Learning.** Signals are dismissed, accepted, ignored and missed. They become proposal PRs at
-   the narrowest scope, promoted to team, org or language when a pattern repeats. The same signals
-   calibrate the fallback models' confidence and tune related-file sources.
-10. **Phasing.** The first slice (P1) delivers Jev HTTP (enterprise) plus standing seats (home), the
-    GitHub PAT host, one reviewer, status checks and a replay evaluation. The rest follows over P2–P4
-    (section 20).
+   the narrowest scope. A pattern in 2 repos of a team is promoted by PR to the team layer, and one
+   in 2 teams to the company layer. A dismissal at path, repo or team scope always shows a
+   preview to confirm first. The same signals calibrate the fallback models' confidence and tune
+   related-file sources.
+10. **Cost** is shown in dollars first: actual cost for Jev and other API calls, and an
+    API-equivalent estimate for seats. Subscription quota appears only in a tooltip (section 15).
+11. **Events and deployment.** Enterprise runs on Kubernetes and takes every GitHub webhook event.
+    Home has no public webhook, so it polls, and a manual Refresh is available (8.5, 16.2).
+12. **Phasing.** The first slice (P1) delivers Jev HTTP (enterprise) plus standing seats (home), the
+    GitHub PAT host with webhooks, polling and Refresh, one reviewer, status checks and a replay
+    evaluation. The rest follows over P2–P4 (section 20).
 
 ## Decisions
 
 | # | Decision |
 |---|---|
 | D-1 | The server coordinates every workflow. Agents do the judgement work inside nodes and never move the graph. |
-| D-2 | Workflows may be cyclic. Every cycle must pass through a `gate` or `wait` node or be closed by a loop edge with an iteration limit, and each loop edge has an iteration limit (3.2). |
+| D-2 | Workflows may be cyclic. A cycle is valid if it passes through a `gate`, a `wait`, or a loop edge with an iteration limit, and each loop edge has an iteration limit. Exceeding a limit always routes to a gate (3.2; OQ-11, accepted 2026-11-22). |
 | D-3 | Code hosts sit behind `ICodeHost`. v1 has GitHub with a personal access token for a machine user, plus local git. |
 | D-4 | Typed decisions use `IDecisionModel` (Jev shape) and text uses `ICompletionModel`. The default decision chain is Jev → Luna → Haiku → Grok Low. |
 | D-5 | Transports are HTTP and standing seat in P1. The one-shot CLI follows later. |
-| D-6 | Machine-to-machine text uses ABF (`docs/specs/block-format/v1.md`), and is stored as canonical JSON. |
+| D-6 | Machine-to-machine text uses ABF (`docs/specs/block-format/v1.md`), and is stored as canonical JSON. ABF details are in D-28. |
 | D-7 | A check is a markdown file with `# @audience: Name` section markers. The prompt hash covers `@model` sections only. |
 | D-8 | Review config is read from the **base** branch, never from the PR head. |
 | D-9 | Findings post straight to the PR. With no PR, they appear in an Antiphon review gate. There is no triage-first mode. |
 | D-10 | Status goes back through GitHub commit statuses, `antiphon/review` and `antiphon/approval`, because a PAT cannot create check runs. |
-| D-11 | Who may dismiss a blocker is configurable. The default is the author (high trust). |
+| D-11 | Who may clear a blocker is configurable (`dismiss.blocker`). The default is still the author, but the clear is now **trust-gated** (D-21): it counts alone only when the person is at or above the `clearBlocker` threshold. |
 | D-12 | After approval the merge is left to the author by default. Auto-merge and merge are per-repo settings. |
 | D-13 | A human can always send a PR to another round, with an optional steer prompt. |
 | D-14 | v1 runners are long-lived custom images that phone home. Joining needs a shared secret, then the server issues each runner its own token automatically. |
 | D-15 | Teams, orgs and memberships come from GitHub into Antiphon entities, reconciled by webhook or daily. Antiphon overrides win. |
 | D-16 | The engine listens to every PR in scope. It acts on its own threads, mentions, issues raised by humans, and repo questions in human threads (after a grace period). |
 | D-17 | `@antiphon fix this` (pushing fixes from a comment) is deferred to P4. |
+| D-18 | `baseDrift.affectedThreshold` is a policy setting, default 0.35. A probability at or above it that the base changes affect the PR means `affected`. The low default leans towards re-review (4.13). |
+| D-19 | When the base moves while `await-fixes` waits, the PR branch is not updated. The drift is recorded, the drift check re-runs on the author's next push, and the branch is updated only after approval or when the author opts in (4.2, 4.13). |
+| D-20 | Cost is shown in dollars first. Seat cost is an API-equivalent estimate (transcript tokens × the price table, as `AgentTask.CostUsd` is computed today). Jev and other API calls use their actual cost. Subscription quota % appears only in a tooltip. Under $1 shows as rounded cents ("5¢"); $1 or more as rounded dollars ("$4") (section 15). |
+| D-21 | The bot never approves while a blocker is open. A human clears a blocker by marking it "not a blocker" or "accepted risk", with a reason. The clear counts alone only when the person's trust score for the scope is at or above the `clearBlocker` threshold; otherwise a second human at or above it must confirm. With every blocker cleared, the bot may approve when everything else is clean (11.6). |
+| D-22 | Trust scores are kept per user per scope (repo, team, area) in the database and recomputed nightly. The person and their team lead can see them. New users start at a neutral score, which is above the thresholds in high-trust instances (an instance setting). Authorised people (team lead or maintainer, configurable) can adjust a score per scope by an offset or a pinned value, with a reason, an optional expiry and an audit trail. Nobody adjusts their own score. Raw and effective values are shown side by side (11.8). |
+| D-23 | Trust thresholds gate a fixed list of actions, each with a set behaviour below the threshold: a second person is needed, the action becomes a proposal, or the person can't be assigned. Thresholds are database settings like the weights (11.9). |
+| D-24 | The author can't decide their own gate, unless the owning team has one member and there are no other code owners. A per-repo override (`gates.authorMayDecide: always`) allows it (11.10). |
+| D-25 | Code ownership is many-to-many. A path can have several owners (teams or users), and a user can belong to several teams (11.4, section 12). |
+| D-26 | Scoring settings live in the database: leaderboard and impact weights, trust weights and thresholds. They are instance defaults plus team overrides, edited in a settings UI with revision history, like the dispatch-concurrency settings (CARD-0505). Files hold only config that travels with a repo: checks, prompts, workflow and policy. |
+| D-27 | `workflow.yaml` has named `sections` (for example Intake, Review, Decide, Branch maintenance). The UI shows them as collapsible groups that expand on click. A collapsed fan-out shows as "reviewers ×4" and also expands (3.3, section 17). |
+| D-28 | ABF is a **draft**: breaking changes are allowed until v1 is declared settled. The legacy scan does not look inside ABF documents. The two report-block parsers (`PipelineHandoff.cs`, `ReviewEvidence.cs`) are replaced by the ABF parser in P0, before the P1 shadow run, so the two readings never diverge in use. |
+| D-29 | The enterprise Jev default is `{proxy}/v1/systemone` on the latest LiteLLM, with a request shape identical to TypeSafe's. The response field names and description fields are settled by the first live call from work (OQ-2, OQ-3). |
+| D-30 | Enterprise takes **every** GitHub webhook event. The engine acts on a listed set; the rest are stored or ignored. An install without a public webhook (home) polls at a configurable interval (default 2 minutes), and a manual **Refresh** is available in the UI and the API (8.5). |
+| D-31 | Enterprise runs on Kubernetes: the Antiphon server container with a Postgres sidecar, and agent runner containers as sidecars, possibly one instance per team (to be confirmed). Home runs on the desktop and server2, moving fully to Docker on server2 (CARD-1744) (16.2). |
+| D-32 | Promotion thresholds: the same adjustment in 2 repos of a team goes by PR to the team layer; in 2 teams, to the company layer. Promotion PRs target those layers from day 1. A language or framework facet layer comes later (section 13). |
+| D-33 | Prompt sources are configured per instance. v1 models the full layer stack, resolved **company → team → instance → repo** (lowest to highest). The instance layer is the instance-wide `.antiphon` (instance-, graph- and workflow-wide). Team and Org entities carry their layer source: by default a folder inside the instance-wide `.antiphon` (`company/`, `teams/<team>/`), unless a separate source repo is configured. Language and framework facets come later (section 10). This replaces the two-layer v1 of 2026-11-21. |
+| D-34 | A dismissal at path, repo or team scope always shows a confirmation step that previews exactly what will happen, with an optional steer prompt. The learn PR and the original PR are linked both ways. Team scope queues a proposal until the 2-repo rule is met (11.7). |
+| D-35 | Bypass categories are a configurable list, with `security` and `data-loss` on by default. They post in any round, can't be conceded by the adjudicator alone, and route to `bypassRouteTo`, which defaults to the **owning team** (the PR's own). Another team, such as a security group, is an override (section 5). |
+| D-36 | This design's phase cards are not filed until the card-claim feature exists (section 22). |
+| D-37 | `base-moved` with `keepUpToDate: true` compares the PR branch's merge-base with the base tip, so a branch that was already behind at review time is caught too. It emits `behind` or `moved` → `base-drift` → `update-branch`. With `keepUpToDate: false` it compares the reviewed base with the base tip (drift only). Rejected: the code host's "behind" status (provider-dependent, an extra API call, and it lags), and always updating (needless pushes, CI runs and approval churn) (4.12; OQ-13, accepted 2026-11-22). |
+| D-38 | `base-drift[affected]` re-reviews just the change, in delta mode, and the approval is withdrawn until that re-review passes (4.13; OQ-12, accepted 2026-11-22). |
+| D-39 | Trust scores run 0–100. New users start at 60 in a high-trust instance and 40 otherwise. Thresholds default to about 50. `trust.holdDays` defaults to 90 (11.8, 11.9; OQ-14, accepted 2026-11-22). |
 
 ## 1. What exists and what is reused
 
@@ -151,7 +199,9 @@ The operator gave this direction over one brainstorming session:
 | Prompts | `server/Bundles/*.md`, stamped `[bundle:key vHASH]` (`InstructionBundles.cs:11-33`). | Multi-source layering. `.antiphon/` is wholly gitignored (`.gitignore:53-55`), and task footprints skip it (`AgentTaskReplyService.cs:5047`, `DeliverableBundleService.cs:521`). |
 | Runners | Phone-home runners, `PhoneHome__Capacity` (`docker-compose.server2-runner.yml:44,64`), a per-id config map (`PhoneHomeRunnerSettings.cs:31,194,388-395`), second-runner recipe (`docs/docker-stack.md:2250-2280`). One `RunnerRepository` per runner (`:21-22`). | Shared-secret enrollment, capability labels, multi-repo mirrors, a custom image contract. |
 | Projects | `Project` has GitRepositoryUrl, LocalRepositoryPath, BaseBranch (`server/Domain/Entities/Project.cs:11-70`). | Team, org, membership and identity entities. Only `User` exists. |
-| Usage | Per-task tokens and cost (`AgentTask.cs:519-536`, `DelegationUsageRollup.cs:22`). `/api/agent-tasks/summary`, `/api/audit/cost-summary`. | A ledger for direct calls; grouping by model. |
+| Usage | Per-task tokens and cost (`AgentTask.cs:519-536`, `DelegationUsageRollup.cs:22`). `AgentTask.CostUsd` is an API-equivalent estimate: token counters × the `Delegation:Pricing` rates (`DelegationCost.Estimate`, `PricingVersion` 2). `/api/agent-tasks/summary`, `/api/audit/cost-summary`, quota samples at `GET /api/subscription-usage`. | A ledger for direct calls with a cost basis (actual or estimate); grouping by model; the dollar display rules (D-20). |
+| Revisioned settings | `DispatchConcurrencySettings` and `DispatchConcurrencyRevision` (CARD-0505, `server/Domain/Entities/DispatchConcurrencySettings.cs`): a global row plus per-scope overrides, each change a full snapshot with reason and provenance, served at `/api/dispatch-concurrency`. | The same pattern for scoring settings (instance + team), plus a settings UI (D-26). |
+| Card ownership | `Card.OwnerSessionId` means the card spawned and owns an agent session (`docs/agent-card-lifecycle.md:113,154`). It is not a claim. | A card claim (section 22). |
 | UI | Mantine 8, TanStack Query, SignalR invalidation (`client/src/hooks/useSignalRInvalidation.ts:28`), stage strips, attention feed (`AttentionEndpoints.cs:19`). Only `mermaid` for graphs. | Review pages, a graph editor (`@xyflow/react` + `elkjs`), queues, stats. |
 
 ## 2. Architecture
@@ -190,7 +240,8 @@ The operator gave this direction over one brainstorming session:
 
 The graph may contain cycles. Saving a revision fails unless **every cycle contains at least one
 `gate` or `wait` node, or is closed by a back edge with `maxIterations`**. Each back edge has
-`maxIterations`; going over it routes to a configured gate. A run is long-lived (one per PR, kept
+`maxIterations`; going over it **always** routes to a gate (D-2). An over-limit target that is not a
+gate fails validation. A run is long-lived (one per PR, kept
 open until merge or close). Each pass round a loop is a numbered **iteration** with its own node
 executions.
 
@@ -223,10 +274,24 @@ executions.
   description creates a new revision like any other edit, but the description is excluded from the
   node's inputs hash, so a description-only edit does not invalidate cached node executions
   (section 3.4).
+- **Sections** (D-27) are named groups of nodes, for example Intake, Review, Decide and Branch
+  maintenance. The run page and the workflow editor draw each section as a collapsible group. A
+  collapsed section is one box with a status roll-up ("Review · 2/4 running"), and a click expands
+  it. Edges into or out of a collapsed section attach to its box. A collapsed fan-out shows as one
+  node with its child count for the iteration ("reviewers ×4"), and also expands on click.
+  - A node is in at most one section. Nodes in no section are drawn ungrouped.
+  - Sections are presentation only. Like descriptions, they are excluded from every inputs hash.
+  - Whether a section starts collapsed is set per section (`collapsed: true`). After that, each
+    viewer's expand and collapse choices are kept per viewer.
 
 ```yaml
 workflow: pr-review
 version: 1
+sections:
+  intake:  { title: Intake, nodes: [intake, delta, categorise, select, group, packs] }
+  review:  { title: Review, nodes: [review, reviewer, collate, verify, publish], collapsed: true }
+  decide:  { title: Decide, nodes: [route, await-fixes, record-drift, needs-human-approval, bot-approve, human-approve, human-review] }
+  branch:  { title: Branch maintenance, nodes: [base-moved, base-drift, update-branch, await-merge], collapsed: true }
 nodes:
   intake:        { kind: code, run: Intake }
   delta:         { kind: code, run: Delta }            # full on first iteration, delta afterwards
@@ -240,14 +305,15 @@ nodes:
   verify:        { kind: completion, run: VerifyFindings, chain: completions-cheap }
   publish:       { kind: code, run: Publish }          # PR comments, summary, statuses
   route:         { kind: code, run: RouteAfterRound }  # outputs: bot-round-limit | findings | clean
-  await-fixes:   { kind: wait, on: [push, recheck, close, base-moved], timeout: 14d, description: "Parks the run, with no seat held, until the author pushes fixes or someone asks for a recheck. Times out after 14 days." }
-  base-drift:    { kind: decision, run: BaseDriftCheck, chain: decisions-default }  # outputs: affected | unaffected-approved | unaffected-open
+  await-fixes:   { kind: wait, on: [push, recheck, close, base-moved, update-requested], timeout: 14d, description: "Parks the run, with no seat held, until the author pushes fixes or someone asks for a recheck. Times out after 14 days." }
+  record-drift:  { kind: code, run: RecordBaseDrift, description: "Notes that the base moved while fixes are awaited. No model call, no re-review and no branch update; the next push re-runs the drift check." }
+  base-drift:    { kind: decision, run: BaseDriftCheck, chain: decisions-default }  # outputs: affected | unaffected; approved PRs only (D-19)
   needs-human-approval: { kind: code, run: NeedsHumanApproval }  # outputs: yes | no
   bot-approve:   { kind: code, run: BotApprove }
   human-approve: { kind: gate, queue: owning-team, decisions: [approve, another-round, close] }
   human-review:  { kind: gate, queue: owning-team, decisions: [approve, another-round, close] }
-  base-moved:    { kind: code, run: CheckBaseMoved }   # outputs: unchanged | moved; approval's base vs base tip, no model
-  update-branch: { kind: code, run: UpdateBranch }     # after base-drift only; rebase or merge base in, AI conflict resolution
+  base-moved:    { kind: code, run: CheckBaseMoved }   # outputs: unchanged | moved | behind; no model (D-37)
+  update-branch: { kind: code, run: UpdateBranch }     # outputs: approved | open; after base-drift or an author opt-in; rebase or merge base in, AI conflict resolution
   await-merge:   { kind: wait, on: [merge, close, push, base-moved], description: "Holds the approved PR until it's merged or closed. Keeps the approval while only the base branch moves." }
 edges:
   - intake -> delta -> categorise -> select -> group -> packs -> review -> collate -> verify -> publish -> route
@@ -261,21 +327,24 @@ edges:
   - human-review[another-round] -> intake
   - human-review[approve] -> base-moved
   - base-moved[unchanged] -> await-merge        # no update, no model call
-  - base-moved[moved] -> base-drift
-  - update-branch -> await-merge
-  - await-fixes[push|recheck] -> intake         # back edge, maxIterations: 20
+  - base-moved[moved|behind] -> base-drift
+  - update-branch[approved] -> await-merge
+  - update-branch[open] -> await-fixes          # after an author opt-in; its own push is base-only
+  - await-fixes[push|recheck] -> intake         # back edge, maxIterations: 20; delta re-runs the drift check if a drift is recorded
   - await-merge[push] -> intake                 # back edge, maxIterations: 20; revokes the approval
-  - await-fixes[base-moved] -> base-drift
+  - await-fixes[base-moved] -> record-drift     # D-19: no branch update while fixes are awaited
+  - record-drift -> await-fixes
+  - await-fixes[update-requested] -> update-branch   # the author opts in (D-19)
   - await-merge[base-moved] -> base-drift
   - base-drift[affected] -> intake              # back edge, maxIterations: 10; carries a rebase steer
-  - base-drift[unaffected-approved] -> update-branch   # approval carried forward (patch ids unchanged)
-  - base-drift[unaffected-open] -> await-fixes
+  - base-drift[unaffected] -> update-branch     # approval carried forward (patch ids unchanged)
 ```
 
 ### 3.4 Execution
 
 - Node executions are rows (`node_execution`): status, iteration, inputs hash, outputs (canonical
-  JSON), model/provider/transport, tokens, cost, timings.
+  JSON), model/provider/transport, tokens, cost with its basis (`actual` or `api-equivalent`, D-20),
+  timings.
 - The executor is a server service with leases, not Hangfire, which runs a single worker
   (`server/Program.cs:1021`).
 - Agent nodes dispatch through the existing delegation path onto runner seats.
@@ -292,7 +361,7 @@ edges:
 | recheck | push, `/recheck`, UI button, `await-fixes`, `base-drift[affected]` | the same graph; `delta` limits work to the change since the last reviewed SHA (4.2) |
 | `comment` | a human response: PR comment, thread reply, review submission, gate decision | section 6 |
 | `seed` | manual or scheduled per source | section 14 |
-| `update-branch` | the base moved under an approved PR (`base-moved` after the approval, or `await-merge`) and `base-drift` says it does not affect the PR; conflicts | sections 4.12, 4.13 |
+| `update-branch` | the base moved under an approved PR (`base-moved` after the approval, or `await-merge`) and `base-drift` says it does not affect the PR; the author opts in while fixes are awaited (D-19); conflicts | sections 4.12, 4.13 |
 | `resolve-author` | intake, when the PR author is a service account | section 11.5 |
 
 ### 3.6 Artifacts
@@ -320,12 +389,13 @@ edges:
 | Verified findings | ABF | `verify` | publish, route | every finding kept or disproved; bypass findings not dropped alone | `prompts/verify.md`; provider chain settings |
 | Posted review | code-host object | `publish` | route, human-review | only findings above the bar inline; every posted finding linked to its thread | `policy.yaml` `rounds.post`, `handles`; `prompts/summary.md` |
 | Round route / human-approval verdict | JSON record | `route` / `needs-human-approval` | await-fixes, needs-human-approval, gates | exactly one output; every fired rule cites its evidence | `policy.yaml` `rounds`, `approval` |
-| Gate decision | event | `human-approve`, `human-review` | intake (with the steer), base-moved | decider authorised and not the author; decision allowed by the gate | `workflow.yaml` gate nodes |
-| Wait event | event | `await-fixes`, `await-merge` | intake, base-drift | back edge under `maxIterations` | `workflow.yaml` `await-fixes`, `await-merge` |
-| Base-drift assessment | decision | `base-drift` | intake (with the rebase steer), update-branch, await-fixes | code-only prefilter before any model call; an affected verdict lists the overlapping commits and files | `workflow.yaml` `base-drift`; `.antiphon/review/questions/base-drift.yaml` |
-| Approval record | code-host object | `bot-approve`, gates | base-moved, update-branch, await-merge | head equals the reviewed SHA; records the base it was reviewed against | `policy.yaml` `approval.autoApproveRequires` |
-| Base-tip check | JSON record | `base-moved` | base-drift, await-merge | base ref fetched after the approval; exactly one output, `unchanged` only when the approved base equals the tip | `workflow.yaml` `base-moved` |
-| Branch update | event | `update-branch` | await-merge | approval carried only when `base-drift` said unaffected and patch ids are unchanged; `not-needed` only when `keepUpToDate` is off and the head merges cleanly | `policy.yaml` `afterApproval` |
+| Gate decision | event | `human-approve`, `human-review` | intake (with the steer), base-moved | decider authorised, at or above the gate's trust threshold (11.9), and not the author unless 11.10 allows it; decision allowed by the gate; a steer from below `acceptSteer` held for review | `workflow.yaml` gate nodes; `policy.yaml` `gates` |
+| Wait event | event | `await-fixes`, `await-merge` | intake, record-drift, base-drift, update-branch | back edge under `maxIterations` | `workflow.yaml` `await-fixes`, `await-merge` |
+| Drift record | JSON record | `record-drift` | delta | base range and code-only overlap stored; no model call; branch untouched | `workflow.yaml` `record-drift` |
+| Base-drift assessment | decision | `base-drift`, `delta` (recorded drift) | intake (with the rebase steer), packs, update-branch | code-only prefilter before any model call; verdict against `baseDrift.affectedThreshold`; an affected verdict lists the overlapping commits and files | `workflow.yaml` `base-drift`; `policy.yaml` `baseDrift`; `.antiphon/review/questions/base-drift.yaml` |
+| Approval record | code-host object | `bot-approve`, gates | base-moved, update-branch, await-merge | head equals the reviewed SHA; records the base it was reviewed against; no open blocker for a bot approval (D-21) | `policy.yaml` `approval.autoApproveRequires` |
+| Base-tip check | JSON record | `base-moved` | base-drift, await-merge | base ref fetched after the approval; exactly one output; `unchanged` only when the compared base (the branch's merge-base with `keepUpToDate`, else the reviewed base) equals the tip; `behind` only with `keepUpToDate` | `workflow.yaml` `base-moved`; `policy.yaml` `afterApproval.keepUpToDate` |
+| Branch update | event | `update-branch` | await-merge, await-fixes | approval carried only when `base-drift` said unaffected and patch ids are unchanged; `not-needed` only when `keepUpToDate` is off and the head merges cleanly; on an open PR only after the author opted in | `policy.yaml` `afterApproval` |
 
 ## 4. Review stages
 
@@ -336,7 +406,9 @@ edges:
   from the API (section 8).
 - Policy, checks and workflow are read **at the base SHA** (D-8).
 - Code-only tags: languages, `antiphon.areas.json` areas, path-glob classes, size bucket,
-  generated-file detection, CODEOWNERS owners of the changed paths.
+  generated-file detection, and every code owner (team or user) of the changed paths (11.4).
+- The base tip is pinned too. When a drift was recorded while fixes were awaited, this is the base
+  the drift check in `delta` uses (D-19).
 
 ### 4.2 Delta (recheck)
 
@@ -345,6 +417,11 @@ edges:
      trees and match commits by patch id (an interdiff).
    - A base-only update leaves the PR's own patch ids unchanged, and is marked as such. Whether
      it needs a new review is decided by `base-drift` (4.13), not here.
+   - **Recorded drift (D-19).** When `record-drift` logged base moves while fixes were awaited, delta
+     re-runs the drift check (4.13 steps 1 and 2) for the range from the reviewed base to the base
+     tip pinned at intake. An affected verdict adds the rebase steer to every pack and adds the
+     overlapping files to the scope. An unaffected verdict adds nothing. Either way the branch is not
+     updated, and the record is cleared.
 2. **Re-anchor open findings.**
    - Each open finding moves through the diff to its new location.
    - Its anchor (quoted code) is searched for at the new head.
@@ -505,6 +582,8 @@ answers one question: must a human approve? `yes` goes to the `human-approve` ga
 - a high-severity check was marked `unverified`
 
 **The bot approves only when all of these hold:**
+- no open blocker. This rule is not configurable (D-21). A blocker is closed only when it is fixed,
+  or cleared by a human under 11.6. A clear still waiting for a second person keeps it open.
 - no open findings
 - every check given to a reviewer is accounted for
 - head = reviewed SHA
@@ -535,19 +614,34 @@ carry a markdown summary and annotations.
   with a merge method.
 - **Checking the base after approval:** every approval (`bot-approve`, or `approve` at
   `human-approve` or `human-review`) goes to `base-moved`. This code step makes no model call. It
-  fetches the base ref and compares the base the approval covered (pinned at intake for the approved
-  iteration) with the current base tip.
+  fetches the base ref and compares a base with the current base tip (D-37):
+  - **`keepUpToDate: true`:** it compares the PR branch's **merge-base** with the tip, so a branch
+    that was already behind at review time is caught too. `moved` means the base moved since the
+    reviewed base (pinned at intake for the approved iteration). `behind` means it didn't, but the
+    branch lacks base commits.
+  - **`keepUpToDate: false`:** it compares the **reviewed base** with the tip (drift only), and
+    emits `unchanged` or `moved`.
+
+  Then:
   - `unchanged` → `await-merge`, with no update and no model call.
-  - `moved` → `base-drift` (4.13), which decides whether the move affects the PR.
+  - `moved` or `behind` → `base-drift` (4.13), which decides whether the missing base commits
+    affect the PR, and then `update-branch`.
 
   A human gate can stay open for days, so a move is common on the human path. On the bot path the
-  check catches a base that moved during the round.
+  check catches a base that moved during the round. Two alternatives were rejected: the code host's
+  "behind" status (it depends on the provider, costs an API call and lags) and always updating
+  (needless pushes, CI runs and approval churn).
 - **Waiting for the merge:** an approved PR parks on `await-merge` (no seat held) until it is merged
   or closed. A push revokes the approval and starts a new iteration; a base move goes to `base-drift`
   (4.13).
-- **Keeping the branch up to date:** `update-branch` runs only when `base-drift` says a base move does
+- **Keeping the branch up to date:** `update-branch` runs when `base-drift` says a base move does
   not affect an approved PR, whether the move was found by `base-moved` or during `await-merge`. It
   brings the branch up to date by merge or rebase, per repo.
+- **While fixes are awaited (D-19):** a base move is only recorded (`record-drift`). The branch is not
+  updated until the PR is approved, unless the author opts in with `@antiphon update-branch` or the
+  run page's **Update branch** button. That runs `update-branch` from `await-fixes` and returns
+  there (`update-branch[open]`). Its push is base-only, so it starts no new round, and the recorded
+  drift stays for the next author push.
 - **`keepUpToDate: false`:** `update-branch` does not merge the base in. It checks that the head still
   merges cleanly into the new base, records `not-needed` and goes on to `await-merge` without
   pushing, so the approval stands. Only conflicts make it update the branch. This stays inside
@@ -559,30 +653,33 @@ carry a markdown summary and annotations.
 
 ### 4.13 Base drift
 
-When the base branch moves under an open or approved PR, both waits (`await-fixes`, `await-merge`)
-send a `base-moved` event to `base-drift`, a cheap decision node. The `base-moved` check after an
-approval (4.12) enters the same node through `base-moved[moved]`, when the base moved between the
-reviewed base and the approval:
+When the base branch moves under an **approved** PR, `await-merge` sends a `base-moved` event to
+`base-drift`, a cheap decision node. The `base-moved` check after an approval (4.12) enters the same
+node through `base-moved[moved|behind]`. The range checked runs from the compared base (the
+branch's merge-base with `keepUpToDate`, else the reviewed base, D-37) to the base tip.
+When the base moves under an **open** PR that waits in `await-fixes`, the move is only recorded
+(`record-drift`), and `delta` runs steps 1 and 2 on the author's next push (D-19, 4.2):
 
-1. **Code-only prefilter.** Do the base commits since the reviewed base touch the PR's changed files,
+1. **Code-only prefilter.** Do the base commits in that range touch the PR's changed files,
    its related files (impact index, callers of changed symbols), or the contract and schema globs?
    No overlap means `unaffected`, with no model call.
 2. **One Jev call on overlap.** A single yes/no question, "Could these base changes affect this PR?",
-   with the base commit summaries and the overlapping files as state. The threshold is deliberately
-   low: a false re-review is cheaper than a missed semantic conflict. A low-confidence answer
-   escalates up the chain like any other decision.
+   with the base commit summaries and the overlapping files as state. The verdict is `affected` when
+   the probability of yes is at or above `baseDrift.affectedThreshold` (policy, default 0.35, D-18).
+   The default is deliberately low: a false re-review is cheaper than a missed semantic conflict. A
+   low-confidence answer escalates up the chain like any other decision.
 3. **Route.**
-   - `affected` → back to intake for a re-review in delta mode (back edge, maxIterations 10; the
-     recheck row in 3.5). An approval is withdrawn until the re-review approves again. Every pack
-     gets an automatic steer: "Base moved `<old>..<new>`: review as if rebased onto the new base;
-     check interactions with these commits/files: …".
-   - `unaffected-approved` → `update-branch` (4.12), and the approval carries forward when the PR's
-     patch ids are unchanged.
-   - `unaffected-open` → back to `await-fixes`.
+   - `affected` → back to intake for a re-review of just the change, in delta mode (back edge,
+     maxIterations 10; the recheck row in 3.5). The approval is withdrawn until that re-review
+     passes (D-38).
+     Every pack gets an automatic steer: "Base moved `<old>..<new>`: review as if rebased onto the
+     new base; check interactions with these commits/files: …".
+   - `unaffected` → `update-branch` (4.12), and the approval carries forward when the PR's patch ids
+     are unchanged.
 
 The assessment (base range, commits, overlap, prefilter result, probability, verdict, steer) is
-stored as an artifact (3.6) and shown on the run page. Prefilter sources, contract globs, the
-threshold and the steer template are per-repo parameters of the node.
+stored as an artifact (3.6) and shown on the run page. The threshold is a policy setting (D-18).
+Prefilter sources, contract globs and the steer template are per-repo parameters of the node.
 
 ## 5. Rounds policy
 
@@ -601,10 +698,15 @@ rounds:
     - { round: 1,  minSeverity: nit,   minConfidence: 0.5,  maxNits: 5, nitsInline: false }
     - { round: 2,  minSeverity: minor, minConfidence: 0.65 }
     - { round: 3+, minSeverity: major, minConfidence: 0.8 }
-  bypassCategories: [security, data-loss]   # posted in any round; the adjudicator cannot concede them alone
+  bypassCategories: [security, data-loss]   # D-35: on by default; posted in any round; the adjudicator cannot concede them alone
+  bypassRouteTo: owning-team                # default: the PR's owning team; or name another team, e.g. a security group
 severities: [nit, minor, major, blocker]
 dismiss:
-  blocker: author                       # author | other-member | maintainer
+  blocker: author                       # who may clear a blocker: author | other-member | maintainer; trust-gated (11.6)
+gates:
+  authorMayDecide: sole-owner           # sole-owner (default: only when the owning team has one member and no other code owners) | always (11.10)
+baseDrift:
+  affectedThreshold: 0.35               # D-18; leans towards re-review
 approval:
   sticky: true
   humanRequiredWhen:
@@ -629,8 +731,20 @@ afterApproval: { mode: leave-to-author, keepUpToDate: true, updateMethod: rebase
   Author pushes and bot or agent activity don't reset it. People are told apart from bots by
   identity flags, `[bot]` logins and Antiphon delegate commit trailers.
 - **Steer prompts.** `another-round` takes an optional steer prompt. It is stored on the round and
-  goes into the shared prefix of every pack ("Human steer from <name>: …"). Steers that keep
-  recurring become candidate checks (section 13).
+  goes into the shared prefix of every pack ("Human steer from <name>: …"). A steer from a person
+  below the `acceptSteer` threshold waits for review first (11.9). Steers that keep recurring become
+  candidate checks (section 13).
+- **Bypass categories (D-35).** `bypassCategories` is a per-repo list, layered like the rest of the
+  policy, with `security` and `data-loss` on by default. A finding in a bypass category, by its
+  check's `flags` or the finding's own `flags`:
+  - posts in any round, whatever the round's bar;
+  - gets its own reviewer group (4.5);
+  - can't be conceded by the adjudicator alone (section 6); a concession opens a gate instead;
+  - opens a review item in the queue of the `bypassRouteTo` team (11.3). By default that is the
+    owning team, the same team as the PR. Naming another team, such as a security group, is an
+    override, and that team's item is added next to the owning team's.
+- **What is not in this file.** Scoring weights, trust weights and trust thresholds are database
+  settings (D-26, section 15), because they belong to people and teams, not to a repo.
 
 ## 6. Comment workflow
 
@@ -645,7 +759,7 @@ human response (PR comment / thread reply / review submission / Antiphon gate or
 
 | Intent | Action |
 |---|---|
-| Dismiss / by design / won't fix | Resolve the thread, store the reason and scope, emit a learn signal |
+| Dismiss / by design / won't fix | Resolve the thread, store the reason and scope, emit a learn signal. On a blocker this is a clear ("not a blocker" or accepted risk) and follows the trust gate (11.6). At path, repo or team scope the confirmation step comes first (11.7) |
 | Dispute | Adjudicator (completion): concede (resolve + learn signal), hold (reply with reasoning), or escalate to a gate. Bypass categories can't be conceded by the adjudicator alone |
 | Claims fixed | Recheck that one finding now |
 | Will fix | Mark it pending; the next push checks it |
@@ -662,10 +776,14 @@ human response (PR comment / thread reply / review submission / Antiphon gate or
 **Guardrails**
 - **Comment text is untrusted data.** Triage only picks from the intent list, and each intent maps
   to an allowlisted action.
-- **High-stakes actions** need an authorised commenter and high confidence: dismissing a blocker
-  where policy demands it, proposing a learning for a whole repo or more, or any write to the
-  branch. Otherwise Antiphon asks for confirmation ("Resolve F3 as by-design for this repo? Reply
-  `/antiphon yes`") or routes the item to a gate.
+- **High-stakes actions** need an authorised commenter and high confidence: clearing a blocker,
+  dismissing at path, repo or team scope, or any write to the branch. Otherwise Antiphon asks for
+  confirmation or routes the item to a gate. A wide-scope dismissal always gets the confirmation,
+  with its preview (11.7): "Resolve F3 as by-design for this repo? This opens a PR on `<repo>` that
+  adds: … Reply `/antiphon yes`, or `/antiphon yes steer: <text>` to have the rule drafted with your
+  steer."
+- **Trust gates.** A clear, a wide-scope dismissal, a gate decision or an approval made in a comment
+  follows the same thresholds as in the review UI (11.9).
 - **Locking.** Actions take a lock on the finding record, and queue while a review iteration is in
   flight.
 - **Antiphon first, then the code host.** A decision made in Antiphon on a finding that has a
@@ -676,7 +794,8 @@ human response (PR comment / thread reply / review submission / Antiphon gate or
 **Reason categories:** false positive, by design, out of scope, accepted risk, fix later, duplicate,
 style preference.
 
-**Scopes:** this instance, this path, this repo, suggest to the team.
+**Scopes:** this instance (this one finding), this path, this repo, suggest to the team. The last
+three are wide scopes (11.7).
 
 ## 7. Model access
 
@@ -719,15 +838,20 @@ The request body is the same for every dialect: `{ model, state, questions }`. Q
 - `choice`: `instructions`, `choices: [{value}]`
 - `score`: `instructions`, `levels: [{label}]`
 
-Optional description fields on choices and levels are to be confirmed from TypeSafe's OpenAPI spec.
+Whether choices and levels take optional description fields is settled by the first live call from
+work (OQ-3).
 
 | Dialect | Endpoint | `model` | Errors | Cost |
 |---|---|---|---|---|
-| `litellm-systemone` (enterprise default) | `{proxy}/v1/systemone` | proxy alias, e.g. `jev-latest` | LiteLLM `{"error":{...}}` envelope; pre-validation 400s; a missing answer key = refusal | `x-litellm-response-cost` header |
+| `litellm-systemone` (enterprise default, D-29) | `{proxy}/v1/systemone` on the latest LiteLLM; request shape identical to TypeSafe's | proxy alias, e.g. `jev-latest` | LiteLLM `{"error":{...}}` envelope; pre-validation 400s; a missing answer key = refusal | `x-litellm-response-cost` header |
 | `litellm-passthrough` | `{proxy}/typesafe/v1/systemone` | upstream model | TypeSafe native | price table × `usage.input_tokens` |
 | `typesafe-native` | `https://api.typesafe.ai/v1/systemone` | `jev-1.14.0` (pin) or alias | 400/401/413/415/422; retry 429/529 | price table ($0.042 per million input tokens, output free) |
 | `openrouter-systemone` | `https://openrouter.ai/api/v1/systemone` | native | native | price table, or OpenRouter usage cost |
 
+- **Cost basis.** Every dialect's cost is an **actual** cost, as the table gives it, and is recorded
+  as such in `llm_call` (D-20).
+- **First live call.** The P1 smoke call from work, against the enterprise default, settles the
+  response field names (OQ-2) and description fields (OQ-3), and captures a sanitised fixture.
 - **Auth.** Every dialect sends `Authorization: Bearer <key>`. Enterprise uses the existing proxy
   virtual key, which is the same key used for its OpenAI-compatible endpoints, with no separate Jev
   key. Keys go through Antiphon credential custody (`docs/agent-credentials.md`).
@@ -759,7 +883,7 @@ Optional description fields on choices and levels are to be confirmed from TypeS
 - **Escalate by confidence.** An answer below its question's per-provider threshold escalates
   **that question only** to the next entry. A refused answer escalates the same way.
 - **Record every call** in `llm_call`: chain, entry, provider, transport, resolved model, tokens,
-  cost, latency, outcome.
+  cost and cost basis (`actual` for HTTP, `api-equivalent` for seats, D-20), latency, outcome.
 
 ### 7.5 Calibration
 
@@ -782,8 +906,9 @@ It covers:
 - the authenticated identity
 - org, team and membership listing; CODEOWNERS
 - webhook verification and translation into a common event model (`PrOpened`, `PrUpdated`,
-  `Pushed`, `CommentCreated`, `ReviewSubmitted`, `ThreadResolved`, `Merged`, `Closed`,
-  `MembershipChanged`)
+  `Pushed`, `BaseMoved`, `CommentCreated`, `ReviewSubmitted`, `ThreadResolved`, `CiChanged`,
+  `Merged`, `Closed`, `MembershipChanged`, `RepoChanged`, `ConfigChanged`)
+- polling that produces the same events, for installs without a webhook (8.5)
 
 Capability flags: `SupportsCheckRuns`, `CanResolveThreads`, `ApprovalCountsForMerge`,
 `SupportsAutoMerge`.
@@ -805,7 +930,7 @@ Capability flags: `SupportsCheckRuns`, `CanResolveThreads`, `ApprovalCountsForMe
 - **Rate limits.** The limit is 5,000 requests an hour per token. Conditional requests that return
   304 don't count against it, which makes polling and daily reconciliation cheap.
 - **Webhooks** need a publicly reachable endpoint and admin rights on the repo or org. Without one,
-  the adapter polls through the cache layer.
+  the adapter polls through the cache layer (8.5).
 
 ### 8.4 Mirrors and caching
 
@@ -814,6 +939,44 @@ Capability flags: `SupportsCheckRuns`, `CanResolveThreads`, `ApprovalCountsForMe
 - **Cache layer.** A wrapper around any adapter. Content addressed by SHA is cached forever; other
   responses use ETags. It keeps a per-host rate-limit budget.
 - **Base URL.** Configurable, for GitHub Enterprise Server and company proxies.
+
+### 8.5 Events: webhooks, polling and Refresh
+
+**Enterprise: every webhook event (D-30).** The org webhook is set to send every event. The engine
+acts on this set:
+
+| GitHub event | Actions | Common event | Drives |
+|---|---|---|---|
+| `pull_request` | opened, reopened, ready_for_review, converted_to_draft, edited, synchronize, closed | `PrOpened`, `PrUpdated`, `Pushed`, `Merged`, `Closed` | intake, scope, the `await-fixes` and `await-merge` waits |
+| `pull_request_review` | submitted, dismissed | `ReviewSubmitted` | comment workflow, the bot-only counter (section 5) |
+| `pull_request_review_comment` | created, edited | `CommentCreated` | comment workflow |
+| `pull_request_review_thread` | resolved, unresolved | `ThreadResolved` | finding state |
+| `issue_comment` | created, edited, on PRs only | `CommentCreated` | comment workflow, `/recheck`, mentions |
+| `push` | to the base branch of an open PR; to a default branch touching `CODEOWNERS` or `.antiphon/` | `BaseMoved`, `ConfigChanged` | `base-moved` wait events; ownership and config reload |
+| `status`, `check_suite`, `check_run` | state changes, completed | `CiChanged` | the `ci-green` approval rule |
+| `membership`, `team`, `organization` | added, removed, renamed, member_added, member_removed | `MembershipChanged` | team sync (section 12) |
+| `repository` | renamed, transferred, archived, deleted | `RepoChanged` | scope, mirrors |
+| `ping` | | | webhook health on the providers page |
+
+- **Everything else is stored or ignored, never acted on.** An instance setting lists the other
+  event names to store in `webhook_delivery`, with a retention period, for audit and later replay.
+  The rest are acknowledged and dropped.
+- **Delivery.** The `X-Hub-Signature-256` signature is checked against the webhook secret, which is
+  held under credential custody. Deliveries are deduplicated by `X-GitHub-Delivery`, acknowledged at
+  once, and processed from a queue.
+- **Reconciliation.** Webhook installs still run one poll a day, so a missed delivery is caught.
+
+**Home: polling plus Refresh.** An install without a public webhook polls every in-scope repo at
+`codeHost.pollInterval` (instance setting, default 2 minutes). Each poll goes through the cache layer
+and reads open PRs by update time, their reviews, comments and threads since the last cursor, base
+tips and CI status. Conditional requests that return 304 don't count against the rate limit (8.3).
+Polling produces the same common events as webhooks, so the engine only sees a difference in latency.
+
+**Refresh.** A **Refresh** button on the review runs page (every in-scope repo) and on a run page
+(one PR) runs a poll at once, without waiting for the interval. The API is
+`POST /api/review/refresh`, with an optional body `{ "repo": "<owner/name>", "pr": <number> }`. It
+goes through the cache layer like any poll. It works on webhook installs too, to recover from a
+missed delivery.
 
 ## 9. Check catalogue
 
@@ -861,15 +1024,40 @@ What was tried, what was rejected and why.
 
 ## 10. Prompt sources and layering
 
+Prompt sources are configured **per instance** (D-33), like the graph. v1 models the full layer
+stack. Layers resolve **company → team → instance → repo**, lowest first, so in `override` mode the
+repo wins:
+
+| Layer | Default source | Holds |
+|---|---|---|
+| Company | `company/` in the instance-wide `.antiphon`, or the source repo and ref the `Org` entity names | Company-wide checks, prompts and policy defaults |
+| Team | `teams/<team>/` in the instance-wide `.antiphon`, or the source repo and ref the `Team` entity names | The team's checks, context notes, suppressions and policy |
+| Instance | `review/` in the instance-wide `.antiphon` (the repo and ref named in the instance settings) | Instance-wide checks, prompts, groups and policy defaults, and the default workflow graph. It applies to every repo and workflow the instance runs |
+| Repo | The repo's own `.antiphon/review/`, read at the base SHA (D-8) | The repo's checks, overrides, policy, workflow edits and `related.yaml` |
+
 ```
-.antiphon/review/
-  sources.yaml      # ordered layers: common repo(s)@ref → org → team → this repo
-  sources.lock      # per path: each layer's source, commit and content hash; merged hash; method; merged-by
+<instance-wide .antiphon>/   # the repo and ref named in the instance settings
+  review/                    # instance layer
+  company/                   # company layer, unless the Org entity names a separate source repo
+  teams/<team>/              # one team layer per team, unless the Team entity names a separate source repo
+
+.antiphon/review/            # each layer folder above, and each repo, uses this layout
   policy.yaml  workflow.yaml  related.yaml
-  checks/  groups/  prompts/
-  resolved/         # agent-merged outputs, referenced by the lock
+  checks/  groups/  prompts/  questions/
+  sources.lock               # repo layer only: per path, each lower layer's source, commit and content hash; merged hash; method; merged-by
+  resolved/                  # repo layer only: agent-merged outputs, referenced by the lock
 ```
 
+- **Which team layer a repo gets.** Each registered repo has one **layer team**. It is set on the
+  repo in Antiphon, and defaults to the owner of the CODEOWNERS catch-all rule (`*`), or else to the
+  team that owns the most files. A repo can have several owning teams (D-25), but only its layer
+  team's layer applies. Parent teams add no layers in v1. A repo with no layer team skips that
+  layer.
+- **Who owns a layer.** Whoever owns its folder or repo. CODEOWNERS on the instance-wide `.antiphon`
+  can give `teams/<team>/` to that team and `company/` to the instance's administrators.
+- **Refs.** The instance settings pin the instance-wide `.antiphon` ref; a separate team or company
+  source repo is pinned on its entity. Every run stamps each commit it read. Moving a pin is a
+  settings change with revision history.
 - **Merge modes.**
   - `override`, the default: the highest layer wins.
   - Declarative, set in the file's header: `extends`, `append`, `patch`.
@@ -878,9 +1066,11 @@ What was tried, what was rejected and why.
 - **Provenance.** Every run stamps the workflow revision hash and every prompt hash, following the
   existing `[bundle:key vHASH]` convention. The UI shows each prompt's final text and which layer
   each part came from.
-- **Team and org layers.** These come from the Team and Org entities (section 12): each entity
-  records its prompt source repo. A repo's `sources.yaml` can name them as `team:` or `org:` instead
-  of URLs.
+- **Re-merge.** A change to any lower layer re-runs the agent merge only for repo paths whose lock
+  records a different upstream hash. Each affected repo gets one PR.
+- **Later.** Language and framework facet layers, and a repo-level `sources.yaml` that adds further
+  common repos. Facets stay out of v1 because they cut across teams, so they need their own place in
+  the resolution order, and the 2-teams promotion already has the company layer as its target.
 - **Repo changes needed.**
   - Add a `.gitignore` exception for `.antiphon/review/`.
   - Stop task footprints skipping `.antiphon/review/`.
@@ -902,7 +1092,10 @@ What was tried, what was rejected and why.
 - **Per PR or run:** each finding with the code at its anchor, the check's `@humans` text, the thread
   history, and the blast-radius summary.
 - **Choices per finding:** will fix / fixed / dismiss (reason + scope) / dispute / question / defer,
-  with free text.
+  with free text. A blocker offers **not a blocker** and **accepted risk** instead of dismiss, each
+  with a required reason (11.6). A wide scope opens the confirmation step (11.7).
+- **Trust.** When a choice needs a second person under the thresholds, the screen says so before
+  submit ("Your clear needs a confirmation from a member of team-x").
 - **Submit** posts one code-host review (one notification). Thread replies follow the "Antiphon
   first, then the code host" rule (section 6).
 - **Attribution.** The machine user posts, signed "— <display name> via Antiphon". This uses the
@@ -914,7 +1107,11 @@ What was tried, what was rejected and why.
 - **Mine:** assigned to me, plus unassigned items from teams I've selected.
 - **Team** and **overall**.
 - **Item kinds:** review gate, approval gate, escalated dispute, prompt-merge approval, seed
-  candidate, learn proposal.
+  candidate, learn proposal, and the trust items: blocker-clear confirmation, second approval,
+  second gate decision, steer review and wide-scope proposal (11.9). A bypass-category finding goes
+  to the `bypassRouteTo` team's queue: the owning team by default, or an override team (section 5).
+- **Trust items** go to members at or above the threshold concerned, never to the person who made
+  the first decision.
 - **Item states:** unassigned → assigned → in progress → done, or passed back.
 - **"Not me"** returns the item to the team queue with a reason, and excludes that person from the
   next pick.
@@ -923,11 +1120,18 @@ What was tried, what was rejected and why.
 
 ### 11.4 Routing
 
-1. Changed paths are matched against CODEOWNERS to find the owning teams. The primary team is the one
-   with the most changed lines; the others get read-only visibility.
-2. If the team has opted in, a reviewer is picked at random from the opted-in members. The pick is
-   weighted by open load and excludes the author and anyone who passed.
-3. Findings go to the **author's** queue as well as the PR.
+Code ownership is **many-to-many** (D-25). A path can have several owners, each a team or a user,
+and a user can belong to several teams.
+
+1. Changed paths are matched against the ownership rules (from CODEOWNERS, section 12). Each path
+   yields its full owner set: every team and user on the matching rule.
+2. The owning teams are the teams in those sets. The primary team is the one with the most changed
+   lines; the other teams get read-only visibility. A user owner who is in no owning team is added
+   to the gate as an individual reviewer. A user in several owning teams counts once.
+3. If the primary team has opted in, a reviewer is picked at random from its members who are opted
+   in and eligible (at or above the `randomAssignment` threshold, 11.9). The pick is weighted by
+   open load and excludes the author and anyone who passed.
+4. Findings go to the **author's** queue as well as the PR.
 
 ### 11.5 Author resolution
 
@@ -942,28 +1146,152 @@ a known bot login). In that case the `resolve-author` workflow runs:
 
 The deciding signal is recorded.
 
-### 11.6 Dismissals and incidents
+### 11.6 Blockers, dismissals and incidents
 
-- `dismiss.blocker` is configurable; the default is `author` (D-11).
-- The Debug and why-missed investigation templates (including Antiphon's own
-  `docs/investigations/why-missed-template.md`) gain a step: "search Antiphon's finding history for
-  dismissed findings on the code involved, and link them".
-- A linked dismissal is marked **wrong**. That counts against the person who dismissed it in the
-  stats, raises the check's weight, and queues the dismissal reason for review.
+- **The bot never approves while a blocker is open** (D-21, 4.10).
+- **Clearing a blocker.** A human marks a blocker **not a blocker** (a false positive, or a severity
+  that doesn't block) or **accepted risk**, with a required reason. A clear that stands closes the
+  finding with reason category `false-positive`, `by-design` or `accepted-risk`.
+- **Who may clear** is `dismiss.blocker`: `author` (default, D-11), `other-member` or `maintainer`.
+- **Trust gate.** The clear counts alone only when the person's effective trust score for the scope
+  is at or above `clearBlocker` (11.9). Otherwise it is `pending-confirmation`:
+  - a blocker-clear confirmation item goes to members of the owning team at or above the threshold,
+    never to the person who cleared it;
+  - the confirmer agrees, so the clear stands, or rejects, so the blocker reopens with a reply on
+    its thread;
+  - until then the blocker stays open.
+- **Approval after clearing.** Once every blocker is fixed or cleared, the bot may approve if
+  everything else in 4.10 holds.
+- **Records.** The finding records who cleared it, who confirmed it and both reasons. For trust and
+  stats, a confirmation counts as a dismissal by the confirmer too.
+- **Bypass categories.** An adjudicator concession never clears a blocker. Only humans can clear one.
+- **Incidents.**
+  - The Debug and why-missed investigation templates (including Antiphon's own
+    `docs/investigations/why-missed-template.md`) gain a step: "search Antiphon's finding history for
+    dismissed findings on the code involved, and link them".
+  - A linked dismissal is marked **wrong**. That counts heavily against the trust score and stats of
+    everyone who dismissed or confirmed it (11.8), raises the check's weight, and queues the
+    dismissal reason for review.
+
+### 11.7 Wide-scope dismissals
+
+A dismissal at path, repo or team scope **always shows a confirmation step** (D-34), in the review
+UI and, as a reply, in the comment workflow (section 6).
+
+1. **Preview.** It shows exactly what will happen:
+   - the target: the repo's `.antiphon/review/` (path or repo scope), or the repo's team layer
+     (team scope), naming its folder or source repo;
+   - the rule text: a suppression, context note or severity change (section 13);
+   - the files the learn PR will touch;
+   - for team scope while the 2-repo rule (D-32) is unmet, that a proposal is queued instead, for
+     example "Queued as a team proposal: seen in 1 of the 2 repos needed";
+   - when the person is below `dismissWideScope` (11.9), that the wider scope becomes a proposal.
+2. **Optional steer prompt.** With a steer, an agent first drafts the updated rule from the
+   dismissal, the finding, its thread and the steer, and the learn PR is opened with that rule.
+   Without one, the previewed rule text is used as is.
+3. **After confirming,** the learn PR is opened (or the proposal queued), and the confirmation shows
+   its link. Cancelling changes nothing.
+4. **Links both ways.**
+   - The learn PR body links the original PR, the finding and its thread.
+   - A reply on the original PR's thread links the learn PR.
+   - Antiphon stores the link on both records: the finding and the learn proposal (`learn_link`).
+
+### 11.8 Trust scores
+
+Trust scores (D-22) are kept per user per scope: **repo**, **team** and **area** (a named path area,
+from `antiphon.areas.json` where the repo has one, or an ownership-rule path). They are stored in
+the database and recomputed nightly by the stats job (section 15).
+
+- **Visibility.** The person and their team lead can see them, as can the people allowed to adjust
+  them. They never appear on leaderboards.
+- **Which score an action uses.** The narrowest scope that covers the action: the area, then the
+  repo, then the team. A scope with too little data borrows the next wider one, and then the
+  neutral start.
+
+| Component | Effect | Evidence |
+|---|---|---|
+| Wrong dismissal | Heavy negative | A dismissal or confirmation later linked to a bug or incident (11.6) |
+| Dismissal that held up | Positive | A dismissal or confirmation with no wrong link after the hold period (`trust.holdDays`) |
+| Raised issue later confirmed | Positive | A human-raised finding that was accepted or fixed (section 13) |
+| Suggestion merged | Positive | A suggestion from the person that was merged |
+| Code-owner status | Positive | An ownership rule for the scope names the person or one of their teams |
+| Tenure | Positive, capped | Time since the person's first activity in the scope |
+
+The component weights are database settings (D-26). Scores run **0–100** (D-39). The hold period
+`trust.holdDays` defaults to 90 days.
+
+- **New users** start at the neutral score (`trust.neutralStart`): **60** in a **high-trust
+  instance** (instance setting `trust.highTrust`) and **40** otherwise. With thresholds near 50, a
+  new user in a high-trust instance acts alone from day one; this is the "author may dismiss
+  blockers" direction. Elsewhere a new user's clears need confirmation until their record builds.
+- **Adjustments.** Authorised people can adjust a user's score per scope. They are the team lead or
+  a maintainer by default (setting `trust.adjusters`, with team overrides).
+  - An adjustment is an **offset** (±n) or a **pinned value**. It carries a required reason and an
+    optional expiry.
+  - Nobody adjusts their own score.
+  - The effective score is the latest active pin if there is one; otherwise the raw score plus the
+    active offsets. It is clamped to the scale and recomputed at each adjustment and each expiry.
+  - Adjustments are append-only rows (`trust_adjustment`): who, when, scope, kind, value, reason and
+    expiry. Revoking one adds a row.
+  - Every view of a score shows the **raw computed** and **effective** values side by side, with the
+    active adjustments listed.
+
+### 11.9 Trust thresholds
+
+Each threshold gates one action and has a set behaviour below it (D-23). The thresholds are database
+settings: instance defaults plus team overrides, with revision history (D-26). Each is compared with
+the effective score for the action's scope (11.8). Scores run 0–100, and every threshold defaults to
+about 50 (D-39). A team override can raise or lower one threshold without touching the others.
+
+| Threshold | Action it gates | At or above | Below |
+|---|---|---|---|
+| `clearBlocker` | Clearing a blocker alone (not a blocker, accepted risk) | The clear counts. With every blocker cleared, the bot may approve if the rest is clean | **Second person needed:** a blocker-clear confirmation item; the blocker stays open until a member at or above the threshold confirms (11.6) |
+| `dismissWideScope` | Dismissing at path, repo or team scope | The confirmation step opens the learn PR (team scope: queued until the 2-repo rule is met) (11.7) | **Becomes a proposal:** the dismissal applies to this finding only, and the wider scope goes to the owning team's queue as a wide-scope proposal |
+| `decideGate` | Deciding a gate: approve, another round, close, or any other gate decision | The decision takes effect | **Second person needed:** a second gate decision item; the gate stays open until a member at or above the threshold decides |
+| `approve` | Approving at `human-approve` or `human-review` (it must also clear `decideGate`) | The approval counts and `antiphon/approval` goes green | **Second person needed:** recorded as a first approval; a second approver at or above the threshold completes it |
+| `randomAssignment` | Being picked for random assignment (11.4) | In the pick pool | **Can't be assigned** at random |
+| `acceptSteer` | Having a steer prompt accepted without review (section 5) | The steer goes into the next round's packs as written | **Second person needed:** a steer review item; the round starts once a member at or above the threshold accepts, edits or drops the steer |
+
+A second person is never the person who made the first decision, and is never the author for an
+approval or a gate decision (11.10).
+
+### 11.10 Gate deciders
+
+A gate decision counts only when the decider:
+1. is a member of an owning team or a user owner of the changed paths (11.4), or is otherwise
+   authorised for the gate's queue;
+2. clears the thresholds for the decision (11.9);
+3. is not the PR author (the resolved author, 11.5), unless `gates.authorMayDecide` allows it
+   (D-24):
+   - `sole-owner` (default): only when the owning team has one member and no other team or user owns
+     any changed path;
+   - `always`: a per-repo override that always allows it.
+
+A home install where one person owns everything meets `sole-owner` without an override.
 
 ## 12. Teams and orgs
 
 - **Entities:**
-  - `Org`
-  - `Team`, with a parent team, prompt source repo, working-hours calendar and auto-assign setting
-  - `Membership`, with an auto-assign opt-in and a role
+  - `Org`, with its **layer source** for the company layer: by default the `company/` folder in the
+    instance-wide `.antiphon`, or a separate source repo and ref (section 10)
+  - `Team`, with a parent team, its **layer source** (by default `teams/<team>/` in the
+    instance-wide `.antiphon`, or a separate source repo and ref), a working-hours calendar and an
+    auto-assign setting
+  - The registered repo (`Project`) gains its **layer team**, the team whose layer it reads
+    (section 10)
+  - `Membership`, joining a user to a team, with an auto-assign opt-in and a role (member, lead,
+    maintainer). A user can have memberships in several teams (D-25).
   - `Identity`, mapping code-host login, email and user, with a service-account flag
-  - `RepoOwnership`, from CODEOWNERS
+  - `OwnershipRule`, one per CODEOWNERS line: repo, path pattern, order, source line
+  - `OwnershipOwner`, joining a rule to each of its owners, each a team or a user. A rule can have
+    several owners, so a path can too (D-25).
+  - `TrustScore` and `TrustAdjustment`, per user per scope (11.8)
 - **Sync:** code-host org, team and membership data maps in. It is reconciled by webhook
-  (membership events) where reachable, otherwise daily using conditional requests. Manual overrides
-  in Antiphon take precedence.
-- **Uses:** learning scopes (repo → team → org, plus language and framework facets), queue routing,
-  stats and prompt layers all read these entities.
+  (membership events) where reachable, otherwise daily using conditional requests. Ownership rules
+  are reloaded when a push to a default branch touches `CODEOWNERS` (8.5). Manual overrides in
+  Antiphon take precedence.
+- **Uses:** learning scopes (repo → team → company; language and framework facets later), queue
+  routing, gate deciders, trust scopes, stats and the prompt layers all read these entities.
 
 ## 13. Learn
 
@@ -986,17 +1314,22 @@ proposal can be:
 - a new candidate check, from missed issues and steers
 - a related-file rule
 
-**Promotion** is by repetition:
+A dismissal at path, repo or team scope reaches these outputs only through the confirmation step
+(11.7), and its learn PR is linked both ways with the original PR.
 
-| The same normalised adjustment seen in | Proposed to |
+**Promotion** is by repetition (D-32):
+
+| The same normalised adjustment seen in | Proposed as |
 |---|---|
-| ≥N repos of one team | that team's prompt repo |
-| ≥M teams | the org or company prompt repo |
-| repos sharing a language or framework rather than a team | a language/framework layer |
+| 2 repos of one team | a PR to that team's layer: its `teams/<team>/` folder, or its separate source repo |
+| 2 teams | a PR to the company layer: `company/`, or the Org's separate source repo |
+
+Promotion PRs target these layers from day 1 (D-32, D-33). Language and framework facets come
+later (section 10).
 
 Each proposal links to its evidence threads. A promoted rule that repos keep overriding is flagged
 for demotion. Low-volume repos borrow team-level statistics until they have enough data of their
-own.
+own. The minimum evidence for a context note, which was part of OQ-6, is now OQ-15.
 
 **The same data also:**
 - calibrates fallback confidence (7.5)
@@ -1029,7 +1362,7 @@ material. Replay cases grow the evaluation set (section 20).
 1. An append-only `review_event` log: gate opened, assigned, passed or decided; comment posted;
    finding state changed; and so on.
 2. A nightly job writes `stats_daily(date, scope_type, scope_id, metric, value)` for each user, team,
-   repo and org.
+   repo and org. The same job recomputes trust scores (11.8).
 3. Weekly, monthly and yearly rollups are built from the daily rows.
 
 Percentiles come from raw events, because daily p90s can't be averaged. Durations are in
@@ -1042,12 +1375,39 @@ Percentiles come from raw events, because daily p90s can't be averaged. Duration
 | Activity | Comments, words, threads, questions to the bot, bot-answer 👍/👎 |
 | Outcomes | Suggestions merged; human-raised issues confirmed; learnings merged and promoted; wrong dismissals (count against) |
 | Quality signal | Fast approvals of large PRs (a "rubber-stamp" indicator), shown to the person and the team lead, not ranked |
-| Per PR / team | Rounds per PR; time from open to bot-clean to human approval to merge; bot precision; cost per PR; **cost per accepted finding** |
+| Per PR / team | Rounds per PR; time from open to bot-clean to human approval to merge; bot precision; cost per PR; **cost per accepted finding** (dollars, D-20) |
+| Trust | Clears confirmed or rejected; second-person items opened and their wait; adjustments made (shown to the person, the lead and adjusters only) |
 
 Leaderboards are per team and per month, and **rank outcomes, not volume**. Words never score on
 their own.
 
-## 16. Runners
+**Scoring settings live in the database (D-26).** Leaderboard and impact weights, trust component
+weights, trust thresholds (11.9), `trust.holdDays`, `trust.neutralStart` and `trust.adjusters` are
+settings with an instance default and optional team overrides. `trust.highTrust` is instance only.
+They follow the dispatch-concurrency pattern (CARD-0505): every change stores a full snapshot with
+its revision, reason and author, history survives clearing an override, and an edit names the
+revision it was based on so concurrent edits conflict instead of overwriting. A settings page edits
+them and shows their history. Files never hold them; files hold only config that travels with a
+repo (checks, prompts, workflow, policy).
+
+**Cost display (D-20)**
+
+| Source | Amount shown | Basis |
+|---|---|---|
+| Jev and other HTTP API calls | Actual cost: `x-litellm-response-cost`, the provider's usage cost, or the price table where that is the bill (7.3) | `actual` |
+| Standing seats and agent nodes | API-equivalent estimate: transcript tokens × the price table, as `AgentTask.CostUsd` is computed today (`DelegationCost.Estimate`, `Delegation:Pricing` rates) | `api-equivalent` |
+| Totals (per node, run, PR, accepted finding, team, day) | The sum of both | mixed |
+
+- **Dollars first, everywhere cost is shown:** run lists, the run overlay, the providers page, stats
+  and queue items.
+- **Format:** under $1, rounded cents ("5¢"); $1 or more, rounded dollars ("$4").
+- **Tooltip:** the exact amount, the split between actual and estimate, and for seats the
+  subscription quota used, from the `GET /api/subscription-usage` samples ("≈ 3% of the Claude
+  weekly window"). Quota % appears only there.
+
+## 16. Runners and deployment
+
+### 16.1 Runners
 
 - **Contract.**
   - The session runner, either as an `antiphon/runner-base` image to build `FROM` or as a versioned
@@ -1070,18 +1430,47 @@ their own.
 - **Later:** continuing a previous session on a seat; ephemeral per-session containers launched by a
   host runner.
 
+### 16.2 Deployment
+
+| | Enterprise | Home |
+|---|---|---|
+| Platform | Kubernetes | The desktop and server2 today, moving fully to Docker on server2 (CARD-1744, a separate card; `docs/docker-stack.md`) |
+| Server | The Antiphon server container with a Postgres sidecar in the same pod, on a persistent volume. One replica per instance, because there is one writer | AppHost on the desktop until the cutover; after it, the server container on server2 with its Postgres service |
+| Runners | Agent runner containers as sidecars in the pod | The existing phone-home runners (server2 runner, desktop runner) |
+| Instances | Possibly one instance per team (to be confirmed, OQ-5) | One |
+| Events | Every webhook event (8.5) | Polling plus Refresh (8.5) |
+| Models | Jev through the company LiteLLM proxy; the proxy's chat models | Subscription seats |
+
+**Implications**
+- **Learnings cross instances only through PRs.** Learn PRs target a repo's `.antiphon/review/`, its
+  team layer or the company layer (section 13). By default the team and company layers are folders
+  in the instance-wide `.antiphon`, so their rules stay inside the instance. When several instances
+  name the same separate source repo for a team or for the company (the `Team` or `Org` layer
+  source), a promotion PR there reaches every instance that reads it. That is how a learning
+  crosses instances, for example with one instance per team (OQ-5).
+- **Stats stay per instance.** Trust scores, leaderboards and rollups are computed per instance and
+  never merged. A person active in two instances has two independent trust records.
+- **The runner join secret is a Kubernetes Secret,** mounted as a file in each runner sidecar (16.1).
+  Rotation uses the two-valid-secrets rule. The per-runner token the server issues is kept in the
+  runner's state volume.
+- **Enrollment.** A sidecar runner enrolls on pod start with the join secret. When a restarted pod
+  has lost its state, it enrolls again as a new runner, and the server retires runners that have
+  stopped phoning home. Capability labels come from the pod spec.
+
 ## 17. Visibility (UI)
 
 | Page | Contents |
 |---|---|
-| Review runs | PRs by stage, the number in review, queue depth, models and providers in use, tokens and cost per run, cost per accepted finding |
-| Run detail | The live workflow graph overlay (status, iteration, model, time, tokens per node), findings, rounds, statuses posted |
-| Workflow editor | `@xyflow/react` + `elkjs`. Back edges are drawn as loops with iteration counts. Saving validates the cycle rule and produces a revision or PR. The graph is read-only: changes are made by AI prompt into a staging area (preview, diff, validation, replay estimate) before saving. Each node's description and typed parameters are edited in an inspector and staged the same way |
+| Review runs | PRs by stage, the number in review, queue depth, models and providers in use, cost per run in dollars (D-20) with tokens and quota in the tooltip, cost per accepted finding. A **Refresh** button polls every in-scope repo now (8.5) |
+| Run detail | The live workflow graph overlay (status, iteration, model, time, cost per node), drawn in collapsible sections; a collapsed fan-out shows as "reviewers ×4" and expands on click (3.3). Findings, rounds, statuses posted, recorded drift, and a **Refresh** button for this PR |
+| Workflow editor | `@xyflow/react` + `elkjs`. Back edges are drawn as loops with iteration counts. Sections are drawn as collapsible groups, as on the run page. Saving validates the cycle rule and produces a revision or PR. The graph is read-only: changes are made by AI prompt into a staging area (preview, diff, validation, replay estimate) before saving. Each node's description, typed parameters and section are edited in an inspector and staged the same way |
 | Pack viewer | Per reviewer: what was loaded and why, and what it opened that the pack missed |
 | Checks | Selection rate, precision per scope, last hit, shadow candidates, noisy checks to retire |
 | Queues / review UI | Section 11 |
 | Stats | Section 15 |
-| Providers | Calls, cost, escalations and fallbacks per chain entry; Jev vs subscription quota |
+| Providers | Calls, cost in dollars (actual or estimate), escalations and fallbacks per chain entry; subscription quota % in the tooltip only; webhook health |
+| Trust | For a person: their score per scope, raw and effective side by side, the components, and active adjustments. For a lead or adjuster: the same for their team, plus adjusting (offset or pin, reason, expiry) and the audit trail (11.8) |
+| Settings | Scoring weights, trust weights and thresholds: the instance defaults, team overrides and revision history (D-26) |
 
 Live data arrives through `useSignalRInvalidation` entries. A by-model grouping is added for agent
 tasks and `llm_call`.
@@ -1090,13 +1479,16 @@ tasks and `llm_call`.
 
 | Area | Tables |
 |---|---|
-| Runs | `review_subject` (host, repo, PR or commit range), `review_run`, `review_iteration`, `workflow_definition`, `workflow_revision`, `node_execution` |
-| Findings | `finding`, `finding_event`, `finding_thread_link`, `human_finding` |
+| Runs | `review_subject` (host, repo, PR or commit range), `review_run`, `review_iteration`, `workflow_definition`, `workflow_revision`, `node_execution`, `drift_record` |
+| Findings | `finding` (with clear and confirmation fields), `finding_event`, `finding_thread_link`, `human_finding`, `learn_link` (learn PR ↔ original PR, finding and thread) |
+| Events | `webhook_delivery` (stored deliveries, deduplicated by delivery id), `poll_cursor` |
 | Context | `context_item` (ledger), `pack` (hash, staged path) |
 | Models | `llm_call`, `decision_cache`, `calibration_map`, `provider_chain` |
 | Checks | `check_index` (path, hashes, embedding), `check_stat` (per scope) |
-| Prompts | `prompt_source`, `prompt_lock_entry` |
-| People | `org`, `team`, `membership`, `identity`, `repo_ownership`, `work_calendar` |
+| Prompts | `prompt_source` (one row per company, team and instance layer: folder or repo and ref), `prompt_lock_entry`; a layer-team column on the repo registration |
+| People | `org`, `team`, `membership` (user ↔ team, many-to-many), `identity`, `ownership_rule`, `ownership_owner` (rule ↔ team or user, many-to-many), `work_calendar` |
+| Trust | `trust_score` (user, scope type, scope id, raw, effective, components, computed at), `trust_adjustment` (append-only) |
+| Settings | `scoring_settings`, `scoring_settings_revision` (instance and team scopes, as `DispatchConcurrencySettings`) |
 | Queues | `gate`, `queue_item`, `assignment` |
 | Stats | `review_event`, `stats_daily`, rollup views |
 | Seeding / eval | `seed_source`, `seed_cursor`, `seed_run`, `eval_case`, `eval_run` |
@@ -1110,20 +1502,26 @@ tasks and `llm_call`.
 - Reviewers are read-only and carry no credentials beyond their model sign-in. Writes (conflict
   resolution, later fixes) are separate node kinds that need a grant.
 - Trusted identity headers are accepted only from the configured proxy.
+- Webhook deliveries are accepted only with a valid signature (8.5).
+- Trust: nobody adjusts their own score, a second person is never the first decider, and every
+  adjustment and settings change is audited (11.8, section 15).
 - Each tenant has a setting for whether code may be sent to external APIs (enterprise plans can
   offer zero data retention).
 - The machine user has least-privilege token permissions (8.3). Secrets follow
-  `docs/agent-credentials.md`, and are never printed or logged.
+  `docs/agent-credentials.md`, and are never printed or logged. On Kubernetes, the join secret and the
+  webhook secret are Secrets mounted as files (16.2).
 
 ## 20. Phasing
 
 | Phase | Delivers |
 |---|---|
-| **P0: specs and seed** | ABF v1 spec + conformance corpus + C#/TS parsers; check file format; `.antiphon/review/` layout, gitignore exception, footprint and slot-wipe fixes; data model; seed ~100 checks with a manually run seeding agent (why-missed docs, CARD-1809 R1–R5); replay set of ~20 why-missed cases (bug + fix commits) |
-| **P1: thin vertical slice** | Executor core (code, decision, completion, agent, gate, wait; fixed default workflow); `IDecisionModel` + Jev HTTP (all four dialects) + standing-seat transport + chains + `llm_call`; `ICompletionModel` over seats; `ICodeHost` GitHub (PAT) + local git + mirrors + cache layer; intake by PR or commit range; categorisation with blast radius; pack builder with ledger; **one** reviewer (fixed check set); publish to the PR + commit statuses; Antiphon gate when there's no PR; replay evaluation run; shadow run on Antiphon's own Review stage |
-| **P2: parallel review and rounds** | Check selection, grouping, fan-out/join on runner seats; collate and verify; rounds policy and bypass categories; needs-human-approval and bot approval; recheck workflow; comment workflow (no fix); review runs page; review UI; JWT and trusted-header identity |
-| **P3: people and editing** | Workflow editor and live overlay; prompt layers, lock and agent merge; teams/orgs sync, CODEOWNERS routing, queues, random assignment, author resolution; stats and rollups; runner shared-secret enrollment + doctor + custom image docs |
-| **P4: learning and automation** | Learn loop (signals, proposals, promotion, calibration, related-file tuning); seeding as a product workflow with cursors; the base-moved check, update-branch, base drift and AI conflict resolution (until then an approval goes straight to `await-merge`); `@antiphon fix this`; GitHub App adapter (check runs); one-shot CLI transport; continue-session; ephemeral per-session containers |
+| **Before P0** | The card-claim feature (section 22). Phase cards are filed only after it exists (D-36) |
+| **P0: specs and seed** | ABF v1 draft spec + conformance corpus + C#/TS parsers, with the legacy scan skipping ABF documents (D-28); **replace `PipelineHandoff.cs` and `ReviewEvidence.cs` with the ABF parser**, so the server and the engine read reports the same way before the P1 shadow run (the corpus's `currentParsers` values then retire); check file format; `.antiphon/review/` layout, gitignore exception, footprint and slot-wipe fixes; data model; seed ~100 checks with a manually run seeding agent (why-missed docs, CARD-1809 R1–R5); replay set of ~20 why-missed cases (bug + fix commits) |
+| **P1: thin vertical slice** | Executor core (code, decision, completion, agent, gate, wait; fixed default workflow; the `sections` key accepted and stored); `IDecisionModel` + Jev HTTP (all four dialects; the first live call from work settles OQ-2 and OQ-3) + standing-seat transport + chains + `llm_call` with cost basis; `ICompletionModel` over seats; `ICodeHost` GitHub (PAT) + local git + mirrors + cache layer; prompt resolution over all four layers (company → team → instance → repo) in `override` mode from the default folders, with the repo's layer team set by hand; **events**: the webhook receiver for the consumed set with stored deliveries (enterprise), polling at `codeHost.pollInterval` (home), and the Refresh API; intake by PR or commit range; categorisation with blast radius; pack builder with ledger; **one** reviewer (fixed check set); publish to the PR + commit statuses; Antiphon gate when there's no PR; the enterprise Kubernetes shape (server + Postgres sidecar + runner sidecars, per-id runner config); replay evaluation run; shadow run on Antiphon's own Review stage |
+| **P2: parallel review and rounds** | Check selection, grouping, fan-out/join on runner seats; collate and verify; rounds policy and bypass categories (configurable, `security` and `data-loss` by default); needs-human-approval and bot approval, never with an open blocker; blocker clears with reasons, trust-gated against the neutral start (a high-trust instance clears alone; elsewhere a second member confirms in the review UI); gate deciders without the author, with the `always` override; recheck workflow; comment workflow (no fix); review runs page with the Refresh button and dollar cost display; review UI; JWT and trusted-header identity |
+| **P3: people and editing** | Workflow editor and live overlay with collapsible sections and collapsed fan-outs; declarative merge modes, the lock and agent merge across the four layers, separate team and company source repos, and the layer-team default from CODEOWNERS; teams/orgs sync, many-to-many ownership, routing, queues, random assignment, author resolution; the `sole-owner` gate exception; **trust**: scores per scope with the nightly recompute, thresholds and weights as database settings with team overrides and history, adjustments with audit, the trust and settings pages, trust queue items, steer review, assignment eligibility; bypass routing to the owning team, or an override team; stats and rollups; runner shared-secret enrollment (join secret as a Kubernetes Secret) + doctor + custom image docs |
+| **P4: learning and automation** | Learn loop (signals, proposals, promotion PRs to the team layer at 2 repos and the company layer at 2 teams, calibration, related-file tuning); the wide-scope confirmation step with preview, steer drafting and two-way learn-PR links (until then a wide-scope dismissal is stored with its scope and opens no PR); seeding as a product workflow with cursors; the base-moved check, `record-drift`, the author's update-branch opt-in, update-branch, base drift with `baseDrift.affectedThreshold`, and AI conflict resolution (until then an approval goes straight to `await-merge`); `@antiphon fix this`; GitHub App adapter (check runs); one-shot CLI transport; continue-session; ephemeral per-session containers |
+| **Later** | Language and framework facet layers; a repo-level `sources.yaml` for further common repos |
 
 The replay evaluation runs from P1 onward. Every workflow, prompt or check revision is scored on
 the replay set (recall on known bugs, findings posted, cost) before activation. Revisions can also
@@ -1131,25 +1529,49 @@ be A/B'd in shadow on live PRs.
 
 ## 21. Open questions
 
-| # | Question |
-|---|---|
-| OQ-1 | Which LiteLLM version the enterprise proxy runs, and whether it configures `/v1/systemone` (alias `jev-latest`, as the example shows) or the `/typesafe` pass-through. The adapter supports both. |
-| OQ-2 | Exact answer field names. They were checked against LiteLLM's code, not TypeSafe's OpenAPI. A P1 live smoke call captures a sanitised fixture. |
-| OQ-3 | Whether choices and levels accept a description field (it improves question quality). |
-| OQ-4 | Webhook reachability at home and in the enterprise. Otherwise polling through the cache layer. |
-| OQ-5 | Whether enterprise runs its own Antiphon instance (data residency) or a tenant of a shared one. |
-| OQ-6 | Promotion thresholds N and M, and the minimum evidence for a context note. |
-| OQ-7 | Which repos make up the initial common prompt layer, and who owns it. |
-| OQ-8 | **Resolved 2026-11-21.** ABF legacy blocks do not end at a blank line. A block runs to the next line whose trimmed text starts with `---`, or to the closing report token, or to end of input, as `PipelineHandoff.cs` and `ReviewEvidence.cs` do. Per-type profiles (spec §6) give the same values as both parsers for every input; corpus `legacy/` pins it. |
+| # | Question | Answer or recommendation |
+|---|---|---|
+| OQ-1 | Which LiteLLM version the enterprise proxy runs, and whether it configures `/v1/systemone` (alias `jev-latest`, as the example shows) or the `/typesafe` pass-through. | **Resolved 2026-11-21 (D-29).** `{proxy}/v1/systemone` on the latest LiteLLM, with a request shape identical to TypeSafe's. The adapter keeps the pass-through dialect. |
+| OQ-2 | Exact answer field names. They were checked against LiteLLM's code, not TypeSafe's OpenAPI. | **Settled by the first live call from work** (D-29), in P1. It captures a sanitised fixture. |
+| OQ-3 | Whether choices and levels accept a description field (it improves question quality). | **Settled by the first live call from work** (D-29). Until then descriptions are folded into `instructions` (ABF spec 7.2). |
+| OQ-4 | Webhook reachability at home and in the enterprise. | **Resolved 2026-11-21 (D-30).** Enterprise takes every webhook event. Home polls at a configurable interval, with a manual Refresh (8.5). |
+| OQ-5 | Whether enterprise runs its own Antiphon instance (data residency) or a tenant of a shared one. | **Partly resolved 2026-11-21 (D-31).** Enterprise runs its own instance on Kubernetes (16.2). Still open: one instance per team, or one for several teams. |
+| OQ-6 | Promotion thresholds N and M. | **Resolved 2026-11-21 (D-32).** 2 repos → team layer; 2 teams → company layer (language and framework facets later). The context-note part moved to OQ-15. |
+| OQ-7 | Which repos make up the initial common prompt layer, and who owns it. | **Resolved 2026-11-22 (D-33).** The company and team layers exist from day 1, as `company/` and `teams/<team>/` in the instance-wide `.antiphon` unless the Org or Team entity names a separate source repo. Each is owned by whoever owns its folder or repo (CODEOWNERS on the instance-wide `.antiphon`). |
+| OQ-8 | Where ABF legacy blocks end. | **Resolved 2026-11-21.** They do not end at a blank line. A block runs to the next line whose trimmed text starts with `---`, or to the closing report token, or to end of input, as `PipelineHandoff.cs` and `ReviewEvidence.cs` do. Since D-28 the legacy scan skips ABF documents. Per-type profiles (spec §6) give the same values as both parsers for every input except where a legacy line falls inside an ABF document; corpus `legacy/` pins both. |
+| OQ-9 | Should a dismissal scoped to a path or repo show an inline confirmation ("This opens a PR on `<repo>`: …") before opening the learn PR? | **Resolved 2026-11-21 (D-34).** Always, for path, repo and team scope, with a preview, an optional steer and two-way links. Team scope queues a proposal until the 2-repo rule is met (11.7). |
+| OQ-10 | Should `security` and `data-loss` findings bypass the round's posting bar, be immune to adjudicator concession, and route to a security group? | **Resolved 2026-11-21 (D-35).** Yes, as a configurable list with both on by default. Routing defaults to the owning team (changed 2026-11-22); another team, such as a security group, is an override (section 5). |
+| OQ-11 | The cycle rule (D-2) was relaxed to "gate, wait, or a loop edge with an iteration limit". Accept? | **Resolved 2026-11-22 (D-2).** Accepted: a loop is valid if it passes through a gate, a wait or an iteration limit, and exceeding a limit always routes to a gate (3.2). |
+| OQ-12 | `base-drift[affected]` does a delta re-review, and the approval is withdrawn until it passes again. Accept? | **Resolved 2026-11-22 (D-38).** Accepted. |
+| OQ-13 | With `keepUpToDate: true`, a branch already behind the reviewed base takes `base-moved[unchanged]` and is never updated. | **Resolved 2026-11-22 (D-37).** With `keepUpToDate` on, `base-moved` compares the branch's merge-base with the base tip and emits `behind` or `moved` → `base-drift` → `update-branch`. With it off, it compares the reviewed base with the tip. The code host's "behind" status and always updating were rejected (4.12). |
+| OQ-14 | Trust scale, neutral start, `trust.holdDays` and default threshold values (11.8, 11.9). | **Resolved 2026-11-22 (D-39).** A 0–100 scale; new users start at 60 in a high-trust instance and 40 otherwise; thresholds default to about 50; `holdDays` 90. |
+| OQ-15 | The minimum evidence for a context note (from OQ-6). | Open. |
 
-## 22. References
+## 22. Follow-ups
 
-- [Antiphon Block Format v1](../../specs/block-format/v1.md): legacy blocks in §6 (OQ-8), document
-  types in §7, and the [conformance corpus](../../specs/block-format/conformance/README.md)
+### 22.1 Card claims
+
+This design's phase cards are not filed until card claims exist (D-36). Without a claim, an
+orchestrator's Backlog pickup could dispatch a card that a person or session is already working on.
+
+- **Field.** `ClaimedBy`: a user or a session, with `ClaimExpiresAt`.
+- **Shown on the card,** with the claimant and the time left.
+- **Skipped** by orchestrator Backlog pickup and by dispatch while the claim is live.
+- **Released** on expiry, or by hand (the claimant, or an operator).
+- **Not `OwnerSessionId`.** The existing `Card.OwnerSessionId` means the card spawned and owns an
+  agent session (`docs/agent-card-lifecycle.md:113,154`). It is not a claim and is left unchanged.
+
+## 23. References
+
+- [Antiphon Block Format v1](../../specs/block-format/v1.md) (draft): legacy blocks in §6 (OQ-8),
+  document types in §7, and the [conformance corpus](../../specs/block-format/conformance/README.md)
 - Review rounds: [docs/orchestration-loop.md](../../orchestration-loop.md#review-rounds) (CARD-1635)
 - Review bundle: `server/Bundles/stage-review.md`
 - Fast-track lane plan: [2026-11-20-fast-track-lane-plan.md](../../superpowers/plans/2026-11-20-fast-track-lane-plan.md)
 - Why-missed template: [docs/investigations/why-missed-template.md](../../investigations/why-missed-template.md)
+- Card spawn path and `OwnerSessionId`: [docs/agent-card-lifecycle.md](../../agent-card-lifecycle.md)
+- Revisioned settings pattern: `server/Domain/Entities/DispatchConcurrencySettings.cs` (CARD-0505)
+- server2 production cutover: [docs/docker-stack.md](../../docker-stack.md#production-server-on-the-server2-host-card-1744) (CARD-1744)
 - TypeSafe System One API: https://docs.typesafe.ai/api/system-one.md
 - LiteLLM Decisions: https://docs.litellm.ai/docs/decisions
 - LiteLLM TypeSafe pass-through: https://docs.litellm.ai/docs/pass_through/typesafe

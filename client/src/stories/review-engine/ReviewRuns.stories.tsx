@@ -40,8 +40,8 @@ import {
   SEVERITY_META,
   STAGES,
   STAGE_META,
+  SEAT_QUOTA,
   fmtTokens,
-  fmtUsd,
   personName,
   runRef,
   type ModelKey,
@@ -52,6 +52,7 @@ import {
 import {
   BlastMini,
   CostText,
+  fmtCost,
   ModelStack,
   PersonChip,
   RoundPips,
@@ -251,10 +252,10 @@ function DenseTable() {
         </Table.ScrollContainer>
         <Group justify="space-between" px="sm" py={6} style={{ borderTop: '1px solid var(--mantine-color-dark-4)' }}>
           <Text size="xs" c="dimmed">
-            Cost: metered API (Jev via LiteLLM) + list-price equivalent of subscription seats (not billed).
+            Cost in dollars: Jev (metered API) is actual; ≈ marks an API-equivalent estimate for subscription seats (not billed). Hover a cost for the split and seat quota.
           </Text>
           <Text size="xs" ff="monospace">
-            Σ {fmtUsd(totalApi)} API + ≈{fmtUsd(totalSeat)} seats · {fmtTokens(rows.reduce((a, r) => a + r.tokensIn, 0))} in
+            Σ <CostText cost={{ api: totalApi, seatEq: totalSeat }} /> ({fmtCost(totalApi)} actual API) · {fmtTokens(rows.reduce((a, r) => a + r.tokensIn, 0))} in
           </Text>
         </Group>
       </Paper>
@@ -327,7 +328,7 @@ function GroupRows({ label, runs }: { label: React.ReactNode; runs: ReviewRun[] 
             </Text>
           </Table.Td>
           <Table.Td ta="right">
-            <CostText cost={r.cost} />
+            <CostText cost={r.cost} models={r.models} />
           </Table.Td>
           <Table.Td>
             <Group gap={6} wrap="nowrap">
@@ -396,7 +397,7 @@ function BoardCard({ run }: { run: ReviewRun }) {
         <BlastMini blast={run.blast} height={12} />
       </Group>
       <Group justify="space-between" mt={4}>
-        <CostText cost={run.cost} />
+        <CostText cost={run.cost} models={run.models} />
         <Text size="xs" c="dimmed">
           {run.updated}
         </Text>
@@ -426,7 +427,7 @@ function StageBoard() {
           {swim && <Box />}
           {STAGES.map((s) => {
             const runs = RUNS.filter((r) => r.stage === s)
-            const cost = runs.reduce((a, r) => a + r.cost.api + r.cost.seatEq, 0)
+            const cost = runs.reduce((a, r) => ({ api: a.api + r.cost.api, seatEq: a.seatEq + r.cost.seatEq }), { api: 0, seatEq: 0 })
             return (
               <Paper key={s} p={6} radius="sm" bg="dark.6" style={{ borderTop: `3px solid var(--mantine-color-${STAGE_META[s].color}-6)` }}>
                 <Group justify="space-between" wrap="nowrap">
@@ -438,7 +439,7 @@ function StageBoard() {
                   </Badge>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  ≈{fmtUsd(cost)}
+                  <CostText cost={cost} dimmed />
                   {s === 'reviewing' && ' · 7 seats busy'}
                   {s === 'human-gate' && ' · oldest 5.6 wh'}
                   {s === 'intake' && ' · 2 queued ahead'}
@@ -609,13 +610,13 @@ function ProviderSplit({ models, onModels }: { models?: ModelKey[]; onModels?: (
         </Text>
       </Group>
       <Progress.Root size={14} mt={6}>
-        <Tooltip label={`Jev via LiteLLM (metered): ${jev.calls} calls · ${fmtUsd(jev.cost.api)}`}>
+        <Tooltip label={`Jev via LiteLLM (metered): ${jev.calls} calls · ${fmtCost(jev.cost.api)} actual`}>
           <Progress.Section value={(jev.calls / total) * 100} color="cyan" style={{ opacity: dim('jev') }}>
             <Progress.Label>Jev {Math.round((jev.calls / total) * 100)}%</Progress.Label>
           </Progress.Section>
         </Tooltip>
         {seats.map((p) => (
-          <Tooltip key={p.model} label={`${MODELS[p.model].name} seat: ${p.calls} requests · quota ${p.quotaPct}%`}>
+          <Tooltip key={p.model} label={`${MODELS[p.model].name} seat: ${p.calls} requests · ≈${fmtCost(p.cost.seatEq)} API-equivalent estimate · ${p.quotaPct}% of ${SEAT_QUOTA[p.model]?.window ?? 'quota'} used, ${SEAT_QUOTA[p.model]?.resets ?? ''}`}>
             <Progress.Section value={Math.max(1.5, (p.calls / total) * 100)} color={MODELS[p.model].color} style={{ opacity: dim(p.model) }} />
           </Tooltip>
         ))}
@@ -626,7 +627,7 @@ function ProviderSplit({ models, onModels }: { models?: ModelKey[]; onModels?: (
             API (Jev)
           </Text>
           <Text size="xs" ff="monospace">
-            {jev.calls.toLocaleString()} calls · {fmtTokens(jev.tokensIn)} · {fmtUsd(jev.cost.api)}
+            {jev.calls.toLocaleString()} calls · {fmtTokens(jev.tokensIn)} · {fmtCost(jev.cost.api)} actual
           </Text>
         </Box>
         <Box>
@@ -634,7 +635,7 @@ function ProviderSplit({ models, onModels }: { models?: ModelKey[]; onModels?: (
             Subscription seats
           </Text>
           <Text size="xs" ff="monospace">
-            {seatCalls} requests · quota{' '}
+            {seatCalls} requests · ≈{fmtCost(seats.reduce((a, p) => a + p.cost.seatEq, 0))} est. · quota{' '}
             {seats
               .filter((p) => (p.quotaPct ?? 0) >= 10)
               .map((p) => `${MODELS[p.model].short} ${p.quotaPct}%`)
@@ -715,22 +716,20 @@ function KpiStrip({ f }: { f?: StripFilters }) {
       <ToggleKpi
         label="Cost today"
         value={
-          <Text span fw={700} size="xl" ff="monospace">
-            {fmtUsd(today.costApi)}
-          </Text>
+          <CostText cost={{ api: today.costApi, seatEq: today.costSeatEq }} size="xl" />
         }
         accent="cyan"
-        sub={<>API · +≈{fmtUsd(today.costSeatEq)} seats</>}
+        sub={<>{fmtCost(today.costApi)} actual API · ≈{fmtCost(today.costSeatEq)} seat estimate</>}
       />
       <ToggleKpi
         label="Per accepted finding"
         value={
           <Text span fw={700} size="xl" ff="monospace">
-            ≈{fmtUsd(cost7 / accepted7)}
+            ≈{fmtCost(cost7 / accepted7)}
           </Text>
         }
         accent="success"
-        sub={`7d: ${accepted7} accepted · API only ${fmtUsd(api7 / accepted7)}`}
+        sub={`7d: ${accepted7} accepted · actual API only ${fmtCost(api7 / accepted7)}`}
       />
       <ProviderSplit models={f?.models} onModels={f?.onModels} />
     </Box>
@@ -870,7 +869,7 @@ function KpiOverview() {
                     </Box>
                     {g.key === 'antiphon' && r.fanOut ? <FanOut run={r} /> : <RoundPips round={r.round} botOnly={r.botOnlyRounds} compact />}
                     <Box w={110} ta="right">
-                      <CostText cost={r.cost} />
+                      <CostText cost={r.cost} models={r.models} />
                     </Box>
                   </Group>
                 ))}

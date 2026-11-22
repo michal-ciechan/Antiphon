@@ -74,6 +74,18 @@ export const MODELS: Record<ModelKey, ModelInfo> = {
   opus: { key: 'opus', short: 'opus', name: 'opus', provider: 'Claude seat pool', transport: 'seat', billing: 'subscription', color: 'violet', role: 'reviewer (high tier)' },
 }
 
+/**
+ * Subscription quota per seat model, as the runner's quota probe last read it. Dollar figures for
+ * these models are API-equivalent estimates (list price × tokens), never a bill.
+ */
+export const SEAT_QUOTA: Partial<Record<ModelKey, { pctUsed: number; window: string; resets: string }>> = {
+  luna: { pctUsed: 23, window: '5 h window', resets: 'resets today 18:40' },
+  haiku: { pctUsed: 11, window: 'weekly', resets: 'resets Mon 09:00' },
+  sonnet: { pctUsed: 38, window: 'weekly', resets: 'resets Mon 09:00' },
+  opus: { pctUsed: 44, window: 'weekly (Opus cap)', resets: 'resets Mon 09:00' },
+  grok: { pctUsed: 2, window: 'daily', resets: 'resets 00:00 UTC' },
+}
+
 // ---------------------------------------------------------------- org, teams, people
 
 export const ORG = 'lumen'
@@ -121,6 +133,158 @@ export function personName(login: string | undefined): string {
   if (!login) return 'Unassigned'
   return PEOPLE[login]?.name ?? login
 }
+
+// ---------------------------------------------------------------- code owners (teams and users, from CODEOWNERS)
+
+export interface Owner {
+  kind: 'team' | 'user'
+  /** team slug or user login */
+  name: string
+  members?: number
+}
+
+const team = (name: string, members: number): Owner => ({ kind: 'team', name, members })
+const user = (name: string): Owner => ({ kind: 'user', name })
+
+/** CODEOWNERS entries the mock PRs touch. A path can have several owners: any of them can be routed to. */
+export const CODE_OWNERS: Record<string, Owner[]> = {
+  'payments-api:/src/Refunds/**': [team('payments-core', 5), team('platform-sre', 3)],
+  'payments-api:/src/Invoicing/**': [team('payments-core', 5), user('hmartin')],
+  'payments-api:/db/**': [team('payments-core', 5), team('data-platform', 4)],
+  'payments-api:/src/Ledger/**': [team('payments-core', 5)],
+  'payments-api:/tools/refund-replay/**': [team('refund-tooling', 1)],
+  'antiphon:/server/Application/Review/**': [team('platform-runtime', 4), user('grao')],
+  'antiphon:/server/Teams/**': [team('platform-runtime', 4)],
+  'antiphon:/docs/investigations/**': [team('platform-runtime', 4), team('platform-sre', 3)],
+  'web-portal:/src/checkout/**': [team('web-experience', 3), team('payments-core', 5)],
+}
+
+export function ownersText(owners: Owner[]): string {
+  return owners.map((o) => (o.kind === 'user' ? `@${o.name}` : o.name)).join(', ')
+}
+
+// ---------------------------------------------------------------- trust (per user, per scope; stored in Antiphon)
+
+export type TrustScopeKind = 'repo' | 'team' | 'area'
+
+export interface TrustAdjustment {
+  kind: 'offset' | 'pinned'
+  value: number
+  reason: string
+  by: string
+  at: string
+  expires?: string
+}
+
+export interface TrustScore {
+  login: string
+  scopeKind: TrustScopeKind
+  scope: string
+  /** computed from outcomes over the last 180 days */
+  computed: number
+  basis: string
+  adj?: TrustAdjustment
+}
+
+export const TRUST: TrustScore[] = [
+  { login: 'hmartin', scopeKind: 'repo', scope: 'payments-api', computed: 88, basis: '19 gates · 4 disputes won · 0 wrong dismissals', adj: { kind: 'offset', value: 3, reason: 'Wrote the refund and settlement modules; on-call lead', by: 'grao', at: '2026-09-14' } },
+  { login: 'asmith', scopeKind: 'repo', scope: 'payments-api', computed: 82, basis: '14 gates · 11 suggestions merged · 0 wrong dismissals' },
+  { login: 'cwei', scopeKind: 'repo', scope: 'payments-api', computed: 64, basis: '9 gates · 1 wrong dismissal · 3 disputes lost' },
+  { login: 'ksato', scopeKind: 'repo', scope: 'payments-api', computed: 49, basis: '22 gates · 3 rubber-stamp approvals · 1 wrong dismissal', adj: { kind: 'offset', value: -8, reason: '3 approvals in under 2 minutes on large PRs (Oct); revisit after pairing with Hugo', by: 'hmartin', at: '2026-10-30', expires: '2026-12-31' } },
+  { login: 'lnovak', scopeKind: 'repo', scope: 'payments-api', computed: 22, basis: 'joined Oct · 2 gates' },
+  { login: 'hmartin', scopeKind: 'team', scope: 'payments-core', computed: 90, basis: 'across payments-api, ledger-jobs' },
+  { login: 'asmith', scopeKind: 'team', scope: 'payments-core', computed: 79, basis: 'across payments-api, ledger-jobs' },
+  { login: 'ksato', scopeKind: 'team', scope: 'payments-core', computed: 52, basis: 'across payments-api, ledger-jobs' },
+  { login: 'hmartin', scopeKind: 'area', scope: 'ledger', computed: 84, basis: 'files under src/Ledger/**', adj: { kind: 'pinned', value: 95, reason: 'Owner of the double-entry invariant (src/Ledger/README.md)', by: 'grao', at: '2026-08-02' } },
+  { login: 'asmith', scopeKind: 'area', scope: 'ledger', computed: 58, basis: 'files under src/Ledger/**' },
+  { login: 'grao', scopeKind: 'repo', scope: 'antiphon', computed: 93, basis: '31 gates · 6 learnings merged' },
+  { login: 'bokafor', scopeKind: 'repo', scope: 'antiphon', computed: 71, basis: '12 gates · 2 learnings merged' },
+  { login: 'elindqvist', scopeKind: 'repo', scope: 'antiphon', computed: 66, basis: '17 gates · 2 SLA breaches' },
+  { login: 'druiz', scopeKind: 'repo', scope: 'web-portal', computed: 77, basis: '15 gates · 1 dispute lost' },
+  { login: 'icosta', scopeKind: 'repo', scope: 'web-portal', computed: 61, basis: '8 gates' },
+]
+
+export function effectiveTrust(t: TrustScore): number {
+  if (!t.adj) return t.computed
+  const v = t.adj.kind === 'pinned' ? t.adj.value : t.computed + t.adj.value
+  return Math.max(0, Math.min(100, v))
+}
+
+export function trustOf(login: string, repo: string): number | undefined {
+  const t = TRUST.find((x) => x.login === login && x.scopeKind === 'repo' && x.scope === repo)
+  return t ? effectiveTrust(t) : undefined
+}
+
+export type ThresholdKey = 'clear-blocker' | 'dismiss-wide' | 'decide-gate' | 'random-assign'
+
+export interface TrustThreshold {
+  key: ThresholdKey
+  label: string
+  /** the action it gates */
+  gates: string
+  instance: number
+  team: Partial<Record<TeamKey, number>>
+  above: string
+  below: string
+  belowKind: 'second-reviewer' | 'proposal' | 'not-allowed' | 'not-assignable'
+}
+
+export const TRUST_THRESHOLDS: TrustThreshold[] = [
+  {
+    key: 'clear-blocker', label: 'Clear a blocker alone', gates: '"Not a blocker" on a blocker finding', instance: 60, team: { web: 55 },
+    above: 'The blocker is cleared. The bot can approve once everything else is clean.', below: 'Needs a second trusted reviewer: a queue item opens for the owning team.', belowKind: 'second-reviewer',
+  },
+  {
+    key: 'dismiss-wide', label: 'Dismiss at repo scope', gates: 'Dismiss with scope "this path" or "this repo"', instance: 70, team: { payments: 75 },
+    above: 'The learn PR opens directly with the rule.', below: 'Becomes a proposal for a repo maintainer to accept.', belowKind: 'proposal',
+  },
+  {
+    key: 'decide-gate', label: 'Decide a gate', gates: 'Approve / another round / close on a human gate', instance: 50, team: {},
+    above: 'Can be assigned a gate and decide it.', below: "Can comment on the gate but can't decide it; the gate is assigned to someone else.", belowKind: 'not-allowed',
+  },
+  {
+    key: 'random-assign', label: 'Eligible for random assignment', gates: 'Picked by the queue router (weighted by open load)', instance: 30, team: {},
+    above: 'In the random-assignment pool for the owning team.', below: "Can't be assigned; still sees the team queue.", belowKind: 'not-assignable',
+  },
+]
+
+export function thresholdFor(key: ThresholdKey, teamKey?: TeamKey): { value: number; source: 'instance' | 'team' } {
+  const t = TRUST_THRESHOLDS.find((x) => x.key === key)!
+  const o = teamKey ? t.team[teamKey] : undefined
+  return o === undefined ? { value: t.instance, source: 'instance' } : { value: o, source: 'team' }
+}
+
+/** Who changed a settings table and when. Settings are rows in Antiphon's database, not files in a repo. */
+export interface SettingRevision {
+  rev: number
+  at: string
+  by: string
+  layer: 'instance' | TeamKey
+  change: string
+  reason?: string
+}
+
+export const TRUST_THRESHOLD_REVISIONS: SettingRevision[] = [
+  { rev: 6, at: '2026-11-18 10:12', by: 'hmartin', layer: 'payments', change: 'dismiss-wide 70 → 75 (team override)', reason: 'Two repo-scope dismissals in Nov later linked to INC-2291' },
+  { rev: 5, at: '2026-11-02 15:40', by: 'fhaddad', layer: 'web', change: 'clear-blocker 60 → 55 (team override)', reason: 'Small team; 60 left only one eligible person' },
+  { rev: 4, at: '2026-10-21 09:05', by: 'grao', layer: 'instance', change: 'random-assign 25 → 30' },
+  { rev: 3, at: '2026-10-03 11:30', by: 'grao', layer: 'instance', change: 'added decide-gate at 50' },
+]
+
+export interface BypassCategory {
+  key: string
+  label: string
+  on: boolean
+  hint: string
+  changed?: { by: string; at: string }
+}
+
+/** Categories whose findings post in any round, ignoring the round's severity/confidence bar. */
+export const BYPASS_CATEGORIES: BypassCategory[] = [
+  { key: 'security', label: 'security', on: true, hint: 'Auth, secrets, injection, tenant isolation' },
+  { key: 'data-loss', label: 'data-loss', on: true, hint: 'Destructive migrations, overwrites, unrecoverable deletes' },
+  { key: 'compliance', label: 'compliance', on: false, hint: 'PCI scope, audit-log gaps, retention rules', changed: { by: 'hmartin', at: '2026-10-12' } },
+]
 
 // ---------------------------------------------------------------- blast radius
 
@@ -181,12 +345,7 @@ export function blastTrips(b: Blast): string[] {
 
 // ---------------------------------------------------------------- formatting
 
-export function fmtUsd(v: number): string {
-  if (v === 0) return '$0'
-  if (v < 0.01) return `$${v.toFixed(4)}`
-  if (v < 1) return `$${v.toFixed(3)}`
-  return `$${v.toFixed(2)}`
-}
+// Cost is formatted by fmtCost in shared.tsx (one formatter for every story).
 
 export function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
@@ -202,9 +361,9 @@ export function fmtWh(h: number): string {
 // ---------------------------------------------------------------- review runs
 
 export interface Cost {
-  /** metered API spend (Jev via LiteLLM `x-litellm-response-cost`) */
+  /** actual metered API spend (Jev via LiteLLM `x-litellm-response-cost`) */
   api: number
-  /** list-price equivalent of subscription seat usage (not billed) */
+  /** API-equivalent estimate of subscription seat usage (list price × tokens; not billed) */
   seatEq: number
 }
 
@@ -399,7 +558,7 @@ export const PROVIDER_USAGE_TODAY: ProviderUsage[] = [
 // ---------------------------------------------------------------- findings (payments-api#612)
 
 export type FindingStatus = 'open' | 'will-fix' | 'fixed' | 'dismissed' | 'pending-sync' | 'outdated'
-export type ResponseAction = 'will-fix' | 'fixed' | 'dismiss' | 'dispute' | 'question' | 'defer'
+export type ResponseAction = 'will-fix' | 'fixed' | 'dismiss' | 'dispute' | 'question' | 'defer' | 'not-blocker'
 export type DismissReason = 'false-positive' | 'by-design' | 'out-of-scope' | 'accepted-risk' | 'fix-later' | 'duplicate' | 'style-preference'
 export type DismissScope = 'instance' | 'path' | 'repo' | 'team'
 
@@ -410,6 +569,8 @@ export const ACTION_META: Record<ResponseAction, { label: string; color: string;
   dispute: { label: 'Dispute', color: 'danger', key: 'x', verb: 'Disputed:' },
   question: { label: 'Question', color: 'cyan', key: 'q', verb: 'Question:' },
   defer: { label: 'Defer', color: 'warning', key: 'l', verb: 'Deferred to a follow-up.' },
+  /** blocker findings only; clears the blocker alone at or above the clear-blocker trust threshold */
+  'not-blocker': { label: 'Not a blocker', color: 'orange', key: 'b', verb: 'Not a blocker:' },
 }
 
 export const REASON_META: Record<DismissReason, { label: string; key: string }> = {
@@ -689,11 +850,12 @@ export const CHECKS: Check[] = [
 
 // ---------------------------------------------------------------- queues
 
-export type QueueKind = 'review-gate' | 'approval-gate' | 'escalated-dispute' | 'prompt-merge' | 'seed-candidate' | 'learn-proposal'
+export type QueueKind = 'review-gate' | 'approval-gate' | 'escalated-dispute' | 'blocker-second' | 'prompt-merge' | 'seed-candidate' | 'learn-proposal'
 export const QUEUE_KIND_META: Record<QueueKind, { label: string; color: string }> = {
   'review-gate': { label: 'Review gate', color: 'pink' },
   'approval-gate': { label: 'Approval gate', color: 'success' },
   'escalated-dispute': { label: 'Escalated dispute', color: 'danger' },
+  'blocker-second': { label: 'Blocker: second reviewer', color: 'orange' },
   'prompt-merge': { label: 'Prompt merge', color: 'indigo' },
   'seed-candidate': { label: 'Seed candidate', color: 'teal' },
   'learn-proposal': { label: 'Learn proposal', color: 'cyan' },
@@ -717,6 +879,8 @@ export interface QueueItem {
   why: string[]
   passedBy?: { login: string; reason: string }[]
   routing: string
+  /** CODEOWNERS owners of the changed paths: one or more teams and/or users */
+  owners: Owner[]
   blast?: Blast
   openFindings?: number
   steerHint?: string
@@ -727,7 +891,15 @@ export const QUEUE: QueueItem[] = [
     id: 'Q-5512', kind: 'review-gate', title: 'Refunds: idempotency keys and partial refunds', subject: 'payments-api#612 · round 3', repo: 'payments-api', team: 'payments',
     author: 'asmith', assignee: 'hmartin', state: 'in-progress', ageWh: 3.6, slaWh: 4, openFindings: 6, blast: PR612.blast,
     why: ['Bot-only rounds 3/3 → human-review gate', 'external_contract 0.91 ≥ 0.6', 'category: public-api'],
-    routing: 'CODEOWNERS /src/Refunds/** @lumen/payments-core (612 of 774 changed lines). Random pick from 4 opted-in members, weighted by open load; author Alice Smith excluded.',
+    routing: 'CODEOWNERS /src/Refunds/** @lumen/payments-core @lumen/platform-sre (612 of 774 changed lines). Gate goes to payments-core (most changed lines). Random pick from 4 opted-in members with trust ≥ 30, weighted by open load; author Alice Smith excluded.',
+    owners: CODE_OWNERS['payments-api:/src/Refunds/**'],
+  },
+  {
+    id: 'Q-5523', kind: 'blocker-second', title: 'Second reviewer: "Not a blocker" on F1 (idempotency key not scoped)', subject: 'payments-api#612 · F1 · blocker', repo: 'payments-api', team: 'payments',
+    author: 'asmith', state: 'unassigned', ageWh: 0.3, slaWh: 4, openFindings: 6,
+    why: ['Kenji Sato marked F1 "not a blocker" with Trust 41 · payments-api', 'clear-blocker threshold 60: below it a second trusted reviewer must agree', 'Bot approval stays blocked until then'],
+    routing: 'Routed to owners with trust ≥ 60 on payments-api: Hugo Martin (91), Alice Smith (82, author: excluded), Chen Wei (64). Random pick weighted by open load.',
+    owners: CODE_OWNERS['payments-api:/src/Refunds/**'],
   },
   {
     id: 'Q-5518', kind: 'approval-gate', title: 'Drop legacy settlement_v1 table', subject: 'payments-api#609 · clean round 2', repo: 'payments-api', team: 'payments',
@@ -735,12 +907,14 @@ export const QUEUE: QueueItem[] = [
     why: ['category: migration', 'reversal_after_months 5 ≥ 4', 'destructive migration, no Down step'],
     passedBy: [{ login: 'cwei', reason: 'Not familiar with settlement — Hugo or Kenji wrote it' }],
     routing: 'CODEOWNERS /db/** @lumen/payments-core. Chen Wei passed; excluded from the next pick with Kenji Sato (author).',
+    owners: CODE_OWNERS['payments-api:/db/**'],
   },
   {
     id: 'Q-5520', kind: 'escalated-dispute', title: 'Dispute on F3 "Over-refund race" — adjudicator held twice', subject: 'payments-api#618 · F3', repo: 'payments-api', team: 'payments',
     author: 'cwei', state: 'unassigned', ageWh: 1.2, slaWh: 4,
     why: ['Author disputed twice; adjudicator (luna) held both times', 'rebuttal_strength 0.62 (Jev)'],
     routing: 'Escalated by the comment workflow. Goes to the owning team, not the author.',
+    owners: CODE_OWNERS['payments-api:/src/Ledger/**'],
   },
   {
     id: 'Q-5521', kind: 'review-gate', title: 'Teams: sync org/team membership from GitHub daily', subject: 'antiphon#1846 · round 1 findings', repo: 'antiphon', team: 'platform',
@@ -757,12 +931,14 @@ export const QUEUE: QueueItem[] = [
     },
     why: ['Findings need an author; author unknown → team queue'],
     routing: 'Tagged "author unknown". Anyone in platform-runtime can claim authorship or set it.',
+    owners: CODE_OWNERS['antiphon:/server/Teams/**'],
   },
   {
     id: 'Q-5509', kind: 'approval-gate', title: 'Review executor: lease-based node scheduling', subject: 'antiphon#1842 · pre-assigned (large)', repo: 'antiphon', team: 'platform',
     author: 'bokafor', assignee: 'grao', state: 'assigned', ageWh: 0.8, slaWh: 8, blast: RUNS.find((r) => r.number === 1842)!.blast,
     why: ['size: large (1,380 lines)', 'reversal_after_months 4 ≥ 4'],
     routing: 'CODEOWNERS /server/Application/Review/** @lumen/platform-runtime. Pre-assigned while reviewers run so the human is ready.',
+    owners: CODE_OWNERS['antiphon:/server/Application/Review/**'],
   },
   {
     id: 'Q-5502', kind: 'review-gate', title: 'Hotfix: correct VAT rounding on invoices', subject: 'payments-api#617 · round 1', repo: 'payments-api', team: 'payments',
@@ -777,30 +953,35 @@ export const QUEUE: QueueItem[] = [
     },
     why: ['Hotfix label → human required', 'Findings routed to resolved author Hugo Martin'],
     routing: 'CODEOWNERS /src/Invoicing/** @lumen/payments-core. Random pick: Alice Smith (load 2); excluded Hugo Martin (resolved author).',
+    owners: CODE_OWNERS['payments-api:/src/Invoicing/**'],
   },
   {
     id: 'Q-5497', kind: 'learn-proposal', title: 'Suppress CHK-0510 for src/Ledger/** ("amounts are always minor units here")', subject: 'payments-api · PR #623 to .antiphon/review/', repo: 'payments-api', team: 'payments',
     author: 'antiphon-delegate', state: 'unassigned', ageWh: 9.5, slaWh: 16,
     why: ['7 dismissals as false positive, 3 people, 30 days', 'scope: this path'],
     routing: 'Learn proposals go to repo maintainers in the owning team.',
+    owners: CODE_OWNERS['payments-api:/src/Ledger/**'],
   },
   {
     id: 'Q-5490', kind: 'prompt-merge', title: 'Merge common@v14 into payments-core layer (2 conflicts)', subject: '.antiphon/review/sources.lock', repo: 'payments-api', team: 'payments',
     author: 'antiphon-delegate', state: 'unassigned', ageWh: 12.0, slaWh: 16,
     why: ['Upstream hash changed: common/checks/api/CHK-0219.md', 'Agent merge produced resolved/checks/api/CHK-0219.md'],
     routing: 'Prompt-merge approvals go to the team that owns the layer.',
+    owners: [{ kind: 'team', name: 'payments-core', members: 5 }],
   },
   {
     id: 'Q-5488', kind: 'seed-candidate', title: '4 candidate checks from docs/investigations (cursor 2026-11-14)', subject: 'seed run SR-0091', repo: 'antiphon', team: 'platform',
     author: 'antiphon-delegate', assignee: 'elindqvist', state: 'in-progress', ageWh: 4.5, slaWh: 16,
     why: ['Seed workflow: why-missed docs since last cursor'],
     routing: 'Seed candidates go to the target layer owner.',
+    owners: CODE_OWNERS['antiphon:/docs/investigations/**'],
   },
   {
     id: 'Q-5485', kind: 'approval-gate', title: 'Checkout: persist cart across sessions', subject: 'web-portal#2284 · waiting', repo: 'web-portal', team: 'web',
     author: 'icosta', assignee: 'druiz', state: 'assigned', ageWh: 11.2, slaWh: 8, openFindings: 4,
     why: ['data p=0.88', 'exposure 5 · Critical path'],
     routing: 'CODEOWNERS /src/checkout/** @lumen/web-experience.',
+    owners: CODE_OWNERS['web-portal:/src/checkout/**'],
   },
 ]
 
@@ -837,17 +1018,36 @@ export const REVIEWER_STATS: ReviewerStat[] = [
   { login: 'lnovak', gatesDecided: 2, sentBack: 0, steers: 0, suggestionsMerged: 1, humanIssuesConfirmed: 1, learningsMerged: 0, learningsPromoted: 0, disputesWon: 0, disputesLost: 0, wrongDismissals: 0, p50Wh: 1.5, p90Wh: 1.9, passes: 0, slaBreaches: 0, comments: 7, words: 520, botAnswerUp: 0, botAnswerDown: 0, rubberStamps: 0 },
 ]
 
-/** Outcome score: what the leaderboard ranks. Volume (comments, words, gates) never scores on its own. */
-export function outcomeScore(s: ReviewerStat): number {
-  return (
-    s.suggestionsMerged * 2 +
-    s.humanIssuesConfirmed * 5 +
-    s.learningsMerged * 4 +
-    s.learningsPromoted * 6 +
-    s.disputesWon * 2 -
-    s.disputesLost * 1 -
-    s.wrongDismissals * 8
-  )
+export type WeightKey = 'suggestionsMerged' | 'humanIssuesConfirmed' | 'learningsMerged' | 'learningsPromoted' | 'disputesWon' | 'disputesLost' | 'wrongDismissals'
+
+/** Impact-score weights: instance defaults plus per-team overrides. Stored in Antiphon (database rows), not in a repo. */
+export const IMPACT_WEIGHTS: { key: WeightKey; label: string; help: string; instance: number; team: Partial<Record<TeamKey, number>> }[] = [
+  { key: 'suggestionsMerged', label: 'Suggestion merged', help: 'A reviewer suggestion the author merged as written', instance: 2, team: {} },
+  { key: 'humanIssuesConfirmed', label: 'Human-raised issue confirmed', help: 'An issue the human raised that a fix or the verifier confirmed', instance: 5, team: { payments: 6 } },
+  { key: 'learningsMerged', label: 'Learning merged', help: 'A learn PR (suppression, context note, check) merged into a layer', instance: 4, team: {} },
+  { key: 'learningsPromoted', label: 'Learning promoted', help: 'A learning promoted to the team or common layer', instance: 6, team: {} },
+  { key: 'disputesWon', label: 'Dispute won', help: 'A dispute the adjudicator or gate conceded', instance: 2, team: {} },
+  { key: 'disputesLost', label: 'Dispute lost', help: 'A dispute held against the human', instance: -1, team: { platform: -2 } },
+  { key: 'wrongDismissals', label: 'Dismissal linked to a bug', help: 'A dismissal later linked to an incident by a why-missed investigation', instance: -8, team: { payments: -10 } },
+]
+
+export function weightFor(key: WeightKey, teamKey?: TeamKey): { value: number; source: 'instance' | 'team' } {
+  const w = IMPACT_WEIGHTS.find((x) => x.key === key)!
+  const o = teamKey ? w.team[teamKey] : undefined
+  return o === undefined ? { value: w.instance, source: 'instance' } : { value: o, source: 'team' }
+}
+
+export const IMPACT_WEIGHT_REVISIONS: SettingRevision[] = [
+  { rev: 9, at: '2026-11-12 16:05', by: 'hmartin', layer: 'payments', change: 'wrongDismissals −8 → −10 (team override)', reason: 'INC-2291 follow-up: dismissals must cost more than they save' },
+  { rev: 8, at: '2026-11-04 09:20', by: 'hmartin', layer: 'payments', change: 'humanIssuesConfirmed 5 → 6 (team override)' },
+  { rev: 7, at: '2026-10-28 14:00', by: 'grao', layer: 'platform', change: 'disputesLost −1 → −2 (team override)' },
+  { rev: 6, at: '2026-10-01 10:00', by: 'grao', layer: 'instance', change: 'learningsPromoted 5 → 6', reason: 'Promotion is rarer and worth more than a local learning' },
+  { rev: 5, at: '2026-09-15 11:45', by: 'grao', layer: 'instance', change: 'initial weights imported from design.md §18' },
+]
+
+/** Outcome (impact) score: what the leaderboard ranks, using the team's effective weights. Volume (comments, words, gates) never scores on its own. */
+export function outcomeScore(s: ReviewerStat, teamKey: TeamKey = 'payments'): number {
+  return IMPACT_WEIGHTS.reduce((a, w) => a + s[w.key] * weightFor(w.key, teamKey).value, 0)
 }
 
 export interface DailyStat {
@@ -1017,8 +1217,8 @@ export const RUN618_NODES: WorkflowNodeDef[] = [
   { id: 'verify', kind: 'completion', run: 'VerifyFindings', detail: 'completions-cheap', status: 'pending', execs: [nx(1, 'done', 'Wed 10:13', 41, { model: 'luna', tokensIn: 72_000, tokensOut: 4_100, cost: { api: 0, seatEq: 0.38 }, output: '1 disproved and dropped' }), nx(2, 'done', 'Thu 11:37', 29, { model: 'haiku', tokensIn: 40_000, tokensOut: 2_000, cost: { api: 0, seatEq: 0.07 }, note: 'luna seat over quota → haiku', output: '0 dropped' })] },
   { id: 'publish', kind: 'code', run: 'Publish', status: 'pending', execs: [nx(1, 'done', 'Wed 10:14', 4, { output: 'review with 4 inline + summary; status failure' }), nx(2, 'done', 'Thu 11:38', 3, { output: '2 inline; summary edited' })] },
   { id: 'route', kind: 'code', run: 'RouteAfterRound', status: 'pending', execs: [nx(1, 'done', 'Wed 10:14', 0.2, { output: 'findings' }), nx(2, 'done', 'Thu 11:38', 0.2, { output: 'clean' })] },
-  { id: 'await-fixes', kind: 'wait', run: 'on: push, recheck, close, base-moved', detail: 'timeout 14d', status: 'pending', execs: [nx(1, 'done', 'Wed 10:14', 91_000, { output: 'push 4a77b10 after 19.5 wh; the base moved once meanwhile (base-drift: unaffected)' })] },
-  { id: 'base-drift', kind: 'decision', run: 'BaseDriftCheck', detail: 'decisions-default', status: 'pending', execs: [nx(1, 'done', 'Wed 16:40', 0.4, { output: 'base 1f20c9e..7b3e9d0 (2 commits) · prefilter: no overlap with PR files, related files or contract globs → unaffected-open (no model call)' })] },
+  { id: 'await-fixes', kind: 'wait', run: 'on: push, recheck, close, base-moved', detail: 'timeout 14d', status: 'pending', execs: [nx(1, 'done', 'Wed 10:14', 91_000, { output: 'push 4a77b10 after 19.5 wh', note: 'Base moved (3 commits) at 6.4 wh · drift recorded · branch not updated: waiting on author' })] },
+  { id: 'base-drift', kind: 'decision', run: 'BaseDriftCheck', detail: 'decisions-default', status: 'pending', execs: [nx(1, 'done', 'Wed 16:40', 0.4, { output: 'base 1f20c9e..7b3e9d0 (3 commits) · prefilter: no overlap with PR files, related files or contract globs → unaffected-open (no model call)', note: 'Drift recorded on the run · branch not updated: waiting on author (the run stays parked on await-fixes)' })] },
   { id: 'needs-human-approval', kind: 'code', run: 'NeedsHumanApproval', status: 'pending', execs: [nx(2, 'done', 'Thu 11:38', 0.3, { output: 'yes: data p=0.93, rollback 4 (sticky)' })] },
   { id: 'bot-approve', kind: 'code', run: 'BotApprove', status: 'skipped', execs: [] },
   { id: 'human-approve', kind: 'gate', run: 'queue: owning-team', detail: 'approve · another-round · close', status: 'pending', execs: [nx(2, 'done', 'Thu 11:38', 98_000, { output: 'Hugo Martin → another-round', note: 'Steer: "check the refund ledger reconciliation path against the double-entry invariant in src/Ledger/README.md"' })] },
@@ -1044,12 +1244,13 @@ export const NODE_PURPOSE: Record<string, string> = {
   route: 'Decides what happens after the round: findings → wait for changes, clean → needs-human-approval, bot-round limit → human review (§5).',
   'await-fixes': 'Parks the run, with no seat held, until the author pushes fixes or someone asks for a recheck. Times out after 14 days.',
   'base-drift':
-    'When the base branch moves under the PR (while parked, or since an approval): a code-only prefilter checks whether the new base commits touch the PR’s files, related files or contract globs; only on overlap does one cheap Jev call ask “could these changes affect this PR?”. Affected → delta re-review with an automatic rebase steer; unaffected and approved → update-branch with the approval carried forward.',
+    'When the base branch moves under the PR (while parked, or since an approval), or with keepUpToDate on the approved branch was already behind the tip: a code-only prefilter checks whether the new base commits touch the PR’s files, related files or contract globs; only on overlap does one cheap Jev call ask “could these changes affect this PR?”. Affected → delta re-review with an automatic rebase steer; unaffected and approved → update-branch with the approval carried forward.',
   'needs-human-approval': 'For a clean round, decides whether a human must approve, by applying the policy rules (risk categories, blast-radius thresholds, requiresHuman checks, size, first-time author, conceded disputes, unverified high-severity). The answer is sticky for the rest of the PR (§4.10).',
   'bot-approve': 'Sets antiphon/approval to success for the reviewed SHA when every auto-approve condition holds (§4.10).',
   'human-approve': 'Gate: a team member approves a clean round, sends it back for another round with a steer, or closes (§11).',
   'human-review': 'Gate opened after 3 bot-only rounds: a human approves, steers another round, or closes (§5).',
-  'base-moved': 'After approval (bot or human), compares the base SHA the approval covered with the current base tip, in code. Unchanged → await-merge with no update and no model call; moved → base-drift decides whether the move affects the PR (§4.12).',
+  'base-moved':
+    'After approval (bot or human), checks in code whether the approved branch is behind the base tip. keepUpToDate on: compares the branch’s merge-base with the tip, so a branch already behind at review time is caught too; off: compares the reviewed base with the tip (drift only). Unchanged → await-merge with no update and no model call; moved → base-drift decides whether it affects the PR (§4.12).',
   'update-branch': 'When the base moved without affecting the approved PR (base-drift): brings the branch up to date by rebase or merge, set per repo, and carries the approval forward if patch ids are unchanged. With keepUpToDate off it only acts on conflicts. An agent resolves conflicts; only conflict hunks are rechecked.',
   'await-merge': 'Holds the approved PR until it’s merged or closed. Keeps the approval while only the base branch moves.',
   // optional pattern, only in the editor's "Re-review disputed findings" proposal (design.md §4.8)
@@ -1119,6 +1320,32 @@ export const RUN618_EDGES: WorkflowEdgeDef[] = [
   { id: 'b5', from: 'base-drift', to: 'intake', label: 'affected', back: { taken: 0, max: 10 }, taken: false },
 ]
 
+/** Base-branch moves seen while the run was parked. Recorded on the run; the PR branch is never updated while it waits on the author. */
+export interface BaseMove {
+  iteration: number
+  at: string
+  atWh: number
+  from: string
+  to: string
+  commits: { sha: string; title: string; author: string }[]
+  verdict: 'unaffected-open' | 'affected' | 'unaffected-approved'
+  how: string
+  branch: string
+}
+
+export const RUN618_BASE_MOVES: BaseMove[] = [
+  {
+    iteration: 1, at: 'Wed 16:40', atWh: 6.4, from: '1f20c9e', to: '7b3e9d0',
+    commits: [
+      { sha: '5d1a7c2', title: 'Invoicing: VAT rounding uses banker’s rounding', author: 'hmartin' },
+      { sha: '9e04b33', title: 'CI: cache NuGet packages between jobs', author: 'bokafor' },
+      { sha: '7b3e9d0', title: 'Docs: settlement runbook typo', author: 'lnovak' },
+    ],
+    verdict: 'unaffected-open', how: 'code-only prefilter: no overlap with PR files, related files or contract globs (no model call)',
+    branch: 'not updated: waiting on author',
+  },
+]
+
 export interface IterationEvent {
   at: string
   label: string
@@ -1154,7 +1381,7 @@ export const RUN618_ITERATIONS: IterationTrack[] = [
       node: 'await-fixes',
       wh: 19.5,
       outcome: 'push 4a77b10',
-      during: [{ node: 'base-drift', atWh: 6.4, label: 'base moved 1f20c9e..7b3e9d0 (2 commits) → unaffected (prefilter, no model call)' }],
+      during: [{ node: 'base-drift', atWh: 6.4, label: 'Base moved (3 commits) · drift recorded · branch not updated: waiting on author' }],
     },
     events: [{ at: '11.0', label: '4 findings posted · status failure', kind: 'post' }],
   },

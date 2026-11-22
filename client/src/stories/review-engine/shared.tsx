@@ -4,24 +4,46 @@
  */
 import { Avatar, Badge, Box, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import type { ReactNode } from 'react'
-import { TbRobot, TbShieldLock, TbDatabaseX } from 'react-icons/tb'
+import { TbCheck, TbDatabaseX, TbRobot, TbShieldCheck, TbShieldLock, TbUser, TbUsers, TbX } from 'react-icons/tb'
 import {
   BLAST_DIMS,
   FLAG_META,
   MODELS,
   PEOPLE,
+  SEAT_QUOTA,
   SEVERITY_META,
   STAGE_META,
+  TEAMS,
+  TRUST,
+  TRUST_THRESHOLDS,
   blastNorm,
   blastText,
-  fmtUsd,
+  effectiveTrust,
+  personName,
+  thresholdFor,
   type Blast,
   type Cost,
   type Flag,
   type ModelKey,
+  type Owner,
   type Severity,
   type Stage,
 } from './mockData'
+
+/**
+ * The one cost formatter for every review-engine story. Under $1: rounded cents ("5¢", "<1¢" for
+ * a non-zero amount under half a cent). $1 or more: rounded whole dollars ("$4"). No decimals.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- story-only helper, kept beside CostText on purpose
+export function fmtCost(usd: number): string {
+  const sign = usd < 0 ? '−' : ''
+  const v = Math.abs(usd)
+  if (v === 0) return '0¢'
+  const cents = Math.round(v * 100)
+  if (cents === 0) return `${sign}<1¢`
+  if (cents < 100) return `${sign}${cents}¢`
+  return `${sign}$${Math.round(v).toLocaleString('en-US')}`
+}
 
 export function StageChip({ stage, detail, size = 'sm' }: { stage: Stage; detail?: string; size?: 'xs' | 'sm' | 'md' }) {
   const m = STAGE_META[stage]
@@ -208,33 +230,146 @@ export function BlastPanel({ blast, trips, compact = false }: { blast: Blast; tr
   )
 }
 
-export function CostText({ cost, size = 'xs' }: { cost: Cost; size?: 'xs' | 'sm' }) {
-  const total = cost.api + cost.seatEq
+/** Tooltip body for any cost: actual API spend, the seat estimate, and each seat model's quota. */
+export function CostTip({ cost, models }: { cost: Cost; models?: ModelKey[] }) {
+  const seats = (models ?? (Object.keys(SEAT_QUOTA) as ModelKey[])).filter((m) => MODELS[m].billing === 'subscription' && SEAT_QUOTA[m])
   return (
-    <Tooltip
-      withArrow
-      label={
-        <Stack gap={0}>
-          <Text size="xs">API (Jev, metered): {fmtUsd(cost.api)}</Text>
-          <Text size="xs">Seats (list-price equivalent, not billed): ≈{fmtUsd(cost.seatEq)}</Text>
-        </Stack>
-      }
-    >
-      <Text size={size} ff="monospace" span style={{ whiteSpace: 'nowrap' }}>
-        {total === 0 ? '—' : fmtUsd(cost.api)}
-        {cost.seatEq > 0 && (
-          <Text span c="dimmed" size={size} ff="monospace">
-            {' '}
-            +≈{fmtUsd(cost.seatEq)}
+    <Stack gap={2}>
+      <Text size="xs">
+        <b>{fmtCost(cost.api)}</b> actual · metered API (Jev via LiteLLM)
+      </Text>
+      <Text size="xs">
+        <b>≈{fmtCost(cost.seatEq)}</b> API-equivalent estimate · subscription seats (Luna, Haiku, Grok, Sonnet/Opus), not billed
+      </Text>
+      {cost.seatEq > 0 && seats.length > 0 && (
+        <Box mt={2}>
+          <Text size="10px" c="dimmed" tt="uppercase" fw={700}>
+            Seat quota used
           </Text>
-        )}
+          {seats.map((m) => (
+            <Text key={m} size="xs">
+              <Text span size="xs" ff="monospace" fw={600}>
+                {MODELS[m].short}
+              </Text>{' '}
+              {SEAT_QUOTA[m]!.pctUsed}% of {SEAT_QUOTA[m]!.window} · {SEAT_QUOTA[m]!.resets}
+            </Text>
+          ))}
+        </Box>
+      )}
+      <Text size="10px" c="dimmed">
+        Estimate = the same tokens at API list price.
+      </Text>
+    </Stack>
+  )
+}
 
+/** Dollars first. "≈" marks a total that includes a seat (API-equivalent) estimate; the tooltip splits it. */
+export function CostText({ cost, size = 'xs', models, dimmed = false }: { cost: Cost; size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'; models?: ModelKey[]; dimmed?: boolean }) {
+  const total = cost.api + cost.seatEq
+  const est = cost.seatEq > 0
+  return (
+    <Tooltip withArrow multiline w={340} label={<CostTip cost={cost} models={models} />}>
+      <Text
+        size={size}
+        ff="monospace"
+        span
+        c={dimmed ? 'dimmed' : undefined}
+        style={{ whiteSpace: 'nowrap', textDecoration: est ? 'underline dotted' : undefined, textUnderlineOffset: 3, cursor: 'help' }}
+      >
+        {total === 0 ? '—' : `${est ? '≈' : ''}${fmtCost(total)}`}
       </Text>
     </Tooltip>
   )
 }
 
-export function PersonChip({ login, size = 'sm', note }: { login?: string; size?: 'xs' | 'sm'; note?: ReactNode }) {
+/** "Trust 82 · payments-api", with what that score allows on this repo in the tooltip. */
+export function TrustBadge({ login, repo, size = 'xs', showScope = true }: { login: string; repo: string; size?: 'xs' | 'sm'; showScope?: boolean }) {
+  const t = TRUST.find((x) => x.login === login && x.scopeKind === 'repo' && x.scope === repo)
+  if (!t) return null
+  const v = effectiveTrust(t)
+  const teamKey = (Object.values(TEAMS).find((x) => x.repo === repo) ?? TEAMS.payments).key
+  const clear = thresholdFor('clear-blocker', teamKey).value
+  const gate = thresholdFor('decide-gate', teamKey).value
+  const color = v >= clear ? 'success' : v >= gate ? 'yellow' : 'orange'
+  return (
+    <Tooltip
+      withArrow
+      multiline
+      w={380}
+      label={
+        <Stack gap={3}>
+          <Text size="xs" fw={700}>
+            {personName(login)} · trust {v} on {repo}
+          </Text>
+          <Text size="xs" c="dimmed">
+            computed {t.computed} ({t.basis})
+            {t.adj &&
+              ` · ${t.adj.kind === 'pinned' ? `pinned at ${t.adj.value}` : `offset ${t.adj.value > 0 ? '+' : ''}${t.adj.value}`} by ${personName(t.adj.by)} on ${t.adj.at}${t.adj.expires ? `, expires ${t.adj.expires}` : ''}: ${t.adj.reason}`}
+          </Text>
+          <Text size="10px" c="dimmed" tt="uppercase" fw={700} mt={2}>
+            On {repo} this allows
+          </Text>
+          {TRUST_THRESHOLDS.map((th) => {
+            const need = thresholdFor(th.key, teamKey)
+            const ok = v >= need.value
+            return (
+              <Group key={th.key} gap={4} wrap="nowrap" align="flex-start">
+                <Box c={ok ? 'success.4' : 'orange.4'} style={{ display: 'flex', marginTop: 2 }}>
+                  {ok ? <TbCheck size={12} /> : <TbX size={12} />}
+                </Box>
+                <Text size="xs">
+                  {th.label}{' '}
+                  <Text span size="xs" c="dimmed">
+                    (≥ {need.value}
+                    {need.source === 'team' ? ', team override' : ''})
+                  </Text>
+                  {!ok && (
+                    <Text span size="xs" c="orange.3">
+                      {' '}
+                      → {th.below}
+                    </Text>
+                  )}
+                </Text>
+              </Group>
+            )
+          })}
+        </Stack>
+      }
+    >
+      <Badge size={size} variant="light" color={color} radius="sm" tt="none" leftSection={<TbShieldCheck size={10} />} style={{ cursor: 'help', flexShrink: 0 }}>
+        Trust {v}
+        {showScope && <span style={{ opacity: 0.75 }}> · {repo}</span>}
+      </Badge>
+    </Tooltip>
+  )
+}
+
+/** "Owners: payments-core, platform-sre": CODEOWNERS can name several teams and users. */
+export function OwnersLine({ owners, label = 'Owners', size = 'xs' }: { owners: Owner[]; label?: string; size?: 'xs' | 'sm' }) {
+  return (
+    <Group gap={4} wrap="wrap">
+      <Text size={size} c="dimmed">
+        {label}:
+      </Text>
+      {owners.map((o) => (
+        <Tooltip key={o.name} label={o.kind === 'team' ? `team @lumen/${o.name} · ${o.members ?? '?'} member${o.members === 1 ? '' : 's'}` : `user @${o.name} (${personName(o.name)})`}>
+          <Badge
+            size={size}
+            variant="outline"
+            color={o.kind === 'team' ? 'indigo' : 'gray'}
+            radius="sm"
+            tt="none"
+            leftSection={o.kind === 'team' ? <TbUsers size={10} /> : <TbUser size={10} />}
+          >
+            {o.kind === 'user' ? `@${o.name}` : o.name}
+          </Badge>
+        </Tooltip>
+      ))}
+    </Group>
+  )
+}
+
+export function PersonChip({ login, size = 'sm', note, trustRepo }: { login?: string; size?: 'xs' | 'sm'; note?: ReactNode; trustRepo?: string }) {
   if (!login)
     return (
       <Text size="xs" c="dimmed" fs="italic">
@@ -252,6 +387,7 @@ export function PersonChip({ login, size = 'sm', note }: { login?: string; size?
       <Text size={size === 'xs' ? 'xs' : 'sm'} truncate>
         {name}
       </Text>
+      {trustRepo && <TrustBadge login={login} repo={trustRepo} showScope={false} />}
       {note}
     </Group>
   )

@@ -1,5 +1,5 @@
 {
-  "source": "Built from server/Bundles/stage-review.md lines 7-15 and ReviewEvidenceParserTests; adds an ABF review-findings document before the legacy blocks.",
+  "source": "Built from server/Bundles/stage-review.md lines 7-15 and ReviewEvidenceParserTests; adds an ABF review-findings document before the legacy blocks, whose finding body quotes a report example in a tilde fence. The legacy scan skips the document (spec 6.2); today's parsers do not, and ReviewEvidence counts the quoted heading as a second standalone block.",
   "envelope": "report",
   "legacy": {
     "abf": 1,
@@ -9,7 +9,7 @@
       {
         "type": "review-evidence",
         "id": null,
-        "line": 16,
+        "line": 23,
         "standalone": true,
         "fields": {
           "subjectTaskId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -24,7 +24,7 @@
       {
         "type": "next-stage",
         "id": null,
-        "line": 23,
+        "line": 30,
         "standalone": true,
         "fields": {
           "next": "land",
@@ -51,6 +51,24 @@
       "warning": null,
       "scope": "Full",
       "reviewedSourceClean": true
+    }
+  },
+  "currentParsers": {
+    "next-stage": {
+      "found": true,
+      "kind": "land",
+      "rawToken": "land",
+      "handoff": "Clean Final review; land the Code owner with -ExpectedSourceSha 0123456789abcdef0123456789abcdef01234567.",
+      "artifactPath": null
+    },
+    "review-evidence": {
+      "found": true,
+      "usable": false,
+      "subjectTaskId": null,
+      "reviewedSourceSha": null,
+      "warning": "review_evidence_duplicate",
+      "scope": "Unknown",
+      "reviewedSourceClean": null
     }
   }
 }

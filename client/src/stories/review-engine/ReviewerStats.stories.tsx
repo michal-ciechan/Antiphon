@@ -4,18 +4,34 @@ import {
   Alert,
   Badge,
   Box,
+  Button,
+  Drawer,
   Group,
+  NumberInput,
   Paper,
   SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
   Tooltip,
 } from '@mantine/core'
-import { TbAlertTriangle, TbEyeOff, TbFlag, TbInfoCircle, TbTrophy } from 'react-icons/tb'
-import { DAILY, REVIEWER_STATS, fmtUsd, outcomeScore, personName, type ReviewerStat } from './mockData'
-import { Kpi, PersonChip, SectionLabel, Spark } from './shared'
+import { TbAdjustments, TbAlertTriangle, TbDatabase, TbEyeOff, TbFlag, TbHistory, TbInfoCircle, TbTrophy } from 'react-icons/tb'
+import {
+  DAILY,
+  IMPACT_WEIGHTS,
+  IMPACT_WEIGHT_REVISIONS,
+  REVIEWER_STATS,
+  TEAMS,
+  outcomeScore,
+  personName,
+  weightFor,
+  type ReviewerStat,
+  type TeamKey,
+  type WeightKey,
+} from './mockData'
+import { CostText, Kpi, PersonChip, SectionLabel, Spark } from './shared'
 
 /**
  * PROPOSAL MOCK — not production code. Reviewer stats for
@@ -25,6 +41,7 @@ import { Kpi, PersonChip, SectionLabel, Spark } from './shared'
  *   A — team leaderboard (payments-core), outcome columns scored, volume columns shown but greyed
  *   B — one person's card as their team lead sees it, with the private panel
  *   C — team health over time (backlog, time to decision, accepted vs dismissed, cost)
+ *   D — impact-score weights: instance defaults, team overrides, revision history (stored in Antiphon)
  */
 
 type Period = 'day' | 'week' | 'month'
@@ -67,8 +84,27 @@ function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period
   )
 }
 
-const SCORE_HELP =
-  'Outcome score = 2 × suggestions merged + 5 × human-raised issues confirmed + 4 × learnings merged + 6 × learnings promoted + 2 × disputes won − 1 × disputes lost − 8 × wrong dismissals. Comments, words and gate counts never score on their own.'
+/** The score formula as it is computed for a team, from the stored weights (instance defaults + team overrides). */
+function scoreHelp(teamKey: TeamKey): string {
+  const terms = IMPACT_WEIGHTS.map((w, i) => {
+    const v = weightFor(w.key, teamKey).value
+    const sign = v < 0 ? ' − ' : i === 0 ? '' : ' + '
+    return `${sign}${Math.abs(v)} × ${w.label.toLowerCase()}`
+  }).join('')
+  return `Outcome score = ${terms}. Weights: ${TEAMS[teamKey].slug} effective set, revision r${IMPACT_WEIGHT_REVISIONS[0].rev} (stored in Antiphon). Comments, words and gate counts never score on their own.`
+}
+
+/** "×2" next to a scored column header, marked when the team overrides the instance default. */
+function W({ k, teamKey = 'payments' }: { k: WeightKey; teamKey?: TeamKey }) {
+  const w = weightFor(k, teamKey)
+  return (
+    <Tooltip label={w.source === 'team' ? `${TEAMS[teamKey].slug} override (instance default ${IMPACT_WEIGHTS.find((x) => x.key === k)!.instance})` : 'instance default'}>
+      <Text span size="10px" ff="monospace" c={w.source === 'team' ? 'grape.4' : 'dimmed'} ml={4}>
+        ×{w.value}
+      </Text>
+    </Tooltip>
+  )
+}
 
 // ---------------------------------------------------------------- (A) leaderboard
 
@@ -83,6 +119,7 @@ function Num({ v, neg = false, strong = false }: { v: number; neg?: boolean; str
 function Leaderboard() {
   const [period, setPeriod] = useState<Period>('month')
   const [asLead, setAsLead] = useState(true)
+  const [weightsOpen, setWeightsOpen] = useState(false)
   const rows = REVIEWER_STATS.map((s) => scaled(s, period))
     .map((s) => ({ s, score: outcomeScore(s) }))
     .sort((a, b) => b.score - a.score)
@@ -100,6 +137,15 @@ function Leaderboard() {
           <Text size="xs" c="dimmed">
             {PERIOD_LABEL[period]} · ranked by outcome score, not volume · durations in working hours
           </Text>
+          <Group gap={6} mt={2}>
+            <Text size="xs" c="dimmed">
+              Weights: payments-core effective set · r{IMPACT_WEIGHT_REVISIONS[0].rev} by {personName(IMPACT_WEIGHT_REVISIONS[0].by)} ({IMPACT_WEIGHT_REVISIONS[0].at.slice(0, 10)}) ·{' '}
+              {IMPACT_WEIGHTS.filter((w) => w.team.payments !== undefined).length} team overrides
+            </Text>
+            <Button size="compact-xs" variant="light" leftSection={<TbAdjustments size={12} />} onClick={() => setWeightsOpen(true)}>
+              Weights
+            </Button>
+          </Group>
         </Box>
         <Group gap="sm">
           <SegmentedControl
@@ -122,20 +168,35 @@ function Leaderboard() {
                 <Table.Th w={30}>#</Table.Th>
                 <Table.Th w={160}>Reviewer</Table.Th>
                 <Table.Th w={190}>
-                  <Tooltip multiline w={360} label={SCORE_HELP}>
+                  <Tooltip multiline w={380} label={scoreHelp('payments')}>
                     <Group gap={4}>
                       Outcome score <TbInfoCircle size={12} />
                     </Group>
                   </Tooltip>
                 </Table.Th>
-                <Table.Th ta="right">Suggestions merged</Table.Th>
-                <Table.Th ta="right">Human issues confirmed</Table.Th>
-                <Table.Th ta="right">Learnings merged / promoted</Table.Th>
-                <Table.Th ta="right">Disputes won / lost</Table.Th>
                 <Table.Th ta="right">
-                  <Tooltip multiline w={300} label="A dismissed finding later linked to a bug or incident by a Debug or why-missed investigation. −8 each.">
+                  Suggestions merged
+                  <W k="suggestionsMerged" />
+                </Table.Th>
+                <Table.Th ta="right">
+                  Human issues confirmed
+                  <W k="humanIssuesConfirmed" />
+                </Table.Th>
+                <Table.Th ta="right">
+                  Learnings merged / promoted
+                  <W k="learningsMerged" />
+                  <W k="learningsPromoted" />
+                </Table.Th>
+                <Table.Th ta="right">
+                  Disputes won / lost
+                  <W k="disputesWon" />
+                  <W k="disputesLost" />
+                </Table.Th>
+                <Table.Th ta="right">
+                  <Tooltip multiline w={300} label={`A dismissed finding later linked to a bug or incident by a Debug or why-missed investigation. ${weightFor('wrongDismissals', 'payments').value} each (payments-core override).`}>
                     <span>Wrong dismissals</span>
                   </Tooltip>
+                  <W k="wrongDismissals" />
                 </Table.Th>
                 <Table.Th ta="right">Decision p50 / p90</Table.Th>
                 <Table.Th ta="right" c="dimmed">
@@ -164,7 +225,7 @@ function Leaderboard() {
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <PersonChip login={s.login} size="xs" />
+                      <PersonChip login={s.login} size="xs" trustRepo="payments-api" />
                     </Table.Td>
                     <Table.Td>
                       <Group gap={6} wrap="nowrap">
@@ -248,8 +309,230 @@ function Leaderboard() {
       </Paper>
       <Text size="xs" c="dimmed">
         Greyed columns are context, not score: a reviewer who approves 22 gates in 0.2 wh p50 does not outrank one who confirms 5 real issues. Leaderboards are per team and per month.
-        {!asLead && ' As a member you see the private column only for yourself.'}
+        {!asLead && ' As a member you see the private column only for yourself.'} Scores use the weights above (×n in each header); the badge next to each
+        name is their trust on payments-api.
       </Text>
+      <Drawer opened={weightsOpen} onClose={() => setWeightsOpen(false)} position="right" size={820} title={<Text fw={700}>Impact-score weights</Text>}>
+        <WeightsSettings compact />
+      </Drawer>
+    </Stack>
+  )
+}
+
+// ---------------------------------------------------------------- (D) impact-score weights (settings)
+
+const TEAM_COLS: TeamKey[] = ['payments', 'platform', 'web']
+
+function WeightsSettings({ compact = false }: { compact?: boolean }) {
+  const [teamKey, setTeamKey] = useState<TeamKey>('payments')
+  const [staged, setStaged] = useState<Partial<Record<WeightKey, number | null>>>({})
+  const [reason, setReason] = useState('')
+  const [saved, setSaved] = useState<number | null>(null)
+  const canEdit = teamKey === 'payments'
+  const valueOf = (k: WeightKey): { value: number; source: 'instance' | 'team' | 'staged' } => {
+    const st = staged[k]
+    if (st === null) return { value: IMPACT_WEIGHTS.find((w) => w.key === k)!.instance, source: 'instance' }
+    if (st !== undefined) return { value: st, source: 'staged' }
+    return weightFor(k, teamKey)
+  }
+  const nStaged = Object.keys(staged).length
+  const rank = (useStaged: boolean) =>
+    REVIEWER_STATS.map((s) => ({
+      login: s.login,
+      score: IMPACT_WEIGHTS.reduce((a, w) => a + s[w.key] * (useStaged ? valueOf(w.key).value : weightFor(w.key, teamKey).value), 0),
+    })).sort((a, b) => b.score - a.score)
+  const before = rank(false)
+  const after = rank(true)
+  const setOverride = (k: WeightKey, v: number | string) => {
+    const current = IMPACT_WEIGHTS.find((w) => w.key === k)!.team[teamKey]
+    setStaged((m) => {
+      const n = { ...m }
+      const num = typeof v === 'number' ? v : v === '' ? undefined : Number(v)
+      if (num === undefined) {
+        if (current !== undefined) n[k] = null
+        else delete n[k]
+      } else if (num === current) delete n[k]
+      else n[k] = num
+      return n
+    })
+    setSaved(null)
+  }
+  return (
+    <Stack gap="sm">
+      {!compact && (
+        <Box>
+          <Text fw={700} size="lg">
+            Impact-score weights
+          </Text>
+          <Text size="xs" c="dimmed">
+            What the reviewer leaderboard multiplies each outcome by. Instance defaults, overridden per team.
+          </Text>
+        </Box>
+      )}
+      <Alert color="indigo" variant="light" p={8} icon={<TbDatabase size={16} />}>
+        <Text size="xs">
+          Stored in Antiphon (database rows, one revision per save), not in any repo file. A change applies from the next leaderboard rollup; past periods
+          keep the weights that were in force then. Instance admins edit the defaults; team leads edit their team's column.
+        </Text>
+      </Alert>
+      <Group gap="sm">
+        <Text size="xs" c="dimmed">
+          Team column
+        </Text>
+        <SegmentedControl
+          size="xs"
+          value={teamKey}
+          onChange={(v) => {
+            setTeamKey(v as TeamKey)
+            setStaged({})
+            setSaved(null)
+          }}
+          data={TEAM_COLS.map((t) => ({ value: t, label: TEAMS[t].slug }))}
+        />
+        <Text size="xs" c="dimmed">
+          {canEdit ? 'Viewing as Hugo Martin, payments-core lead: you can edit this column.' : 'Read only: you are not a lead of this team.'}
+        </Text>
+      </Group>
+      <Paper withBorder radius="md">
+        <Table verticalSpacing={4} fz="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Outcome</Table.Th>
+              <Table.Th ta="right" w={110}>
+                Instance default
+              </Table.Th>
+              <Table.Th w={200}>{TEAMS[teamKey].slug} override</Table.Th>
+              <Table.Th ta="right" w={90}>
+                Effective
+              </Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {IMPACT_WEIGHTS.map((w) => {
+              const eff = valueOf(w.key)
+              const st = staged[w.key]
+              const override = st === null ? undefined : (st ?? w.team[teamKey])
+              return (
+                <Table.Tr key={w.key}>
+                  <Table.Td>
+                    <Text size="sm">{w.label}</Text>
+                    <Text size="xs" c="dimmed">
+                      {w.help}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    <Text ff="monospace" size="sm" c={eff.source === 'instance' ? undefined : 'dimmed'}>
+                      {w.instance}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="nowrap">
+                      <NumberInput size="xs" w={80} placeholder="—" disabled={!canEdit} value={override ?? ''} onChange={(v) => setOverride(w.key, v)} />
+                      {st !== undefined && (
+                        <Badge size="xs" color="warning" variant="light">
+                          {st === null ? 'remove override' : 'staged'}
+                        </Badge>
+                      )}
+                      {st === undefined && w.team[teamKey] !== undefined && (
+                        <Badge size="xs" color="grape" variant="light">
+                          override
+                        </Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    <Text ff="monospace" size="sm" fw={700} c={eff.source === 'staged' ? 'warning.4' : eff.source === 'team' ? 'grape.4' : undefined}>
+                      {eff.value > 0 ? `+${eff.value}` : eff.value}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              )
+            })}
+          </Table.Tbody>
+        </Table>
+      </Paper>
+      {canEdit && (
+        <Paper withBorder radius="md" p="xs">
+          <Group gap="sm" align="flex-end" wrap="nowrap">
+            <TextInput
+              size="xs"
+              style={{ flex: 1 }}
+              label="Reason for this revision (required)"
+              placeholder="e.g. wrong dismissals must cost more than they save"
+              value={reason}
+              onChange={(e) => setReason(e.currentTarget.value)}
+            />
+            <Button size="xs" variant="subtle" color="gray" disabled={nStaged === 0} onClick={() => setStaged({})}>
+              Discard
+            </Button>
+            <Button
+              size="xs"
+              disabled={nStaged === 0 || !reason.trim()}
+              onClick={() => {
+                setSaved(IMPACT_WEIGHT_REVISIONS[0].rev + 1)
+                setStaged({})
+                setReason('')
+              }}
+            >
+              Save as r{IMPACT_WEIGHT_REVISIONS[0].rev + 1}
+            </Button>
+          </Group>
+          {nStaged > 0 && (
+            <Text size="xs" c="warning.4" mt={6}>
+              Re-rank preview with {nStaged} staged change{nStaged === 1 ? '' : 's'} (this month):{' '}
+              {after
+                .map((a, i) => {
+                  const was = before.findIndex((b) => b.login === a.login)
+                  return `${i + 1}. ${personName(a.login)} ${a.score}${was !== i ? ` (was #${was + 1})` : ''}`
+                })
+                .join(' · ')}
+            </Text>
+          )}
+          {saved && (
+            <Text size="xs" c="success.4" mt={6}>
+              Saved r{saved} by Hugo Martin (mock). The leaderboard re-scores this month on the next rollup.
+            </Text>
+          )}
+        </Paper>
+      )}
+      <Paper withBorder radius="md" p="xs">
+        <Group gap={6} mb={4}>
+          <TbHistory size={14} />
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+            Revision history · edited by / when
+          </Text>
+        </Group>
+        <Table fz="xs" verticalSpacing={3}>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>rev</Table.Th>
+              <Table.Th>edited</Table.Th>
+              <Table.Th>by</Table.Th>
+              <Table.Th>layer</Table.Th>
+              <Table.Th>change</Table.Th>
+              <Table.Th>reason</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {IMPACT_WEIGHT_REVISIONS.map((r) => (
+              <Table.Tr key={r.rev}>
+                <Table.Td ff="monospace">r{r.rev}</Table.Td>
+                <Table.Td ff="monospace" style={{ whiteSpace: 'nowrap' }}>
+                  {r.at}
+                </Table.Td>
+                <Table.Td style={{ whiteSpace: 'nowrap' }}>{personName(r.by)}</Table.Td>
+                <Table.Td>
+                  <Badge size="xs" variant="light" color={r.layer === 'instance' ? 'gray' : 'grape'}>
+                    {r.layer === 'instance' ? 'instance' : TEAMS[r.layer].slug}
+                  </Badge>
+                </Table.Td>
+                <Table.Td ff="monospace">{r.change}</Table.Td>
+                <Table.Td c="dimmed">{r.reason ?? '—'}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Paper>
     </Stack>
   )
 }
@@ -265,7 +548,7 @@ function PersonCard() {
     <Stack gap="sm" maw={1100}>
       <Group justify="space-between">
         <Group gap="sm">
-          <PersonChip login="ksato" />
+          <PersonChip login="ksato" trustRepo="payments-api" />
           <Text size="xs" c="dimmed">
             payments-core · viewed by Hugo Martin (team lead) · {PERIOD_LABEL[period]}
           </Text>
@@ -277,7 +560,7 @@ function PersonCard() {
         <Kpi label="Suggestions merged" value={s.suggestionsMerged} sub="team median 8" />
         <Kpi label="Gates decided" value={s.gatesDecided} sub="most in team (volume, not scored)" accent="gray" />
         <Kpi label="Decision p50" value={`${s.p50Wh.toFixed(1)} wh`} sub={`team ${teamP50.toFixed(1)} wh`} />
-        <Kpi label="Wrong dismissals" value={<Text span c="danger.4" fw={700} size="xl">{s.wrongDismissals}</Text>} sub="−8 each" accent="danger" />
+        <Kpi label="Wrong dismissals" value={<Text span c="danger.4" fw={700} size="xl">{s.wrongDismissals}</Text>} sub={`${weightFor('wrongDismissals', 'payments').value} each (payments-core weight)`} accent="danger" />
       </SimpleGrid>
       <Box style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 12 }}>
         <Stack gap="sm">
@@ -391,7 +674,8 @@ function TeamHealth() {
   const dows = days.map((d) => d.dow)
   const acc = days.reduce((a, d) => a + d.accepted, 0)
   const dis = days.reduce((a, d) => a + d.dismissed, 0)
-  const cost = days.reduce((a, d) => a + d.costApi + d.costSeatEq, 0)
+  const costApi = days.reduce((a, d) => a + d.costApi, 0)
+  const costSeat = days.reduce((a, d) => a + d.costSeatEq, 0)
   return (
     <Stack gap="sm">
       <Group justify="space-between">
@@ -410,7 +694,7 @@ function TeamHealth() {
         <Kpi label="Time to decision p50" value="1.5 wh" sub="p90 4.1 wh" />
         <Kpi label="Bot precision" value={`${Math.round((acc / (acc + dis)) * 100)}%`} sub={`${acc} accepted · ${dis} dismissed`} accent="success" />
         <Kpi label="Rounds per PR" value="1.8" sub="open → bot-clean 1.1 wd · → merge 2.3 wd" />
-        <Kpi label="Cost per accepted finding" value={`≈${fmtUsd(cost / acc)}`} sub="API + seat equivalent" accent="cyan" />
+        <Kpi label="Cost per accepted finding" value={<CostText cost={{ api: costApi / acc, seatEq: costSeat / acc }} size="xl" />} sub="actual API + seat estimate (≈)" accent="cyan" />
       </SimpleGrid>
       <SimpleGrid cols={3} spacing="sm">
         <Paper withBorder p="sm" radius="md">
@@ -469,3 +753,16 @@ export const PersonCardLeadView: Story = { name: 'B · Person card (lead view)',
 
 /** (C) Team health over time: backlog, time to decision, accepted vs dismissed, dismissal reasons, cost per accepted finding. */
 export const TeamHealthView: Story = { name: 'C · Team health', render: () => <TeamHealth /> }
+
+/**
+ * (D) Settings for the impact-score weights the leaderboard uses: instance defaults, a team override column (editable by
+ * that team's lead), staged edits with a re-rank preview, and the revision history. Stored in Antiphon, not in files.
+ */
+export const ImpactWeights: Story = {
+  name: 'D · Impact-score weights (settings)',
+  render: () => (
+    <Box p="md" maw={960}>
+      <WeightsSettings />
+    </Box>
+  ),
+}

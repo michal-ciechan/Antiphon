@@ -1,8 +1,10 @@
 # ABF v1 conformance corpus
 
-The test cases for the [Antiphon Block Format v1](../v1.md). The C# parser (server) and the
-TypeScript parser (client) must both pass every case. The current C# legacy parsers
-(`PipelineHandoff`, `ReviewEvidence`) must pass `legacy/`.
+The test cases for the [Antiphon Block Format v1](../v1.md). The spec is a draft, so cases may change
+until v1 is declared settled. The C# parser (server) and the TypeScript parser (client) must both
+pass every case. The current C# legacy parsers (`PipelineHandoff`, `ReviewEvidence`) must pass
+`legacy/`, reading `currentParsers` where a case has it. The ABF parser replaces them in design P0,
+and `currentParsers` retires with them.
 
 ## Layout
 
@@ -11,7 +13,7 @@ TypeScript parser (client) must both pass every case. The current C# legacy pars
 | `valid/` | `NNN-<name>.abf` | The canonical JSON (spec §4), with `"diagnostics": []` | strict | 10 |
 | `tolerant/` | `NNN-<name>.abf` | The canonical JSON of the selected document, with its diagnostics | tolerant | 10 |
 | `invalid/` | `NNN-<name>.abf` | `{ "expect": "<type>/<ver>", "errors": [ { "line", "code", "name"? } ] }` | strict | 10 |
-| `legacy/` | `NNN-<name>.txt` | `{ "source", "envelope", "legacy", "values" }` | report envelope | 10 |
+| `legacy/` | `NNN-<name>.txt` | `{ "source", "envelope", "legacy", "values", "currentParsers"? }` | report envelope | 11 |
 
 Each input has a `.json` file with the same stem. Files are UTF-8 with LF line endings and no
 trailing whitespace that matters, so editors and Git may normalise them safely.
@@ -28,10 +30,13 @@ Every case is parsed with the **report envelope** (spec §6.1). That is a no-op 
   including `diagnostics`, must equal the `.json`.
 - **`invalid/`:** strict mode, expecting `expect`. The parser's errors must equal `errors`, the
   complete list.
-- **`legacy/`:** the legacy scan (spec §6). `legacy` must equal the legacy document (§6.6), and
-  `values` must equal the typed values (§6.4, §6.5). For the current C# parsers, `values.next-stage`
-  is `PipelineHandoff.TryParse(text)` and `values.review-evidence` is `ReviewEvidence.TryParse(text)`.
-  The enum and GUID fields are written as below.
+- **`legacy/`:** the legacy scan (spec §6), which skips ABF documents (§6.2). `legacy` must equal
+  the legacy document (§6.6), and `values` must equal the typed values (§6.4, §6.5).
+- **The current C# parsers** are checked against `currentParsers` when the case has it, and against
+  `values` otherwise. `next-stage` is `PipelineHandoff.TryParse(text)` and `review-evidence` is
+  `ReviewEvidence.TryParse(text)`. `currentParsers` appears only in cases where an ABF document
+  holds a line those parsers act on, so their whole-text reading differs from ABF's (§6.2). The enum
+  and GUID fields are written as below.
 
 ## Comparison rules
 
@@ -81,7 +86,9 @@ Every case is parsed with the **report envelope** (spec §6.1). That is a no-op 
 | `tolerant/010` | Decision-response repairs: percent, renormalised probabilities, `yes` |
 | `invalid/001`–`010` | Missing header or end, unknown names, missing required fields, bad values, unescaped fence content, name spelling, unsupported version, decision-request rules, `=== check candidate C1` |
 | `legacy/001`–`006` | `next-stage` from real report tails: basic, fenced, last block wins, unrecognised token, clipped handoff, prose `Next:` and a block after the token |
-| `legacy/007`–`010` | `review-evidence`: with an ABF document in the same report, ignored examples, grammar edges, placement after next stage |
+| `legacy/007` | `review-evidence` with an ABF document in the same report. A tilde-fenced example in a finding body is skipped with the document; today's parsers read it as a second standalone block (`currentParsers`: `review_evidence_duplicate`) |
+| `legacy/008`–`010` | `review-evidence`: ignored examples, grammar edges, placement after next stage |
+| `legacy/011` | A fenced `next-stage` example inside an ABF document, with no real block: ABF finds none; today's parser reads `next: plan` (`currentParsers`) |
 
 Each `legacy/*.json` has a `source` member naming the report it was trimmed from
 (`.antiphon/task-*.md`) or the parser test it reproduces.
@@ -91,5 +98,7 @@ Each `legacy/*.json` has a `source` member naming the report it was trimmed from
 1. Pick the folder by mode and the next free `NNN`. Use a name that says what the case shows.
 2. Keep inputs small and free of secrets. Trim real reports to the block and the lines that matter.
 3. Write the expected `.json` from the spec, not from a parser's output.
-4. For `legacy/`, also confirm the values against the current C# parsers before you commit.
+4. For `legacy/`, also confirm the values against the current C# parsers before you commit. Where
+   they differ because a line falls inside an ABF document, record theirs in `currentParsers`; any
+   other difference is a defect in the case or the spec.
 5. Add a row to the coverage table above.

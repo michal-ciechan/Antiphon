@@ -1,0 +1,21 @@
+Reviewed the plan. One finding, below.
+
+@abf 1 review-findings/1.0
+=== finding F1
+check: none
+severity: minor
+confidence: 0.7
+file: docs/report-format.md
+anchor: End the report with the next-stage block.
+--- body
+The guide should show a complete block, for example:
+
+```
+--- next stage ---
+next: plan
+handoff: replan the slice
+```
+=== checks
+CHK-0007 pass
+=== end
+[antiphon-report:bbbbbbbb done]

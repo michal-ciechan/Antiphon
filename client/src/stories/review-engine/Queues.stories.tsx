@@ -41,18 +41,22 @@ import {
   VIEWER,
   blastTrips,
   personName,
+  thresholdFor,
+  trustOf,
   type QueueItem,
   type QueueKind,
   type QueueState,
   type TeamKey,
 } from './mockData'
-import { BlastPanel, PersonChip, SectionLabel, SlaBar } from './shared'
+import { BlastPanel, OwnersLine, PersonChip, SectionLabel, SlaBar } from './shared'
 
 /**
  * PROPOSAL MOCK — not production code. Human queues for
  * `docs/features/012-review-engine/design.md` §11.3 queues, §11.4 routing, §11.5 author
  * resolution: Mine / My teams / Overall, "Not me", random assignment that excludes the author,
- * SLA ageing in working hours. Viewer: Alice Smith (payments-core).
+ * SLA ageing in working hours. Viewer: Alice Smith (payments-core). Owners come from CODEOWNERS and can
+ * be several teams and users; reviewer names carry their trust on the repo, and random assignment
+ * skips anyone below the trust threshold for the item (random-assign 30, clear-blocker 60).
  *   A — tabbed table with inline actions
  *   B — inbox list + preview pane, with author resolution shown (AI-resolved and unknown)
  */
@@ -67,9 +71,18 @@ const STATE_META: Record<QueueState, { label: string; color: string }> = {
 
 const NOT_ME_REASONS = ['Not familiar with this area', 'Conflict of interest', 'Out / at capacity today', 'I wrote part of it', 'Other']
 
+/** The trust an assignee needs for this item: clear-blocker for a second-reviewer item, random-assign otherwise. */
+function trustNeeded(item: QueueItem): { value: number; label: string } {
+  return item.kind === 'blocker-second'
+    ? { value: thresholdFor('clear-blocker', item.team).value, label: 'clear-blocker' }
+    : { value: thresholdFor('random-assign', item.team).value, label: 'random-assign' }
+}
+
 function pickRandom(item: QueueItem): { login: string; excluded: string[]; pool: string[] } | null {
   const author = item.authorResolution?.to ?? item.author
-  const excluded = [author, ...(item.passedBy ?? []).map((p) => p.login)]
+  const need = trustNeeded(item).value
+  const lowTrust = Object.values(PEOPLE).filter((p) => p.team === item.team && p.optedIn && (trustOf(p.login, item.repo) ?? 0) < need).map((p) => p.login)
+  const excluded = [author, ...(item.passedBy ?? []).map((p) => p.login), ...lowTrust]
   const pool = Object.values(PEOPLE).filter((p) => p.team === item.team && p.optedIn && !excluded.includes(p.login))
   if (pool.length === 0) return null
   // weight by inverse open load
@@ -95,7 +108,7 @@ function useQueue() {
     notifications.show({
       color: 'active',
       title: `${item.id} assigned to ${personName(pick.login)}`,
-      message: `Random from ${pick.pool.length} opted-in ${TEAMS[item.team].slug} members, weighted by open load. Excluded: ${pick.excluded.map(personName).join(', ')}.`,
+      message: `Random from ${pick.pool.length} opted-in ${TEAMS[item.team].slug} members with trust ≥ ${trustNeeded(item).value}, weighted by open load. Excluded: ${pick.excluded.map(personName).join(', ')}.`,
     })
   }
   const notMe = (item: QueueItem, reason: string) => {
@@ -246,7 +259,7 @@ function QueueTable() {
               <Table.Tr>
                 <Table.Th w={130}>Kind</Table.Th>
                 <Table.Th>Item</Table.Th>
-                <Table.Th w={120}>Team</Table.Th>
+                <Table.Th w={210}>Team · owners</Table.Th>
                 <Table.Th w={150}>Author</Table.Th>
                 <Table.Th w={150}>Assignee</Table.Th>
                 <Table.Th w={150}>Age / SLA</Table.Th>
@@ -284,13 +297,16 @@ function QueueTable() {
                     )}
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs">{TEAMS[q.team].slug}</Text>
+                    <Text size="xs" fw={600}>
+                      {TEAMS[q.team].slug}
+                    </Text>
+                    <OwnersLine owners={q.owners} />
                   </Table.Td>
                   <Table.Td>
                     <AuthorCell item={q} />
                   </Table.Td>
                   <Table.Td>
-                    <PersonChip login={q.assignee} size="xs" />
+                    <PersonChip login={q.assignee} size="xs" trustRepo={q.repo} />
                     <Badge size="xs" variant="dot" color={STATE_META[q.state].color} mt={2}>
                       {STATE_META[q.state].label}
                     </Badge>
@@ -309,7 +325,7 @@ function QueueTable() {
                         </Button>
                       )}
                       <NotMeButton item={q} onConfirm={(r) => notMe(q, r)} />
-                      <Tooltip label="Random pick among opted-in team members, weighted by open load. Excludes the author (or resolved author) and anyone who passed.">
+                      <Tooltip label="Random pick among opted-in team members with enough trust on the repo, weighted by open load. Excludes the author (or resolved author) and anyone who passed.">
                         <Button size="compact-xs" variant="default" leftSection={<TbArrowsShuffle size={12} />} onClick={() => assignRandom(q)}>
                           Assign random
                         </Button>
@@ -560,9 +576,12 @@ function Inbox({ initial }: { initial: string }) {
             </Box>
             <Stack gap={4} align="flex-end">
               <SlaBar ageWh={q.ageWh} slaWh={q.slaWh} width={120} />
-              <PersonChip login={q.assignee} size="xs" />
+              <PersonChip login={q.assignee} size="xs" trustRepo={q.repo} />
             </Stack>
           </Group>
+          <Box mt={6}>
+            <OwnersLine owners={q.owners} label="Owners (CODEOWNERS)" />
+          </Box>
 
           <Group gap={6} mt="sm">
             <Button size="xs">Open review</Button>
@@ -603,6 +622,9 @@ function Inbox({ initial }: { initial: string }) {
               <Box>
                 <SectionLabel>Routing</SectionLabel>
                 <Text size="sm">{q.routing}</Text>
+                <Text size="xs" c="dimmed" mt={2}>
+                  Assignable here: trust ≥ {trustNeeded(q).value} on {q.repo} ({trustNeeded(q).label} threshold, Trust settings).
+                </Text>
                 {q.passedBy && q.passedBy.length > 0 && (
                   <Stack gap={2} mt={4}>
                     {q.passedBy.map((p) => (
@@ -637,11 +659,13 @@ function Inbox({ initial }: { initial: string }) {
                     .map((p) => {
                       const isAuthor = p.login === (q.authorResolution?.to ?? q.author)
                       const passed = q.passedBy?.some((x) => x.login === p.login)
+                      const t = trustOf(p.login, q.repo)
+                      const low = t !== undefined && t < trustNeeded(q).value
                       return (
                         <Group key={p.login} justify="space-between" wrap="nowrap">
-                          <PersonChip login={p.login} size="xs" />
-                          <Text size="xs" c={isAuthor || passed || !p.optedIn ? 'dimmed' : undefined}>
-                            {isAuthor ? 'author · excluded' : passed ? 'passed · excluded' : !p.optedIn ? 'not opted in' : `${p.openLoad} open`}
+                          <PersonChip login={p.login} size="xs" trustRepo={q.repo} />
+                          <Text size="xs" c={isAuthor || passed || !p.optedIn || low ? 'dimmed' : undefined} ta="right">
+                            {isAuthor ? 'author · excluded' : passed ? 'passed · excluded' : !p.optedIn ? 'not opted in' : low ? `trust < ${trustNeeded(q).value} · excluded` : `${p.openLoad} open`}
                           </Text>
                         </Group>
                       )
@@ -672,3 +696,6 @@ export const InboxAuthorUnknown: Story = { name: 'B · Inbox (author unknown)', 
 
 /** (B) The same inbox on a hotfix whose author was resolved by AI from a Co-authored-by trailer. */
 export const InboxAuthorResolved: Story = { name: 'B · Inbox (AI-resolved author)', render: () => <Inbox initial="Q-5502" /> }
+
+/** (B) The queue item a low-trust "Not a blocker" creates (Kenji, Trust 41 < 60 on F1): only owners with trust ≥ 60 on payments-api are assignable; the author is excluded. */
+export const InboxBlockerSecondReviewer: Story = { name: 'B · Inbox (blocker: second trusted reviewer)', render: () => <Inbox initial="Q-5523" /> }

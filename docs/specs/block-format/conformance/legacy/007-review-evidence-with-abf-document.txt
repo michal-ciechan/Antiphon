@@ -5,10 +5,17 @@ Reviewed the Code owner at its pushed tip. One nit, below.
 check: none
 severity: nit
 confidence: 0.6
-file: src/Orders/OrderSaver.cs
-anchor: _lock.Release();
+file: docs/report-format.md
+anchor: End the report with the next-stage block, then the evidence block.
 --- body
-The comment above the release still describes the old order.
+The order is backwards, and the guide's example repeats it:
+
+~~~
+--- next stage ---
+next: land
+--- review evidence ---
+subjectTaskId: 11111111-2222-3333-4444-555555555555
+~~~
 === checks
 CHK-0142 pass
 === end

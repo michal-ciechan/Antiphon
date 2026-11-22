@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { createContext, useContext, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import {
   Alert,
   Badge,
@@ -34,7 +34,6 @@ import {
   EdgeLabelRenderer,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   getSmoothStepPath,
@@ -44,6 +43,7 @@ import {
   type Node,
   type NodeProps,
   type NodeTypes,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import {
@@ -53,6 +53,8 @@ import {
   TbArrowMerge,
   TbArrowsSplit2,
   TbBinaryTree,
+  TbChevronDown,
+  TbChevronRight,
   TbCode,
   TbFileText,
   TbGitPullRequest,
@@ -76,21 +78,22 @@ import {
   NODE_KIND_META,
   NODE_NOT_RUN_NOTE,
   NODE_STATUS_META,
+  RUN618_BASE_MOVES,
   RUN618_EDGES,
   RUN618_ITERATIONS,
   RUN618_NODES,
   RUNS,
   SEVERITIES,
   fmtTokens,
-  fmtUsd,
   nodePurpose,
+  personName,
   type ModelKey,
   type NodeExec,
   type NodeKind,
   type NodeStatus,
   type WorkflowNodeDef,
 } from './mockData'
-import { BlastMini, CostText, ModelBadge, SectionLabel, StageChip } from './shared'
+import { BlastMini, CostText, ModelBadge, SectionLabel, StageChip, fmtCost } from './shared'
 import { ArtifactDetail, InputCountBadge, NodeIOTabs } from './ArtifactViews'
 import { instanceByKey } from './artifacts'
 
@@ -101,7 +104,11 @@ import { instanceByKey } from './artifacts'
  * (no elkjs): the main path snakes left→right then right→left, and back edges loop round the
  * left-hand side with their iteration counts. Every step has a human description and a hover
  * tooltip built from its definition (kind, run, typed parameters with their layer, back edges).
- *   A — live run overlay (payments-api#618, iteration 3, reviewer fan-out 3/4)
+ *   A — live run overlay (payments-api#618, iteration 3, reviewer fan-out 3/4). Nodes are grouped into
+ *       collapsible sections (Intake, Review, Decide, Branch maintenance; xyflow parent nodes); a
+ *       collapsed section is one summary node and edges into it attach to that node. The reviewer
+ *       fan-out collapses to "reviewers ×4". A second state shows the same run after approval with a
+ *       branch that was already behind at review (base-moved → base-drift → update-branch).
  *   B — editor: the graph is read-only and changes through AI prompts. Proposals land in a
  *       staging area (Current | Staged | Diff, cycle-rule validation, YAML diff, replay estimate).
  *       Typed, layered parameters and descriptions per step are edited in the inspector and
@@ -145,9 +152,6 @@ const POS: Record<string, { x: number; y: number }> = {
   'base-drift': { x: STEP, y: 530 },
   'update-branch': { x: 0, y: 530 },
 }
-
-/** Graph bounds including the back-edge lanes left of intake and below row 3. */
-const BOUNDS = { x: -190, y: -125, width: STEP * 7 + 20 + W + 230, height: 880 }
 
 const ROW2 = new Set(['collate', 'verify', 'publish', 'route', 'needs-human-approval', 'human-approve', 'bot-approve', 'base-moved', 'await-merge'])
 
@@ -310,14 +314,16 @@ const NODE_FIELDS: Record<string, Field[]> = {
   'human-approve': gateFields({ queue: 'owning-team', decisions: ['approve', 'another-round', 'close'], timeout: '3d', onTimeout: 'reassign' }, '2d'),
   'human-review': gateFields({ queue: 'owning-team', decisions: ['approve', 'another-round', 'close'], timeout: '3d', onTimeout: 'reassign' }, '2d'),
   'base-moved': [
-    fld('fetchBase', 'Fetch the base ref before comparing', 'bool', { common: true }, { help: 'A late webhook cannot hide a move. Code only: unchanged → await-merge, moved → base-drift.' }),
+    fld('fetchBase', 'Fetch the base ref before comparing', 'bool', { common: true }, {
+      help: 'A late webhook cannot hide a move. Code only. Compares the merge-base (keepUpToDate on) or the reviewed base (keepUpToDate off) with the fetched tip: unchanged → await-merge, moved → base-drift.',
+    }),
   ],
   'update-branch': [
     fld('afterApproval', 'After approval', 'select', { common: 'leave-to-author' }, { options: ['leave-to-author', 'enable-auto-merge', 'merge'], ...POLICY, yamlKey: 'afterApproval.mode' }),
     fld('keepUpToDate', 'Keep the branch up to date', 'bool', { common: true }, {
       ...POLICY,
       yamlKey: 'afterApproval.keepUpToDate',
-      help: 'Off: a base move that base-drift calls unaffected is not merged in. The step only checks for conflicts and resolves them; a clean merge records not-needed.',
+      help: 'On: base-moved compares the branch’s merge-base with the base tip, so a branch that was already behind at review is caught and brought up to date too. Off: base-moved compares the reviewed base with the tip (drift only), and an unaffected move is not merged in: the step only checks for conflicts and resolves them; a clean merge records not-needed.',
     }),
     fld('updateMethod', 'Keep up to date by', 'select', { common: 'merge', team: 'rebase' }, { options: ['rebase', 'merge'] }),
     fld('resolveConflicts', 'Resolve conflicts', 'select', { common: 'ai' }, { options: ['ai', 'human', 'off'] }),
@@ -711,6 +717,30 @@ type FlowNode = Node<FlowNodeData, 'run'>
 
 const hidden = { opacity: 0, width: 6, height: 6, minWidth: 0, minHeight: 0, border: 0 }
 
+/** Every handle a hand-routed edge can use. Section and fan-out summary nodes carry the same set. */
+function RunHandles() {
+  return (
+    <>
+      <Handle type="target" position={Position.Left} id="l" style={hidden} />
+      <Handle type="target" position={Position.Left} id="l-a" style={{ ...hidden, top: '25%' }} />
+      <Handle type="target" position={Position.Left} id="l-c" style={{ ...hidden, top: '75%' }} />
+      <Handle type="target" position={Position.Left} id="l-12" style={{ ...hidden, top: '12.5%' }} />
+      <Handle type="target" position={Position.Left} id="l-30" style={{ ...hidden, top: '30%' }} />
+      <Handle type="target" position={Position.Left} id="l-70" style={{ ...hidden, top: '70%' }} />
+      <Handle type="target" position={Position.Left} id="l-88" style={{ ...hidden, top: '87.5%' }} />
+      <Handle type="source" position={Position.Right} id="r-c" style={{ ...hidden, top: '75%' }} />
+      <Handle type="source" position={Position.Right} id="r" style={hidden} />
+      <Handle type="source" position={Position.Left} id="l-out" style={hidden} />
+      <Handle type="source" position={Position.Left} id="l-out-c" style={{ ...hidden, top: '75%' }} />
+      <Handle type="target" position={Position.Right} id="r-in" style={hidden} />
+      <Handle type="source" position={Position.Bottom} id="b-out" style={hidden} />
+      <Handle type="target" position={Position.Bottom} id="b-in" style={hidden} />
+      <Handle type="target" position={Position.Top} id="t-in" style={hidden} />
+      <Handle type="source" position={Position.Top} id="t-out" style={hidden} />
+    </>
+  )
+}
+
 function RunNodeView({ data, selected }: NodeProps<FlowNode>) {
   const { def, mode } = data
   const edit = mode === 'edit'
@@ -749,22 +779,7 @@ function RunNodeView({ data, selected }: NodeProps<FlowNode>) {
           cursor: 'pointer',
         }}
       >
-        <Handle type="target" position={Position.Left} id="l" style={hidden} />
-        <Handle type="target" position={Position.Left} id="l-a" style={{ ...hidden, top: '25%' }} />
-        <Handle type="target" position={Position.Left} id="l-c" style={{ ...hidden, top: '75%' }} />
-        <Handle type="target" position={Position.Left} id="l-12" style={{ ...hidden, top: '12.5%' }} />
-        <Handle type="target" position={Position.Left} id="l-30" style={{ ...hidden, top: '30%' }} />
-        <Handle type="target" position={Position.Left} id="l-70" style={{ ...hidden, top: '70%' }} />
-        <Handle type="target" position={Position.Left} id="l-88" style={{ ...hidden, top: '87.5%' }} />
-        <Handle type="source" position={Position.Right} id="r-c" style={{ ...hidden, top: '75%' }} />
-        <Handle type="source" position={Position.Right} id="r" style={hidden} />
-        <Handle type="source" position={Position.Left} id="l-out" style={hidden} />
-        <Handle type="source" position={Position.Left} id="l-out-c" style={{ ...hidden, top: '75%' }} />
-        <Handle type="target" position={Position.Right} id="r-in" style={hidden} />
-        <Handle type="source" position={Position.Bottom} id="b-out" style={hidden} />
-        <Handle type="target" position={Position.Bottom} id="b-in" style={hidden} />
-        <Handle type="target" position={Position.Top} id="t-in" style={hidden} />
-        <Handle type="source" position={Position.Top} id="t-out" style={hidden} />
+        <RunHandles />
         <Group gap={4} wrap="nowrap" justify="space-between">
           <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
             <Box c={`${kindColor}.4`} style={{ display: 'flex' }}>
@@ -998,7 +1013,7 @@ function LaneEdgeView({ id, source, target, sourceX, sourceY, targetX, targetY, 
   )
 }
 
-const nodeTypes: NodeTypes = { run: RunNodeView }
+const nodeTypes: NodeTypes = { run: RunNodeView, section: SectionNodeView, fan: FanNodeView }
 const edgeTypes: EdgeTypes = { lane: LaneEdgeView }
 
 function toneOf(id: string, from: string): Tone {
@@ -1034,11 +1049,519 @@ function toFlowEdge(e: EdgeSpec, extra: { taken?: boolean; diff?: 'added' | 'rem
   }
 }
 
-function buildLiveNodes(): FlowNode[] {
-  return RUN618_NODES.map((def) => ({ id: def.id, type: 'run', position: POS[def.id], data: { def, mode: 'live' }, draggable: false }))
+const isWait = (id: string) => RUN618_NODES.find((n) => n.id === id)?.kind === 'wait'
+
+// ---------------------------------------------------------------- sections: collapsible xyflow parent (group) nodes
+
+type SecId = 'intake' | 'review' | 'decide' | 'branch'
+type SecKey = SecId | 'fan'
+type Collapse = Record<SecKey, boolean>
+type Rect = { x: number; y: number; width: number; height: number }
+
+const SECTIONS: { id: SecId; label: string; blurb: string }[] = [
+  { id: 'intake', label: 'Intake', blurb: 'pin · delta · categorise · select · group · packs' },
+  { id: 'review', label: 'Review', blurb: 'fan-out · reviewers · collate · verify' },
+  { id: 'decide', label: 'Decide', blurb: 'publish · route · approve, or wait for fixes' },
+  { id: 'branch', label: 'Branch maintenance', blurb: 'base check · drift · update branch · await merge' },
+]
+
+const SECTION_OF: Record<string, SecId> = {
+  intake: 'intake',
+  delta: 'intake',
+  categorise: 'intake',
+  select: 'intake',
+  group: 'intake',
+  packs: 'intake',
+  review: 'review',
+  collate: 'review',
+  verify: 'review',
+  'disputed-findings': 'review',
+  publish: 'decide',
+  route: 'decide',
+  'needs-human-approval': 'decide',
+  'bot-approve': 'decide',
+  'human-approve': 'decide',
+  'human-review': 'decide',
+  'await-fixes': 'decide',
+  notify: 'decide',
+  'base-moved': 'branch',
+  'base-drift': 'branch',
+  'update-branch': 'branch',
+  'await-merge': 'branch',
+}
+const secOf = (id: string): SecId | undefined => (id.startsWith('reviewer:') ? 'review' : SECTION_OF[id])
+const FAN_ID = 'fan:reviewers'
+
+/**
+ * Where a collapsed section's summary node sits: on its own row, spanning the nodes whose handles its
+ * boundary edges used (intake's left side, packs' right side, publish's r-in, base-moved's r-in), so most
+ * edges keep their hand-picked lanes when they re-attach to the summary.
+ */
+const SUMMARY: Record<SecKey, { x: number; y: number; width: number; height: number }> = {
+  intake: { x: 0, y: 0, width: STEP * 5 + W, height: H },
+  review: { x: STEP * 6, y: 0, width: STEP + 20 + W, height: H },
+  decide: { x: STEP * 3, y: 300, width: STEP * 2 + W, height: H },
+  branch: { x: 0, y: 300, width: STEP + W, height: H },
+  fan: { x: STEP * 7 + 20, y: 0, width: W, height: H },
 }
 
-const isWait = (id: string) => RUN618_NODES.find((n) => n.id === id)?.kind === 'wait'
+const LIVE_COLLAPSE: Collapse = { intake: true, review: false, decide: true, branch: true, fan: false }
+const BEHIND_COLLAPSE: Collapse = { intake: true, review: true, decide: false, branch: false, fan: true }
+const ALL_OPEN: Collapse = { intake: false, review: false, decide: false, branch: false, fan: false }
+
+type SecData = {
+  sec: SecId
+  collapsed: boolean
+  members: WorkflowNodeDef[]
+  mode: 'live' | 'edit'
+  added: number
+  onToggle: () => void
+  fan?: { collapsed: boolean; n: number; onToggle: () => void }
+}
+type SecNode = Node<SecData, 'section'>
+type FanData = { members: WorkflowNodeDef[]; mode: 'live' | 'edit'; onToggle: () => void }
+type FanNode = Node<FanData, 'fan'>
+type AnyNode = FlowNode | SecNode | FanNode
+
+function rollup(members: WorkflowNodeDef[]): { st: NodeStatus; text: string } {
+  const running = members.filter((m) => m.status === 'running')
+  if (running.length) return { st: 'running', text: `running: ${running.map((r) => (r.id.startsWith('reviewer:') ? r.detail : r.id)).join(', ')}` }
+  const waiting = members.filter((m) => m.status === 'waiting')
+  if (waiting.length) return { st: 'waiting', text: `parked on ${waiting.map((w) => w.id).join(', ')}` }
+  const done = members.filter((m) => m.status === 'done' || m.status === 'reused').length
+  if (done === members.length) return { st: 'done', text: 'all done this iteration' }
+  if (members.every((m) => m.status === 'skipped')) return { st: 'skipped', text: 'not reached' }
+  return { st: 'pending', text: `${done}/${members.length} done this iteration` }
+}
+
+function SectionNodeView({ data }: NodeProps<SecNode>) {
+  const s = SECTIONS.find((x) => x.id === data.sec)!
+  const live = data.mode === 'live'
+  const r = rollup(data.members)
+  if (!data.collapsed)
+    return (
+      <Box w="100%" h="100%" style={{ border: '1px dashed var(--mantine-color-dark-3)', borderRadius: 10, background: 'rgba(255,255,255,0.018)', pointerEvents: 'none' }}>
+        <Group gap={8} wrap="nowrap" style={{ position: 'absolute', top: 4, left: 8, pointerEvents: 'all' }} className="nodrag nopan">
+          <UnstyledButton
+            onClick={(e) => {
+              e.stopPropagation()
+              data.onToggle()
+            }}
+          >
+            <Group gap={4} wrap="nowrap">
+              <TbChevronDown size={12} />
+              <Text size="11px" fw={700} tt="uppercase" c="gray.4" style={{ letterSpacing: 0.6 }}>
+                {s.label}
+              </Text>
+              <Text size="10px" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                {data.members.length} steps · {s.blurb}
+              </Text>
+            </Group>
+          </UnstyledButton>
+          {data.fan && !data.fan.collapsed && (
+            <UnstyledButton
+              onClick={(e) => {
+                e.stopPropagation()
+                data.fan!.onToggle()
+              }}
+            >
+              <Badge size="xs" variant="outline" color="grape" tt="none" style={{ cursor: 'pointer' }}>
+                collapse reviewers ×{data.fan.n}
+              </Badge>
+            </UnstyledButton>
+          )}
+        </Group>
+      </Box>
+    )
+  const border = live ? STATUS_HEX[r.st] : 'var(--mantine-color-dark-3)'
+  return (
+    <Box
+      w="100%"
+      h="100%"
+      px={10}
+      py={5}
+      onClick={(e) => {
+        e.stopPropagation()
+        data.onToggle()
+      }}
+      style={{
+        background: 'var(--mantine-color-dark-6)',
+        borderTop: `1.5px solid ${border}`,
+        borderRight: `1.5px solid ${border}`,
+        borderBottom: `1.5px solid ${border}`,
+        borderLeft: `4px solid ${border}`,
+        borderRadius: 8,
+        cursor: 'pointer',
+        animation: live && r.st === 'running' ? 'rePulse 1.6s infinite' : undefined,
+        overflow: 'hidden',
+        boxShadow: '0 3px 0 -1px var(--mantine-color-dark-4)',
+      }}
+    >
+      <RunHandles />
+      <Group justify="space-between" wrap="nowrap" gap={8}>
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <TbChevronRight size={13} />
+          <Text size="12px" fw={700} style={{ whiteSpace: 'nowrap' }}>
+            {s.label}
+          </Text>
+          <Text size="10px" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+            {data.members.length} steps · collapsed
+          </Text>
+          {data.added > 0 && (
+            <Badge size="xs" color="success" variant="filled">
+              +{data.added} new
+            </Badge>
+          )}
+        </Group>
+        {live && (
+          <Text size="10px" fw={600} style={{ color: STATUS_HEX[r.st] }} truncate>
+            {r.text}
+          </Text>
+        )}
+      </Group>
+      <Group gap={3} mt={4} wrap="nowrap">
+        {data.members.map((m) => (
+          <Tooltip key={m.id} label={`${m.id} · ${live ? NODE_STATUS_META[m.status].label : m.kind}`} openDelay={150}>
+            <Box w={live ? 14 : 10} h={8} style={{ borderRadius: 2, background: live ? STATUS_HEX[m.status] : `var(--mantine-color-${NODE_KIND_META[m.kind].color}-6)`, border: live && m.status === 'skipped' ? '1px dashed #5c5f66' : undefined }} />
+          </Tooltip>
+        ))}
+      </Group>
+      <Text size="10px" c="dimmed" truncate mt={3}>
+        {s.blurb} · click to expand
+      </Text>
+    </Box>
+  )
+}
+
+function FanNodeView({ data }: NodeProps<FanNode>) {
+  const live = data.mode === 'live'
+  const n = data.members.length
+  const done = data.members.filter((m) => m.status === 'done').length
+  const running = data.members.filter((m) => m.status === 'running')
+  const st: NodeStatus = !live ? 'pending' : running.length ? 'running' : done === n ? 'done' : 'pending'
+  const border = live ? STATUS_HEX[st] : 'var(--mantine-color-grape-7)'
+  return (
+    <Box
+      w={W}
+      h={H}
+      px={8}
+      py={5}
+      onClick={(e) => {
+        e.stopPropagation()
+        data.onToggle()
+      }}
+      style={{
+        background: 'var(--mantine-color-dark-6)',
+        borderTop: `1.5px solid ${border}`,
+        borderRight: `1.5px solid ${border}`,
+        borderBottom: `1.5px solid ${border}`,
+        borderLeft: `4px solid ${border}`,
+        borderRadius: 6,
+        cursor: 'pointer',
+        boxShadow: '4px 4px 0 -1px var(--mantine-color-dark-5), 8px 8px 0 -2px var(--mantine-color-dark-4)',
+        animation: live && st === 'running' ? 'rePulse 1.6s infinite' : undefined,
+      }}
+    >
+      <RunHandles />
+      <Group gap={4} wrap="nowrap" justify="space-between">
+        <Group gap={4} wrap="nowrap">
+          <Box c="grape.4" style={{ display: 'flex' }}>
+            <TbRobot size={13} />
+          </Box>
+          <Text size="12px" fw={700}>
+            reviewers ×{n}
+          </Text>
+        </Group>
+        <Tooltip label="Expand the fan-out">
+          <Box style={{ display: 'flex' }}>
+            <TbChevronRight size={12} />
+          </Box>
+        </Tooltip>
+      </Group>
+      <Text size="10px" c="dimmed" truncate>
+        {data.members.map((m) => m.detail).join(' · ')}
+      </Text>
+      {live && (
+        <Text size="10px" fw={600} style={{ color: STATUS_HEX[st] }} truncate>
+          {done}/{n} done{running.length ? ` · ${running.map((r) => r.detail).join(', ')} running` : ''}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
+const BASE_EDGE_IDS = new Set(RUN618_EDGES.map((e) => e.id))
+
+/** Handle and lane choice for an edge that re-attaches to a summary node; null keeps the original route. */
+function remapRoute(vs: string, vt: string): { sh: string; th: string; laneX?: number; laneY?: number } | null {
+  if (vs === 'sec:review' && (vt === 'publish' || vt === 'sec:decide')) return { sh: 'b-out', th: 'r-in' }
+  if (vs === 'review' && vt === FAN_ID) return { sh: 'r', th: 'l' }
+  if (vs === FAN_ID && vt === 'collate') return { sh: 'r', th: 'r-in' }
+  if (vs === 'sec:decide') {
+    if (vt === 'base-moved' || vt === 'sec:branch') return { sh: 'l-out', th: 'r-in' }
+    if (vt === 'base-drift') return { sh: 'l-out-c', th: 'r-in' }
+    if (vt === 'intake' || vt === 'sec:intake') return { sh: 't-out', th: 'l-88', laneX: -30, laneY: 170 }
+  }
+  if (vs === 'sec:branch') {
+    if (vt === 'await-fixes') return { sh: 'r-c', th: 'b-in', laneY: 640 }
+    if (vt === 'sec:decide') return { sh: 'b-out', th: 'b-in', laneY: 420 }
+    if (vt === 'intake' || vt === 'sec:intake') return { sh: 'l-out', th: 'l-70', laneX: -60 }
+  }
+  if (vs === 'base-drift' && vt === 'sec:decide') return { sh: 'r-c', th: 'b-in', laneY: 640 }
+  return null
+}
+
+/**
+ * Wraps the graph's nodes in one parent (group) node per section. A collapsed section becomes a single
+ * summary node; its children are hidden and every edge that crossed its boundary is re-attached to the
+ * summary (several edges between the same two visible nodes merge into one, labels joined).
+ */
+function sectionize(nodes: FlowNode[], edges: FlowEdge[], c: Collapse, toggle: (k: SecKey) => void, mode: 'live' | 'edit'): { nodes: AnyNode[]; edges: FlowEdge[]; bounds: Rect } {
+  const size = (id: string) => ({ width: W, height: id.startsWith('reviewer:') ? HR : H })
+  const reviewers = nodes.filter((n) => n.id.startsWith('reviewer:'))
+  const fanOn = c.fan && !c.review && reviewers.length > 1
+  const visOf = (id: string) => {
+    const sec = secOf(id)
+    if (sec && c[sec]) return `sec:${sec}`
+    if (fanOn && id.startsWith('reviewer:')) return FAN_ID
+    return id
+  }
+  const frames = new Map<SecId, Rect>()
+  for (const sec of SECTIONS) {
+    const ms = nodes.filter((n) => secOf(n.id) === sec.id)
+    if (ms.length === 0) continue
+    const x0 = Math.min(...ms.map((n) => n.position.x))
+    const y0 = Math.min(...ms.map((n) => n.position.y))
+    const x1 = Math.max(...ms.map((n) => n.position.x + size(n.id).width))
+    const y1 = Math.max(...ms.map((n) => n.position.y + size(n.id).height))
+    frames.set(sec.id, { x: x0 - 12, y: y0 - 28, width: x1 - x0 + 24, height: y1 - y0 + 40 })
+  }
+  const out: AnyNode[] = []
+  const rects: Rect[] = []
+  for (const sec of SECTIONS) {
+    const f = frames.get(sec.id)
+    if (!f) continue
+    const col = c[sec.id]
+    const r = col ? SUMMARY[sec.id] : f
+    rects.push(r)
+    const ms = nodes.filter((n) => secOf(n.id) === sec.id)
+    out.push({
+      id: `sec:${sec.id}`,
+      type: 'section',
+      position: { x: r.x, y: r.y },
+      width: r.width,
+      height: r.height,
+      draggable: false,
+      selectable: false,
+      style: { pointerEvents: col ? 'all' : 'none' },
+      data: {
+        sec: sec.id,
+        collapsed: col,
+        members: ms.map((n) => n.data.def),
+        mode,
+        added: ms.filter((n) => n.data.diff === 'added').length,
+        onToggle: () => toggle(sec.id),
+        fan: sec.id === 'review' && reviewers.length > 1 ? { collapsed: fanOn, n: reviewers.length, onToggle: () => toggle('fan') } : undefined,
+      },
+    })
+  }
+  const fr = frames.get('review')
+  if (fanOn && fr) {
+    const r = SUMMARY.fan
+    rects.push(r)
+    out.push({ id: FAN_ID, type: 'fan', parentId: 'sec:review', position: { x: r.x - fr.x, y: r.y - fr.y }, draggable: false, selectable: false, data: { members: reviewers.map((n) => n.data.def), mode, onToggle: () => toggle('fan') } })
+  }
+  for (const n of nodes) {
+    const sec = secOf(n.id)
+    const parent = sec ? (c[sec] ? SUMMARY[sec] : frames.get(sec)) : undefined
+    const hide = (sec ? c[sec] : false) || (fanOn && n.id.startsWith('reviewer:'))
+    if (!hide) rects.push({ x: n.position.x, y: n.position.y, ...size(n.id) })
+    out.push(parent && sec ? { ...n, parentId: `sec:${sec}`, position: { x: n.position.x - parent.x, y: n.position.y - parent.y }, hidden: hide } : { ...n, hidden: hide })
+  }
+
+  const outEdges: FlowEdge[] = []
+  const groups = new Map<string, FlowEdge[]>()
+  for (const e of edges) {
+    const vs = visOf(e.source)
+    const vt = visOf(e.target)
+    if (vs === e.source && vt === e.target) {
+      outEdges.push(e)
+      continue
+    }
+    if (vs === vt) continue
+    const k = `${vs}>${vt}`
+    groups.set(k, [...(groups.get(k) ?? []), e])
+  }
+  for (const [k, es] of groups) {
+    const [vs, vt] = k.split('>')
+    const first = es[0]
+    const r =
+      remapRoute(vs, vt) ??
+      (BASE_EDGE_IDS.has(first.id)
+        ? { sh: first.sourceHandle ?? 'r', th: first.targetHandle ?? 'l', laneX: first.data?.laneX, laneY: first.data?.laneY }
+        : { sh: first.sourceHandle ?? 'r', th: first.targetHandle ?? 'l' })
+    const labels = [...new Set(es.map((e) => e.data?.label).filter((l): l is string => !!l))]
+    const backs = es.flatMap((e) => (e.data?.back ? [e.data.back] : []))
+    outEdges.push({
+      ...first,
+      id: `m:${k}`,
+      source: vs,
+      target: vt,
+      sourceHandle: r.sh,
+      targetHandle: r.th,
+      selected: es.some((e) => e.selected),
+      data: {
+        ...first.data!,
+        label: labels.join(' | ') || undefined,
+        laneX: r.laneX,
+        laneY: r.laneY,
+        taken: es.some((e) => e.data?.taken),
+        back: backs.length ? { taken: backs.reduce((a, b) => a + b.taken, 0), max: backs.reduce((a, b) => a + b.max, 0) } : undefined,
+        note: es.length > 1 ? `${es.length} edges` : first.data?.note,
+        description: `Re-attached to the collapsed section: ${es.map((e) => edgeHead(e.source, e.target, e.data)).join(' · ')}`,
+      },
+    })
+  }
+
+  const lx = outEdges.flatMap((e) => (e.data?.laneX !== undefined ? [e.data.laneX] : []))
+  const ly = outEdges.flatMap((e) => (e.data?.laneY !== undefined ? [e.data.laneY] : []))
+  // lane labels are centred on the lane, so leave room for them left of the outermost lane
+  const x0 = Math.min(...rects.map((r) => r.x), ...lx.map((v) => v - 70)) - 24
+  const y0 = Math.min(...rects.map((r) => r.y), ...ly) - 16
+  const x1 = Math.max(...rects.map((r) => r.x + r.width), ...lx) + 24
+  const y1 = Math.max(...rects.map((r) => r.y + r.height), ...ly) + 16
+  return { nodes: out, edges: outEdges, bounds: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }
+}
+
+function useSections(initial: Collapse) {
+  const [collapse, setCollapse] = useState<Collapse>(initial)
+  const toggle = useCallback((k: SecKey) => setCollapse((c) => ({ ...c, [k]: !c[k] })), [])
+  const setAll = useCallback((v: boolean) => setCollapse({ intake: v, review: v, decide: v, branch: v, fan: v }), [])
+  return { collapse, toggle, setAll }
+}
+
+/** Refits the view whenever the visible graph's bounds change (a section collapsed or expanded, a node staged). */
+function useFitOnChange(bounds: Rect) {
+  const [rf, setRf] = useState<ReactFlowInstance<AnyNode, FlowEdge> | null>(null)
+  const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`
+  useEffect(() => {
+    if (!rf) return
+    const [x, y, width, height] = key.split(':').map(Number)
+    const id = window.requestAnimationFrame(() => rf.fitBounds({ x, y, width, height }, { padding: 0.02, duration: 250 }))
+    return () => window.cancelAnimationFrame(id)
+  }, [rf, key])
+  return setRf
+}
+
+function SectionBar({ c, onToggle, onAll, fanN }: { c: Collapse; onToggle: (k: SecKey) => void; onAll: (v: boolean) => void; fanN: number }) {
+  return (
+    <Group gap={6} wrap="wrap">
+      <Text size="xs" c="dimmed">
+        Sections
+      </Text>
+      {SECTIONS.map((x) => (
+        <Button
+          key={x.id}
+          size="compact-xs"
+          variant={c[x.id] ? 'default' : 'light'}
+          leftSection={c[x.id] ? <TbChevronRight size={12} /> : <TbChevronDown size={12} />}
+          onClick={() => onToggle(x.id)}
+        >
+          {x.label}
+        </Button>
+      ))}
+      <Button
+        size="compact-xs"
+        variant={c.fan ? 'default' : 'light'}
+        color="grape"
+        disabled={c.review}
+        leftSection={c.fan ? <TbChevronRight size={12} /> : <TbChevronDown size={12} />}
+        onClick={() => onToggle('fan')}
+      >
+        reviewers ×{fanN}
+      </Button>
+      <Button size="compact-xs" variant="subtle" color="gray" onClick={() => onAll(false)}>
+        Expand all
+      </Button>
+      <Button size="compact-xs" variant="subtle" color="gray" onClick={() => onAll(true)}>
+        Collapse all
+      </Button>
+    </Group>
+  )
+}
+
+// ---------------------------------------------------------------- (A, C) base moves seen while parked
+
+/** "Base moved (3 commits) · drift recorded · branch not updated: waiting on author", with the commits and the verdict. */
+function BaseMoves({ behind = false }: { behind?: boolean }) {
+  return (
+    <Stack gap={6}>
+      {RUN618_BASE_MOVES.map((m) => (
+        <Paper key={m.at} withBorder p={6} radius="sm" style={{ borderLeft: '3px solid var(--mantine-color-cyan-6)' }}>
+          <Text size="xs" fw={700}>
+            Base moved ({m.commits.length} commits) · drift recorded · branch {m.branch}
+          </Text>
+          <Text size="xs" c="dimmed">
+            it{m.iteration} · {m.at} · {m.atWh} wh into the await-fixes park · {m.from}..{m.to}
+          </Text>
+          <Text size="xs" c="cyan.4">
+            <StepName id="base-drift" /> → {m.verdict}: {m.how}
+          </Text>
+          {m.commits.map((c) => (
+            <Text key={c.sha} size="10px" ff="monospace" c="dimmed" truncate>
+              {c.sha} {c.title} · {personName(c.author)}
+            </Text>
+          ))}
+          <Text size="10px" c="dimmed" mt={2}>
+            While a run waits on the author the PR branch is never updated; the next push (4a77b10) was reviewed against {m.to}, its merge-base stayed {m.from}.
+          </Text>
+        </Paper>
+      ))}
+      {behind && (
+        <Paper withBorder p={6} radius="sm" style={{ borderLeft: '3px solid var(--mantine-color-warning-6)' }}>
+          <Text size="xs" fw={700}>
+            After approval: behind (merge-base 3 commits behind tip)
+          </Text>
+          <Text size="xs" c="dimmed">
+            <StepName id="base-moved" /> · keepUpToDate on → compared merge-base 1f20c9e with tip 7b3e9d0 (reviewed base 7b3e9d0 = tip, so a reviewed-base check would have said unchanged)
+          </Text>
+          <Text size="xs" c="cyan.4">
+            → <StepName id="base-drift" /> unaffected-approved (same range as the it1 drift record) → <StepName id="update-branch" /> rebased to 52c8e1a, approval carried
+          </Text>
+        </Paper>
+      )}
+    </Stack>
+  )
+}
+
+// ---------------------------------------------------------------- (A') the same run after approval, with a branch already behind at review
+
+type Patch = { status: NodeStatus; exec?: Omit<NodeExec, 'iteration' | 'status'> }
+const BEHIND_PATCH: Record<string, Patch> = {
+  'reviewer:concurrency': { status: 'done', exec: { started: 'Fri 16:06', durationS: 252, model: 'opus', tokensIn: 61_900, tokensOut: 2_900, cost: { api: 0, seatEq: 1.21 }, output: '0 findings · 3/3 checks pass' } },
+  review: { status: 'done', exec: { started: 'Fri 16:06', durationS: 262, note: '4/4 children done' } },
+  collate: { status: 'done', exec: { started: 'Fri 16:10', durationS: 2, output: '3 → 2 after dedupe' } },
+  verify: { status: 'done', exec: { started: 'Fri 16:10', durationS: 31, model: 'haiku', tokensIn: 38_000, tokensOut: 1_900, cost: { api: 0, seatEq: 0.07 }, output: '2 dropped: already fixed in e41b07c' } },
+  publish: { status: 'done', exec: { started: 'Fri 16:11', durationS: 3, output: 'no inline findings · summary edited · antiphon/review success' } },
+  route: { status: 'done', exec: { started: 'Fri 16:11', durationS: 0.2, output: 'clean' } },
+  'needs-human-approval': { status: 'done', exec: { started: 'Fri 16:11', durationS: 0.1, output: 'yes (sticky from iteration 2)' } },
+  'human-approve': { status: 'done', exec: { started: 'Fri 16:11', durationS: 5_400, output: 'Hugo Martin → approve e41b07c' } },
+  'base-moved': {
+    status: 'done',
+    exec: { started: 'Fri 17:42', durationS: 0.6, output: 'behind (merge-base 3 commits behind tip) · keepUpToDate on → compared merge-base 1f20c9e with tip 7b3e9d0; reviewed base 7b3e9d0 = tip' },
+  },
+  'base-drift': { status: 'done', exec: { started: 'Fri 17:42', durationS: 0.2, output: '1f20c9e..7b3e9d0 (3 commits) · same range as the it1 drift record → unaffected-approved (no model call)' } },
+  'update-branch': { status: 'done', exec: { started: 'Fri 17:42', durationS: 38, output: 'rebased onto 7b3e9d0 → 52c8e1a · no conflicts · patch ids unchanged → approval carried forward' } },
+  'await-merge': { status: 'waiting', exec: { started: 'Fri 17:43', durationS: 0, output: 'holding the approval at 52c8e1a until merge or close' } },
+}
+const BEHIND_NODES: WorkflowNodeDef[] = RUN618_NODES.map((d) => {
+  const pt = BEHIND_PATCH[d.id]
+  if (!pt) return d
+  const execs = d.execs.filter((e) => e.iteration !== 3)
+  return { ...d, status: pt.status, execs: pt.exec ? [...execs, { iteration: 3, status: pt.status, ...pt.exec }] : execs }
+})
+const BEHIND_TAKEN = new Set(['e8b', 'e9', 'e10', 'e11', 'e14', 'e16', 'e18', 'e26', 'e23', 'e20'])
+const BEHIND_EDGES = RUN618_EDGES.map((e) => (BEHIND_TAKEN.has(e.id) ? { ...e, taken: true } : e))
 
 const PULSE_CSS = `@keyframes rePulse { 0% { box-shadow: 0 0 0 0 rgba(59,123,245,.65) } 70% { box-shadow: 0 0 0 10px rgba(59,123,245,0) } 100% { box-shadow: 0 0 0 0 rgba(59,123,245,0) } }
 .react-flow__attribution { background: transparent !important; }`
@@ -1087,8 +1610,8 @@ function Legend() {
   )
 }
 
-function NodeDetailPanel({ id, onArtifact }: { id: string; onArtifact: (artifactId: string, instanceKey?: string) => void }) {
-  const def = RUN618_NODES.find((n) => n.id === id)!
+function NodeDetailPanel({ id, onArtifact, defs = RUN618_NODES }: { id: string; onArtifact: (artifactId: string, instanceKey?: string) => void; defs?: WorkflowNodeDef[] }) {
+  const def = defs.find((n) => n.id === id)!
   const k = NODE_KIND_META[def.kind]
   const totalIn = def.execs.reduce((a, e) => a + (e.tokensIn ?? 0), 0)
   return (
@@ -1178,6 +1701,12 @@ function NodeDetailPanel({ id, onArtifact }: { id: string; onArtifact: (artifact
           </Box>
         ) : null,
       )}
+      {(def.id === 'await-fixes' || def.id === 'base-drift') && (
+        <>
+          <Divider label={<Text size="xs">Base moves while parked</Text>} labelPosition="left" />
+          <BaseMoves behind={defs !== RUN618_NODES} />
+        </>
+      )}
       {totalIn > 0 && (
         <Group gap={6}>
           <Text size="xs" c="dimmed">
@@ -1186,7 +1715,10 @@ function NodeDetailPanel({ id, onArtifact }: { id: string; onArtifact: (artifact
           <Text size="xs" ff="monospace">
             {fmtTokens(totalIn)} in
           </Text>
-          <CostText cost={def.execs.reduce((a, e) => ({ api: a.api + (e.cost?.api ?? 0), seatEq: a.seatEq + (e.cost?.seatEq ?? 0) }), { api: 0, seatEq: 0 })} />
+          <CostText
+            cost={def.execs.reduce((a, e) => ({ api: a.api + (e.cost?.api ?? 0), seatEq: a.seatEq + (e.cost?.seatEq ?? 0) }), { api: 0, seatEq: 0 })}
+            models={def.execs.flatMap((e) => (e.model ? [e.model] : []))}
+          />
         </Group>
       )}
       <Text size="xs" c="dimmed" ff="monospace">
@@ -1213,10 +1745,16 @@ function NodeDetailPanel({ id, onArtifact }: { id: string; onArtifact: (artifact
   )
 }
 
-function LiveOverlay() {
-  const nodes = useMemo(() => buildLiveNodes(), [])
-  const edges = useMemo(() => RUN618_EDGES.map((e) => toFlowEdge(e)), [])
-  const [sel, setSel] = useState('reviewer:concurrency')
+function LiveOverlay({ scenario = 'live' }: { scenario?: 'live' | 'behind' }) {
+  const behind = scenario === 'behind'
+  const defs = behind ? BEHIND_NODES : RUN618_NODES
+  const edgeDefs = behind ? BEHIND_EDGES : RUN618_EDGES
+  const { collapse, toggle, setAll } = useSections(behind ? BEHIND_COLLAPSE : LIVE_COLLAPSE)
+  const base = useMemo<FlowNode[]>(() => defs.map((def) => ({ id: def.id, type: 'run', position: POS[def.id], data: { def, mode: 'live' }, draggable: false })), [defs])
+  const baseEdges = useMemo(() => edgeDefs.map((e) => toFlowEdge(e)), [edgeDefs])
+  const g = useMemo(() => sectionize(base, baseEdges, collapse, toggle, 'live'), [base, baseEdges, collapse, toggle])
+  const onInit = useFitOnChange(g.bounds)
+  const [sel, setSel] = useState(behind ? 'base-moved' : 'reviewer:concurrency')
   const [art, setArt] = useState<{ id: string; key?: string } | null>(null)
   return (
     <Stack gap="xs">
@@ -1233,7 +1771,7 @@ function LiveOverlay() {
             artifactId={art.id}
             instance={art.key ? instanceByKey(art.key) : undefined}
             onNode={(id) => {
-              if (RUN618_NODES.some((n) => n.id === id)) setSel(id)
+              if (defs.some((n) => n.id === id)) setSel(id)
               setArt(null)
             }}
           />
@@ -1245,7 +1783,11 @@ function LiveOverlay() {
             <Text size="xs" ff="monospace" c="dimmed">
               lumen/payments-api#618 · {RUN.id}
             </Text>
-            <StageChip stage="reviewing" size="xs" detail="iteration 3 · round 3 · steer from Hugo Martin" />
+            {behind ? (
+              <StageChip stage="approved" size="xs" detail="iteration 3 · approved by Hugo Martin · branch was behind at review → updated, approval carried" />
+            ) : (
+              <StageChip stage="reviewing" size="xs" detail="iteration 3 · round 3 · steer from Hugo Martin" />
+            )}
           </Group>
           <Text fw={700} size="lg">
             {RUN.title}
@@ -1261,48 +1803,66 @@ function LiveOverlay() {
               <Text size="xs" ff="monospace">
                 {fmtTokens(RUN.tokensIn)} in · {fmtTokens(RUN.tokensOut)} out
               </Text>
-              <CostText cost={RUN.cost} />
+              <CostText cost={RUN.cost} models={RUN.models} />
             </Group>
           </Box>
         </Group>
       </Group>
-      <Legend />
+      <Group justify="space-between" wrap="wrap" gap="xs">
+        <Legend />
+        <SectionBar c={collapse} onToggle={toggle} onAll={setAll} fanN={4} />
+      </Group>
       <Box style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 12 }}>
-        <Paper withBorder radius="md" h="calc(100vh - 210px)" mih={560} style={{ overflow: 'hidden' }}>
+        <Paper withBorder radius="md" h="calc(100vh - 230px)" mih={560} style={{ overflow: 'hidden' }}>
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={g.nodes}
+            edges={g.edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             colorMode="dark"
-            onInit={(rf) => rf.fitBounds(BOUNDS, { padding: 0.02 })}
+            onInit={onInit}
             minZoom={0.3}
             nodesDraggable={false}
             nodesConnectable={false}
-            onNodeClick={(_, n) => setSel(n.id)}
+            onNodeClick={(_, n) => {
+              if (n.type === 'run') setSel(n.id)
+            }}
           >
             <Background gap={24} size={1} color="#2c2e33" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(n) => STATUS_HEX[(n as FlowNode).data.def.status]} maskColor="rgba(20,21,23,0.7)" style={{ background: '#1a1b1e' }} />
           </ReactFlow>
         </Paper>
-        <Paper withBorder radius="md" p="sm" h="calc(100vh - 210px)" mih={560}>
+        <Paper withBorder radius="md" p="sm" h="calc(100vh - 230px)" mih={560}>
           <ScrollArea h="100%">
             <SectionLabel>Selected node</SectionLabel>
-            <NodeDetailPanel id={sel} onArtifact={(id, key) => setArt({ id, key })} />
+            <NodeDetailPanel key={`${scenario}:${sel}`} id={sel} defs={defs} onArtifact={(id, key) => setArt({ id, key })} />
             <Divider my="sm" />
-            <SectionLabel>Statuses posted to e41b07c</SectionLabel>
-            <Stack gap={2}>
-              <Text size="xs">
-                <Text span ff="monospace">antiphon/review</Text> pending · "Round 3 · 11 checks · 3/4 reviewers done"
-              </Text>
-              <Text size="xs" c="dimmed">
-                updated 12s ago · throttled to 1 per 30s
-              </Text>
-              <Text size="xs">
-                <Text span ff="monospace">antiphon/approval</Text> pending
-              </Text>
-            </Stack>
+            <SectionLabel>Base branch</SectionLabel>
+            <BaseMoves behind={behind} />
+            <Divider my="sm" />
+            <SectionLabel>Statuses posted to {behind ? '52c8e1a' : 'e41b07c'}</SectionLabel>
+            {behind ? (
+              <Stack gap={2}>
+                <Text size="xs">
+                  <Text span ff="monospace">antiphon/review</Text> success · "Round 3 clean · 11 checks"
+                </Text>
+                <Text size="xs">
+                  <Text span ff="monospace">antiphon/approval</Text> success · Hugo Martin, carried from e41b07c (patch ids unchanged)
+                </Text>
+              </Stack>
+            ) : (
+              <Stack gap={2}>
+                <Text size="xs">
+                  <Text span ff="monospace">antiphon/review</Text> pending · "Round 3 · 11 checks · 3/4 reviewers done"
+                </Text>
+                <Text size="xs" c="dimmed">
+                  updated 12s ago · throttled to 1 per 30s
+                </Text>
+                <Text size="xs">
+                  <Text span ff="monospace">antiphon/approval</Text> pending
+                </Text>
+              </Stack>
+            )}
           </ScrollArea>
         </Paper>
       </Box>
@@ -1342,7 +1902,7 @@ const PROPOSALS: Record<string, Proposal> = {
       { id: 'p1-e2', kind: 'add-edge', edge: { id: 'p1b', from: 'reviewer:migration', to: 'collate' }, why: 'joins at collate' },
       { id: 'p1-p', kind: 'param', target: 'group', key: 'conditionalGroups', label: 'Conditional groups', from: '', to: 'migration-safety when persistent_data ≥ 0.6', source: 'ai' },
     ],
-    replay: 'replay set: recall 18/20 → 19/20 (catches the 2025-11-03 backfill miss) · findings posted +4% · cost +$0.41/PR on the 31% of PRs it triggers',
+    replay: `replay set: recall 18/20 → 19/20 (catches the 2025-11-03 backfill miss) · findings posted +4% · cost +${fmtCost(0.41)}/PR on the 31% of PRs it triggers`,
   },
   p2: {
     id: 'p2',
@@ -1354,7 +1914,7 @@ const PROPOSALS: Record<string, Proposal> = {
       { id: 'p2-p', kind: 'param', target: 'route', key: 'humanGateAfterBotOnlyRounds', label: 'Human gate after bot-only rounds', from: 3, to: 2, source: 'ai' },
       { id: 'p2-d', kind: 'description', target: 'route', from: nodePurpose('route'), to: ROUTE_DESC_2, source: 'ai' },
     ],
-    replay: 'replay set: human gates opened 4 → 7 of 20 · avg rounds 1.8 → 1.6 · cost −$0.05/PR',
+    replay: `replay set: human gates opened 4 → 7 of 20 · avg rounds 1.8 → 1.6 · cost ${fmtCost(-0.05)}/PR`,
   },
   p3: {
     id: 'p3',
@@ -1393,7 +1953,7 @@ const PROPOSALS: Record<string, Proposal> = {
       { id: 'p3f-p3', kind: 'param', target: 'disputed-findings', key: 'timeout', label: 'Timeout', to: '2wh', source: 'ai' },
       { id: 'p3f-p4', kind: 'param', target: 'disputed-findings', key: 'onTimeout', label: 'On timeout', to: 'drop', source: 'ai' },
     ],
-    replay: 'replay set: recall 18/20 → 18/20 · 3 of 41 disputed findings recovered as real · 0.9 automatic re-reviews/PR · +0.2 gates/PR · cost +$0.04/PR',
+    replay: `replay set: recall 18/20 → 18/20 · 3 of 41 disputed findings recovered as real · 0.9 automatic re-reviews/PR · +0.2 gates/PR · cost +${fmtCost(0.04)}/PR`,
   },
   p3limit: {
     id: 'p3limit',
@@ -1409,7 +1969,7 @@ const PROPOSALS: Record<string, Proposal> = {
         why: 'back edge, maxIterations 2 → human-review',
       },
     ],
-    replay: 'replay set: recall 18/20 → 18/20 · 3 of 41 disputed findings recovered as real · 1.3 extra verify passes/PR · cost +$0.07/PR',
+    replay: `replay set: recall 18/20 → 18/20 · 3 of 41 disputed findings recovered as real · 1.3 extra verify passes/PR · cost +${fmtCost(0.07)}/PR`,
   },
   p4: {
     id: 'p4',
@@ -1430,7 +1990,7 @@ const PROPOSALS: Record<string, Proposal> = {
       { id: 'p4-p1', kind: 'param', target: 'notify', key: 'when', label: 'Only when', to: 'external_contract ≥ 0.6', source: 'ai' },
       { id: 'p4-p2', kind: 'param', target: 'notify', key: 'channels', label: 'Channels', to: ['attention-feed', 'consumer-register'], source: 'ai' },
     ],
-    replay: 'replay set: no recall change · 7/20 PRs would notify 2.1 consuming teams each · cost +$0.002/PR (one Jev call)',
+    replay: `replay set: no recall change · 7/20 PRs would notify 2.1 consuming teams each · cost +${fmtCost(0.002)}/PR (one Jev call)`,
   },
 }
 
@@ -1958,6 +2518,9 @@ function Editor({ start }: { start: 'invalid' | 'fresh' | 'fixed' }) {
         note: view === 'current' ? undefined : edgeNote(e.spec),
       }),
     )
+  const sections = useSections(ALL_OPEN)
+  const sg = sectionize(flowNodes, flowEdges, sections.collapse, sections.toggle, 'edit')
+  const onInit = useFitOnChange(sg.bounds)
 
   const ask = (text: string, fix = false) => {
     if (!text.trim() || busy) return
@@ -2035,7 +2598,7 @@ function Editor({ start }: { start: 'invalid' | 'fresh' | 'fixed' }) {
     { path: '.antiphon/review/policy.yaml (resolved)', a: policyYaml(EMPTY_PARAMS), b: policyYaml(sp) },
     { path: '.antiphon/review/groups/*.yaml (resolved)', a: groupsYaml(BASE_GRAPH, EMPTY_PARAMS, EMPTY_DESC), b: groupsYaml(g, sp, sd) },
   ]
-  const replay = errors.length ? 'Not estimated: the staged graph is invalid.' : proposal ? proposal.replay : manual.length ? 'Parameter edits only: replay runs on save (20 cases, ≈4 min, ≈$0.30).' : ''
+  const replay = errors.length ? 'Not estimated: the staged graph is invalid.' : proposal ? proposal.replay : manual.length ? `Parameter edits only: replay runs on save (20 cases, ≈4 min, ≈${fmtCost(0.3)}).` : ''
 
   return (
     <StepCtx.Provider value={resolver}>
@@ -2112,24 +2675,27 @@ function Editor({ start }: { start: 'invalid' | 'fresh' | 'fixed' }) {
           </Group>
         </Paper>
 
+        <SectionBar c={sections.collapse} onToggle={sections.toggle} onAll={sections.setAll} fanN={shown.nodes.filter((n) => n.def.id.startsWith('reviewer:')).length} />
         <Box style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 430px', gap: 12 }}>
-          <Paper withBorder radius="md" h="calc(100vh - 330px)" mih={480} style={{ overflow: 'hidden', position: 'relative' }}>
+          <Paper withBorder radius="md" h="calc(100vh - 360px)" mih={480} style={{ overflow: 'hidden', position: 'relative' }}>
             <ReactFlow
-              nodes={flowNodes}
-              edges={flowEdges}
+              nodes={sg.nodes}
+              edges={sg.edges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               colorMode="dark"
-              onInit={(rf) => rf.fitBounds(BOUNDS, { padding: 0.02 })}
+              onInit={onInit}
               minZoom={0.3}
               nodesDraggable={false}
               nodesConnectable={false}
               deleteKeyCode={null}
               onNodeClick={(_, n) => {
+                if (n.type !== 'run') return
                 setSel({ type: 'node', id: n.id })
                 setTab('node')
               }}
               onEdgeClick={(_, e) => {
+                if (e.id.startsWith('m:')) return
                 setSel({ type: 'edge', id: e.id })
                 setTab('node')
               }}
@@ -2635,7 +3201,7 @@ function Timeline() {
                   </Text>
                   {t.park.during?.map((d) => (
                     <Text key={d.node + d.atWh} size="10px" ta="center" c="cyan.4">
-                      at {d.atWh} wh: <StepName id={d.node} /> · unaffected
+                      at {d.atWh} wh: <StepName id={d.node} />: {d.label}
                     </Text>
                   ))}
                   <Text size="10px" ta="center" c="dimmed">
@@ -2787,9 +3353,10 @@ function Timeline() {
                 RUN618_NODES.find((n) => n.id === selected.node)?.execs.find((e) => e.iteration === Number(sel!.split(':')[0]))?.note ??
                 ''}
             </Text>
-            <Text size="xs" c="dimmed">
-              cost {fmtUsd(0)} API (seat)
-            </Text>
+            {(() => {
+              const c = RUN618_NODES.find((n) => n.id === selected.node)?.execs.find((e) => e.iteration === Number(sel!.split(':')[0]))?.cost
+              return c ? <CostText cost={c} models={selected.model ? [selected.model] : undefined} /> : <Text size="xs" c="dimmed">no model cost</Text>
+            })()}
           </Group>
         </Paper>
       )}
@@ -2808,6 +3375,14 @@ type Story = StoryObj
 
 /** (A) Live overlay: status colours, 4-reviewer fan-out (3 done, concurrency running), ↺ taken/max on back edges, node detail panel. Hover any step for its definition and last execution. */
 export const LiveRunOverlay: Story = { name: 'A · Live run overlay', render: () => <LiveOverlay /> }
+
+/**
+ * (A) The same run after Hugo approves iteration 3, with keepUpToDate on. The branch was already behind at review: its
+ * merge-base (1f20c9e) never moved when the base moved during the it1 park. base-moved compares the merge-base with the
+ * tip and reports "behind (merge-base 3 commits behind tip)" → base-drift (unaffected-approved) → update-branch (rebased,
+ * approval carried) → await-merge. Intake and Review start collapsed.
+ */
+export const LiveRunBehindAtReview: Story = { name: 'A · Live run overlay (approved, branch behind at review)', render: () => <LiveOverlay scenario="behind" /> }
 
 /**
  * (B) Editor driven by AI prompts. The graph is read-only; a prompt produces a proposal in the staging area (include/exclude per
