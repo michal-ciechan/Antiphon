@@ -702,6 +702,11 @@ isolates each item and reports errors after processing the remaining batch.
   inferred from the composer border because snapshots do not carry dimensions.
   Other width/height pairs, including the clipped 40x20 layout, stay Unknown;
   trust and sign-in detection still take precedence at any size.
+  At the default 60-second boundary, a Working screen extends observation in
+  30-second steps up to 180 seconds total. An Unknown screen after MCP appeared
+  earns one additional observation window on the same process, with no writes
+  during that window. The gate still requires a settled positive composer.
+  A failed retry records both windows in one bounded local capture.
 
 - **Runner branch publication (CARD-0779).** A runner task's owned branch is published only as a
   fast-forward of its dispatch baseline. Settlement may publish the runner mirror's fast-forward

@@ -519,8 +519,8 @@ public class GrokLinuxBlockingPromptTests
         TrustSettle = TimeSpan.FromMilliseconds(1000), PollInterval = TimeSpan.FromMilliseconds(50),
         MinimumAgeRemaining = TimeSpan.Zero, TimeProvider = clock,
         OnSignIn = onSignIn,
-        OnFailure = failure => onFailure(new(failure.Outcome, failure.LastReason, failure.Frame, failure.Elapsed,
-            failure.Positives, failure.SignInSeen))
+        OnFailure = failure => onFailure(new(failure.Outcome, failure.Window.LastReason, failure.Window.Frame,
+            failure.Elapsed, failure.Window.Positives, failure.SignInSeen))
     };
     private static async Task<WaitResult> DriveWaitAsync(Func<double, string> screenAt, bool assertAt1050 = false)
     {

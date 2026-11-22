@@ -15,8 +15,9 @@ public class GrokStartupCaptureStoreTests
         var frame = new GrokStartupSnapshot(new string('s', 8193) + "\u001b\n" + sentinel,
             sentinel + new string('r', 8193) + "\u0000", 17, DateTime.UtcNow);
         var now = DateTimeOffset.UtcNow;
-        var output = GrokStartupCaptureStore.Format(Guid.NewGuid(), GrokStartupReason.Deadline,
-            GrokStartupReason.Unknown, frame, TimeSpan.FromSeconds(60), 0, true, false, now);
+        var firstWindow = new GrokStartupWindow(GrokStartupReason.Unknown, frame, TimeSpan.FromSeconds(60), 0, true);
+        var output = GrokStartupCaptureStore.Format(Guid.NewGuid(),
+            new GrokStartupFailure(GrokStartupReason.Deadline, firstWindow, false), now);
         output.ShouldContain("screenSourceUnits:");
         output.ShouldContain("rawSourceUnits:");
         output.ShouldContain("truncated: True");
@@ -25,13 +26,18 @@ public class GrokStartupCaptureStoreTests
         output.ShouldNotContain(sentinel);
         System.Text.Encoding.UTF8.GetByteCount(output).ShouldBeLessThanOrEqualTo(
             GrokStartupCaptureStore.FileLimit);
-        var suppressed = GrokStartupCaptureStore.Format(Guid.NewGuid(), GrokStartupReason.SignIn,
-            GrokStartupReason.SignIn, frame, TimeSpan.Zero, 0, true, true, now);
+        var signIn = new GrokStartupWindow(GrokStartupReason.SignIn, frame with { RawOutput = sentinel },
+            TimeSpan.FromSeconds(10), 0, true);
+        var suppressed = GrokStartupCaptureStore.Format(Guid.NewGuid(),
+            new GrokStartupFailure(GrokStartupReason.SignIn, signIn, true, FirstWindow: firstWindow), now);
         suppressed.ShouldContain("content: suppressed after sign-in");
+        suppressed.ShouldContain("firstWindowOutcome: Deadline");
+        suppressed.ShouldContain("secondWindowOutcome: SignIn");
         suppressed.ShouldNotContain(sentinel);
         suppressed.ShouldNotContain("--- rendered screen");
-        var absent = GrokStartupCaptureStore.Format(Guid.NewGuid(), GrokStartupReason.Deadline,
-            GrokStartupReason.Unknown, null, TimeSpan.Zero, 0, false, false, now);
+        var absent = GrokStartupCaptureStore.Format(Guid.NewGuid(),
+            new GrokStartupFailure(GrokStartupReason.Deadline,
+                new GrokStartupWindow(GrokStartupReason.Unknown, null, TimeSpan.Zero, 0, false), false), now);
         absent.ShouldContain("frame: none");
     }
 
@@ -112,6 +118,7 @@ public class GrokStartupCaptureStoreTests
     }
 
     private static string Write(string root, DateTimeOffset now, int keep) =>
-        GrokStartupCaptureStore.Write(root, keep, Guid.NewGuid(), GrokStartupReason.Deadline,
-            GrokStartupReason.Unknown, null, TimeSpan.Zero, 0, false, false, now);
+        GrokStartupCaptureStore.Write(root, keep, Guid.NewGuid(),
+            new GrokStartupFailure(GrokStartupReason.Deadline,
+                new GrokStartupWindow(GrokStartupReason.Unknown, null, TimeSpan.Zero, 0, false), false), now);
 }
