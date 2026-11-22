@@ -429,7 +429,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var workerEvents = new WorkerTurnBus();
             var delegation = new DelegationSettings { MaxConcurrentTasks = 16 };
-            await using var w = await UnifiedOutboundTransport.CreateAsync(broker, configure: services =>
+            await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true, configure: services =>
             {
                 services.AddSingleton(Options.Create(delegation));
                 services.AddSingleton<IEventBus>(workerEvents);

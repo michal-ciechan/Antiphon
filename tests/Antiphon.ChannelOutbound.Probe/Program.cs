@@ -19,6 +19,12 @@ using Microsoft.Extensions.Options;
 // The parent owns the database and directory. No production configuration or
 // external runner is loaded by this crash probe.
 if (args is ["--generate-model", var modelDir]) return ProbeModelGenerator.Run(modelDir);
+// A spare (ProbeSpare): warmed first, then the probe its config, once given, describes.
+if (args is ["--spare", var warmPath, var givenPath])
+{
+    if (await ProbeSpare.WaitAsync(warmPath, givenPath) is not { } given) return 2;
+    args = [given];
+}
 if (args.Length != 1 || !File.Exists(args[0])) return 2;
 var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync(args[0]));
 if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;

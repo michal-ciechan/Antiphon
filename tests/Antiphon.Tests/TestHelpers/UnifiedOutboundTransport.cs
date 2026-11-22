@@ -51,12 +51,55 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public Guid ConverterId { get; set; }
     public Guid ProjectId { get; set; }
     private bool _gatewayStarted;
+
+    // warmProbes: the next probe child is started ahead (a spare, ProbeSpare) and warmed while this world goes on: its
+    // runtime start, compiled model and first database and Kafka connections overlap the parent's own work, and it does
+    // nothing else until StartProbeAsync gives it its config, then starts the next spare. Each probe is still its own
+    // fresh process, killed or recovering as before; only its start moves earlier. The last spare is killed unused.
+    private bool _warmProbes;
+    private (Process Process, string ConfigPath)? _spare;
+
+    private static ProcessStartInfo ProbeStart()
+    {
+        var start = new ProcessStartInfo("dotnet")
+            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe", "Antiphon.ChannelOutbound.Probe.dll"));
+        return start;
+    }
+
+    private async Task StartSpareAsync()
+    {
+        var root = Path.Combine(H.TempRoot, "spare-" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllTextAsync(root + ".warm.json", JsonSerializer.Serialize(new
+        {
+            ConnectionString = Schema.ConnectionString, CompiledModelPath = await ProbeGeneratedModel.PathAsync(),
+            BootstrapServers = Bootstrap, Topic,
+        }));
+        var start = ProbeStart();
+        start.ArgumentList.Add("--spare");
+        start.ArgumentList.Add(root + ".warm.json");
+        start.ArgumentList.Add(root + ".config");
+        _spare = (Process.Start(start) ?? throw new InvalidOperationException("Spare probe did not start"), root + ".config");
+    }
+
+    private async Task StopSpareAsync()
+    {
+        if (_spare is not { } spare) return;
+        _spare = null;
+        try
+        {
+            if (!spare.Process.HasExited) spare.Process.Kill(entireProcessTree: true);
+            await spare.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception) { }
+        finally { spare.Process.Dispose(); }
+    }
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
     public static async Task<UnifiedOutboundTransport> CreateAsync(RedpandaContainer broker,
         bool gatewayStarted = true, Action<IServiceCollection>? configure = null,
         Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null, bool warmProbes = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var topic = "c519-" + Guid.NewGuid().ToString("N");
@@ -123,6 +166,11 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             Conversation = conversation, ChannelId = channelId,
         };
         await File.WriteAllBytesAsync(world.SourcePath, world.OriginalBytes);
+        if (warmProbes)
+        {
+            world._warmProbes = true;
+            await world.StartSpareAsync();
+        }
         if (gatewayStarted) await world.StartGatewayAsync();
         return world;
     }
@@ -200,13 +248,27 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var source = ProbeSource;
         // The compiled model this probe build generated (ProbeGeneratedModel), or none: the probe then builds it.
         var model = await ProbeGeneratedModel.PathAsync();
-        await File.WriteAllTextAsync(config, JsonSerializer.Serialize(
-            ProbeConfigFor(marker, barrier, offset, refuseOutcome, mode, deliveryId, stallPoint, model)));
-        var start = new ProcessStartInfo("dotnet")
-            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe", "Antiphon.ChannelOutbound.Probe.dll"));
-        start.ArgumentList.Add(config);
-        return new OwnedProbe(Process.Start(start) ?? throw new InvalidOperationException("Probe did not start"), marker, source);
+        var json = JsonSerializer.Serialize(ProbeConfigFor(marker, barrier, offset, refuseOutcome, mode, deliveryId, stallPoint, model));
+        Process process;
+        if (_spare is { } spare && !spare.Process.HasExited)
+        {
+            _spare = null;
+            // Written whole, then named: the spare only ever reads a complete config.
+            await File.WriteAllTextAsync(spare.ConfigPath + ".tmp", json);
+            File.Move(spare.ConfigPath + ".tmp", spare.ConfigPath);
+            process = spare.Process;
+        }
+        else
+        {
+            await StopSpareAsync();
+            await File.WriteAllTextAsync(config, json);
+            var start = ProbeStart();
+            start.ArgumentList.Add(config);
+            process = Process.Start(start) ?? throw new InvalidOperationException("Probe did not start");
+        }
+        var owned = new OwnedProbe(process, marker, source);
+        if (_warmProbes) await StartSpareAsync();
+        return owned;
     }
 
     private static string ProbeSource => typeof(UnifiedOutboundTransport).Assembly
@@ -299,6 +361,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     {
         try
         {
+            await StopSpareAsync();
             if (_gatewayStarted) await Gateway.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
             Gateway.Dispose(); Producer.Dispose(); Http.Dispose();
             await Slack.DisposeAsync(); await H.DisposeAsync(); await Schema.DisposeAsync();

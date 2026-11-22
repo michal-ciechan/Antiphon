@@ -48,7 +48,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
     {
         var broker = await SharedBroker.GetAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
+        await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true);
         await w.SeedCrashSourceAsync(kind);
         await using (var child = await w.StartProbeAsync(cut))
         {
@@ -115,7 +115,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
         {
             var broker = await SharedBroker.GetAsync();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
+            await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true);
             await w.SeedCrashSourceAsync(kind);
             var accepted = cut is "producer-accepted" or "outcome-refused" or "published-committed";
             var published = cut == "published-committed";
