@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 353,
+      "classes": 352,
       "reason": "allowlist"
     },
     {
@@ -2088,9 +2088,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 141,
       "reason": "cap",
-      "owed": 117,
+      "owed": 116,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
@@ -2147,9 +2147,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 75,
+      "classes": 74,
       "reason": "cap",
-      "owed": 50,
+      "owed": 49,
       "first": [
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
@@ -2179,10 +2179,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
+        "ToolchainFloorTwinTests",
         "ExpectedPlatformSkipRosterTests",
         "NightlySummaryWitnessTests"
       ]
@@ -25364,8 +25365,8 @@
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
+        "TestTimingReportTests",
         "TestTimingsTwinTests",
-        "ToolchainFloorTwinTests",
         "ToolchainFloorWarningTests"
       ]
     },
