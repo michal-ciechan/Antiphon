@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -193,6 +194,83 @@ public partial class ProjectReadinessTests
             .ToListAsync();
 
         ids.ShouldBe([exact.Id, cased.Id], ignoreOrder: true);
+    }
+
+    /// <summary>
+    /// Review 0d322ed5 round 2: case variants beyond ASCII. Windows spellings fold case with
+    /// <c>ToLowerInvariant</c>, so the corpus covers é/É, ü/Ü, Greek (including final sigma),
+    /// Turkish dotted and dotless i, ß/ẞ, the Kelvin and Angstrom signs (non-ASCII letters whose
+    /// lower case is ASCII or Latin-1) and a supplementary-plane pair. POSIX copies stay exact.
+    /// </summary>
+    internal static readonly string[] CaseFoldWords =
+    [
+        "café", "CAFÉ", "Café", "cafe", "CAFE",
+        "über", "ÜBER", "Über", "uber",
+        "σοφια", "ΣΟΦΙΑ", "Σοφια",
+        "οδος", "ΟΔΟΣ", "οδοσ",
+        "\u0130zmir", "izmir", "Izmir", "\u0131zmir", "IZMIR",
+        "straße", "STRAẞE", "STRASSE", "strasse",
+        "\u212Aelvin", "kelvin", "KELVIN",
+        "\u212Bngstrom", "ångstrom", "ÅNGSTROM",
+        "\U00010400x", "\U00010428x",
+    ];
+
+    internal static IReadOnlyList<string> CaseFoldCorpus(string u)
+    {
+        var corpus = new List<string>();
+        for (var i = 0; i < CaseFoldWords.Length; i++)
+        {
+            var word = CaseFoldWords[i];
+            corpus.Add(i % 2 == 0 ? $@"C:\fold-{u}\{word}" : $"c:/FOLD-{u}/{word}/");
+            corpus.Add($"/srv/fold-{u}/{word}");
+        }
+
+        return corpus;
+    }
+
+    /// <summary>
+    /// Property witness: for every pair of corpus spellings that <see cref="WorkingDirectoryIdentity.Same"/>
+    /// accepts, the SQL prefilter returns the stored row for the probe. The prefilter may return more
+    /// (callers refine with Same); it must never return less.
+    /// </summary>
+    internal static async Task AssertPrefilterAdmitsEverySamePairAsync(
+        Func<AppDbContext> createContext, Guid boardId, Func<Guid, string, Task<Agent>> seedAgent)
+    {
+        var corpus = CaseFoldCorpus(Guid.NewGuid().ToString("N"));
+        var stored = new Dictionary<Guid, string>();
+        foreach (var path in corpus)
+            stored.Add((await seedAgent(boardId, path)).Id, path);
+
+        var missed = new List<string>();
+        var accepted = 0;
+        await using var db = createContext();
+        foreach (var probe in corpus)
+        {
+            var admitted = (await db.Agents.AsNoTracking()
+                .Where(a => a.BoardId == boardId)
+                .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe))
+                .Select(a => a.Id)
+                .ToListAsync()).ToHashSet();
+            foreach (var (id, path) in stored)
+            {
+                if (!WorkingDirectoryIdentity.Same(path, probe))
+                    continue;
+                accepted++;
+                if (!admitted.Contains(id))
+                    missed.Add($"stored {path} probe {probe}");
+            }
+        }
+
+        missed.ShouldBeEmpty();
+        accepted.ShouldBeGreaterThan(corpus.Count, "the corpus must contain case-variant pairs, not only self-pairs");
+    }
+
+    [Test]
+    public async Task candidate_prefilter_admits_every_pair_same_accepts()
+    {
+        var board = await SeedBoardAsync((await SeedProjectAsync()).Id);
+        await AssertPrefilterAdmitsEverySamePairAsync(
+            CreateContext, board.Id, (boardId, path) => SeedAgentAsync(boardId, workingDirectory: path));
     }
 
     private static (string Project, string Other) Tokenise(string projectSpelling, string otherSpelling)
