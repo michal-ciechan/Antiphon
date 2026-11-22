@@ -12,7 +12,8 @@
 // - PowerShell's -match, -eq and @{} keys ignore case and [regex] does not; $s.IndexOf('{', i) is the current
 //   culture's IndexOf; Sort-Object is List.Sort with the current culture, ignoring case.
 // - The catalog is written as ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 wrote it: two-space indents, the
-//   platform's line ends, Newtonsoft's default escaping, a final line end, no byte-order mark.
+//   platform's line ends, Newtonsoft's default escaping, a final line end, no byte-order mark (LiveLaneJson.cs, shared
+//   with the discovery, roster and export files since W2-nightly S24).
 // One deliberate difference: tests/live-lanes.json is read with System.Text.Json, so the core and additiveContract
 // rows the catalog carries over are written back as they were read (ConvertFrom-Json turned a date-like string into
 // a date first), and a number other than an integer refuses. A non-text field value (a number, list or object where
@@ -21,7 +22,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -521,35 +521,18 @@ namespace Antiphon.Nightly
             var exclusions = RcExclusions(repoRoot);
             var gates = new List<LiveLaneGate>(scan.Gates);
             gates.Sort(CatalogOrder);
-            var rows = new List<(LiveLaneGate Gate, LiveLaneGateDisposition Disposition)>();
-            foreach (var gate in gates) rows.Add((gate, Disposition(gate, exclusions)));
+            var rows = new List<LiveLaneJsonObject>();
+            foreach (var gate in gates) rows.Add(GateRow(gate, Disposition(gate, exclusions)));
             using var manifest = ReadManifest(repoRoot);
-            var sb = new StringBuilder(64 * 1024);
-            sb.Append('{');
-            Name(sb, 1, "format", first: true);
-            WriteString(sb, "antiphon-live-lanes-v1");
-            Name(sb, 1, "core", first: false);
-            WriteRows(sb, Rows(manifest.RootElement, "core"), 1);
-            Name(sb, 1, "gates", first: false);
-            if (rows.Count == 0) sb.Append("[]");
-            else
+            var doc = new LiveLaneJsonObject
             {
-                sb.Append('[');
-                for (var i = 0; i < rows.Count; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    NewLine(sb, 2);
-                    WriteGateRow(sb, rows[i].Gate, rows[i].Disposition, 2);
-                }
-                NewLine(sb, 1);
-                sb.Append(']');
-            }
-            Name(sb, 1, "additiveContract", first: false);
-            WriteRows(sb, Rows(manifest.RootElement, "additiveContract"), 1);
-            NewLine(sb, 0);
-            sb.Append('}');
+                { "format", "antiphon-live-lanes-v1" },
+                { "core", LiveLaneJson.Rows(manifest.RootElement, "core") },
+                { "gates", rows },
+                { "additiveContract", LiveLaneJson.Rows(manifest.RootElement, "additiveContract") },
+            };
             var path = outputPath ?? Path.Combine(repoRoot, "tests", "live-lanes.json");
-            File.WriteAllText(path, sb.Append(Environment.NewLine).ToString(), new UTF8Encoding(false));
+            LiveLaneJson.WriteFile(path, doc, finalNewLine: true);
             return new LiveLaneGateCatalog(rows.Count, scan.Unresolved, path);
         }
 
@@ -565,204 +548,37 @@ namespace Antiphon.Nightly
             return order;
         }
 
-        private static void WriteGateRow(StringBuilder sb, LiveLaneGate gate, LiveLaneGateDisposition disposition, int depth)
+        private static LiveLaneJsonObject GateRow(LiveLaneGate gate, LiveLaneGateDisposition disposition) => new LiveLaneJsonObject
         {
-            sb.Append('{');
-            Name(sb, depth + 1, "project", first: true);
-            WriteString(sb, gate.Project);
-            Name(sb, depth + 1, "namespace", first: false);
-            WriteString(sb, gate.Namespace);
-            Name(sb, depth + 1, "class", first: false);
-            WriteString(sb, gate.Class);
-            Name(sb, depth + 1, "method", first: false);
-            WriteString(sb, gate.Method);
-            Name(sb, depth + 1, "arguments", first: false);
-            WriteStrings(sb, gate.Arguments, depth + 1);
-            Name(sb, depth + 1, "shapes", first: false);
-            WriteStrings(sb, gate.Shapes, depth + 1);
-            Name(sb, depth + 1, "disposition", first: false);
-            WriteString(sb, disposition.Disposition);
-            Name(sb, depth + 1, "owner", first: false);
-            WriteString(sb, disposition.Owner);
-            Name(sb, depth + 1, "reason", first: false);
-            WriteString(sb, disposition.Reason);
-            NewLine(sb, depth);
-            sb.Append('}');
-        }
-
-        private static void WriteStrings(StringBuilder sb, IReadOnlyList<string> values, int depth)
-        {
-            if (values.Count == 0) { sb.Append("[]"); return; }
-            sb.Append('[');
-            for (var i = 0; i < values.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                NewLine(sb, depth + 1);
-                WriteString(sb, values[i]);
-            }
-            NewLine(sb, depth);
-            sb.Append(']');
-        }
-
-        private static void WriteRows(StringBuilder sb, List<JsonElement> rows, int depth)
-        {
-            if (rows.Count == 0) { sb.Append("[]"); return; }
-            sb.Append('[');
-            for (var i = 0; i < rows.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                NewLine(sb, depth + 1);
-                WriteElement(sb, rows[i], depth + 1);
-            }
-            NewLine(sb, depth);
-            sb.Append(']');
-        }
-
-        // A manifest value as ConvertFrom-Json | ConvertTo-Json -Depth 8 wrote it back (dates aside).
-        private static void WriteElement(StringBuilder sb, JsonElement value, int depth)
-        {
-            switch (value.ValueKind)
-            {
-                case JsonValueKind.String: WriteString(sb, value.GetString()); return;
-                case JsonValueKind.True: sb.Append("true"); return;
-                case JsonValueKind.False: sb.Append("false"); return;
-                case JsonValueKind.Null: sb.Append("null"); return;
-                case JsonValueKind.Number:
-                    if (!IsInteger(value.GetRawText()) || !value.TryGetInt64(out var number)) throw new InvalidOperationException("live-lanes-number " + value.GetRawText());
-                    sb.Append(number.ToString(CultureInfo.InvariantCulture));
-                    return;
-            }
-            if (depth >= 8) throw new InvalidOperationException("live-lanes-depth");
-            if (value.ValueKind == JsonValueKind.Array)
-            {
-                var items = new List<JsonElement>(value.EnumerateArray());
-                WriteRows(sb, items, depth);
-                return;
-            }
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var first = true;
-            foreach (var property in value.EnumerateObject())
-            {
-                if (!names.Add(property.Name)) throw new InvalidOperationException("live-lanes-duplicate-key " + property.Name);
-                if (first) sb.Append('{');
-                Name(sb, depth + 1, property.Name, first);
-                first = false;
-                WriteElement(sb, property.Value, depth + 1);
-            }
-            if (first) { sb.Append("{}"); return; }
-            NewLine(sb, depth);
-            sb.Append('}');
-        }
-
-        private static bool IsInteger(string raw)
-        {
-            if (raw.Length == 0) return false;
-            for (var i = raw[0] == '-' ? 1 : 0; i < raw.Length; i++)
-                if (raw[i] < '0' || raw[i] > '9') return false;
-            return raw != "-";
-        }
-
-        private static void Name(StringBuilder sb, int depth, string name, bool first)
-        {
-            if (!first) sb.Append(',');
-            NewLine(sb, depth);
-            WriteString(sb, name);
-            sb.Append(": ");
-        }
-
-        private static void NewLine(StringBuilder sb, int depth) => sb.Append(Environment.NewLine).Append(' ', depth * 2);
-
-        // Newtonsoft's default escaping: \" \\ \b \f \n \r \t, lower-case \u00XX for the other C0 controls and for
-        // U+0085, U+2028 and U+2029, everything else literal.
-        private static void WriteString(StringBuilder sb, string value)
-        {
-            value ??= "";
-            sb.Append('"');
-            var start = 0;
-            for (var i = 0; i < value.Length; i++)
-            {
-                var ch = value[i];
-                string escaped;
-                switch (ch)
-                {
-                    case '"': escaped = "\\\""; break;
-                    case '\\': escaped = "\\\\"; break;
-                    case '\b': escaped = "\\b"; break;
-                    case '\f': escaped = "\\f"; break;
-                    case '\n': escaped = "\\n"; break;
-                    case '\r': escaped = "\\r"; break;
-                    case '\t': escaped = "\\t"; break;
-                    default:
-                        if (ch >= ' ' && ch != (char)0x85 && ch != (char)0x2028 && ch != (char)0x2029) continue;
-                        escaped = "\\u" + ((int)ch).ToString("x4", CultureInfo.InvariantCulture);
-                        break;
-                }
-                sb.Append(value, start, i - start).Append(escaped);
-                start = i + 1;
-            }
-            sb.Append(value, start, value.Length - start);
-            sb.Append('"');
-        }
+            { "project", gate.Project },
+            { "namespace", gate.Namespace },
+            { "class", gate.Class },
+            { "method", gate.Method },
+            { "arguments", gate.Arguments },
+            { "shapes", gate.Shapes },
+            { "disposition", disposition.Disposition },
+            { "owner", disposition.Owner },
+            { "reason", disposition.Reason },
+        };
 
         // ---- the manifest -------------------------------------------------------------------------------------
 
         // Read-LiveLaneManifestObject: tests/live-lanes.json, refused when missing.
-        private static JsonDocument ReadManifest(string repoRoot)
+        internal static JsonDocument ReadManifest(string repoRoot)
         {
             var path = Path.Combine(repoRoot, "tests", "live-lanes.json");
             if (!File.Exists(path)) throw new InvalidOperationException("manifest-missing");
-            return JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            return LiveLaneJson.ReadFile(path);
         }
 
-        // @(ConvertTo-LiveLaneList (Get-LiveLaneProp $manifest name)): none for a missing or null value, an array's
-        // items, else the value itself.
-        private static List<JsonElement> Rows(JsonElement document, string name)
-        {
-            var rows = new List<JsonElement>();
-            if (!TryProp(document, name, out var value) || value.ValueKind == JsonValueKind.Null) return rows;
-            if (value.ValueKind == JsonValueKind.Array) rows.AddRange(value.EnumerateArray());
-            else rows.Add(value);
-            return rows;
-        }
+        private static List<JsonElement> Rows(JsonElement document, string name) => LiveLaneJson.Rows(document, name);
 
-        // Get-LiveLaneProp: the first property whose name matches, ignoring case (ordinal).
-        private static bool TryProp(JsonElement row, string name, out JsonElement value)
-        {
-            if (row.ValueKind == JsonValueKind.Object)
-            {
-                foreach (var property in row.EnumerateObject())
-                {
-                    if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
-                    value = property.Value;
-                    return true;
-                }
-            }
-            value = default;
-            return false;
-        }
+        private static bool TryProp(JsonElement row, string name, out JsonElement value) => LiveLaneJson.TryProp(row, name, out value);
 
         // [string](Get-LiveLaneProp $row name).
-        private static string Field(JsonElement row, string name) => TryProp(row, name, out var value) ? Text(value) : "";
+        private static string Field(JsonElement row, string name) => LiveLaneJson.Field(row, name);
 
-        // [string] of a ConvertFrom-Json value: a list's items joined by spaces, an empty object blank.
-        private static string Text(JsonElement value)
-        {
-            switch (value.ValueKind)
-            {
-                case JsonValueKind.String: return value.GetString();
-                case JsonValueKind.True: return "True";
-                case JsonValueKind.False: return "False";
-                case JsonValueKind.Number: return value.GetRawText();
-                case JsonValueKind.Array:
-                    var parts = new List<string>();
-                    foreach (var item in value.EnumerateArray()) parts.Add(Text(item));
-                    return string.Join(" ", parts);
-                case JsonValueKind.Object:
-                    foreach (var _ in value.EnumerateObject()) return value.GetRawText();
-                    return "";
-                default: return "";
-            }
-        }
+        private static string Text(JsonElement value) => LiveLaneJson.Str(value);
 
         // Get-LiveLaneIdentityKey of a catalog row: its type when the class is blank.
         private static string RowKey(JsonElement row)

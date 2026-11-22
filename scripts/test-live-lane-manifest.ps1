@@ -3,10 +3,14 @@
 # The gate scan is compiled (W2-nightly S23, scripts/lib/Antiphon.Nightly/LiveLaneGateScan.cs): its cases left
 # this driver. LiveLaneInventoryTests.EveryLiveGateHasDisposition runs the gate matrix in-process, and
 # "scripts/antiphon live-lane-scan-gates" rewrites the gates of tests/live-lanes.json (the old ScanGates case).
+# The discovery, rosters, exports, receipts and scratch are compiled too (W2-nightly S24): ExactCoreRoster and
+# ExactPtyCoreRoster run in-process (LiveLaneInventoryTests, LiveClaudeInventoryTests, or "scripts/antiphon
+# live-lane-roster" for a named assembly); ExtraArgumentDecoyFirst, ExportPending, ProducerReceipt, ScratchResidue,
+# BindManifest and WriteFixture are LiveLaneDiscoveryTests, and the last two are also "scripts/antiphon
+# live-lane-bind-manifest" and "live-lane-write-fixture". What is left is the census (S25): CensusAdditiveIdentity,
+# CensusTargetScope, FullCensusUnchanged, EmitPolicyHash (its policy-hash child) and Group (the S1a commission).
 param(
     [string]$Case = '',
-    [string]$AssemblyPath = '',
-    [string]$Project = '',
     [string]$RepoRoot = '',
     [string]$Group = '',
     [string]$ToolDll = '',
@@ -14,8 +18,7 @@ param(
     [string]$ExpectedSourceSha = '',
     [string]$CensusBaseSha = '',
     [string]$PolicyRoot = '',
-    [string]$PolicyPath = '',
-    [string]$CaptureDir = ''
+    [string]$PolicyPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,17 +57,6 @@ function Write-LiveLaneCaseResult {
     [Console]::Out.WriteLine($line)
 }
 
-function Write-LiveLanePhase {
-    param([string]$Capture, [string]$Name, [int]$ElapsedMs)
-    $line = 'phase=' + $Name + ' elapsedMs=' + $ElapsedMs
-    [Console]::Error.WriteLine($line)
-    try { [Console]::Error.Flush() } catch { }
-    if ([string]::IsNullOrWhiteSpace($Capture)) { return }
-    New-Item -ItemType Directory -Path $Capture -Force | Out-Null
-    $path = Join-Path $Capture 'phase.log'
-    [System.IO.File]::AppendAllText($path, $line + "`n")
-}
-
 if ($Case -eq 'EmitPolicyHash') {
     if ([string]::IsNullOrWhiteSpace($PolicyRoot)) { exit 2 }
     $policyLib = Join-Path $PolicyRoot 'scripts/lib'
@@ -78,67 +70,6 @@ if ($Case -eq 'EmitPolicyHash') {
 
 $RepoRoot = Get-LiveLaneScriptRepo -Start $RepoRoot
 . (Join-Path $RepoRoot 'scripts/lib/live-lane-manifest.ps1')
-
-function Invoke-LiveLaneRosterCase {
-    param([string]$ProjectName)
-    $capture = $CaptureDir
-    if ([string]::IsNullOrWhiteSpace($capture)) { $capture = Join-Path $RepoRoot '.antiphon/live-lane-capture' }
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    Write-LiveLanePhase -Capture $capture -Name 'start' -ElapsedMs 0
-    $discovery = $null
-    try {
-        $discovery = Invoke-LiveLaneDiscovery -RepoRoot $RepoRoot -Project $ProjectName -AssemblyPath $AssemblyPath -CaptureDir $capture
-    } catch {
-        Write-LiveLanePhase -Capture $capture -Name 'discovery-failed' -ElapsedMs ([int]$clock.ElapsedMilliseconds)
-        Write-LiveLaneCaseResult -DiscoveryOk $false -ErrorText $_.Exception.Message -Failures @() -LaunchCount 0 -DiscoveryMs ([int]$clock.ElapsedMilliseconds)
-        exit 1
-    }
-    $discoveryMs = [int]$clock.ElapsedMilliseconds
-    Write-LiveLanePhase -Capture $capture -Name 'discovery' -ElapsedMs $discoveryMs
-    if ($null -eq $discovery -or [string]$discovery.Error -eq 'assembly-missing') {
-        $message = $(if ($discovery) { [string]$discovery.Error } else { 'assembly-missing' })
-        Write-LiveLaneCaseResult -DiscoveryOk $false -ErrorText $message -Failures @() -LaunchCount 0 -DiscoveryMs $discoveryMs
-        exit 1
-    }
-    $manifest = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
-    $context = Read-LiveLaneContextObject
-    $mode = ''
-    $exportRequired = $false
-    if ($context) {
-        $mode = [string](Get-LiveLaneProp $context 'mode')
-        $flag = Get-LiveLaneProp $context 'exportRequired'
-        if ($null -ne $flag) { $exportRequired = [bool]$flag }
-    }
-    $exportPathWritten = ''
-    if ($mode -eq 'candidate' -and $exportRequired) {
-        $exportPath = ''
-        $cp = ''
-        if ($ProjectName -eq 'Antiphon.Agents.Pty.Tests') {
-            $exportPath = [string](Get-LiveLaneProp $context 'cp25Export')
-            $cp = 'CP-25'
-        } else {
-            $exportPath = [string](Get-LiveLaneProp $context 'cp1Export')
-            $cp = 'CP-1'
-        }
-        if (-not [string]::IsNullOrWhiteSpace($exportPath)) {
-            # Pending until the roster checks pass. A killed or red row must not look final.
-            Write-LiveLaneExportFile -Path $exportPath -Project $ProjectName -Cp $cp -SourceSha ([string](Get-LiveLaneProp $context 'sourceSha')) -RunId ([string](Get-LiveLaneProp $context 'runId')) -AssemblyHash ([string]$discovery.AssemblyHash) -AssemblyPath ([string]$discovery.AssemblyPath) -Nodes @($discovery.Nodes)
-            $exportPathWritten = $exportPath
-        }
-    }
-    $exportMs = [int]$clock.ElapsedMilliseconds
-    Write-LiveLanePhase -Capture $capture -Name 'export' -ElapsedMs $exportMs
-    $failures = @(Invoke-LiveLaneRosterMatrix -Project $ProjectName -Nodes @($discovery.Nodes) -Manifest $manifest -Context $context -AssemblyHash ([string]$discovery.AssemblyHash) -AssemblyPath ([string]$discovery.AssemblyPath))
-    $matrixMs = [int]$clock.ElapsedMilliseconds
-    Write-LiveLanePhase -Capture $capture -Name 'matrix' -ElapsedMs $matrixMs
-    $checksPassed = ($failures.Count -eq 0 -and [bool]$discovery.Ok)
-    if (-not [string]::IsNullOrWhiteSpace($exportPathWritten)) {
-        Complete-LiveLaneExport -Path $exportPathWritten -ChecksPassed $checksPassed
-    }
-    Write-LiveLanePhase -Capture $capture -Name 'final' -ElapsedMs ([int]$clock.ElapsedMilliseconds)
-    Write-LiveLaneCaseResult -DiscoveryOk ([bool]$discovery.Ok) -ErrorText ([string]$discovery.Error) -Failures $failures -LaunchCount ([int]$discovery.LaunchCount) -DiscoveryMs $discoveryMs -ExportMs $exportMs -MatrixMs $matrixMs
-    exit 0
-}
 
 function Write-LiveLaneGroupContext {
     param([string]$Head, [string]$CheckpointResults)
@@ -205,170 +136,6 @@ function Write-LiveLaneGroupContext {
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($contextPath, $json, $utf8)
     return (Resolve-Path -LiteralPath $contextPath).Path
-}
-
-function Write-LiveLaneWitness {
-    param([string[]]$Problems)
-    $items = @($Problems | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-    if ($items.Count -eq 0) {
-        [Console]::Out.WriteLine('accepted')
-        exit 0
-    }
-    foreach ($item in $items) { [Console]::Out.WriteLine([string]$item) }
-    exit 1
-}
-
-function Invoke-LiveLaneExportPendingWitness {
-    param([string]$RepoRoot)
-    $problems = New-Object System.Collections.Generic.List[string]
-    $root = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('exportpending' + [guid]::NewGuid().ToString('N'))
-    try {
-        $path = Join-Path $root 'export.json'
-        Write-LiveLaneExportFile -Path $path -Project 'Antiphon.Tests' -Cp 'CP-1' -SourceSha ('a' * 40) -RunId 'run' -AssemblyHash ('ab' * 32) -AssemblyPath '' -Nodes @()
-        $pending = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-        if ([bool](Get-LiveLaneProp $pending 'terminal')) { $problems.Add('finalized-early') }
-        Complete-LiveLaneExport -Path $path -ChecksPassed $false
-        $held = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-        if ([bool](Get-LiveLaneProp $held 'terminal')) { $problems.Add('finalized-on-failure') }
-        Complete-LiveLaneExport -Path $path -ChecksPassed $true
-        $done = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-        if (-not [bool](Get-LiveLaneProp $done 'terminal')) { $problems.Add('not-finalized') }
-    } finally {
-        Clear-LiveLaneOwnedScratch
-    }
-    if (Test-Path -LiteralPath $root) { $problems.Add('export-scratch-residue') }
-    return @($problems)
-}
-
-function Invoke-LiveLaneProducerReceiptWitness {
-    param([string]$RepoRoot)
-    $problems = New-Object System.Collections.Generic.List[string]
-    $sha = 'a' * 40
-    $root = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('receiptwitness' + [guid]::NewGuid().ToString('N'))
-    try {
-        $missing = Test-LiveLaneProducerReceipt -Context ([pscustomobject]@{ sourceSha = $sha; checkpointResults = (Join-Path $root 'absent') })
-        if ($missing.Reason -ne 'producer-receipt-missing') { $problems.Add('missing-shape') }
-        $red = Join-Path $root 'red'
-        New-Item -ItemType Directory -Path $red -Force | Out-Null
-        Write-LiveLaneReceiptFixture -Root $red -Commit $sha -RowState 'red'
-        $redResult = Test-LiveLaneProducerReceipt -Context ([pscustomobject]@{ sourceSha = $sha; checkpointResults = $red })
-        if ($redResult.Reason -ne 'producer-row-not-green') { $problems.Add('red-shape') }
-        $timed = Join-Path $root 'timed'
-        New-Item -ItemType Directory -Path $timed -Force | Out-Null
-        Write-LiveLaneReceiptFixture -Root $timed -Commit $sha -RowState 'running'
-        $timedResult = Test-LiveLaneProducerReceipt -Context ([pscustomobject]@{ sourceSha = $sha; checkpointResults = $timed })
-        if ($timedResult.Reason -ne 'producer-row-not-green') { $problems.Add('timeout-shape') }
-        $foreign = Join-Path $root 'foreign'
-        New-Item -ItemType Directory -Path $foreign -Force | Out-Null
-        Write-LiveLaneReceiptFixture -Root $foreign -Commit ('b' * 40) -RowState 'green' -BuildSource 'unknown' -LineCommit ('b' * 40)
-        $foreignResult = Test-LiveLaneProducerReceipt -Context ([pscustomobject]@{ sourceSha = $sha; checkpointResults = $foreign })
-        if ($foreignResult.Reason -ne 'producer-receipt-foreign') { $problems.Add('foreign-shape') }
-        $green = Join-Path $root 'green'
-        New-Item -ItemType Directory -Path $green -Force | Out-Null
-        Write-LiveLaneReceiptFixture -Root $green -Commit $sha -RowState 'green'
-        $greenResult = Test-LiveLaneProducerReceipt -Context ([pscustomobject]@{ sourceSha = $sha; checkpointResults = $green })
-        if (-not $greenResult.Accepted) { $problems.Add('green-shape') }
-        $wired = Invoke-LiveLaneCensus -Context ([pscustomobject]@{ candidateRoot = $RepoRoot; sourceSha = $sha; checkpointResults = $red; censusBaseSha = '' })
-        if (-not (Test-LiveLaneCensusHas $wired @('producer-row-not-green'))) { $problems.Add('census-skipped-receipt') }
-    } finally {
-        Clear-LiveLaneOwnedScratch
-    }
-    return @($problems)
-}
-
-function Invoke-LiveLaneScratchWitness {
-    param([string]$RepoRoot)
-    $problems = New-Object System.Collections.Generic.List[string]
-    foreach ($label in @('fail', 'green')) {
-        $before = @(Get-LiveLaneTempResidue)
-        $created = New-Object System.Collections.Generic.List[string]
-        $sha = ''
-        try {
-            $owned = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('residue' + $label + [guid]::NewGuid().ToString('N'))
-            $created.Add($owned)
-            $head = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD')).Text
-            $material = Get-LiveLaneCensusSeedMaterial -RepoRoot $RepoRoot -Seed $head -FixtureRel $script:LiveLaneFixtureRel -Pre $script:LiveLanePreS1BaseSha
-            if ($null -eq $material) { $problems.Add('seed-material-missing') }
-            else { $created.Add([string]$material.BeforeDir) }
-            $policy = New-LiveLanePolicyMutant -RepoRoot $RepoRoot -Edit { param($obj) $obj.policyHash = [string]$obj.policyHash }
-            $created.Add([string]$policy.Root)
-            $sha = New-LiveLaneDanglingSeed -RepoRoot $RepoRoot
-            if ($label -eq 'fail') { throw 'forced-scratch-failure' }
-        } catch {
-            if ($label -eq 'green') { $problems.Add([string]$_.Exception.Message) }
-        } finally {
-            Clear-LiveLaneOwnedScratch
-        }
-        foreach ($path in @($created)) {
-            if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) { $problems.Add('residue-' + $label) }
-        }
-        if (-not [string]::IsNullOrWhiteSpace($sha)) {
-            $still = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('cat-file', '-t', $sha)
-            if ($still.Exit -eq 0) { $problems.Add('dangling-commit-' + $label) }
-        }
-        foreach ($name in @(Get-LiveLaneTempResidue)) {
-            $seen = $false
-            foreach ($old in @($before)) { if ($old -eq $name) { $seen = $true } }
-            if (-not $seen) { $problems.Add('tmp-residue') }
-        }
-    }
-    return @($problems)
-}
-
-function Test-LiveLaneCrlfDisplayArguments {
-    $problems = @()
-    $lfPath = '/tmp/c1545-f0ad975a-lf.diag'
-    $crlfPath = '/tmp/c1545-f0ad975a-crlf.diag'
-    $line = 'TestNodeUid { Value = uid-submit }, DisplayName = Submitting_via_two_writes_completes_a_turn(claude), Properties = [ ParameterTypeFullNames = [System.String] ]'
-    try {
-        [System.IO.File]::WriteAllText($lfPath, $line + "`n")
-        [System.IO.File]::WriteAllText($crlfPath, ($line + "`n").Replace("`n", "`r`n"))
-        $lfMap = Get-LiveLaneDisplayMap -DiagPath $lfPath
-        $crlfMap = Get-LiveLaneDisplayMap -DiagPath $crlfPath
-        $lfArgs = @()
-        $crlfArgs = @()
-        if ($lfMap.ContainsKey('uid-submit')) { $lfArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$lfMap['uid-submit'].Display)) }
-        if ($crlfMap.ContainsKey('uid-submit')) { $crlfArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$crlfMap['uid-submit'].Display)) }
-        if (($lfArgs -join '|') -ne 'claude' -or ($crlfArgs -join '|') -ne 'claude') {
-            $problems += ('C1545 V-2/display lf=' + ($lfArgs -join '|') + ' crlf=' + ($crlfArgs -join '|'))
-        }
-        $bare = $line.Replace('(claude)', '()')
-        [System.IO.File]::WriteAllText($crlfPath, ($bare + "`n").Replace("`n", "`r`n"))
-        $bareMap = Get-LiveLaneDisplayMap -DiagPath $crlfPath
-        $bareArgs = @()
-        if ($bareMap.ContainsKey('uid-submit')) { $bareArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$bareMap['uid-submit'].Display)) }
-        if (@($bareArgs).Count -ne 0) { $problems += 'C1545 V-2/display removed argument still parsed' }
-    } finally {
-        Remove-Item -LiteralPath '/tmp/c1545-f0ad975a-lf.diag' -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath '/tmp/c1545-f0ad975a-crlf.diag' -ErrorAction SilentlyContinue
-    }
-    return @($problems)
-}
-
-function New-LiveLaneDecoyFirstSubmitNodes {
-    $decoy = [pscustomobject]@{
-        project = 'Antiphon.Agents.Pty.Tests'
-        uid = 'decoy-submit'
-        namespace = 'Antiphon.Agents.Pty.Tests'
-        type = 'ClaudeSubmitContractTests'
-        method = 'Submitting_via_two_writes_completes_a_turn'
-        displayName = 'Submitting_via_two_writes_completes_a_turn(fakeclaude)'
-        arguments = @('fakeclaude')
-        signature = ''
-        categories = @('Pty')
-    }
-    $live = [pscustomobject]@{
-        project = 'Antiphon.Agents.Pty.Tests'
-        uid = 'live-submit'
-        namespace = 'Antiphon.Agents.Pty.Tests'
-        type = 'ClaudeSubmitContractLiveTests'
-        method = 'Submitting_via_two_writes_completes_a_turn'
-        displayName = 'Submitting_via_two_writes_completes_a_turn(claude)'
-        arguments = @('claude')
-        signature = ''
-        categories = @('Pty')
-    }
-    return @($decoy, $live)
 }
 
 # CARD-1645 item 2. Every declared additive identity must appear in the after set, and an
@@ -514,25 +281,6 @@ function Invoke-LiveLaneTargetScopeWitness {
 }
 
 switch ($Case) {
-    'ExactCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Tests' }
-    'ExactPtyCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Agents.Pty.Tests' }
-    'ExtraArgumentDecoyFirst' {
-        $projectName = 'Antiphon.Agents.Pty.Tests'
-        $manifestObject = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
-        $entries = @(Copy-LiveLaneEntries (Get-LiveLaneProp $manifestObject 'core') | Where-Object { $_.project -eq $projectName })
-        $nodes = @(New-LiveLaneDecoyFirstSubmitNodes)
-        $expanded = Test-LiveLaneSubmitExtraExpansion -Project $projectName -Nodes $nodes -Entries $entries
-        $sameArgument = Test-LiveLaneSubmitExtraExpansion -Project $projectName -Nodes $nodes -Entries $entries -CloneArguments @('claude')
-        $decoyFailures = @()
-        if (-not $expanded) { $decoyFailures += 'C1545 V-2/extra-argument expandedUidSet has no extra argument' }
-        if ($sameArgument) { $decoyFailures += 'C1545 V-2/extra-argument same argument still expanded' }
-        foreach ($item in @(Test-LiveLaneCrlfDisplayArguments)) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $decoyFailures += [string]$item }
-        }
-        Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $decoyFailures -LaunchCount 0
-        if ($decoyFailures.Count -ne 0) { exit 1 }
-        exit 0
-    }
     'CensusAdditiveIdentity' {
         $failures = @(Invoke-LiveLaneAdditiveIdentityWitness -RepoRoot $RepoRoot)
         Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
@@ -543,18 +291,22 @@ switch ($Case) {
         Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
         exit 0
     }
-    'ExportPending' { Write-LiveLaneWitness -Problems @(Invoke-LiveLaneExportPendingWitness -RepoRoot $RepoRoot) }
-    'ProducerReceipt' { Write-LiveLaneWitness -Problems @(Invoke-LiveLaneProducerReceiptWitness -RepoRoot $RepoRoot) }
-    'ScratchResidue' { Write-LiveLaneWitness -Problems @(Invoke-LiveLaneScratchWitness -RepoRoot $RepoRoot) }
     'FullCensusUnchanged' {
-        $pending = @(Invoke-LiveLaneExportPendingWitness -RepoRoot $RepoRoot)
-        if (@($pending | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
-            foreach ($item in @($pending)) { [Console]::Out.WriteLine([string]$item) }
-            exit 1
+        # The witnesses are compiled (W2-nightly S24). The producer receipt's census check (census-skipped-receipt)
+        # runs here, over the PowerShell census, until the census is compiled too (S25).
+        $receiptProbe = [Func[string, string, string, bool]]{
+            param($Repo, $Sha, $Red)
+            $wired = Invoke-LiveLaneCensus -Context ([pscustomobject]@{ candidateRoot = $Repo; sourceSha = $Sha; checkpointResults = $Red; censusBaseSha = '' })
+            return [bool](Test-LiveLaneCensusHas $wired @('producer-row-not-green'))
         }
-        $residue = @(Invoke-LiveLaneScratchWitness -RepoRoot $RepoRoot)
-        if (@($residue | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
-            foreach ($item in @($residue)) { [Console]::Out.WriteLine([string]$item) }
+        $witness = New-Object System.Collections.Generic.List[string]
+        foreach ($item in [Antiphon.Nightly.LiveLaneExports]::ExportPendingWitness($RepoRoot)) { $witness.Add([string]$item) }
+        if ($witness.Count -eq 0) { foreach ($item in [Antiphon.Nightly.LiveLaneReceipt]::ProducerReceiptWitness($RepoRoot, $receiptProbe)) { $witness.Add([string]$item) } }
+        if ($witness.Count -eq 0) {
+            foreach ($item in [Antiphon.Nightly.LiveLaneScratch]::ScratchResidueWitness($RepoRoot, $script:LiveLaneFixtureRel, [string[]]@($script:LiveLaneProtectedPaths))) { $witness.Add([string]$item) }
+        }
+        if ($witness.Count -gt 0) {
+            foreach ($item in $witness) { [Console]::Out.WriteLine($item) }
             exit 1
         }
         $beforeResidue = @(Get-LiveLaneTempResidue)
@@ -581,24 +333,6 @@ switch ($Case) {
             }
         }
         exit $exitCode
-    }
-    'BindManifest' {
-        $capture = $CaptureDir
-        if ([string]::IsNullOrWhiteSpace($capture)) { $capture = Join-Path $RepoRoot '.antiphon/live-lane-capture' }
-        Update-LiveLaneManifestBindings -RepoRoot $RepoRoot -CaptureDir $capture
-        [Console]::Out.WriteLine('bound')
-        exit 0
-    }
-    'WriteFixture' {
-        $capture = $CaptureDir
-        if ([string]::IsNullOrWhiteSpace($capture)) { $capture = Join-Path $RepoRoot '.antiphon/live-lane-capture' }
-        $sourceSha = $ExpectedSourceSha
-        if ([string]::IsNullOrWhiteSpace($sourceSha)) {
-            $sourceSha = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD')).Text.Trim()
-        }
-        $dest = Write-LiveLaneDiscoveryFixture -RepoRoot $RepoRoot -CaptureDir $capture -SourceSha $sourceSha
-        [Console]::Out.WriteLine($dest)
-        exit 0
     }
     'Group' {
         if ([string]::IsNullOrWhiteSpace($ToolDll) -or -not (Test-Path -LiteralPath $ToolDll)) { throw 'tool-dll-missing' }

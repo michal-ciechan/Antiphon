@@ -51,6 +51,11 @@ namespace Antiphon.Scripts
             [Antiphon.Nightly.NightlySeedCommands.MergeSeeds] = NightlySeedCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
+            // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
+            // result line; 1 when there was no discovery), 1 refused (one stderr line), 2 usage.
+            ["live-lane-roster"] = LiveLaneRosterCommand,
+            ["live-lane-bind-manifest"] = LiveLaneBindManifest,
+            ["live-lane-write-fixture"] = LiveLaneWriteFixture,
             // The release selection answers exactly or hands back NotHandled (exit 10).
             ["select-release"] = SelectRelease,
         };
@@ -75,7 +80,8 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
+                + " | " + LiveLaneWriteFixtureUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
             return Usage;
         }
 
@@ -102,6 +108,87 @@ namespace Antiphon.Scripts
             {
                 var written = Antiphon.Nightly.LiveLaneGateScan.WriteCatalog(flags.TryGetValue("--repository", out var repository) ? repository : Environment.CurrentDirectory);
                 Console.WriteLine("gates=" + written.Count + " unresolved=" + written.Unresolved);
+                return Handled;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        private const string LiveLaneRosterUsage = "live-lane-roster --project <name> --assembly <dll> [--repository <dir>] [--capture-dir <dir>]";
+        private const string LiveLaneBindManifestUsage = "live-lane-bind-manifest [--repository <dir>] [--capture-dir <dir>]";
+        private const string LiveLaneWriteFixtureUsage = "live-lane-write-fixture [--repository <dir>] [--capture-dir <dir>] [--source-sha <sha>]";
+
+        // W2-nightly S24: the ExactCoreRoster and ExactPtyCoreRoster cases of scripts/test-live-lane-manifest.ps1 for a
+        // named assembly (an S1a capture row). Lists its tests into the capture directory, runs the roster matrix, writes
+        // the row's export in candidate mode (ANTIPHON_LIVE_PORTABLE_CONTEXT), prints the result line; phases on stderr.
+        private static int LiveLaneRosterCommand(string[] args)
+        {
+            var flags = Flags(args, new[] { "--project", "--assembly", "--repository", "--capture-dir" }, new string[0]);
+            if (flags == null || !flags.ContainsKey("--project") || !flags.ContainsKey("--assembly"))
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneRosterUsage);
+                return Usage;
+            }
+            try
+            {
+                var result = Antiphon.Nightly.LiveLaneRoster.RunCase(flags.TryGetValue("--repository", out var repository) ? repository : Environment.CurrentDirectory,
+                    flags["--project"], flags["--assembly"], flags.TryGetValue("--capture-dir", out var capture) ? capture : null, null, Console.Error);
+                Console.WriteLine(result.ToJsonLine());
+                return result.ExitCode;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        // W2-nightly S24: the BindManifest case. Binds the core rows of tests/live-lanes.json to the captured nodes.
+        private static int LiveLaneBindManifest(string[] args)
+        {
+            var flags = Flags(args, new[] { "--repository", "--capture-dir" }, new string[0]);
+            if (flags == null)
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneBindManifestUsage);
+                return Usage;
+            }
+            try
+            {
+                Antiphon.Nightly.LiveLaneManifestFiles.BindManifest(flags.TryGetValue("--repository", out var repository) ? repository : Environment.CurrentDirectory,
+                    flags.TryGetValue("--capture-dir", out var capture) ? capture : null);
+                Console.WriteLine("bound");
+                return Handled;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        // W2-nightly S24: the WriteFixture case. Writes the census fixture from the captures; the source defaults to HEAD.
+        private static int LiveLaneWriteFixture(string[] args)
+        {
+            var flags = Flags(args, new[] { "--repository", "--capture-dir", "--source-sha" }, new string[0]);
+            if (flags == null)
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneWriteFixtureUsage);
+                return Usage;
+            }
+            try
+            {
+                var repository = flags.TryGetValue("--repository", out var given) ? given : Environment.CurrentDirectory;
+                var sourceSha = flags.TryGetValue("--source-sha", out var sha) ? sha : "";
+                if (string.IsNullOrWhiteSpace(sourceSha))
+                {
+                    var head = Antiphon.Nightly.NightlyNativeGit.Run(repository, new[] { "rev-parse", "HEAD" });
+                    if (head.ExitCode != 0) throw new InvalidOperationException("head-unresolved " + head.Output.Trim());
+                    sourceSha = head.Output.Trim();
+                }
+                Console.WriteLine(Antiphon.Nightly.LiveLaneManifestFiles.WriteFixture(repository, flags.TryGetValue("--capture-dir", out var capture) ? capture : null, sourceSha));
                 return Handled;
             }
             catch (Exception e)

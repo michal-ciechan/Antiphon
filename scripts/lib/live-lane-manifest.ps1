@@ -1,5 +1,9 @@
 # CARD-1545 S1a live-lane manifest, discovery adapter and census.
 # The gate scan is compiled (W2-nightly S23): scripts/lib/Antiphon.Nightly/LiveLaneGateScan.cs.
+# The discovery, the core rosters, the producer exports and receipts, the owned scratch, the manifest bindings and the
+# census fixture writer are compiled (W2-nightly S24): LiveLaneDiscovery.cs, LiveLaneRoster.cs, LiveLaneExport.cs,
+# LiveLaneScratch.cs and LiveLaneManifestFiles.cs in scripts/lib/Antiphon.Nightly. What is left here is the census
+# (S25) and the thin wrappers it calls.
 # ASCII-only. Diagnostic inventory only: list-tests of the owned assembly.
 # No provider call, no live Claude, no policy edit.
 
@@ -34,18 +38,14 @@ $script:LiveLaneProtectedPaths = @(
     'scripts/lib/Antiphon.Nightly/DiagScan.cs',
     'scripts/lib/nightly-coverage.ps1'
 )
-# Discovery child budget. Loaded-host n=3 discovery 71966, 74696, 79685 ms (p95 = 79685).
-# 160000 ms is about 2x that p95. The parent roster wall is 320000 ms.
-$script:LiveLaneDiscoveryBudgetMs = 160000
-$script:LiveLaneScratchLedger = @()
 
-# Dot-source in this script scope. A dot-source inside Initialize-LiveLaneNightly
-# would define the readers only until that function returned.
-. (Join-Path $PSScriptRoot 'nightly-common.ps1')
-. (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+# Dot-source in this script scope. Only the compiled core is needed: the discovery runs inside it
+# (NightlyDiscoveryProducer on the live-lane transport), so nightly-common, nightly-coverage and
+# nightly-tests-impl are no longer loaded here.
 . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-. (Join-Path $PSScriptRoot 'nightly-tests-impl.ps1')
 $script:LiveLaneNightlyReady = $true
+# The owned scratch ledger of this session (Clear-LiveLaneOwnedScratch empties it).
+$script:LiveLaneScratch = [Antiphon.Nightly.LiveLaneScratch]::new()
 
 function ConvertTo-LiveLaneList {
     param($Value)
@@ -175,284 +175,9 @@ function Read-LiveLaneContextObject {
 
 function Initialize-LiveLaneNightly {
     param([string]$RepoRoot)
-    if ($script:LiveLaneNightlyReady -and (Get-Command Get-NightlyFileSha256 -ErrorAction SilentlyContinue)) { return }
-    if (-not (Get-Command Get-NightlyFileSha256 -ErrorAction SilentlyContinue)) { throw 'nightly-readers-not-loaded' }
+    # The census reads the policy through the compiled core (NightlyPolicy, ExecutionPolicy, NightlyCensus).
+    if (-not $script:NightlyCoreAvailable) { throw 'nightly-readers-not-loaded' }
     $script:LiveLaneNightlyReady = $true
-}
-
-function Test-LiveLaneListOnly {
-    param([string]$FilePath, [string[]]$ArgumentList, [string]$BoundAssembly)
-    $list = @(ConvertTo-LiveLaneList $ArgumentList)
-    $hasList = $false
-    $hasRun = $false
-    $dll = ''
-    for ($i = 0; $i -lt $list.Count; $i++) {
-        $a = [string]$list[$i]
-        if ($a -eq '--list-tests') { $hasList = $true }
-        if ($a -eq '--report-trx' -or $a.StartsWith('--report-trx=')) { $hasRun = $true }
-        if ($a -eq 'exec' -and ($i + 1) -lt $list.Count) { $dll = [string]$list[$i + 1] }
-    }
-    if ([string]::IsNullOrWhiteSpace($dll) -and $FilePath -like '*.dll') { $dll = $FilePath }
-    if ([string]::IsNullOrWhiteSpace($dll) -or [string]::IsNullOrWhiteSpace($BoundAssembly)) { return $false }
-    try {
-        $dll = [System.IO.Path]::GetFullPath($dll)
-        $bound = [System.IO.Path]::GetFullPath($BoundAssembly)
-    } catch { return $false }
-    if (-not $hasList -or $hasRun) { return $false }
-    return [string]::Equals($dll, $bound, [StringComparison]::OrdinalIgnoreCase)
-}
-
-function Invoke-LiveLaneSeamProcess {
-    param([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory, [int]$TimeoutMilliseconds)
-    $admitted = Test-LiveLaneListOnly -FilePath $FilePath -ArgumentList $ArgumentList -BoundAssembly $script:LiveLaneBoundAssembly
-    if (-not $admitted) {
-        return @{ ExitCode = 2; TimedOut = $false; LogText = 'transport-refused'; ChildrenExited = $true }
-    }
-    $script:LiveLaneLaunchCount = [int]$script:LiveLaneLaunchCount + 1
-    $launch = @(ConvertTo-LiveLaneList $ArgumentList)
-    if ($script:LiveLaneSuppressDiag) {
-        $filtered = @()
-        for ($i = 0; $i -lt $launch.Count; $i++) {
-            if ([string]$launch[$i] -eq '--diagnostic-output-directory') { $i++; continue }
-            $filtered += [string]$launch[$i]
-        }
-        $launch = $filtered
-    }
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $FilePath
-    foreach ($a in $launch) { [void]$psi.ArgumentList.Add([string]$a) }
-    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $psi.WorkingDirectory = $WorkingDirectory }
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $proc = $null
-    try {
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        $outTask = $proc.StandardOutput.ReadToEndAsync()
-        $errTask = $proc.StandardError.ReadToEndAsync()
-        $budget = $TimeoutMilliseconds
-        if ($budget -le 0) { $budget = 120000 }
-        if (-not $proc.WaitForExit($budget)) {
-            try { $proc.Kill($true) } catch { try { $proc.Kill() } catch { } }
-            $script:LiveLaneObservedExit = 124
-            return @{ ExitCode = 124; TimedOut = $true; LogText = 'timeout'; ChildrenExited = $false }
-        }
-        $proc.WaitForExit()
-        $log = ''
-        try { $log = [string]$outTask.Result + "`n" + [string]$errTask.Result } catch { $log = '' }
-        $code = [int]$proc.ExitCode
-        if ($null -ne $script:LiveLaneForceExit) { $code = [int]$script:LiveLaneForceExit }
-        $script:LiveLaneObservedExit = $code
-        return @{ ExitCode = $code; TimedOut = $false; LogText = $log; ChildrenExited = $true }
-    } finally {
-        if ($proc) { $proc.Dispose() }
-    }
-}
-
-function Install-LiveLaneSeam {
-    param([string]$BoundAssembly)
-    $script:LiveLaneBoundAssembly = [System.IO.Path]::GetFullPath($BoundAssembly)
-    $script:LiveLaneLaunchCount = 0
-    $script:LiveLaneObservedExit = $null
-    $script:LiveLaneForceExit = $null
-    $script:LiveLaneSuppressDiag = $false
-    if (-not $script:NightlySeams) { $script:NightlySeams = @{} }
-    $script:NightlySeams['StartProcess'] = {
-        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-        return (Invoke-LiveLaneSeamProcess -FilePath ([string]$FilePath) -ArgumentList @(ConvertTo-LiveLaneList $ArgumentList) -WorkingDirectory ([string]$WorkingDirectory) -TimeoutMilliseconds ([int]$TimeoutMilliseconds))
-    }
-}
-
-function Get-LiveLaneDisplayMap {
-    param([string]$DiagPath)
-    $map = @{}
-    if (-not (Test-Path -LiteralPath $DiagPath)) { return $map }
-    $raw = [System.IO.File]::ReadAllText($DiagPath).Replace("`r", '')
-    $rx = [regex]'TestNodeUid \{ Value = (?<uid>[^}]+?) \}, DisplayName = (?<display>.*?), Properties = \['
-    foreach ($m in $rx.Matches($raw)) {
-        $uid = $m.Groups['uid'].Value.Trim()
-        $display = $m.Groups['display'].Value.Trim()
-        $window = $raw.Substring($m.Index, [Math]::Min(1200, $raw.Length - $m.Index))
-        $sig = ''
-        $sigMatch = [regex]::Match($window, 'ParameterTypeFullNames = \[(?<sig>[^\]]*)\]')
-        if ($sigMatch.Success) { $sig = $sigMatch.Groups['sig'].Value.Trim() }
-        $map[$uid] = @{ Display = $display; Signature = $sig }
-    }
-    return $map
-}
-
-function Get-LiveLaneParsedArguments {
-    param([string]$Method, [string]$Display)
-    if ([string]::IsNullOrWhiteSpace($Display)) { return @() }
-    $prefix = $Method + '('
-    if (-not $Display.StartsWith($prefix, [StringComparison]::Ordinal)) { return @() }
-    if (-not $Display.EndsWith(')', [StringComparison]::Ordinal)) { return @() }
-    $inner = $Display.Substring($prefix.Length, $Display.Length - $prefix.Length - 1).Trim()
-    if ([string]::IsNullOrWhiteSpace($inner)) { return @() }
-    $parts = @()
-    $current = New-Object System.Text.StringBuilder
-    $quote = $null
-    foreach ($ch in $inner.ToCharArray()) {
-        if ($null -ne $quote) {
-            if ($ch -eq $quote) { $quote = $null } else { [void]$current.Append($ch) }
-            continue
-        }
-        if ($ch -eq '"' -or $ch -eq "'") { $quote = $ch; continue }
-        if ($ch -eq ',') { $parts += $current.ToString().Trim(); $current = New-Object System.Text.StringBuilder; continue }
-        [void]$current.Append($ch)
-    }
-    $tail = $current.ToString().Trim()
-    if (-not [string]::IsNullOrWhiteSpace($tail) -or $parts.Count -gt 0) { $parts += $tail }
-    return @($parts | ForEach-Object { $_.Trim().Trim('"').Trim("'").Replace("`r", '') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-}
-
-function Add-LiveLaneDiscoveryOverlay {
-    param($Document, [string]$DiagPath, [string]$Project)
-    $map = Get-LiveLaneDisplayMap -DiagPath $DiagPath
-    $nodes = @()
-    foreach ($n in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $Document 'nodes'))) {
-        $uid = [string](Get-LiveLaneProp $n 'uid')
-        if ([string]::IsNullOrWhiteSpace($uid)) { $uid = [string](Get-LiveLaneProp $n 'Uid') }
-        $method = [string](Get-LiveLaneProp $n 'method')
-        if ([string]::IsNullOrWhiteSpace($method)) { $method = [string](Get-LiveLaneProp $n 'Method') }
-        $display = $method
-        $sig = [string](Get-LiveLaneProp $n 'signature')
-        if ($map.ContainsKey($uid)) {
-            $display = [string]$map[$uid].Display
-            if (-not [string]::IsNullOrWhiteSpace([string]$map[$uid].Signature)) { $sig = [string]$map[$uid].Signature }
-        }
-        $parsedArguments = @(Get-LiveLaneParsedArguments -Method $method -Display $display)
-        $ns = [string](Get-LiveLaneProp $n 'namespace')
-        if ([string]::IsNullOrWhiteSpace($ns)) { $ns = [string](Get-LiveLaneProp $n 'Namespace') }
-        $type = [string](Get-LiveLaneProp $n 'type')
-        if ([string]::IsNullOrWhiteSpace($type)) { $type = [string](Get-LiveLaneProp $n 'Type') }
-        $cats = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $n 'categories') | ForEach-Object { [string]$_ })
-        if ($cats.Count -eq 0) { $cats = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $n 'Categories') | ForEach-Object { [string]$_ }) }
-        $nodes += [pscustomobject]@{
-            project = $Project
-            uid = $uid
-            namespace = $ns
-            type = $type
-            method = $method
-            displayName = $display
-            arguments = $parsedArguments
-            signature = $sig
-            categories = $cats
-        }
-    }
-    return $nodes
-}
-
-function Invoke-LiveLaneDiscovery {
-    param(
-        [string]$RepoRoot,
-        [string]$Project,
-        [string]$AssemblyPath,
-        [string]$CaptureDir
-    )
-    Initialize-LiveLaneNightly -RepoRoot $RepoRoot
-    if ([string]::IsNullOrWhiteSpace($AssemblyPath) -or -not (Test-Path -LiteralPath $AssemblyPath)) {
-        return @{ Ok = $false; Error = 'assembly-missing'; LaunchCount = 0; Nodes = @(); AssemblyHash = '' }
-    }
-    $assembly = [System.IO.Path]::GetFullPath($AssemblyPath)
-    New-Item -ItemType Directory -Path $CaptureDir -Force | Out-Null
-    $diagDir = Join-Path $CaptureDir ($Project + '.diag')
-    if (Test-Path -LiteralPath $diagDir) { Remove-Item -LiteralPath $diagDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
-    $outPath = Join-Path $CaptureDir ($Project + '.discovery-doc.json')
-    $logPath = Join-Path $CaptureDir ($Project + '.discovery.log')
-    Install-LiveLaneSeam -BoundAssembly $assembly
-    $dotnet = 'dotnet'
-    $cmd = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($cmd -and -not [string]::IsNullOrWhiteSpace([string]$cmd.Source)) { $dotnet = [string]$cmd.Source }
-    $started = [Diagnostics.Stopwatch]::StartNew()
-    $errorText = ''
-    $doc = $null
-    try {
-        $doc = Invoke-NightlyProduceDiscovery -ExePath $dotnet -OutputPath $outPath -DiagnosticDirectory $diagDir `
-            -LogPath $logPath -WorkingDirectory $RepoRoot -TimeoutMilliseconds $script:LiveLaneDiscoveryBudgetMs `
-            -ArgumentPrefix @('exec', $assembly) -AssemblyPath $assembly
-    } catch {
-        $errorText = $_.Exception.Message
-    }
-    $started.Stop()
-    $exitCode = $script:LiveLaneObservedExit
-    $diag = Get-ChildItem -LiteralPath $diagDir -Filter '*.diag' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-    $diagPath = ''
-    if ($diag) { $diagPath = $diag.FullName }
-    $hash = ''
-    try { $hash = Get-NightlyFileSha256 -Path $assembly } catch { $hash = '' }
-    $docHash = ''
-    if ($doc) { $docHash = [string](Get-LiveLaneProp $doc 'assemblyHash') }
-    $nodes = @()
-    if ($doc -and $diagPath) { $nodes = @(Add-LiveLaneDiscoveryOverlay -Document $doc -DiagPath $diagPath -Project $Project) }
-    $accepted = $true
-    $reason = ''
-    if (-not [string]::IsNullOrWhiteSpace($errorText)) { $accepted = $false; $reason = 'missing-diag' }
-    if ($null -eq $exitCode -or [int]$exitCode -ne 0) { $accepted = $false; if (-not $reason) { $reason = 'nonzero-exit' } }
-    if ([string]::IsNullOrWhiteSpace($diagPath)) { $accepted = $false; if (-not $reason) { $reason = 'missing-diag' } }
-    if ($nodes.Count -eq 0) { $accepted = $false; if (-not $reason) { $reason = 'empty-discovery' } }
-    if (-not [string]::IsNullOrWhiteSpace($docHash) -and -not [string]::Equals($docHash, $hash, [StringComparison]::OrdinalIgnoreCase)) {
-        $accepted = $false; $reason = 'wrong-assembly-hash'
-    }
-    $capture = [ordered]@{
-        format = 'antiphon-live-lane-discovery-capture-v1'
-        project = $Project
-        assemblyPath = $assembly
-        assemblyHash = $hash
-        observedAssemblyHash = $docHash
-        launchCount = [int]$script:LiveLaneLaunchCount
-        exitCode = $exitCode
-        producerAccepted = $accepted
-        reason = $reason
-        detail = $errorText
-        discoveryMs = [int]$started.ElapsedMilliseconds
-        nodes = @($nodes)
-    }
-    $capturePath = Join-Path $CaptureDir ($Project + '.discovery.json')
-    ($capture | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $capturePath -Encoding utf8
-    return @{
-        Ok = $accepted
-        Error = $(if ($accepted) { '' } else { $(if ($errorText) { $errorText } else { $reason }) })
-        LaunchCount = [int]$script:LiveLaneLaunchCount
-        Nodes = @($nodes)
-        AssemblyHash = $hash
-        ObservedAssemblyHash = $docHash
-        AssemblyPath = $assembly
-        DiscoveryMs = [int]$started.ElapsedMilliseconds
-        ExitCode = $exitCode
-        Reason = $reason
-    }
-}
-
-function Test-LiveLaneSameArguments {
-    param($Left, $Right)
-    $a = @(ConvertTo-LiveLaneList $Left | ForEach-Object { [string]$_ })
-    $b = @(ConvertTo-LiveLaneList $Right | ForEach-Object { [string]$_ })
-    if ($a.Count -ne $b.Count) { return $false }
-    for ($i = 0; $i -lt $a.Count; $i++) {
-        if (-not [string]::Equals($a[$i], $b[$i], [StringComparison]::Ordinal)) { return $false }
-    }
-    return $true
-}
-
-function Get-LiveLaneMatchingNodes {
-    param([object[]]$Nodes, $Identity)
-    $hits = @()
-    foreach ($n in @(ConvertTo-LiveLaneList $Nodes)) {
-        $ns = [string](Get-LiveLaneProp $n 'namespace')
-        $type = [string](Get-LiveLaneProp $n 'type')
-        if ([string]::IsNullOrWhiteSpace($type)) { $type = [string](Get-LiveLaneProp $n 'class') }
-        $method = [string](Get-LiveLaneProp $n 'method')
-        if ($ns -ne [string]$Identity.namespace) { continue }
-        if ($type -ne [string]$Identity.class) { continue }
-        if ($method -ne [string]$Identity.method) { continue }
-        $proj = [string](Get-LiveLaneProp $n 'project')
-        if (-not [string]::IsNullOrWhiteSpace($proj) -and $proj -ne [string]$Identity.project) { continue }
-        if (-not (Test-LiveLaneSameArguments (Get-LiveLaneProp $n 'arguments') $Identity.arguments)) { continue }
-        $hits += $n
-    }
-    return @($hits)
 }
 
 function Get-LiveLaneCategorySet {
@@ -465,314 +190,14 @@ function Get-LiveLaneCategorySet {
     return $set
 }
 
-function Test-LiveLaneCategoryEqual {
-    param($Left, $Right)
-    $a = Get-LiveLaneCategorySet $Left
-    $b = Get-LiveLaneCategorySet $Right
-    if ($a.Count -ne $b.Count) { return $false }
-    foreach ($item in $a) { if (-not $b.Contains($item)) { return $false } }
-    return $true
-}
-
-function Copy-LiveLaneEntries {
-    param($Entries)
-    $copies = @()
-    foreach ($e in @(ConvertTo-LiveLaneList $Entries)) {
-        $copies += [pscustomobject]@{
-            project = [string](Get-LiveLaneProp $e 'project')
-            namespace = [string](Get-LiveLaneProp $e 'namespace')
-            class = [string](Get-LiveLaneProp $e 'class')
-            method = [string](Get-LiveLaneProp $e 'method')
-            arguments = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $e 'arguments') | ForEach-Object { [string]$_ })
-            uid = [string](Get-LiveLaneProp $e 'uid')
-            categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $e 'categories') | ForEach-Object { [string]$_ })
-            bound = [bool](Get-LiveLaneProp $e 'bound')
-        }
-    }
-    return @($copies)
-}
-
-function Test-LiveLaneRosterAccepted {
-    param([object[]]$Entries, [object[]]$Nodes, [string]$Project, [switch]$FullManifest)
-    $contract = @(Get-LiveLaneContract)
-    if (-not $FullManifest) { $contract = @($contract | Where-Object { $_.project -eq $Project }) }
-    $core = @(ConvertTo-LiveLaneList $Entries)
-    if (-not $FullManifest) { $core = @($core | Where-Object { [string](Get-LiveLaneProp $_ 'project') -eq $Project }) }
-    $reasons = @()
-    $allBound = $true
-    foreach ($e in $core) {
-        $uid = [string](Get-LiveLaneProp $e 'uid')
-        $bound = $false
-        $boundProp = Get-LiveLaneProp $e 'bound'
-        if ($null -ne $boundProp) { $bound = [bool]$boundProp }
-        if (-not $bound -or [string]::IsNullOrWhiteSpace($uid)) { $allBound = $false }
-    }
-    if (-not $allBound) { $reasons += 'manifest-uid-bound' }
-    if ($core.Count -ne $contract.Count) { $reasons += 'manifest-count' }
-    $seen = @{}
-    $exact = $true
-    foreach ($want in $contract) {
-        $key = Get-LiveLaneIdentityKey $want
-        $have = @($core | Where-Object { (Get-LiveLaneIdentityKey $_) -eq $key })
-        if ($have.Count -ne 1) { $exact = $false; continue }
-        $entry = $have[0]
-        $uid = [string](Get-LiveLaneProp $entry 'uid')
-        if ($seen.ContainsKey($uid) -and -not [string]::IsNullOrWhiteSpace($uid)) { $reasons += 'duplicate-uid' }
-        if (-not [string]::IsNullOrWhiteSpace($uid)) { $seen[$uid] = $true }
-        if ([string]$want.project -ne $Project) { continue }
-        $local = @(Get-LiveLaneMatchingNodes -Nodes $Nodes -Identity $want)
-        if ($local.Count -ne 1) { $reasons += 'local-identity'; continue }
-        if ($allBound) {
-            $localUid = [string](Get-LiveLaneProp $local[0] 'uid')
-            if ($localUid -ne $uid) { $reasons += 'uid-equals-discovery' }
-            if (-not (Test-LiveLaneCategoryEqual (Get-LiveLaneProp $entry 'categories') (Get-LiveLaneProp $local[0] 'categories'))) {
-                $reasons += 'category-equals-discovery'
-            }
-        }
-    }
-    if (-not $exact) { $reasons += 'exact-set' }
-    $expansionExtra = $false
-    foreach ($want in $contract) {
-        if ([string]$want.project -ne $Project) { continue }
-        $sameMethod = @($Nodes | Where-Object {
-            [string](Get-LiveLaneProp $_ 'namespace') -eq $want.namespace -and
-            [string](Get-LiveLaneProp $_ 'type') -eq $want.class -and
-            [string](Get-LiveLaneProp $_ 'method') -eq $want.method
-        })
-        $observed = @($sameMethod | ForEach-Object { Get-LiveLaneArgumentKey (Get-LiveLaneProp $_ 'arguments') } | Sort-Object -Unique)
-        $wanted = @($contract | Where-Object { $_.class -eq $want.class -and $_.method -eq $want.method -and $_.project -eq $Project } | ForEach-Object { Get-LiveLaneArgumentKey $_.arguments } | Sort-Object -Unique)
-        if (($observed -join '|') -ne ($wanted -join '|')) { $expansionExtra = $true }
-    }
-    if ($expansionExtra) { $reasons += 'extra-expansion' }
-    $unique = @($reasons | Select-Object -Unique)
-    return @{ Accepted = ($unique.Count -eq 0); Reasons = @($unique); Count = $core.Count; ContractCount = $contract.Count }
-}
-
-function Get-LiveLaneLocalCoreCount {
-    param([object[]]$Nodes, [string]$Project)
-    $count = 0
-    foreach ($want in @(Get-LiveLaneContract | Where-Object { $_.project -eq $Project })) {
-        $count += @(Get-LiveLaneMatchingNodes -Nodes $Nodes -Identity $want).Count
-    }
-    return $count
-}
-
-function Test-LiveLaneSubmitExtraExpansion {
-    param([string]$Project, [object[]]$Nodes, $Entries, [string[]]$CloneArguments)
-    $extraArguments = [System.Collections.Generic.List[string]]::new()
-    [void]$extraArguments.Add('other')
-    if ($PSBoundParameters.ContainsKey('CloneArguments')) {
-        $extraArguments.Clear()
-        foreach ($item in @($PSBoundParameters['CloneArguments'])) {
-            if ($null -ne $item) { [void]$extraArguments.Add([string]$item) }
-        }
-        if ($extraArguments.Count -eq 0) { [void]$extraArguments.Add('other') }
-    }
-    $extraNodes = @(ConvertTo-LiveLaneList $Nodes)
-    $wanted = @(Get-LiveLaneContract | Where-Object {
-        [string]$_.project -eq $Project -and [string]$_.method -eq 'Submitting_via_two_writes_completes_a_turn'
-    })
-    $submitNode = @()
-    if ($wanted.Count -eq 1) {
-        $hit = @(Get-LiveLaneMatchingNodes -Nodes $extraNodes -Identity $wanted[0])
-        if ($hit.Count -eq 1) { $submitNode = @($hit) }
-    }
-    if ($submitNode.Count -eq 1) {
-        $shown = ($extraArguments.ToArray() -join ',')
-        $clone = [pscustomobject]@{
-            project = $Project
-            uid = ([string](Get-LiveLaneProp $submitNode[0] 'uid') + '-extra')
-            namespace = [string](Get-LiveLaneProp $submitNode[0] 'namespace')
-            type = [string](Get-LiveLaneProp $submitNode[0] 'type')
-            method = [string](Get-LiveLaneProp $submitNode[0] 'method')
-            displayName = ('Submitting_via_two_writes_completes_a_turn(' + $shown + ')')
-            arguments = $extraArguments.ToArray()
-            signature = [string](Get-LiveLaneProp $submitNode[0] 'signature')
-            categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $submitNode[0] 'categories'))
-        }
-        $extraNodes += $clone
-    }
-    $extraEval = Test-LiveLaneRosterAccepted -Entries $Entries -Nodes $extraNodes -Project $Project
-    return [bool](@($extraEval.Reasons) -contains 'extra-expansion')
-}
-
-function Invoke-LiveLaneRosterMatrix {
-    param([string]$Project, [object[]]$Nodes, $Manifest, $Context, [string]$AssemblyHash, [string]$AssemblyPath)
-    $failures = New-Object System.Collections.Generic.List[string]
-    $prefix = $(if ($Project -eq 'Antiphon.Tests') { 'V-1' } else { 'V-2' })
-    $full = $Project -eq 'Antiphon.Tests'
-    $core = @(Copy-LiveLaneEntries (Get-LiveLaneProp $Manifest 'core'))
-    $projectCore = @($core | Where-Object { $_.project -eq $Project })
-    $pool = $(if ($full) { @($core) } else { @($projectCore) })
-    $eval = Test-LiveLaneRosterAccepted -Entries $pool -Nodes $Nodes -Project $Project -FullManifest:$full
-    if (-not $eval.Accepted) {
-        foreach ($reason in @($eval.Reasons)) {
-            if ($reason -eq 'manifest-uid-bound') { $failures.Add(("C1545 {0}/valid manifest-uid-bound" -f $prefix)) }
-            elseif ($reason -eq 'manifest-count' -or $reason -eq 'exact-set') { $failures.Add(("C1545 {0}/valid exact-set" -f $prefix)) }
-            elseif ($reason -eq 'uid-equals-discovery') { $failures.Add(("C1545 {0}/valid uid-equals-discovery" -f $prefix)) }
-            elseif ($reason -eq 'category-equals-discovery') { $failures.Add(("C1545 {0}/valid category-equals-discovery" -f $prefix)) }
-            elseif ($reason -eq 'extra-expansion') { $failures.Add(("C1545 {0}/valid extra-expansion" -f $prefix)) }
-            else { $failures.Add(("C1545 {0}/valid {1}" -f $prefix, $reason)) }
-        }
-    }
-
-    $five = @($pool | Select-Object -SkipLast 1)
-    $fiveEval = Test-LiveLaneRosterAccepted -Entries $five -Nodes $Nodes -Project $Project -FullManifest:$full
-    $expectedCount = $(if ($full) { 6 } else { 5 })
-    if ($fiveEval.Accepted -or $fiveEval.Count -eq $expectedCount) {
-        $failures.Add(("C1545 {0}/five manifest.count == {1}" -f $prefix, $expectedCount))
-    }
-
-    $dup = @(Copy-LiveLaneEntries $pool)
-    if ($dup.Count -gt 0) { $dup += $dup[0] }
-    $dupEval = Test-LiveLaneRosterAccepted -Entries $dup -Nodes $Nodes -Project $Project -FullManifest:$full
-    if ($dupEval.Accepted) { $failures.Add(("C1545 {0}/duplicate exact-set" -f $prefix)) }
-
-    $renamed = @(Copy-LiveLaneEntries $pool)
-    if ($renamed.Count -gt 0) { $renamed[0].method = ($renamed[0].method + '_renamed') }
-    $c680 = [pscustomobject]@{ project = 'Antiphon.Tests'; namespace = 'Antiphon.Tests.Agents'; class = 'ClaudeDialogWatchdogCanaryTests'; method = 'C680_LiveNudgeRefusesPermissionAndQuestionDialogs'; arguments = @() }
-    $localC680 = 0
-    if ($Project -eq 'Antiphon.Tests') { $localC680 = @(Get-LiveLaneMatchingNodes -Nodes $Nodes -Identity $c680).Count }
-    else {
-        $submit = @(Get-LiveLaneContract | Where-Object { $_.method -eq 'Submitting_via_two_writes_completes_a_turn' })[0]
-        $localC680 = @(Get-LiveLaneMatchingNodes -Nodes $Nodes -Identity $submit).Count
-    }
-    if ($Project -eq 'Antiphon.Tests' -and $localC680 -ne 1) { $failures.Add('C1545 V-1/renamed localC680Matches == 1') }
-    if ($Project -ne 'Antiphon.Tests' -and $localC680 -ne 1) { $failures.Add('C1545 V-2/renamed localPtyCoreSet == expectedFive') }
-    $renamedEval = Test-LiveLaneRosterAccepted -Entries $renamed -Nodes $Nodes -Project $Project -FullManifest:$full
-    if ($renamedEval.Accepted) { $failures.Add(("C1545 {0}/renamed exact-set" -f $prefix)) }
-
-    if ($Project -eq 'Antiphon.Tests') {
-        $unexpected = @(Copy-LiveLaneEntries $pool)
-        $unexpected += [pscustomobject]@{ project = $Project; namespace = 'Antiphon.Tests.Scripts'; class = 'NotALiveLane'; method = 'Unexpected'; arguments = @(); uid = 'unexpected'; categories = @(); bound = $true }
-        $unexpectedEval = Test-LiveLaneRosterAccepted -Entries $unexpected -Nodes $Nodes -Project $Project -FullManifest
-        if ($unexpectedEval.Accepted) { $failures.Add('C1545 V-1/unexpected exact-set') }
-
-        $unbound = @(Copy-LiveLaneEntries $pool)
-        if ($unbound.Count -gt 0) { $unbound[0].uid = ''; $unbound[0].bound = $false }
-        $unboundEval = Test-LiveLaneRosterAccepted -Entries $unbound -Nodes $Nodes -Project $Project -FullManifest
-        if ($unboundEval.Reasons -notcontains 'manifest-uid-bound') { $failures.Add('C1545 V-1/unbound-uid manifest-uid-bound') }
-
-        $foreign = @(Copy-LiveLaneEntries $pool)
-        if ($foreign.Count -gt 0) { $foreign[0].project = 'Foreign.Tests' }
-        $foreignEval = Test-LiveLaneRosterAccepted -Entries $foreign -Nodes $Nodes -Project $Project -FullManifest
-        if ($foreignEval.Accepted) { $failures.Add('C1545 V-1/foreign-project exact-set') }
-    } else {
-        $expanded = Test-LiveLaneSubmitExtraExpansion -Project $Project -Nodes $Nodes -Entries $projectCore
-        if (-not $expanded) { $failures.Add('C1545 V-2/extra-argument expandedUidSet has no extra argument') }
-
-        $wrong = @(Copy-LiveLaneEntries $projectCore)
-        foreach ($row in $wrong) { $row.project = 'Wrong.Assembly' }
-        $wrongEval = Test-LiveLaneRosterAccepted -Entries $wrong -Nodes $Nodes -Project $Project
-        $localSet = Get-LiveLaneLocalCoreCount -Nodes $Nodes -Project $Project
-        if ($wrongEval.Accepted -or $localSet -ne 5) { $failures.Add('C1545 V-2/wrong-assembly localPtyCoreSet == expectedFive') }
-
-        $hashProbe = Test-LiveLaneDiscoveryAdmission -ExitCode 0 -DiagExists $true -ObservedHash ('0' * 64) -BoundHash $AssemblyHash -NodeCount $Nodes.Count
-        if ($hashProbe.Accepted -or $hashProbe.Observed -eq $hashProbe.Bound) { $failures.Add('C1545 V-2/wrong-assembly-hash observedAssemblyHash == boundBuildAssemblyHash') }
-        $exitProbe = Test-LiveLaneDiscoveryAdmission -ExitCode 7 -DiagExists $true -ObservedHash $AssemblyHash -BoundHash $AssemblyHash -NodeCount $Nodes.Count
-        if ($exitProbe.Accepted) { $failures.Add('C1545 V-2/nonzero-exit producerAccepted == false') }
-        $diagProbe = Test-LiveLaneDiscoveryAdmission -ExitCode 0 -DiagExists $false -ObservedHash $AssemblyHash -BoundHash $AssemblyHash -NodeCount 0
-        if ($diagProbe.Accepted -or $diagProbe.Reason -ne 'missing-diag') { $failures.Add('C1545 V-2/missing-diag producerAccepted == false') }
-
-        $before = [int]$script:LiveLaneLaunchCount
-        $refused = -not (Test-LiveLaneListOnly -FilePath 'dotnet' -ArgumentList @('exec', $AssemblyPath, '--report-trx') -BoundAssembly $AssemblyPath)
-        $after = [int]$script:LiveLaneLaunchCount
-        if (-not $refused -or $after -ne $before) { $failures.Add('C1545 V-2/run-not-list launchCount == 0') }
-
-        $partial = Test-LiveLaneExportDocument -Export ([pscustomobject]@{
-            format = 'antiphon-live-lane-export-v1'; project = $Project; cp = 'CP-25'; sourceSha = 'abc'; runId = 'run'; assemblyHash = $AssemblyHash; terminal = $true; nodes = @()
-        }) -ExpectedSource 'abc' -ExpectedRun 'run' -ExpectedHash $AssemblyHash -ExpectedProject $Project -RequireCore $true
-        if ($partial.Accepted -or $partial.Reason -ne 'producer-incomplete') { $failures.Add('C1545 V-2/partial-export producerAccepted == false') }
-    }
-
-    $exportRequired = $false
-    $mode = ''
-    if ($Context) {
-        $mode = [string](Get-LiveLaneProp $Context 'mode')
-        $flag = Get-LiveLaneProp $Context 'exportRequired'
-        if ($null -ne $flag) { $exportRequired = [bool]$flag }
-    }
-    if ($Project -eq 'Antiphon.Tests') {
-        $source = 'local-source'
-        $run = 'local-run'
-        $hash = $(if ($AssemblyHash) { $AssemblyHash } else { 'local-hash' })
-        if ($Context -and $exportRequired) {
-            $source = [string](Get-LiveLaneProp $Context 'sourceSha')
-            $run = [string](Get-LiveLaneProp $Context 'runId')
-        }
-        $healthyNodes = @($Nodes | Select-Object -First 1)
-        $healthy = Test-LiveLaneExportDocument -Export ([pscustomobject]@{
-            format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = $source; runId = $run; assemblyHash = $hash; terminal = $true
-            nodes = @($healthyNodes)
-        }) -ExpectedSource $source -ExpectedRun $run -ExpectedHash $hash -ExpectedProject 'Antiphon.Agents.Pty.Tests' -RequireCore $false
-        if (-not $healthy.Accepted) { $failures.Add('C1545 V-1/valid exportAccepted') }
-        foreach ($pair in @(
-            @{ id = 'missing'; export = $null; reason = 'producer-incomplete' },
-            @{ id = 'partial'; export = [pscustomobject]@{ format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = $source; runId = $run; assemblyHash = $hash; terminal = $true; nodes = @() }; reason = 'producer-incomplete' },
-            @{ id = 'pending'; export = [pscustomobject]@{ format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = $source; runId = $run; assemblyHash = $hash; terminal = $false; nodes = @($healthyNodes) }; reason = 'producer-incomplete' },
-            @{ id = 'wrong-source'; export = [pscustomobject]@{ format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = 'other-source'; runId = $run; assemblyHash = $hash; terminal = $true; nodes = @($healthyNodes) }; reason = 'source-mismatch' },
-            @{ id = 'wrong-build'; export = [pscustomobject]@{ format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = $source; runId = $run; assemblyHash = ('f' * 64); terminal = $true; nodes = @($healthyNodes) }; reason = 'build-mismatch' },
-            @{ id = 'wrong-run'; export = [pscustomobject]@{ format = 'antiphon-live-lane-export-v1'; project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-25'; sourceSha = $source; runId = 'other-run'; assemblyHash = $hash; terminal = $true; nodes = @($healthyNodes) }; reason = 'run-mismatch' }
-        )) {
-            $probe = Test-LiveLaneExportDocument -Export $pair.export -ExpectedSource $source -ExpectedRun $run -ExpectedHash $hash -ExpectedProject 'Antiphon.Agents.Pty.Tests' -RequireCore $false
-            if ($probe.Accepted -or $probe.Reason -ne $pair.reason) {
-                $failures.Add(("C1545 V-1/{0} exportAccepted == false; reason={1}" -f $pair.id, $pair.reason))
-            }
-        }
-        if (-not $exportRequired) {
-            # Baseline and ordinary mode do not consume an absent CP-25 file.
-        } else {
-            $path = [string](Get-LiveLaneProp $Context 'cp25Export')
-            $loaded = Read-LiveLaneExportFile -Path $path
-            $real = Test-LiveLaneExportDocument -Export $loaded.Export -ExpectedSource $source -ExpectedRun $run -ExpectedHash ([string](Get-LiveLaneProp $loaded.Export 'assemblyHash')) -ExpectedProject 'Antiphon.Agents.Pty.Tests' -RequireCore $true -AssemblyPath ([string](Get-LiveLaneProp $loaded.Export 'assemblyPath'))
-            if (-not $loaded.Found -or -not $real.Accepted) { $failures.Add('C1545 V-1/valid exportAccepted') }
-        }
-    }
-
-    return @($failures)
-}
-
-function Test-LiveLaneDiscoveryAdmission {
-    param([int]$ExitCode, [bool]$DiagExists, [string]$ObservedHash, [string]$BoundHash, [int]$NodeCount)
-    $reason = ''
-    $accepted = $true
-    if ($ExitCode -ne 0) { $accepted = $false; $reason = 'nonzero-exit' }
-    if (-not $DiagExists) { $accepted = $false; if (-not $reason) { $reason = 'missing-diag' } }
-    if ($NodeCount -le 0) { $accepted = $false; if (-not $reason) { $reason = 'missing-diag' } }
-    if (-not [string]::Equals([string]$ObservedHash, [string]$BoundHash, [StringComparison]::OrdinalIgnoreCase)) {
-        $accepted = $false; $reason = 'wrong-assembly-hash'
-    }
-    return @{ Accepted = $accepted; Reason = $reason; Observed = [string]$ObservedHash; Bound = [string]$BoundHash }
-}
-
+# Compiled (LiveLaneExports.Check): the census passes the export it read, possibly edited, as an object.
 function Test-LiveLaneExportDocument {
     param($Export, [string]$ExpectedSource, [string]$ExpectedRun, [string]$ExpectedHash, [string]$ExpectedProject, [bool]$RequireCore, [string]$AssemblyPath = '')
-    if ($null -eq $Export) { return @{ Accepted = $false; Reason = 'producer-incomplete' } }
-    $terminal = Get-LiveLaneProp $Export 'terminal'
-    $nodes = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $Export 'nodes'))
-    if ($null -eq $terminal -or -not [bool]$terminal) { return @{ Accepted = $false; Reason = 'producer-incomplete' } }
-    if ($nodes.Count -eq 0) { return @{ Accepted = $false; Reason = 'producer-incomplete' } }
-    $project = [string](Get-LiveLaneProp $Export 'project')
-    if ($project -ne $ExpectedProject) { return @{ Accepted = $false; Reason = 'source-mismatch' } }
-    $source = [string](Get-LiveLaneProp $Export 'sourceSha')
-    if ($source -ne $ExpectedSource) { return @{ Accepted = $false; Reason = 'source-mismatch' } }
-    $run = [string](Get-LiveLaneProp $Export 'runId')
-    if ($run -ne $ExpectedRun) { return @{ Accepted = $false; Reason = 'run-mismatch' } }
-    $hash = [string](Get-LiveLaneProp $Export 'assemblyHash')
-    if (-not [string]::Equals($hash, $ExpectedHash, [StringComparison]::OrdinalIgnoreCase)) { return @{ Accepted = $false; Reason = 'build-mismatch' } }
-    if (-not [string]::IsNullOrWhiteSpace($AssemblyPath)) {
-        if (-not (Test-Path -LiteralPath $AssemblyPath)) { return @{ Accepted = $false; Reason = 'build-mismatch' } }
-        Initialize-LiveLaneNightly -RepoRoot (Get-LiveLaneRepoRoot $AssemblyPath)
-        $fileHash = Get-NightlyFileSha256 -Path $AssemblyPath
-        if (-not [string]::Equals($fileHash, $hash, [StringComparison]::OrdinalIgnoreCase)) { return @{ Accepted = $false; Reason = 'build-mismatch' } }
-    }
-    if ($RequireCore) {
-        $pty = @(Get-LiveLaneContract | Where-Object { $_.project -eq 'Antiphon.Agents.Pty.Tests' })
-        foreach ($want in $pty) {
-            if (@(Get-LiveLaneMatchingNodes -Nodes $nodes -Identity $want).Count -ne 1) { return @{ Accepted = $false; Reason = 'producer-incomplete' } }
-        }
-    }
-    return @{ Accepted = $true; Reason = '' }
+    try {
+        $verdict = [Antiphon.Nightly.LiveLaneExports]::Check([Antiphon.Nightly.LiveLaneExport]::FromObject($Export), $ExpectedSource, $ExpectedRun, $ExpectedHash,
+            $ExpectedProject, $RequireCore, $AssemblyPath)
+    } catch { throw (Get-NightlyRefusalText $_) }
+    return @{ Accepted = [bool]$verdict.Accepted; Reason = [string]$verdict.Reason }
 }
 
 function Read-LiveLaneExportFile {
@@ -805,155 +230,35 @@ function Copy-LiveLaneExportShell {
     }
 }
 
-function Test-LiveLaneUnderCapture {
-    param([string]$Full)
-    $marker = [System.IO.Path]::DirectorySeparatorChar + '.antiphon' + [System.IO.Path]::DirectorySeparatorChar + 'live-lane-capture' + [System.IO.Path]::DirectorySeparatorChar
-    return ($Full.IndexOf($marker, [System.StringComparison]::Ordinal) -ge 0)
-}
-
+# The owned scratch is compiled (LiveLaneScratch): one ledger per session, $script:LiveLaneScratch.
 function New-LiveLaneOwnedScratch {
     param([string]$RepoRoot, [string]$Leaf)
-    if ([string]::IsNullOrWhiteSpace($Leaf) -or $Leaf.IndexOfAny([char[]]@('\', '/', '.')) -ge 0) { throw 'scratch-leaf' }
-    $capture = Join-Path $RepoRoot '.antiphon/live-lane-capture'
-    New-Item -ItemType Directory -Path $capture -Force | Out-Null
-    $captureFull = [System.IO.Path]::GetFullPath($capture)
-    $path = [System.IO.Path]::GetFullPath((Join-Path $captureFull $Leaf))
-    if (-not $path.StartsWith($captureFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal)) { throw 'scratch-escape' }
-    if (-not (Test-LiveLaneUnderCapture $path)) { throw 'scratch-escape' }
-    New-Item -ItemType Directory -Path $path -Force | Out-Null
-    $script:LiveLaneScratchLedger += @{ Path = $path; Kind = 'dir'; Sha = '' }
-    return $path
+    try { return $script:LiveLaneScratch.NewOwned($RepoRoot, $Leaf) } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Remove-LiveLaneOwnedScratch {
     param($Entry)
     if ($null -eq $Entry) { return }
-    $full = [System.IO.Path]::GetFullPath([string]$Entry.Path)
-    $known = $false
-    foreach ($item in @($script:LiveLaneScratchLedger)) {
-        if ([string]$item.Path -eq $full) { $known = $true }
-    }
-    if (-not $known) { throw 'scratch-not-owned' }
-    if ($Entry.Kind -eq 'file') {
-        $underCapture = Test-LiveLaneUnderCapture $full
-        $objectOk = $false
-        $sha = [string]$Entry.Sha
-        if ($sha -match '^[0-9a-f]{40}$') {
-            $name = [System.IO.Path]::GetFileName($full)
-            $dir = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($full))
-            if ($dir -eq $sha.Substring(0, 2) -and $name -eq $sha.Substring(2)) { $objectOk = $true }
-        }
-        if (-not $underCapture -and -not $objectOk) { throw 'scratch-escape' }
-        if (Test-Path -LiteralPath $full -PathType Leaf) { Remove-Item -LiteralPath $full -Force }
-        return
-    }
-    if (-not (Test-LiveLaneUnderCapture $full)) { throw 'scratch-escape' }
-    if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+    try { $script:LiveLaneScratch.Remove([string]$Entry.Path, [string]$Entry.Kind, [string]$Entry.Sha) } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Clear-LiveLaneOwnedScratch {
-    $items = @($script:LiveLaneScratchLedger)
-    foreach ($item in $items) { Remove-LiveLaneOwnedScratch -Entry $item }
-    $script:LiveLaneScratchLedger = @()
+    try { $script:LiveLaneScratch.Clear() } catch { throw (Get-NightlyRefusalText $_) }
     $script:LiveLaneCensusSeed = @{}
 }
 
 function Get-LiveLaneTempResidue {
-    $roots = New-Object System.Collections.Generic.List[string]
-    $temp = [System.IO.Path]::GetTempPath()
-    if (-not [string]::IsNullOrWhiteSpace($temp)) { $roots.Add(([System.IO.Path]::GetFullPath($temp))) }
-    if (Test-Path -LiteralPath '/tmp') {
-        $unix = [System.IO.Path]::GetFullPath('/tmp')
-        $have = $false
-        foreach ($root in @($roots)) {
-            if ($root -eq $unix) { $have = $true }
-        }
-        if (-not $have) { $roots.Add($unix) }
-    }
-    $names = New-Object System.Collections.Generic.List[string]
-    foreach ($root in @($roots)) {
-        if (-not (Test-Path -LiteralPath $root)) { continue }
-        foreach ($item in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
-            if ($item.Name.StartsWith('antiphon-live-lane-', [System.StringComparison]::Ordinal)) { $names.Add($item.FullName) }
-        }
-    }
-    return @($names)
+    return @([Antiphon.Nightly.LiveLaneScratch]::TempResidue())
 }
 
-function Test-LiveLaneReceiptLine {
-    param([string]$Line, [string]$Id, [string]$Commit)
-    if ([string]::IsNullOrWhiteSpace($Line)) { return $false }
-    if (-not $Line.StartsWith('CHECKPOINT ' + $Id + ' ', [System.StringComparison]::Ordinal)) { return $false }
-    $fields = @{}
-    foreach ($match in [regex]::Matches($Line, '(?:^|\s)([A-Za-z][A-Za-z0-9]*)=([^\s]*)')) {
-        $key = [string]$match.Groups[1].Value
-        if (-not $fields.ContainsKey($key)) { $fields[$key] = [string]$match.Groups[2].Value }
-    }
-    if ($fields['commit'] -ne $Commit) { return $false }
-    if ($fields['source'] -ne $Commit) { return $false }
-    if ($fields['buildSource'] -ne 'verified') { return $false }
-    if ($fields['sourceState'] -ne 'clean') { return $false }
-    if ($fields['dirty'] -ne '0') { return $false }
-    return $true
-}
-
+# The producer receipt is compiled (LiveLaneReceipt): the context's source and checkpointResults, or the mutant's root.
 function Test-LiveLaneProducerReceipt {
     param($Context, $Mutant)
     $expected = [string](Get-LiveLaneProp $Context 'sourceSha')
     $root = [string](Get-LiveLaneProp $Context 'checkpointResults')
     if ($Mutant -and $Mutant.ContainsKey('receiptRoot')) { $root = [string]$Mutant.receiptRoot }
-    if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root -PathType Container)) {
-        return @{ Accepted = $false; Reason = 'producer-receipt-missing' }
-    }
-    $latest = @{}
-    foreach ($run in @(Get-ChildItem -LiteralPath $root -Directory | Sort-Object -Property Name)) {
-        $statePath = Join-Path $run.FullName 'state.json'
-        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { continue }
-        $state = [System.IO.File]::ReadAllText($statePath) | ConvertFrom-Json
-        $report = $null
-        $reportPath = Join-Path $run.FullName 'report.json'
-        if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
-            $report = [System.IO.File]::ReadAllText($reportPath) | ConvertFrom-Json
-        }
-        foreach ($row in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $state 'rows'))) {
-            $id = [string](Get-LiveLaneProp $row 'id')
-            if ($id -ne 'CP-25' -and $id -ne 'CP-1') { continue }
-            $latest[$id] = @{ State = $state; Row = $row; Report = $report }
-        }
-    }
-    foreach ($id in @('CP-25', 'CP-1')) {
-        if (-not $latest.ContainsKey($id)) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
-        $item = $latest[$id]
-        $rowState = [string](Get-LiveLaneProp $item.Row 'state')
-        if ($rowState -ne 'green') { return @{ Accepted = $false; Reason = 'producer-row-not-green' } }
-        $report = $item.Report
-        if ($null -eq $report) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
-        $match = $null
-        foreach ($reportRow in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $report 'rows'))) {
-            if ([string](Get-LiveLaneProp $reportRow 'id') -eq $id) { $match = $reportRow }
-        }
-        if ($null -eq $match) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
-        if ([string](Get-LiveLaneProp $match 'state') -ne 'green') { return @{ Accepted = $false; Reason = 'producer-row-not-green' } }
-        $line = [string](Get-LiveLaneProp $match 'line')
-        if ([string]::IsNullOrWhiteSpace($line)) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
-        $source = Get-LiveLaneProp $item.State 'source'
-        $reportSource = Get-LiveLaneProp $report 'source'
-        $rowSource = Get-LiveLaneProp $match 'source'
-        $build = [string](Get-LiveLaneProp $rowSource 'buildSource')
-        if ([string]::IsNullOrWhiteSpace($build)) { $build = [string](Get-LiveLaneProp $reportSource 'buildSource') }
-        if ([string]::IsNullOrWhiteSpace($build)) { $build = [string](Get-LiveLaneProp $source 'buildSource') }
-        $commit = [string](Get-LiveLaneProp $report 'commit')
-        if ([string]::IsNullOrWhiteSpace($commit)) {
-            $commit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'start') 'commit')
-        }
-        $startCommit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'start') 'commit')
-        $endCommit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'end') 'commit')
-        $sourceState = [string](Get-LiveLaneProp $source 'state')
-        if ($commit -ne $expected -or $startCommit -ne $expected -or $endCommit -ne $expected -or $build -ne 'verified' -or $sourceState -ne 'clean' -or -not (Test-LiveLaneReceiptLine -Line $line -Id $id -Commit $expected)) {
-            return @{ Accepted = $false; Reason = 'producer-receipt-foreign' }
-        }
-    }
-    return @{ Accepted = $true; Reason = '' }
+    try { $verdict = [Antiphon.Nightly.LiveLaneReceipt]::Check($expected, $root) } catch { throw (Get-NightlyRefusalText $_) }
+    return @{ Accepted = [bool]$verdict.Accepted; Reason = [string]$verdict.Reason }
 }
 
 function Write-LiveLaneReceiptFixture {
@@ -965,146 +270,7 @@ function Write-LiveLaneReceiptFixture {
         [string]$LineCommit = '',
         [switch]$OmitReport
     )
-    if ([string]::IsNullOrWhiteSpace($LineCommit)) { $LineCommit = $Commit }
-    $run = Join-Path $Root 'run-producers'
-    New-Item -ItemType Directory -Path $run -Force | Out-Null
-    $exitCode = $(if ($RowState -eq 'green') { 0 } else { 1 })
-    $rows = @()
-    foreach ($id in @('CP-25', 'CP-1')) {
-        $line = 'CHECKPOINT ' + $id + ' commit=' + $LineCommit + ' build=ok filter=live executed=1 passed=1 failed=0 skipped=0 dirty=0 source=' + $LineCommit + ' sourceState=clean buildSource=' + $BuildSource
-        $rows += [ordered]@{
-            id = $id
-            state = $RowState
-            exitCode = $exitCode
-            source = [ordered]@{ buildSource = $BuildSource; state = 'clean' }
-            line = $line
-        }
-    }
-    $stateRows = @()
-    foreach ($id in @('CP-25', 'CP-1')) {
-        $stateRows += [ordered]@{ id = $id; state = $RowState; exitCode = $exitCode }
-    }
-    $state = [ordered]@{
-        source = [ordered]@{
-            state = 'clean'
-            buildSource = $BuildSource
-            start = [ordered]@{ commit = $Commit; captureStatus = 'known'; dirtyFiles = 0 }
-            end = [ordered]@{ commit = $Commit; captureStatus = 'known'; dirtyFiles = 0 }
-        }
-        rows = $stateRows
-    }
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText((Join-Path $run 'state.json'), ($state | ConvertTo-Json -Depth 6), $utf8)
-    if (-not $OmitReport) {
-        $report = [ordered]@{
-            commit = $Commit
-            exitCode = $exitCode
-            verdict = $(if ($RowState -eq 'green') { 'GREEN' } else { 'INVALID' })
-            source = $state.source
-            rows = $rows
-        }
-        [System.IO.File]::WriteAllText((Join-Path $run 'report.json'), ($report | ConvertTo-Json -Depth 8), $utf8)
-    }
-}
-
-function Write-LiveLaneExportFile {
-    param([string]$Path, [string]$Project, [string]$Cp, [string]$SourceSha, [string]$RunId, [string]$AssemblyHash, [string]$AssemblyPath, [object[]]$Nodes)
-    $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    # Green checkpoint cleanup deletes the build output. Keep the hashed assembly beside the export.
-    $keptPath = $AssemblyPath
-    if (-not [string]::IsNullOrWhiteSpace($AssemblyPath) -and (Test-Path -LiteralPath $AssemblyPath)) {
-        $keptPath = Join-Path $dir ($Cp.ToLowerInvariant() + '-assembly.dll')
-        [System.IO.File]::Copy($AssemblyPath, $keptPath, $true)
-    }
-    $doc = [ordered]@{
-        format = 'antiphon-live-lane-export-v1'
-        project = $Project
-        cp = $Cp
-        sourceSha = $SourceSha
-        runId = $RunId
-        assemblyHash = $AssemblyHash
-        assemblyPath = $keptPath
-        terminal = $false
-        nodes = @($Nodes)
-    }
-    ($doc | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8
-}
-
-function Complete-LiveLaneExport {
-    param([string]$Path, [bool]$ChecksPassed)
-    if (-not $ChecksPassed) { return }
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return }
-    $export = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
-    $export | Add-Member -NotePropertyName terminal -NotePropertyValue $true -Force
-    ($export | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8
-}
-
-function Update-LiveLaneManifestBindings {
-    param([string]$RepoRoot, [string]$CaptureDir)
-    $manifest = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
-    $byProject = @{}
-    foreach ($project in @('Antiphon.Tests', 'Antiphon.Agents.Pty.Tests')) {
-        $path = Join-Path $CaptureDir ($project + '.discovery.json')
-        if (-not (Test-Path -LiteralPath $path)) { throw ('capture-missing ' + $project) }
-        $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-        $byProject[$project] = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $doc 'nodes'))
-    }
-    $core = @()
-    foreach ($entry in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $manifest 'core'))) {
-        $project = [string](Get-LiveLaneProp $entry 'project')
-        $identity = [pscustomobject]@{
-            project = $project
-            namespace = [string](Get-LiveLaneProp $entry 'namespace')
-            class = [string](Get-LiveLaneProp $entry 'class')
-            method = [string](Get-LiveLaneProp $entry 'method')
-            arguments = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $entry 'arguments') | ForEach-Object { [string]$_ })
-        }
-        $hits = @(Get-LiveLaneMatchingNodes -Nodes $byProject[$project] -Identity $identity)
-        if ($hits.Count -ne 1) { throw ('bind-miss ' + $identity.method + ' count=' + $hits.Count) }
-        $core += [ordered]@{
-            project = $identity.project
-            namespace = $identity.namespace
-            class = $identity.class
-            method = $identity.method
-            arguments = @($identity.arguments)
-            uid = [string](Get-LiveLaneProp $hits[0] 'uid')
-            categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $hits[0] 'categories') | ForEach-Object { [string]$_ })
-            bound = $true
-        }
-    }
-    $doc = [ordered]@{
-        format = 'antiphon-live-lanes-v1'
-        core = @($core)
-        gates = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $manifest 'gates'))
-        additiveContract = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $manifest 'additiveContract'))
-    }
-    ($doc | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath (Join-Path $RepoRoot 'tests/live-lanes.json') -Encoding utf8
-}
-
-function Write-LiveLaneDiscoveryFixture {
-    param([string]$RepoRoot, [string]$CaptureDir, [string]$SourceSha)
-    $projects = @()
-    $nodes = @()
-    foreach ($pair in @(
-        @{ project = 'Antiphon.Tests'; cp = 'CP-27' },
-        @{ project = 'Antiphon.Agents.Pty.Tests'; cp = 'CP-28' }
-    )) {
-        $path = Join-Path $CaptureDir ($pair.project + '.discovery.json')
-        $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-        $projects += [ordered]@{ project = $pair.project; cp = $pair.cp; assemblyHash = [string](Get-LiveLaneProp $doc 'assemblyHash') }
-        foreach ($n in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $doc 'nodes'))) { $nodes += $n }
-    }
-    $fixture = [ordered]@{
-        format = 'antiphon-live-lane-discovery-fixture-v1'
-        producing = [ordered]@{ sourceSha = $SourceSha; projects = @($projects) }
-        nodes = @($nodes)
-    }
-    $dest = Join-Path $RepoRoot $script:LiveLaneFixtureRel
-    $parent = Split-Path -Parent $dest
-    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    ($fixture | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $dest -Encoding utf8
-    return $dest
+    try { [Antiphon.Nightly.LiveLaneReceipt]::WriteFixture($Root, $Commit, $RowState, $BuildSource, $LineCommit, [bool]$OmitReport) } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Get-LiveLaneGit {
@@ -1115,26 +281,8 @@ function Get-LiveLaneGit {
 
 function Copy-LiveLaneGitBlob {
     param([string]$RepoRoot, [string]$Spec, [string]$Dest)
-    $parent = Split-Path -Parent $Dest
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'git'
-    [void]$psi.ArgumentList.Add('-C')
-    [void]$psi.ArgumentList.Add($RepoRoot)
-    [void]$psi.ArgumentList.Add('cat-file')
-    [void]$psi.ArgumentList.Add('blob')
-    [void]$psi.ArgumentList.Add($Spec)
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.UseShellExecute = $false
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $fs = [System.IO.File]::Create($Dest)
-    try { $proc.StandardOutput.BaseStream.CopyTo($fs) } finally { $fs.Dispose() }
-    $err = $proc.StandardError.ReadToEnd()
-    $proc.WaitForExit()
-    $code = $proc.ExitCode
-    $proc.Dispose()
-    if ($code -ne 0) { throw ('seed-object-missing ' + $Spec) }
+    # Compiled (LiveLaneScratch.CopyGitBlob): git cat-file blob into Dest; seed-object-missing when it fails.
+    try { [Antiphon.Nightly.LiveLaneScratch]::CopyGitBlob($RepoRoot, $Spec, $Dest) } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Get-LiveLanePolicyHashProcess {
@@ -2269,22 +1417,8 @@ function Test-LiveLaneSetEqual {
 
 function New-LiveLaneDanglingSeed {
     param([string]$RepoRoot)
-    $tree = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD^{tree}')).Text
-    $sha = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('commit-tree', $tree, '-m', 'c1545 dangling non-ancestor')).Text
-    if ($sha -notmatch '^[0-9a-f]{40}$') { throw 'dangling-seed' }
-    $rel = 'objects/' + $sha.Substring(0, 2) + '/' + $sha.Substring(2)
-    $gitPath = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', '--git-path', $rel)).Text
-    if ([string]::IsNullOrWhiteSpace($gitPath)) { throw 'dangling-seed-path' }
-    if (-not [System.IO.Path]::IsPathRooted($gitPath)) {
-        $gitPath = Join-Path $RepoRoot $gitPath
-    }
-    $full = [System.IO.Path]::GetFullPath($gitPath)
-    $name = [System.IO.Path]::GetFileName($full)
-    $dir = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($full))
-    if ($dir -ne $sha.Substring(0, 2) -or $name -ne $sha.Substring(2)) { throw 'dangling-seed-path' }
-    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw 'dangling-seed-missing' }
-    $script:LiveLaneScratchLedger += @{ Path = $full; Kind = 'file'; Sha = $sha }
-    return $sha
+    # Compiled (LiveLaneScratch.DanglingSeed): the commit's loose object is recorded in this session's scratch ledger.
+    try { return $script:LiveLaneScratch.DanglingSeed($RepoRoot) } catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function New-LiveLanePolicyMutant {

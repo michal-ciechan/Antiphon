@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -10,17 +11,18 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-1545 S1a. Ordinary Unit roster for the six live identities.
 /// Classification is Unit, not Integration: the method is parameterless inventory
 /// and does not host a session. Matrices stay inside this one method.
-/// The gate matrix runs in-process (W2-nightly S23: the gate scan is compiled,
-/// LiveLaneGateScan.cs); the other cases still run the manifest driver.
+/// The gate matrix (W2-nightly S23, LiveLaneGateScan.cs) and the roster (W2-nightly S24, LiveLaneRoster.cs) run
+/// in-process; the roster still lists this assembly's tests in a child (dotnet exec --list-tests). The census cases
+/// still run the manifest driver until the census is compiled (S25).
 /// </summary>
 [Category("Unit")]
 public sealed class LiveLaneInventoryTests
 {
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task ExactCoreRoster()
+    public void ExactCoreRoster()
     {
-        var result = await LiveLaneProcess.RunAsync("ExactCoreRoster", "Antiphon.Tests").ConfigureAwait(false);
+        var result = LiveLaneProcess.Roster("ExactCoreRoster", LiveLaneRoster.TestsProject, typeof(LiveLaneInventoryTests).Assembly.Location);
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
@@ -35,7 +37,7 @@ public sealed class LiveLaneInventoryTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task CensusAdditiveIdentity()
     {
-        var result = await LiveLaneProcess.RunAsync("CensusAdditiveIdentity", "Antiphon.Tests").ConfigureAwait(false);
+        var result = await LiveLaneProcess.RunAsync("CensusAdditiveIdentity").ConfigureAwait(false);
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
@@ -43,22 +45,36 @@ public sealed class LiveLaneInventoryTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task CensusTargetScope()
     {
-        var result = await LiveLaneProcess.RunAsync("CensusTargetScope", "Antiphon.Tests").ConfigureAwait(false);
+        var result = await LiveLaneProcess.RunAsync("CensusTargetScope").ConfigureAwait(false);
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
     internal static class LiveLaneProcess
     {
-        // Hard wall for the roster child. Loaded-host n=3 totals 122603, 159105, 127989 ms
+        // Hard wall for the driver child. Loaded-host n=3 roster totals 122603, 159105, 127989 ms
         // (p95 = 159105). 320000 ms is about 2x that p95.
         public const int ChildBudgetMs = 320_000;
 
-        public static async Task<LiveLaneScriptResult> RunAsync(string caseName, string project)
+        /// <summary>
+        /// The roster case in-process (LiveLaneRoster.RunCase, the old ExactCoreRoster / ExactPtyCoreRoster of the
+        /// driver): the assembly is listed into .antiphon/live-lane-capture under the listing's own watchdog (160 s).
+        /// </summary>
+        public static LiveLaneCaseResult Roster(string caseName, string project, string assembly)
+        {
+            var repo = FindRepo();
+            var clock = Stopwatch.StartNew();
+            assembly.ShouldNotBeNullOrWhiteSpace("C1545 assembly-location");
+            var result = LiveLaneRoster.RunCase(repo, project, assembly);
+            var phase = ReadPhase(repo);
+            result.ExitCode.ShouldBe(0, $"C1545 {caseName} discovery exit error={result.Error} elapsedMs={clock.ElapsedMilliseconds} phase={phase}");
+            result.DiscoveryOk.ShouldBeTrue($"C1545 {caseName} discoveryOk error={result.Error} elapsedMs={clock.ElapsedMilliseconds} phase={phase}");
+            return result;
+        }
+
+        public static async Task<LiveLaneScriptResult> RunAsync(string caseName)
         {
             var repo = FindRepo();
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            var assembly = typeof(LiveLaneInventoryTests).Assembly.Location;
-            assembly.ShouldNotBeNullOrWhiteSpace("C1545 assembly-location");
             var script = Path.Combine(repo, "scripts", "test-live-lane-manifest.ps1");
             File.Exists(script).ShouldBeTrue("C1545 manifest-script");
 
@@ -74,10 +90,6 @@ public sealed class LiveLaneInventoryTests
             psi.ArgumentList.Add(script);
             psi.ArgumentList.Add("-Case");
             psi.ArgumentList.Add(caseName);
-            psi.ArgumentList.Add("-Project");
-            psi.ArgumentList.Add(project);
-            psi.ArgumentList.Add("-AssemblyPath");
-            psi.ArgumentList.Add(assembly);
             psi.ArgumentList.Add("-RepoRoot");
             psi.ArgumentList.Add(repo);
 
@@ -109,9 +121,8 @@ public sealed class LiveLaneInventoryTests
                 parsed = null;
             }
 
-            var phase = ReadPhase(repo);
-            parsed.ShouldNotBeNull($"C1545 {caseName} result json exit={process.ExitCode} timedOut={timedOut} elapsedMs={clock.ElapsedMilliseconds} phase={phase} stderr={Tail(stderr)} stdout={Tail(stdout)}");
-            process.ExitCode.ShouldBe(0, $"C1545 {caseName} discovery exit stderr={Tail(stderr)} error={parsed!.Error}");
+            parsed.ShouldNotBeNull($"C1545 {caseName} result json exit={process.ExitCode} timedOut={timedOut} elapsedMs={clock.ElapsedMilliseconds} stderr={Tail(stderr)} stdout={Tail(stdout)}");
+            process.ExitCode.ShouldBe(0, $"C1545 {caseName} exit stderr={Tail(stderr)} error={parsed!.Error}");
             parsed!.DiscoveryOk.ShouldBeTrue($"C1545 {caseName} discoveryOk error={parsed.Error} stderr={Tail(stderr)}");
             parsed.Failures ??= [];
             return parsed;

@@ -41,6 +41,8 @@
     <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
+    <!-- W2-nightly S24: the live-lane roster (LiveClaudeInventoryTests) runs in-process (plain C# types only). -->
+    <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
