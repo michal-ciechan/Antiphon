@@ -427,7 +427,19 @@ public sealed class RunScheduler
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
         var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
             repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
-        using var intermediate = request.IntermediateCache?.Prepare(build.Project, properties);
+        CheckpointIntermediateCache.Entry? opened = null;
+        try
+        {
+            opened = request.IntermediateCache?.Prepare(build.Project, properties);
+            opened?.Invalidate();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
+        {
+            request.IntermediateCache?.Report(ex);
+            opened?.Dispose();
+            opened = null;
+        }
+        using var intermediate = opened;
         if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
             BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath, intermediate?.Path);
         var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
@@ -523,7 +535,6 @@ public sealed class RunScheduler
             }
             launched = true;
             built = binding;
-            intermediate?.Invalidate();
             result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log)

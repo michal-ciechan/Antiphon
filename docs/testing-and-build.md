@@ -707,8 +707,10 @@ Source-qualified plan runs keep MSBuild intermediates in the worktree's
 and build properties. The tool writes the per-project `BaseIntermediateOutputPath`
 import to the untracked `.antiphon/checkpoint-obj/CheckpointIntermediates.props`
 when it opens the cache. Each build still creates, seals and cleans its own binary
-output. A worktree lock serializes cache use, and a missing or changed cache
-seal falls back to a cold build. Warm slot resets retain the cache. To reset it,
+output. A worktree lock serializes cache use when that lock is a single-link
+regular file owned by this process. A missing or changed cache seal, an untrusted
+lock or seal, or a cache I/O failure leaves the planted file untouched and that
+run builds cold. Warm slot resets retain the cache. To reset it,
 use the workspace slot's cold reset or remove `.antiphon/checkpoint-obj/`
 while the worktree is idle.
 

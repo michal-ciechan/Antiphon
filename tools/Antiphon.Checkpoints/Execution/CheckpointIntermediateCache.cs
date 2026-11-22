@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Antiphon.HostCleanup.Checkpoints;
 
 namespace Antiphon.Checkpoints;
 
 // Cache authority is independent of the disposable output ledger. A matching partition is
 // reusable only after a clean build sealed its contents. The gate covers all builds and hosts
 // in the executor, including dotnet run's evaluation of the project's restored assets.
-internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate) : IDisposable
+internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate, Action<string>? refuse = null) : IDisposable
 {
     internal const string RootProperty = "AntiphonCheckpointIntermediateRoot";
     // Generated beside the cache. A tracked props file that sets BaseIntermediateOutputPath
@@ -32,7 +33,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         "CustomAfterDirectoryBuildProps", RootProperty, "AntiphonCheckpointRepositoryRoot",
     };
 
-    internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected)
+    internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected, Action<string>? refuse = null)
     {
         if (expected is null || source.Commit != expected || source.CaptureStatus != "known"
             || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint))
@@ -43,32 +44,68 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             var home = Home(root);
             EnsureCacheDirectory(home, root);
             var lockPath = Path.Combine(home, "run.lock");
-            RefuseReplaceable(root, lockPath);
-            // A normal lock stays on one inode so the cross-process gate cannot split.
-            // A planted extra link is replaced before the open, which never truncates it.
-            if (IsSharedInode(lockPath))
-                PublishNewBytes(root, lockPath, ReadOnlySpan<byte>.Empty);
-            if (SafeWrite.OpenGate(lockPath, SafeWrite.Under(root), out stream) is not null || stream is null)
+            // The lock name is never replaced. An untrusted path is left in place and this run builds cold.
+            var refusal = TrustedPath(lockPath, out var absent);
+            if (refusal is not null)
+            {
+                Note(refuse, refusal);
                 return null;
-            WriteProps(root);
-            var opened = new CheckpointIntermediateCache(root, source, stream);
+            }
+
+            if (absent && CreateBlank(lockPath, root) is string created)
+            {
+                Note(refuse, created);
+                return null;
+            }
+
+            stream = OpenExisting(lockPath);
+            if (CheckpointNativeIo.Untrusted(stream.SafeFileHandle) is string handleRefusal)
+            {
+                Note(refuse, handleRefusal);
+                return null;
+            }
+
+            if (!WriteProps(root, refuse))
+                return null;
+            var opened = new CheckpointIntermediateCache(root, source, stream, refuse);
             stream = null;
             return opened;
         }
         catch (CheckpointCacheRefusal)
         {
-            stream?.Dispose();
             throw;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            stream?.Dispose();
+            Note(refuse, ex.GetType().Name);
             return null; // A concurrent run or an unavailable cache can build in its fresh output.
+        }
+        finally
+        {
+            stream?.Dispose();
         }
     }
 
-    private static void WriteProps(string root) =>
-        PublishNewBytes(root, Path.Combine(root, ProjectProps), Encoding.UTF8.GetBytes(PropsText));
+    internal void Report(Exception ex) =>
+        Note(refuse, ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name);
+
+    private static bool WriteProps(string root, Action<string>? refuse)
+    {
+        try
+        {
+            PublishNewBytes(root, Path.Combine(root, ProjectProps), Encoding.UTF8.GetBytes(PropsText));
+            return true;
+        }
+        catch (CheckpointCacheRefusal)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Note(refuse, ex.GetType().Name);
+            return false;
+        }
+    }
 
     public void Dispose() => gate.Dispose();
 
@@ -103,22 +140,38 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 throw new CheckpointCacheRefusal(preflight);
             if (preflight is not null)
                 return null;
-            if (IsRealDirectory(sealPath))
-                throw new CheckpointCacheRefusal("directory");
-            if (File.Exists(sealPath) && OutputCustody.Stat(sealPath) is null)
-                throw new CheckpointCacheRefusal("unreadable-link-count");
-            // Reading the previous seal does not modify a shared inode. The replacement does.
-            if (IsSharedInode(sealPath))
-                PublishNewBytes(root, sealPath, PreserveSeal(sealPath));
-            if (SafeWrite.OpenGate(sealPath, SafeWrite.Under(root), out seal) is not null || seal is null)
+            // A FIFO or other non-regular seal is refused before open. Opening it for read can block.
+            var refusal = TrustedPath(sealPath, out var absent);
+            if (refusal is not null)
+            {
+                Note(refuse, refusal);
                 return null;
-            var ready = Directory.Exists(path)
-                ? MatchesSeal(seal, path)
-                : seal.Length == 0 && SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(root)) is null;
-            if (!ready)
-                return null;
+            }
 
-            var entry = new Entry(root, path, seal);
+            if (absent && CreateBlank(sealPath, root) is string created)
+            {
+                Note(refuse, created);
+                return null;
+            }
+
+            seal = OpenExisting(sealPath);
+            if (CheckpointNativeIo.Untrusted(seal.SafeFileHandle) is string handleRefusal)
+            {
+                Note(refuse, handleRefusal);
+                return null;
+            }
+
+            if (Directory.Exists(path))
+            {
+                if (!MatchesSeal(seal, path))
+                    return null;
+            }
+            else if (seal.Length != 0 || SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(root)) is not null)
+            {
+                return null;
+            }
+
+            var entry = new Entry(path, seal);
             seal = null;
             return entry;
         }
@@ -128,12 +181,61 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            Note(refuse, ex.GetType().Name);
             return null;
         }
         finally
         {
             seal?.Dispose();
         }
+    }
+
+    private static void Note(Action<string>? refuse, string reason) =>
+        refuse?.Invoke("checkpoint cache refused: " + reason);
+
+    // Absent is safe to create. Anything else must already be one regular link owned by this process.
+    private static string? TrustedPath(string path, out bool absent)
+    {
+        absent = false;
+        var raw = CheckpointCleanupDefaults.Context.Io.Stat(path);
+        if (raw.Kind == "absent")
+        {
+            absent = true;
+            return null;
+        }
+
+        var stat = OutputCustody.Stat(path);
+        if (stat is null)
+            return "unreadable-link-count";
+        if (stat.IsDirectory)
+            return "directory";
+        if (!stat.IsRegular)
+            return "not-regular";
+        if (stat.Links != 1)
+            return "multiple-links";
+        if (stat.Owner != OutputCustody.Owner)
+            return "foreign-owner";
+        return null;
+    }
+
+    private static string? CreateBlank(string path, string root)
+    {
+        var reason = SafeWrite.OpenCreate(path, SafeWrite.Under(root), out var blank);
+        if (reason == "link-component")
+            throw new CheckpointCacheRefusal(reason);
+        if (reason is not null || blank is null)
+            return reason ?? "unopened";
+        blank.Dispose();
+        return null;
+    }
+
+    private static FileStream OpenExisting(string path)
+    {
+        var opened = CheckpointCleanupDefaults.Context.Io.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        if (opened is FileStream file)
+            return file;
+        opened.Dispose();
+        throw new IOException("cache write refused: unopened");
     }
 
     private static void EnsureCacheDirectory(string directory, string root)
@@ -168,21 +270,11 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return (info.Attributes & FileAttributes.Directory) != 0;
     }
 
-    private static bool IsSharedInode(string path) =>
-        OutputCustody.Stat(path) is { IsRegular: true, Links: > 1 };
-
     private static bool SameSingleLink(string path, ReadOnlySpan<byte> payload)
     {
         if (OutputCustody.Stat(path) is not { IsRegular: true, Links: 1, Size: var size } || size != (ulong)payload.Length)
             return false;
         return File.ReadAllBytes(path).AsSpan().SequenceEqual(payload);
-    }
-
-    private static byte[] PreserveSeal(string sealPath)
-    {
-        if (OutputCustody.Stat(sealPath) is not { IsRegular: true, Size: <= 32ul })
-            return [];
-        return File.ReadAllBytes(sealPath);
     }
 
     // Exclusive create plus rename replaces the directory entry. Another hard link keeps the old inode.
@@ -265,9 +357,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
     }
 
-    internal sealed class Entry(string repository, string path, FileStream seal) : IDisposable
+    internal sealed class Entry(string path, FileStream seal) : IDisposable
     {
-        private readonly string sealPath = path + ".seal";
         private FileStream? held = seal;
 
         internal string Path { get; } = path;
@@ -287,14 +378,15 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             }
         }
 
+        // The handle was fstat'd before use. Rewriting it cannot follow a later directory entry.
         private void Replace(ReadOnlySpan<byte> payload)
         {
-            held?.Dispose();
-            held = null;
-            PublishNewBytes(repository, sealPath, payload);
-            if (SafeWrite.OpenGate(sealPath, SafeWrite.Under(repository), out var reopened) is not null || reopened is null)
-                throw new IOException("cache write refused: seal-reopen");
-            held = reopened;
+            if (held is null)
+                throw new IOException("cache write refused: seal-closed");
+            held.Position = 0;
+            held.SetLength(0);
+            held.Write(payload);
+            held.Flush(flushToDisk: true);
         }
 
         public void Dispose()
