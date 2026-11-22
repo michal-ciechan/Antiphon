@@ -427,7 +427,32 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         while (!predicate()) await Task.Delay(25, timeout.Token);
     }
 
-    public async ValueTask DisposeAsync()
+    // A world's teardown (its spare, the gateway's stop, the bridge harness, the schema, the store and the topic: about
+    // 0.6 s a world on the HP laptop on AC) runs in the background, so the next world's setup overlaps it. Each world
+    // keeps its own schema, topic, Slack fake and gateway, so a teardown still running touches nothing the next one
+    // uses. Every class that builds worlds drains them after each test (DrainDisposalsAsync in an After(Test) hook):
+    // no world outlives its test, and a teardown failure still fails the test that made it.
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<Task> PendingDisposals = new();
+
+    public ValueTask DisposeAsync()
+    {
+        PendingDisposals.Enqueue(Task.Run(DisposeNowAsync));
+        return ValueTask.CompletedTask;
+    }
+
+    public static async Task DrainDisposalsAsync()
+    {
+        var failures = new List<Exception>();
+        while (PendingDisposals.TryDequeue(out var disposal))
+        {
+            try { await disposal; }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+        }
+        if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1) throw new AggregateException("World teardowns failed", failures);
+    }
+
+    private async Task DisposeNowAsync()
     {
         try
         {

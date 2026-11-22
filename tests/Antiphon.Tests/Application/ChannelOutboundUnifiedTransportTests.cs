@@ -43,6 +43,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
     private static Task<RedpandaContainer> SharedBrokerAsync() => SharedRedpandaBroker.C519.GetAsync();
 
     // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
+    // World teardowns run in the background (UnifiedOutboundTransport.DisposeAsync); none outlives its test.
+    [After(Test)]
+    public Task DrainWorldDisposalsAsync() => UnifiedOutboundTransport.DrainDisposalsAsync();
+
     [Before(Class)]
     public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
 
