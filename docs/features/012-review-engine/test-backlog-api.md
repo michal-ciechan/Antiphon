@@ -85,3 +85,35 @@ or corpus questions found while implementing. Each row says what to test and why
 | E-9 | `ReviewRunChanged` once per node transition (Running, then Succeeded/Failed) and once at the stop point. | Needs a recording `IEventBus` (see R-5). |
 | E-10 | Duplicate manual intake for a PR that already has an active run. | Today a second run is created; the design wants one run per subject (3.2). Decide 409 or return the existing run. |
 | E-11 | Migration `AddReviewIterationShas` Down throws, and the tip-rewind fixtures (`MigrationTestDatabase.DetachHostLoadAsync` callers) need the review-engine tables and these columns detached before they rewind. | `AddReviewEngine` already had this gap on the branch; `tests/Antiphon.Tests/TestHelpers` is outside this track. |
+
+## The whole workflow (`ReviewWorkflowExecutor`, `server/Application/Review/Execution/`)
+
+Covered: `ReviewEndToEndApiTests` (a human path with findings, a fix, an approval gate, a base move
+and a branch update; a bot path), `ReviewExecutorApiTests` (no agent runner: the fan-out fails
+loudly), `ReviewRoundsPolicyTests` and `ReviewCheckParserTests`. E-1 and E-8 are now covered by the
+human path.
+
+| # | Test later | Why |
+|---|---|---|
+| X-1 | `route[bot-round-limit]`: three bot-only rounds with findings open the `human-review` gate with the limit as its reason; a response or gate decision resets the counter. | The counter and route are unit tested; the gate path over HTTP is not. |
+| X-2 | An edge past `maxIterations` (`await-fixes[push]` a 21st time, `base-drift[affected]` an 11th) opens its overflow gate with the limit in its reasons. | Implemented in `FollowAsync`; needs 20 scripted pushes. |
+| X-3 | `base-drift[affected]`: an overlapping base change asks `base_change_affects_pr`, at or above 0.35 starts a `base-moved` iteration in the same round with the rebase steer in every pack and `antiphon/approval` back to pending. | Implemented; the human path covers only the no-overlap branch. |
+| X-4 | `base-moved` with `keepUpToDate: false` (`unchanged`/`moved` from the reviewed base) and `behind` (tip equals the reviewed base, merge base older). | Unit-testable once the step takes a branch state; only `moved` and `unchanged` run end to end. |
+| X-5 | `await-fixes[base-moved] -> record-drift -> await-fixes`: a base move while fixes are awaited is recorded, the run parks again, and the next push's delta notes the drift. The drift re-check inside delta (design 4.2 step 1) is not implemented. | Refresh only raises `base-moved` when the wait listens for it; untested. |
+| X-6 | `await-fixes[update-requested] -> update-branch[open] -> await-fixes` (the author's opt-in, D-19). | No API raises `update-requested` yet (see the contract proposals in the report). |
+| X-7 | `await-merge[push]`: a push after approval starts a new round; the new head has no `antiphon/approval` status, so the approval is revoked by construction. | Implemented; untested. |
+| X-8 | Refresh while parked at a gate with a moved head closes the gate (Done, no decision, a `superseded:` reason) and skips its node. | Implemented in `SupersedeGatesAsync`; untested. |
+| X-9 | A PR closed (not merged) on the code host ends the run Closed from any parked node. | Merged is covered; Closed shares the code path. |
+| X-10 | Verify: a disproved finding (p < 0.5) is dropped and recorded; a bypass finding is kept; a refused answer keeps it; a wrong request id fails the node; no chain configured is Skipped with the reason and findings pass through. | The scripted verifier holds everything; the skip path runs only by reading. |
+| X-11 | Reviewer answer that does not parse: one retry, then the child fails with the error codes; a `Pending` answer parks the child Waiting with its handle and the run queued, then completes on a later pass. | The scripted reviewer always answers valid ABF at once. |
+| X-12 | Collate: duplicates across groups keep the most severe and merge flags; a duplicate of an open finding is dropped as such; an anchor outside the diff resolves through `ReadFileAsync` and is summary-only; an unresolvable anchor is dropped. | Anchors are unit tested; the dedupe paths are not. |
+| X-13 | Select: more than 128 candidates split across calls; a refused `applies` is included; the round bar drops a check whose severity cannot clear it (a nit check in round 2) unless it is a bypass check. | Implemented; the seed set is 7 checks. |
+| X-14 | Check catalogue: the instance folder (`Review:InstanceChecksPath`) and the repo's `.antiphon/review/checks/` at the base SHA (a repo check overrides an instance check by id); a file that does not parse is skipped and named in the select summary; the seed set is used only when both are empty. | Only the seed set runs end to end; the scripted host reads no files. |
+| X-15 | Needs human approval rules one by one: categories, `reversal_after_months`, a `requiresHuman` check (SEED-0003), a large PR, two conceded disputes, an unverified high-severity check; the yes stays sticky in later rounds. | Only the external-contract rule runs end to end. |
+| X-16 | Bot approval refusals: an open blocker, an open finding above the bar, a head moved since the review; each fails the node with its reason. | Implemented; untested. |
+| X-17 | Finding sync: a transient code-host failure keeps the response Pending for the next pass; a rejected one is Failed; a local host or a summary-only finding is NotApplicable; Dismiss, NotABlocker and Defer resolve the thread when the host can. | WillFix and the bot's Fixed are covered. |
+| X-18 | Context packs: the prefix hash is identical across an iteration's packs; the ledger has one row per changed file with `included` false past the diff budget; a re-run replaces the iteration's packs and ledger. | Implemented; only the outstanding-findings text is asserted. |
+| X-19 | `GitHubCodeHost` writes over a fake handler: the review body and `RIGHT`-side comments, the comment ids read back from `reviews/{id}/comments`, a status description cut to 140 characters, `update-branch` with `expected_head_sha`, compare's `base_commit`, `merge_base_commit` and `behind_by`, a 404 raw file read as null. | Implemented; the existing GitHub tests cover reads only. |
+| X-20 | `LocalGitCodeHost` compare, branch state, `ls-tree` and `show` over a fixture repo; every write is `Unsupported`. | Needs the git spawn lane (see C-1). |
+| X-21 | Migration `AddReviewEngineExecution`: `Down` throws, and the tip-rewind fixtures detach the new tables and columns. | Same gap as E-11. |
+| X-22 | Lease takeover in the middle of a fan-out: a second executor resumes the Waiting fan-out without re-running finished reviewers. | Needs two executors on one schema (E-6). |
