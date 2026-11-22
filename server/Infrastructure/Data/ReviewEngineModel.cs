@@ -15,6 +15,8 @@ public partial class AppDbContext
     public DbSet<ReviewGatePass> ReviewGatePasses => Set<ReviewGatePass>();
     public DbSet<ReviewIteration> ReviewIterations => Set<ReviewIteration>();
     public DbSet<ReviewWorkflowRevision> ReviewWorkflowRevisions => Set<ReviewWorkflowRevision>();
+    public DbSet<ReviewContextPack> ReviewContextPacks => Set<ReviewContextPack>();
+    public DbSet<ReviewPackLedgerEntry> ReviewPackLedgerEntries => Set<ReviewPackLedgerEntry>();
 
     private static void ConfigureReviewEngineModel(ModelBuilder model)
     {
@@ -47,6 +49,7 @@ public partial class AppDbContext
             e.Property(r => r.CostUsd).HasPrecision(18, 6);
             e.Property(r => r.WorkflowName).HasMaxLength(200);
             e.Property(r => r.WorkflowHash).HasMaxLength(64);
+            e.Property(r => r.BaseTipSha).HasMaxLength(64);
             e.HasOne(r => r.Subject).WithMany().HasForeignKey(r => r.SubjectId).OnDelete(DeleteBehavior.Restrict);
             e.HasMany(r => r.Iterations).WithOne().HasForeignKey(i => i.RunId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<ReviewWorkflowRevision>().WithMany().HasForeignKey(r => r.WorkflowRevisionId).OnDelete(DeleteBehavior.Restrict);
@@ -72,7 +75,30 @@ public partial class AppDbContext
             e.Property(n => n.InputsHash).HasMaxLength(64);
             e.Property(n => n.ItemKey).HasMaxLength(200);
             e.Property(n => n.Outcome).HasMaxLength(100);
+            e.Property(n => n.OutputJson).HasColumnType("jsonb");
             e.HasIndex(n => new { n.RunId, n.Iteration });
+        });
+
+        model.Entity<ReviewContextPack>(e =>
+        {
+            e.ToTable("ReviewContextPacks");
+            e.HasKey(p => p.Id);
+            e.Property(p => p.GroupKey).HasMaxLength(200);
+            e.Property(p => p.Hash).HasMaxLength(64);
+            e.Property(p => p.PrefixHash).HasMaxLength(64);
+            e.HasOne<ReviewRun>().WithMany().HasForeignKey(p => p.RunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(p => new { p.RunId, p.Iteration, p.GroupKey }).IsUnique();
+        });
+
+        model.Entity<ReviewPackLedgerEntry>(e =>
+        {
+            e.ToTable("ReviewPackLedgerEntries");
+            e.HasKey(l => l.Id);
+            e.Property(l => l.Path).HasMaxLength(1000);
+            e.Property(l => l.Source).HasMaxLength(64);
+            e.Property(l => l.Reason).HasMaxLength(1000);
+            e.HasOne<ReviewRun>().WithMany().HasForeignKey(l => l.RunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(l => new { l.RunId, l.Iteration });
         });
 
         model.Entity<ReviewFinding>(e =>
@@ -87,6 +113,8 @@ public partial class AppDbContext
             e.Property(f => f.FilePath).HasMaxLength(1000);
             e.Property(f => f.Title).HasMaxLength(1000);
             e.Property(f => f.ExternalThreadUrl).HasMaxLength(2000);
+            e.Property(f => f.ExternalCommentId).HasMaxLength(100);
+            e.Property(f => f.ExternalThreadId).HasMaxLength(200);
             e.HasMany(f => f.Events).WithOne().HasForeignKey(ev => ev.FindingId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(f => new { f.RunId, f.Key }).IsUnique();
             e.HasIndex(f => new { f.RunId, f.Status });

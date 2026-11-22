@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
@@ -13,8 +13,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Review;
 
 /// <summary>
-/// Manual intake through a fake code host, then the executor's walk over the real host and Postgres:
-/// intake, delta and categorise (a fake decision model with fixed answers) up to the stop point.
+/// Manual intake through an intake-only fake code host, then the executor's walk over the real host
+/// and Postgres: intake, delta, categorise and select (a fake decision model with fixed answers),
+/// group and packs, then the reviewer fan-out, which fails loudly because no reviewer agent runner is
+/// configured. The whole workflow with scripted reviewers is <see cref="ReviewEndToEndApiTests"/>.
 /// </summary>
 [Category("Integration")]
 [ClassDataSource<ReviewExecutorApiTests.Factory>(Shared = SharedType.PerClass)]
@@ -23,7 +25,7 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
     private static readonly TimeSpan WalkTimeout = TimeSpan.FromSeconds(30);
 
     [Test]
-    public async Task Manual_intake_runs_through_categorise_and_stops_at_select()
+    public async Task Manual_intake_walks_to_the_reviewers_and_fails_loudly_with_no_agent_runner()
     {
         using var client = factory.CreateClient();
 
@@ -39,16 +41,15 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
 
         var detail = run;
         var deadline = DateTime.UtcNow + WalkTimeout;
-        while (detail.GetProperty("stage").GetString() != "Select" && detail.GetProperty("status").GetString() != "Failed")
+        while (detail.GetProperty("status").GetString() != "Failed")
         {
             if (DateTime.UtcNow > deadline)
-                throw new TimeoutException($"Run {id} did not reach Select within {WalkTimeout}: {detail}");
+                throw new TimeoutException($"Run {id} did not stop within {WalkTimeout}: {detail}");
             await Task.Delay(100);
             detail = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}");
         }
 
-        detail.GetProperty("status").GetString().ShouldBe("Running", detail.ToString());
-        detail.GetProperty("stage").GetString().ShouldBe("Select");
+        detail.GetProperty("stage").GetString().ShouldBe("Review");
         var blast = detail.GetProperty("blastRadius");
         blast.GetProperty("reach").GetInt32().ShouldBe(2);
         blast.GetProperty("externalContract").GetInt32().ShouldBe(2, "p(yes) 0.2 maps to 1 + round(0.8)");
@@ -59,8 +60,8 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         detail.GetProperty("categories").EnumerateArray().Select(c => c.GetString()).ShouldBe(["bugfix", "persistent-data"]);
         detail.GetProperty("models").EnumerateArray().Select(m => m.GetString()).ShouldBe([FakeDecisions.Model]);
 
-        var nodes = detail.GetProperty("nodes").EnumerateArray().Where(n => n.GetProperty("iteration").GetInt32() == 1)
-            .ToDictionary(n => n.GetProperty("nodeId").GetString()!);
+        var all = detail.GetProperty("nodes").EnumerateArray().Where(n => n.GetProperty("iteration").GetInt32() == 1).ToList();
+        var nodes = all.Where(n => n.GetProperty("itemKey").ValueKind == JsonValueKind.Null).ToDictionary(n => n.GetProperty("nodeId").GetString()!);
         nodes["intake"].GetProperty("status").GetString().ShouldBe("Succeeded");
         nodes["intake"].GetProperty("summary").GetString()!.ShouldStartWith("2 files, +14 -3, size S");
         nodes["intake"].GetProperty("summary").GetString()!.ShouldContain("M src/Lease.cs (+12 -3)");
@@ -75,15 +76,29 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         categorise.GetProperty("transport").GetString().ShouldBe("Http");
         categorise.GetProperty("inputTokens").GetInt64().ShouldBe(1200);
         categorise.GetProperty("costUsd").GetDecimal().ShouldBe(0.0005m);
-        nodes["select"].GetProperty("status").GetString().ShouldBe("Pending");
-        nodes["select"].GetProperty("summary").GetString().ShouldBe(ReviewWorkflowExecutor.StopSummary);
+        nodes["select"].GetProperty("status").GetString().ShouldBe("Succeeded", nodes["select"].ToString());
+        nodes["select"].GetProperty("summary").GetString()!.ShouldContain("7 checks (7 built-in seed)");
+        nodes["group"].GetProperty("status").GetString().ShouldBe("Succeeded");
+        nodes["packs"].GetProperty("status").GetString().ShouldBe("Succeeded");
+        nodes["review"].GetProperty("status").GetString().ShouldBe("Failed");
+        nodes["review"].GetProperty("summary").GetString()!.ShouldContain(UnconfiguredReviewAgentRunner.Reason);
+        var reviewers = all.Where(n => n.GetProperty("nodeId").GetString() == "reviewer").ToList();
+        reviewers.ShouldNotBeEmpty();
+        reviewers.ShouldAllBe(n => n.GetProperty("status").GetString() == "Failed" && n.GetProperty("summary").GetString() == UnconfiguredReviewAgentRunner.Reason);
+        nodes.ShouldNotContainKey("collate");
 
-        var asked = factory.Decisions.Requests.ShouldHaveSingleItem();
+        // The fake answers only categorise's questions, so every applies question is refused and
+        // escalates through the chain's four entries (design 7.4) before it is included.
+        factory.Decisions.Requests.Count.ShouldBe(5, "categorise, then the applies questions on each chain entry");
+        var asked = factory.Decisions.Requests[0];
         asked.Questions.Select(q => q.Name).ShouldBe(["change_kind", "external_contract", "persistent_data", "reach",
             "rollback_at_release", "reversal_after_months", "exposure"]);
         asked.State.ShouldContain(FakeCodeHost.Pr.Title);
         asked.State.ShouldContain("src/Lease.cs");
         asked.State.ShouldContain(FakeCodeHost.Diff.Trim());
+        factory.Decisions.Requests.Skip(1).ShouldAllBe(r => r.Questions.All(q => q.Name.StartsWith("applies_seed_")));
+        nodes["select"].GetProperty("summary").GetString()!.ShouldContain("selected: SEED-0001, SEED-0002", Case.Sensitive,
+            "a refused applies answer includes the check");
     }
 
     /// <summary>The real host with the code host and the decision model swapped for fakes.</summary>

@@ -75,6 +75,12 @@ public sealed class ReviewRun
     /// <summary>The steer prompt carried into the next round by a gate's another-round decision.</summary>
     public string? SteerPrompt { get; set; }
 
+    /// <summary>
+    /// The base branch tip the engine last saw: pinned at intake, moved by base-moved, record-drift
+    /// and base-drift. Refresh turns a different tip into a <c>base-moved</c> event (design 8.5).
+    /// </summary>
+    public string? BaseTipSha { get; set; }
+
     public DateTime StartedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
@@ -127,6 +133,14 @@ public sealed class ReviewNodeExecution
     public Guid RunId { get; set; }
     public string NodeId { get; set; } = "";
     public int Iteration { get; set; }
+
+    /// <summary>
+    /// Creation order within the run. The run's next step follows the latest top-level execution of
+    /// its current iteration, so a node may run more than once in one iteration (a wait re-entered
+    /// after <c>record-drift</c>).
+    /// </summary>
+    public int Sequence { get; set; }
+
     public ReviewNodeKind Kind { get; set; }
     public ReviewNodeStatus Status { get; set; }
 
@@ -149,6 +163,45 @@ public sealed class ReviewNodeExecution
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? Summary { get; set; }
+
+    /// <summary>The node's outputs as canonical JSON (design 3.4): selected checks, groups, a reviewer's findings, a verdict.</summary>
+    public string? OutputJson { get; set; }
+}
+
+/// <summary>One reviewer group's context pack (design 4.6): the text the reviewer is given, and its hashes.</summary>
+public sealed class ReviewContextPack
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public int Iteration { get; set; }
+    public string GroupKey { get; set; } = "";
+
+    /// <summary>SHA-256 of <see cref="Content"/>, lower-case hex.</summary>
+    public string Hash { get; set; } = "";
+
+    /// <summary>SHA-256 of the shared prefix, identical across the iteration's packs.</summary>
+    public string PrefixHash { get; set; } = "";
+
+    public string Content { get; set; } = "";
+    public int TokenEstimate { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>A context-pack ledger row (design 4.6): a file considered for the shared prefix, why, and whether it fit.</summary>
+public sealed class ReviewPackLedgerEntry
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public int Iteration { get; set; }
+    public string Path { get; set; } = "";
+
+    /// <summary><c>diff</c> today; the impact index, callers, co-change and the rest come later.</summary>
+    public string Source { get; set; } = "";
+
+    public string Reason { get; set; } = "";
+    public double Score { get; set; }
+    public int Tokens { get; set; }
+    public bool Included { get; set; }
 }
 
 /// <summary>A finding raised by a reviewer (design 4.7, ABF review-findings/1).</summary>
@@ -185,6 +238,13 @@ public sealed class ReviewFinding
     public bool Posted { get; set; }
     public ReviewSyncState SyncState { get; set; }
     public string? ExternalThreadUrl { get; set; }
+
+    /// <summary>The code-host comment that opened the finding's thread; replies go to it.</summary>
+    public string? ExternalCommentId { get; set; }
+
+    /// <summary>The code-host thread id that resolves it, when the host gave one.</summary>
+    public string? ExternalThreadId { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public List<ReviewFindingEvent> Events { get; set; } = [];

@@ -7852,6 +7852,51 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("ReviewComments", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewContextPack", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GroupKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Iteration")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PrefixHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TokenEstimate")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "Iteration", "GroupKey")
+                        .IsUnique();
+
+                    b.ToTable("ReviewContextPacks", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewEvidenceCorrection", b =>
                 {
                     b.Property<Guid>("Id")
@@ -7984,6 +8029,14 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalCommentId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ExternalThreadId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("ExternalThreadUrl")
                         .HasMaxLength(2000)
@@ -8291,6 +8344,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("OutputJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<long>("OutputTokens")
                         .HasColumnType("bigint");
 
@@ -8300,6 +8356,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<Guid>("RunId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
@@ -8323,11 +8382,58 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("ReviewNodeExecutions", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewPackLedgerEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Included")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Iteration")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Score")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Tokens")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "Iteration");
+
+                    b.ToTable("ReviewPackLedgerEntries", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewRun", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("BaseTipSha")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<int?>("BlastData")
                         .HasColumnType("integer");
@@ -12672,6 +12778,15 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Thread");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewContextPack", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.ReviewRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewFinding", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.ReviewRun", null)
@@ -12721,6 +12836,15 @@ namespace Antiphon.Server.Migrations
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.ReviewRun", null)
                         .WithMany("Nodes")
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewPackLedgerEntry", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.ReviewRun", null)
+                        .WithMany()
                         .HasForeignKey("RunId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

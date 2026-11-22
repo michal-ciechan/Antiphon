@@ -14,7 +14,9 @@ namespace Antiphon.Server.Application.Review;
 /// <summary>
 /// Review runs, findings, gates and the human queue (docs/features/012-review-engine/api.md). Every
 /// mutation publishes <c>ReviewRunChanged</c> and records the <see cref="ReviewViewer"/> as the actor.
-/// Responses are stored with sync state Pending: nothing is posted to a code host in this slice.
+/// Responses are stored with sync state Pending; the executor's next pass posts them to the code
+/// host (<see cref="ReviewFindingSync"/>). Refresh turns code-host state into workflow events, and a
+/// gate decision on an executor-walked run hands it back to the executor.
 /// </summary>
 public sealed class ReviewService(
     AppDbContext db,
@@ -24,7 +26,8 @@ public sealed class ReviewService(
     TimeProvider time,
     ReviewWorkflowService workflows,
     ReviewIntake intake,
-    ReviewExecutorSignal executor)
+    ReviewExecutorSignal executor,
+    CodeHostRouter router)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
 
@@ -150,8 +153,9 @@ public sealed class ReviewService(
             UpdatedAt = now,
         };
         var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, Round = 1, Trigger = "manual", StartedAt = now };
-        var intakeNode = PendingIntake(run.Id, 1);
+        var intakeNode = PendingIntake(run.Id, 1, 1);
         ReviewIntake.Apply(subject, iteration, intakeNode, snapshot, now);
+        run.BaseTipSha = pr.BaseSha;
         run.Iterations.Add(iteration);
         run.Nodes.Add(intakeNode);
         db.ReviewSubjects.Add(subject);
@@ -193,19 +197,84 @@ public sealed class ReviewService(
         var now = Now();
         if (run.Subject.Host == ReviewHost.GitHub && pr.Title.Length > 0)
             run.Subject.Title = pr.Title;
-        var previousHead = current.HeadSha ?? run.Subject.HeadSha;
-        var moved = !string.Equals(pr.HeadSha, previousHead, StringComparison.OrdinalIgnoreCase);
-        var trigger = moved ? "push" : run.Status == ReviewRunStatus.Failed ? "recheck" : null;
         run.UpdatedAt = now;
+
+        // Merged or closed on the code host: the run ends wherever it stands (design 8.5).
+        if (pr.State is CodeHostPullRequestState.Merged or CodeHostPullRequestState.Closed)
+        {
+            var merged = pr.State == CodeHostPullRequestState.Merged;
+            if (Parked(run, current) is { } parked)
+                Complete(parked, merged ? "merge" : "close", merged ? "merged on the code host" : "closed on the code host", now);
+            await SupersedeGatesAsync(run, merged ? "the PR was merged" : "the PR was closed", now, ct);
+            ReviewWorkflowExecutor.Finish(run, merged ? ReviewRunStatus.Merged : ReviewRunStatus.Closed, now);
+            await db.SaveChangesAsync(ct);
+            await PublishAsync(id, ct);
+            return;
+        }
+
+        // The head the run accepts: the pinned head, moved forward by a base-only branch update.
+        var previousHead = run.Subject.HeadSha.Length > 0 ? run.Subject.HeadSha : current.HeadSha ?? "";
+        var moved = !string.Equals(pr.HeadSha, previousHead, StringComparison.OrdinalIgnoreCase);
+
+        // A parked wait takes the event it listens for: a push, or a base move (design 3.1, 8.5).
+        if (Parked(run, current) is { Kind: ReviewNodeKind.Wait } wait)
+        {
+            var awaits = workflows.Default.Node(wait.NodeId)?.ListParam("on") ?? [];
+            string? evt = null;
+            string? detail = null;
+            if (moved && awaits.Contains("push"))
+            {
+                evt = "push";
+                detail = $"head moved {ReviewIntake.Short(previousHead)} -> {ReviewIntake.Short(pr.HeadSha)}";
+            }
+            else if (!moved && awaits.Contains("base-moved"))
+            {
+                var state = await ReadIntakeAsync(() =>
+                {
+                    var binding = router.Resolve(run.Subject);
+                    return binding.Host.GetBranchStateAsync(binding.Target, run.Subject.BaseRef, previousHead, ct);
+                });
+                if (!string.Equals(state.BaseTipSha, run.BaseTipSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    evt = "base-moved";
+                    detail = $"base moved {ReviewIntake.Short(run.BaseTipSha)} -> {ReviewIntake.Short(state.BaseTipSha)}";
+                }
+            }
+
+            if (evt is not null)
+            {
+                Complete(wait, evt, detail!, now);
+                run.Status = ReviewRunStatus.Queued;
+                run.WaitingOn = ReviewWaitingOn.Bot;
+                await db.SaveChangesAsync(ct);
+                await PublishAsync(id, ct);
+                executor.Wake();
+                return;
+            }
+
+            if (!moved)
+            {
+                await db.SaveChangesAsync(ct);
+                await PublishAsync(id, ct);
+                return;
+            }
+        }
+
+        var trigger = moved ? "push" : run.Status == ReviewRunStatus.Failed ? "recheck" : null;
         if (trigger is not null)
         {
             if (moved)
+            {
                 run.Round += 1;
+                await SupersedeGatesAsync(run, $"a push moved the head to {ReviewIntake.Short(pr.HeadSha)}", now, ct);
+            }
+
             var number = Math.Max(run.Nodes.Select(n => n.Iteration).DefaultIfEmpty(0).Max(), current.Iteration) + 1;
             var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = number, Round = run.Round, Trigger = trigger, StartedAt = now };
-            var intakeNode = PendingIntake(run.Id, number);
+            var intakeNode = PendingIntake(run.Id, number, NextSequence(run));
             ReviewIntake.Apply(run.Subject, iteration, intakeNode, snapshot, now,
                 moved ? $"head moved {ReviewIntake.Short(previousHead)} -> {ReviewIntake.Short(pr.HeadSha)}" : "recheck after a failure");
+            run.BaseTipSha = pr.BaseSha;
             // Added through the context: see Apply() on client-set Guid keys.
             db.ReviewIterations.Add(iteration);
             db.ReviewNodeExecutions.Add(intakeNode);
@@ -220,8 +289,43 @@ public sealed class ReviewService(
             executor.Wake();
     }
 
+    /// <summary>The current iteration's parked execution: its latest top-level one, when it is Waiting.</summary>
+    private static ReviewNodeExecution? Parked(ReviewRun run, ReviewIteration current) =>
+        run.Nodes.Where(n => n.Iteration == current.Iteration && n.ItemKey == null).MaxBy(n => n.Sequence) is { Status: ReviewNodeStatus.Waiting } parked
+            ? parked
+            : null;
+
+    private static void Complete(ReviewNodeExecution execution, string outcome, string summary, DateTime now)
+    {
+        execution.Status = ReviewNodeStatus.Succeeded;
+        execution.Outcome = outcome;
+        execution.CompletedAt = now;
+        execution.Summary = $"{outcome}: {summary}";
+    }
+
+    /// <summary>Open gates of a run that moved on without them are closed with no decision, and their parked node skipped.</summary>
+    private async Task SupersedeGatesAsync(ReviewRun run, string why, DateTime now, CancellationToken ct)
+    {
+        var open = await db.ReviewGates.Where(g => g.RunId == run.Id && g.Status != ReviewQueueItemStatus.Done).ToListAsync(ct);
+        foreach (var gate in open)
+        {
+            gate.Status = ReviewQueueItemStatus.Done;
+            gate.DecidedAt = now;
+            if (!gate.Reasons.Contains($"superseded: {why}"))
+                gate.Reasons = [.. gate.Reasons, $"superseded: {why}"];
+            foreach (var parked in run.Nodes.Where(n => n.NodeId == gate.NodeId && n.Iteration == gate.Iteration && n.Status == ReviewNodeStatus.Waiting))
+            {
+                parked.Status = ReviewNodeStatus.Skipped;
+                parked.CompletedAt = now;
+                parked.Summary = $"superseded: {why}";
+            }
+        }
+    }
+
+    private static int NextSequence(ReviewRun run) => run.Nodes.Select(n => n.Sequence).DefaultIfEmpty(0).Max() + 1;
+
     /// <summary>A code host failure during a request becomes the API's error (404, 422 or 503).</summary>
-    private static async Task<IntakeSnapshot> ReadIntakeAsync(Func<Task<IntakeSnapshot>> read)
+    private static async Task<T> ReadIntakeAsync<T>(Func<Task<T>> read)
     {
         try
         {
@@ -294,9 +398,11 @@ public sealed class ReviewService(
         var run = await db.ReviewRuns.SingleAsync(r => r.Id == finding.RunId, ct);
         EnsureRespondable(run);
         Apply(finding, request);
+        run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
+        executor.Wake();
         return ToDto(finding);
     }
 
@@ -320,9 +426,12 @@ public sealed class ReviewService(
             Apply(finding, response.ToRequest());
         }
 
+        // A submitted review is human involvement: the bot-only counter starts again (design 5).
+        run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
         await db.SaveChangesAsync(ct);
         await PublishAsync(runId, ct);
+        executor.Wake();
         return new ReviewItemsDto<ReviewFindingDto>(ids.Select(id => ToDto(findings[id])).ToList());
     }
 
@@ -519,7 +628,8 @@ public sealed class ReviewService(
         gate.SteerPrompt = steer;
         if (gate.NodeId is not null)
         {
-            foreach (var waiting in run.Nodes.Where(n => n.NodeId == gate.NodeId && n.Status is ReviewNodeStatus.Waiting or ReviewNodeStatus.Running))
+            foreach (var waiting in run.Nodes.Where(n => n.NodeId == gate.NodeId && n.Iteration == gate.Iteration
+                         && n.Status is ReviewNodeStatus.Waiting or ReviewNodeStatus.Running))
             {
                 waiting.Status = ReviewNodeStatus.Succeeded;
                 waiting.Outcome = DecisionLabel(request.Decision);
@@ -528,8 +638,17 @@ public sealed class ReviewService(
             }
         }
 
+        // A gate decision is human involvement: the bot-only counter starts again (design 5).
+        run.BotOnlyRounds = 0;
+        var walked = run.Iterations.Any(i => i.HeadSha != null);
         switch (request.Decision)
         {
+            case ReviewGateDecision.Approve when walked:
+                // The executor follows the gate's approve edge: the approval status, then base-moved.
+                run.Status = ReviewRunStatus.Queued;
+                run.Stage = ReviewStage.Approval;
+                run.WaitingOn = ReviewWaitingOn.Bot;
+                break;
             case ReviewGateDecision.Approve:
                 run.Status = ReviewRunStatus.Approved;
                 run.Stage = ReviewStage.Approval;
@@ -553,7 +672,7 @@ public sealed class ReviewService(
                     Trigger = "another-round",
                     StartedAt = now,
                 });
-                db.ReviewNodeExecutions.Add(PendingIntake(run.Id, iteration));
+                db.ReviewNodeExecutions.Add(PendingIntake(run.Id, iteration, NextSequence(run)));
                 break;
             case ReviewGateDecision.Close:
                 run.Status = ReviewRunStatus.Closed;
@@ -565,7 +684,7 @@ public sealed class ReviewService(
         run.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
-        if (request.Decision == ReviewGateDecision.AnotherRound)
+        if (request.Decision == ReviewGateDecision.AnotherRound || (walked && request.Decision == ReviewGateDecision.Approve))
             executor.Wake();
         return await GetRunAsync(run.Id, ct);
     }
@@ -778,12 +897,13 @@ public sealed class ReviewService(
         f.Events.OrderBy(e => e.CreatedAt).Select(e => new FindingEventDto(e.Id, e.Action, e.ActorLogin, e.ActorDisplayName,
             e.ReasonCategory, e.Scope, e.Text, e.SyncState, e.CreatedAt)).ToList());
 
-    private static ReviewNodeExecution PendingIntake(Guid runId, int iteration) => new()
+    private static ReviewNodeExecution PendingIntake(Guid runId, int iteration, int sequence) => new()
     {
         Id = Guid.NewGuid(),
         RunId = runId,
         NodeId = "intake",
         Iteration = iteration,
+        Sequence = sequence,
         Kind = ReviewNodeKind.Code,
         Status = ReviewNodeStatus.Pending,
     };

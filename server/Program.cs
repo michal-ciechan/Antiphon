@@ -1009,6 +1009,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<CodeHostRouter>();
     builder.Services.AddScoped<ReviewIntake>();
     builder.Services.AddScoped<Antiphon.Server.Application.Review.Checks.ReviewCheckCatalogue>();
+    builder.Services.AddScoped<ReviewFindingSync>();
     builder.Services.AddSingleton<ReviewExecutorSignal>();
     builder.Services.AddHostedService<ReviewWorkflowExecutor>();
     builder.Services.AddHttpClient<GitHubIssuesTracker>();

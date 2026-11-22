@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review.Decisions;
+using Antiphon.Server.Application.Review.Execution;
 using Antiphon.Server.Application.Review.Workflows;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -14,10 +15,19 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Review;
 
 /// <summary>
-/// The minimal workflow executor (design 3.4): a hosted service, not Hangfire, that walks a run's
-/// workflow snapshot from intake, one node execution at a time, and publishes <c>ReviewRunChanged</c>
-/// on every transition. It runs intake (for an another-round iteration still waiting for it), delta
-/// and categorise, then stops before <see cref="StopBeforeNode"/>.
+/// The workflow executor (design 3.4): a hosted service, not Hangfire, that walks a run's workflow
+/// snapshot node by node from intake to merge, and publishes <c>ReviewRunChanged</c> on every
+/// transition. Each node is a step keyed by its yaml <c>run</c> name; gates, waits and fan-outs are
+/// handled by kind.
+/// <para>
+/// The walk follows the latest top-level execution of the run's current iteration (by
+/// <see cref="ReviewNodeExecution.Sequence"/>): a Pending or Running one is run, a Succeeded or
+/// Skipped one is followed along the edge labelled with its outcome (else its unlabelled edge), and
+/// a Waiting gate or wait has parked the run. A gate decision (the decision API) or an event
+/// (Refresh: push, base-moved, merge, close) completes the parked execution with the decision or
+/// event as its outcome and queues the run again. An edge back to the entry node starts a new
+/// iteration; an edge with <c>maxIterations</c> opens its overflow gate past the limit (D-2).
+/// </para>
 /// <para>
 /// Lease: a run is claimed by one conditional UPDATE that moves it from Queued to Running, or takes
 /// over a Running run not updated for <c>Review:Executor:LeaseSeconds</c>, so two servers on one
@@ -26,7 +36,8 @@ namespace Antiphon.Server.Application.Review;
 /// </para>
 /// <para>
 /// A failure is loud: the node is marked Failed with the reason as its summary and the run becomes
-/// Failed. Nothing is defaulted. Refresh retries a failed run.
+/// Failed. Nothing is defaulted. Refresh retries a failed run. Each pass also syncs pending finding
+/// responses to the code host (<see cref="ReviewFindingSync"/>).
 /// </para>
 /// </summary>
 public sealed class ReviewWorkflowExecutor(
@@ -36,17 +47,34 @@ public sealed class ReviewWorkflowExecutor(
     TimeProvider time,
     ILogger<ReviewWorkflowExecutor> logger) : BackgroundService
 {
-    /// <summary>
-    /// Where the walk stops in this slice. The run is left at stage Select, status Running, with a
-    /// Pending execution of this node that says so; a later executor resumes from it. Move this as
-    /// the next nodes are implemented.
-    /// </summary>
-    public const string StopBeforeNode = "select";
-
-    public const string StopSummary = "executor stops here in this slice";
-
     private const int MaxRunsPerPass = 20;
-    private const int MaxStepsPerWalk = 32;
+    private const int MaxStepsPerWalk = 64;
+
+    private delegate Task<NodeResult> Step(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct);
+
+    /// <summary>The code and decision steps by yaml <c>run</c> name (design 3.3).</summary>
+    private static readonly IReadOnlyDictionary<string, Step> Steps = new Dictionary<string, Step>(StringComparer.Ordinal)
+    {
+        ["Intake"] = ReviewIntakeSteps.IntakeAsync,
+        ["Delta"] = ReviewIntakeSteps.DeltaAsync,
+        ["Categorise"] = ReviewIntakeSteps.CategoriseAsync,
+        ["SelectChecks"] = ReviewSelectionSteps.SelectChecksAsync,
+        ["GroupChecks"] = ReviewSelectionSteps.GroupChecksAsync,
+        ["BuildPacks"] = ReviewSelectionSteps.BuildPacksAsync,
+        ["CollateFindings"] = ReviewReviewSteps.CollateAsync,
+        ["VerifyFindings"] = ReviewReviewSteps.VerifyAsync,
+        ["Publish"] = ReviewReviewSteps.PublishAsync,
+        ["RouteAfterRound"] = ReviewDecideSteps.RouteAsync,
+        ["NeedsHumanApproval"] = ReviewDecideSteps.NeedsHumanApprovalAsync,
+        ["BotApprove"] = ReviewDecideSteps.BotApproveAsync,
+        ["RecordBaseDrift"] = ReviewDecideSteps.RecordBaseDriftAsync,
+        ["CheckBaseMoved"] = ReviewBranchSteps.CheckBaseMovedAsync,
+        ["BaseDriftCheck"] = ReviewBranchSteps.BaseDriftAsync,
+        ["UpdateBranch"] = ReviewBranchSteps.UpdateBranchAsync,
+    };
+
+    /// <summary>The steps this executor implements, for diagnostics and tests.</summary>
+    public static IReadOnlyCollection<string> StepNames => Steps.Keys.ToList();
 
     private TimeSpan Lease => TimeSpan.FromSeconds(Math.Max(30, options.Value.LeaseSeconds));
 
@@ -85,7 +113,7 @@ public sealed class ReviewWorkflowExecutor(
         }
     }
 
-    /// <summary>One pass: claims and walks every run with work, oldest update first. Returns the runs walked.</summary>
+    /// <summary>One pass: claims and walks every run with work, oldest update first, then syncs responses. Returns the runs walked.</summary>
     public async Task<int> RunPendingAsync(CancellationToken ct)
     {
         List<Guid> candidates;
@@ -126,6 +154,16 @@ public sealed class ReviewWorkflowExecutor(
             walked++;
         }
 
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<ReviewFindingSync>().SyncAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Review finding sync failed; the next pass retries.");
+        }
+
         return walked;
     }
 
@@ -155,10 +193,9 @@ public sealed class ReviewWorkflowExecutor(
         }
     }
 
-    /// <summary>Runs at intake or categorise that are queued, or running under a lapsed lease.</summary>
+    /// <summary>Runs that are queued, or running under a lapsed lease. Parked and finished runs wait for an event.</summary>
     private static IQueryable<ReviewRun> Claimable(IQueryable<ReviewRun> runs, DateTime staleBefore) =>
-        runs.Where(r => (r.Stage == ReviewStage.Intake || r.Stage == ReviewStage.Categorise)
-            && (r.Status == ReviewRunStatus.Queued || (r.Status == ReviewRunStatus.Running && r.UpdatedAt < staleBefore)));
+        runs.Where(r => r.Status == ReviewRunStatus.Queued || (r.Status == ReviewRunStatus.Running && r.UpdatedAt < staleBefore));
 
     private async Task WalkAsync(IServiceProvider services, Guid runId, CancellationToken ct)
     {
@@ -168,55 +205,67 @@ public sealed class ReviewWorkflowExecutor(
         var iteration = run.Iterations.MaxBy(i => i.Iteration)
             ?? throw new InvalidOperationException($"Review run {runId} has no iteration.");
         var workflow = await WorkflowAsync(services, db, run, ct);
-        var walk = new Walk(services, db, run, iteration, workflow);
+        var walk = new ReviewWalk(services, db, run, iteration, workflow, time);
 
-        var nodeId = workflow.Nodes.FirstOrDefault(n => n.Run == "Intake")?.Id ?? workflow.Nodes[0].Id;
         for (var step = 0; step < MaxStepsPerWalk; step++)
         {
             if (await SupersededAsync(walk, ct))
                 return;
-            if (nodeId == StopBeforeNode)
+
+            var frontier = walk.Frontier();
+            if (frontier is null)
             {
-                await ParkAsync(walk, ct);
-                return;
+                var entry = workflow.Node(walk.EntryNodeId)!;
+                walk.NewExecution(entry.Id, entry.Kind);
+                continue;
             }
 
-            var node = workflow.Node(nodeId)
-                ?? throw new InvalidOperationException($"Workflow '{workflow.Name}' has no node '{nodeId}'.");
-            if (walk.Execution(nodeId) is not { Status: ReviewNodeStatus.Succeeded } && !await StepAsync(walk, node, ct))
-                return;
-            nodeId = Next(workflow, nodeId);
+            var node = workflow.Node(frontier.NodeId)
+                ?? throw new InvalidOperationException($"Workflow '{workflow.Name}' has no node '{frontier.NodeId}'.");
+            switch (frontier.Status)
+            {
+                case ReviewNodeStatus.Pending:
+                case ReviewNodeStatus.Running:
+                case ReviewNodeStatus.Waiting when node.Kind == ReviewNodeKind.FanOut:
+                    if (!await StepAsync(walk, node, frontier, ct))
+                        return;
+                    break;
+                case ReviewNodeStatus.Waiting:
+                    await ParkAgainAsync(walk, node, ct);
+                    return;
+                case ReviewNodeStatus.Succeeded:
+                case ReviewNodeStatus.Skipped:
+                    if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == "approve")
+                        await ReviewDecideSteps.ApplyGateApprovalAsync(walk, frontier, ct);
+                    if (!await FollowAsync(walk, node, frontier, ct))
+                        return;
+                    break;
+                default:
+                    walk.Run.Status = ReviewRunStatus.Failed;
+                    walk.Run.WaitingOn = null;
+                    walk.Run.UpdatedAt = Now();
+                    await SaveAndPublishAsync(walk, ct);
+                    return;
+            }
         }
 
-        throw new InvalidOperationException($"Review run {runId} did not reach '{StopBeforeNode}' within {MaxStepsPerWalk} steps.");
+        throw new InvalidOperationException($"Review run {runId} did not park within {MaxStepsPerWalk} steps.");
     }
 
-    /// <summary>Runs one node. False when it failed (the run is then Failed) or the iteration was superseded.</summary>
-    private async Task<bool> StepAsync(Walk walk, WorkflowNode node, CancellationToken ct)
+    /// <summary>Runs one node. False when the walk stops: the node failed, parked the run, or is polling.</summary>
+    private async Task<bool> StepAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var execution = walk.Execution(node.Id);
-        if (execution is null)
-        {
-            execution = new ReviewNodeExecution
-            {
-                Id = Guid.NewGuid(),
-                RunId = walk.Run.Id,
-                NodeId = node.Id,
-                Iteration = walk.Iteration.Iteration,
-                Kind = node.Kind,
-            };
-            // Added through the context: a client-set Guid key found only through the navigation is
-            // treated as an existing row (see ReviewService.Apply).
-            walk.Db.ReviewNodeExecutions.Add(execution);
-        }
-
         var now = Now();
         execution.Kind = node.Kind;
+        if (execution.Status != ReviewNodeStatus.Waiting)
+        {
+            execution.StartedAt = now;
+            execution.CompletedAt = null;
+            execution.Outcome = null;
+            execution.Summary = null;
+        }
+
         execution.Status = ReviewNodeStatus.Running;
-        execution.StartedAt = now;
-        execution.CompletedAt = null;
-        execution.Outcome = null;
-        execution.Summary = null;
         walk.Run.Status = ReviewRunStatus.Running;
         walk.Run.Stage = StageOf(node, walk.Run.Stage);
         walk.Run.WaitingOn = ReviewWaitingOn.Bot;
@@ -226,13 +275,7 @@ public sealed class ReviewWorkflowExecutor(
         NodeResult result;
         try
         {
-            result = node.Run switch
-            {
-                "Intake" => await IntakeAsync(walk, execution, ct),
-                "Delta" => await DeltaAsync(walk, ct),
-                "Categorise" => await CategoriseAsync(walk, node, ct),
-                _ => NodeResult.Fail($"The executor has no step for '{node.Run ?? node.Id}' in this slice."),
-            };
+            result = await RunNodeAsync(walk, node, execution, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -241,7 +284,7 @@ public sealed class ReviewWorkflowExecutor(
         }
         catch (Exception ex)
         {
-            if (ex is not (CodeHostException or DecisionChainException))
+            if (ex is not (CodeHostException or DecisionChainException or ReviewAgentRunnerException))
                 logger.LogError(ex, "Review run {RunId} node {NodeId} threw", walk.Run.Id, node.Id);
             result = NodeResult.Fail(ex is CodeHostException ? $"Code host: {ex.Message}" : ex.Message);
         }
@@ -250,10 +293,10 @@ public sealed class ReviewWorkflowExecutor(
             return false;
 
         now = Now();
-        execution.Status = result.FailureReason is null ? ReviewNodeStatus.Succeeded : ReviewNodeStatus.Failed;
         execution.Outcome = result.Outcome;
-        execution.Summary = result.FailureReason ?? result.Summary;
-        execution.CompletedAt = now;
+        execution.Summary = result.Summary;
+        if (result.Output is not null)
+            execution.OutputJson = ReviewWalk.ToJson(result.Output);
         if (result.Usage is { } usage)
         {
             execution.Provider = usage.Provider;
@@ -267,113 +310,178 @@ public sealed class ReviewWorkflowExecutor(
         }
 
         walk.Run.UpdatedAt = now;
-        if (result.FailureReason is { } reason)
+        var proceed = false;
+        switch (result.Kind)
         {
-            walk.Run.Status = ReviewRunStatus.Failed;
-            walk.Run.WaitingOn = null;
-            logger.LogWarning("Review run {RunId} failed at {NodeId}: {Reason}", walk.Run.Id, node.Id, reason);
+            case NodeResultKind.Succeeded:
+            case NodeResultKind.Skipped:
+                execution.Status = result.Kind == NodeResultKind.Succeeded ? ReviewNodeStatus.Succeeded : ReviewNodeStatus.Skipped;
+                execution.CompletedAt = now;
+                if (walk.Run.Status is not (ReviewRunStatus.Running or ReviewRunStatus.Approved))
+                    walk.Run.Status = ReviewRunStatus.Running;
+                proceed = true;
+                break;
+            case NodeResultKind.Waiting:
+                execution.Status = ReviewNodeStatus.Waiting;
+                Park(walk.Run, result.Park!);
+                break;
+            case NodeResultKind.Polling:
+                execution.Status = ReviewNodeStatus.Waiting;
+                walk.Run.Status = ReviewRunStatus.Queued;
+                walk.Run.WaitingOn = ReviewWaitingOn.Bot;
+                break;
+            default:
+                execution.Status = ReviewNodeStatus.Failed;
+                execution.CompletedAt = now;
+                walk.Run.Status = ReviewRunStatus.Failed;
+                walk.Run.WaitingOn = null;
+                logger.LogWarning("Review run {RunId} failed at {NodeId}: {Reason}", walk.Run.Id, node.Id, result.Summary);
+                break;
         }
 
         await SaveAndPublishAsync(walk, ct);
-        return result.FailureReason is null;
+        return proceed;
     }
 
-    /// <summary>An another-round iteration's intake: re-reads the PR and pins its SHAs.</summary>
-    private static async Task<NodeResult> IntakeAsync(Walk walk, ReviewNodeExecution execution, CancellationToken ct)
-    {
-        var snapshot = await walk.Services.GetRequiredService<ReviewIntake>().ReadAsync(walk.Run.Subject, ct);
-        if (walk.Run.Subject.Host == ReviewHost.GitHub && snapshot.PullRequest.Title.Length > 0)
-            walk.Run.Subject.Title = snapshot.PullRequest.Title;
-        ReviewIntake.Apply(walk.Run.Subject, walk.Iteration, execution, snapshot, execution.StartedAt ?? DateTime.UtcNow);
-        return new NodeResult(null, execution.Summary ?? "");
-    }
+    private static Task<NodeResult> RunNodeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct) =>
+        node.Kind switch
+        {
+            ReviewNodeKind.Gate => ReviewDecideSteps.GateAsync(walk, node, execution, ct),
+            ReviewNodeKind.Wait => ReviewDecideSteps.WaitAsync(walk, node, execution, ct),
+            ReviewNodeKind.FanOut => ReviewReviewSteps.FanOutAsync(walk, node, execution, ct),
+            _ when node.Run is { } name && Steps.TryGetValue(name, out var step) => step(walk, node, execution, ct),
+            _ => Task.FromResult(NodeResult.Fail($"The executor has no step for '{node.Run ?? node.Id}' ({node.Kind}).")),
+        };
 
-    private static async Task<NodeResult> DeltaAsync(Walk walk, CancellationToken ct)
+    /// <summary>
+    /// Follows the edge for the execution's outcome. A back edge into the entry node starts the next
+    /// iteration; over an edge's <c>maxIterations</c> the overflow gate opens instead. False when the
+    /// walk ends here (no edge: the run fails, or a merge or close event finishes it).
+    /// </summary>
+    private async Task<bool> FollowAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var scope = await walk.ScopeAsync(ct);
-        return new NodeResult(scope.Range.IsIncremental ? "incremental" : "full", ReviewIntake.Summary(scope.Files, scope.Description, scope.Note));
+        var edges = walk.Workflow.Edges.Where(e => e.From == node.Id).ToList();
+        var outcome = execution.Outcome;
+        var edge = (outcome is null ? null : edges.FirstOrDefault(e => e.Labels.Contains(outcome, StringComparer.Ordinal)))
+            ?? edges.FirstOrDefault(e => e.Labels.Count == 0);
+        if (edge is null)
+        {
+            if (outcome is "merge" or "close")
+            {
+                Finish(walk.Run, outcome == "merge" ? ReviewRunStatus.Merged : ReviewRunStatus.Closed, Now());
+                await SaveAndPublishAsync(walk, ct);
+                return false;
+            }
+
+            execution.Status = ReviewNodeStatus.Failed;
+            execution.Summary = $"{execution.Summary}\nNo edge leaves '{node.Id}' for outcome '{outcome ?? "(none)"}'.".Trim();
+            walk.Run.Status = ReviewRunStatus.Failed;
+            walk.Run.WaitingOn = null;
+            walk.Run.UpdatedAt = Now();
+            await SaveAndPublishAsync(walk, ct);
+            return false;
+        }
+
+        var target = edge.To;
+        string? overflowReason = null;
+        if (edge.MaxIterations is { } max)
+        {
+            var traversals = walk.Run.Nodes.Count(n => n.NodeId == node.Id && n.ItemKey == null && n.Status == ReviewNodeStatus.Succeeded
+                && (edge.Labels.Count == 0 || (n.Outcome is not null && edge.Labels.Contains(n.Outcome))));
+            if (traversals > max)
+            {
+                target = edge.Overflow ?? throw new InvalidOperationException($"Edge {edge.From} -> {edge.To} has no overflow gate.");
+                overflowReason = $"{edge.From} -> {edge.To} passed its limit of {max} iterations (D-2)";
+            }
+        }
+
+        if (target == walk.EntryNodeId)
+        {
+            StartIteration(walk, node, outcome);
+        }
+        else
+        {
+            var next = walk.Workflow.Node(target) ?? throw new InvalidOperationException($"Workflow '{walk.Workflow.Name}' has no node '{target}'.");
+            var created = walk.NewExecution(next.Id, next.Kind);
+            if (overflowReason is not null)
+                created.OutputJson = ReviewWalk.ToJson(new GateOutput(Guid.Empty, [overflowReason]));
+        }
+
+        walk.Run.UpdatedAt = Now();
+        await SaveAndPublishAsync(walk, ct);
+        return true;
     }
 
     /// <summary>
-    /// One batched decision call (design 4.3). Later iterations only raise the blast radius and add
-    /// categories: a small follow-up push does not shrink what the PR as a whole can break.
+    /// A back edge into intake: the next iteration (design 3.2). A push or another round is the next
+    /// round; a recheck or an affected base drift re-reviews in the same round.
     /// </summary>
-    private static async Task<NodeResult> CategoriseAsync(Walk walk, WorkflowNode node, CancellationToken ct)
+    private void StartIteration(ReviewWalk walk, WorkflowNode from, string? outcome)
     {
-        var scope = await walk.ScopeAsync(ct);
-        var host = scope.Binding.Host;
-        var pr = await host.GetPullRequestAsync(scope.Binding.Target, ct);
-        string? diff = null;
-        string? diffNote = null;
-        try
-        {
-            diff = await host.GetDiffAsync(scope.Binding.Target, scope.Range, ct);
-        }
-        catch (CodeHostException ex) when (ex.Kind == CodeHostFailureKind.TooLarge)
-        {
-            diffNote = "The code host will not render this diff (too large); judge from the file list.";
-        }
-
-        var state = ReviewCategorisation.BuildState(walk.Run.Subject.Title, pr.Description, scope.Description, scope.Files, diff, diffNote);
-        var chain = node.StringParam("chain") is { Length: > 0 } named ? named : ReviewCategorisation.DefaultChain;
-        var decided = await walk.Services.GetRequiredService<DecisionChain>()
-            .DecideAsync(chain, new DecisionRequest(state, ReviewCategorisation.Questions), ct);
-        var usage = NodeUsage.From(decided);
-        var outcome = ReviewCategorisation.Read(decided.Answers, out var unanswered);
-        if (outcome is null)
-            return NodeResult.Fail($"Chain '{chain}' gave no answer for {string.Join(", ", unanswered)} (refused by every entry).", usage);
-
         var run = walk.Run;
-        run.BlastReach = Raise(run.BlastReach, outcome.Reach);
-        run.BlastExternalContract = Raise(run.BlastExternalContract, outcome.ExternalContract);
-        run.BlastData = Raise(run.BlastData, outcome.Data);
-        run.BlastRollbackAtRelease = Raise(run.BlastRollbackAtRelease, outcome.RollbackAtRelease);
-        run.BlastReversalAfterMonths = Raise(run.BlastReversalAfterMonths, outcome.ReversalAfterMonths);
-        run.BlastExposure = Raise(run.BlastExposure, outcome.Exposure);
-        run.Categories = run.Categories.Union(outcome.Categories, StringComparer.Ordinal).ToList();
-        var others = decided.Calls.Where(c => c.Outcome == "ok" && c.Provider != usage.Provider).Select(c => c.Provider).Distinct().ToList();
-        var summary = ReviewCategorisation.Describe(outcome) + (others.Count > 0 ? $"; escalated to {string.Join(", ", others)}" : "");
-        return new NodeResult(outcome.ChangeKind, summary, usage);
+        var trigger = (from.Id, outcome) switch
+        {
+            (_, "push") => "push",
+            (_, "recheck") => "recheck",
+            (_, "another-round") => "another-round",
+            ("base-drift", "affected") => "base-moved",
+            _ => outcome ?? "manual",
+        };
+        if (trigger is "push" or "another-round")
+            run.Round += 1;
+        if (trigger == "another-round")
+            run.BotOnlyRounds = 0;
+        var number = Math.Max(run.Nodes.Select(n => n.Iteration).DefaultIfEmpty(0).Max(), run.Iterations.Select(i => i.Iteration).DefaultIfEmpty(0).Max()) + 1;
+        var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = number, Round = run.Round, Trigger = trigger, StartedAt = Now() };
+        walk.Db.ReviewIterations.Add(iteration);
+        if (!run.Iterations.Contains(iteration))
+            run.Iterations.Add(iteration);
+        walk.MoveTo(iteration);
+        var entry = walk.Workflow.Node(walk.EntryNodeId)!;
+        walk.NewExecution(entry.Id, entry.Kind);
+        run.Status = ReviewRunStatus.Running;
+        run.Stage = ReviewStage.Intake;
+        run.WaitingOn = ReviewWaitingOn.Bot;
     }
 
-    private static int Raise(int? current, int value) => current is { } c ? Math.Max(c, value) : value;
-
-    /// <summary>The stop point: a Pending execution of <see cref="StopBeforeNode"/>, stage Select, status Running.</summary>
-    private async Task ParkAsync(Walk walk, CancellationToken ct)
+    /// <summary>A queued run whose frontier is still a parked gate or wait (no event yet): parks it again.</summary>
+    private async Task ParkAgainAsync(ReviewWalk walk, WorkflowNode node, CancellationToken ct)
     {
-        var execution = walk.Execution(StopBeforeNode);
-        if (execution is null)
-        {
-            execution = new ReviewNodeExecution
-            {
-                Id = Guid.NewGuid(),
-                RunId = walk.Run.Id,
-                NodeId = StopBeforeNode,
-                Iteration = walk.Iteration.Iteration,
-                Kind = walk.Workflow.Node(StopBeforeNode)?.Kind ?? ReviewNodeKind.Decision,
-            };
-            walk.Db.ReviewNodeExecutions.Add(execution);
-        }
-
-        execution.Status = ReviewNodeStatus.Pending;
-        execution.Summary = StopSummary;
-        walk.Run.Status = ReviewRunStatus.Running;
-        walk.Run.Stage = ReviewStage.Select;
-        walk.Run.WaitingOn = ReviewWaitingOn.Bot;
+        Park(walk.Run, node.Kind == ReviewNodeKind.Gate
+            ? new ParkState(ReviewRunStatus.AtGate, ReviewStage.HumanGate, ReviewWaitingOn.Humans)
+            : node.ListParam("on").Contains("merge")
+                ? new ParkState(ReviewRunStatus.AwaitingMerge, ReviewStage.BranchMaintenance, ReviewWaitingOn.Author)
+                : new ParkState(ReviewRunStatus.AwaitingFixes, ReviewStage.AwaitingFixes, ReviewWaitingOn.Author));
         walk.Run.UpdatedAt = Now();
         await SaveAndPublishAsync(walk, ct);
+    }
+
+    private static void Park(ReviewRun run, ParkState park)
+    {
+        run.Status = park.Status;
+        run.Stage = park.Stage;
+        run.WaitingOn = park.WaitingOn;
+    }
+
+    /// <summary>The run ended on the code host: Merged or Closed, stage Done.</summary>
+    public static void Finish(ReviewRun run, ReviewRunStatus status, DateTime now)
+    {
+        run.Status = status;
+        run.Stage = ReviewStage.Done;
+        run.WaitingOn = null;
+        run.UpdatedAt = now;
     }
 
     /// <summary>
     /// True when the run moved on under this walk: a newer iteration (a Refresh saw a push) or a
     /// status this executor did not set. The running node is marked Skipped and the walk ends.
     /// </summary>
-    private async Task<bool> SupersededAsync(Walk walk, CancellationToken ct)
+    private async Task<bool> SupersededAsync(ReviewWalk walk, CancellationToken ct)
     {
         var current = await walk.Db.ReviewRuns.AsNoTracking().Where(r => r.Id == walk.Run.Id)
             .Select(r => new { r.Status, Latest = r.Iterations.Max(i => i.Iteration) })
             .SingleAsync(ct);
-        if (current.Latest <= walk.Iteration.Iteration && current.Status == ReviewRunStatus.Running)
+        if (current.Latest <= walk.Iteration.Iteration && current.Status is ReviewRunStatus.Running or ReviewRunStatus.Approved)
             return false;
 
         var running = walk.Run.Nodes.Where(n => n.Iteration == walk.Iteration.Iteration && n.Status == ReviewNodeStatus.Running).ToList();
@@ -388,9 +496,15 @@ public sealed class ReviewWorkflowExecutor(
                     : $"stopped: the run is {current.Status}";
             }
 
-            // Only the executions are saved: the run row now belongs to whoever moved it on.
-            foreach (var entry in walk.Db.ChangeTracker.Entries<ReviewRun>())
-                entry.State = EntityState.Unchanged;
+            // Only the executions are saved: the run row and the rest now belong to whoever moved it on.
+            foreach (var entry in walk.Db.ChangeTracker.Entries().Where(e => e.Entity is not ReviewNodeExecution))
+            {
+                if (entry.State == EntityState.Modified)
+                    entry.State = EntityState.Unchanged;
+                else if (entry.State == EntityState.Added)
+                    entry.State = EntityState.Detached;
+            }
+
             await walk.Db.SaveChangesAsync(ct);
             await PublishAsync(walk, ct);
         }
@@ -399,7 +513,7 @@ public sealed class ReviewWorkflowExecutor(
     }
 
     /// <summary>On shutdown, hands the node and run back (Pending, Queued) so the next start resumes at once.</summary>
-    private async Task ReleaseAsync(Walk walk, ReviewNodeExecution execution)
+    private async Task ReleaseAsync(ReviewWalk walk, ReviewNodeExecution execution)
     {
         try
         {
@@ -423,109 +537,31 @@ public sealed class ReviewWorkflowExecutor(
         return services.GetRequiredService<ReviewWorkflowService>().Default;
     }
 
-    /// <summary>The node after <paramref name="nodeId"/> on its unlabelled edge (the straight path of design 3.3).</summary>
-    private static string Next(WorkflowDefinition workflow, string nodeId) =>
-        workflow.Edges.FirstOrDefault(e => e.From == nodeId && e.Labels.Count == 0)?.To
-        ?? throw new InvalidOperationException($"Node '{nodeId}' of workflow '{workflow.Name}' has no unlabelled outgoing edge.");
-
-    private static ReviewStage StageOf(WorkflowNode node, ReviewStage current) => node.Run switch
+    private static ReviewStage StageOf(WorkflowNode node, ReviewStage current) => (node.Kind, node.Run) switch
     {
-        "Intake" or "Delta" => ReviewStage.Intake,
-        "Categorise" => ReviewStage.Categorise,
-        "SelectChecks" or "GroupChecks" or "BuildPacks" => ReviewStage.Select,
+        (_, "Intake" or "Delta") => ReviewStage.Intake,
+        (_, "Categorise") => ReviewStage.Categorise,
+        (_, "SelectChecks" or "GroupChecks" or "BuildPacks") => ReviewStage.Select,
+        (ReviewNodeKind.FanOut or ReviewNodeKind.Agent, _) => ReviewStage.Review,
+        (_, "CollateFindings") => ReviewStage.Collate,
+        (_, "VerifyFindings") => ReviewStage.Verify,
+        (_, "Publish" or "RouteAfterRound") => ReviewStage.Publish,
+        (_, "NeedsHumanApproval" or "BotApprove") => ReviewStage.Approval,
+        (ReviewNodeKind.Gate, _) => ReviewStage.HumanGate,
+        (_, "RecordBaseDrift") => ReviewStage.AwaitingFixes,
+        (_, "CheckBaseMoved" or "BaseDriftCheck" or "UpdateBranch") => ReviewStage.BranchMaintenance,
         _ => current,
     };
 
-    private static async Task SaveAndPublishAsync(Walk walk, CancellationToken ct)
+    private static async Task SaveAndPublishAsync(ReviewWalk walk, CancellationToken ct)
     {
         await walk.Db.SaveChangesAsync(ct);
         await PublishAsync(walk, ct);
     }
 
-    private static Task PublishAsync(Walk walk, CancellationToken ct) =>
+    private static Task PublishAsync(ReviewWalk walk, CancellationToken ct) =>
         walk.Services.GetRequiredService<IEventBus>()
             .PublishToAllAsync(ReviewService.RunChangedEvent, new ReviewRunChangedEvent(walk.Run.Id), ct);
 
     private DateTime Now() => time.GetUtcNow().UtcDateTime;
-
-    /// <summary>A node's result: its outcome label and summary, or the reason it failed; and any model usage.</summary>
-    private sealed record NodeResult(string? Outcome, string Summary, NodeUsage? Usage = null, string? FailureReason = null)
-    {
-        public static NodeResult Fail(string reason, NodeUsage? usage = null) => new(null, "", usage, reason);
-    }
-
-    /// <summary>
-    /// What a decision node records: the first entry that answered (provider, resolved model,
-    /// transport, cost basis), and the tokens and cost of every call the chain made.
-    /// </summary>
-    private sealed record NodeUsage(string? Provider, string? Model, ReviewTransport? Transport, long InputTokens, long OutputTokens,
-        decimal CostUsd, string CostBasis)
-    {
-        public static NodeUsage From(DecisionChainResult result)
-        {
-            var first = result.Calls.FirstOrDefault(c => c.Outcome == "ok");
-            ReviewTransport? transport = first is not null && Enum.TryParse<ReviewTransport>(first.Transport, ignoreCase: true, out var parsed)
-                ? parsed
-                : null;
-            return new NodeUsage(first?.Provider, first?.ResolvedModel, transport, result.Calls.Sum(c => c.InputTokens),
-                result.Calls.Sum(c => c.OutputTokens), result.CostUsd, first?.CostBasis ?? "actual");
-        }
-    }
-
-    /// <summary>The change a walk reviews, from delta: the binding, the range, its files and how it was chosen.</summary>
-    private sealed record DeltaScope(CodeHostBinding Binding, CodeHostRange Range, IReadOnlyList<CodeHostChangedFile> Files, string Description,
-        string? Note);
-
-    /// <summary>One run's walk: its scope, context and tracked rows.</summary>
-    private sealed class Walk(IServiceProvider services, AppDbContext db, ReviewRun run, ReviewIteration iteration, WorkflowDefinition workflow)
-    {
-        private DeltaScope? _scope;
-
-        public IServiceProvider Services { get; } = services;
-        public AppDbContext Db { get; } = db;
-        public ReviewRun Run { get; } = run;
-        public ReviewIteration Iteration { get; } = iteration;
-        public WorkflowDefinition Workflow { get; } = workflow;
-
-        public ReviewNodeExecution? Execution(string nodeId) =>
-            Run.Nodes.FirstOrDefault(n => n.NodeId == nodeId && n.Iteration == Iteration.Iteration && n.ItemKey == null);
-
-        /// <summary>
-        /// Delta (design 4.2): the whole change on the first iteration, else the change since the last
-        /// iteration's pinned head. An unreachable earlier head (force push) or an unchanged head falls
-        /// back to the whole change and says so. Interdiffs by patch id, re-anchoring and the drift
-        /// check come later. Computed once per walk, again after a restart.
-        /// </summary>
-        public async Task<DeltaScope> ScopeAsync(CancellationToken ct)
-        {
-            if (_scope is not null)
-                return _scope;
-            var binding = Services.GetRequiredService<CodeHostRouter>().Resolve(Run.Subject);
-            var baseSha = Iteration.BaseSha ?? Run.Subject.BaseSha;
-            var headSha = Iteration.HeadSha ?? Run.Subject.HeadSha;
-            var since = Run.Iterations.Where(i => i.Iteration < Iteration.Iteration && i.HeadSha != null).MaxBy(i => i.Iteration)?.HeadSha;
-            string? note = null;
-            if (since is not null && !string.Equals(since, headSha, StringComparison.OrdinalIgnoreCase))
-            {
-                var incremental = new CodeHostRange(baseSha, headSha, since);
-                try
-                {
-                    var changed = await binding.Host.ListChangedFilesAsync(binding.Target, incremental, ct);
-                    return _scope = new DeltaScope(binding, incremental, changed, $"changes since {ReviewIntake.Short(since)}", null);
-                }
-                catch (CodeHostException ex) when (ex.Kind is CodeHostFailureKind.NotFound or CodeHostFailureKind.InvalidRequest)
-                {
-                    note = $"The last reviewed head {ReviewIntake.Short(since)} is not reachable; reviewing the whole change.";
-                }
-            }
-            else if (since is not null)
-            {
-                note = "The head has not moved since the last iteration; reviewing the whole change.";
-            }
-
-            var whole = new CodeHostRange(baseSha, headSha);
-            var files = await binding.Host.ListChangedFilesAsync(binding.Target, whole, ct);
-            return _scope = new DeltaScope(binding, whole, files, "full review", note);
-        }
-    }
 }
