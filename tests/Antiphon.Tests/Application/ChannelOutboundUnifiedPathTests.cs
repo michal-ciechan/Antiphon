@@ -29,10 +29,10 @@ public sealed class ChannelOutboundUnifiedPathTests
     public static Task DrainEveryWorldTeardownAsync() => World.DrainEveryTeardownAsync();
 
     [Test]
-    public async Task C519_Every_agent_shape_is_captured()
-    {
-        foreach (var profile in new[] { "none", "MarkdownSources", "EveryAgentReply" })
-        foreach (var kind in new[] { "main", "trailing", "machine" })
+    public Task C519_Every_agent_shape_is_captured() => EachConcurrentlyAsync(
+        from profile in new[] { "none", "MarkdownSources", "EveryAgentReply" }
+        from kind in new[] { "main", "trailing", "machine" }
+        select ($"profile={profile} kind={kind}", (Func<Task>)(async () =>
         {
             await using var w = await World.CreateAsync(profile: profile);
             var member = kind == "machine" ? await w.MachineAsync("original answer")
@@ -60,8 +60,7 @@ public sealed class ChannelOutboundUnifiedPathTests
                 await w.H.TickOutboundAsync();
                 w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("original answer");
             }
-        }
-    }
+        })));
 
     [Test]
     public async Task C519_Missing_catalog_preserves_direct_routing()
@@ -104,10 +103,10 @@ public sealed class ChannelOutboundUnifiedPathTests
     }
 
     [Test]
-    public async Task C519_Machine_origins_and_attachments_keep_policy()
-    {
-        foreach (var allowSystem in new[] { false, true })
-        foreach (var attachment in new[] { false, true })
+    public Task C519_Machine_origins_and_attachments_keep_policy() => EachConcurrentlyAsync(
+        (from allowSystem in new[] { false, true }
+         from attachment in new[] { false, true }
+         select ($"allowSystem={allowSystem} attachment={attachment}", (Func<Task>)(async () =>
         {
             await using var w = await World.CreateAsync(allowSystem);
             var path = Path.Combine(w.H.TempRoot, "workspace", "system.md");
@@ -128,7 +127,10 @@ public sealed class ChannelOutboundUnifiedPathTests
                 await w.MachineAsync("allowed Check companion"); await w.DispatchAsync(); await w.DrainAsync();
                 w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("allowed Check companion");
             }
-        }
+        }))).Append(("implied bundle", ImpliedBundleKeepsPolicyAsync)));
+
+    private static async Task ImpliedBundleKeepsPolicyAsync()
+    {
         // An implied Delegation bundle is eligible even with an empty text-origin policy.
         // Exact NO_REPLY still withholds that bundle until the same window gains real prose.
         await using var implied = await World.CreateAsync(attachmentsOnly: true);
@@ -153,10 +155,10 @@ public sealed class ChannelOutboundUnifiedPathTests
     }
 
     [Test]
-    public async Task C519_Api_error_withholds_the_whole_window()
-    {
-        foreach (var kind in new[] { "main", "trailing", "machine" })
-        foreach (var position in new[] { "before", "middle", "after" })
+    public Task C519_Api_error_withholds_the_whole_window() => EachConcurrentlyAsync(
+        from kind in new[] { "main", "trailing", "machine" }
+        from position in new[] { "before", "middle", "after" }
+        select ($"kind={kind} position={position}", (Func<Task>)(async () =>
         {
             await using var w = await World.CreateAsync();
             if (kind == "machine") await w.MachineAsync("otherwise valid prose");
@@ -180,6 +182,24 @@ public sealed class ChannelOutboundUnifiedPathTests
             await w.MainAsync("valid companion after the withheld window");
             await w.DispatchAsync(); await w.DrainAsync();
             w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("valid companion after the withheld window");
+        })));
+
+    // A test's cases run side by side. Each has its own world (cloned database, harness, temp root, service provider,
+    // messaging fake and settings), none starts a process, and the harness keeps no mutable static state, so a case
+    // sees exactly what it saw run alone; BridgeQueueHarness worlds already run concurrently across classes. Every
+    // case runs to its end, and every failure is reported, labelled with its case.
+    private static async Task EachConcurrentlyAsync(IEnumerable<(string Case, Func<Task> Run)> cases)
+    {
+        var started = cases.Select(c => (c.Case, Run: Task.Run(c.Run))).ToArray();
+        try { await Task.WhenAll(started.Select(c => c.Run)); }
+        catch
+        {
+            var failures = started.Where(c => c.Run.IsFaulted || c.Run.IsCanceled).Select(c => (Exception)new InvalidOperationException(
+                $"Case {c.Case} failed",
+                c.Run.Exception is { InnerExceptions.Count: 1 } one ? one.InnerException : (Exception?)c.Run.Exception ?? new TaskCanceledException(c.Run)))
+                .ToArray();
+            if (failures.Length == 1) throw failures[0];
+            throw new AggregateException($"{failures.Length} of {started.Length} cases failed", failures);
         }
     }
 
