@@ -37,3 +37,10 @@ Include this method in the short witness selection when changing the audit helpe
 `LiveLaneInventoryTests.EveryLiveGateHasDisposition` reported one unmapped gate after the Nightly S15 port (`75d96a8c7`). The scanner sees the `ANTIPHON_HEADED_TESTS` literal in `NightlyTestsRunTests.C487_G044`. The test supplies the value in a fixture environment and checks that the launcher clears it before starting the child. It runs without a headed opt-in, so the scanner hit is a false positive.
 The data-only repair adds the generator's `diagnostic` disposition to `tests/live-lanes.json`. Short verification for changes that introduce a recognized gate shape should run `EveryLiveGateHasDisposition` to catch catalog drift before Windows Full.
 Scanner changes from `65aae6b4` and `2920c586` are deferred. Follow-up scanner coverage needs to recognize a real lookup with the `target` named argument first and ignore environment lookup text printed as output.
+
+## Group 90 · C778 Grok ready-ordering deadline race
+
+Seeded Windows Full run `557cdb63` (rc/2026-12-03 at `ecc9bfaa5`) failed `GrokStartupReadyOrderingTests.Work_waits_for_ready_rules_ack_and_complete_prompt` with `Status = Failed`, rules `Pending`, `writes=0`. No product change was involved: the CARD-2047 readiness commits were already in the previous seed `39ac64c90`.
+The test calls `ReleaseReady()` only after it has seen two starting-screen snapshots and flushed the session queue. The scripted adapter's 1500 ms `GrokReadyMaxWaitMs` started counting at the first snapshot, so a slow DB flush on a loaded host let the deadline expire first. A 1.6 s pause before `ReleaseReady()` reproduces the exact message on Linux.
+Fast Linux hosts always finished within 1.5 s, which is why short runs never caught it. Repair `48c1f442d`: the happy path uses a 60 s deadline, so `ReleaseReady()` alone ends the wait and the 25 s test token bounds a hang. `Unready_launch_cleans_up_and_keeps_work_pending` still covers expiry with a 180 ms deadline.
+In a test, a product deadline should be shorter than a test-controlled gate only when expiry is what the test asserts.
