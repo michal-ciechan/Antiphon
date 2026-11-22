@@ -11,7 +11,8 @@ namespace Antiphon.GitInProcess;
 /// <item><c>ls-remote --refs --exit-code &lt;local path&gt; &lt;ref&gt;...</c>: the refs a local-path remote advertises
 /// (what <c>git-upload-pack</c> would list), tail-matched as ls-remote matches them. URL remotes stay with git
 /// (credential helpers, transports, proxies), as do glob patterns and remotes that hide refs.</item>
-/// <item><c>for-each-ref --format=…</c> with literal prefix patterns, sorted by name as git sorts them.</item>
+/// <item><c>for-each-ref --format=…</c> (refname and objectname in either order, refname alone, or refname, objectname
+/// and symref) with literal prefix patterns or none, sorted by name as git sorts them.</item>
 /// <item><c>diff-tree --no-commit-id --raw -r -z --no-abbrev --no-ext-diff --no-textconv --find-renames A B --</c>
 /// when no rename can be found (no path is both added and deleted), from a walk of the two trees.</item>
 /// <item><c>ls-tree -r -z [--full-tree] &lt;commit or tree oid&gt;</c>, from a walk of the tree.</item>
@@ -74,31 +75,61 @@ internal static partial class InProcessGitReads
 
     private static LandingGitResult? ForEachRef(Repository repo, IReadOnlyList<string> a)
     {
-        if (a.Count < 3) return null;
-        var nameFirst = a[1] == "--format=%(refname) %(objectname)";
-        if (!nameFirst && a[1] != "--format=%(objectname) %(refname)") return null;
+        if (a.Count < 2) return null;
+        var format = a[1] switch
+        {
+            "--format=%(refname) %(objectname)" => RefFormat.NameSha,
+            "--format=%(objectname) %(refname)" => RefFormat.ShaName,
+            "--format=%(refname)" => RefFormat.Name,
+            "--format=%(refname) %(objectname) %(symref)" => RefFormat.NameShaSymref,
+            _ => (RefFormat?)null,
+        };
+        if (format is not { } shape) return null;
+        // No pattern lists every ref under refs/.
         var patterns = a.Skip(2).ToList();
         if (patterns.Any(p => p.Length == 0 || p.StartsWith('-') || p.IndexOfAny(GlobCharacters) >= 0)) return null;
-        var lines = new List<(string Name, string Sha)>();
+        var lines = new List<(string Name, string Sha, string Symref)>();
         foreach (var reference in repo.Refs)
         {
             var name = reference.CanonicalName;
             if (!name.StartsWith("refs/", StringComparison.Ordinal)) continue;
             // A literal pattern matches the whole name or a prefix ending at a '/'.
-            if (!patterns.Any(p => name == p || name.StartsWith(p, StringComparison.Ordinal)
+            if (patterns.Count > 0 && !patterns.Any(p => name == p || name.StartsWith(p, StringComparison.Ordinal)
                     && (p.EndsWith('/') || name[p.Length] == '/'))) continue;
+            // git sorts bytes; ordinal UTF-16 order is the same only for ASCII names.
+            if (name.Any(c => c > 0x7f)) return null;
             // Per-worktree refs, and refs git skips as broken (a missing object, a dangling symref), are git's.
             if (name.StartsWith("refs/worktree/", StringComparison.Ordinal) || name.StartsWith("refs/bisect/", StringComparison.Ordinal)
                 || name.StartsWith("refs/rewritten/", StringComparison.Ordinal)) return null;
             if (reference.ResolveToDirectReference()?.TargetIdentifier is not { } sha || !GitText.IsOid(sha)
                 || !repo.ObjectDatabase.Contains(new ObjectId(sha))) return null;
-            lines.Add((name, sha));
+            // %(symref): a symbolic ref's own target, here only one that is itself a direct ref (no chain).
+            var symref = "";
+            if (reference is SymbolicReference symbolic)
+            {
+                if (shape == RefFormat.NameShaSymref && (!IsPlainRef(symbolic.TargetIdentifier)
+                        || repo.Refs[symbolic.TargetIdentifier] is not DirectReference))
+                    return null;
+                symref = symbolic.TargetIdentifier;
+            }
+            lines.Add((name, sha, symref));
         }
         var output = new StringBuilder();
-        foreach (var (name, sha) in lines.OrderBy(l => l.Name, StringComparer.Ordinal))
-            output.Append(nameFirst ? name : sha).Append(' ').Append(nameFirst ? sha : name).Append('\n');
+        foreach (var (name, sha, symref) in lines.OrderBy(l => l.Name, StringComparer.Ordinal))
+        {
+            switch (shape)
+            {
+                case RefFormat.NameSha: output.Append(name).Append(' ').Append(sha); break;
+                case RefFormat.ShaName: output.Append(sha).Append(' ').Append(name); break;
+                case RefFormat.Name: output.Append(name); break;
+                default: output.Append(name).Append(' ').Append(sha).Append(' ').Append(symref); break;
+            }
+            output.Append('\n');
+        }
         return Ok(output.ToString());
     }
+
+    private enum RefFormat { NameSha, ShaName, Name, NameShaSymref }
 
     private static LandingGitResult? DiffTree(Repository repo, IReadOnlyList<string> a)
     {

@@ -166,6 +166,36 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(fixture.Source, Expect.Answered, "rev-parse", "--absolute-git-dir");
     }
 
+    // for-each-ref's formats (with a pattern, a bare prefix, or none), a direct and a symbolic ref, a tag; a symref chain
+    // or a dangling symref is git's for %(symref).
+    [Test]
+    public async Task For_each_ref_formats_match_git()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", "refs/antiphon/salvage/direct", fixture.SeedSha);
+        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/sym", fixture.TargetRef);
+        await fixture.RequiredAsync(fixture.Repository, "tag", "-a", "annotated", "-m", "annotated", fixture.SeedSha);
+        string[] formats = ["--format=%(refname) %(objectname)", "--format=%(objectname) %(refname)", "--format=%(refname)",
+            "--format=%(refname) %(objectname) %(symref)"];
+        foreach (var cwd in new[] { fixture.Repository, fixture.Source })
+        foreach (var format in formats)
+        {
+            await CompareAsync(cwd, Expect.Answered, "for-each-ref", format);
+            await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/antiphon/salvage/");
+            await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/antiphon/salvage");
+            await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/heads/", "refs/tags/");
+            await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/antiphon/none/");
+        }
+        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/chain", "refs/antiphon/salvage/sym");
+        await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname) %(symref)",
+            "refs/antiphon/salvage/");
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", "-d", "--no-deref", "refs/antiphon/salvage/chain");
+        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/dangling", "refs/heads/no-such-branch");
+        foreach (var format in formats)
+            await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", format, "refs/antiphon/salvage/");
+    }
+
     [Test]
     public async Task Ancestry_matches_git_both_ways()
     {
