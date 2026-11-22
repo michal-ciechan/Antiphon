@@ -21,16 +21,13 @@ public static class GrokStartupCaptureStore
             ? Path.Combine(Path.GetTempPath(), "antiphon-grok-startup") : configured;
 
     public static string Write(string directory, int keep, Guid sessionId,
-        GrokStartupReason outcome, GrokStartupReason lastScreenReason,
-        GrokStartupSnapshot? frame, TimeSpan elapsed, int positiveObservations,
-        bool mcpSeen, bool signInSeen, DateTimeOffset utcNow, TimeSpan? workingCeiling = null)
+        GrokStartupFailure failure, DateTimeOffset utcNow)
     {
         Directory.CreateDirectory(directory);
         var timestamp = utcNow.UtcDateTime.ToString(NameTimeFormat, CultureInfo.InvariantCulture);
         var name = $"{NamePrefix}{timestamp}-{sessionId:N}-{Guid.NewGuid():N}.txt";
         var path = Path.Combine(directory, name);
-        var content = Format(sessionId, outcome, lastScreenReason, frame, elapsed,
-            positiveObservations, mcpSeen, signInSeen, utcNow, workingCeiling);
+        var content = Format(sessionId, failure, utcNow);
         lock (CaptureLock)
         {
             File.WriteAllText(path, content, new UTF8Encoding(false));
@@ -39,52 +36,78 @@ public static class GrokStartupCaptureStore
         return path;
     }
 
-    public static string Format(Guid sessionId, GrokStartupReason outcome,
-        GrokStartupReason lastScreenReason, GrokStartupSnapshot? frame,
-        TimeSpan elapsed, int positiveObservations, bool mcpSeen, bool signInSeen,
-        DateTimeOffset utcNow, TimeSpan? workingCeiling = null)
+    public static string Format(Guid sessionId, GrokStartupFailure failure, DateTimeOffset utcNow)
     {
         var sb = new StringBuilder();
+        var window = failure.Window;
+        var first = failure.FirstWindow;
         sb.Append("session: ").Append(sessionId).Append('\n');
         sb.Append("capturedAtUtc: ").Append(utcNow.UtcDateTime.ToString("O")).Append('\n');
-        sb.Append("outcome: ").Append(outcome).Append('\n');
-        sb.Append("lastScreenReason: ").Append(lastScreenReason).Append('\n');
-        sb.Append("elapsedMs: ").Append((long)elapsed.TotalMilliseconds).Append('\n');
-        if (workingCeiling is { } ceiling)
+        sb.Append("outcome: ").Append(failure.Outcome).Append('\n');
+        sb.Append("lastScreenReason: ").Append(window.LastReason).Append('\n');
+        sb.Append("elapsedMs: ").Append((long)failure.Elapsed.TotalMilliseconds).Append('\n');
+        if (failure.WorkingCeiling is { } ceiling)
             sb.Append("workingCeilingMs: ").Append((long)ceiling.TotalMilliseconds).Append('\n');
-        sb.Append("positiveObservations: ").Append(positiveObservations).Append('\n');
-        sb.Append("mcpSeen: ").Append(mcpSeen).Append('\n');
-        sb.Append("frameSequence: ").Append(frame?.Sequence.ToString() ?? "none").Append('\n');
-        sb.Append("frameAtUtc: ").Append(frame?.CapturedAt.ToUniversalTime().ToString("O") ?? "none").Append('\n');
-        if (signInSeen)
+        sb.Append("positiveObservations: ").Append(window.Positives).Append('\n');
+        sb.Append("mcpSeen: ").Append(failure.McpSeen).Append('\n');
+        sb.Append("frameSequence: ").Append(window.Frame?.Sequence.ToString() ?? "none").Append('\n');
+        sb.Append("frameAtUtc: ").Append(window.Frame?.CapturedAt.ToUniversalTime().ToString("O") ?? "none").Append('\n');
+        if (first is not null)
+        {
+            AppendWindow(sb, "firstWindow", GrokStartupReason.Deadline, first);
+            AppendWindow(sb, "secondWindow", failure.Outcome, window);
+        }
+        if (failure.SignInSeen)
         {
             sb.Append("content: suppressed after sign-in\n");
             return sb.ToString();
         }
+        if (first is not null)
+        {
+            sb.Append("--- firstWindow frame ---\n");
+            AppendFrame(sb, first.Frame, SourceLimit / 2);
+            sb.Append("--- secondWindow frame ---\n");
+        }
+        AppendFrame(sb, window.Frame, first is null ? SourceLimit : SourceLimit / 2);
+
+        var result = sb.ToString();
+        if (Encoding.UTF8.GetByteCount(result) > FileLimit)
+        {
+            // This is a defensive whole-file cap. The source caps normally keep it below 128 KiB.
+            result = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(result).AsSpan(0, FileLimit - 32))
+                + "\nfileTruncated: true\n";
+        }
+        return result;
+    }
+
+    private static void AppendWindow(StringBuilder sb, string name,
+        GrokStartupReason outcome, GrokStartupWindow window)
+    {
+        sb.Append(name).Append("Outcome: ").Append(outcome).Append('\n');
+        sb.Append(name).Append("ScreenReason: ").Append(window.LastReason).Append('\n');
+        sb.Append(name).Append("ElapsedMs: ").Append((long)window.Elapsed.TotalMilliseconds).Append('\n');
+        sb.Append(name).Append("PositiveObservations: ").Append(window.Positives).Append('\n');
+        sb.Append(name).Append("McpSeen: ").Append(window.McpSeen).Append('\n');
+        sb.Append(name).Append("FrameSequence: ").Append(window.Frame?.Sequence.ToString() ?? "none").Append('\n');
+    }
+
+    private static void AppendFrame(StringBuilder sb, GrokStartupSnapshot? frame, int limit)
+    {
         if (frame is null)
         {
             sb.Append("frame: none\n");
-            return sb.ToString();
+            return;
         }
-
         var screen = frame.RenderedScreen ?? "";
         var raw = frame.RawOutput ?? "";
-        var screenPart = Prefix(screen, SourceLimit);
-        var rawPart = Tail(raw, SourceLimit);
+        var screenPart = Prefix(screen, limit);
+        var rawPart = Tail(raw, limit);
         sb.Append("screenSourceUnits: ").Append(screen.Length).Append(" truncated: ")
             .Append(screenPart.Length < screen.Length).Append('\n');
         sb.Append("rawSourceUnits: ").Append(raw.Length).Append(" truncated: ")
             .Append(rawPart.Length < raw.Length).Append('\n');
         sb.Append("--- rendered screen (controls escaped) ---\n").Append(Escape(screenPart)).Append('\n');
         sb.Append("--- raw tail (controls escaped) ---\n").Append(Escape(rawPart)).Append('\n');
-        var result = sb.ToString();
-        if (Encoding.UTF8.GetByteCount(result) > FileLimit)
-        {
-            // This is a defensive whole-file cap. The two source caps normally keep it below 128 KiB.
-            result = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(result).AsSpan(0, FileLimit - 32))
-                + "\nfileTruncated: true\n";
-        }
-        return result;
     }
 
     private static string Prefix(string value, int limit)
