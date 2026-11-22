@@ -22,11 +22,11 @@ public sealed class ChannelOutboundUnifiedPathTests
 {
     // World teardowns run in the background (World.DisposeAsync); none outlives its test.
     [After(Test)]
-    public Task DrainWorldTeardownsAsync() => World.DrainTeardownsAsync();
+    public Task DrainWorldTeardownsAsync() => World.DrainOwnTeardownsAsync();
 
-    // A teardown a test's drain gave up on (hung) is still awaited before the class ends.
+    // Any teardown still running (one a test's drain reported hung) ends before the class does.
     [After(Class)]
-    public static Task DrainHungWorldTeardownsAsync() => World.DrainTeardownsAsync();
+    public static Task DrainEveryWorldTeardownAsync() => World.DrainEveryTeardownAsync();
 
     [Test]
     public async Task C519_Every_agent_shape_is_captured()
@@ -193,26 +193,53 @@ public sealed class ChannelOutboundUnifiedPathTests
 
     // A world's teardown (its harness and its cloned database: about 0.1 s of each ~0.35 s world on the HP laptop on AC)
     // runs in the background while the next world is built and used. A world starts no process and has its own schema
-    // and harness, so a teardown still running touches nothing the next one uses. A new world first waits for every
-    // teardown but the latest, so at most one overlaps it. After each test every teardown is awaited (the class's
-    // After(Test) hook; the class is NotInParallel): no world outlives its test, and every teardown failure (each one,
-    // harness and schema both) fails the test that made it, naming the world.
+    // and harness, so a teardown still running touches nothing the next one uses. Each teardown belongs to the test
+    // that made it (its TUnit test id). A new world first waits for every teardown of its test but the latest, so at
+    // most one overlaps it; after each test its teardowns are awaited (After(Test); the class is NotInParallel), so no
+    // world outlives its test, and every failure (harness and schema both) fails the test that made it, naming the
+    // world. One that hangs past TeardownHung is reported once by its test and awaited, unbounded but for TUnit's hook
+    // timeout, before the class ends (After(Class)). Phase timings a world records may include one earlier world's
+    // teardown running beside them.
     private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key, Guid projectId) : IAsyncDisposable
     {
-        // A hang bound, not a budget (a teardown normally takes about 0.1 s): long enough for a loaded host's database
-        // drop, short enough to name a stuck world well inside the test's own timeout.
-        private static readonly TimeSpan TeardownHung = TimeSpan.FromSeconds(30);
-        private static readonly List<(string World, Task Teardown)> Teardowns = [];
+        // A hang bound, not a budget (a teardown normally takes about 0.1 s here): UnifiedOutboundTransport's same 2 min,
+        // so a loaded qualification host's database drop is not cut short.
+        private static readonly TimeSpan TeardownHung = TimeSpan.FromMinutes(2);
+        private static readonly List<(string Owner, string World, Task Teardown)> Teardowns = [];
         private int _disposed;
+
+        private static string CurrentTest => TUnit.Core.TestContext.Current?.Metadata.TestDetails.TestId ?? "";
 
         public BridgeQueueHarness H => harness;
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(harness.ConnectionString));
         public static async Task<World> CreateAsync(bool allowSystem = false, string profile = "none", bool attachmentsOnly = false)
         {
-            (string World, Task Teardown)[] earlier;
-            lock (Teardowns) earlier = [.. Teardowns.Take(Math.Max(0, Teardowns.Count - 1))];
+            var current = CurrentTest;
+            (string Owner, string World, Task Teardown)[] earlier;
+            lock (Teardowns)
+            {
+                var own = Teardowns.Where(t => t.Owner == current).ToArray();
+                earlier = own.Take(Math.Max(0, own.Length - 1)).ToArray();
+            }
             await AwaitAsync(earlier);
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            BridgeQueueHarness? built = null;
+            try
+            {
+                return await BuildAsync(schema, allowSystem, profile, attachmentsOnly, h => built = h);
+            }
+            catch
+            {
+                // A world that failed part-way still drops what it made.
+                if (built is not null) await built.DisposeAsync();
+                await schema.DisposeAsync();
+                throw;
+            }
+        }
+
+        private static async Task<World> BuildAsync(IsolatedTestSchema schema, bool allowSystem, string profile,
+            bool attachmentsOnly, Action<BridgeQueueHarness> made)
+        {
             var settings = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true };
             var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
@@ -222,6 +249,7 @@ public sealed class ChannelOutboundUnifiedPathTests
                     : new ChannelBridgeSettings().MachineTurnTextOrigins },
                 ConfigureServices = s => s.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(settings)),
             });
+            made(h);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
             var project = Guid.NewGuid(); var board = Guid.NewGuid(); var converter = Guid.NewGuid();
             db.Projects.Add(new() { Id = project, Name = "unified" });
@@ -283,40 +311,75 @@ public sealed class ChannelOutboundUnifiedPathTests
         public ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return ValueTask.CompletedTask;
-            var world = schema.ConnectionString.Split(';').FirstOrDefault(p => p.StartsWith("Database=", StringComparison.OrdinalIgnoreCase)) ?? "world";
+            var world = new Npgsql.NpgsqlConnectionStringBuilder(schema.ConnectionString).Database ?? "world";
             var teardown = Task.Run(async () =>
             {
                 var failures = new List<Exception>();
                 try { await H.DisposeAsync(); }
                 catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
-                try { await schema.DisposeAsync(); }
-                catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                finally
+                {
+                    try { await schema.DisposeAsync(); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                }
                 if (failures.Count > 0)
                     throw new InvalidOperationException($"World {world} teardown failed",
                         failures.Count == 1 ? failures[0] : new AggregateException(failures));
             });
-            lock (Teardowns) Teardowns.Add((world, teardown));
+            lock (Teardowns) Teardowns.Add((CurrentTest, world, teardown));
             return ValueTask.CompletedTask;
         }
 
-        public static async Task DrainTeardownsAsync()
+        // After each test: its own teardowns, bounded; a hung one is reported here once and left for the class drain.
+        public static async Task DrainOwnTeardownsAsync()
         {
-            (string World, Task Teardown)[] all;
-            lock (Teardowns) all = [.. Teardowns];
-            await AwaitAsync(all);
+            var current = CurrentTest;
+            (string Owner, string World, Task Teardown)[] own;
+            lock (Teardowns) own = Teardowns.Where(t => t.Owner == current).ToArray();
+            await AwaitAsync(own);
         }
 
-        // Every failure collected; an entry leaves the list only once it has ended, so a hung one is still awaited later.
-        private static async Task AwaitAsync((string World, Task Teardown)[] entries)
+        // Before the class ends: every teardown still listed, unbounded (TUnit's hook timeout still applies).
+        public static async Task DrainEveryTeardownAsync()
+        {
+            (string Owner, string World, Task Teardown)[] all;
+            lock (Teardowns) all = [.. Teardowns];
+            var failures = new List<Exception>();
+            foreach (var entry in all)
+            {
+                try { await entry.Teardown; }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
+                lock (Teardowns) Teardowns.Remove(entry);
+            }
+            Throw(failures);
+        }
+
+        // Every entry awaited and every failure collected. An ended entry leaves the list; one past TeardownHung is
+        // reported and handed to the class drain (taken off its test, so no later wait reports it again).
+        private static async Task AwaitAsync((string Owner, string World, Task Teardown)[] entries)
         {
             var failures = new List<Exception>();
             foreach (var entry in entries)
             {
                 try { await entry.Teardown.WaitAsync(TeardownHung); }
-                catch (TimeoutException) { failures.Add(new TimeoutException($"World {entry.World} teardown still running after {TeardownHung.TotalSeconds:0} s")); continue; }
+                catch (TimeoutException)
+                {
+                    failures.Add(new TimeoutException($"World {entry.World} teardown still running after {TeardownHung.TotalMinutes:0} min"));
+                    lock (Teardowns)
+                    {
+                        Teardowns.Remove(entry);
+                        Teardowns.Add(("", entry.World, entry.Teardown));
+                    }
+                    continue;
+                }
                 catch (Exception ex) when (ex is not OutOfMemoryException) { failures.Add(ex); }
                 lock (Teardowns) Teardowns.Remove(entry);
             }
+            Throw(failures);
+        }
+
+        private static void Throw(List<Exception> failures)
+        {
             if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
             if (failures.Count > 1) throw new AggregateException("World teardowns failed", failures);
         }
