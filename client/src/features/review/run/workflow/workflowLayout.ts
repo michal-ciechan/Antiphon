@@ -23,12 +23,17 @@ const LANE_STEP = 16
 export type Dir = 'ltr' | 'rtl'
 
 export interface LaidNode {
+  /** the step id, or `<stepId>::<itemKey>` for one agent of an expanded fan-out step */
   id: string
   def: WorkflowNodeDto
   x: number
   y: number
   dir: Dir
   sectionId: string | null
+  /** the fan-out item (e.g. reviewer group) this node shows; null for an ordinary step */
+  item: string | null
+  /** the workflow step this node belongs to (its own id for an ordinary step) */
+  stepId: string
 }
 
 export interface LaidSection {
@@ -66,6 +71,13 @@ export interface WorkflowLayout {
 }
 
 export const sectionNodeId = (id: string) => `sec:${id}`
+/** One agent of an expanded fan-out step. */
+export const agentNodeId = (stepId: string, item: string) => `${stepId}::${item}`
+/** Splits a node id into its step and (for an agent node) item. */
+export function parseNodeId(id: string): { stepId: string; item: string | null } {
+  const at = id.indexOf('::')
+  return at < 0 ? { stepId: id, item: null } : { stepId: id.slice(0, at), item: id.slice(at + 2) }
+}
 
 /** Back edges for layout: the graph's own flags, plus any DFS back edge that still closes a cycle. */
 function layoutBackEdges(graph: WorkflowGraphDto): Set<WorkflowEdgeDto> {
@@ -86,8 +98,21 @@ function layoutBackEdges(graph: WorkflowGraphDto): Set<WorkflowEdgeDto> {
   return back
 }
 
-export function layoutWorkflow(graph: WorkflowGraphDto, collapsed: ReadonlySet<string>): WorkflowLayout {
+/**
+ * `expanded` maps a fan-out step to the items it is shown expanded into (one node per agent,
+ * stacked in the step's column; the band grows to fit, and its edges fan out to each agent).
+ */
+export function layoutWorkflow(
+  graph: WorkflowGraphDto,
+  collapsed: ReadonlySet<string>,
+  expanded: ReadonlyMap<string, string[]> = new Map(),
+): WorkflowLayout {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const itemsOf = (id: string) => {
+    const items = expanded.get(id)
+    return items && items.length > 0 ? items : null
+  }
+  const span = (id: string) => itemsOf(id)?.length ?? 1
   const back = layoutBackEdges(graph)
   const sectionOf = new Map<string, string>()
   const bands = graph.sections.map((s) => ({ id: s.id, title: s.title, nodeIds: s.nodeIds.filter((id) => byId.has(id)) }))
@@ -128,9 +153,14 @@ export function layoutWorkflow(graph: WorkflowGraphDto, collapsed: ReadonlySet<s
         }
         ids.sort((a, z) => score(a) - score(z))
       }
-      ids.forEach((id, r) => rowOf.set(id, r))
+      // an expanded fan-out step takes one row per agent
+      let row = 0
+      for (const id of ids) {
+        rowOf.set(id, row)
+        row += span(id)
+      }
     })
-    const rows = Math.max(1, ...rowsByLayer.map((r) => r.length))
+    const rows = Math.max(1, ...rowsByLayer.map((ids) => ids.reduce((s, id) => s + span(id), 0)))
     return { band: b, layer, rowOf, cols, rows }
   })
 
@@ -152,14 +182,12 @@ export function layoutWorkflow(graph: WorkflowGraphDto, collapsed: ReadonlySet<s
       for (const id of l.band.nodeIds) {
         const col = l.layer.get(id) ?? 0
         const c = dir === 'ltr' ? col : l.cols - 1 - col
-        nodes.push({
-          id,
-          def: byId.get(id)!,
-          x: x0 + BAND_PAD + c * STEP_X,
-          y: y + BAND_HEADER + BAND_PAD + (l.rowOf.get(id) ?? 0) * STEP_Y,
-          dir,
-          sectionId: l.band.id || null,
-        })
+        const x = x0 + BAND_PAD + c * STEP_X
+        const top = y + BAND_HEADER + BAND_PAD + (l.rowOf.get(id) ?? 0) * STEP_Y
+        const base = { def: byId.get(id)!, x, dir, sectionId: l.band.id || null, stepId: id }
+        const items = itemsOf(id)
+        if (items) items.forEach((item, k) => nodes.push({ ...base, id: agentNodeId(id, item), y: top + k * STEP_Y, item }))
+        else nodes.push({ ...base, id, y: top, item: null })
       }
     }
     y += h + BAND_GAP
@@ -167,20 +195,26 @@ export function layoutWorkflow(graph: WorkflowGraphDto, collapsed: ReadonlySet<s
 
   const bandIndex = new Map(local.map((l, i) => [l.band.id, i]))
   const sectionRect = new Map(sections.map((s) => [s.id, s]))
-  const visible = (id: string) => {
+  /** The visible nodes a step's edges attach to: its section box, its agents, or itself. */
+  const endpoints = (id: string): string[] => {
     const s = bandOf(id)
-    return s && collapsed.has(s) ? sectionNodeId(s) : id
+    if (s && collapsed.has(s)) return [sectionNodeId(s)]
+    return itemsOf(id)?.map((item) => agentNodeId(id, item)) ?? [id]
   }
 
-  // merge edges that collapse onto the same visible pair
+  // merge edges that collapse onto the same visible pair; an expanded step fans out to its agents
   const merged = new Map<string, WorkflowEdgeDto[]>()
   for (const e of graph.edges) {
     if (!byId.has(e.from) || !byId.has(e.to)) continue
-    const vs = visible(e.from)
-    const vt = visible(e.to)
-    if (vs === vt && vs !== e.from) continue
-    const key = `${vs}>${vt}>${back.has(e) ? 'b' : 'f'}`
-    merged.set(key, [...(merged.get(key) ?? []), e])
+    const sources = endpoints(e.from)
+    const targets = endpoints(e.to)
+    // a loop on an expanded step stays on each agent rather than crossing between them
+    const pairs = e.from === e.to && itemsOf(e.from) && sources[0] !== sectionNodeId(bandOf(e.from)) ? sources.map((s) => [s, s]) : sources.flatMap((s) => targets.map((t) => [s, t]))
+    for (const [vs, vt] of pairs) {
+      if (vs === vt && vs.startsWith('sec:')) continue
+      const key = `${vs}>${vt}>${back.has(e) ? 'b' : 'f'}`
+      merged.set(key, [...(merged.get(key) ?? []), e])
+    }
   }
 
   const edges: LaidEdge[] = []

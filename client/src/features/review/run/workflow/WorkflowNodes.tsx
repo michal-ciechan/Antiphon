@@ -56,11 +56,42 @@ export type StepData = {
   iterationsRun: number
   dir: Dir
   selected: boolean
+  /** one agent of an expanded fan-out step: its item (e.g. the reviewer group); null otherwise */
+  item: string | null
+  /** a fan-out step that can be shown as one node per agent */
+  expandable: boolean
+  expanded: boolean
+  /** how many agents the step expands into */
+  agentCount: number
+  onToggleExpand?: () => void
 }
 export type StepNode = Node<StepData, 'step'>
 
+/** The control that splits a fan-out step into its agents, or folds an agent back into its step. */
+function ExpandToggle({ expanded, count, step, onToggle }: { expanded: boolean; count: number; step: string; onToggle: () => void }) {
+  return (
+    <Tooltip label={expanded ? `Fold the agents back into ${step}` : `Show each of the ${count} agents`} openDelay={200}>
+      <UnstyledButton
+        className="nodrag nopan"
+        aria-label={expanded ? `Collapse ${step} agents` : `Expand ${step} into agents`}
+        data-testid={expanded ? `review-graph-collapse-${step}` : `review-graph-expand-${step}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+        style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 4px', borderRadius: 4, border: '1px solid var(--mantine-color-dark-3)', lineHeight: 1.4 }}
+      >
+        {expanded ? <TbArrowMerge size={11} /> : <TbArrowsSplit2 size={11} />}
+        <Text size="9px" fw={600} c="gray.4">
+          {expanded ? 'fold' : `${count} agents`}
+        </Text>
+      </UnstyledButton>
+    </Tooltip>
+  )
+}
+
 export function StepNodeView({ data }: NodeProps<StepNode>) {
-  const { def, status, execs, items, dir, selected, iterationsRun } = data
+  const { def, status, execs, items, dir, selected, iterationsRun, item, expandable, expanded, onToggleExpand } = data
   const meta = NODE_STATUS_META[status]
   const kind = NODE_KIND_META[def.kind]
   const dashed = status === 'NotReached' || status === 'Pending' || status === 'Skipped'
@@ -96,18 +127,27 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
             {KIND_ICON[def.kind]}
           </Box>
           <Text size="12px" fw={700} truncate>
-            {def.id}
+            {item ?? def.id}
           </Text>
         </Group>
-        {iterationsRun > 1 && (
-          <Tooltip label={`Ran in ${iterationsRun} iterations`}>
-            <Badge size="xs" variant="outline" color="gray" px={4}>
-              ×{iterationsRun}
-            </Badge>
-          </Tooltip>
-        )}
+        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+          {onToggleExpand && (expandable || item) && (
+            <ExpandToggle expanded={expanded} count={data.agentCount} step={def.id} onToggle={onToggleExpand} />
+          )}
+          {iterationsRun > 1 && (
+            <Tooltip label={`Ran in ${iterationsRun} iterations`}>
+              <Badge size="xs" variant="outline" color="gray" px={4}>
+                ×{iterationsRun}
+              </Badge>
+            </Tooltip>
+          )}
+        </Group>
       </Group>
-      {items.length > 0 ? (
+      {item ? (
+        <Text size="10px" c="dimmed" truncate>
+          agent of {def.id}
+        </Text>
+      ) : items.length > 0 ? (
         <Group gap={3} wrap="nowrap" mt={3} mb={1} style={{ overflow: 'hidden' }}>
           {items.map((it) => (
             <Tooltip key={it.itemKey ?? '-'} label={`${it.itemKey} · ${NODE_STATUS_META[it.status].label}${it.execs[0]?.model ? ` · ${modelShort(it.execs[0].model)}` : ''}`} openDelay={100}>

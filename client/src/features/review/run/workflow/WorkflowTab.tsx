@@ -17,7 +17,7 @@ import { FloatingWindow } from './FloatingWindow'
 import { useDocumentFullscreen } from './useDocumentFullscreen'
 import { NodeSidePanel, ValidationPanel } from './NodeSidePanel'
 import { backEdgeTaken, edgeTakenIn, execsIn, groupByItem, iterationInfo, iterationsOf, rollupStatus } from './overlay'
-import { NODE_H, NODE_W, layoutWorkflow, sectionNodeId, type LaidEdge } from './workflowLayout'
+import { NODE_H, NODE_W, layoutWorkflow, parseNodeId, sectionNodeId, type LaidEdge } from './workflowLayout'
 import { LaneEdgeView, SectionNodeView, StepNodeView, type LaneEdge, type SectionNode, type StepNode } from './WorkflowNodes'
 
 const nodeTypes: NodeTypes = { step: StepNodeView, section: SectionNodeView }
@@ -108,8 +108,41 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
     return set
   }, [graph.sections, stored])
   const collapseKey = [...collapsed].sort().join(',')
-  const layout = useMemo(() => layoutWorkflow(graph, collapsed), [graph, collapsed])
   const execs = useMemo(() => execsIn(run, iteration), [run, iteration])
+
+  // Fan-out steps (executions with an itemKey) can be shown as one node per agent.
+  const [expandedSteps, setExpandedSteps] = useState<ReadonlySet<string>>(() => new Set())
+  const agentsByStep = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const n of run.nodes) {
+      if (!n.itemKey) continue
+      const items = m.get(n.nodeId) ?? []
+      if (!items.includes(n.itemKey)) items.push(n.itemKey)
+      m.set(n.nodeId, items)
+    }
+    return m
+  }, [run.nodes])
+  const expandedItems = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const id of expandedSteps) {
+      // the agents of the shown iteration; a step that did not run in it shows every agent it ever had
+      const shownNow = groupByItem(execs.get(id) ?? []).map((g) => g.itemKey).filter((k): k is string => !!k)
+      const items = shownNow.length > 0 ? shownNow : (agentsByStep.get(id) ?? [])
+      if (items.length > 0) m.set(id, items)
+    }
+    return m
+  }, [expandedSteps, execs, agentsByStep])
+  const expandKey = [...expandedItems].map(([k, v]) => `${k}:${v.join('+')}`).sort().join(',')
+  const toggleExpand = (stepId: string) =>
+    setExpandedSteps((prev) => {
+      const next = new Set(prev)
+      if (next.has(stepId)) next.delete(stepId)
+      else next.add(stepId)
+      return next
+    })
+  const fanSteps = [...agentsByStep.keys()]
+
+  const layout = useMemo(() => layoutWorkflow(graph, collapsed, expandedItems), [graph, collapsed, expandedItems])
 
   const flowNodes = useMemo(() => {
     const out: Node[] = []
@@ -135,6 +168,9 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
       out.push(section)
     }
     for (const n of layout.nodes) {
+      const stepExecs = execs.get(n.stepId) ?? []
+      const mine = n.item ? stepExecs.filter((x) => x.itemKey === n.item) : stepExecs
+      const agents = agentsByStep.get(n.stepId) ?? []
       const step: StepNode = {
         id: n.id,
         type: 'step',
@@ -144,20 +180,30 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
         draggable: false,
         data: {
           def: n.def,
-          status: rollupStatus(execs.get(n.id)),
-          execs: execs.get(n.id) ?? [],
-          items: groupByItem(execs.get(n.id) ?? []).filter((g) => g.itemKey !== null),
-          iterationsRun: new Set(run.nodes.filter((x) => x.nodeId === n.id).map((x) => x.iteration)).size,
+          status: rollupStatus(mine),
+          execs: mine,
+          items: n.item ? [] : groupByItem(mine).filter((g) => g.itemKey !== null),
+          iterationsRun: new Set(run.nodes.filter((x) => x.nodeId === n.stepId && (!n.item || x.itemKey === n.item)).map((x) => x.iteration)).size,
           dir: n.dir,
           selected: selectedId === n.id,
+          item: n.item,
+          expandable: agents.length > 0,
+          expanded: expandedSteps.has(n.stepId),
+          agentCount: agents.length,
+          onToggleExpand: agents.length > 0 ? () => toggleExpand(n.stepId) : undefined,
         },
       }
       out.push(step)
     }
     return out
-  }, [layout, execs, run.nodes, selectedId, graph.name, setCollapsed])
+  }, [layout, execs, run.nodes, selectedId, graph.name, setCollapsed, agentsByStep, expandedSteps])
 
   const flowEdges = useMemo(() => {
+    // an edge animates while its visible target runs; for an agent node, only that agent's executions count
+    const targetRunning = (target: string) => {
+      const t = parseNodeId(target)
+      return (execs.get(t.stepId) ?? []).some((x) => (!t.item || x.itemKey === t.item) && x.status === 'Running')
+    }
     const out: Edge[] = []
     for (const e of layout.edges) {
       const taken = e.members.some((m) => edgeTakenIn(run, execs, m))
@@ -189,7 +235,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
         sourceHandle: e.sourceHandle,
         targetHandle: e.targetHandle,
         markerEnd: marker,
-        animated: taken && !e.isBackEdge && (execs.get(e.members[0].to) ?? []).some((x) => x.status === 'Running'),
+        animated: taken && !e.isBackEdge && targetRunning(e.target),
         style: { stroke: color, strokeWidth: taken ? 2.2 : e.isBackEdge ? 1.4 : 1.1, strokeDasharray: e.isBackEdge ? '5 4' : undefined },
         label: backLabel ?? e.label ?? undefined,
         labelStyle: { fill: e.isBackEdge || taken ? color : '#909296', fontSize: 10, fontWeight: taken ? 700 : 400 },
@@ -202,15 +248,18 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   }, [layout, execs, graph, run])
   const shown = iterationInfo(run, iteration)
 
-  const selectedDef = graph.nodes.find((n) => n.id === selectedId)
+  // a selected agent node shows its step's description with only that agent's executions
+  const selection = selectedId ? parseNodeId(selectedId) : null
+  const selectedDef = selection ? graph.nodes.find((n) => n.id === selection.stepId) : undefined
+  const selectedTitle = selection ? (selection.item ? `${selection.stepId} · ${selection.item}` : selection.stepId) : ''
   const selectedExecs = run.nodes
-    .filter((n) => n.nodeId === selectedId)
+    .filter((n) => selection && n.nodeId === selection.stepId && (!selection.item || n.itemKey === selection.item))
     .sort((a, b) => a.iteration - b.iteration || Date.parse(a.startedAt ?? '') - Date.parse(b.startedAt ?? ''))
 
   // One canvas definition, rendered inline and (when open) in the fullscreen view.
   const canvas = (variant: 'inline' | 'fullscreen') => (
     <ReactFlow
-      key={`${variant}:${collapseKey}`}
+      key={`${variant}:${collapseKey}|${expandKey}`}
       nodes={flowNodes}
       edges={flowEdges}
       nodeTypes={nodeTypes}
@@ -258,6 +307,19 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setAllCollapsed(graph.name, graph.sections.map((s) => s.id), true)}>
             Collapse all
           </Button>
+          {fanSteps.length > 0 && (
+            <Tooltip label={`Show each agent of ${fanSteps.join(', ')} as its own node (or click "agents" on a step)`}>
+              <Button
+                size="compact-xs"
+                variant={expandedSteps.size > 0 ? 'light' : 'subtle'}
+                color="grape"
+                data-testid="review-graph-toggle-agents"
+                onClick={() => setExpandedSteps(expandedSteps.size > 0 ? new Set() : new Set(fanSteps))}
+              >
+                {expandedSteps.size > 0 ? 'Fold agents' : 'Show agents'}
+              </Button>
+            </Tooltip>
+          )}
         </Group>
         <Group gap={6} wrap="wrap">
           {iterations.length > 1 && (
@@ -374,7 +436,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
             {selectedDef && (
               <FloatingWindow
                 key="node"
-                title={selectedDef.id}
+                title={selectedTitle}
                 badge={
                   <Badge size="xs" variant="light" color="gray" tt="none">
                     {selectedDef.kind}
