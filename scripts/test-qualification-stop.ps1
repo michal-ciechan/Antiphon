@@ -607,6 +607,38 @@ function C1507_TaskDirCopyLoadsCheckoutLibrary {
         'a task-directory copy of stop-supervisor.ps1 loads its libraries from -CheckoutRoot' ($code.ToString() + ' ' + $text)
 }
 
+function C1507_NonCheckoutRootRefusedBeforeImport {
+    # CARD-2045 Review r1: a directory without checkout metadata must not supply the stop
+    # implementation, even when it holds genuine-looking helpers at the checkout-relative paths.
+    $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    Copy-Item -LiteralPath $script:stopScript -Destination (Join-Path $fixture.Task 'stop-supervisor.ps1')
+    $copied = Join-Path $fixture.Task 'stop-supervisor.ps1'
+    $marker = 'C2045-STALE-HELPER-LOADED'
+    $stale = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-export')
+    [void][IO.Directory]::CreateDirectory((Join-Path $stale 'scripts/qualification'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $stale 'scripts/lib'))
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $helperText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'qualification/qualification-stop.ps1'))
+    [IO.File]::WriteAllText((Join-Path $stale 'scripts/qualification/qualification-stop.ps1'), ("[Console]::Out.WriteLine('" + $marker + "')`r`n" + $helperText), $utf8)
+    foreach ($name in @('qualification-supervisor.ps1', 'rc-qualification-status.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('lib/' + $name)) -Destination (Join-Path $stale ('scripts/lib/' + $name))
+    }
+    $empty = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-empty')
+    [void][IO.Directory]::CreateDirectory($empty)
+    $absent = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-absent')
+    $lockBefore = Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')
+    foreach ($row in @(@('populated non-checkout', $stale), @('empty', $empty), @('absent', $absent))) {
+        foreach ($confirm in @($false, $true)) {
+            $argv = @('-NoProfile', '-NonInteractive', '-File', $copied, '-CheckoutRoot', $row[1], '-TaskRoot', $fixture.Task, '-CoordinationRoot', $fixture.Coord, '-RunId', $fixture.RunId, '-Reason', 'operator replacement')
+            if ($confirm) { $argv += '-Confirm' }
+            $text = @(& $script:pwsh @argv 2>&1) -join "`n"
+            $code = $LASTEXITCODE
+            Assert-C1507 ($code -eq 6 -and $text -match 'refused' -and $text -match 'CheckoutRoot' -and $text -notmatch $marker -and $text -notmatch 'dry-run' -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore) `
+                ('a ' + $row[0] + ' -CheckoutRoot is refused before any helper import (confirm=' + $confirm + ')') ($code.ToString() + ' ' + $text)
+        }
+    }
+}
+
 try {
     $selected = @(
         'C1507_StopOrder',
@@ -621,7 +653,8 @@ try {
         'C1507_FaultAfterKillKeepsTheKillList',
         'C1507_OwedNativeWindowsStop',
         'C1507_EntryRefusesOffWindows',
-        'C1507_TaskDirCopyLoadsCheckoutLibrary'
+        'C1507_TaskDirCopyLoadsCheckoutLibrary',
+        'C1507_NonCheckoutRootRefusedBeforeImport'
     )
     if ($Case -ne 'Smoke') {
         if ($selected -notcontains $Case) { throw ('unknown case ' + $Case) }
