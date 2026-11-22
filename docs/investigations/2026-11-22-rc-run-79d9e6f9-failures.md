@@ -26,6 +26,12 @@ Nightly S19 (`cad15e980841e1713f645d19f354227832303761`) landed after the fixtur
 Short Merge replays the subject's own witnesses, which left the fixture cleanup guard outside S19's selection on the combined tree.
 Apply the existing `test-fixture-cleanup` trigger for `tests/**/*.cs` during short Merge and run `/*/*/TestFixtureCleanupGuardTests/*` on the combined tree before landing matching changes.
 
+## Group 146 · Rolling recycle Git audit fixture
+
+CARD-2043 (`c3781c45acef1e7a15b8e0e6bd3ed41b0afb285b`) raised `GIT_CONFIG_COUNT` from 2 to 7 to disable hooks, fsmonitor, user attributes, external diffs, and submodule recursion during retirement audits.
+Short Merge selected the CARD-2043 dry-run preview method. The 40 cases of `C1594_Antiphon_evidence_gitdir` were outside that selection and shared a fixture that still expected 2.
+Include this method in the short witness selection when changing the audit helper's Git environment.
+
 ## Group 138 · Live-gate disposition
 
 `LiveLaneInventoryTests.EveryLiveGateHasDisposition` reported one unmapped gate after the Nightly S15 port (`75d96a8c7`). The scanner sees the `ANTIPHON_HEADED_TESTS` literal in `NightlyTestsRunTests.C487_G044`. The test supplies the value in a fixture environment and checks that the launcher clears it before starting the child. It runs without a headed opt-in, so the scanner hit is a false positive.
