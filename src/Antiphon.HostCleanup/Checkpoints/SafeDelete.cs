@@ -289,29 +289,33 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         return listed.Stdout.Length == 0 ? null : "tracked";
     }
 
+    // IndexChanged: the index moved while it was read in a removal scope, so the listing authorizes nothing.
+    private enum InProcessTracked { GitAnswers, Untracked, Tracked, IndexChanged }
+
     // Whether `git ls-files -z -- <paths>` run at the owning checkout's root would print anything: is any index
     // entry at or under one of the paths. Read from the index file in process (GitInProcess.IndexListing, git's own
-    // ls-files bytes), so a delete starts no git child. Still re-read on every call: nothing is cached. Null when
+    // ls-files bytes), so a delete starts no git child. Re-read on every call, except inside one owned removal
+    // (TrackedIndexScope), which reuses a listing only while the index keeps its version. GitAnswers when
     // git must answer: a custom git executable or a supplied runner (a test's observer or fake) is in use, the
     // filesystem is not the native one, a path holds a character git would read as a pathspec glob or lies
     // outside the checkout, or the index is a layout GitInProcess declines. Case-insensitive on Windows, which can
     // only call more paths tracked (a refusal to delete), never fewer.
-    private bool? TrackedInProcess(string owner, IReadOnlyCollection<string> fullPaths, string? gitExecutable,
+    private InProcessTracked TrackedInProcess(string owner, IReadOnlyCollection<string> fullPaths, string? gitExecutable,
         TrackedIndexScope? scope = null)
     {
         if (!string.IsNullOrWhiteSpace(gitExecutable)
             || context.Git is not CheckpointNativeGitRunner { RunsRealGit: true }
             || context.Io is not CheckpointNativeIo)
-            return null;
+            return InProcessTracked.GitAnswers;
         var relatives = new List<string>(fullPaths.Count);
         foreach (var full in fullPaths)
         {
             if (full.IndexOfAny(['*', '?', '[']) >= 0 || !OperatingSystem.IsWindows() && full.Contains('\\'))
-                return null;
+                return InProcessTracked.GitAnswers;
             var relative = Path.GetRelativePath(owner, full).Replace('\\', '/');
             if (relative == ".") relative = "";
             if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
-                return null;
+                return InProcessTracked.GitAnswers;
             relatives.Add(relative.TrimEnd('/'));
             // git refuses a pathspec beyond a symbolic link (a delete it used to refuse): leave those to git.
             var parent = owner;
@@ -322,36 +326,47 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 try
                 {
                     if (!Io.DirectoryExists(parent) && !Io.FileExists(parent)) break;
-                    if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) return null;
+                    if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) return InProcessTracked.GitAnswers;
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return InProcessTracked.GitAnswers; }
             }
         }
-        // CARD-2052: inside one removal scope, a listing read while the index and its repository files kept one
-        // identity answers again for as long as they still have it; any change, or a stamp that cannot be read,
-        // reads the index again through every IndexListing check.
+        // CARD-2052: inside one removal scope, a listing read while the index kept one version (TrackedIndexStamp)
+        // answers again for as long as it still has it; any change, or a stamp that cannot be read, reads the index
+        // again through every IndexListing check. Each in-process decision records the version it was read from.
         var stamp = scope is null ? null : TrackedIndexStamp.Read(context, owner);
-        if (scope?.Answer(owner, stamp, relatives) is { } cached) return cached;
+        if (scope?.Answer(owner, stamp, relatives) is { } cached)
+        {
+            scope.Decide(owner, stamp!);
+            return cached ? InProcessTracked.Tracked : InProcessTracked.Untracked;
+        }
         string? listing;
         context.CountInProcessIndexRead();
         try { listing = Antiphon.GitInProcess.InProcessGitStatus.IndexListing(owner, stage: false); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
             or TypeInitializationException or BadImageFormatException or EntryPointNotFoundException
-            or LibGit2Sharp.LibGit2SharpException) { scope?.Clear(); return null; }
+            or LibGit2Sharp.LibGit2SharpException) { scope?.Clear(); return InProcessTracked.GitAnswers; }
         context.AfterInProcessIndexRead?.Invoke(fullPaths);
-        if (listing is null) { scope?.Clear(); return null; }
-        if (scope is not null)
+        if (listing is null) { scope?.Clear(); return InProcessTracked.GitAnswers; }
+        if (scope is not null && stamp is not null)
         {
-            scope.Store(owner, stamp is not null && stamp == TrackedIndexStamp.Read(context, owner) ? stamp : null, listing);
-            if (scope.Answer(owner, stamp, relatives) is { } stored) return stored;
+            // Review d1e0f4ca D-1: a version that moved while it was read leaves this listing older than the index,
+            // perhaps missing an entry staged meanwhile. It authorizes nothing: the caller refuses the entry.
+            if (!stamp.SameVersion(TrackedIndexStamp.Read(context, owner)))
+            {
+                scope.Clear();
+                return InProcessTracked.IndexChanged;
+            }
+            scope.Store(owner, stamp, listing);
+            scope.Decide(owner, stamp);
         }
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var entry in listing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
             foreach (var relative in relatives)
                 if (relative.Length == 0 || entry.Equals(relative, comparison)
                     || entry.StartsWith(relative + "/", comparison))
-                    return true;
-        return false;
+                    return InProcessTracked.Tracked;
+        return InProcessTracked.Untracked;
     }
 
     // CreateProcess rejects a command line at 32,767 characters, and cmd.exe at 8,191.
@@ -409,8 +424,12 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 return "path-unsafe";
             paths.Add(full);
         }
-        if (TrackedInProcess(owner, paths, gitExecutable, scope) is { } tracked)
-            return tracked ? "tracked" : null;
+        switch (TrackedInProcess(owner, paths, gitExecutable, scope))
+        {
+            case InProcessTracked.Tracked: return "tracked";
+            case InProcessTracked.Untracked: return null;
+            case InProcessTracked.IndexChanged: return "index-changed-during-read";
+        }
 
         var prefix = new[] { "-C", owner, "ls-files", "-z", "--" };
         var batch = new List<string>(prefix);
