@@ -254,7 +254,7 @@ public sealed class DelegationReviewAgentRunner(
                 .Append("  bash: curl -fsS \"$ANTIPHON_API").Append(path).Append("\" -o \"${TMPDIR:-/tmp}/").Append(file).AppendLine("\"");
         }
 
-        return text.ToString();
+        return text.ToString().ReplaceLineEndings("\n");
     }
 
     private static string Excerpt(string? text) =>

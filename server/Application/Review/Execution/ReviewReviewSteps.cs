@@ -238,7 +238,8 @@ public static class ReviewReviewSteps
     /// Verify (design 4.8): a cheaper model tries to disprove each finding through the node's
     /// completion chain, answering <c>decision-response/1.0</c> with the probability each holds. A
     /// disproved finding is dropped and recorded; a bypass finding is never dropped by the verifier
-    /// alone; a refused answer keeps the finding. With no chain configured the node is skipped.
+    /// alone; a refused answer keeps the finding. The instructions carry the answer's ABF shape, since a
+    /// chat model or seat knows nothing of ABF. Only an empty chain skips the node.
     /// </summary>
     public static async Task<NodeResult> VerifyAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
@@ -262,6 +263,8 @@ public static class ReviewReviewSteps
             You verify code review findings. Try to disprove each finding below against the diff: a finding holds only when the
             defect is real at the reviewed head. Answer with one ABF decision-response/1.0 document for request {requestId}, with one
             noul answer per finding named {string.Join(", ", questions.Select(q => q.Name))}: the value is the probability the finding holds.
+
+            {AbfTemplates.DecisionResponse(requestId)}
             """,
             [
                 new CompletionInput("findings", string.Join("\n\n", candidates.Select(c =>

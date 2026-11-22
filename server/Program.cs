@@ -194,7 +194,20 @@ try
         });
     builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
     builder.Services.Configure<ReviewAgentSettings>(builder.Configuration.GetSection(ReviewAgentSettings.SectionName));
-    builder.Services.Configure<ReviewCompletionSettings>(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName));
+    builder.Services.AddOptions<ReviewCompletionSettings>()
+        .Bind(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName))
+        .PostConfigure(s =>
+        {
+            s.ApplyDefaultProviders();
+            // A provider names its key by configuration key only; the value never reaches a log.
+            foreach (var provider in s.Providers.Values)
+            {
+                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
+                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
+            }
+
+            s.ApplyDefaultChain();
+        });
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
@@ -998,7 +1011,13 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<JevSystemOneClient>();
     builder.Services.AddTransient<IDecisionModel>(sp => sp.GetRequiredService<JevSystemOneClient>());
     builder.Services.AddSingleton<IDecisionModel, StandingSeatDecisionModel>();
-    // No ICompletionModel is registered yet: without a configured chain, verify is skipped and says so.
+    // Completion providers (design 7.2): OpenAI-compatible chat (LiteLLM), the Anthropic Messages API and a
+    // delegate seat. The chain's own budget times each call, so the HTTP clients never time out first.
+    builder.Services.AddHttpClient<OpenAiChatCompletionModel>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
+    builder.Services.AddTransient<ICompletionModel>(sp => sp.GetRequiredService<OpenAiChatCompletionModel>());
+    builder.Services.AddHttpClient<AnthropicMessagesCompletionModel>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
+    builder.Services.AddTransient<ICompletionModel>(sp => sp.GetRequiredService<AnthropicMessagesCompletionModel>());
+    builder.Services.AddScoped<ICompletionModel, DelegationCompletionModel>();
     builder.Services.AddScoped<CompletionChain>();
     // Reviewers are read-only Review delegate tasks in a worktree at the head (design 4.7, Review:Agents).
     builder.Services.AddScoped<IReviewTaskGateway, AgentTaskReviewGateway>();

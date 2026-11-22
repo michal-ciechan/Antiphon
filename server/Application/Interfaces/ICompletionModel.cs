@@ -33,3 +33,47 @@ public sealed class CompletionProviderException(DecisionFailureKind kind, string
     public DecisionFailureKind Kind { get; } = kind;
     public int? StatusCode { get; } = statusCode;
 }
+
+/// <summary>
+/// How a completion request reads as chat text, for the HTTP adapters and the delegate seat: each
+/// input under its name, its body in a fence longer than any backtick run inside it, then what the
+/// answer must be.
+/// </summary>
+public static class CompletionText
+{
+    /// <summary>The user turn: the inputs and the expected answer.</summary>
+    public static string UserMessage(CompletionRequest request) => Inputs(request) + Expectation(request);
+
+    public static string Inputs(CompletionRequest request)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var input in request.Inputs)
+        {
+            text.Append("## ").Append(input.Name);
+            if (!string.IsNullOrWhiteSpace(input.Title))
+                text.Append(" (").Append(input.Title.Trim()).Append(')');
+            text.Append('\n');
+            var fence = new string('`', Math.Max(3, LongestRun(input.Body, '`') + 1));
+            text.Append(fence).Append('\n').Append(input.Body.TrimEnd()).Append('\n').Append(fence).Append("\n\n");
+        }
+
+        return text.ToString();
+    }
+
+    public static string Expectation(CompletionRequest request) =>
+        string.Equals(request.Expect, "text", StringComparison.OrdinalIgnoreCase)
+            ? "Answer in plain text."
+            : $"Answer with one ABF {request.Expect} document as the instructions describe, not inside a code fence.";
+
+    private static int LongestRun(string text, char c)
+    {
+        int longest = 0, run = 0;
+        foreach (var ch in text)
+        {
+            run = ch == c ? run + 1 : 0;
+            longest = Math.Max(longest, run);
+        }
+
+        return longest;
+    }
+}
