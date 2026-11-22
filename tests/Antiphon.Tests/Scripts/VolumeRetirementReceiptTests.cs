@@ -624,10 +624,13 @@ public sealed class VolumeRetirementReceiptTests
         NativeLinuxGate.Require(NativeLinuxReason);
         // The v1 absent-work adapter must never suppress a fresh v2 role
         // failure. Main retains its cached-audit recovery contract.
+        // The temp failure path calls c1609_audit_failure_detail, which production
+        // gets from c1609_load_retirement sourcing c1008-retirement.sh whole.
         foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
         {
             var checkedAudit = await VolumeRetirementFixture.Bash($$"""
                 set -euo pipefail
+                source {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh"))}}
                 source <(sed -n '/^c1008_audit_checked() {/,/^}/p' {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"))}})
                 C1008_PROJECT={{project}}; TEMP_PROJECT=antiphon-runner-temp; C1008_RESUME=1
                 C1008_RECORD="$(jq -cn --arg name "$C1008_PROJECT"_work '{phase:"removing",volumes:{($name):{outcome:"pending"} },audit:"old-audit"}')"
