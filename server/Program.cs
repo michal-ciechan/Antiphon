@@ -180,6 +180,18 @@ try
                     provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
             }
         });
+    builder.Services.AddOptions<ReviewCodeHostSettings>()
+        .Bind(builder.Configuration.GetSection(ReviewCodeHostSettings.SectionName))
+        .PostConfigure(s =>
+        {
+            s.ApplyDefaults();
+            // A host names its token by configuration key only; the value never reaches a log.
+            foreach (var host in s.Hosts.Values)
+            {
+                if (string.IsNullOrEmpty(host.Token) && !string.IsNullOrWhiteSpace(host.TokenConfigKey))
+                    host.Token = builder.Configuration[host.TokenConfigKey];
+            }
+        });
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
     builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
@@ -982,6 +994,13 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<JevSystemOneClient>();
     builder.Services.AddTransient<IDecisionModel>(sp => sp.GetRequiredService<JevSystemOneClient>());
     builder.Services.AddSingleton<IDecisionModel, StandingSeatDecisionModel>();
+    // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
+    builder.Services.AddSingleton<CodeHostResponseCache>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());
+    builder.Services.AddHttpClient<GitHubCodeHost>();
+    builder.Services.AddTransient<ICodeHost>(sp => sp.GetRequiredService<GitHubCodeHost>());
+    builder.Services.AddSingleton<ICodeHost, LocalGitCodeHost>();
+    builder.Services.AddScoped<CodeHostRouter>();
     builder.Services.AddHttpClient<GitHubIssuesTracker>();
     builder.Services.AddHttpClient<LinearTracker>();
     builder.Services.AddHttpClient<JiraTracker>();
