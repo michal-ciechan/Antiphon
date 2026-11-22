@@ -151,11 +151,6 @@ $extraText
     Set-Content -LiteralPath $Path -Value $text -Encoding ASCII
 }
 
-function Invoke-C487NightlyRun {
-    param([hashtable]$Args)
-    return Invoke-AntiphonNightlyRun @Args
-}
-
 function Write-C487Trx {
     param(
         [string]$Path,

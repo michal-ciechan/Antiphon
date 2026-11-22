@@ -1,7 +1,8 @@
 // W2-nightly S19: the command line of the nightly-run command (plan 2026-11-21-w2-nightly-port-slices.md, section 4): one
 // flag per parameter of scripts/nightly-run.ps1 (Invoke-AntiphonNightlyRunCore) except -SeamsPath (seams never cross a
-// process, section 2 rule 2) and -PassThru (the launcher's, read back from --result-file). Not wired yet: S20 makes it
-// the CLI command and the 5.1 launcher. Plain C#: no PowerShell types. ASCII only.
+// process, section 2 rule 2) and -PassThru (the launcher's, read back from --result-file). S20: the flags of the
+// nightly-run command (Antiphon.Scripts/NightlyRunCommand.cs), which scripts/nightly-run.ps1 launches. Plain C#: no
+// PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;

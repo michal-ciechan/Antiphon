@@ -1,7 +1,7 @@
 // W2-nightly S03: the C# twin of scripts/lib/toolchain-floor.ps1 (CARD-1698 host toolchain floors; plan
 // 2026-11-21-w2-nightly-port-slices.md). Warn, never refuse (operator decision 2026-11-03). The ps1 stays: the restart
 // chain (session-runner-restart-health.ps1, restart-server.ps1) dot-sources it and must not depend on the compiled
-// core. nightly-run-impl.ps1 and nightly-tests-impl.ps1 call this twin; ToolchainFloorTwinTests holds the two to the
+// core. The run core (NightlyRun.cs) and the tests run (NightlyTests.cs) call this twin; ToolchainFloorTwinTests holds the two to the
 // same rows and warnings on the same inputs.
 //
 // The manifest names where each floor is declared; it restates no version number.

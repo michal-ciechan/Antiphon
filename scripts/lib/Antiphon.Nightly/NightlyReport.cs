@@ -1,7 +1,7 @@
 // W2-nightly S06: the nightly run card (CARD-0124; lanes CARD-0599 R-4), ported from scripts/nightly-report.ps1 (plan
 // 2026-11-21-w2-nightly-port-slices.md). `antiphon-scripts nightly-report` runs NightlyReport.Run with
-// NightlyReportSeams.Production; the run core's report hop (scripts/lib/nightly-run-impl.ps1) starts it through
-// scripts/lib/antiphon-cli.ps1. NightlyReportTests build the seams directly.
+// NightlyReportSeams.Production; the run core (NightlyRun.cs, W2-nightly S20) runs it in-process on the same seams.
+// NightlyReportTests build the seams directly.
 //
 // It reads summary.json (and an optional previous summary for the new/still/fixed delta), composes the run section and
 // title, and applies the one-open-card-per-lane rule: red creates, updates or reopens the lane's card; green auto-closes

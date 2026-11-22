@@ -1,7 +1,6 @@
 // W2-nightly S17: antiphon-scripts nightly-tests <flags>, the nightly tests run (Antiphon.Nightly.NightlyTests.Run). It
-// replaces scripts/nightly-tests.ps1 and scripts/lib/nightly-tests-impl.ps1 (deleted): nightly-run-impl.ps1's tests hop
-// runs it through scripts/lib/antiphon-cli.ps1, and the C# run core (NightlyRun, S20) with `dotnet exec <this dll>
-// nightly-tests`. The host is the production one (the system clock, git, both launch custodies, the process table, the host
+// replaces scripts/nightly-tests.ps1 and scripts/lib/nightly-tests-impl.ps1 (deleted): the C# run core (NightlyRun, the
+// nightly-run command since S20) runs it with `dotnet exec <this dll> nightly-tests`. The host is the production one (the system clock, git, both launch custodies, the process table, the host
 // probe), its owned children prepared as Set-AntiphonBuildDriverEnvironment prepared them; the bindings are
 // NightlyTestsBindings.Production (the evidence recorder, the real E2E check, the heartbeat's active-chunk identity and
 // this checkout's class-cost file), as nightly-tests-impl.ps1 bound them. The flags are NightlyTestsOptions' (section 4

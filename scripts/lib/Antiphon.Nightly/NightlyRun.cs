@@ -1,5 +1,5 @@
 // W2-nightly S19: the nightly run core (plan 2026-11-21-w2-nightly-port-slices.md, slice S19), moved from
-// scripts/lib/nightly-run-impl.ps1: Invoke-AntiphonNightlyRunCore (the profile and candidate refusals, the reparse, shared
+// scripts/lib/nightly-run-impl.ps1 (deleted in S20): Invoke-AntiphonNightlyRunCore (the profile and candidate refusals, the reparse, shared
 // tree and ownership guards, the run lock and the shared native lock, the state writes, the sync with its line-ending
 // repair, the selection attempt, the self-update hop, WhatIf, the tests hop, the summary settle, the report, the final
 // state and the credit), Repair-NightlyCheckoutLineEndings, Write-NightlyHopFailure, Write-NightlyRunState,
@@ -15,10 +15,11 @@
 // clone's nightly-run.ps1). The tests hop runs `dotnet exec <this CLI> nightly-tests` (NightlyTests.Run) and never the
 // JSON-splatted selection hop; the report runs in-process (NightlyReport.Run).
 //
-// Not wired: scripts/nightly-run.ps1 still runs the PowerShell; NightlyRunParityTests runs both on the same seams. S20 makes
-// this the nightly-run command and deletes the PowerShell. Every observation of the machine goes through the run's
-// NightlyHost; the collaborators that are another lane's (the selection attempt writer, W2-rc) are NightlyRunBindings.
-// Plain C#: no PowerShell types; records the core returns are read through PsValue. ASCII only.
+// W2-nightly S20: wired as `antiphon-scripts nightly-run` (Antiphon.Scripts/NightlyRunCommand.cs, the production host and
+// NightlyRunBindings.Production); scripts/nightly-run.ps1 is its Windows PowerShell 5.1 launcher and nightly-run-impl.ps1
+// is deleted. Every observation of the machine goes through the run's NightlyHost; the collaborators that are another
+// lane's (the selection attempt writer, W2-rc) are NightlyRunBindings. Plain C#: no PowerShell types; records the core
+// returns are read through PsValue. ASCII only.
 #nullable disable
 using System;
 using System.Collections;
@@ -134,6 +135,26 @@ namespace Antiphon.Nightly
 
         /// <summary>The run's shadow evidence recorder; null: one from ANTIPHON_RC_RUN_EVIDENCE, unseamed.</summary>
         public RcRunEvidenceRecorder RcEvidence { get; set; }
+
+        /// <summary>
+        /// W2-nightly S20, the nightly-run command's bindings: the checkout this code was built from as the product root
+        /// (NightlyTests.ProductRoot), the given CLI dll for the tests hop and the selection attempt, the report in-process
+        /// on its production seams over the host, the selection attempt through that CLI's select-release (then the product
+        /// root's release-selection-worker.ps1 under pwsh), and the shadow evidence recorder from ANTIPHON_RC_RUN_EVIDENCE.
+        /// </summary>
+        public static NightlyRunBindings Production(NightlyHost host, string cliPath)
+        {
+            if (host == null) throw new ArgumentNullException(nameof(host));
+            var productRoot = NightlyTests.ProductRoot();
+            return new NightlyRunBindings
+            {
+                ProductRoot = productRoot,
+                CliPath = cliPath ?? "",
+                Report = options => NightlyReport.Run(options, NightlyReportSeams.Production(host, host.Variables)).ExitCode,
+                SelectionAttempts = NightlyRun.SelectionWorker(cliPath, Path.Combine(productRoot ?? "", "scripts", "lib"), host.Variables("PATH")),
+                RcEvidence = new RcRunEvidenceRecorder(host.Variables("ANTIPHON_RC_RUN_EVIDENCE"), false, false, line => NightlyTests.RunLine(host, line)),
+            };
+        }
     }
 
     /// <summary>The nightly run and its helpers.</summary>
