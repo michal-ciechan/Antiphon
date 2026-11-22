@@ -26538,6 +26538,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/NativeHardLink.cs",
       "classes": [
         "ChannelReplyAttachmentReaderTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "QualificationCheckoutSourceTests",
         "RcDirtyOrderCSharpTests",
