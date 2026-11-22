@@ -28,6 +28,13 @@ public interface IPtyCustodyContainment
     PtyTrackedLaunch Place(PtyTrackedLaunch launch);
 
     /// <summary>
+    /// CARD-1931. How long after the spawn returns the container may still be placing the root.
+    /// Windows places inside the suspended spawn, so zero. The Linux shim writes its own pid into
+    /// the tree only once it runs, so the first read after the spawn can precede it.
+    /// </summary>
+    TimeSpan PlacementSettleBound => TimeSpan.Zero;
+
+    /// <summary>
     /// What the container itself reports is still alive. Never a guess, never a process-name
     /// match: a read that cannot be performed throws rather than returning zero.
     /// </summary>
@@ -107,6 +114,12 @@ public sealed class LinuxCgroupContainment : IPtyCustodyContainment
         args.AddRange(launch.CommandLine);
         return new PtyTrackedLaunch(SudoExe, args);
     }
+
+    /// <summary>
+    /// CARD-1931. The shim enters a tree that must be empty, so its own pid is the first member.
+    /// Only a launch that never places waits this long; the launch reply bound is 30 s.
+    /// </summary>
+    public TimeSpan PlacementSettleBound => TimeSpan.FromSeconds(5);
 
     public PtyCustodyPopulation ReadActive()
     {

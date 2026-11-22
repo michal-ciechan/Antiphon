@@ -235,25 +235,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             custody.RecordStartIntent();
             _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
             custody.RecordTracking(_conn.Pid);
-            try
-            {
-                var population = _containment.ReadActive();
-                var contained = false;
-                foreach (var member in population.Pids)
-                {
-                    if (member == _conn.Pid)
-                    {
-                        contained = true;
-                        break;
-                    }
-                }
-
+            // Missing accounting is not placement. Natural finality then stays Unknown.
+            if (await ObserveRootPlacementAsync(_containment, _conn.Pid) is { } contained)
                 custody.RecordLinuxPlacement(contained);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Missing accounting is not placement. Natural finality stays Unknown.
-            }
         }
         else
         {
@@ -711,6 +695,37 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { stat = null; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
         return ProcStatShowsExit(stat);
+    }
+
+    /// <summary>
+    /// CARD-1931: whether the tracked root is a member of its own tree. The Linux shim places
+    /// itself after the spawn has returned, so an empty or not-yet-created tree is re-read until
+    /// a first member appears, the root has exited, or the containment's settle bound passes.
+    /// The first member of a tree the shim found empty is the shim; any other member means the
+    /// root was not placed. Null means accounting stayed unreadable, which is not placement.
+    /// </summary>
+    private static async Task<bool?> ObserveRootPlacementAsync(IPtyCustodyContainment containment, int rootPid)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        while (true)
+        {
+            bool? contained;
+            try
+            {
+                var population = containment.ReadActive();
+                contained = population.Pids.Contains(rootPid);
+                if (contained.Value || population.Count != 0) return contained;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                contained = null;
+            }
+
+            if (System.Diagnostics.Stopwatch.GetElapsedTime(started) >= containment.PlacementSettleBound
+                || RootExited(false, ProcStatReader("/proc/" + rootPid + "/stat")))
+                return contained;
+            await Task.Delay(TimeSpan.FromMilliseconds(10));
+        }
     }
 
     /// <summary>CARD-1681: the <c>/proc/&lt;pid&gt;/stat</c> reader <see cref="RootExited"/> uses.</summary>
