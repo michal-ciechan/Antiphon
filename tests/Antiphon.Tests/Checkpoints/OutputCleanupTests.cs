@@ -81,6 +81,36 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         reads.ShouldBeLessThanOrEqualTo(10, "46 entries; the index did not change during the removal");
     }
 
+    // CARD-2052: the removal scope never answers from a listing older than the index it was read from.
+    [Test]
+    public void tracked_index_scope_reads_the_index_again_after_it_changes()
+    {
+        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner());
+        var delete = new CheckpointDelete(context);
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var output = Path.Combine(root, "bin-c2052");
+        Directory.CreateDirectory(output);
+        var dll = Path.Combine(output, "app.dll");
+        File.WriteAllText(dll, "COMPILER");
+        var scope = new TrackedIndexScope();
+
+        delete.PreflightRoots(root, [dll], scope).ShouldBeNull();
+        var reads = context.InProcessIndexReads;
+        reads.ShouldBeGreaterThan(0, "the tracked-path check is answered from the index in process");
+        delete.PreflightRoots(root, [dll], scope).ShouldBeNull();
+        context.InProcessIndexReads.ShouldBe(reads, "an unchanged index is answered from the scope");
+        delete.PreflightRoots(root, [Path.Combine(root, "tracked.txt")], scope).ShouldBe("tracked");
+
+        Git(root, "add", "--", "bin-c2052/app.dll");
+
+        delete.PreflightRoots(root, [dll], scope).ShouldBe("tracked");
+        context.InProcessIndexReads.ShouldBeGreaterThan(reads, "a changed index is read again");
+        delete.PreflightRoots(root, [output], scope).ShouldBe("tracked");
+        delete.PreflightRoots(root, [Path.Combine(output, "other.dll")], scope).ShouldBeNull();
+    }
+
     [Test]
     public void deletes_only_this_runs_bin_names()
     {

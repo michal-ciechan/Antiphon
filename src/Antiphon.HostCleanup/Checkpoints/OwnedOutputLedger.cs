@@ -88,26 +88,29 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         if (refusal is not null || dryRun) return refusal;
         // No recursive deletion: an unrecorded late addition keeps its directory alive.
         var entries = Inventory(root).Keys.Append(Ledger).OrderByDescending(path => path.Count(c => c == '/')).ToList();
+        // CARD-2052: every entry is still checked against the index before its unlink; the scope reads the index
+        // again only when its identity changed, instead of once per entry.
+        var index = new TrackedIndexScope();
         foreach (var relative in entries.Where(path => !Io.DirectoryExists(Path.Combine(root, path))))
         {
-            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: false);
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: false, index);
             if (stopped is not null) return stopped;
         }
         foreach (var relative in entries.Where(path => Io.DirectoryExists(Path.Combine(root, path))))
         {
-            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: true);
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: true, index);
             if (stopped is not null) return stopped;
         }
-        return DeleteRecorded(root, root, directory: true);
+        return DeleteRecorded(root, root, directory: true, index);
     }
 
-    private string? DeleteRecorded(string root, string full, bool directory)
+    private string? DeleteRecorded(string root, string full, bool directory, TrackedIndexScope index)
     {
         // CARD-1520: the persisted refusal must keep which gate stopped the
         // unlink. Preflight already names tracked, link, and git outcomes.
         // A content or creation-record mismatch is a different fact.
         var stage = directory ? "directory" : "file";
-        if (SafeWrite.Preflight(root, [full]) is { } preflight)
+        if (SafeWrite.Preflight(root, [full], index) is { } preflight)
             return PerEntryRefusal(full, stage, "preflight=" + preflight);
         if (!SafeWrite.MatchesCreation(full))
             return PerEntryRefusal(full, stage, "content-or-creation-record-mismatch");

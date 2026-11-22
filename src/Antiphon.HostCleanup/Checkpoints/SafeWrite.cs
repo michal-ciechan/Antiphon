@@ -148,6 +148,10 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         context.Registry.Content(path);
 
     public string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
+        => Preflight(repository, roots, scope: null, gitExecutable, timeoutMs);
+
+    internal string? Preflight(string repository, IReadOnlyCollection<string> roots, TrackedIndexScope? scope,
+        string? gitExecutable = null, int? timeoutMs = null)
     {
         foreach (var root in roots)
         {
@@ -156,7 +160,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
                 return link;
         }
 
-        return SafeDelete.PreflightRoots(repository, roots, gitExecutable, timeoutMs);
+        return SafeDelete.PreflightRoots(repository, roots, scope, gitExecutable, timeoutMs);
     }
 
     public string? Refusal(string path, WriteOwnership ownership)
