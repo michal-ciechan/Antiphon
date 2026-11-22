@@ -22,8 +22,8 @@ restart operations, readiness budget, result JSON and exit code intact.
   `New-RunnerRestartPlatform`; the added decision and HTTP read are portable.
 - V-2 / CP-5. Check the edited runbook sections, doc consumers and the standing
   guard batch, including the impacted `TestLaneCategoryGuardTests`.
-- V-3 / CP-6 and CP-7. Run the derived index class and the remaining impacted
-  limiter census.
+- V-3 / CP-6 through CP-8. Run the derived index class, its consumers selected
+  by the regenerated index, and the remaining impacted limiter census.
 - V-4 / manual. Check the committed scripts' ASCII bytes and syntax, inspect
   the existing `GET /capabilities` mapping and deploy build stamp contract,
   and verify full-range impacted classes and evidence-diff, land graph
@@ -41,10 +41,11 @@ restart operations, readiness budget, result JSON and exit code intact.
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c2031-docs/` | doc-and-standing-guards | `/*/*/(DockerStackDocumentationTests*)\|(GrokRunnerImageContractTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(ZombieCensusPlatformTests*)\|(KeepSixDocumentationTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-2 | DockerStackDocumentationTests,GrokRunnerImageContractTests,StandingPipelinePolicyDocumentationTests,ZombieCensusPlatformTests,KeepSixDocumentationTests,TestClassificationPolicyTests,TestClassificationGuardTests,SlowTestRegistryMergeTests,SlowTestTripwireTests,NativeLinuxPolicyWitnessTests,MechanicalPcContractTests,TaskPlatformGuidanceTests,C1729LayeringGuardTests,TestLaneCategoryGuardTests,ProcessSpawnLimitTests | 78 | 8 | true |
 | CP-6 | S2 | CP-5 | derived-impact-index | `/*/*/DerivedImpactIndexTests/*` | V-3 | DerivedImpactIndexTests | 1 | 4 | true |
 | CP-7 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c2031-pty/` | pty-limiter-guard | `/*/*/ProcessSpawnLimitTests/*` | V-3 | ProcessSpawnLimitTests | 1 | 3 | true |
+| CP-8 | S2 | CP-5 | index-consumers | `/*/*/(IncrementalSelectionSoundnessTests*)\|(LandGeneratedArtifactTests*)\|(RcInputManifestTests*)\|(RcInputOwnersMapTests*)\|(ReleaseImpactEnvelopeTests*)/*` | V-3 | IncrementalSelectionSoundnessTests,LandGeneratedArtifactTests,RcInputManifestTests,RcInputOwnersMapTests,ReleaseImpactEnvelopeTests | 5 | 3 | true |
 
 ### Cost
 
-Estimated checkpoint runtime is 36 minutes before build-slot and host-load
+Estimated checkpoint runtime is 39 minutes before build-slot and host-load
 waits. Every row is bounded by named methods or classes. The checkpoint
 driver and, if its inputs change, the derived index generator are separate
 prerequisites. [Mutation candidates](../mutations/2026-11-22-card-2031-runner-sha-stamp-hint.md)

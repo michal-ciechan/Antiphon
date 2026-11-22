@@ -108,6 +108,7 @@ public class RunnerRestartScriptCompatibilityTests
                 . '{{helper}}'
                 $p=New-RunnerRestartPlatform -Root $PSScriptRoot
                 $p.Probe={ param($ms) Invoke-RunnerHealthHttp 'http://127.0.0.1:{{port}}/health' $ms }
+                $p.ProbeBuild={ $null }
                 $p.Census={ @{supervisor=$null;wrapper=$null} }
                 $p.Identity={ Get-RunnerProcessIdentity ([AntiphonRestartTcpOwner]::Find({{port}})) }
                 $p.Verify={ param($i) $i.pid -eq {{Environment.ProcessId}} }
@@ -149,6 +150,7 @@ public class RunnerRestartScriptCompatibilityTests
             $controls=New-Object 'System.Collections.Generic.List[string]'
             $p.Control={ param($op,$identity) $controls.Add($op) }.GetNewClosure()
             $p.Probe={ param($ms) @{ status=200; result='fixture-healthy' } }
+            $p.ProbeBuild={ $null }
             $p.Identity={ @{ pid=$PID } }
             $p.Verify={ param($identity) $true }
             $r=Invoke-RunnerRestart -Platform $p -TimeoutSec 1
@@ -207,6 +209,7 @@ public class RunnerRestartScriptCompatibilityTests
                 $controls=New-Object 'System.Collections.Generic.List[string]'
                 $p.Control={ param($op,$identity) $controls.Add($op) }.GetNewClosure()
                 $p.Probe={ param($ms) @{ status=200; result='fixture-healthy' } }
+                $p.ProbeBuild={ $null }
                 $p.Identity={ @{ pid=$PID } }
                 $p.Verify={ param($identity) $true }
                 $r=Invoke-RunnerRestart -Platform $p -TimeoutSec 1 {{(state.StartsWith("hard-") ? "-Hard" : state.StartsWith("wait-") ? "-WaitOnly" : "")}}
