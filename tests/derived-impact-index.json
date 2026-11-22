@@ -5661,7 +5661,8 @@
     {
       "path": "server/Application/Dtos/VersionDtos.cs",
       "classes": [
-        "HealthEndpointTests"
+        "HealthEndpointTests",
+        "LandDeliveryFixtureProbeTests"
       ]
     },
     {
@@ -20947,6 +20948,7 @@
         "DelegationSequencingE2ETests",
         "DirectoryAutocompleteE2ETests",
         "DispatchConcurrencySettingsE2ETests",
+        "LandDeliveryFixtureProbeTests",
         "OrchestratorE2ETests",
         "OutputDistillationApplyCanaryTests",
         "PipelineGlanceE2ETests",
