@@ -14,5 +14,5 @@ server/Domain/**, server/Application/{Interfaces,Dtos,Exceptions,Settings,Core}/
 server/Infrastructure/Data/**, server/Migrations/**, server/Infrastructure/Resilience/{DatabaseResilienceExecutor,NpgsqlTransientFailureClassifier}.cs Persistence
 server/Infrastructure/Git/**, server/Infrastructure/{WorkspaceHooks,Verification}/**, server/Application/Services/{GitWorkspaceService,ServerGitProcess,GitIndexLock,OrchestratorWorkspaceLayout}.cs Git
 server/Infrastructure/Agents/{Pty,SessionRunner,Tui}/**, server/Infrastructure/Agents/CodexSubmitConfirmation.cs Runners
-server/Infrastructure/Agents/*.cs, server/Infrastructure/Agents/Tools/**, server/Infrastructure/{GitHub,IssueTrackers}/** Integrations
+server/Infrastructure/Agents/*.cs, server/Infrastructure/Agents/Tools/**, server/Infrastructure/{GitHub,IssueTrackers,Review}/** Integrations
 server/Application/Services/**, server/Application/Review/**, server/Infrastructure/{Orchestration,Supervision,Files,FileSystem,ExternalChanges,WorkflowDefinitions,HostLoad}/**, server/Infrastructure/Resilience/** Application
