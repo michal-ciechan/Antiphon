@@ -57,3 +57,31 @@ or corpus questions found while implementing. Each row says what to test and why
 | R-10 | `GET /api/review-workflows/revisions/{id}` for an unknown id (404) and the get-or-create race on the revision hash. | Only the happy path is covered. |
 | R-11 | Queue `Mine` includes unassigned gates of the viewer's teams; `slaWorkingMinutes` is the breach budget (480). | Implemented, untested. |
 | R-12 | Single `POST /api/review-findings/{id}/responses` and `POST /api/review-gates/{id}/pass` persist their new event/pass rows. Both once failed because a child with a client-set Guid added only through a navigation is treated as existing by EF (UPDATE of 0 rows, 500); fixed by adding through the context. | The batch route is covered by the workflow test; these two are not. |
+
+## Code hosts (`ICodeHost`, `GitHubCodeHost`, `LocalGitCodeHost`, `CodeHostRouter`)
+
+| # | Test later | Why |
+|---|---|---|
+| C-1 | `LocalGitCodeHost` over a fixture repo: base/head refs resolve to SHAs, title and description from the head commit, `--name-status`/`--numstat -z` parsing with a rename, a binary file and a deletion; a ref starting with `-` is `InvalidRequest`. | Implemented; needs a git fixture on the git spawn lane. Only the GitHub adapter is unit tested. |
+| C-2 | `CodeHostRouter`: a repo row naming a host of the other kind is `InvalidRequest`; a local repo with no path is `NotConfigured`; an unknown host id; a GitHub repo with no row uses `github`. | Implemented, untested. |
+| C-3 | Intake errors over HTTP: PR 404 is a 404, a bad token is 503 `review_code_host_rejected`, a rate limit is 503 `review_code_host_rate_limited`, a local repo without a path is 422. | Mapping in `CodeHostRouter.ToHttp`; not exercised. |
+| C-4 | GitHub diff too large (406) during categorise: the state carries the file list and a note instead of failing the node. | Implemented; no fake for it. |
+| C-5 | `CodeHostResponseCache` bounds: past 512 entries it starts again, and a body over 4M characters is not kept. | Implemented, untested. |
+| C-6 | The token never appears in a log line or an exception message. | One assertion on a 401 message only. |
+| C-7 | A PR with more than 3000 files stops at 30 pages; compare lists at most 300 files on a recheck. | GitHub limits; not modelled by the fake. |
+
+## Intake, Refresh and the executor (`ReviewService`, `ReviewWorkflowExecutor`)
+
+| # | Test later | Why |
+|---|---|---|
+| E-1 | Refresh with a moved head: a new iteration with trigger `push`, the next round, pinned SHAs, the intake summary noting the move; the executor's delta is `incremental` since the previous head. | Covered only by reading; the one integration test stops after the first iteration. |
+| E-2 | Refresh on a failed run with an unchanged head starts a `recheck` iteration in the same round; on a demo run (no pinned head) it only re-announces. | Implemented, untested. |
+| E-3 | Delta falls back to the whole change when the previous head is unreachable (compare 404 after a force push) and says so in the summary. | Implemented, untested. |
+| E-4 | Categorise with no configured provider (the default settings) fails the node with the chain's reason and the run becomes Failed; a chain whose every entry refuses a question fails with the question names and still records tokens and cost. | Loud-failure path; not exercised. |
+| E-5 | A later iteration only raises the blast radius and adds categories. | Design choice; untested. |
+| E-6 | Lease: two executors on one database never walk the same run (the conditional claim); a Running run whose `UpdatedAt` is older than `LeaseSeconds` is taken over; shutdown hands the node back as Pending and the run as Queued. | Needs two hosts on one schema or a direct executor harness. |
+| E-7 | A Refresh that lands while a walk is running: the walk marks its running node Skipped (`superseded by iteration N`) and stops without overwriting the run. | Race; needs a blocking fake code host. |
+| E-8 | Another-round on a run that came through a code host: the executor runs the pending intake for the new iteration. | Implemented; the demo run in `ReviewWorkflowApiTests` has no pinned head, so it is (correctly) never claimed. |
+| E-9 | `ReviewRunChanged` once per node transition (Running, then Succeeded/Failed) and once at the stop point. | Needs a recording `IEventBus` (see R-5). |
+| E-10 | Duplicate manual intake for a PR that already has an active run. | Today a second run is created; the design wants one run per subject (3.2). Decide 409 or return the existing run. |
+| E-11 | Migration `AddReviewIterationShas` Down throws, and the tip-rewind fixtures (`MigrationTestDatabase.DetachHostLoadAsync` callers) need the review-engine tables and these columns detached before they rewind. | `AddReviewEngine` already had this gap on the branch; `tests/Antiphon.Tests/TestHelpers` is outside this track. |
