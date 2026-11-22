@@ -593,11 +593,12 @@ function Write-WrapperTiming {
     $root = $TimingRoot
     if (-not $root) { $root = $env:ANTIPHON_TEST_TIMING_ROOT }
     if (-not $root) { return }
+    # The journal writer is compiled (antiphon-scripts test-timing-event); a failed write is not a test result.
     try {
-        . (Join-Path $PSScriptRoot (Join-Path 'lib' 'test-timings.ps1'))
+        . (Join-Path $PSScriptRoot (Join-Path 'lib' 'antiphon-cli.ps1'))
         $stamp = [DateTimeOffset]::UtcNow.ToString('o')
         $outcome = if ($Kind -eq 'run-started') { 'started' } elseif ($Code -eq 0) { 'passed' } else { 'failed' }
-        Write-TestTimingEvent -Root $root -Event ([ordered]@{
+        $timingEvent = [ordered]@{
             schemaVersion = 'antiphon-test-timing-v1'
             eventId = ([guid]::NewGuid().ToString('N'))
             eventKind = $(if ($Kind -eq 'run-started') { 'run-started' } else { 'set-completed' })
@@ -613,7 +614,8 @@ function Write-WrapperTiming {
             category = 'unavailable'
             timingPersistence = 'complete'
             durabilityClass = 'configured-root'
-        })
+        }
+        $null = Invoke-AntiphonCli -Command 'test-timing-event' -Arguments @('--root', $root, '--event', ($timingEvent | ConvertTo-Json -Compress -Depth 8))
     } catch { }
 }
 
@@ -855,9 +857,10 @@ function Invoke-Dotnet {
     $writer = [System.IO.StreamWriter]::new($stream)
     $writer.AutoFlush = $true
     try {
+        # Before the phase clock: the journal write starts the CLI.
+        if ($Phase -eq 'run') { Write-WrapperTiming -Kind 'run-started' }
         $launched = [DateTimeOffset]::UtcNow
         $watch = [System.Diagnostics.Stopwatch]::StartNew()
-        if ($Phase -eq 'run') { Write-WrapperTiming -Kind 'run-started' }
         $proc = [System.Diagnostics.Process]::Start($psi)
         try {
             $stdoutTask = $proc.StandardOutput.ReadLineAsync()

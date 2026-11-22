@@ -17,10 +17,10 @@ try {
     . "$PSScriptRoot/lib/test-selection.ps1"
     $selection=Get-TestSelection $RepositoryRoot $BaselineSha $CandidateSha $Profile
     if ($TimingRoots) {
+        # The timing report and estimates are compiled (Antiphon.Nightly.TestTimings); test-selection.ps1 loaded the core.
         try {
-            . "$PSScriptRoot/lib/test-timings.ps1"
-            $timingReport = Get-TestTimingReport -Roots $TimingRoots -GroupBy roster
-            $selection = Add-TestTimingEstimates -Selection $selection -Report $timingReport
+            $timingReport = [Antiphon.Nightly.TestTimings]::Report([string[]]$TimingRoots, 'roster')
+            $selection = [Antiphon.Nightly.TestTimings]::AddEstimates($selection, $timingReport)
         } catch { }
     }
     $text=ConvertTo-TestSelectionCanonicalJson $selection
