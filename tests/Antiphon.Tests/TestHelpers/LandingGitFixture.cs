@@ -278,13 +278,15 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             || BeforeCommand is not null || BeforeCommandAsync is not null || BeforeObservedCommand is not null
             || AfterCommand is not null;
 
-        /// <summary>A fixture command done in process, recorded as <see cref="RunAsync"/> records one it runs.</summary>
+        /// <summary>A fixture command done in process, recorded as <see cref="RunAsync"/> records one it runs. Its C448
+        /// git_start and git_exit rows are written together once it took effect (no capture runs for it: the
+        /// <see cref="Evidence"/> writer runs only for a git child), evidence first so a failed write records nothing.</summary>
         internal void RecordInProcess(string repository, string[] arguments)
         {
-            Trace.Add(arguments.ToArray());
-            Commands.Add((repository, arguments.ToArray()));
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
             LandingEvidence.Write(taskId, "git_exit", new { arguments, ExitCode = 0, RebaseHeadSha = (string?)null });
+            Trace.Add(arguments.ToArray());
+            Commands.Add((repository, arguments.ToArray()));
         }
 
         /// <summary>CARD-1436: the index-lock census sees only this fixture's own git children, never the host's.</summary>

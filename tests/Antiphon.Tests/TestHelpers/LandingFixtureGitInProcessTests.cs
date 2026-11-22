@@ -134,6 +134,16 @@ public sealed class LandingFixtureGitInProcessTests
         File.Exists(Path.Combine(gitDir, "sequencer", "todo")).ShouldBeTrue();
         Directory.Delete(Path.Combine(gitDir, "sequencer"), recursive: true);
 
+        // A held index lock: git refuses to stage or commit (128); libgit2's commit would not take the lock.
+        await File.WriteAllTextAsync(Path.Combine(fixture.Source, "locked.txt"), "locked\n");
+        await File.WriteAllTextAsync(Path.Combine(gitDir, "index.lock"), "");
+        LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["add", "."]).ShouldBeNull();
+        LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["commit", "--allow-empty", "-m", "locked"]).ShouldBeNull();
+        (await Should.ThrowAsync<InvalidOperationException>(() => fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "locked")))
+            .Message.ShouldBe("fixture_git_failed:commit:128");
+        File.Delete(Path.Combine(gitDir, "index.lock"));
+        File.Delete(Path.Combine(fixture.Source, "locked.txt"));
+
         // Not a checkout root; a bare repository answers rev-parse HEAD in process but stages nothing.
         Directory.CreateDirectory(Path.Combine(fixture.Source, "sub"));
         LandingFixtureGitInProcess.TryRun(fixture.Git, Path.Combine(fixture.Source, "sub"), head).ShouldBeNull();
