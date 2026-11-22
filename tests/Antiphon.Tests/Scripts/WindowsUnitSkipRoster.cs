@@ -329,6 +329,9 @@ internal static class WindowsUnitSkipRoster
     internal const string CheckpointNativeWindowsReason = "native Windows custody proof requires Windows";
     internal const string CheckpointNativeHandleReason = "requires native Windows filesystem handles";
     internal const string WindowsSharingModeReason = "Sharing-mode locks are a Windows file-system behaviour.";
+    // Review 0d322ed5: the impacted-class checkpoint row for path-identity readiness selects these
+    // existing Linux skips; listing them lets the receipt qualify them (skip_identity_unlisted).
+    internal const string AgentStartRecoveryCmdReason = "Agent start recovery's live executable is cmd.exe from the Windows system directory; Linux has no cmd.exe.";
     internal static readonly Entry[] WindowsOnly =
     [
         new("Antiphon.Tests.Checkpoints", "CheckpointOutputConfinementTests", "windows_confined_build_leaves_use_app_host_unset", 1, "CARD-1310: the confined build resolves dotnet.exe through the Windows CreateProcess PATH and leaves UseAppHost unset."),
@@ -369,6 +372,13 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write", 1, "CARD-1310 Windows output custody"),
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_set_clock_and_foreign_dacl_are_not_adopted", 1, "CARD-1318 Windows custody hardening"),
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_sharing_violation_retries_then_adopts", 1, "CARD-1318 Windows custody hardening"),
+        new("Antiphon.Tests.Application", "AgentSessionServiceIntegrationTests", "AgentSessionService_start_to_first_text_delta_with_real_worktree_and_raw_pty", 1, "Raw PTY integration uses Windows ConPTY in this test."),
+        new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Interactive_start_failure_marks_agent_failed_not_working", 1, AgentStartRecoveryCmdReason),
+        new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Observed_exit_closes_session_and_resets_agent", 2, AgentStartRecoveryCmdReason),
+        new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "AlwaysOn_channel_bound_survives_child_death_and_replies", 2, "CARD-0865: the two ClaudeCode rows skip on Linux until standing/always-on channel parity has native recovery fixes; the Grok row runs."),
+        new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Unsafe_grok_rules_on_the_named_seat_refuse_before_any_pane_and_leave_the_streak_untouched", 1, "CARD-0865: Linux Grok named-seat argv policy parity awaits repair."),
+        new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Standing_claude_ptyhost_native_wire_missing_target_never_creates", 1, "CARD-0878: Linux PtyHost output/exit race can miss native-session-missing classification."),
+        new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Standing_grok_unavailable_native_store_never_creates", 2, "CARD-0865: Linux Grok unavailable-native-store classification awaits repair."),
         new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
         new("Antiphon.Tests.Scripts", "WindowsUnitPlatformAdmissionTests", "C1210_Windows_linux_only_outcomes_are_exact", 1, "CARD-1210: the child skip-roster audit requires Windows placement."),
     ];

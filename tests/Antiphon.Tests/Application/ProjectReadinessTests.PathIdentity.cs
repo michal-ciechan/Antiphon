@@ -157,6 +157,7 @@ public partial class ProjectReadinessTests
 
         var sql = query.ToQueryString();
         Console.WriteLine(sql);
+        sql.ShouldContain("lower(replace(");
         sql.ShouldContain("lower(rtrim(replace(");
         sql.ShouldContain("COLLATE \"C\")");
         sql.ShouldContain(" LIKE @");
@@ -175,7 +176,12 @@ public partial class ProjectReadinessTests
 
         Console.WriteLine(string.Join(Environment.NewLine, plan));
         plan[0].ShouldContain("on \"Agents\"");
-        plan.ShouldContain(line => line.Contains("Filter:") && line.Contains("rtrim"));
+        var filter = plan.Single(line => line.Contains("Filter:"));
+        filter.ShouldContain("rtrim");
+        // The prefix guard must come before the trimmed match so rtrim runs only on prefix matches.
+        // PostgreSQL prints the COLLATE as a cast: lower((replace(...))::text) ~~ ... AND lower((rtrim(replace(...
+        filter.IndexOf("replace(", StringComparison.Ordinal)
+            .ShouldBeLessThan(filter.IndexOf("rtrim(", StringComparison.Ordinal), filter);
         plan.ShouldNotContain(line => line.Contains("Join") || line.Contains("SubPlan"));
     }
 
