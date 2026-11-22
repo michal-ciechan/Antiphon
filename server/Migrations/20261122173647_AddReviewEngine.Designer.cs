@@ -13,8 +13,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261122130035_AddReviewEngineExecution")]
-    partial class AddReviewEngineExecution
+    [Migration("20261122173647_AddReviewEngine")]
+    partial class AddReviewEngine
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

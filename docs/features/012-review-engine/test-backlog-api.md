@@ -84,7 +84,7 @@ or corpus questions found while implementing. Each row says what to test and why
 | E-8 | Another-round on a run that came through a code host: the executor runs the pending intake for the new iteration. | Implemented; the demo run in `ReviewWorkflowApiTests` has no pinned head, so it is (correctly) never claimed. |
 | E-9 | `ReviewRunChanged` once per node transition (Running, then Succeeded/Failed) and once at the stop point. | Needs a recording `IEventBus` (see R-5). |
 | E-10 | Duplicate manual intake for a PR that already has an active run. | Today a second run is created; the design wants one run per subject (3.2). Decide 409 or return the existing run. |
-| E-11 | Migration `AddReviewIterationShas` Down throws, and the tip-rewind fixtures (`MigrationTestDatabase.DetachHostLoadAsync` callers) need the review-engine tables and these columns detached before they rewind. | `AddReviewEngine` already had this gap on the branch; `tests/Antiphon.Tests/TestHelpers` is outside this track. |
+| E-11 | Migration `AddReviewEngine` (the single review migration, which now also carries the iteration SHA columns) Down throws, and the tip-rewind fixtures (`MigrationTestDatabase.DetachHostLoadAsync` callers) need the review-engine tables detached before they rewind. | `tests/Antiphon.Tests/TestHelpers` is outside this track. |
 
 ## The whole workflow (`ReviewWorkflowExecutor`, `server/Application/Review/Execution/`)
 
@@ -115,7 +115,7 @@ human path.
 | X-18 | Context packs: the prefix hash is identical across an iteration's packs; the ledger has one row per changed file with `included` false past the diff budget; a re-run replaces the iteration's packs and ledger. | Implemented; only the outstanding-findings text is asserted. |
 | X-19 | `GitHubCodeHost` writes over a fake handler: the review body and `RIGHT`-side comments, the comment ids read back from `reviews/{id}/comments`, a status description cut to 140 characters, `update-branch` with `expected_head_sha`, compare's `base_commit`, `merge_base_commit` and `behind_by`, a 404 raw file read as null. | Implemented; the existing GitHub tests cover reads only. |
 | X-20 | `LocalGitCodeHost` compare, branch state, `ls-tree` and `show` over a fixture repo; every write is `Unsupported`. | Needs the git spawn lane (see C-1). |
-| X-21 | Migration `AddReviewEngineExecution`: `Down` throws, and the tip-rewind fixtures detach the new tables and columns. | Same gap as E-11. |
+| X-21 | The execution tables and columns (node executions, context packs, pack ledger, code-host thread links) are part of `AddReviewEngine`, whose `Down` throws; the tip-rewind fixtures detach them too. | Same gap as E-11. |
 | X-22 | Lease takeover in the middle of a fan-out: a second executor resumes the Waiting fan-out without re-running finished reviewers. | Needs two executors on one schema (E-6). |
 
 ## Reviewers, completions and thread resolution (`DelegationReviewAgentRunner`, `ICompletionModel`s, GitHub GraphQL)

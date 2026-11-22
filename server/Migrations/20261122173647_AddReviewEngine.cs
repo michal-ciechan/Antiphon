@@ -78,6 +78,7 @@ namespace Antiphon.Server.Migrations
                     WorkflowRevisionId = table.Column<Guid>(type: "uuid", nullable: true),
                     WorkflowHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     SteerPrompt = table.Column<string>(type: "text", nullable: true),
+                    BaseTipSha = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     StartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
@@ -96,6 +97,31 @@ namespace Antiphon.Server.Migrations
                         principalTable: "ReviewWorkflowRevisions",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "ReviewContextPacks",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    RunId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Iteration = table.Column<int>(type: "integer", nullable: false),
+                    GroupKey = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Hash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    PrefixHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    Content = table.Column<string>(type: "text", nullable: false),
+                    TokenEstimate = table.Column<int>(type: "integer", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ReviewContextPacks", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_ReviewContextPacks_ReviewRuns_RunId",
+                        column: x => x.RunId,
+                        principalTable: "ReviewRuns",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -124,6 +150,8 @@ namespace Antiphon.Server.Migrations
                     Posted = table.Column<bool>(type: "boolean", nullable: false),
                     SyncState = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     ExternalThreadUrl = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    ExternalCommentId = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
+                    ExternalThreadId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
@@ -178,6 +206,8 @@ namespace Antiphon.Server.Migrations
                     Iteration = table.Column<int>(type: "integer", nullable: false),
                     Round = table.Column<int>(type: "integer", nullable: false),
                     Trigger = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    BaseSha = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
+                    HeadSha = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     StartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
@@ -199,6 +229,7 @@ namespace Antiphon.Server.Migrations
                     RunId = table.Column<Guid>(type: "uuid", nullable: false),
                     NodeId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Iteration = table.Column<int>(type: "integer", nullable: false),
+                    Sequence = table.Column<int>(type: "integer", nullable: false),
                     Kind = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     Status = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     ItemKey = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
@@ -213,13 +244,39 @@ namespace Antiphon.Server.Migrations
                     InputsHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     StartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     CompletedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    Summary = table.Column<string>(type: "text", nullable: true)
+                    Summary = table.Column<string>(type: "text", nullable: true),
+                    OutputJson = table.Column<string>(type: "jsonb", nullable: true)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_ReviewNodeExecutions", x => x.Id);
                     table.ForeignKey(
                         name: "FK_ReviewNodeExecutions_ReviewRuns_RunId",
+                        column: x => x.RunId,
+                        principalTable: "ReviewRuns",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "ReviewPackLedgerEntries",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    RunId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Iteration = table.Column<int>(type: "integer", nullable: false),
+                    Path = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
+                    Source = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    Reason = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
+                    Score = table.Column<double>(type: "double precision", nullable: false),
+                    Tokens = table.Column<int>(type: "integer", nullable: false),
+                    Included = table.Column<bool>(type: "boolean", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ReviewPackLedgerEntries", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_ReviewPackLedgerEntries_ReviewRuns_RunId",
                         column: x => x.RunId,
                         principalTable: "ReviewRuns",
                         principalColumn: "Id",
@@ -274,6 +331,12 @@ namespace Antiphon.Server.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "IX_ReviewContextPacks_RunId_Iteration_GroupKey",
+                table: "ReviewContextPacks",
+                columns: new[] { "RunId", "Iteration", "GroupKey" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_ReviewFindingEvents_FindingId_CreatedAt",
                 table: "ReviewFindingEvents",
                 columns: new[] { "FindingId", "CreatedAt" });
@@ -316,6 +379,11 @@ namespace Antiphon.Server.Migrations
                 columns: new[] { "RunId", "Iteration" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_ReviewPackLedgerEntries_RunId_Iteration",
+                table: "ReviewPackLedgerEntries",
+                columns: new[] { "RunId", "Iteration" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_ReviewRuns_Status_UpdatedAt",
                 table: "ReviewRuns",
                 columns: new[] { "Status", "UpdatedAt" });
@@ -346,7 +414,8 @@ namespace Antiphon.Server.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             // Operator rule (2026-11-07): Down fails safely. Dropping these tables would lose every
-            // review run, finding, response and gate decision.
+            // review run, iteration and its pinned SHAs, finding, response, gate decision, node output,
+            // context pack and code-host thread link.
             throw new NotSupportedException(
                 "The review engine tables hold review history; a downgrade cannot drop them.");
         }
