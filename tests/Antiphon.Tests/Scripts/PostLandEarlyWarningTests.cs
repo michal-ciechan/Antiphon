@@ -487,7 +487,9 @@ public sealed class PostLandEarlyWarningTests
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // The detached lane reaches the selector after taking lock.json, and keeps that lock
-        // until the test has received the second lane's marker.
+        // until the test has received the second lane's marker. This is a live-owner check.
+        // It does not witness two publishers of an absent lock.json.
+        // Two_processes_publish_exactly_one_owner is that witness.
         var first = repo.RunAsync(plan: false, range: range, fileList: list, env: env, selector: request =>
         {
             selectorEntered.SetResult();
@@ -515,6 +517,143 @@ public sealed class PostLandEarlyWarningTests
         File.Exists(Path.Combine(repo.ReceiptRoot, "lock.json")).ShouldBeFalse();
         var shimText = await File.ReadAllTextAsync(shim);
         CountOf(shimText, "dotnet build").ShouldBe(1);
+    }
+
+    // One committed trial count. Each trial is two OS processes calling production EnterLock
+    // on one absent lock.json. The 1,000-trial probes were one-off and are not this test.
+    private const int PublicationTrials = 24;
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Two_processes_publish_exactly_one_owner()
+    {
+        File.Exists(SlotHelper).ShouldBeTrue(SlotHelper);
+        var failures = new List<string>();
+        var watch = Stopwatch.StartNew();
+        for (var trial = 1; trial <= PublicationTrials; trial++)
+        {
+            var (wins, detail) = await PublicationTrialAsync();
+            if (wins != 1)
+                failures.Add(trial.ToString(CultureInfo.InvariantCulture) + " wins=" + wins + " " + detail);
+        }
+
+        watch.Stop();
+        var elapsed = watch.Elapsed.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture);
+        Console.WriteLine(
+            "post-land-lock trials=" + PublicationTrials.ToString(CultureInfo.InvariantCulture)
+            + " failures=" + failures.Count.ToString(CultureInfo.InvariantCulture)
+            + " elapsedMs=" + elapsed);
+        failures.ShouldBeEmpty("elapsedMs=" + elapsed);
+    }
+
+    private static async Task<(int Wins, string Detail)> PublicationTrialAsync()
+    {
+        var root = Directory.CreateTempSubdirectory("post-land-lock-").FullName;
+        var lockPath = Path.Combine(root, "lock.json");
+        var goPath = Path.Combine(root, "go");
+        var leftReady = Path.Combine(root, "left.ready");
+        var rightReady = Path.Combine(root, "right.ready");
+        var leftArmed = Path.Combine(root, "left.armed");
+        var rightArmed = Path.Combine(root, "right.armed");
+        var leftResult = Path.Combine(root, "left.result");
+        var rightResult = Path.Combine(root, "right.result");
+        var releasePath = Path.Combine(root, "release");
+        using var left = StartLockProcess(lockPath, Guid.NewGuid().ToString("N"), leftReady, goPath, leftArmed, rightArmed, leftResult, releasePath);
+        using var right = StartLockProcess(lockPath, Guid.NewGuid().ToString("N"), rightReady, goPath, rightArmed, leftArmed, rightResult, releasePath);
+        var leftOut = left.StandardOutput.ReadToEndAsync();
+        var leftErr = left.StandardError.ReadToEndAsync();
+        var rightOut = right.StandardOutput.ReadToEndAsync();
+        var rightErr = right.StandardError.ReadToEndAsync();
+        try
+        {
+            if (!await WaitForFilesAsync(left, right, leftReady, rightReady, TimeSpan.FromSeconds(20)))
+                return (0, "ready timeout " + await DrainAsync(left, right, leftOut, leftErr, rightOut, rightErr));
+
+            File.WriteAllText(goPath, "go\n");
+            if (!await WaitForFilesAsync(left, right, leftResult, rightResult, TimeSpan.FromSeconds(20)))
+                return (0, "result timeout " + await DrainAsync(left, right, leftOut, leftErr, rightOut, rightErr));
+
+            // Both processes are still alive: the loser inspected the winner's live pid.
+            var leftWon = (await File.ReadAllTextAsync(leftResult)).Trim() == "true";
+            var rightWon = (await File.ReadAllTextAsync(rightResult)).Trim() == "true";
+            var wins = (leftWon ? 1 : 0) + (rightWon ? 1 : 0);
+            File.WriteAllText(releasePath, "release\n");
+            await Task.WhenAll(left.WaitForExitAsync(), right.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(20));
+            var detail = "left=" + (leftWon ? "true" : "false") + " right=" + (rightWon ? "true" : "false")
+                + " " + await ChildTextAsync(left, leftOut, leftErr)
+                + " | " + await ChildTextAsync(right, rightOut, rightErr);
+            return (wins, detail);
+        }
+        finally
+        {
+            if (!File.Exists(releasePath))
+            {
+                try { File.WriteAllText(releasePath, "release\n"); }
+                catch (IOException) { }
+            }
+            StopProcess(left);
+            StopProcess(right);
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    private static async Task<bool> WaitForFilesAsync(Process left, Process right, string leftPath, string rightPath, TimeSpan budget)
+    {
+        var ready = DateTime.UtcNow + budget;
+        while (DateTime.UtcNow < ready)
+        {
+            if (left.HasExited || right.HasExited)
+                return false;
+            if (File.Exists(leftPath) && File.Exists(rightPath))
+                return true;
+            await Task.Delay(5);
+        }
+
+        return File.Exists(leftPath) && File.Exists(rightPath) && !left.HasExited && !right.HasExited;
+    }
+
+    private static Process StartLockProcess(
+        string lockPath, string runId, string readyPath, string goPath, string ownArmed, string peerArmed, string resultPath, string releasePath)
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in new[] { SlotHelper, "post-land-lock", lockPath, runId, readyPath, goPath, ownArmed, peerArmed, resultPath, releasePath })
+            start.ArgumentList.Add(arg);
+        return Process.Start(start) ?? throw new InvalidOperationException("post-land lock helper did not start");
+    }
+
+    private static async Task<string> DrainAsync(
+        Process left, Process right, Task<string> leftOut, Task<string> leftErr, Task<string> rightOut, Task<string> rightErr)
+    {
+        StopProcess(left);
+        StopProcess(right);
+        return await ChildTextAsync(left, leftOut, leftErr) + " | " + await ChildTextAsync(right, rightOut, rightErr);
+    }
+
+    private static async Task<string> ChildTextAsync(Process process, Task<string> stdout, Task<string> stderr)
+    {
+        var outText = await stdout;
+        var errText = await stderr;
+        var exit = process.HasExited ? process.ExitCode.ToString(CultureInfo.InvariantCulture) : "running";
+        return "exit=" + exit
+            + " out=" + outText.Trim()
+            + (errText.Length == 0 ? "" : " err=" + errText.Trim());
+    }
+
+    private static void StopProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            process.WaitForExit(5_000);
+        }
+        catch (InvalidOperationException) { }
     }
 
     [Test]

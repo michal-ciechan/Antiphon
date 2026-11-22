@@ -6,4 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseAppHost>false</UseAppHost>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
+  </ItemGroup>
 </Project>
