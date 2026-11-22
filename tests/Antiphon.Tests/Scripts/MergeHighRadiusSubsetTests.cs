@@ -32,18 +32,19 @@ public sealed class MergeHighRadiusSubsetTests
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
 
-    // CARD-1819: dcb973d8 edits the policy file and Antiphon.Tests sources, so the quiet range
-    // keeps the fixed land rows and adds the nightly lane plus the lane guard to the tests row.
+    // dcb973d8 edits the policy file and Antiphon.Tests sources, selecting the nightly lane,
+    // the lane-category guard, and the fixture cleanup guard.
     private const string QuietTestsFilter =
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(LiveLaneRunnerTests*)|(NightlyCoreGoldenTests*)|(ReceiptScanDestinationIntegrationTests*)"
-        + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        + "|(TestFixtureCleanupGuardTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
 
-    // CARD-1819: a54a6d4f edits Antiphon.Tests sources, so the remote range adds the lane guard.
+    // a54a6d4f edits Antiphon.Tests sources, selecting the lane-category and fixture cleanup guards.
     // Its c346 Compose fixture also selects timing-labels; the fixed subset already runs that class.
     private const string RemoteTestsFilter =
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
-        + "|(ReceiptScanDestinationIntegrationTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        + "|(ReceiptScanDestinationIntegrationTests*)|(TestFixtureCleanupGuardTests*)"
+        + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
 
     private const string LandFilter1 =
         "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
@@ -340,14 +341,12 @@ public sealed class MergeHighRadiusSubsetTests
         root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
     }
 
-    // The quiet historical range is not the no-range fixed subset: it also selects the CARD-1819
-    // nightly lane and the lane guard. Land-1 and land-2 stay the documented filters.
     private static void AssertQuiet(JsonElement root)
     {
         root.GetProperty("mode").GetString().ShouldBe("merge-subset");
         root.GetProperty("migrations").GetBoolean().ShouldBeFalse();
         Names(root, "kinds").ShouldBe(
-            ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
+            ["linux-only-policy", "nightly-live-lane", "test-fixture-cleanup", "test-lane-category", "timing-labels"],
             ignoreOrder: false);
         Names(root, "fixedClasses").ShouldBe(FixedClasses, ignoreOrder: false);
         Names(root, "fixedMethods").ShouldBe(FixedMethods, ignoreOrder: false);
@@ -356,6 +355,7 @@ public sealed class MergeHighRadiusSubsetTests
                 .Append("LiveLaneRunnerTests")
                 .Append("NightlyCoreGoldenTests")
                 .Append("ReleaseGatePlatformTests")
+                .Append("TestFixtureCleanupGuardTests")
                 .Append("TestLaneCategoryGuardTests")
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
@@ -409,7 +409,9 @@ public sealed class MergeHighRadiusSubsetTests
 
     private static void AssertImpactedMethods(JsonElement root)
     {
-        Names(root, "kinds").ShouldBe(["remote-scripts", "test-lane-category", "timing-labels"], ignoreOrder: false);
+        Names(root, "kinds").ShouldBe(
+            ["remote-scripts", "test-fixture-cleanup", "test-lane-category", "timing-labels"],
+            ignoreOrder: false);
         Filter(root, "CP-merge-subset-tests").ShouldBe(RemoteTestsFilter);
         var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
         methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
