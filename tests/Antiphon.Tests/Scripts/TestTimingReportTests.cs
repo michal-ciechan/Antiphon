@@ -11,8 +11,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 // CARD-1313 S5. The report reads durable history and never changes a selection. In-process since 2026-11-22: the
-// test-timing-report command (TestTimings.Run) replaced scripts/test-timing-report.ps1, and select-test-rosters.ps1 calls
-// TestTimings.Report and AddEstimates from the loaded core (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 2).
+// test-timing-report command (TestTimings.Run) replaced scripts/test-timing-report.ps1, and the select-test-rosters command
+// (TestSelection.Run, unit 3) calls TestTimings.Report and AddEstimates (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 2).
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TestTimingReportTests : CheckpointTestBase
@@ -122,7 +122,7 @@ public sealed class TestTimingReportTests : CheckpointTestBase
     }
 
     /// <summary>
-    /// select-test-rosters.ps1's call (TestTimings.Report by roster, then AddEstimates on its ordered selection): a roster
+    /// The select-test-rosters command's call (TestTimings.Report by roster, then AddEstimates on its ordered selection): a roster
     /// series is host wall time over roster, run and chunk sets; the copy keeps every entry, drops stale estimates and
     /// observations, and never changes a set or the digest.
     /// </summary>

@@ -1,6 +1,7 @@
 #requires -Version 7.0
 # CARD-1545: advisory project batches; never execution or qualification authority.
-. "$PSScriptRoot/test-selection.ps1"
+# The selection's value helpers and git reads are compiled (Antiphon.Nightly.TestSelectionJson, TestSelectionGit).
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 
 function Resolve-RcProjectInput {
     param([string]$From, [string]$Include, [string]$Project = $From, [switch]$AllowWildcard)
@@ -32,21 +33,21 @@ function Get-RcDownstream {
             if ($project.references -ccontains $current -and $seen.Add($project.path)) { $queue.Enqueue($project.path) }
         }
     }
-    return @(Get-TestSelectionSorted @($seen))
+    return @([Antiphon.Nightly.TestSelectionJson]::Sorted(@($seen)))
 }
 
 function Read-RcProjectBlob {
     # Blob text by immutable id, kept in a parsed-document cache under its own key space.
     param([string]$Root, [string]$Blob, [hashtable]$Cache)
     $key="text:$Blob"
-    if (-not $Cache.ContainsKey($key)) { $Cache[$key]=(Invoke-TestSelectionGit $Root @('cat-file','blob',$Blob)).Stdout }
+    if (-not $Cache.ContainsKey($key)) { $Cache[$key]=[Antiphon.Nightly.TestSelectionGit]::Run($Root, @('cat-file','blob',$Blob)).Stdout }
     return $Cache[$key]
 }
 
 function Read-RcProjectBlobBatch {
-    # The census batch; Read-TestSelectionBlobBatch (test-selection.ps1) reads the bytes.
+    # The census batch; TestSelectionGit.ReadBlobBatch reads the bytes.
     param([string]$Root, [string]$Sha, [string[]]$Paths)
-    return ,(Read-TestSelectionBlobBatch $Root $Sha $Paths)
+    return ,([Antiphon.Nightly.TestSelectionGit]::ReadBlobBatch($Root, $Sha, $Paths))
 }
 
 function Read-RcProjectGraph {
@@ -55,7 +56,7 @@ function Read-RcProjectGraph {
     $reasons=[Collections.Generic.List[string]]::new()
     $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $blobs=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    $text=if ($Listing) { $Listing } else { (Invoke-TestSelectionGit $Root @('ls-tree','-r','-z',$Sha,'--')).Stdout }
+    $text=if ($Listing) { $Listing } else { [Antiphon.Nightly.TestSelectionGit]::Run($Root, @('ls-tree','-r','-z',$Sha,'--')).Stdout }
     foreach ($entry in $text.Split([char]0)) {
         if (-not $entry) { continue }
         $tab=$entry.IndexOf([char]9)
@@ -75,12 +76,12 @@ function Read-RcProjectGraph {
     $projectPaths=[Collections.Generic.List[string]]::new()
     foreach ($path in $paths) { if ($path -cmatch '\.csproj$') { $projectPaths.Add($path) } }
     $sortedPaths=$null
-    foreach ($path in (Get-TestSelectionSorted @($projectPaths))) {
+    foreach ($path in [Antiphon.Nightly.TestSelectionJson]::Sorted(@($projectPaths))) {
         $categories=@($catalog.projects[$path])
         if (-not $categories.Count -or @($categories | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[a-z][a-z0-9-]*$' }).Count) {
             $reasons.Add("unknown-project:$path"); $categories=@('unknown')
         }
-        $projects[$path]=@{path=$path;categories=@(Get-TestSelectionSorted $categories);references=@();inputs=@();downstream=@();hasTests=$false;batchDisposition='unclassified'}
+        $projects[$path]=@{path=$path;categories=@([Antiphon.Nightly.TestSelectionJson]::Sorted($categories));references=@();inputs=@();downstream=@();hasTests=$false;batchDisposition='unclassified'}
     }
     foreach ($path in $catalog.projects.Keys) { if (-not $projects.ContainsKey($path)) { $reasons.Add("stale-project:$path") } }
     foreach ($batch in $catalog.batches) { if (-not $projects.ContainsKey([string]$batch)) { $reasons.Add("unknown-batch:$batch") } }
@@ -132,7 +133,7 @@ function Read-RcProjectGraph {
                 if (-not $blobs.ContainsKey($input)) { throw "missing-input:$input" }
                 $blob=$blobs[$input]
                 if (-not $documents.ContainsKey($blob)) {
-                    $inputText=if ($prefetched.ContainsKey($blob)) { $prefetched[$blob] } else { Get-TestSelectionBlob $Root $Sha $input }
+                    $inputText=if ($prefetched.ContainsKey($blob)) { $prefetched[$blob] } else { [Antiphon.Nightly.TestSelectionGit]::Blob($Root, $Sha, $input) }
                     $settings=[Xml.XmlReaderSettings]::new(); $settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit; $settings.XmlResolver=$null
                     try {
                         $reader=[Xml.XmlReader]::Create([IO.StringReader]::new($inputText), $settings)
@@ -183,10 +184,14 @@ function Read-RcProjectGraph {
                         $inputs+=$target
                     }
                 }
-            } catch { $reasons.Add("graph:$input"+':'+$_.Exception.Message) }
+            } catch {
+                # A compiled read's refusal arrives wrapped; its reason is the one the PowerShell reader threw.
+                $why=$_.Exception; if ($why.InnerException -is [Antiphon.Nightly.TestSelectionRefusal]) { $why=$why.InnerException }
+                $reasons.Add("graph:$input"+':'+$why.Message)
+            }
         }
-        $project.references=@(Get-TestSelectionSorted $references)
-        $project.inputs=@(Get-TestSelectionSorted $inputs)
+        $project.references=@([Antiphon.Nightly.TestSelectionJson]::Sorted($references))
+        $project.inputs=@([Antiphon.Nightly.TestSelectionJson]::Sorted($inputs))
     }
     $exemptions=$catalog.nonQualificationTests
     if ($null -eq $exemptions) { $exemptions=@{} }
@@ -208,23 +213,23 @@ function Read-RcProjectGraph {
             if ($dependency -ceq $project.path -or $project.downstream -ccontains $dependency) { $reasons.Add("project-cycle:$($project.path)") }
         }
     }
-    return @{sha=$Sha;projects=$projects;paths=$paths;blobs=$blobs;batches=@(Get-TestSelectionSorted $batches)
+    return @{sha=$Sha;projects=$projects;paths=$paths;blobs=$blobs;batches=@([Antiphon.Nightly.TestSelectionJson]::Sorted($batches))
         inventoryBlob=$(if ($blobs.ContainsKey($catalogPath)) { $blobs[$catalogPath] } else { '' })
-        fallbackReasons=@(Get-TestSelectionSorted @($reasons))}
+        fallbackReasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($reasons)))}
 }
 
 function Get-RcProjectSelection {
     param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha)
     foreach ($sha in @($BaselineSha,$CandidateSha)) {
-        if ($sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
+        if ($sha -cnotmatch '^[0-9a-f]{40}$' -or [Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('cat-file','-t',$sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     }
     $documents=@{}
     $old=Read-RcProjectGraph $RepositoryRoot $BaselineSha $documents
     $new=Read-RcProjectGraph $RepositoryRoot $CandidateSha $documents
     $reasons=@($old.fallbackReasons)+@($new.fallbackReasons)
-    if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$BaselineSha,$CandidateSha) @(0,1)).Exit -ne 0) { $reasons+='baseline-not-ancestor' }
+    if ([Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('merge-base','--is-ancestor',$BaselineSha,$CandidateSha), @(0,1)).Exit -ne 0) { $reasons+='baseline-not-ancestor' }
     # No rename inference: both removed and added ownership must participate.
-    $diff=(Invoke-TestSelectionGit $RepositoryRoot @('diff','--no-ext-diff','--no-renames','--name-status','-z',$BaselineSha,$CandidateSha,'--')).Stdout.Split([char]0)
+    $diff=[Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('diff','--no-ext-diff','--no-renames','--name-status','-z',$BaselineSha,$CandidateSha,'--')).Stdout.Split([char]0)
     $changes=@(); $changed=@(); $affected=@()
     for ($i=0;$i -lt $diff.Count-1;$i+=2) {
         $status=$diff[$i]; $path=$diff[$i+1]
@@ -246,10 +251,10 @@ function Get-RcProjectSelection {
         }
         $changed+=$owners
     }
-    $reasons=@(Get-TestSelectionSorted $reasons)
+    $reasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted($reasons))
     if ($reasons.Count) { $affected=@($new.projects.Keys) }
     $batchRows=@()
-    foreach ($path in (Get-TestSelectionSorted @($new.batches))) {
+    foreach ($path in [Antiphon.Nightly.TestSelectionJson]::Sorted(@($new.batches))) {
         if ($new.projects.ContainsKey($path) -and $affected -ccontains $path) {
             $batchRows+=@{id=$path;project=$path;categories=$new.projects[$path].categories;membership='whole-project'}
         }
@@ -260,12 +265,12 @@ function Get-RcProjectSelection {
         $graphs+=@{sha=$graph.sha;inventoryBlob=$graph.inventoryBlob;projects=$rows}
     }
     $result=[ordered]@{format='antiphon-rc-project-selection-v1';baselineSha=$BaselineSha;candidateSha=$CandidateSha
-        plannerVersion=1;plannerHash=(Get-TestSelectionDigest ([IO.File]::ReadAllText($PSCommandPath)))
+        plannerVersion=1;plannerHash=([Antiphon.Nightly.TestSelectionJson]::Digest([IO.File]::ReadAllText($PSCommandPath)))
         mode=$(if ($reasons.Count) { 'Full' } else { 'Scoped' });effectiveMode='Full';coverageScope='Full'
         activation='shadow-only';executionEvidence=$false;gateCredit=$false
-        changedPaths=$changes;changedProjects=@(Get-TestSelectionSorted $changed);affectedProjects=@(Get-TestSelectionSorted $affected)
-        categories=@(Get-TestSelectionSorted @($new.projects.Values | Where-Object { $affected -ccontains $_.path } | ForEach-Object { $_.categories }))
+        changedPaths=$changes;changedProjects=@([Antiphon.Nightly.TestSelectionJson]::Sorted($changed));affectedProjects=@([Antiphon.Nightly.TestSelectionJson]::Sorted($affected))
+        categories=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($new.projects.Values | Where-Object { $affected -ccontains $_.path } | ForEach-Object { $_.categories })))
         batches=$batchRows;graphs=$graphs;fallbackReasons=$reasons}
-    $result.digest=Get-TestSelectionDigest $result
+    $result.digest=[Antiphon.Nightly.TestSelectionJson]::Digest($result)
     return $result
 }

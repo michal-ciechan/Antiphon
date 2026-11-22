@@ -17,12 +17,13 @@ try {
         if (-not (@('AlwaysRerun', 'Bounded24h') -ccontains $ReusePolicy)) { throw 'policy-invalid' }
         $document = Get-LiveLaneStatus -RepositoryRoot $RepositoryRoot -Lane $Lane -CandidateSha $CandidateSha -Attestation $Attestation
     }
-    [Console]::Out.WriteLine((ConvertTo-TestSelectionCanonicalJson $document))
+    [Console]::Out.WriteLine([Antiphon.Nightly.TestSelectionJson]::Canonical($document))
     exit 0
 } catch {
-    $reason = $_.Exception.Message
+    # A compiled refusal (TestSelectionGit, TestSelectionJson) arrives wrapped: its reason is the message.
+    $reason = Get-NightlyRefusalText $_
     if ($reason -cnotmatch '^[a-z][a-z0-9-]*(:[^\r\n]{0,200})?$') { $reason = 'status-failed' }
-    [Console]::Out.WriteLine((ConvertTo-TestSelectionCanonicalJson ([ordered]@{format = 'antiphon-live-lane-status-v1'; laneId = $Lane
-                    state = 'INVALID'; error = $reason; effectiveMode = 'Full'; activation = 'shadow-only'; gateCredit = $false; executionEvidence = $false })))
+    [Console]::Out.WriteLine([Antiphon.Nightly.TestSelectionJson]::Canonical([ordered]@{format = 'antiphon-live-lane-status-v1'; laneId = $Lane
+                    state = 'INVALID'; error = $reason; effectiveMode = 'Full'; activation = 'shadow-only'; gateCredit = $false; executionEvidence = $false }))
     exit 2
 }

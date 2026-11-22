@@ -16,7 +16,7 @@ $script:LiveLaneFingerprintNames=@('environment','instructions','laneContract','
 
 function Get-LiveLaneRosterDigest {
     param([string[]]$Roster)
-    return Get-TestSelectionDigest @(Get-TestSelectionSorted @($Roster))
+    return [Antiphon.Nightly.TestSelectionJson]::Digest(@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($Roster))))
 }
 
 function Read-LiveLaneRosterFile {
@@ -72,7 +72,7 @@ function Test-LiveLaneReceipt {
     param([string]$Receipt, [string]$Manifest, [string[]]$Roster, [string]$RosterDigest)
     $reasons=[Collections.Generic.List[string]]::new()
     $invalid={ param([string[]]$why, $digest, $document)
-        return [ordered]@{valid=$false;reasons=@(Get-TestSelectionSorted @($why));outcome='INVALID';code=2;digest=$digest;receipt=$document} }
+        return [ordered]@{valid=$false;reasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($why)));outcome='INVALID';code=2;digest=$digest;receipt=$document} }
     try { $read=Read-LiveLaneJsonDocument $Receipt 'receipt-unreadable' } catch { return & $invalid @($_.Exception.Message) $null $null }
     $document=$read.document
     if ($document -isnot [Collections.IDictionary]) { return & $invalid @('receipt-unreadable') $read.sha256 $null }
@@ -170,7 +170,7 @@ function Test-LiveLaneReceipt {
         }
     }
 
-    $sorted=@(Get-TestSelectionSorted @($reasons))
+    $sorted=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($reasons)))
     if ($sorted.Count) { return & $invalid $sorted $read.sha256 $document }
     # Outcome: the worse of the rows and the classifier; a skip is never green.
     $rowsCode=if ($tally.Failed) { 1 } elseif ($tally.Skipped) { 20 } else { 0 }
@@ -203,7 +203,7 @@ function Test-LiveLaneUseRecord {
     }
     if ($record['reused'] -isnot [bool] -or -not $record['reused']) { $reasons.Add('type:reused') }
     if ($record['gateCredit'] -isnot [bool] -or $record['gateCredit']) { $reasons.Add('use-gate-credit') }
-    return [ordered]@{valid=($reasons.Count -eq 0);reasons=@(Get-TestSelectionSorted @($reasons));digest=$read.sha256;record=$record}
+    return [ordered]@{valid=($reasons.Count -eq 0);reasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($reasons)));digest=$read.sha256;record=$record}
 }
 
 function Get-LiveLaneState {
@@ -215,7 +215,7 @@ function Get-LiveLaneState {
     $result=[ordered]@{format='antiphon-live-lane-state-v1';laneId=$Candidate['laneId'];candidateSha=$Candidate['sha'];state='DUE';reasons=@()
         localCompatibility='DUE';reuseEligible=$false;policy=$ReusePolicy;selected=$null;lastGreen=$null;freshness=$null
         effectiveMode='Full';activation='shadow-only';gateCredit=$false;executionEvidence=$false}
-    $finish={ $result.reasons=@(Get-TestSelectionSorted @($reasons)); return $result }
+    $finish={ $result.reasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($reasons))); return $result }
 
     $fingerprint=$Candidate['fingerprint']
     if ($fingerprint -isnot [Collections.IDictionary] -or $fingerprint['status'] -cne 'complete') { $reasons.Add('unknown-input') }
@@ -248,7 +248,7 @@ function Get-LiveLaneState {
             if ($use.valid) { $uses.Add($use) } else { $reasons.Add('history-invalid') }
         } elseif ($kind -ceq 'live-lane-revocation') {
             $revocation=(Read-LiveLaneJsonDocument $path 'history-unreadable').document
-            $keys=@(Get-TestSelectionSorted @($revocation.Keys))
+            $keys=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($revocation.Keys)))
             if (($keys -join ',') -cne ($script:LiveLaneRevocationFields -join ',') -or $revocation['schemaVersion'] -isnot [long] -or $revocation['schemaVersion'] -ne 1 -or
                 $revocation['receiptDigest'] -isnot [string] -or $revocation['receiptDigest'] -cnotmatch '^[0-9a-f]{64}$') { $reasons.Add('history-invalid') }
             else { [void]$revoked.Add($revocation['receiptDigest']) }
@@ -269,7 +269,7 @@ function Get-LiveLaneState {
         $reasons.Add('no-execution-receipt')
         if ($ordered.Count) {
             $other=$ordered[-1].receipt['fingerprint']['components']
-            foreach ($name in (Get-TestSelectionSorted (@($other.Keys)+@($fingerprint['components'].Keys)))) {
+            foreach ($name in [Antiphon.Nightly.TestSelectionJson]::Sorted((@($other.Keys)+@($fingerprint['components'].Keys)))) {
                 if ($other[$name] -cne $fingerprint['components'][$name]) { $reasons.Add("fingerprint-changed:$name") }
             }
         }
@@ -286,10 +286,10 @@ function Get-LiveLaneState {
     if ($receipt['ref'] -cne $Candidate['ref']) { $reasons.Add('foreign-ref') }
     if ($receipt['host']['enrollmentId'] -cne $Candidate['host']) { $reasons.Add('host-mismatch') }
     if ($receipt['account']['enrollmentId'] -cne $Candidate['account']) { $reasons.Add('account-mismatch') }
-    $present=(Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-e',"$($receipt['sourceSha'])^{commit}") -AllowedExit @(0,1,128)).Exit -eq 0
+    $present=[Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('cat-file','-e',"$($receipt['sourceSha'])^{commit}"), @(0,1,128)).Exit -eq 0
     if (-not $present) { $reasons.Add('source-missing') }
     else {
-        $ancestry=(Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$receipt['sourceSha'],$Candidate['sha']) -AllowedExit @(0,1,128)).Exit
+        $ancestry=[Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('merge-base','--is-ancestor',$receipt['sourceSha'],$Candidate['sha']), @(0,1,128)).Exit
         if ($ancestry -eq 1) { $reasons.Add('not-ancestor') } elseif ($ancestry -ne 0) { $reasons.Add('source-missing') }
     }
     if ($reasons.Count) { return & $finish }
@@ -317,7 +317,7 @@ function New-LiveLaneUseRecord {
         receiptDigest=$State['selected']['receiptDigest'];runId=$State['selected']['runId'];fingerprintDigest=$State['selected']['fingerprintDigest']
         reused=$true;executedNow=0;executed=0;passed=0;failed=0;skipped=0;gateCredit=$false
         createdUtc=$now.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)}
-    $bytes=[Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-TestSelectionCanonicalJson $record))
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes([Antiphon.Nightly.TestSelectionJson]::Canonical($record))
     try { $stream=[IO.FileStream]::new($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None) }
     catch [IO.IOException] { if ([IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path)) { throw 'use-record-exists' }; throw 'use-record-unwritable' }
     catch { throw 'use-record-unwritable' }
@@ -334,11 +334,11 @@ function Get-LiveLaneHistoryStatus {
     if (-not (@('AlwaysRerun','Bounded24h') -ccontains $ReusePolicy)) { throw 'policy-invalid' }
     if (-not $Context) { throw 'context-required' }
     $binding=(Read-LiveLaneJsonDocument $Context 'context-invalid').document
-    $keys=@(if ($binding -is [Collections.IDictionary]) { Get-TestSelectionSorted @($binding.Keys) })
+    $keys=@(if ($binding -is [Collections.IDictionary]) { [Antiphon.Nightly.TestSelectionJson]::Sorted(@($binding.Keys)) })
     if (($keys -join ',') -cne 'account,host,nonce,nowUtc,probes,ref,repository,revocations' -or $binding['probes'] -isnot [Collections.IList] -or
         $binding['revocations'] -isnot [Collections.IList] -or $null -eq (ConvertTo-LiveLaneUtc $binding['nowUtc'])) { throw 'context-invalid' }
     if (-not [IO.Directory]::Exists($History) -or ([IO.File]::GetAttributes($History)).HasFlag([IO.FileAttributes]::ReparsePoint)) { throw 'history-invalid' }
-    $paths=@(Get-TestSelectionSorted @([IO.Directory]::GetFiles($History,'*.json')))
+    $paths=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@([IO.Directory]::GetFiles($History,'*.json'))))
     if ($Attestation) { [void](Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane) }
     $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane -Attestation $Attestation
     $tree=Read-LiveLaneTree $RepositoryRoot $CandidateSha

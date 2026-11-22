@@ -5,7 +5,7 @@
 # without a baseline; each refusal is the worker's). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common', 'release-gate', 'release-selection', 'test-selection', 'c487-harness') {
+foreach ($name in 'nightly-common', 'release-gate', 'release-selection', 'c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path -Parent $PSScriptRoot
@@ -29,7 +29,7 @@ function New-RSRepository {
     [void](Invoke-RSGit $git @('config', 'user.name', 'RS fixture'))
     [void](Invoke-RSGit $git @('config', 'user.email', 'fixture@example.invalid'))
     [void](Invoke-RSGit $git @('config', 'core.autocrlf', 'false'))
-    foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json', 'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
+    foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json') + [Antiphon.Nightly.TestSelection]::SelectorFiles) {
         Write-RSFile $git $file ([IO.File]::ReadAllText((Join-Path $repo $file)))
     }
     [void](Invoke-RSGit $git @('add', '--all')); [void](Invoke-RSGit $git @('commit', '-qm', 'baseline'))
@@ -155,7 +155,7 @@ function Write-RSPolicy([string]$Root, [scriptblock]$EditPolicy, [scriptblock]$E
     if ($EditCatalog) {
         $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json -AsHashtable
         & $EditCatalog $catalog
-        $catalog.catalogHash = Get-TestSelectionCatalogHash $catalog
+        $catalog.catalogHash = [Antiphon.Nightly.TestSelectionCatalog]::Hash($catalog)
         [IO.File]::WriteAllText($catalogPath, (ConvertTo-Json $catalog -Depth 30))
         $policy.selectionCatalog.hash = $catalog.catalogHash
     }
@@ -175,7 +175,7 @@ function New-RSProjectRepository {
     [void](Invoke-RSGit $git @('config', 'user.email', 'fixture@example.invalid'))
     [void](Invoke-RSGit $git @('config', 'core.autocrlf', 'false'))
     $p0 = New-RSCommit $git '' 'projects' {
-        foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json', 'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
+        foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json') + [Antiphon.Nightly.TestSelection]::SelectorFiles) {
             Write-RSFile $git $file ([IO.File]::ReadAllText((Join-Path $repo $file)))
         }
         Write-RSFile $git 'tests/rc-project-categories.json' ('{"schemaVersion":1,"projects":{"src/A/A.csproj":["app"],"src/B/B.csproj":["lib","core"]},' +
@@ -238,7 +238,7 @@ function New-RSProjectRepository {
 function Write-RSReceipt($Fixture, [string]$Release, [string]$Sha, [string]$Name, [string]$Directory = 'baselines') {
     $candidateRoot = 'archive/' + $Name
     $croot = Join-Path $Release $candidateRoot; $dir = Join-Path $croot 'authority'
-    $contract = Get-ReleaseSelectionContract $Fixture.Root $Sha 'rc'
+    $contract = [Antiphon.Nightly.TestSelection]::Contract($Fixture.Root, $Sha, 'rc')
     $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Fixture.Root, $Sha)
     $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
     $authority = @{schemaVersion=1;kind='release-authority';repository='fixture/repository';profile='rc';sha=$Sha;candidateId=('historical-' + $Name);candidateRef='rc/2026-11-08'

@@ -4,7 +4,6 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/release-gate.ps1"
-. "$PSScriptRoot/lib/test-selection.ps1"
 . "$PSScriptRoot/lib/release-selection.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $ResultsDirectory = New-C487Root $ResultsDirectory
@@ -38,7 +37,7 @@ function New-Fx {
     Copy-Item "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib') -Recurse
     Copy-C487NightlyCoreDependency -Root $seed
     # W2-nightly S17: the tests hop is the nightly-tests command; its sources are the scripts/lib copy above.
-    foreach ($file in @('nightly-run.ps1','release-cut.ps1','release-candidate.ps1','select-test-rosters.ps1')) {
+    foreach ($file in @('nightly-run.ps1','release-cut.ps1','release-candidate.ps1')) {
         Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $seed "scripts/$file")
     }
     foreach ($file in @('tests/test-execution-policy.json','tests/test-selection-policy.json','global.json')) {
@@ -183,7 +182,7 @@ function Write-BaselineArchive($Fx, $ArchiveId = 'full-b') {
     # F-V diagnostic archive, with real pinned Git bytes and synthetic historical
     # TRX. This proves the reader only; it is not a production supplier fixture.
     $root = Join-Path $Fx.Release ('archive/' + $ArchiveId); $dir=Join-Path $root 'authority'
-    $contract = Get-ReleaseSelectionContract $Fx.Clone $Fx.B 'rc'
+    $contract = [Antiphon.Nightly.TestSelection]::Contract($Fx.Clone, $Fx.B, 'rc')
     $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Fx.Clone, $Fx.B)
     $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
     $authority = @{schemaVersion=1;kind='release-authority';repository=$Fx.Repository;profile='rc';sha=$Fx.B;candidateId='historical-b';candidateRef=$Fx.Ref

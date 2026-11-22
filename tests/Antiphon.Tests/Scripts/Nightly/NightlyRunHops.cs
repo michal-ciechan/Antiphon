@@ -110,8 +110,8 @@ public static class NightlyRunHops
 /// <summary>
 /// W2-nightly S20: an rc run chain in-process, the C# twin of the fixtures that ran the PowerShell run core on seams
 /// (New-C599RunFx -Rc, New-Fx of test-change-aware-release.ps1, New-C1336Candidate): a seed repository on the candidate
-/// branch carrying the committed selection inputs (global.json, both policies, select-test-rosters.ps1,
-/// scripts/lib/test-selection.ps1), the catalog's source inputs as stubs, every policy project, its own
+/// branch carrying the committed selection inputs (TestSelection.ContractFiles: both policies, the selector identity
+/// sources and global.json), the catalog's source inputs as stubs, every policy project, its own
 /// scripts/nightly-run.ps1 (so the self-update hop fires) and both ownership markers; its bare origin; and a clone of
 /// it with long paths enabled. Every launch is answered in this process: the self-update hop runs NightlyRun.Run of the
 /// child's options with the clone as its product root (the clone's own code, so it hops no further), the tests hop runs
@@ -120,8 +120,7 @@ public static class NightlyRunHops
 /// </summary>
 public sealed class NightlyRcChain : IDisposable
 {
-    private static readonly string[] SelectionInputs =
-        ["global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1"];
+    private static readonly string[] SelectionInputs = TestSelection.ContractFiles;
 
     private readonly object _gate = new();
     private readonly StringBuilder _trace = new();

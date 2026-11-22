@@ -21,7 +21,7 @@ public sealed class ReleaseImpactScriptTests
     private const string Project = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
     private const string Tests = "tests/Antiphon.Tests/Scripts/";
     private const string Cli = Project + "::Antiphon.Tests.Scripts.ReleaseSelectionCliTests";
-    private const string Selection = Project + "::Antiphon.Tests.Scripts.TestSelectionTests";
+    private const string ProjectSelection = Project + "::Antiphon.Tests.Scripts.RcProjectSelectionTests";
     private const string Publication = Project + "::Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests";
     private const string Contract = Project + "::Antiphon.Tests.Scripts.ReleaseGateAuthorityContractTests";
     private const string Launcher = Project + "::Antiphon.Tests.Scripts.Nightly.AntiphonCliLauncherTests";
@@ -60,9 +60,11 @@ public sealed class ReleaseImpactScriptTests
         // nightly-core.ps1 compiles every scripts/lib/Antiphon.Scripts source into the CLI.
         chain[^2..].ShouldBe(["scripts/lib/nightly-core.ps1", "scripts/lib/Antiphon.Scripts/Baseline.cs"]);
         Kinds(result, "scripts/test-release-selection-cli.ps1", Cli).ShouldContain("script:basename");
-        Kinds(result, "scripts/test-test-selection.ps1", Selection).ShouldContain("script:basename");
-        Chain(result, "scripts/lib/test-selection.ps1", Selection).ShouldBe(
-            [Tests + "TestSelectionTests.cs", "scripts/test-test-selection.ps1", "scripts/lib/test-selection.ps1"]);
+        // 2026-11-22 (remaining-ps1 plan, unit 3): TestSelectionTests runs in-process (test-test-selection.ps1 and
+        // lib/test-selection.ps1 are deleted); a driver basename still reaches the library it dot-sources.
+        Kinds(result, "scripts/test-rc-project-selection.ps1", ProjectSelection).ShouldContain("script:basename");
+        Chain(result, "scripts/lib/rc-project-selection.ps1", ProjectSelection).ShouldBe(
+            [Tests + "RcProjectSelectionTests.cs", "scripts/test-rc-project-selection.ps1", "scripts/lib/rc-project-selection.ps1"]);
         Classes(result, "scripts/lib/Antiphon.Scripts/Baseline.cs").ShouldNotContain(Harmless);
         AssertIncomplete(result);
     }
@@ -255,7 +257,7 @@ public sealed class ReleaseImpactScriptTests
         Walk(new DirectoryInfo(Path.Combine(root, "scripts")));
         foreach (var path in new[]
         {
-            Project, Tests + "ScriptHarness.cs", Tests + "ReleaseSelectionCliTests.cs", Tests + "TestSelectionTests.cs",
+            Project, Tests + "ScriptHarness.cs", Tests + "ReleaseSelectionCliTests.cs", Tests + "RcProjectSelectionTests.cs",
             Tests + "ReleaseGatePublicationAuthorityTests.cs", Tests + "ReleaseGateAuthorityContractTests.cs",
             Tests + "Nightly/AntiphonCliLauncherTests.cs",
         })
@@ -266,7 +268,7 @@ public sealed class ReleaseImpactScriptTests
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
             Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
         };
-        foreach (var name in new[] { "ReleaseSelectionCliTests", "TestSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests" })
+        foreach (var name in new[] { "ReleaseSelectionCliTests", "RcProjectSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
         consumers.Add(Consumer(Launcher, Tests + "Nightly/AntiphonCliLauncherTests.cs"));
         return new { name = "real", files, consumers, maxVisits = 0 };

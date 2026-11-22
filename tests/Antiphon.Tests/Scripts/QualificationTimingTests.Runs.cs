@@ -621,7 +621,8 @@ public sealed partial class QualificationTimingTests
             & $git $checkout @('init', '-q', '-b', 'rc/2026-10-27')
             & $git $checkout @('config', 'user.email', 'fixture@example.invalid')
             & $git $checkout @('config', 'user.name', 'qtiming')
-            foreach ($rel in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json', 'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
+            foreach ($rel in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json', 'scripts/lib/Antiphon.Nightly/TestSelection.cs',
+                    'scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs', 'scripts/lib/Antiphon.Nightly/TestSelectionGit.cs', 'scripts/lib/Antiphon.Nightly/TestSelectionJson.cs')) {
                 $dest = Join-Path $checkout $rel
                 New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
                 Copy-Item -LiteralPath (Join-Path $Repo $rel) -Destination $dest

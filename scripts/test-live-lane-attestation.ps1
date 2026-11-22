@@ -82,7 +82,7 @@ function New-LaneFixture {
     $root=Join-Path $ResultsDirectory 'lane repository'
     [void][IO.Directory]::CreateDirectory($root)
     $put={ param($path,$text) $full=Join-Path $root $path; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $full)); [IO.File]::WriteAllText($full,$text) }
-    foreach ($a in @(@('init','-q','-b','main'),@('config','user.name','Fixture'),@('config','user.email','fixture@example.invalid'),@('config','core.autocrlf','false'))) { [void](Invoke-TestSelectionGit $root $a) }
+    foreach ($a in @(@('init','-q','-b','main'),@('config','user.name','Fixture'),@('config','user.email','fixture@example.invalid'),@('config','core.autocrlf','false'))) { [void](Invoke-C487FixtureGit $root $a) }
     & $put 'tests/rc-project-categories.json' '{"schemaVersion":1,"projects":{"tests/Pty.Tests/Pty.Tests.csproj":["fixture"]},"batches":["tests/Pty.Tests/Pty.Tests.csproj"]}'
     & $put 'tests/Pty.Tests/Pty.Tests.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="TUnit" Version="1.0" /></ItemGroup></Project>'
     & $put 'tests/Pty.Tests/T.cs' "namespace Antiphon.Agents.Pty.Tests;`n"
@@ -93,8 +93,8 @@ function New-LaneFixture {
     & $put 'tests/live-lane-inputs.json' (ConvertTo-Json -Depth 10 ([ordered]@{format='antiphon-live-lane-inputs-v1';lanes=[ordered]@{'fixture-lane'=[ordered]@{
         manifest='tests/live-lanes.json';contractFiles=@('tests/live-lanes.json','tests/live-lane-inputs.json');minimumRoots=@('tests/Pty.Tests/')
         runtimeRoots=@('scripts/');namespaceRoots=@('Antiphon.Agents.Pty');instructionPatterns=@('CLAUDE.md')}}}))
-    [void](Invoke-TestSelectionGit $root @('add','--all')); [void](Invoke-TestSelectionGit $root @('commit','-qm','fixture'))
-    return @($root,(Invoke-TestSelectionGit $root @('rev-parse','HEAD')).Stdout.Trim())
+    [void](Invoke-C487FixtureGit $root @('add','--all')); [void](Invoke-C487FixtureGit $root @('commit','-qm','fixture'))
+    return @($root,(Invoke-C487FixtureGit $root @('rev-parse','HEAD')))
 }
 function Fp([string[]]$fixture, [string]$attestation) {
     $arguments=@{RepositoryRoot=$fixture[0];Sha=$fixture[1];Lane=$script:Lane}
@@ -156,7 +156,7 @@ switch ($Case) {
         Check ((Differs (Att 'runtime-dotnet') $base @('runtime')) -and (Differs (Att 'runtime-packages') $base @('runtime'))) 'runtime-identity'
         Check (Same (Att 'volatile') $base) 'volatile-only'
         $text=[IO.File]::ReadAllText((Join-Path $AttestationDirectory 'credential.json'))
-        $credential=Att 'credential'; $output=ConvertTo-TestSelectionCanonicalJson $credential
+        $credential=Att 'credential'; $output=[Antiphon.Nightly.TestSelectionJson]::Canonical($credential)
         $forged=Invoke-Status (Forge 'base' { param($d) $d.environment['ANTHROPIC_API_KEY']="value:$($script:Sentinel)" })
         Check ((Same $credential $base) -and -not $text.Contains($script:Sentinel) -and -not $output.Contains($script:Sentinel) -and
             (Refused $forged 'credential-field-present') -and -not ($forged.stdout+$forged.stderr).Contains($script:Sentinel)) 'credential-free' "$(Show $credential) status=$($forged.exit) $($forged.stdout)"
@@ -207,7 +207,7 @@ switch ($Case) {
         # unknown; a foreign uid is never echoed.
         $short=Att (Forge 'base' { param($d) $d.rows=@($d.rows[0]) })
         $foreign=Att (Forge 'base' { param($d) $d.rows[0].uid="sk-ant-$($script:Sentinel)"; $d.rows[0].attested.route='path-search' })
-        $foreignText=ConvertTo-TestSelectionCanonicalJson $foreign
+        $foreignText=[Antiphon.Nightly.TestSelectionJson]::Canonical($foreign)
         $unbound=Unbound 'base'
         Check ((Unknown $short "roster-missing:$($uids[1])") -and (Unknown $short "roster-missing:$($uids[5])") -and
             (Unknown $foreign 'roster-unexpected') -and (Unknown $foreign "roster-missing:$($uids[0])") -and -not $foreignText.Contains($script:Sentinel) -and

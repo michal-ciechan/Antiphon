@@ -219,6 +219,13 @@ public sealed class NightlyScriptsTests
                      // restart entry points that run it.
                      Path.Combine("lib", "Antiphon.Nightly", "ToolchainFloor.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "ToolchainFloorCommand.cs"),
+                     // CARD-1313: the selection, its catalog, JSON and git reads, and the select-test-rosters command
+                     // (scripts/lib/test-selection.ps1 and select-test-rosters.ps1 are deleted).
+                     Path.Combine("lib", "Antiphon.Nightly", "TestSelection.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "TestSelectionCatalog.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "TestSelectionGit.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "TestSelectionJson.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "TestSelectionCommand.cs"),
                      "session-runner-restart-health.ps1",
                      Path.Combine("..", "restart-server.ps1"),
                  })

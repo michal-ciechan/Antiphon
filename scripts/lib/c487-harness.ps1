@@ -32,7 +32,8 @@ function Assert-C487 {
     else { Write-C487Fail $Name $Detail }
 }
 
-# Fixture repository setup (init, commit, clone) through the hardened git runner of test-selection.ps1. The
+# Fixture repository setup (init, add, commit, clone) through the hardened git runner (CheckpointProcessRunner):
+# 30 s, strict UTF-8 stdout, trimmed; a timeout or non-zero exit throws git-read-failed:<command>:<exit>. The
 # runner asks git for filter/textconv driver settings before every command; fixtures configure no drivers, so
 # that answer is reused for 60 s per directory while a fixture builds its repositories. The setting is restored
 # after each call: the code under test keeps its own.
@@ -41,7 +42,15 @@ function Invoke-C487FixtureGit {
     . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
     $saved = [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds
     [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = 60000
-    try { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+    try {
+        $start = New-Object Diagnostics.ProcessStartInfo('git')
+        $start.WorkingDirectory = [IO.Path]::GetFullPath($Root)
+        $start.StandardOutputEncoding = New-Object Text.UTF8Encoding($false, $true)
+        foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+        $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 30000, $true)
+        if ($result.TimedOut -or $result.Exit -ne 0) { throw ('git-read-failed:' + $Arguments[0] + ':' + $result.Exit) }
+        return $result.Stdout.Trim()
+    }
     finally { [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = $saved }
 }
 

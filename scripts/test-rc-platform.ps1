@@ -2,7 +2,7 @@
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
 param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'release-gate', 'test-selection', 'c487-harness')) {
+foreach ($name in @('nightly-common', 'release-gate', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -21,7 +21,7 @@ function Write-C1323Policy($Object, $Path) {
     $Object.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($Object | ConvertTo-Json -Depth 40))
     [IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 40))
 }
-function Invoke-C1323Git($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+function Invoke-C1323Git($Root, $Arguments) { return (Invoke-C487FixtureGit $Root $Arguments) }
 function Write-C1323File($Root, $Path, $Text) {
     $file = Join-Path $Root $Path
     [void](New-Item -ItemType Directory (Split-Path $file) -Force)
@@ -156,18 +156,18 @@ function Test-C1323_PlatformPolicy {
     [void](Invoke-C1323Git $root @('config', 'user.email', 'c1323@example.invalid'))
     [void](Invoke-C1323Git $root @('config', 'core.autocrlf', 'false'))
     [void](Invoke-C1323Git $root @('remote', 'add', 'origin', 'https://github.com/fixture/c1323'))
-    foreach ($file in @('tests/test-selection-policy.json', 'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
+    foreach ($file in @('tests/test-selection-policy.json') + [Antiphon.Nightly.TestSelection]::SelectorFiles) {
         Write-C1323File $root $file ([IO.File]::ReadAllText((Join-Path $repoRoot $file)))
     }
     Write-C1323File $root 'tests/test-execution-policy.json' ([Text.Encoding]::UTF8.GetString($bytes))
-    $catalog = Read-TestSelectionCatalog "$root/tests/test-selection-policy.json" $policy.selectionCatalog.hash
-    foreach ($input in @(Get-TestSelectionSorted @($catalog.sets.sourceInputs + $catalog.sets.members.source))) {
+    $catalog = [Antiphon.Nightly.TestSelectionCatalog]::Read("$root/tests/test-selection-policy.json", $policy.selectionCatalog.hash)
+    foreach ($input in [Antiphon.Nightly.TestSelectionJson]::Sorted(@($catalog.sets.sourceInputs + $catalog.sets.members.source))) {
         if ($input) { Write-C1323File $root $input 'fixture source' }
     }
     [void](Invoke-C1323Git $root @('add', '--all'))
     [void](Invoke-C1323Git $root @('commit', '--quiet', '-m', 'fixture'))
     $sha = Invoke-C1323Git $root @('rev-parse', 'HEAD')
-    $selection = Get-TestSelection $root $sha $sha 'rc'
+    $selection = [Antiphon.Nightly.TestSelection]::Select($root, $sha, $sha, 'rc')
     Assert-C1323 ($null -ne $selection -and $selection.candidateSha -ceq $sha) 'schema4-selector-admitted'
     Test-C1323FrozenLedger $root $sha $nodes $expectedWindows
 }
@@ -259,7 +259,7 @@ function New-C1323ExecutionFixture {
     $policy.projectDispositions = @([pscustomobject]@{ project = $policy.projects[0]; role = 'primary'; reason = 'offline fixture' })
     $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = 'MixedTests'; methods = @('Live'); reason = 'legacy live method'; owner = 'fixture' }
     Write-C1323File $clone 'tests/Antiphon.E2E/Antiphon.E2E.csproj' '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
-    foreach ($file in @('global.json', 'tests/test-selection-policy.json', 'scripts/select-test-rosters.ps1')) {
+    foreach ($file in @('global.json', 'tests/test-selection-policy.json') + [Antiphon.Nightly.TestSelection]::SelectorFiles) {
         Write-C1323File $clone $file ([IO.File]::ReadAllText((Join-Path $repoRoot $file)))
     }
     Write-C1323Policy $policy "$clone/tests/test-execution-policy.json"
@@ -621,7 +621,7 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
         'RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused'
     )
     $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
-    $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $shipped.Object.selectionCatalog.hash
+    $catalog = [Antiphon.Nightly.TestSelectionCatalog]::Read("$repoRoot/tests/test-selection-policy.json", $shipped.Object.selectionCatalog.hash)
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
     $inventory = @($shippedRows | ForEach-Object {
         @{ s = [string]$_.suite; c = [string]$_.class; o = [string]$_.owner; m = @($_.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) }

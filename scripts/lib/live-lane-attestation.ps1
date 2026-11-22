@@ -3,7 +3,8 @@
 # never earns gate credit. It recomputes every verdict from the document's own facts, trusts no
 # summary field, and makes the attestation unknown whenever an executable, settings source or
 # runtime fact is not proven. Schema faults throw (status exit 2); nothing echoes a value.
-. "$PSScriptRoot/test-selection.ps1"
+# The canonical JSON, digest and ordinal order are compiled (Antiphon.Nightly.TestSelectionJson).
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 
 $script:LiveLaneAttestationFormat='antiphon-live-lane-attestation-v1'
 $script:LiveLaneAttestationFields=@('account','environment','external','format','host','installedTarget','laneId','model','rows','runtime','schemaVersion','settings')
@@ -65,7 +66,7 @@ function ConvertTo-LiveLaneRoster {
         if ($roster.Contains($uid)) { throw 'manifest-invalid' }
         $roster.Add($uid)
     }
-    return @(Get-TestSelectionSorted @($roster))
+    return @([Antiphon.Nightly.TestSelectionJson]::Sorted(@($roster)))
 }
 
 function Assert-LiveLaneCredentialFree {
@@ -113,7 +114,7 @@ function Get-LiveLaneSortedBy {
     # Ordinal order by a unique string key, independent of the host culture.
     param($Items, [string]$Key)
     $byKey=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal); foreach ($item in $Items) { $byKey[$item[$Key]]=$item }
-    return @(foreach ($name in (Get-TestSelectionSorted @($byKey.Keys))) { $byKey[$name] })
+    return @(foreach ($name in [Antiphon.Nightly.TestSelectionJson]::Sorted(@($byKey.Keys))) { $byKey[$name] })
 }
 
 function Get-LiveLaneEnvironmentAttestation {
@@ -213,19 +214,19 @@ function Get-LiveLaneEnvironmentAttestation {
     Assert-LiveLaneObject $document['external'] @('epoch')
     Assert-LiveLaneString $document['external']['epoch'] -Nullable
 
-    $unknownReasons=@(Get-TestSelectionSorted @($reasons | Select-Object -Unique))
+    $unknownReasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($reasons | Select-Object -Unique)))
     if ($unknownReasons.Count) {
         # No partial digest: one refused row makes the whole environment unknown.
         return [ordered]@{format='antiphon-live-lane-environment-v1';laneId=$Lane;status='unknown';reasons=$unknownReasons;digest=$null;components=$null}
     }
     $components=[ordered]@{
-        executable=Get-TestSelectionDigest ([ordered]@{rows=@(Get-LiveLaneSortedBy $executables 'uid');installedTarget=$installed})
-        runtime=Get-TestSelectionDigest ([ordered]@{runtime=$document['runtime'];os=$document['host']['os'];arch=$document['host']['arch']})
-        settings=Get-TestSelectionDigest ([ordered]@{sources=@(Get-LiveLaneSortedBy $sources 'kind')
+        executable=[Antiphon.Nightly.TestSelectionJson]::Digest([ordered]@{rows=@(Get-LiveLaneSortedBy $executables 'uid');installedTarget=$installed})
+        runtime=[Antiphon.Nightly.TestSelectionJson]::Digest([ordered]@{runtime=$document['runtime'];os=$document['host']['os'];arch=$document['host']['arch']})
+        settings=[Antiphon.Nightly.TestSelectionJson]::Digest([ordered]@{sources=@(Get-LiveLaneSortedBy $sources 'kind')
             model=$document['model'];environment=$environment})
-        account=Get-TestSelectionDigest ([ordered]@{host=$document['host']['enrollmentId'];account=$document['account']})
+        account=[Antiphon.Nightly.TestSelectionJson]::Digest([ordered]@{host=$document['host']['enrollmentId'];account=$document['account']})
     }
-    $material="antiphon-live-lane-environment`n"+(ConvertTo-TestSelectionCanonicalJson ([ordered]@{schemaVersion=1;laneId=$Lane;components=$components}))
+    $material="antiphon-live-lane-environment`n"+[Antiphon.Nightly.TestSelectionJson]::Canonical([ordered]@{schemaVersion=1;laneId=$Lane;components=$components})
     $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
     return [ordered]@{format='antiphon-live-lane-environment-v1';laneId=$Lane;status='complete';reasons=@();digest=$digest;components=$components
         external=[ordered]@{epoch=$document['external']['epoch']}}
@@ -238,7 +239,7 @@ function Test-LiveLaneExternalFreshness {
     param([string]$Policy = 'AlwaysRerun', $ExecutedAtUtc, $NowUtc, $Candidate, $Executed, $Probes = @(), $Revocations = @(), $MaxAgeHours)
     if ($PSBoundParameters.ContainsKey('MaxAgeHours')) { throw 'horizon-not-configurable' }
     if (-not (@('AlwaysRerun','Bounded24h') -ccontains $Policy)) { throw 'policy-invalid' }
-    $refuse={ param([string[]]$why) return [ordered]@{policy=$Policy;reuseEligible=$false;reasons=@(Get-TestSelectionSorted @($why | Select-Object -Unique));externalProof=$false} }
+    $refuse={ param([string[]]$why) return [ordered]@{policy=$Policy;reuseEligible=$false;reasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($why | Select-Object -Unique)));externalProof=$false} }
     if ($Policy -ceq 'AlwaysRerun') { return & $refuse @('policy-always-rerun') }
     try { $now=[DateTimeOffset]$NowUtc; $executedAt=[DateTimeOffset]$ExecutedAtUtc } catch { throw 'time-invalid' }
     if ($null -eq $NowUtc -or $null -eq $ExecutedAtUtc) { throw 'time-invalid' }

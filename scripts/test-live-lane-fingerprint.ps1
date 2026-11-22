@@ -32,7 +32,7 @@ $script:Documents=@{}
 function Fp([string]$sha, [string]$lane=$script:Lane, [string]$at=$script:root) {
     return Get-LiveLaneFingerprint -RepositoryRoot $at -Sha $sha -Lane $lane -DocumentCache $script:Documents
 }
-function Canon($value) { return ConvertTo-TestSelectionCanonicalJson $value }
+function Canon($value) { return [Antiphon.Nightly.TestSelectionJson]::Canonical($value) }
 function Differs($a, $b, [string[]]$components=@()) {
     if (-not ($a.digest -cmatch '^[0-9a-f]{64}$') -or $a.digest -ceq $b.digest) { return $false }
     foreach ($name in $components) {
@@ -173,7 +173,7 @@ switch ($Case) {
             $head=Git @('rev-parse','HEAD') $repository
             $real1=Fp $head 'live-claude-core-windows' $repository
             $real2=Get-LiveLaneFingerprint -RepositoryRoot $repository -Sha $head -Lane 'live-claude-core-windows' -DocumentCache $script:Documents
-            $declaration=(Invoke-TestSelectionGit $repository @('cat-file','blob',"${head}:tests/live-lane-inputs.json")).Stdout | ConvertFrom-Json -AsHashtable
+            $declaration=[Antiphon.Nightly.TestSelectionGit]::Blob($repository, $head, 'tests/live-lane-inputs.json') | ConvertFrom-Json -AsHashtable
             $real=$declaration.lanes['live-claude-core-windows']
             $paths=Paths $real1; $empty=@()
             foreach ($rootPath in @($real.minimumRoots)+@($real.runtimeRoots)) {
@@ -200,7 +200,7 @@ switch ($Case) {
         $graph=Read-RcProjectGraph $script:root $d
         $selected=@('tests/Pty.Tests/Pty.Tests.csproj','tests/Main.Tests/Main.Tests.csproj')
         $expected=@($graph.projects.Keys | Where-Object { $down=@(Get-RcDownstream $graph.projects @($_)); @($selected | Where-Object { $down -ccontains $_ }).Count })
-        Check ((Differs $fd $fc) -and ((Get-TestSelectionSorted $expected) -join ',') -ceq ((Get-TestSelectionSorted @($fd.closureProjects)) -join ',') -and $expected.Count -eq 6) 'transitive-edge' (@($fd.closureProjects) -join ',')
+        Check ((Differs $fd $fc) -and ([Antiphon.Nightly.TestSelectionJson]::Sorted($expected) -join ',') -ceq ([Antiphon.Nightly.TestSelectionJson]::Sorted(@($fd.closureProjects)) -join ',') -and $expected.Count -eq 6) 'transitive-edge' (@($fd.closureProjects) -join ',')
         Put 'tests/Pty.Tests/Pty.Tests.csproj' $script:PtyTestsProject.Replace('<ProjectReference Include="../../src/Agents.Pty/Agents.Pty.csproj" />','')
         $e=Commit; $fe=Fp $e
         $before=Entry $fd 'tests/Pty.Tests/Pty.Tests.csproj'; $after=Entry $fe 'tests/Pty.Tests/Pty.Tests.csproj'

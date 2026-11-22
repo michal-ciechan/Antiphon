@@ -7,7 +7,7 @@ $ErrorActionPreference='Stop'
 $ResultsDirectory=New-C487Root $ResultsDirectory
 $root=Join-Path $ResultsDirectory 'repository with spaces'
 [void][IO.Directory]::CreateDirectory($root)
-function Git($a) { return (Invoke-TestSelectionGit $root $a).Stdout.Trim() }
+function Git($a) { return (Invoke-C487FixtureGit $root $a) }
 function Put($path,$text) {
     $full=Join-Path $root $path
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $full))
@@ -15,7 +15,7 @@ function Put($path,$text) {
 }
 function Commit { [void](Git @('add','--all')); [void](Git @('commit','-qm','fixture')); return Git @('rev-parse','HEAD') }
 function Check($ok,$label) { Assert-C487 ([bool]$ok) "C1545 $label" }
-function Same($a,$b) { return ((Get-TestSelectionSorted @($a)) -join ',') -ceq ((Get-TestSelectionSorted @($b)) -join ',') }
+function Same($a,$b) { return ([Antiphon.Nightly.TestSelectionJson]::Sorted(@($a)) -join ',') -ceq ([Antiphon.Nightly.TestSelectionJson]::Sorted(@($b)) -join ',') }
 [void](Git @('init','-q','-b','main')); [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $projects=[ordered]@{
     'src/Messaging/Messaging.csproj'=@('messaging')
@@ -40,14 +40,7 @@ switch ($Case) {
         Put 'src/Messaging/Message.cs' 'changed'; $a=Commit
         $script:ProjectBlobReads=0
         $script:InvalidSharedReads=0
-        $script:OriginalSelectionBlob=${function:Get-TestSelectionBlob}
-        function Get-TestSelectionBlob {
-            param([string]$Root,[string]$Sha,[string]$Path)
-            if ($Path.EndsWith('.csproj',[StringComparison]::Ordinal)) { $script:ProjectBlobReads++ }
-            if ($Path -ceq 'Directory.Build.props') { $script:InvalidSharedReads++ }
-            return & $script:OriginalSelectionBlob $Root $Sha $Path
-        }
-        # Batched reads count the same way: every path asked of git, one read each.
+        # Every project and shared input is read through the census batch: every path asked of git, one read each.
         $script:OriginalBlobBatch=${function:Read-RcProjectBlobBatch}
         function Read-RcProjectBlobBatch {
             param([string]$Root,[string]$Sha,[string[]]$Paths)
@@ -62,7 +55,6 @@ switch ($Case) {
         Put 'Directory.Build.props' 'not XML'; $invalidBase=Commit
         Put 'src/Messaging/Message.cs' 'invalid shared input candidate'; $invalidCandidate=Commit
         $invalid=Get-RcProjectSelection $root $invalidBase $invalidCandidate
-        ${function:Get-TestSelectionBlob}=$script:OriginalSelectionBlob
         ${function:Read-RcProjectBlobBatch}=$script:OriginalBlobBatch
         $projectBlobs=@((Git @('ls-tree','-r',$a)).Split("`n") | Where-Object { $_.EndsWith('.csproj',[StringComparison]::Ordinal) } | ForEach-Object { ($_ -split '\s+',4)[2] } | Sort-Object -Unique)
         Check ($projectReads -eq $projectBlobs.Count -and $script:InvalidSharedReads -eq 1 -and
@@ -77,7 +69,7 @@ switch ($Case) {
         Check (Same $m.downstream @('src/Server/Server.csproj','src/Runner/Runner.csproj','tests/Server/Server.csproj','tests/Runner/Runner.csproj')) 'manifest-closure'
         Check (($s.effectiveMode -ceq 'Full') -and ($s.gateCredit -is [bool]) -and -not $s.gateCredit -and -not $s.executionEvidence) 'no-credit'
         $again=Get-RcProjectSelection $root $b $a
-        Check ((ConvertTo-TestSelectionCanonicalJson $s) -ceq (ConvertTo-TestSelectionCanonicalJson $again)) 'deterministic'
+        Check ([Antiphon.Nightly.TestSelectionJson]::Canonical($s) -ceq [Antiphon.Nightly.TestSelectionJson]::Canonical($again)) 'deterministic'
     }
     'C1545_FailClosed' {
         Put 'unowned/file.txt' 'new'; $a=Commit; $s=Get-RcProjectSelection $root $b $a

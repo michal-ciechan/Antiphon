@@ -1,4 +1,4 @@
-// The orders the selection scripts produce: Get-TestSelectionSorted (ordinal, distinct), Sort-Object -CaseSensitive
+// The orders the selection scripts produce: Get-TestSelectionSorted (ordinal, distinct: the core's TestSelectionJson.Sorted), Sort-Object -CaseSensitive
 // (current culture, case-sensitive) and Sort-Object -Unique (current culture ignoring case, distinct ignoring case).
 // A culture sort is only answered when it is a total order on the values: two different strings the culture calls
 // equal would leave their order to the sort's stability, so that input is NotHandled.
@@ -11,13 +11,8 @@ namespace Antiphon.Scripts
 {
     internal static class PsSort
     {
-        /// <summary>Get-TestSelectionSorted: the distinct non-null strings in ordinal order.</summary>
-        internal static List<object> Ordinal(IEnumerable<string> values)
-        {
-            var set = new SortedSet<string>(StringComparer.Ordinal);
-            foreach (string value in values) if (value != null) set.Add(value);
-            return set.Cast<object>().ToList();
-        }
+        /// <summary>Get-TestSelectionSorted (the core's TestSelectionJson.Sorted): the distinct non-null strings in ordinal order.</summary>
+        internal static List<object> Ordinal(IEnumerable<string> values) => Antiphon.Nightly.TestSelectionJson.Sorted(values.ToArray()).Cast<object>().ToList();
 
         /// <summary>Sort-Object {key} -CaseSensitive.</summary>
         internal static List<T> CultureCaseSensitive<T>(IEnumerable<T> items, Func<T, string> key) => Culture(items, key, CompareOptions.None);

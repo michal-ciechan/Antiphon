@@ -47,28 +47,6 @@ function Write-ReleaseSelectionOnce {
     } finally { if (Test-Path -LiteralPath $temp) { [IO.File]::Delete($temp) } }
 }
 
-function Get-ReleaseSelectionContract {
-    param([string]$RepositoryRoot, [string]$Sha, [string]$Profile)
-    Add-TestSelectionBlobPrefetch $RepositoryRoot $Sha @('tests/test-execution-policy.json', 'tests/test-selection-policy.json',
-        'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1', 'global.json')
-    $policy = [Antiphon.Nightly.ExecutionPolicy]::Parse((Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-execution-policy.json'))
-    if ($policy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))) { throw 'policy-hash-stale' }
-    [void]([Antiphon.Nightly.NightlyPolicy]::Profile($policy, $Profile))
-    $catalog = ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-selection-policy.json')
-    if ($policy.selectionCatalog.hash -cne $catalog.catalogHash) { throw 'catalog-pin-mismatch' }
-    $selectors = @{}
-    foreach ($path in @('scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
-        $selectors[$path] = Get-TestSelectionDigest (ConvertTo-TestSelectionLfText (Get-TestSelectionBlob $RepositoryRoot $Sha $path))
-    }
-    return [ordered]@{
-        policyHash = $policy.policyHash; catalogHash = $catalog.catalogHash
-        selectorHash = (Get-TestSelectionDigest $selectors)
-        runtimeHash = (Get-TestSelectionDigest (Get-TestSelectionBlob $RepositoryRoot $Sha 'global.json'))
-        profile = $Profile
-        platform = $(if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows' } else { 'linux' })
-    }
-}
-
 function Read-ReleaseSelectionBaseline {
     # An archived publication, not today's card revision or remote tip. The archive
     # receipt is an index into immutable publisher artifacts in configured state.
@@ -140,7 +118,7 @@ function Read-ReleaseSelectionBaseline {
         $ledger.prepublicationReceipt.correlation.runId -cne $ledger.runId -or
         $ledger.prepublicationReceipt.recipient.cardId -cne $authority.releaseCardId -or
         $ledger.prepublicationReceipt.recipient.revision -lt 1) { throw 'baseline-receipt' }
-    $historical = Get-ReleaseSelectionContract $Request.RepositoryRoot $receipt.sha 'rc'
+    $historical = [Antiphon.Nightly.TestSelection]::Contract($Request.RepositoryRoot, $receipt.sha, 'rc')
     if (([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($historical)) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($receipt.contract))) { throw 'baseline-contract' }
     if ($authority.policyHash -cne $historical.policyHash) { throw 'baseline-policy' }
     $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Request.RepositoryRoot, $receipt.sha)
@@ -186,7 +164,7 @@ function Read-ReleaseSelectionBaseline {
 function Assert-ReleaseSelectionCommit {
     param([string]$Root, [string]$Sha)
     if ($Sha -cnotmatch '^[0-9a-f]{40}$') { throw 'selection-commit-required' }
-    $read = Invoke-TestSelectionGit $Root @('cat-file', '-t', $Sha) @(0, 128)
+    $read = [Antiphon.Nightly.TestSelectionGit]::Run($Root, @('cat-file', '-t', $Sha), @(0, 128))
     if ($read.Exit -ne 0 -or $read.Stdout.Trim() -cne 'commit') { throw 'selection-commit-unavailable' }
 }
 
@@ -195,15 +173,15 @@ function New-ReleaseSelectionAttemptCore {
     if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'selection-pwsh-required' }
     . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $PSScriptRoot 'release-gate.ps1')
-    . (Join-Path $PSScriptRoot 'test-selection.ps1')
     Assert-ReleaseSelectionCommit $Request.RepositoryRoot $Request.CandidateSha
     if ($Request.BaselineSha) { Assert-ReleaseSelectionCommit $Request.RepositoryRoot $Request.BaselineSha }
-    $contract = Get-ReleaseSelectionContract $Request.RepositoryRoot $Request.CandidateSha $Request.Profile
+    # The contract and the proposal are compiled (Antiphon.Nightly.TestSelection, CARD-1313).
+    $contract = [Antiphon.Nightly.TestSelection]::Contract($Request.RepositoryRoot, $Request.CandidateSha, $Request.Profile)
     $baseline = Read-ReleaseSelectionBaseline $Request $contract
     $b = [string]$baseline.sha
     if ($b) {
         Assert-ReleaseSelectionCommit $Request.RepositoryRoot $b
-        $ancestor = Invoke-TestSelectionGit $Request.RepositoryRoot @('merge-base', '--is-ancestor', $b, $Request.CandidateSha) @(0, 1)
+        $ancestor = [Antiphon.Nightly.TestSelectionGit]::Run($Request.RepositoryRoot, @('merge-base', '--is-ancestor', $b, $Request.CandidateSha), @(0, 1))
         if ($ancestor.Exit -ne 0) { throw 'baseline-not-ancestor' }
     }
     $proposal = $null
@@ -211,7 +189,7 @@ function New-ReleaseSelectionAttemptCore {
     $reasons = @()
     if ($baseline.reason) { $reasons += $baseline.reason }
     if ($b) {
-        $proposal = Get-TestSelection $Request.RepositoryRoot $b $Request.CandidateSha $Request.Profile
+        $proposal = [Antiphon.Nightly.TestSelection]::Select($Request.RepositoryRoot, $b, $Request.CandidateSha, $Request.Profile)
         $reasons += @($proposal.fallbackReasons)
         if ($Request.SelectionMode -cne 'Full') {
             . (Join-Path $PSScriptRoot 'rc-project-selection.ps1')

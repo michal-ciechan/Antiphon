@@ -3,7 +3,7 @@
 // (2026-11-22-remaining-ps1-to-csharp.md, unit 2) ported the rest (Get-TestTimingReport, Add-TestTimingEstimates) and
 // deleted the ps1 and scripts/test-timing-report.ps1. Writers: the nightly tests run (NightlyTests.cs) in-process and
 // run-checkpoint.ps1 through `antiphon-scripts test-timing-event`. Readers: `antiphon-scripts test-timing-report` and
-// select-test-rosters.ps1, which calls Report and AddEstimates from the loaded core. A line is ConvertTo-Json -Compress
+// the select-test-rosters command (TestSelection.Run), which calls Report and AddEstimates. A line is ConvertTo-Json -Compress
 // -Depth 8's for the same event (Newtonsoft's default escaping and number forms), written under a named mutex per
 // journal directory. Persistence failure is not a test result: callers catch. Missing configuration writes nothing.
 // Plain C#: no PowerShell types. ASCII only.
@@ -67,7 +67,7 @@ namespace Antiphon.Nightly
     /// <summary>One selected set's estimate: its group's median, p90, sample count and latest value, or unbudgeted without one.</summary>
     public sealed record TestTimingEstimate(string SetId, double? Median, double? P90, int SampleCount, bool Provisional, bool Unbudgeted, double? Last)
     {
-        /// <summary>The estimate as select-test-rosters.ps1's selection carries it (an ordered dictionary).</summary>
+        /// <summary>The estimate as the select-test-rosters selection carries it (an ordered dictionary).</summary>
         public OrderedDictionary ToDictionary() => new OrderedDictionary
         {
             { "setId", SetId }, { "median", Median }, { "p90", P90 }, { "sampleCount", SampleCount }, { "provisional", Provisional },
@@ -386,7 +386,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Add-TestTimingEstimates for select-test-rosters.ps1 (the selection is its ordered dictionary): a copy of the
+        /// Add-TestTimingEstimates for the select-test-rosters command (the selection is its ordered dictionary): a copy of the
         /// selection's entries in order without estimates and budgetObservations, then estimates (one dictionary per
         /// selected set: setId, median, p90, sampleCount, provisional, unbudgeted, last), budgetObservations
         /// ["budget-observed"] and the same selectedSets. It never adds, drops or reorders a set, and never touches the digest.

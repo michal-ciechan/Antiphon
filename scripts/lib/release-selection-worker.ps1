@@ -2,14 +2,12 @@
 param([string]$RequestPath, [string]$ResponsePath)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
-# One driver-settings query per worker (CheckpointProcessRunner.DriverSettingsCacheMilliseconds); a worker lives at most 60 s.
-. (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
-[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = 60000
 try {
     $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
     $value = New-ReleaseSelectionAttemptCore $request
     [IO.File]::WriteAllText($ResponsePath, (ConvertTo-Json @{ok=$true;value=$value} -Depth 40))
 } catch {
-    [IO.File]::WriteAllText($ResponsePath, (ConvertTo-Json @{ok=$false;error=$_.Exception.Message} -Depth 5))
+    # A compiled refusal (TestSelection, the policy readers) arrives wrapped: the response carries its reason.
+    [IO.File]::WriteAllText($ResponsePath, (ConvertTo-Json @{ok=$false;error=(Get-NightlyRefusalText $_)} -Depth 5))
     exit 2
 }

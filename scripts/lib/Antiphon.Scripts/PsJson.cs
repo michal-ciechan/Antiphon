@@ -152,72 +152,51 @@ namespace Antiphon.Scripts
             }
         }
 
-        /// <summary>ConvertTo-TestSelectionCanonicalJson: keys sorted ordinally, strings (keys too) as ConvertTo-Json
-        /// -Compress writes them. Only the characters whose escaping is certain are accepted.</summary>
-        public static string SelectionCanonical(object value)
+        /// <summary>
+        /// A PsObject tree as the core's plain values (TestSelectionJson digests them): an object is an OrderedDictionary
+        /// with ordinal keys in order, a list an object[], anything else itself.
+        /// </summary>
+        public static object ToPlain(object value)
         {
-            var sb = new StringBuilder();
-            WriteSelection(sb, value);
-            return sb.ToString();
-        }
-
-        private static void WriteSelection(StringBuilder sb, object node)
-        {
-            switch (node)
+            switch (value)
             {
-                case null: sb.Append("null"); return;
-                case string s: AppendJsonString(sb, s); return;
-                case bool flag: sb.Append(flag ? "true" : "false"); return;
-                case int i: sb.Append(i.ToString(CultureInfo.InvariantCulture)); return;
-                case long l: sb.Append(l.ToString(CultureInfo.InvariantCulture)); return;
                 case PsObject obj:
-                    var keys = obj.Pairs.Select(p => p.Key).ToArray();
-                    Array.Sort(keys, StringComparer.Ordinal);
-                    sb.Append('{');
-                    for (int k = 0; k < keys.Length; k++)
-                    {
-                        if (k > 0) sb.Append(',');
-                        AppendJsonString(sb, keys[k]);
-                        sb.Append(':');
-                        WriteSelection(sb, obj.GetExact(keys[k]));
-                    }
-                    sb.Append('}');
-                    return;
+                    var map = new System.Collections.Specialized.OrderedDictionary(StringComparer.Ordinal);
+                    foreach (var pair in obj.Pairs) map[pair.Key] = ToPlain(pair.Value);
+                    return map;
+                case string _:
+                    return value;
                 case System.Collections.IEnumerable items:
-                    sb.Append('[');
-                    bool first = true;
-                    foreach (object item in items)
-                    {
-                        if (!first) sb.Append(',');
-                        first = false;
-                        WriteSelection(sb, item);
-                    }
-                    sb.Append(']');
-                    return;
-                default: throw new NotHandledException("canonical-type:" + node.GetType().Name);
+                    return items.Cast<object>().Select(ToPlain).ToArray();
+                default:
+                    return value;
             }
         }
 
-        private static void AppendJsonString(StringBuilder sb, string s)
+        /// <summary>
+        /// The core's plain values (a selection or a contract) as this command's PsObject tree: a dictionary is a PsObject
+        /// in key order, any other enumerable a list; keys that differ only in case are not handled.
+        /// </summary>
+        public static object FromPlain(object value)
         {
-            sb.Append('"');
-            foreach (char c in s)
+            switch (value)
             {
-                switch (c)
-                {
-                    case '"': sb.Append("\\\""); break;
-                    case '\\': sb.Append("\\\\"); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        // Other control characters and the separators Newtonsoft also escapes: not reproduced here.
-                        if (c < 0x20 || c == '\u007f' || c == '\u0085' || c == '\u2028' || c == '\u2029') throw new NotHandledException("json-string-escape");
-                        sb.Append(c);
-                        break;
-                }
+                case System.Collections.IDictionary dictionary:
+                    var obj = new PsObject();
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (System.Collections.DictionaryEntry entry in dictionary)
+                    {
+                        if (!(entry.Key is string key) || key.Length == 0 || !seen.Add(key)) throw new NotHandledException("plain-key");
+                        obj.Pairs.Add(new KeyValuePair<string, object>(key, FromPlain(entry.Value)));
+                    }
+                    return obj;
+                case string _:
+                    return value;
+                case System.Collections.IEnumerable items:
+                    return items.Cast<object>().Select(FromPlain).ToList();
+                default:
+                    return value;
             }
-            sb.Append('"');
         }
 
         public static string Sha256Hex(byte[] bytes) =>

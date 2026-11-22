@@ -6,23 +6,16 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// C1313 reads these working-tree scripts and throws when any byte is CR.
-// scripts/test-test-selection.ps1 New-C1313SelectorCandidate and New-C1313CrlfScriptRoot.
-// A Windows qualification clone leaves core.autocrlf at the machine default, and
-// text=auto then checks the files out as CRLF unless eol=lf is set.
+// C1313: the selector identity (TestSelection.SelectorFiles) is hashed as LF text, and the running selector embeds
+// these sources (Antiphon.Nightly.csproj) to compare with a candidate's blobs. A Windows qualification clone leaves
+// core.autocrlf at the machine default, and text=auto then checks the files out as CRLF unless eol=lf is set: the
+// comparison normalises line endings, and eol=lf keeps the embedded bytes the committed ones too. Until 2026-11-22 the
+// identity was scripts/select-test-rosters.ps1 and scripts/lib/test-selection.ps1 (now *.ps1 eol=lf covers every script).
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class SelectorLineEndingAttributeTests
 {
-    private static readonly string[] LiveLfScripts =
-    [
-        "scripts/select-test-rosters.ps1",
-        "scripts/lib/test-selection.ps1",
-        "scripts/lib/nightly-common.ps1",
-        "scripts/lib/nightly-core.ps1",
-        "scripts/lib/checkpoint-process-runner.ps1",
-        "scripts/lib/checkpoint-file-reader.ps1",
-    ];
+    private static readonly string[] LiveLfScripts = Antiphon.Nightly.TestSelection.SelectorFiles;
 
     private const string PreservedBytes =
         "tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1";

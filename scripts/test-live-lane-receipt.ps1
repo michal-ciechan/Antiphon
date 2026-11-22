@@ -27,7 +27,7 @@ $script:Components=[ordered]@{environment=('e'*64);instructions=('1'*64);laneCon
 function Check($ok, [string]$label, [string]$detail='') { Assert-C487 ([bool]$ok) "C1545 $($script:Method)/$label" $detail }
 function Iso([DateTimeOffset]$at) { return $at.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture) }
 function Sha([string]$path) { return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($path))).ToLowerInvariant() }
-function Git([string[]]$arguments, [string]$root=$script:Repo) { return (Invoke-TestSelectionGit $root $arguments).Stdout.Trim() }
+function Git([string[]]$arguments, [string]$root=$script:Repo) { return (Invoke-C487FixtureGit $root $arguments) }
 function Split-Uid([string]$uid) {
     if ($uid -cnotmatch '^(.+)\.([^.]+)\.([^.(]+)(\((.*)\))?$') { throw "bad roster uid: $uid" }
     $arguments=@(if ($Matches[4]) { $Matches[5] -split ',' })

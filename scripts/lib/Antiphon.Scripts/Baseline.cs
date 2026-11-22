@@ -309,7 +309,8 @@ namespace Antiphon.Scripts
             if (version >= 3)
             {
                 required.Add("markdown-pdf");
-                TestSelection.ProjectDispositions(obj);
+                // Test-NightlyProjectDispositions is the core's, as ConvertFrom-ReleaseAuthorityPolicyBytes calls it.
+                Antiphon.Nightly.NightlyPolicy.ProjectDispositions(Antiphon.Nightly.ExecutionPolicy.Parse(text));
                 var dispositions = List(obj.Get("projectDispositions") ?? new List<object>(), "dispositions");
                 foreach (var (project, suite) in DispositionSuites)
                     if (dispositions.Any(row => Doc(row, "dispositions").Get("project") is string p && p == project)) required.Add(suite);

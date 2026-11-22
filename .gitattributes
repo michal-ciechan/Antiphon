@@ -43,6 +43,9 @@ tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-approval.cs.txt text
 # CARD-0490 guest scripts: packaging must preserve LF working-file bytes.
 tests/fixtures/card0490-linux/*.sh text eol=lf
 
+# CARD-1313: the selector identity (TestSelection.SelectorFiles) is hashed as LF text and embedded in the core.
+scripts/lib/Antiphon.Nightly/TestSelection*.cs text eol=lf
+
 # CARD-1820: the derived index is byte-compared, so a Windows checkout must keep LF.
 tests/derived-impact-index.json text eol=lf
 tests/derived-impact-index-known-os-gated.txt text eol=lf

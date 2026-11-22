@@ -1,5 +1,6 @@
 // select-release: New-ReleaseSelectionAttemptCore (scripts/lib/release-selection.ps1), with or without a baseline
-// (Baseline.cs reads it; TestSelection.cs and RcProjectSelection.cs propose against it). It writes byte-for-byte the
+// (Baseline.cs reads it; the core's Antiphon.Nightly.TestSelection and RcProjectSelection.cs propose against it; the
+// contract is TestSelection.Contract, the one the worker reads too). It writes byte-for-byte the
 // selection.json and selection-attempt.json the PowerShell worker writes and answers with the same response document.
 //
 // Handled only when every check passes on inputs it reads exactly as PowerShell does. Any refusal (bad commit,
@@ -82,7 +83,7 @@ namespace Antiphon.Scripts
             if (Truthy(b))
             {
                 if (!Truthy(scriptsLib) || !Path.IsPathFullyQualified(scriptsLib)) throw new NotHandledException("scripts-lib-required");
-                var testSelection = TestSelection.Select(repositoryRoot, b, candidateSha, profile, scriptsLib, contract);
+                var testSelection = (PsObject)PsJson.FromPlain(Antiphon.Nightly.TestSelection.Select(repositoryRoot, b, candidateSha, profile));
                 proposal = testSelection;
                 reasons.AddRange(((List<object>)testSelection.GetExact("fallbackReasons")).Cast<string>());
                 if (!string.Equals(selectionMode, "Full", StringComparison.Ordinal))
@@ -129,9 +130,6 @@ namespace Antiphon.Scripts
             if (result.Stdout.Length > 16777216) throw new NotHandledException("git-output-too-large");
             return result;
         }
-
-        private static readonly string[] ContractPaths = { "tests/test-execution-policy.json", "tests/test-selection-policy.json",
-            "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1", "global.json" };
 
         /// <summary>The text of each path at a commit in two git processes: ls-tree -l gives each blob's size, and
         /// one show of every blob writes their bytes back to back, split by those sizes. Anything but regular blobs
@@ -210,24 +208,9 @@ namespace Antiphon.Scripts
 
         private static readonly UTF8Encoding Strict = new UTF8Encoding(false, true);
 
-        internal static PsObject Contract(string root, string sha, string profile)
-        {
-            var blob = Texts(root, sha, ContractPaths);
-            string Blob(string unusedRoot, string unusedSha, string path) => blob[path];
-            if (!(PsJson.Parse(Blob(root, sha, "tests/test-execution-policy.json")) is PsObject policy)) throw new NotHandledException("policy-shape");
-            if (!(policy.Get("policyHash") is string policyHash) || policyHash != PolicyHash(policy)) throw new NotHandledException("policy-hash-stale");
-            AssertProfile(policy, profile);
-            if (!(PsJson.Parse(Blob(root, sha, "tests/test-selection-policy.json")) is PsObject catalog)) throw new NotHandledException("catalog-shape");
-            SelectionCatalog.Assert(catalog);
-            string catalogHash = (string)catalog.GetExact("catalogHash");
-            if (!(policy.Get("selectionCatalog") is PsObject pin) || !(pin.Get("hash") is string pinned) || pinned != catalogHash) throw new NotHandledException("catalog-pin-mismatch");
-            var selectors = new PsObject();
-            foreach (string path in new[] { "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1" })
-                selectors.Pairs.Add(new KeyValuePair<string, object>(path, SelectionDigest(LfText(Blob(root, sha, path)))));
-            return Obj(("policyHash", policyHash), ("catalogHash", catalogHash), ("selectorHash", SelectionDigest(selectors)),
-                ("runtimeHash", SelectionDigest(Blob(root, sha, "global.json"))), ("profile", profile),
-                ("platform", Windows ? "windows" : "linux"));
-        }
+        /// <summary>Get-ReleaseSelectionContract: the core's TestSelection.Contract, as this command's PsObject.</summary>
+        internal static PsObject Contract(string root, string sha, string profile) =>
+            (PsObject)PsJson.FromPlain(Antiphon.Nightly.TestSelection.Contract(root, sha, profile));
 
         /// <summary>Get-NightlyPolicyHash: the canonical JSON of every top-level key but policyHash (any case).</summary>
         internal static string PolicyHash(PsObject policy)
@@ -238,24 +221,8 @@ namespace Antiphon.Scripts
             return PsJson.Sha256Text(PsJson.NightlyCanonical(copy));
         }
 
-        /// <summary>Get-NightlyPolicyProfile, for a schema-2+ policy naming the profile with required suites.</summary>
-        private static void AssertProfile(PsObject policy, string profile)
-        {
-            string name = profile.Trim().ToLowerInvariant();
-            if (name.Length == 0) name = "nightly";
-            if (name != "nightly" && name != "rc") throw new NotHandledException("unknown-profile");
-            if (!(policy.Get("profiles") is PsObject profiles)) throw new NotHandledException("policy-profiles");
-            if (!(profiles.Get(name) is PsObject row)) throw new NotHandledException("profile-undefined");
-            object required = row.Get("requiredSuites");
-            bool any = required is string one ? !string.IsNullOrWhiteSpace(one)
-                : required is List<object> list && list.Any(id => id is string s && !string.IsNullOrWhiteSpace(s));
-            if (!any) throw new NotHandledException("profile-no-suites");
-        }
-
-        /// <summary>Get-TestSelectionDigest.</summary>
-        internal static string SelectionDigest(object value) => PsJson.Sha256Text(PsJson.SelectionCanonical(value));
-
-        internal static string LfText(string text) => text == null ? "" : text.Replace("\r\n", "\n").Replace("\r", "\n");
+        /// <summary>Get-TestSelectionDigest: the core's TestSelectionJson.Digest of the value.</summary>
+        internal static string SelectionDigest(object value) => Antiphon.Nightly.TestSelectionJson.Digest(PsJson.ToPlain(value));
 
         // ----- Save-ReleaseSelectionAttempt -----
 

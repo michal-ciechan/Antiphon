@@ -88,7 +88,10 @@ namespace Antiphon.Nightly
         // driver. Not a claim of transitive closure.
         private static readonly string[] RequiredAlgorithmPaths =
         {
-            "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1", "scripts/lib/test-selection.ps1",
+            "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1",
+            // The selection's canonical JSON, digest and git reads (scripts/lib/test-selection.ps1 until 2026-11-22).
+            "scripts/lib/Antiphon.Nightly/TestSelection.cs", "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs",
+            "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs", "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
             "scripts/lib/Antiphon.Nightly/RcAdmission.cs", "scripts/lib/Antiphon.Nightly/RcInputInventory.cs", "scripts/lib/Antiphon.Nightly/RcChunkDigest.cs",
             "scripts/lib/Antiphon.Nightly/RcBoundary.cs", "scripts/lib/Antiphon.Nightly/RcHistoricalEvidence.cs",
             "tests/Antiphon.Tests/Scripts/ReleaseImpactProjectGraph.cs", "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",

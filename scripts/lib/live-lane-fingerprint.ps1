@@ -52,7 +52,7 @@ function Test-LiveLaneStringList {
 function Read-LiveLaneTree {
     param([string]$RepositoryRoot, [string]$Sha, [ref]$Listing)
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    $text=(Invoke-TestSelectionGit $RepositoryRoot @('ls-tree','-r','-z',$Sha,'--')).Stdout
+    $text=[Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('ls-tree','-r','-z',$Sha,'--')).Stdout
     if ($Listing) { $Listing.Value=$text }
     foreach ($entry in $text.Split([char]0)) {
         if (-not $entry) { continue }
@@ -65,7 +65,7 @@ function Read-LiveLaneTree {
 function Read-LiveLaneBlob {
     # The bytes of the tree entry at Path, read by its blob id: the same bytes as <sha>:<path>.
     param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path, [hashtable]$Cache)
-    if ($null -eq $Cache) { return Get-TestSelectionBlob $RepositoryRoot $Sha $Path }
+    if ($null -eq $Cache) { return [Antiphon.Nightly.TestSelectionGit]::Blob($RepositoryRoot, $Sha, $Path) }
     return Read-RcProjectBlob $RepositoryRoot $Tree[$Path].blob $Cache
 }
 
@@ -74,14 +74,14 @@ function Read-LiveLaneDeclaration {
     if (-not $Tree.ContainsKey($script:LiveLaneDeclarationPath) -or $Tree[$script:LiveLaneDeclarationPath].mode -cnotmatch '^1006[0-7]{2}$') { throw 'declaration-invalid' }
     try { $document=Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $script:LiveLaneDeclarationPath $Cache | ConvertFrom-Json -AsHashtable } catch { throw 'declaration-invalid' }
     if ($document -isnot [Collections.IDictionary]) { throw 'declaration-invalid' }
-    $keys=@(Get-TestSelectionSorted @($document.Keys))
+    $keys=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($document.Keys)))
     if (($keys -join ',') -cne 'format,lanes' -or $document['format'] -cne 'antiphon-live-lane-inputs-v1' -or $document['lanes'] -isnot [Collections.IDictionary]) { throw 'declaration-invalid' }
     $name=@($document['lanes'].Keys | Where-Object { $_ -ceq $Lane })
     if ($name.Count -ne 1) { throw 'declaration-invalid' }
     $entry=$document['lanes'][$name[0]]
     if ($entry -isnot [Collections.IDictionary]) { throw 'declaration-invalid' }
-    $fields=@(Get-TestSelectionSorted @($entry.Keys))
-    if (($fields -join ',') -cne ((Get-TestSelectionSorted $script:LiveLaneDeclarationFields) -join ',')) { throw 'declaration-invalid' }
+    $fields=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($entry.Keys)))
+    if (($fields -join ',') -cne ([Antiphon.Nightly.TestSelectionJson]::Sorted($script:LiveLaneDeclarationFields) -join ',')) { throw 'declaration-invalid' }
     if ($entry['manifest'] -isnot [string] -or -not (Test-LiveLaneStringList @($entry['manifest']))) { throw 'declaration-invalid' }
     foreach ($field in @('contractFiles','instructionPatterns')) { if (-not (Test-LiveLaneStringList $entry[$field])) { throw 'declaration-invalid' } }
     foreach ($field in @('minimumRoots','runtimeRoots')) { if (-not (Test-LiveLaneStringList $entry[$field] -Root)) { throw 'declaration-invalid' } }
@@ -98,7 +98,7 @@ function Read-LiveLaneManifestProjects {
         if ($row -isnot [Collections.IDictionary] -or $row['project'] -isnot [string] -or $row['project'] -cnotmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$') { throw 'manifest-invalid' }
         $row['project']
     }
-    return @(Get-TestSelectionSorted @($projects))
+    return @([Antiphon.Nightly.TestSelectionJson]::Sorted(@($projects)))
 }
 
 function Get-LiveLaneManifestRoster {
@@ -112,7 +112,7 @@ function Get-LiveLaneManifestRoster {
 function Get-LiveLaneFingerprintDigest {
     # Domain-separated by lane and schema version; components are the whole material.
     param([string]$Lane, $Components)
-    $material="antiphon-live-lane-fingerprint`n"+(ConvertTo-TestSelectionCanonicalJson ([ordered]@{schemaVersion=1;laneId=$Lane;components=$Components}))
+    $material="antiphon-live-lane-fingerprint`n"+[Antiphon.Nightly.TestSelectionJson]::Canonical([ordered]@{schemaVersion=1;laneId=$Lane;components=$Components})
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
 }
 
@@ -161,7 +161,7 @@ function Get-LiveLaneInstructionImports {
         $file,$depth=$queue.Dequeue()
         if (-not $read.Add($file)) { continue }
         if ($Tree[$file].mode -cnotmatch '^1006[0-7]{2}$') { continue }
-        $text=ConvertTo-TestSelectionLfText (Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $file $Cache)
+        $text=[Antiphon.Nightly.TestSelectionJson]::LfText((Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $file $Cache))
         foreach ($line in $text.Split("`n")) {
             if ($line -cnotmatch '^\s*@(\S+)\s*$') { continue }
             $reference=$Matches[1]
@@ -182,7 +182,7 @@ function Get-LiveLaneGrep {
     # One git process per scan; records are rev:path NUL line NUL text.
     param([string]$RepositoryRoot, [string]$Sha, [string]$Pattern, [string[]]$PathSpecs)
     $rows=[Collections.Generic.List[object]]::new()
-    $text=(Invoke-TestSelectionGit $RepositoryRoot (@('grep','-z','-n','-I','-E',$Pattern,$Sha,'--')+$PathSpecs) @(0,1)).Stdout
+    $text=[Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, (@('grep','-z','-n','-I','-E',$Pattern,$Sha,'--')+$PathSpecs), @(0,1)).Stdout
     foreach ($record in $text.Split("`n")) {
         if (-not $record) { continue }
         $fields=$record.Split([char]0,3)
@@ -193,19 +193,19 @@ function Get-LiveLaneGrep {
 }
 
 function Get-LiveLaneEntryDigest {
-    # Get-TestSelectionDigest over the tree entries of Paths, byte for byte, without one recursive
+    # TestSelectionJson.Digest over the tree entries of Paths, byte for byte, without one recursive
     # canonical call per field: the entry keys sort as blob, mode, path; blob and mode are hex and
     # octal; a printable-ASCII path escapes only at '"' and '\' (so is copied when it has neither).
     # Any other path takes the canonical serializer; a path the tree does not hold, the original form.
     param([string[]]$Paths, $Tree)
-    foreach ($path in $Paths) { if (-not $Tree.ContainsKey($path)) { return Get-TestSelectionDigest @($Paths | ForEach-Object { $Tree[$_] }) } }
+    foreach ($path in $Paths) { if (-not $Tree.ContainsKey($path)) { return [Antiphon.Nightly.TestSelectionJson]::Digest(@($Paths | ForEach-Object { $Tree[$_] })) } }
     $builder=[Text.StringBuilder]::new('[')
     foreach ($path in $Paths) {
         if ($builder.Length -gt 1) { [void]$builder.Append(',') }
         $entry=$Tree[$path]
         if ($path -cmatch '^[ !#-\[\]-~]*$') {
             [void]$builder.Append('{"blob":"').Append($entry.blob).Append('","mode":"').Append($entry.mode).Append('","path":"').Append($path).Append('"}')
-        } else { [void]$builder.Append((ConvertTo-TestSelectionCanonicalJson $entry)) }
+        } else { [void]$builder.Append([Antiphon.Nightly.TestSelectionJson]::Canonical($entry)) }
     }
     $bytes=[Text.Encoding]::UTF8.GetBytes($builder.Append(']').ToString())
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
@@ -225,7 +225,7 @@ function Get-LiveLaneFingerprint {
 
 function Get-LiveLaneFingerprintCore {
     param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{}, [string]$Attestation)
-    if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
+    if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or [Antiphon.Nightly.TestSelectionGit]::Run($RepositoryRoot, @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     if ($Lane -cnotmatch '^[a-z0-9][a-z0-9.-]*$') { throw 'declaration-invalid' }
     $listing=$null
     $tree=Read-LiveLaneTree $RepositoryRoot $Sha ([ref]$listing)
@@ -254,7 +254,7 @@ function Get-LiveLaneFingerprintCore {
         if (-not $graph.projects.ContainsKey($current)) { continue }
         foreach ($reference in $graph.projects[$current].references) { if ($closure.Add($reference)) { $queue.Enqueue($reference) } }
     }
-    $closureProjects=@(Get-TestSelectionSorted @($closure))
+    $closureProjects=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($closure)))
     $imports=Get-LiveLaneImportSet $graph $closureProjects $DocumentCache
 
     # Input faults in the closure or its imports leave the closure unknown; catalog
@@ -353,7 +353,7 @@ function Get-LiveLaneFingerprintCore {
 
     $components=[ordered]@{}
     foreach ($name in $script:LiveLaneComponents) {
-        $components[$name]=Get-LiveLaneEntryDigest (Get-TestSelectionSorted @($members[$name])) $tree
+        $components[$name]=Get-LiveLaneEntryDigest ([Antiphon.Nightly.TestSelectionJson]::Sorted(@($members[$name]))) $tree
     }
     # S2a-2: an attested environment is one more component; unknown environment leaves the lane unknown.
     $environment=$null
@@ -361,16 +361,16 @@ function Get-LiveLaneFingerprintCore {
         $roster=Get-LiveLaneManifestRoster $RepositoryRoot $Sha $tree $declaration['manifest'] $DocumentCache
         $environment=Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane -Roster $roster
         if ($environment.status -ceq 'complete') { $components['environment']=$environment.digest }
-        else { $unknown.Add('environment-unknown'); $components['environment']=Get-TestSelectionDigest @($environment.reasons) }
+        else { $unknown.Add('environment-unknown'); $components['environment']=[Antiphon.Nightly.TestSelectionJson]::Digest(@($environment.reasons)) }
     }
     $digest=Get-LiveLaneFingerprintDigest $Lane $components
-    $unknownReasons=@(Get-TestSelectionSorted @($unknown))
+    $unknownReasons=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($unknown)))
     $result=[ordered]@{format='antiphon-live-lane-fingerprint-v1';schemaVersion=1;laneId=$Lane
         status=$(if ($unknownReasons.Count) { 'unknown' } else { 'complete' })
-        unknownReasons=$unknownReasons;observations=@(Get-TestSelectionSorted @($observations))
+        unknownReasons=$unknownReasons;observations=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($observations)))
         digest=$digest;components=$components
-        selectedProjects=@(Get-TestSelectionSorted $selected);closureProjects=$closureProjects
-        inventory=@(Get-TestSelectionSorted @($inventory) | ForEach-Object { $tree[$_] })}
+        selectedProjects=@([Antiphon.Nightly.TestSelectionJson]::Sorted($selected));closureProjects=$closureProjects
+        inventory=@([Antiphon.Nightly.TestSelectionJson]::Sorted(@($inventory)) | ForEach-Object { $tree[$_] })}
     if ($environment) { $result['environment']=[ordered]@{status=$environment.status;reasons=$environment.reasons} }
     return $result
 }

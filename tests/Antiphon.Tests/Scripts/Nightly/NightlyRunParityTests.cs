@@ -66,7 +66,7 @@ public sealed class NightlyRunParityTests
         var plain = Origin(origins, "plain", seed => File.WriteAllText(Path.Combine(seed, "readme.txt"), "fixture\n"));
         var rc = Origin(origins, "rc", seed =>
         {
-            foreach (var file in new[] { "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1" })
+            foreach (var file in TestSelection.ContractFiles)
             {
                 var target = Path.Combine(seed, file.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
