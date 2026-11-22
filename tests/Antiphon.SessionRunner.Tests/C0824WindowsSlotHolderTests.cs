@@ -54,6 +54,57 @@ public sealed class C0824WindowsSlotHolderTests
     }
 
     [Test]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task Cwd_census_skips_exited_process_with_retained_handle(CancellationToken ct)
+    {
+        NativeWindowsGate.Require("An exited Windows process can retain an open kernel handle after losing its cwd memory");
+        var start = new ProcessStartInfo
+        {
+            FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("/d");
+        start.ArgumentList.Add("/c");
+        start.ArgumentList.Add("exit 0");
+        using var child = Process.Start(start)!;
+        var handle = child.Handle;
+        await child.WaitForExitAsync(ct);
+
+        WindowsSlotHolderQuery.TryReadOpenProcessCwd(handle, out var cwd, out var skipped)
+            .ShouldBeTrue("the census can continue once the same process handle proves exit");
+        skipped.ShouldBeTrue();
+        cwd.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Persistent_holder_quarantines_after_linger_budget(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var leasedPath = scratch.Slot("ws-01");
+        var pool = scratch.Pool(processes: new WindowsWorkspaceSlotProcessProbe(path => new HolderScan(true,
+            path == leasedPath ? [new WorkspaceSlotHolder(4242, "fixture", "cwd")] : [])));
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        (await Release(pool, lease, TaskA)).Outcome.ShouldBe("deferred");
+
+        foreach (var minutes in new[] { 1, 2, 4 })
+        {
+            scratch.Clock.Advance(TimeSpan.FromMinutes(minutes));
+            await pool.MaintainAsync(ct);
+        }
+
+        var ledger = pool.Ledger();
+        var entry = ledger.QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Path.ShouldBe(lease.Path);
+        entry.Reason.ShouldBe("lingering");
+        Directory.Exists(entry.Path).ShouldBeTrue();
+        var replacement = ledger.Slot(lease.SlotId)!;
+        replacement.State.ShouldBe(WorkspaceSlotStates.Free);
+        replacement.Path.ShouldNotBe(lease.Path);
+        replacement.ReleaseRequested.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Rm_lock_defers_release(CancellationToken ct)
     {
         // Real RmGetList is UNOBSERVED on this Linux runner. The desktop runs this one method at S4.
