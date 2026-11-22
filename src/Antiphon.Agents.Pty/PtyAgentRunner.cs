@@ -236,11 +236,19 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             custody.RecordStartIntent();
             _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
             custody.RecordTracking(_conn.Pid);
-            // Missing accounting is not placement. Natural finality then stays Unknown.
-            if (await ObserveRootPlacementAsync(_containment, _conn.Pid, custody.TrackedStartTimeUtc,
-                    ReadProcessStartUtc, RootPidExited, TimeProvider.System, launchStarted,
-                    static _ => Task.Delay(TimeSpan.FromMilliseconds(10)), ct) is { } placement)
-                custody.RecordLinuxPlacement(placement);
+            // CARD-1931 R1: the child is spawned and tracked; nothing below may fail the launch.
+            // Missing, ambiguous or late accounting, or a placement journal I/O failure, is not
+            // placement. Natural finality then stays Unknown.
+            try
+            {
+                if (await ObserveRootPlacementAsync(_containment, _conn.Pid, custody.TrackedStartTimeUtc,
+                        ReadProcessStartUtc, RootPidExited, TimeProvider.System, launchStarted,
+                        static async _ => await Task.Yield(), ct) is { } placement)
+                    custody.RecordLinuxPlacement(placement);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
         }
         else
         {
@@ -701,33 +709,70 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     }
 
     /// <summary>
-    /// CARD-1931: whether the tracked root is a member of its own tree. The Linux shim places
-    /// itself after the spawn has returned, so an empty or not-yet-created tree is re-read until
-    /// a first member appears, the root has exited, or the containment's settle bound passes.
-    /// Null is no placement.
+    /// CARD-1931: the tracked generation observed as the SOLE member of its own tree. The Linux
+    /// shim places itself after the spawn has returned and only into an empty tree, so the tree
+    /// is re-read until its first nonempty sample. Placement is that sample holding exactly
+    /// <paramref name="rootPid"/>, whose start time (the source <see cref="IPtyCustodyJournal.RecordTracking"/>
+    /// read) equals <paramref name="trackedStartUtc"/>, with the root still live. A mixed or
+    /// foreign first sample, another generation, an exited root or unreadable accounting is null:
+    /// a later sample cannot say who entered first.
+    /// <para>
+    /// Review b72ac3e7 blocker 2: the placement budget is the containment's settle bound counted
+    /// from <paramref name="launchStarted"/> on <paramref name="clock"/>, not from the spawn. Each
+    /// read is synchronous, so the deadline and the launch token are checked again after every
+    /// read and before a result is accepted; a late or canceled observation is null. The spawned
+    /// child stays tracked either way. A zero bound (Windows and the test containments) makes one
+    /// read and no re-read.
+    /// </para>
     /// </summary>
     internal static async Task<PtyRootPlacement?> ObserveRootPlacementAsync(
         IPtyCustodyContainment containment, int rootPid, DateTime? trackedStartUtc,
         Func<int, DateTime?> readStartUtc, Func<int, bool> rootExited, TimeProvider clock,
         long launchStarted, Func<CancellationToken, Task> pause, CancellationToken ct)
     {
-        _ = readStartUtc; _ = launchStarted; _ = ct;
-        var started = clock.GetTimestamp();
+        if (trackedStartUtc is not { } tracked)
+            return null;
+        var bound = containment.PlacementSettleBound;
+        bool Expired() => ct.IsCancellationRequested
+            || (bound > TimeSpan.Zero && clock.GetElapsedTime(launchStarted) >= bound);
         while (true)
         {
+            if (Expired())
+                return null;
+            PtyCustodyPopulation? sample;
             try
             {
-                var population = containment.ReadActive();
-                if (population.Pids.Contains(rootPid)) return new(rootPid, trackedStartUtc ?? default);
-                if (population.Count != 0) return null;
+                sample = containment.ReadActive();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                sample = null;
             }
 
-            if (clock.GetElapsedTime(started) >= containment.PlacementSettleBound || rootExited(rootPid))
+            if (Expired())
                 return null;
-            await pause(CancellationToken.None);
+            if (sample is { Count: not 0 })
+            {
+                // First membership decides, once. Only a tree holding exactly the root proves it.
+                if (sample.Count != 1 || sample.Pids.Count != 1 || sample.Pids[0] != rootPid)
+                    return null;
+                if (readStartUtc(rootPid) is not { } observed || observed != tracked)
+                    return null;
+                if (rootExited(rootPid) || Expired())
+                    return null;
+                return new(rootPid, observed);
+            }
+
+            if (bound <= TimeSpan.Zero || rootExited(rootPid))
+                return null;
+            try
+            {
+                await pause(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return null;
+            }
         }
     }
 

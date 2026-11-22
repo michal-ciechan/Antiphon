@@ -87,15 +87,20 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
 
     public DateTime? TrackedStartTimeUtc => _root?.StartTimeUtc;
 
+    /// <summary>
+    /// CARD-1931 R1. Records the observed generation only when it is the tracked one, and records
+    /// the observed start time rather than copying the tracked one.
+    /// </summary>
     public void RecordLinuxPlacement(PtyRootPlacement observed)
     {
-        if (_root is null || Binding.Backend != VerificationCustodyBackends.LinuxCgroup)
+        if (_root is null || Binding.Backend != VerificationCustodyBackends.LinuxCgroup
+            || observed.Pid != _root.Pid || observed.StartTimeUtc != _root.StartTimeUtc)
             return;
         var ns = _store.ReadRecord<LinuxNamespaceRecord>(Binding, "linux-namespace.json");
         if (ns is null || ns.NamespaceId == Guid.Empty || ns.ContainerId != Identity.ContainerId)
             return;
         _store.WriteRecord(Binding, "linux-placement.json",
-            new LinuxPlacementRecord(1, _root.Pid, _root.StartTimeUtc, Identity.ContainerId, ns.NamespaceId));
+            new LinuxPlacementRecord(1, observed.Pid, observed.StartTimeUtc, Identity.ContainerId, ns.NamespaceId));
     }
 
     public void RecordSeal()
