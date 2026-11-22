@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 159,
+      "classes": 160,
       "reason": "cap",
-      "owed": 134,
+      "owed": 135,
       "first": [
         "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
@@ -1736,9 +1736,9 @@
     },
     {
       "path": "src/Antiphon.GitInProcess/LandingGitResult.cs",
-      "classes": 82,
+      "classes": 83,
       "reason": "cap",
-      "owed": 57,
+      "owed": 58,
       "first": [
         "AgentTaskWorktreeBaseResolverTests",
         "AgentTaskLandCleanupSafetyTests",
@@ -2277,9 +2277,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 135,
+      "classes": 136,
       "reason": "cap",
-      "owed": 110,
+      "owed": 111,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -2309,18 +2309,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs",
-      "classes": 52,
+      "classes": 53,
       "reason": "cap",
-      "owed": 27,
+      "owed": 28,
       "first": [
+        "C1708ReflogSalvageTests",
         "GitIndexLockPathTests",
         "GitPushUrlCacheTests",
         "LandingGitBatchingTests",
         "LandingSourceOptionalLockTests",
         "RepositoryLeaseWindowsBoundaryTests",
         "ReviewEvidenceRebindingTests",
-        "ServerGitProcessTests",
-        "TestTimingChokePointTests"
+        "ServerGitProcessTests"
       ]
     },
     {
@@ -26324,13 +26324,18 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/LandingFixtureGitInProcess.cs",
+      "classes": [
+        "LandingFixtureGitInProcessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs",
       "classes": [
         "AgentTaskLandHalfResetWindowsTests",
         "AgentTaskLandPublicationTests",
         "AgentTaskLandSourceFreshnessTests",
         "AgentTaskLandTargetRaceTests",
-        "C1708ReflogSalvageTests",
         "GitTreeTemplateTests",
         "InProcessGitCommandsTests",
         "InProcessObservationPinTests",
@@ -26342,6 +26347,7 @@
         "LandSourceIdentityTests",
         "LandVerificationWindowNativeTests",
         "LandWarmArtifactsTests",
+        "LandingFixtureGitInProcessTests",
         "LandingGitProcessSavingTests",
         "LandingGitTests",
         "LandingRegistrationFreshnessTests",
