@@ -1,19 +1,20 @@
-import { Alert, Badge, Box, Chip, Group, Loader, SegmentedControl, Select, Stack, Text, TextInput, UnstyledButton } from '@mantine/core'
+import { Badge, Box, Button, Chip, Group, Loader, Paper, SegmentedControl, Select, Skeleton, Stack, Text, TextInput, UnstyledButton } from '@mantine/core'
 import { useDebouncedValue } from '@mantine/hooks'
-import { useMemo } from 'react'
-import { TbFilterOff, TbSearch, TbX } from 'react-icons/tb'
-import { getApiErrorMessage } from '../../api/client'
+import { useMemo, useState } from 'react'
+import { TbDatabaseImport, TbFilterOff, TbPlus, TbSearch, TbX } from 'react-icons/tb'
 import type { ReviewRunSummaryDto } from '../../api/reviewEngine'
 import { CostText } from './components/CostText'
-import { FakeApiBanner } from './components/FakeApiBanner'
+import { FakeApiBanner, FakeDataSwitch } from './components/FakeApiBanner'
+import { QueryErrorAlert } from './components/ReviewProblem'
 import { useReviewLiveUpdates } from './reviewApi'
 import { RUN_STATUS_META, modelShort } from './reviewMeta'
 import { IN_REVIEW_STATUSES, STATUS_ORDER, anyClientFilter, applyRunFilters, hasAllStatuses, toggleStatuses } from './runs/runFilters'
+import { NewReviewModal } from './runs/NewReviewModal'
 import { RunsBoard } from './runs/RunsBoard'
 import { RunsKpiStrip } from './runs/RunsKpiStrip'
 import { RunsTable } from './runs/RunsTable'
 import { useNow } from './useNow'
-import { useReviewKpis, useReviewRuns } from './useReview'
+import { useReviewKpis, useReviewRuns, useSeedReviewDemo } from './useReview'
 import { useReviewUiStore, type RunsView } from './useReviewUiStore'
 
 function ActiveFilters({ shown, total }: { shown: number; total: number }) {
@@ -69,6 +70,44 @@ function ActiveFilters({ shown, total }: { shown: number; total: number }) {
   )
 }
 
+/** No runs at all: start one, or (when the server seeds demo data) load the demo runs. */
+function NoReviewsYet({ onNew }: { onNew: () => void }) {
+  const seed = useSeedReviewDemo()
+  const demoUnavailable = useReviewUiStore((s) => s.demoSeedUnavailable)
+  return (
+    <Paper withBorder radius="md" p="xl">
+      <Stack align="center" gap="xs">
+        <Text fw={700} size="lg">
+          No reviews yet
+        </Text>
+        <Text size="sm" c="dimmed" ta="center" maw={460}>
+          Start a review of a GitHub pull request or a local commit range. Runs appear here as Antiphon works through them.
+        </Text>
+        <Group gap="xs" mt="xs">
+          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={onNew}>
+            New review
+          </Button>
+          {!demoUnavailable && (
+            <Button size="xs" variant="default" leftSection={<TbDatabaseImport size={14} />} loading={seed.isPending} onClick={() => seed.mutate()}>
+              Load demo data
+            </Button>
+          )}
+        </Group>
+      </Stack>
+    </Paper>
+  )
+}
+
+function RunsSkeleton() {
+  return (
+    <Stack gap={6}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Skeleton key={i} h={44} radius="sm" />
+      ))}
+    </Stack>
+  )
+}
+
 /** /reviews — every review run: KPI filter cards, a dense table (default) or a board, search. */
 export function ReviewRunsPage() {
   useReviewLiveUpdates()
@@ -78,6 +117,7 @@ export function ReviewRunsPage() {
   const view = useReviewUiStore((s) => s.runsView)
   const setView = useReviewUiStore((s) => s.setRunsView)
   const [q] = useDebouncedValue(filters.q, 250)
+  const [intakeOpen, setIntakeOpen] = useState(false)
 
   const all = useReviewRuns({})
   const searched = useReviewRuns({ q: q.trim() || undefined, repo: filters.repo ?? undefined })
@@ -95,23 +135,36 @@ export function ReviewRunsPage() {
 
   const inReview = allRuns.filter((r) => IN_REVIEW_STATUSES.includes(r.status)).length
   const atGate = allRuns.filter((r) => r.status === 'AtGate').length
-  const total = rows.reduce((sum, r) => sum + r.costUsd, 0)
-  const totalSplit = { actual: rows.reduce((sum, r) => sum + r.costActualUsd, 0), estimate: rows.reduce((sum, r) => sum + r.costEstimatedUsd, 0) }
   const error = all.error ?? searched.error
+  const empty = !!all.data && allRuns.length === 0
+  const retry = () => {
+    void all.refetch()
+    void searched.refetch()
+    void kpis.refetch()
+  }
 
   return (
     <Stack gap="sm" p="md">
       <FakeApiBanner />
+      <NewReviewModal opened={intakeOpen} onClose={() => setIntakeOpen(false)} />
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Box>
           <Text fw={700} size="lg">
             Review runs
           </Text>
-          <Text size="xs" c="dimmed">
-            {allRuns.length} runs · {inReview} in review · {atGate} at a human gate · live
-          </Text>
+          {all.data ? (
+            <Text size="xs" c="dimmed">
+              {allRuns.length} runs · {inReview} in review · {atGate} at a human gate · live
+            </Text>
+          ) : (
+            all.isLoading && <Skeleton h={12} w={260} mt={4} />
+          )}
         </Box>
         <Group gap="xs" wrap="wrap">
+          <FakeDataSwitch />
+          <Button size="xs" leftSection={<TbPlus size={14} />} onClick={() => setIntakeOpen(true)}>
+            New review
+          </Button>
           <TextInput
             size="xs"
             placeholder="Search PR, title, author, branch"
@@ -143,13 +196,51 @@ export function ReviewRunsPage() {
         </Group>
       </Group>
 
-      {error && (
-        <Alert color="danger" variant="light" title="Could not load review runs">
-          {getApiErrorMessage(error, 'The review API did not answer.')}
-        </Alert>
-      )}
+      {error && <QueryErrorAlert title="Could not load review runs" error={error} onRetry={retry} retrying={all.isFetching || searched.isFetching} />}
 
-      <RunsKpiStrip kpis={kpis.data} runs={allRuns} />
+      {all.isLoading ? (
+        <>
+          <Skeleton h={96} radius="md" />
+          <RunsSkeleton />
+        </>
+      ) : empty ? (
+        <NoReviewsYet onNew={() => setIntakeOpen(true)} />
+      ) : all.data ? (
+        <RunsList kpis={kpis} runs={allRuns} rows={rows} base={base} counts={counts} view={view} now={now} />
+      ) : null}
+    </Stack>
+  )
+}
+
+/** The KPI strip, status chips, active filters, the table or board, and the cost footer. */
+function RunsList({
+  kpis,
+  runs,
+  rows,
+  base,
+  counts,
+  view,
+  now,
+}: {
+  kpis: ReturnType<typeof useReviewKpis>
+  runs: ReviewRunSummaryDto[]
+  rows: ReviewRunSummaryDto[]
+  base: ReviewRunSummaryDto[]
+  counts: Map<string, number>
+  view: RunsView
+  now: number
+}) {
+  const filters = useReviewUiStore((s) => s.runsFilters)
+  const patch = useReviewUiStore((s) => s.patchRunsFilters)
+  const total = rows.reduce((sum, r) => sum + r.costUsd, 0)
+  const totalSplit = { actual: rows.reduce((sum, r) => sum + r.costActualUsd, 0), estimate: rows.reduce((sum, r) => sum + r.costEstimatedUsd, 0) }
+  return (
+    <>
+      {kpis.error && !kpis.data ? (
+        <QueryErrorAlert title="Could not load the KPIs" error={kpis.error} onRetry={() => void kpis.refetch()} retrying={kpis.isFetching} />
+      ) : (
+        <RunsKpiStrip kpis={kpis.data} runs={runs} />
+      )}
 
       <Chip.Group multiple value={filters.statuses} onChange={(v) => patch({ statuses: v as typeof filters.statuses })}>
         <Group gap={4}>
@@ -163,15 +254,7 @@ export function ReviewRunsPage() {
 
       <ActiveFilters shown={rows.length} total={base.length} />
 
-      {all.isLoading ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
-      ) : view === 'table' ? (
-        <RunsTable runs={rows} now={now} />
-      ) : (
-        <RunsBoard runs={rows} now={now} />
-      )}
+      {view === 'table' ? <RunsTable runs={rows} now={now} /> : <RunsBoard runs={rows} now={now} />}
 
       <Group justify="space-between" px={4}>
         <Text size="xs" c="dimmed">
@@ -181,6 +264,6 @@ export function ReviewRunsPage() {
           Σ <CostText usd={total} split={totalSplit} /> over {rows.length} shown
         </Text>
       </Group>
-    </Stack>
+    </>
   )
 }

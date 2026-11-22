@@ -19,6 +19,7 @@ import {
   STAGE_META,
   modelColor,
   modelShort,
+  tolerant,
 } from '../reviewMeta'
 
 type Size = 'xs' | 'sm' | 'md'
@@ -91,11 +92,11 @@ export function FlagBadges({ flags, bypassesRoundBar = false }: { flags: string[
   )
 }
 
-const SYNC_META: Record<Exclude<SyncState, 'NotApplicable'>, { label: string; color: string; hint: string }> = {
+const SYNC_META: Record<Exclude<SyncState, 'NotApplicable'>, { label: string; color: string; hint: string }> = tolerant({
   Pending: { label: 'syncing', color: 'warning', hint: 'Saved in Antiphon; posting to the code host' },
   Synced: { label: 'on GitHub', color: 'success', hint: 'Posted to the code host' },
   Failed: { label: 'sync failed', color: 'danger', hint: 'Saved in Antiphon, not yet on the code host. Refresh retries.' },
-}
+}, (value) => ({ label: value, color: 'gray', hint: `Sync state ${value}` }))
 
 export function SyncBadge({ state, quietWhenSynced = true }: { state: SyncState; quietWhenSynced?: boolean }) {
   if (state === 'NotApplicable' || (quietWhenSynced && state === 'Synced')) return null

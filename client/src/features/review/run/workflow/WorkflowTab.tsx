@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Button, Group, Loader, Paper, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Group, Paper, SegmentedControl, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { Background, Controls, MarkerType, ReactFlow, type Edge, type EdgeTypes, type Node, type NodeTypes } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import { TbChevronDown, TbChevronRight, TbShieldCheck } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../../../api/client'
 import type { NodeKind, ReviewRunDetailDto, WorkflowGraphDto } from '../../../../api/reviewEngine'
+import { QueryErrorAlert } from '../../components/ReviewProblem'
 import { SectionLabel } from '../../components/SectionLabel'
 import { NODE_STATUS_META } from '../../reviewMeta'
 import { shaRange, triggerLabel } from '../../reviewFormat'
@@ -281,17 +282,16 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
  */
 export function WorkflowTab({ run, now }: { run: ReviewRunDetailDto; now: number }) {
   const workflow = useReviewWorkflow(run.workflowRevisionId)
-  if (workflow.isLoading)
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="sm" />
-      </Group>
-    )
+  if (workflow.isLoading) return <Skeleton h={520} radius="md" />
   if (!workflow.data)
     return (
-      <Alert color="danger" variant="light" title="Could not load the workflow">
-        {getApiErrorMessage(workflow.error, run.workflowRevisionId ? `The review API did not return workflow revision ${run.workflowRevisionId}.` : 'The review API did not return the default workflow.')}
-      </Alert>
+      <QueryErrorAlert
+        title="Could not load the workflow"
+        error={workflow.error}
+        fallback={run.workflowRevisionId ? `The review API did not return workflow revision ${run.workflowRevisionId}.` : 'The review API did not return the default workflow.'}
+        onRetry={() => void workflow.refetch()}
+        retrying={workflow.isFetching}
+      />
     )
   return <WorkflowGraph run={run} graph={workflow.data} now={now} />
 }

@@ -2,7 +2,6 @@ import { Alert, Badge, Box, Button, Group, Paper, Radio, Stack, Text, Textarea, 
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbCircleCheck, TbLock } from 'react-icons/tb'
-import { getApiErrorMessage } from '../../../api/client'
 import type { GateDecision, ReviewFindingDto, ReviewGateDto, ReviewRunDetailDto, ReviewViewerDto } from '../../../api/reviewEngine'
 import { GatePasses } from '../components/GatePasses'
 import { PersonChip } from '../components/PersonChip'
@@ -20,7 +19,7 @@ function DecidedGate({ gate, now }: { gate: ReviewGateDto; now: number }) {
       <Group gap={6} wrap="wrap">
         <TbCircleCheck size={14} color="var(--mantine-color-success-5)" />
         <Text size="xs" fw={700}>
-          {gate.decision ? copy[gate.decision].label : 'Decided'}
+          {gate.decision ? (copy[gate.decision]?.label ?? gate.decision) : 'Decided'}
         </Text>
         <Text size="xs" c="dimmed">
           by
@@ -171,11 +170,6 @@ export function GatePanel({
               value={steer}
               onChange={(e) => setSteer(e.currentTarget.value)}
             />
-          )}
-          {decide.error && (
-            <Alert color="danger" variant="light" p={6} mt={6}>
-              <Text size="xs">{getApiErrorMessage(decide.error, 'The decision was not recorded.')}</Text>
-            </Alert>
           )}
           {blocked ? (
             <Box mt={8}>

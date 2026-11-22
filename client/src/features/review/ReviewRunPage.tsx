@@ -1,9 +1,11 @@
-import { Alert, Anchor, Badge, Button, Group, Loader, Paper, Stack, Tabs, Text } from '@mantine/core'
+import { Anchor, Badge, Button, Group, Paper, Skeleton, Stack, Tabs, Text } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
 import { TbArrowLeft, TbGitPullRequest, TbHierarchy3, TbTimeline } from 'react-icons/tb'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { ApiError, getApiErrorMessage } from '../../api/client'
+import { ApiError } from '../../api/client'
 import { FakeApiBanner } from './components/FakeApiBanner'
 import { GateKindBadge } from './components/ReviewBadges'
+import { QueryErrorAlert } from './components/ReviewProblem'
 import { useReviewLiveUpdates } from './reviewApi'
 import { FindingsTab } from './run/findings/FindingsTab'
 import { openGate, viewerBlockReason } from './run/gateRules'
@@ -19,6 +21,24 @@ type Tab = (typeof TABS)[number]
 
 const PULSE_CSS = '@keyframes reviewPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(59,123,245,0.55); } 50% { box-shadow: 0 0 0 5px rgba(59,123,245,0); } }'
 
+function RunSkeleton() {
+  return (
+    <Stack gap="sm" p="md">
+      <Skeleton h={12} w={110} />
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <Stack gap={8} style={{ flex: 1, minWidth: 260 }}>
+          <Skeleton h={14} w={220} />
+          <Skeleton h={26} w="70%" />
+          <Skeleton h={12} w="50%" />
+        </Stack>
+        <Skeleton h={64} w={420} radius="md" />
+      </Group>
+      <Skeleton h={34} radius="sm" />
+      <Skeleton h={360} radius="md" />
+    </Stack>
+  )
+}
+
 /**
  * /reviews/:runId — one run: header, gate, and the Findings / Workflow / Timeline tabs (?tab=). The
  * viewer is `GET /api/review-me`; what they may decide comes from each gate's `viewerCanDecide`.
@@ -33,6 +53,10 @@ export function ReviewRunPage() {
   const run = useReviewRun(runId)
   const findings = useReviewFindings(runId)
   const refresh = useRefreshReviewRun(runId ?? '')
+  const requestRefresh = () =>
+    refresh.mutate(undefined, {
+      onSuccess: () => notifications.show({ color: 'gray', message: 'Refresh requested: Antiphon re-reads the change from the code host.' }),
+    })
   const setTab = (t: string | null) =>
     setParams(
       (p) => {
@@ -43,13 +67,9 @@ export function ReviewRunPage() {
       { replace: true },
     )
 
-  if (run.isLoading || me.isLoading)
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="sm" />
-      </Group>
-    )
-  if (!run.data)
+  if (run.isLoading || me.isLoading) return <RunSkeleton />
+  if (!run.data) {
+    const missing = run.error instanceof ApiError && run.error.status === 404
     return (
       <Stack gap="sm" p="md">
         <FakeApiBanner />
@@ -58,11 +78,15 @@ export function ReviewRunPage() {
             <TbArrowLeft size={12} /> Review runs
           </Group>
         </Anchor>
-        <Alert color="danger" variant="light" title={run.error instanceof ApiError && run.error.status === 404 ? 'No such review run' : 'Could not load the run'}>
-          {getApiErrorMessage(run.error, 'The review API did not answer.')}
-        </Alert>
+        <QueryErrorAlert
+          title={missing ? 'No such review run' : 'Could not load the run'}
+          error={run.error}
+          onRetry={missing ? undefined : () => void run.refetch()}
+          retrying={run.isFetching}
+        />
       </Stack>
     )
+  }
 
   const r = run.data
   const gate = openGate(r)
@@ -72,7 +96,8 @@ export function ReviewRunPage() {
   return (
     <Stack gap="sm" p="md">
       <FakeApiBanner />
-      <RunHeader run={r} now={now} onRefresh={() => refresh.mutate()} refreshing={refresh.isPending} />
+      {run.error && <QueryErrorAlert title="Could not refresh the run; showing the last copy" error={run.error} onRetry={() => void run.refetch()} retrying={run.isFetching} />}
+      <RunHeader run={r} now={now} onRefresh={requestRefresh} refreshing={refresh.isPending} />
       {gate && tab !== 'findings' && (
         <Paper withBorder p={6} radius="md" style={{ borderLeft: '3px solid var(--mantine-color-pink-6)' }}>
           <Group justify="space-between" wrap="wrap" gap="xs">
@@ -104,18 +129,22 @@ export function ReviewRunPage() {
           </Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="findings" pt="sm">
-          {findings.error ? (
-            <Alert color="danger" variant="light" title="Could not load findings">
-              {getApiErrorMessage(findings.error, 'The review API did not answer.')}
-            </Alert>
+          {findings.error && !findings.data ? (
+            <QueryErrorAlert title="Could not load findings" error={findings.error} onRetry={() => void findings.refetch()} retrying={findings.isFetching} />
           ) : !me.data ? (
-            <Alert color="danger" variant="light" title="Could not tell who you are">
-              {getApiErrorMessage(me.error, 'GET /api/review-me did not answer, so replies and gate decisions are unavailable.')}
-            </Alert>
+            <QueryErrorAlert
+              title="Could not tell who you are"
+              error={me.error}
+              fallback="GET /api/review-me did not answer, so replies and gate decisions are unavailable."
+              onRetry={() => void me.refetch()}
+              retrying={me.isFetching}
+            />
           ) : findings.isLoading ? (
-            <Group justify="center" py="xl">
-              <Loader size="sm" />
-            </Group>
+            <Stack gap={6}>
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} h={56} radius="sm" />
+              ))}
+            </Stack>
           ) : (
             <FindingsTab key={r.id} run={r} findings={items} viewer={me.data} now={now} />
           )}

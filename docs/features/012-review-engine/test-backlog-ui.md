@@ -6,15 +6,21 @@ Status: backlog for the client slice (2026-11-22). The slice shipped with one Vi
 round + 1 with the steer stored and the author refused; assign random excluding the author and
 passers; "not me" returning the item with its `passes` entry). The pages moved to contract v0.2
 on 2026-11-22 (viewer from `GET /api/review-me`, gate viewer fields, iterations, outcomes, owners,
-hunks, the cost split, SLA minutes, diagnostic severity) without new tests. Everything below is
-still to write. Owner of this file: the review UI track.
+hunks, the cost split, SLA minutes, diagnostic severity) without new tests. The HTTP API became
+the default the same day; `client/src/features/review/reviewApiMode.test.ts` covers the mode
+selection (HTTP by default, fake only from `VITE_REVIEW_API=fake` or localStorage, a stored `http`
+beating a fake build, throwing storage, and `forceReviewApiMode`). Everything below is still to
+write. Owner of this file: the review UI track.
 
 ## API seam (`client/src/api/reviewEngine.ts`)
 
-- `reviewApiMode`: the localStorage override `antiphon.reviewApi` wins over `VITE_REVIEW_API`;
-  `http` and `fake` are the only accepted values; a throwing `localStorage` falls back to the env
-  value; any env value other than `http` selects the fake.
-- `setReviewApiOverride` returns false when storage throws, and clears on `null`.
+- `reviewApiMode` is covered (see the status note). Still open: `currentReviewApiMode()` reads
+  storage once and caches it, so a later storage change does not switch a live page.
+- `setReviewApiOverride` returns false when storage throws, and clears on `null`; the banner's
+  "Use HTTP API" and the dev-only "Fake data" switch set the override and reload.
+- `FakeDataSwitch` renders only when `import.meta.env.DEV` and the mode is HTTP; `FakeApiBanner`
+  renders only in fake mode.
+- `seedDemo` posts `/review-runs/demo` with `{}`.
 - `httpReviewApi` builds each contract route and query string exactly (MSW): empty filter values
   are omitted, ids are URL-encoded, `assignGate` without a login sends `{}`.
 - Problem Details from the HTTP API surface through `getApiErrorMessage` on every page (404 run,
@@ -163,6 +169,40 @@ still to write. Owner of this file: the review UI track.
 - Gate decisions land under the park of the iteration they ended, named by `decidedBy`; the steer
   is quoted.
 
+## Real-data states (HTTP mode, MSW)
+
+- Empty list: "No reviews yet" with New review and Load demo data; the KPI strip, chips and table
+  are not shown. Load demo data → success notification with the count, the list refetches.
+- `POST /api/review-runs/demo` → 404: the button hides for the session (`demoSeedUnavailable`),
+  an info notification carries the server's detail, and no error notification is shown.
+- Loading: skeletons on the runs page (header line, KPI block, rows), the run page, the findings
+  tab, the workflow tab and the queue; no spinner-only states remain.
+- Query errors show the Problem Details `detail`, the `code` and the status, with Retry refetching
+  the failed query: runs list (refetches list, search and KPIs), KPIs, run (not for a 404),
+  findings, `review-me`, queue, workflow. A failed background refetch of a loaded run keeps the
+  last copy under an alert.
+- Mutation errors are notifications with `detail`, `code` and status from the hook's `onError`,
+  once per failure (callers no longer add their own): 403 `review_gate_not_decider`, 409
+  `review_blocker_open` / `review_gate_decided` / `review_no_eligible_reviewer` /
+  `review_run_finished`, 422 field errors, and each 503 `review_code_host_*` with its hint and a
+  10s auto-close.
+- Intake modal: GitHub needs repo + positive integer PR number; Local needs repo + base ref, head
+  defaults to `HEAD` and is omitted when cleared; an empty title is omitted; the request body is
+  exactly `{ host, repo, prNumber }` or `{ host, repo, baseSha, headSha? }` (+ `title`). Success
+  seeds the run cache and navigates to `/reviews/{id}`; 422 `errors.repo` / `prNumber` /
+  `baseSha` land on their inputs; the form resets on reopen. Both entry points (header and empty
+  state) open it.
+- Refresh on the run page: the button shows a pending state, a 202 with an empty body succeeds
+  with a "Refresh requested" notification, a 503 notifies with the code-host hint.
+- Polling: the run detail refetches every 10s while `Queued` or `Running` and every 30s otherwise
+  in HTTP mode, never in fake mode; review queries refetch on window focus.
+- Unknown enum values from a newer server (run status, stage, waitingOn, severity, finding status,
+  action, node status and kind, gate kind, queue status, SLA, sync state, diagnostic severity,
+  decision) render as a grey label with the raw value; the board adds an "Other" column for a
+  status no column lists; `Object.keys` over a `tolerant` record still lists only the known keys.
+- Every contract status renders on the table, board and run header: `AwaitingFixes`, `AtGate`,
+  `AwaitingMerge`, `Merged`, and `Failed` with the failed node's `summary` as the reason.
+
 ## Queue page
 
 - Tabs Mine / My teams / All with counts from three queries; kind chips filter client-side.
@@ -188,6 +228,10 @@ still to write. Owner of this file: the review UI track.
 - Nothing outside `src/stories/` imports the proposal mocks (a lint-style guard test).
 
 ## HTTP switch (when the server lands)
+
+- `ReviewStoryShell` forces the fake; a story rendered without it would hit `/api` (assert the
+  shell is the only way review stories render pages).
+- The `Review/Review runs/Empty` story: Load demo data repopulates the fake.
 
 - Contract fixtures captured from the server (as `src/test/fixtures/contract/` does for other
   features) replace the fake in page tests; the fake keeps the same shapes (a fixture-vs-fake shape

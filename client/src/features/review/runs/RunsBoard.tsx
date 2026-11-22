@@ -49,12 +49,19 @@ function BoardCard({ run, now }: { run: ReviewRunSummaryDto; now: number }) {
   )
 }
 
-/** One column per "whose move" group; header shows count and Σ cost. */
+const BOARD_STATUSES = new Set(BOARD_COLUMNS.flatMap((c) => c.statuses))
+
+/**
+ * One column per "whose move" group; header shows count and Σ cost. A status no column lists (a
+ * newer server) gets an extra "Other" column rather than disappearing.
+ */
 export function RunsBoard({ runs, now }: { runs: ReviewRunSummaryDto[]; now: number }) {
+  const unknown = [...new Set(runs.map((r) => r.status).filter((s) => !BOARD_STATUSES.has(s)))]
+  const columns = unknown.length > 0 ? [...BOARD_COLUMNS, { key: 'other', title: 'Other', statuses: unknown, color: 'gray' }] : BOARD_COLUMNS
   return (
     <ScrollArea type="auto" offsetScrollbars>
-      <Box style={{ display: 'grid', gridTemplateColumns: `repeat(${BOARD_COLUMNS.length}, minmax(220px, 1fr))`, gap: 8, minWidth: BOARD_COLUMNS.length * 228 }}>
-        {BOARD_COLUMNS.map((col) => {
+      <Box style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(220px, 1fr))`, gap: 8, minWidth: columns.length * 228 }}>
+        {columns.map((col) => {
           const items = runs.filter((r) => col.statuses.includes(r.status))
           const cost = items.reduce((sum, r) => sum + r.costUsd, 0)
           const split = { actual: items.reduce((sum, r) => sum + r.costActualUsd, 0), estimate: items.reduce((sum, r) => sum + r.costEstimatedUsd, 0) }

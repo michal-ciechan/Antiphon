@@ -1,23 +1,36 @@
+import { notifications } from '@mantine/notifications'
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { ApiError } from '../../api/client'
 import {
   reviewEngineKeys,
   reviewRunChangedKeys,
+  type CreateReviewRunRequest,
   type FindingResponseRequest,
   type GateDecisionRequest,
   type QueueScope,
   type ReviewGateDto,
+  type ReviewRunDetailDto,
   type ReviewRunFilter,
   type RunFindingResponse,
   type WorkflowGraphDto,
 } from '../../api/reviewEngine'
-import { REVIEW_API_MODE, reviewApi } from './reviewApi'
+import { reviewProblem, notifyReviewError } from './reviewErrors'
+import { currentReviewApiMode, reviewApi } from './reviewApi'
+import { IN_REVIEW_STATUSES } from './runs/runFilters'
+import { useReviewUiStore } from './useReviewUiStore'
 
 /**
  * Query and mutation hooks for the review engine (contract: docs/features/012-review-engine/api.md).
- * In HTTP mode `ReviewRunChanged` keeps these fresh; the 30s poll only covers a dropped connection.
- * In fake mode `useReviewLiveUpdates` does the same job, so there is no poll.
+ * In HTTP mode `ReviewRunChanged` keeps these fresh; refetch on focus and a poll cover a dropped
+ * connection (30s, or 10s for a run that is queued or running). In fake mode `useReviewLiveUpdates`
+ * does the same job, so there is no poll. Every mutation reports its failure as a notification
+ * with the problem `detail` and `code` (`notifyReviewError`).
  */
-const POLL_MS = REVIEW_API_MODE === 'http' ? 30_000 : false
+const POLL_MS = 30_000
+const IN_FLIGHT_POLL_MS = 10_000
+
+const isHttp = () => currentReviewApiMode() === 'http'
+const live = () => ({ refetchInterval: isHttp() ? POLL_MS : (false as const), refetchOnWindowFocus: true })
 
 function invalidateRun(queryClient: QueryClient, runId: string | undefined) {
   for (const queryKey of reviewRunChangedKeys(runId)) void queryClient.invalidateQueries({ queryKey })
@@ -26,40 +39,46 @@ function invalidateRun(queryClient: QueryClient, runId: string | undefined) {
 export function useReviewRuns(filter: ReviewRunFilter = {}) {
   return useQuery({
     queryKey: reviewEngineKeys.runList(filter),
-    queryFn: () => reviewApi.listRuns(filter),
+    queryFn: () => reviewApi().listRuns(filter),
     placeholderData: keepPreviousData,
-    refetchInterval: POLL_MS,
+    ...live(),
   })
 }
 
 export function useReviewKpis() {
-  return useQuery({ queryKey: reviewEngineKeys.kpis, queryFn: () => reviewApi.getKpis(), refetchInterval: POLL_MS })
+  return useQuery({ queryKey: reviewEngineKeys.kpis, queryFn: () => reviewApi().getKpis(), ...live() })
 }
 
 export function useReviewRun(runId: string | undefined) {
+  const http = isHttp()
   return useQuery({
     queryKey: reviewEngineKeys.run(runId ?? ''),
-    queryFn: () => reviewApi.getRun(runId!),
+    queryFn: () => reviewApi().getRun(runId!),
     enabled: !!runId,
-    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      if (!http) return false
+      const status = (query.state.data as ReviewRunDetailDto | undefined)?.status
+      return status && IN_REVIEW_STATUSES.includes(status) ? IN_FLIGHT_POLL_MS : POLL_MS
+    },
   })
 }
 
 export function useReviewFindings(runId: string | undefined) {
   return useQuery({
     queryKey: reviewEngineKeys.findings(runId ?? ''),
-    queryFn: () => reviewApi.listFindings(runId!),
+    queryFn: () => reviewApi().listFindings(runId!),
     enabled: !!runId,
-    refetchInterval: POLL_MS,
+    ...live(),
   })
 }
 
 export function useReviewQueue(scope: QueueScope, login: string | undefined) {
   return useQuery({
     queryKey: reviewEngineKeys.queueScope(scope, login),
-    queryFn: () => reviewApi.getQueue(scope, login),
+    queryFn: () => reviewApi().getQueue(scope, login),
     placeholderData: keepPreviousData,
-    refetchInterval: POLL_MS,
+    ...live(),
   })
 }
 
@@ -70,7 +89,7 @@ export function useReviewQueue(scope: QueueScope, login: string | undefined) {
 export function useReviewWorkflow(revisionId: string | null) {
   return useQuery({
     queryKey: revisionId ? reviewEngineKeys.workflowRevision(revisionId) : reviewEngineKeys.defaultWorkflow,
-    queryFn: () => (revisionId ? reviewApi.getWorkflowRevision(revisionId) : reviewApi.getDefaultWorkflow()),
+    queryFn: () => (revisionId ? reviewApi().getWorkflowRevision(revisionId) : reviewApi().getDefaultWorkflow()),
     staleTime: revisionId ? Infinity : 5 * 60_000,
   })
 }
@@ -81,14 +100,48 @@ export function useReviewWorkflow(revisionId: string | null) {
  * as" person. Gate permissions come from each gate's `viewerCanDecide`, not from this.
  */
 export function useReviewMe() {
-  return useQuery({ queryKey: reviewEngineKeys.me, queryFn: () => reviewApi.getMe(), staleTime: REVIEW_API_MODE === 'http' ? 5 * 60_000 : 0 })
+  return useQuery({ queryKey: reviewEngineKeys.me, queryFn: () => reviewApi().getMe(), staleTime: isHttp() ? 5 * 60_000 : 0 })
+}
+
+/** Manual intake (`POST /api/review-runs`); the caller navigates to the new run. */
+export function useCreateReviewRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: CreateReviewRunRequest) => reviewApi().createRun(request),
+    onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(run.id), run),
+    onError: (error) => notifyReviewError('Review not started', error),
+    onSettled: (run) => invalidateRun(queryClient, run?.id),
+  })
+}
+
+/**
+ * `POST /api/review-runs/demo`. A 404 means the server has demo seeding off: the button hides for
+ * the rest of the session instead of reporting an error.
+ */
+export function useSeedReviewDemo() {
+  const queryClient = useQueryClient()
+  const setUnavailable = useReviewUiStore((s) => s.setDemoSeedUnavailable)
+  return useMutation({
+    mutationFn: () => reviewApi().seedDemo(),
+    onSuccess: (result) => notifications.show({ color: 'success', message: `Loaded ${result.total} demo review${result.total === 1 ? '' : 's'}.` }),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 404) {
+        setUnavailable(true)
+        notifications.show({ color: 'gray', title: 'Demo data is off on this server', message: reviewProblem(error, 'Review:DemoSeedEnabled is false.').detail })
+        return
+      }
+      notifyReviewError('Demo data not loaded', error)
+    },
+    onSettled: () => invalidateRun(queryClient, undefined),
+  })
 }
 
 /** One submitted review: every drafted reply on the run, posted together (one code-host notification). */
 export function useRespondToFindings(runId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (responses: RunFindingResponse[]) => reviewApi.respondToRun(runId, responses),
+    mutationFn: (responses: RunFindingResponse[]) => reviewApi().respondToRun(runId, responses),
+    onError: (error) => notifyReviewError('Review not posted', error, 'The review API refused the replies.'),
     onSettled: () => invalidateRun(queryClient, runId),
   })
 }
@@ -96,7 +149,8 @@ export function useRespondToFindings(runId: string) {
 export function useRespondToFinding(runId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ findingId, request }: { findingId: string; request: FindingResponseRequest }) => reviewApi.respondToFinding(findingId, request),
+    mutationFn: ({ findingId, request }: { findingId: string; request: FindingResponseRequest }) => reviewApi().respondToFinding(findingId, request),
+    onError: (error) => notifyReviewError('Reply not saved', error),
     onSettled: () => invalidateRun(queryClient, runId),
   })
 }
@@ -104,8 +158,9 @@ export function useRespondToFinding(runId: string) {
 export function useGateDecision(runId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ gateId, request }: { gateId: string; request: GateDecisionRequest }) => reviewApi.decideGate(gateId, request),
+    mutationFn: ({ gateId, request }: { gateId: string; request: GateDecisionRequest }) => reviewApi().decideGate(gateId, request),
     onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(runId), run),
+    onError: (error) => notifyReviewError('Decision not recorded', error),
     onSettled: () => invalidateRun(queryClient, runId),
   })
 }
@@ -114,7 +169,8 @@ export function useGateDecision(runId: string) {
 export function useAssignGate() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ gateId, login }: { gateId: string; login?: string }) => reviewApi.assignGate(gateId, login),
+    mutationFn: ({ gateId, login }: { gateId: string; login?: string }) => reviewApi().assignGate(gateId, login),
+    onError: (error, { login }) => notifyReviewError(login ? 'Could not take it' : 'No one to assign', error),
     onSettled: (gate: ReviewGateDto | undefined) => invalidateRun(queryClient, gate?.runId),
   })
 }
@@ -123,20 +179,22 @@ export function useAssignGate() {
 export function usePassGate() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ gateId, reason }: { gateId: string; reason: string }) => reviewApi.passGate(gateId, reason),
+    mutationFn: ({ gateId, reason }: { gateId: string; reason: string }) => reviewApi().passGate(gateId, reason),
+    onError: (error) => notifyReviewError('Could not pass it back', error),
     onSettled: (gate: ReviewGateDto | undefined) => invalidateRun(queryClient, gate?.runId),
   })
 }
 
-/** The manual Refresh: asks the code host for new events (and retries failed syncs). */
+/** The manual Refresh (202, no body): re-reads the PR from the code host and retries failed syncs. */
 export function useRefreshReviewRun(runId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => reviewApi.refreshRun(runId),
+    mutationFn: () => reviewApi().refreshRun(runId),
+    onError: (error) => notifyReviewError('Refresh failed', error),
     onSettled: () => invalidateRun(queryClient, runId),
   })
 }
 
 export function useValidateWorkflow() {
-  return useMutation({ mutationFn: (graph: WorkflowGraphDto) => reviewApi.validateWorkflow(graph) })
+  return useMutation({ mutationFn: (graph: WorkflowGraphDto) => reviewApi().validateWorkflow(graph) })
 }

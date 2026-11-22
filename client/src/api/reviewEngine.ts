@@ -4,7 +4,8 @@ import { apiGet, apiPost } from './client'
  * Review engine API (docs/features/012-review-engine/api.md, contract v0.2). Types mirror the
  * contract exactly; enums are the server's PascalCase strings. The client builds against the
  * `ReviewApi` seam so the in-memory fake (features/review/fake) and the HTTP implementation below
- * are interchangeable. Selection lives in `reviewApiMode()`; the hooks are in features/review.
+ * are interchangeable. HTTP is the default; `reviewApiMode()` picks the fake only on request. The
+ * hooks are in features/review.
  *
  * Not to be confused with `./review.ts`, which is the agent files-review surface.
  */
@@ -380,6 +381,11 @@ export interface ReviewApi {
   validateWorkflow(graph: WorkflowGraphDto): Promise<WorkflowValidationDto>
   /** Who the server acts as; mutations record this viewer as the actor. */
   getMe(): Promise<ReviewViewerDto>
+  /**
+   * `POST /api/review-runs/demo`: seeds the demo runs and returns their summaries. A 404 means the
+   * server has seeding off (`Review:DemoSeedEnabled`). Not in contract v0.2's route table yet.
+   */
+  seedDemo(): Promise<ListResult<ReviewRunSummaryDto>>
 }
 
 function query(params: Record<string, string | undefined>): string {
@@ -412,20 +418,23 @@ export const httpReviewApi: ReviewApi = {
   getWorkflowRevision: (revisionId) => apiGet(`/review-workflows/revisions/${enc(revisionId)}`),
   validateWorkflow: (graph) => apiPost('/review-workflows/validate', graph),
   getMe: () => apiGet('/review-me'),
+  seedDemo: () => apiPost('/review-runs/demo', {}),
 }
 
 // ---------------------------------------------------------------- selection
 
 export type ReviewApiMode = 'http' | 'fake'
 
-/** localStorage key; 'http' or 'fake' overrides the build-time VITE_REVIEW_API. */
+/** localStorage key; 'fake' (or 'http') overrides the build-time VITE_REVIEW_API. */
 export const REVIEW_API_STORAGE_KEY = 'antiphon.reviewApi'
 
 /**
- * Which implementation the review UI talks to. A localStorage override wins (so the operator can
- * flip a running client without a rebuild); otherwise `VITE_REVIEW_API=http` selects HTTP and
- * anything else selects the in-memory fake. Storage can throw (private mode, blocked site data),
- * so every access is guarded and falls through to the env value.
+ * Which implementation the review UI talks to. HTTP is the default; the in-memory fake is used only
+ * when asked for, by localStorage `antiphon.reviewApi=fake` (so a running client can flip without a
+ * rebuild) or `VITE_REVIEW_API=fake`. A stored 'http' wins over a fake build, so the fake banner's
+ * "Use HTTP API" works in either case. Storage can throw (private mode, blocked site data), so the
+ * read is guarded and falls through to the env value. Storybook and Vitest force the fake through
+ * `forceReviewApiMode` (features/review/reviewApi.ts) instead of relying on this.
  */
 export function reviewApiMode(env: { VITE_REVIEW_API?: unknown } = import.meta.env as { VITE_REVIEW_API?: unknown }): ReviewApiMode {
   try {
@@ -434,7 +443,7 @@ export function reviewApiMode(env: { VITE_REVIEW_API?: unknown } = import.meta.e
   } catch {
     // storage unavailable: use the build-time value
   }
-  return env.VITE_REVIEW_API === 'http' ? 'http' : 'fake'
+  return env.VITE_REVIEW_API === 'fake' ? 'fake' : 'http'
 }
 
 /** Sets or clears (null) the localStorage override. Returns false when storage is unavailable. */

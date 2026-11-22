@@ -3,7 +3,7 @@ import type { DiagnosticSeverity, NodeExecutionDto, WorkflowDiagnosticDto, Workf
 import { CostText } from '../../components/CostText'
 import { SectionLabel } from '../../components/SectionLabel'
 import { ModelBadge } from '../../components/ReviewBadges'
-import { NODE_KIND_META, NODE_STATUS_META } from '../../reviewMeta'
+import { NODE_KIND_META, NODE_STATUS_META, tolerant } from '../../reviewMeta'
 import { fmtDuration, fmtTokens } from '../../reviewFormat'
 
 function paramText(v: unknown): string {
@@ -166,10 +166,13 @@ export function NodeSidePanel({
   )
 }
 
-const SEVERITY_META: Record<DiagnosticSeverity, { label: string; plural: string; color: string }> = {
-  Error: { label: 'error', plural: 'errors', color: 'danger' },
-  Warning: { label: 'warning', plural: 'warnings', color: 'warning' },
-}
+const SEVERITY_META: Record<DiagnosticSeverity, { label: string; plural: string; color: string }> = tolerant(
+  {
+    Error: { label: 'error', plural: 'errors', color: 'danger' },
+    Warning: { label: 'warning', plural: 'warnings', color: 'warning' },
+  },
+  (value) => ({ label: value, plural: value, color: 'gray' }),
+)
 
 function DiagnosticRow({ d }: { d: WorkflowDiagnosticDto }) {
   const where = [...d.nodeIds, ...(d.edge ? [`${d.edge.from} → ${d.edge.to}`] : [])]

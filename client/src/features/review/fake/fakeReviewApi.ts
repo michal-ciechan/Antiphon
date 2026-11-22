@@ -80,6 +80,8 @@ export interface FakeReviewApi extends ReviewApi {
   subscribe(listener: (event: ReviewRunChangedEvent) => void): () => void
   /** Re-seeds from scratch and cancels pending timers. */
   reset(): void
+  /** Drops every run and cancels pending timers: the empty state a fresh server shows (stories). */
+  clear(): void
   /** Cancels pending timers (tests). */
   dispose(): void
 }
@@ -465,6 +467,12 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
       seed()
       for (const id of runs.keys()) emit(id)
     },
+    clear() {
+      clearTimers()
+      runs = new Map()
+      findings = []
+      meta = {}
+    },
     dispose() {
       clearTimers()
     },
@@ -518,7 +526,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
 
     createRun: (request: CreateReviewRunRequest) =>
       respond(() => {
-        if (!request.repo?.trim()) throw problem(422, 'A repo is required.', { Repo: ['A repo is required.'] })
+        if (!request.repo?.trim()) throw problem(422, 'A repo is required.', { repo: ['A repo is required.'] })
         const n = counter++
         const id = seedGuid(ID_KIND.run, 0x10000 + n)
         const login = actor()
@@ -775,6 +783,11 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     validateWorkflow: (graph) => respond((): WorkflowValidationDto => validateWorkflowGraph(graph)),
 
     getMe: () => respond(viewer),
+
+    seedDemo: async () => {
+      api.reset()
+      return api.listRuns()
+    },
   }
 
   return api

@@ -2,7 +2,6 @@ import { Badge, Box, Group, Paper, Stack, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useCallback, useMemo, useState } from 'react'
-import { getApiErrorMessage } from '../../../../api/client'
 import type { ReviewFindingDto, ReviewRunDetailDto, ReviewViewerDto } from '../../../../api/reviewEngine'
 import { BlastPanel } from '../../components/Blast'
 import { SectionLabel } from '../../components/SectionLabel'
@@ -46,7 +45,6 @@ export function FindingsTab({ run, findings, viewer, now }: { run: ReviewRunDeta
           message: `Saved in Antiphon; syncing to ${hostLabel} as one review signed by ${viewerName}.`,
         })
       },
-      onError: (error) => notifications.show({ color: 'danger', title: 'Review not posted', message: getApiErrorMessage(error, 'The review API refused the replies.') }),
     })
   }
 

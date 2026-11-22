@@ -11,7 +11,7 @@ const meta: Meta = {
   beforeEach: () => {
     fakeReviewApi.reset()
     useFakeViewerStore.setState({ login: FAKE_DEFAULT_VIEWER_LOGIN })
-    useReviewUiStore.setState({ runsView: 'table', runsFilters: EMPTY_RUNS_FILTERS })
+    useReviewUiStore.setState({ runsView: 'table', runsFilters: EMPTY_RUNS_FILTERS, demoSeedUnavailable: false })
   },
 }
 export default meta
@@ -25,6 +25,14 @@ export const Table: Story = { render: () => <ReviewStoryShell initialPath="/revi
 export const Board: Story = {
   beforeEach: () => {
     useReviewUiStore.setState({ runsView: 'board' })
+  },
+  render: () => <ReviewStoryShell initialPath="/reviews" />,
+}
+
+/** A server with no runs yet: "New review" opens the intake modal; "Load demo data" seeds the demo runs. */
+export const Empty: Story = {
+  beforeEach: () => {
+    fakeReviewApi.clear()
   },
   render: () => <ReviewStoryShell initialPath="/reviews" />,
 }

@@ -1,15 +1,15 @@
-import { Alert, Anchor, Badge, Box, Button, Chip, Group, Loader, Paper, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core'
+import { Anchor, Badge, Box, Button, Chip, Group, Paper, Skeleton, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbArrowsShuffle } from 'react-icons/tb'
 import { Link, useNavigate } from 'react-router'
-import { getApiErrorMessage } from '../../api/client'
 import type { GateKind, QueueItemDto, QueueScope, ReviewViewerDto } from '../../api/reviewEngine'
 import { FakeApiBanner } from './components/FakeApiBanner'
 import { GatePasses } from './components/GatePasses'
 import { OwnerChips } from './components/OwnerChips'
 import { PersonChip } from './components/PersonChip'
 import { GateKindBadge, QueueStatusBadge } from './components/ReviewBadges'
+import { QueryErrorAlert } from './components/ReviewProblem'
 import { NotMeButton } from './queue/NotMeButton'
 import { useReviewLiveUpdates } from './reviewApi'
 import { GATE_KIND_META, SLA_META } from './reviewMeta'
@@ -59,7 +59,6 @@ function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewVie
   const mine = gate.assigneeLogin === viewer.login
   const inTeam = gate.teamKey !== null && viewer.teams.includes(gate.teamKey)
   const notMeAllowed = mine || (gate.assigneeLogin === null && inTeam)
-  const fail = (title: string) => (error: unknown) => notifications.show({ color: 'danger', title, message: getApiErrorMessage(error, 'The review API refused it.') })
 
   return (
     <Table.Tr>
@@ -125,7 +124,7 @@ function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewVie
                   variant="default"
                   disabled={isAuthor}
                   loading={assign.isPending && assign.variables?.login === viewer.login}
-                  onClick={() => assign.mutate({ gateId: gate.id, login: viewer.login }, { onError: fail('Could not take it') })}
+                  onClick={() => assign.mutate({ gateId: gate.id, login: viewer.login })}
                 >
                   Take
                 </Button>
@@ -142,7 +141,6 @@ function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewVie
                 { gateId: gate.id, reason },
                 {
                   onSuccess: () => notifications.show({ color: 'warning', title: `Returned to ${gate.teamKey ?? 'the team'}`, message: `"${reason}". You're excluded from the next pick.` }),
-                  onError: fail('Could not pass it back'),
                 },
               )
             }
@@ -163,7 +161,6 @@ function QueueRow({ item, viewer, now }: { item: QueueItemDto; viewer: ReviewVie
                         title: `Assigned to ${personLabel(g.assigneeLogin, g.assigneeDisplayName)}`,
                         message: `Random from ${g.teamKey ?? 'the team'}; excluded the author${g.passes.length ? ` and ${[...new Set(g.passes.map((p) => `@${p.login}`))].join(', ')}` : ''}.`,
                       }),
-                    onError: fail('No one to assign'),
                   },
                 )
               }
@@ -219,11 +216,7 @@ function QueueBody({ viewer }: { viewer: ReviewViewerDto }) {
           ))}
         </Tabs.List>
       </Tabs>
-      {current.error && (
-        <Alert color="danger" variant="light" title="Could not load the queue">
-          {getApiErrorMessage(current.error, 'The review API did not answer.')}
-        </Alert>
-      )}
+      {current.error && <QueryErrorAlert title="Could not load the queue" error={current.error} onRetry={() => void current.refetch()} retrying={current.isFetching} />}
       <Paper withBorder radius="md">
         <Table.ScrollContainer minWidth={1180} type="native">
           <Table verticalSpacing={6} fz="sm" highlightOnHover>
@@ -239,19 +232,18 @@ function QueueBody({ viewer }: { viewer: ReviewViewerDto }) {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {current.isLoading && (
-                <Table.Tr>
-                  <Table.Td colSpan={7}>
-                    <Group justify="center" py="md">
-                      <Loader size="sm" />
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              )}
+              {current.isLoading &&
+                [0, 1, 2].map((i) => (
+                  <Table.Tr key={i}>
+                    <Table.Td colSpan={7}>
+                      <Skeleton h={28} radius="sm" />
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
               {rows.map((item) => (
                 <QueueRow key={item.gate.id} item={item} viewer={viewer} now={now} />
               ))}
-              {!current.isLoading && rows.length === 0 && (
+              {!current.isLoading && !current.error && rows.length === 0 && (
                 <Table.Tr>
                   <Table.Td colSpan={7}>
                     <Text size="sm" c="dimmed" ta="center" py="md">
@@ -280,15 +272,21 @@ export function ReviewQueuePage() {
     <Stack gap="sm" p="md">
       <FakeApiBanner />
       {me.isLoading ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        <Stack gap="sm">
+          <Skeleton h={40} w={320} radius="sm" />
+          <Skeleton h={32} radius="sm" />
+          <Skeleton h={160} radius="md" />
+        </Stack>
       ) : me.data ? (
         <QueueBody viewer={me.data} />
       ) : (
-        <Alert color="danger" variant="light" title="Could not tell who you are">
-          {getApiErrorMessage(me.error, 'GET /api/review-me did not answer, so the queue cannot be scoped to you.')}
-        </Alert>
+        <QueryErrorAlert
+          title="Could not tell who you are"
+          error={me.error}
+          fallback="GET /api/review-me did not answer, so the queue cannot be scoped to you."
+          onRetry={() => void me.refetch()}
+          retrying={me.isFetching}
+        />
       )}
     </Stack>
   )
