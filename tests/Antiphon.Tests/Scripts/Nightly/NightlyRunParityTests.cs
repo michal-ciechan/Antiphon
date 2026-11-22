@@ -66,7 +66,9 @@ public sealed class NightlyRunParityTests
         var plain = Origin(origins, "plain", seed => File.WriteAllText(Path.Combine(seed, "readme.txt"), "fixture\n"));
         var rc = Origin(origins, "rc", seed =>
         {
-            foreach (var file in TestSelection.ContractFiles)
+            // TestSelection.ContractFiles (the selector identity is C# since 2026-11-22).
+            foreach (var file in new[] { "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/lib/Antiphon.Nightly/TestSelection.cs",
+                         "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs", "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs", "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs" })
             {
                 var target = Path.Combine(seed, file.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);

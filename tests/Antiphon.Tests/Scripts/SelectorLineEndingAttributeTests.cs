@@ -15,7 +15,14 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class SelectorLineEndingAttributeTests
 {
-    private static readonly string[] LiveLfScripts = Antiphon.Nightly.TestSelection.SelectorFiles;
+    // TestSelection.SelectorFiles, as literals the derived impact index reads.
+    private static readonly string[] LiveLfScripts =
+    [
+        "scripts/lib/Antiphon.Nightly/TestSelection.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
+    ];
 
     private const string PreservedBytes =
         "tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1";
@@ -23,6 +30,7 @@ public sealed class SelectorLineEndingAttributeTests
     [Test]
     public async Task C1313_live_scripts_are_forced_lf()
     {
+        LiveLfScripts.ShouldBe(Antiphon.Nightly.TestSelection.SelectorFiles, "c1313-eol: the selector identity");
         var root = DockerStackDocuments.RepoRoot;
         var fields = (await Git(root, ["check-attr", "-z", "eol", "--", .. LiveLfScripts]))
             .Split('\0', StringSplitOptions.RemoveEmptyEntries);

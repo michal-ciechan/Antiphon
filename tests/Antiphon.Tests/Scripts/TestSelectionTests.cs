@@ -224,6 +224,15 @@ public sealed class TestSelectionTests
     }
 
     [Test]
+    public void C1313_ContractFilesAreTheFixtureInputs()
+    {
+        // The literal lists the fixtures commit (and the derived impact index reads) are the contract's files.
+        C1313.Same(C1313SelectionRepository.Inputs, TestSelection.ContractFiles).ShouldBeTrue("C1313 fixture-inputs");
+        C1313.Same(NightlyRcChain.SelectionInputs, TestSelection.ContractFiles).ShouldBeTrue("C1313 nightly-chain-inputs");
+        C1313SelectionRepository.Inputs.Skip(3).ShouldBe(TestSelection.SelectorFiles);
+    }
+
+    [Test]
     public void C1313_CommandOutputs()
     {
         using var fx = C1313SelectionRepository.Create();
@@ -272,6 +281,13 @@ internal sealed class C1313SelectionRepository : IDisposable
 {
     internal static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
+    /// <summary>TestSelection.ContractFiles as literals (the derived impact index reads them): policies and global.json, then the selector identity.</summary>
+    internal static readonly string[] Inputs =
+    [
+        "tests/test-execution-policy.json", "tests/test-selection-policy.json", "global.json", "scripts/lib/Antiphon.Nightly/TestSelection.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs", "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs", "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
+    ];
+
     private C1313SelectionRepository(NightlyFixture fixture)
     {
         Fixture = fixture;
@@ -296,8 +312,8 @@ internal sealed class C1313SelectionRepository : IDisposable
         fx.Git("config", "user.name", "C1313 fixture");
         fx.Git("config", "user.email", "c1313@example.invalid");
         fx.Git("config", "core.autocrlf", "false");
-        foreach (var file in new[] { TestSelection.PolicyPath, TestSelection.CatalogPath, "global.json" }) fx.Write(file, RepoText(file));
-        foreach (var file in TestSelection.SelectorFiles) fx.Write(file, LfRepoText(file));
+        foreach (var file in Inputs.Take(3)) fx.Write(file, RepoText(file));
+        foreach (var file in Inputs.Skip(3)) fx.Write(file, LfRepoText(file));
         fx.Catalog = (IDictionary)TestSelectionJson.Parse(RepoText(TestSelection.CatalogPath));
         foreach (var path in C1313.SourceInputs(fx.Catalog)) fx.Write(path, "fixture source");
         fx.Git("add", "--all");

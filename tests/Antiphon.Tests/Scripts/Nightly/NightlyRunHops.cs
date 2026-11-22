@@ -120,7 +120,12 @@ public static class NightlyRunHops
 /// </summary>
 public sealed class NightlyRcChain : IDisposable
 {
-    private static readonly string[] SelectionInputs = TestSelection.ContractFiles;
+    // TestSelection.ContractFiles, as literals: the derived impact index reads them (TestSelectionTests guards the list).
+    internal static readonly string[] SelectionInputs =
+    [
+        "global.json", "tests/test-execution-policy.json", "tests/test-selection-policy.json", "scripts/lib/Antiphon.Nightly/TestSelection.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs", "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs", "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
+    ];
 
     private readonly object _gate = new();
     private readonly StringBuilder _trace = new();
