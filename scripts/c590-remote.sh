@@ -7246,7 +7246,24 @@ selector_fixture() {
     [ "$remote_status" = 1 ] || return 1
     selector_parent="$parent"
 }
-# Worktree content. Protected: tracked files (raw bytes against the index), staged
+# An explicit text/eol=crlf checkout may differ from its index only by the
+# exact LF-to-CRLF expansion of the blob. Read the indexed attributes and
+# expand the blob ourselves so no other conversion or repository driver runs.
+consider_crlf() {
+    local where="$1" path="$2" oid="$3" actual="$4" attrs_file="$5" converted
+    shift 5
+    local -a attrs=()
+    "$@" check-attr --cached -z text eol -- "$path" > "$attrs_file" || fail $?
+    mapfile -d '' -t attrs < "$attrs_file" || fail $?
+    [ "${#attrs[@]}" = 6 ] || fail 2
+    [[ "${attrs[2]}" == set && "${attrs[5]}" == crlf ]] || refuse_dirty index-content "$where"
+    # The trailing dot makes every newline precede the final sed record.
+    # Remove it after expanding bare LF, preserving any unterminated last line.
+    converted="$( { "$@" cat-file blob "$oid" && printf '.'; } |
+        sed -e '$!{ /\r$/! s/$/\r/; }' | head -c -1 | "$@" hash-object --no-filters --stdin)" || fail $?
+    [ "$actual" = "$converted" ] || refuse_dirty index-content "$where"
+}
+# Worktree content. Protected: tracked files (raw hash or exact CRLF checkout), staged
 # entries and untracked files that are not ignored. Ignored files (build output,
 # caches, local config) are not work: status omits them, under the ignore rules the
 # audited repository itself carries. An absent index is safe only with the deploy
@@ -7256,7 +7273,7 @@ selector_fixture() {
 # An orphaned checkout (its .git pointer missing or naming another directory) is
 # read with its admin directory as the Git directory (fourth argument).
 consider_dirty() {
-    local where="$1" kind="$2" work="$3" admin="${4:-}" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags expected
+    local where="$1" kind="$2" work="$3" admin="${4:-}" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags
     local status=0 error
     local -a g=(git -C "$where")
     [ -z "$admin" ] || g=(git -C "$where" --git-dir="$admin" --work-tree="$where")
@@ -7341,7 +7358,7 @@ consider_dirty() {
                         *$'\n'*|*$'\r'*)
                             # --stdin-paths reads lines; such a name is hashed alone.
                             actual="$("${g[@]}" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
-                            [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
+                            [ "$actual" = "$oid" ] || consider_crlf "$where" "$path" "$oid" "$actual" "$work.attrs" "${g[@]}"
                             ;;
                         *) printf '%s\n' "$where/$path" >&3; printf '%s\n' "$oid" >&4 ;;
                     esac
@@ -7357,9 +7374,15 @@ consider_dirty() {
     } 3> "$work.paths" 4> "$work.expected"
     # One hash-object process per worktree; absolute paths never start with a quote.
     "${g[@]}" hash-object --no-filters --stdin-paths < "$work.paths" > "$work.actual" 2>/dev/null || fail $?
-    expected="$(< "$work.expected")"
-    actual="$(< "$work.actual")"
-    [ "$actual" = "$expected" ] || refuse_dirty index-content "$where"
+    cmp -s -- "$work.actual" "$work.expected" && return 0
+    {
+        while IFS= read -r path; do
+            IFS= read -r oid <&3 && IFS= read -r actual <&4 || fail 2
+            [ "$actual" = "$oid" ] && continue
+            consider_crlf "$where" "${path#"$where/"}" "$oid" "$actual" "$work.attrs" "${g[@]}"
+        done < "$work.paths"
+        if IFS= read -r actual <&4 || [ -n "$actual" ]; then fail 2; fi
+    } 3< "$work.expected" 4< "$work.actual"
 }
 # Each worktree path is checked once, in parallel. Results are read in queue order,
 # so the first refusal reported does not depend on scheduling.
@@ -7383,7 +7406,8 @@ reap_dirty() {
     output="$(< "$scratch/dirty-$n.out")" || output=''
     rm -f -- "$scratch/dirty-$n.out" "$scratch/dirty-$n.flags" "$scratch/dirty-$n.index" \
         "$scratch/dirty-$n.paths" "$scratch/dirty-$n.expected" "$scratch/dirty-$n.actual" \
-        "$scratch/dirty-$n.stash" "$scratch/dirty-$n.filters" "$scratch/dirty-$n.status" "$scratch/dirty-$n.stderr"
+        "$scratch/dirty-$n.attrs" "$scratch/dirty-$n.stash" "$scratch/dirty-$n.filters" \
+        "$scratch/dirty-$n.status" "$scratch/dirty-$n.stderr"
     [ "$status" != 0 ] || return 0
     trap - ERR
     case "$output" in

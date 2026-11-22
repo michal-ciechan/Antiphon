@@ -31,3 +31,9 @@ Apply the existing `test-fixture-cleanup` trigger for `tests/**/*.cs` during sho
 `LiveLaneInventoryTests.EveryLiveGateHasDisposition` reported one unmapped gate after the Nightly S15 port (`75d96a8c7`). The scanner sees the `ANTIPHON_HEADED_TESTS` literal in `NightlyTestsRunTests.C487_G044`. The test supplies the value in a fixture environment and checks that the launcher clears it before starting the child. It runs without a headed opt-in, so the scanner hit is a false positive.
 The data-only repair adds the generator's `diagnostic` disposition to `tests/live-lanes.json`. Short verification for changes that introduce a recognized gate shape should run `EveryLiveGateHasDisposition` to catch catalog drift before Windows Full.
 Scanner changes from `65aae6b4` and `2920c586` are deferred. Follow-up scanner coverage needs to recognize a real lookup with the `target` named argument first and ignore environment lookup text printed as output.
+
+## Gate 9 · Retirement audit and CRLF checkouts
+
+The audit fixtures seeded plain LF content. Their linked-checkout cases exercised Git directory layout with the same bytes in the worktree and index.
+The Windows launcher added an indexed LF blob with `text eol=crlf`, so a real Git checkout on Linux first exposed the false dirty result on the rollout volume.
+For future checkout conversions, commit the attribute and let Git create the linked checkout. Check the byte difference and require Ready for the clean checkout and refusal for both a content edit and the same conversion on an undeclared path.
