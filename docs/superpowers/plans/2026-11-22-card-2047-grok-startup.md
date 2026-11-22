@@ -22,8 +22,8 @@ Unbounded classes: none. Budget: approximately 8 minutes per checkpoint build pl
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | red | `tests/Antiphon.Tests -> bin-c2047-red/` | c2047-red | `/*/*/(GrokStartupCaptureStoreTests)\|(RunnerGrokAdapterReadyTests)/C2047_*` | R-1 | Three change witnesses fail at the base production behavior | 7 | 9 |
-| CP-2 | all | `tests/Antiphon.Tests -> bin-c2047-final/` | c2047-adapter | `/*/*/(GrokStartupCaptureStoreTests)\|(GrokStartupReadinessTests)\|(RunnerGrokAdapterReadyTests)\|(RunnerGrokAdapterSignInPromptTests)\|(RunnerGrokAdapterTrustPromptTests)\|(GrokLinuxBlockingPromptTests)/*` | V-1, V-2, V-3, V-4 | All named classes execute, 0 failed | 7 | 9 |
-| CP-3 | all | CP-2 | c2047-launch | `/*/*/(GrokStartupReadyOrderingTests)\|(Card1619ExitConsumerTests)/*` | V-4 | Both classes execute on isolated Postgres, 0 failed | 2 | 2 |
+| CP-1 | red | `tests/Antiphon.Tests -> bin-c2047-red/` | c2047-red | `/*/*/(GrokStartupCaptureStoreTests*)\|(RunnerGrokAdapterReadyTests*)/C2047_*` | R-1 | Three change witnesses fail at the base production behavior | 7 | 9 |
+| CP-2 | all | `tests/Antiphon.Tests -> bin-c2047-final/` | c2047-adapter | `/*/*/(GrokStartupCaptureStoreTests*)\|(GrokStartupReadinessTests*)\|(RunnerGrokAdapterReadyTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(GrokLinuxBlockingPromptTests*)/*` | V-1, V-2, V-3, V-4 | All named classes execute, 0 failed | 7 | 9 |
+| CP-3 | all | CP-2 | c2047-launch | `/*/*/(GrokStartupReadyOrderingTests*)\|(Card1619ExitConsumerTests*)/*` | V-4 | Both classes execute on isolated Postgres, 0 failed | 2 | 2 |
 | CP-4 | all | CP-2 | c2047-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4 | All nine classes execute, 0 failed | 78 | 2 |
-| CP-5 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c2047-runner/` | c2047-runner | `/*/*/(Card1619RunnerExitTests)\|(GrokRulesStoreFailureTests)/*` | V-4 | Both classes execute on Linux, 0 failed | 2 | 9 |
+| CP-5 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c2047-runner/` | c2047-runner | `/*/*/(Card1619RunnerExitTests*)\|(GrokRulesStoreFailureTests*)/*` | V-4 | Both classes execute on Linux, 0 failed | 2 | 9 |
