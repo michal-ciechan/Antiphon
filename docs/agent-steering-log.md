@@ -412,6 +412,29 @@ Read the one canonical key exactly; fix the writer if it writes anything else."
 
 ---
 
+## 2026-11-22 - Beyond the nightly: every .ps1, functions and top level, one C# library
+
+**Context:** W2-nightly was nearly done (S27 verified). The agent's plan ended there: S28 (typed core APIs), then
+the owner-gated live-lane slices.
+
+**What the agent did:** It treated the W2-nightly plan's slice list as the scope, and saw the remaining W2-rc
+PowerShell as the libraries' last callers rather than as work to do.
+
+**What the owner preferred:** "get rid of more .ps1, what is left, make a note, then carry on removing 1 by 1,
+migrating to c#. Function calls, as well as top level, so hopefully we will just call the csharplib once, and maybe
+even in future as part of sessionrunner / remote host etc."
+
+**Principle:** The goal is the whole repository's PowerShell, not one pipeline. That covers both the entry scripts
+and the library functions behind them. A command should be callable in-process (behind a host seam) so that
+SessionRunner or a remote host can run it without starting a process.
+
+**Candidate guidance:** "Keep an inventory of what PowerShell is left (docs/superpowers/plans/
+2026-11-22-remaining-ps1-to-csharp.md) and work through it one script at a time, leaves first. Write each command
+as a class with typed options and a Run(options, host) entry. No Console, Environment.Exit or ambient environment
+variables inside the command."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
