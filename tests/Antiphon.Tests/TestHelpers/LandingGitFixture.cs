@@ -283,6 +283,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
+            LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
+            LandingEvidence.Write(taskId, "git_exit", new { arguments, ExitCode = 0, RebaseHeadSha = (string?)null });
         }
 
         /// <summary>CARD-1436: the index-lock census sees only this fixture's own git children, never the host's.</summary>

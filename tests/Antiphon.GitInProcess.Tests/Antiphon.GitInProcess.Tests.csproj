@@ -25,6 +25,7 @@
     <Compile Include="..\Antiphon.Tests\TestHelpers\GitTreeTemplate.cs" Link="TestHelpers\GitTreeTemplate.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\LandingEvidence.cs" Link="TestHelpers\LandingEvidence.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\LandingGitFixture.cs" Link="TestHelpers\LandingGitFixture.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\LandingFixtureGitInProcess.cs" Link="TestHelpers\LandingFixtureGitInProcess.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\LibGit2ConfigIsolation.cs" Link="TestHelpers\LibGit2ConfigIsolation.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\ProcessSpawnLimit.cs" Link="TestHelpers\ProcessSpawnLimit.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\ProductionRunnerGuard.cs" Link="TestHelpers\ProductionRunnerGuard.cs" />

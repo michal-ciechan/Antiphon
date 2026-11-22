@@ -77,6 +77,41 @@ public sealed class LandingFixtureGitInProcessTests
         heads[1].Distinct().Count().ShouldBe(2);
     }
 
+    // The template every default fixture clones is built by BuildAsync, whose root commit (on an unborn HEAD, staging
+    // the dotfile .gitignore) now runs in process: the same seed as one built wholly by git, reflogs and state included.
+    [Test]
+    public async Task A_seed_built_in_process_matches_one_built_by_git()
+    {
+        var task = Guid.NewGuid();
+        await using var inProcess = new LandingGitFixture(taskId: task);
+        await using var git = new LandingGitFixture(taskId: task);
+        await inProcess.BuildAsync();
+        git.Git.AfterCommand = (_, _, _) => Task.CompletedTask; // a watching test: every command starts git
+        await git.BuildAsync();
+        git.Git.AfterCommand = null;
+        var views = new List<string>[] { [], [] };
+        foreach (var (fixture, view) in new[] { (inProcess, views[0]), (git, views[1]) })
+        {
+            async Task<string> Read(string directory, params string[] arguments)
+            {
+                var result = await fixture.Git.RunAsync(directory, arguments, CancellationToken.None);
+                result.Succeeded.ShouldBeTrue(string.Join(' ', arguments) + ": " + result.Diagnostic);
+                return result.Output;
+            }
+            view.Add(await Read(fixture.Repository, "rev-parse", "HEAD^{tree}"));
+            view.Add(await Read(fixture.Repository, "ls-tree", "-r", "HEAD"));
+            view.Add(await Read(fixture.Repository, "log", "--format=%an <%ae>|%cn <%ce>|%P|%B"));
+            view.Add(await Read(fixture.Repository, "reflog", "show", "--format=%gn <%ge> %gs", "HEAD"));
+            view.Add(await Read(fixture.Repository, "reflog", "show", "--format=%gn <%ge> %gs", "refs/heads/master"));
+            view.Add(await Read(fixture.Repository, "status", "--porcelain=v1", "--untracked-files=all"));
+            view.Add(await Read(fixture.Source, "status", "--porcelain=v1", "--untracked-files=all"));
+            // git alone writes COMMIT_EDITMSG (nothing reads it back); every other administrative entry is the same.
+            view.Add(string.Join('\n', Directory.EnumerateFileSystemEntries(Path.Combine(fixture.Repository, ".git"))
+                .Select(Path.GetFileName).Where(n => n != "COMMIT_EDITMSG").Order(StringComparer.Ordinal)));
+        }
+        views[0].ShouldBe(views[1]);
+    }
+
     [Test]
     public async Task What_git_refuses_or_a_test_watches_goes_to_git()
     {
@@ -90,6 +125,14 @@ public sealed class LandingFixtureGitInProcessTests
             .Message.ShouldBe("fixture_git_failed:commit:1");
         LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["commit", "--allow-empty", "-m", "   "]).ShouldBeNull();
         LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["commit", "-a", "-m", "other shape"]).ShouldBeNull();
+
+        // A sequencer (or any operation) in progress: libgit2's commit would clear it, git keeps it.
+        var gitDir = (await fixture.Git.RunAsync(fixture.Source, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Output.Trim();
+        Directory.CreateDirectory(Path.Combine(gitDir, "sequencer"));
+        await File.WriteAllTextAsync(Path.Combine(gitDir, "sequencer", "todo"), "pick 0000000 planted\n");
+        LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["commit", "--allow-empty", "-m", "kept"]).ShouldBeNull();
+        File.Exists(Path.Combine(gitDir, "sequencer", "todo")).ShouldBeTrue();
+        Directory.Delete(Path.Combine(gitDir, "sequencer"), recursive: true);
 
         // Not a checkout root; a bare repository answers rev-parse HEAD in process but stages nothing.
         Directory.CreateDirectory(Path.Combine(fixture.Source, "sub"));
