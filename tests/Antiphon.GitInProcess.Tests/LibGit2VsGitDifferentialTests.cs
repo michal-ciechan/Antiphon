@@ -187,6 +187,29 @@ public sealed class LibGit2VsGitDifferentialTests
             await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/heads/", "refs/tags/");
             await CompareAsync(cwd, Expect.Answered, "for-each-ref", format, "refs/antiphon/none/");
         }
+        // The slot pool's per-worktree listing in a linked worktree: empty is answered, any such ref is git's.
+        string[] perWorktree = ["for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/"];
+        await CompareAsync(fixture.Source, Expect.Answered, perWorktree);
+        await fixture.RequiredAsync(fixture.Source, "update-ref", "refs/bisect/bad", fixture.SeedSha);
+        await CompareAsync(fixture.Source, Expect.Fallback, perWorktree);
+        await CompareAsync(fixture.Source, Expect.Fallback, "for-each-ref", "--format=%(refname)");
+        await fixture.RequiredAsync(fixture.Source, "update-ref", "-d", "refs/bisect/bad");
+        // A loose ref spelled otherwise beside a packed one (case-insensitive file systems): git's.
+        var ignoresCase = fixture.Repository != fixture.Repository.ToUpperInvariant()
+            && Directory.Exists(fixture.Repository.ToUpperInvariant());
+        if (ignoresCase)
+        {
+            await fixture.RequiredAsync(fixture.Repository, "update-ref", "refs/antiphon/case/foo", fixture.SeedSha);
+            await fixture.RequiredAsync(fixture.Repository, "pack-refs", "--all");
+            var common = (await fixture.RequiredAsync(fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
+            Directory.CreateDirectory(Path.Combine(common, "refs", "antiphon", "case"));
+            await File.WriteAllTextAsync(Path.Combine(common, "refs", "antiphon", "case", "Foo"),
+                (await fixture.RequiredAsync(fixture.Repository, "rev-parse", fixture.TargetRef)).Trim() + "\n");
+            await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname)", "refs/antiphon/case/");
+            await CompareAsync(fixture.Repository, Expect.Fallback, "show-ref", "--verify", "--hash", "refs/antiphon/case/foo");
+            await CompareAsync(fixture.Repository, Expect.Fallback, "rev-parse", "--verify", "refs/antiphon/case/foo");
+            File.Delete(Path.Combine(common, "refs", "antiphon", "case", "Foo"));
+        }
         await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/chain", "refs/antiphon/salvage/sym");
         await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname) %(symref)",
             "refs/antiphon/salvage/");

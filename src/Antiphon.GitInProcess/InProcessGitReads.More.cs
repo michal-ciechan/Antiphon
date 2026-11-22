@@ -89,9 +89,13 @@ internal static partial class InProcessGitReads
         var patterns = a.Skip(2).ToList();
         if (patterns.Any(p => p.Length == 0 || p.StartsWith('-') || p.IndexOfAny(GlobCharacters) >= 0)) return null;
         var lines = new List<(string Name, string Sha, string Symref)>();
+        // Two names that differ only in case (a loose Foo beside a packed foo): on a case-insensitive file system
+        // libgit2 reads one through the other's loose file, where git's iterator keeps them apart.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var reference in repo.Refs)
         {
             var name = reference.CanonicalName;
+            if (!seen.Add(name)) return null;
             if (!name.StartsWith("refs/", StringComparison.Ordinal)) continue;
             // A literal pattern matches the whole name or a prefix ending at a '/'.
             if (patterns.Count > 0 && !patterns.Any(p => name == p || name.StartsWith(p, StringComparison.Ordinal)
