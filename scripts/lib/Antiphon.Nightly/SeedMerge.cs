@@ -105,8 +105,7 @@ namespace Antiphon.Nightly
                 var loaded = new List<Loaded>();
                 foreach (var path in seeds)
                 {
-                    // The merge runs under PowerShell: the seed is a PSObject.
-                    var doc = (PSObject)StoppedSeedFiles.ReadContent(path, "", links, forceWindows);
+                    var doc = StoppedSeedFiles.ReadContent(path, "", links, forceWindows);
                     var stamp = StoppedSeed.Utc(PsValue.Prop(doc, "sourceObservedAtUtc"));
                     loaded.Add(new Loaded { Doc = doc, Index = loaded.Count, Ticks = stamp.HasValue ? stamp.Value.UtcDateTime.Ticks : long.MinValue });
                 }

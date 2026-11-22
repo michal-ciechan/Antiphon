@@ -336,8 +336,7 @@ namespace Antiphon.Nightly
                 if (_evidence.TryGetValue(relative, out var prior)) { if ((string)prior["sha256"] != digest) throw Refuse("evidence-changed"); }
                 else _evidence.Add(relative, new OrderedDictionary { { "relativePath", relative }, { "sha256", digest }, { "kind", kind } });
                 if ((bool)PsValue.Prop(artifact, "Rebound")) _rebindings.Add(new OrderedDictionary { { "original", Str(artifact, "Original") }, { "relativePath", relative } });
-                // The export runs under PowerShell: the record is a PSObject.
-                return (PSObject)artifact;
+                return artifact;
             }
 
             private void Member(string suite, string className, string reason, OrderedDictionary observation)
