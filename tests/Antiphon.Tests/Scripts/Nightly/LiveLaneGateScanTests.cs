@@ -76,6 +76,13 @@ public sealed class LiveLaneGateScanTests
                 }
 
                 [Test]
+                public void RequiresFlagWithNamedArgument()
+                {
+                    if (Environment.GetEnvironmentVariable(variable: "{{flag}}") != "1")
+                        throw new InvalidOperationException();
+                }
+
+                [Test]
                 public void SeedsChildEnvironment()
                 {
                     var childEnvironment = new Dictionary<string, string> { ["{{flag}}"] = "1" };
@@ -88,8 +95,9 @@ public sealed class LiveLaneGateScanTests
 
         var scan = LiveLaneGateScan.Scan(fixture.Root, source);
         scan.Unresolved.ShouldBe(0);
-        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlag"]);
-        scan.Gates.Single().Shapes.ShouldBe([flag]);
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlag", "RequiresFlagWithNamedArgument"]);
+        foreach (var gate in scan.Gates)
+            gate.Shapes.ShouldBe([flag]);
     }
 
     private static string Key(JsonElement row) =>
