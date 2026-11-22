@@ -6,20 +6,24 @@ using Microsoft.EntityFrameworkCore;
 // A spare probe: started before the parent knows what it will run, warmed on what it already knows (the compiled
 // model, the world's database, the Kafka native library), then the probe it is given once its config appears. The
 // warm-up writes nothing (one read of the world's deliveries) and stops as soon as the config arrives. A warm-up that
-// fails for any reason but that stop exits the spare (3), so the parent starts a probe without one, which meets the
-// same failure itself: a compiled-model fault on first use still fails its probe. A spare whose parent is gone, or
-// that is never given a config within Abandoned, ends itself.
+// fails before the spare takes a config exits the spare (3), so the parent starts a probe without one, which meets the
+// same failure itself; one that fails after is only logged, as the probe redoes that work. A spare whose parent is
+// gone, or that is never given a config within Abandoned, ends itself.
 internal static class ProbeSpare
 {
-    // A world lives at most its scenario's 120 s deadline after it starts a spare, so a spare older than that is no
-    // world's; 150 s leaves the parent's own disposal its margin.
-    private static readonly TimeSpan Abandoned = TimeSpan.FromSeconds(150);
+    // The longest world (C519_Converter_handoff: four probes of at most ProbeDeadline + ProbeStartupAndExit = 60 s
+    // each, plus its 30 s idle wait) is under 5 minutes; a spare older than that is no world's.
+    private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(5);
+
+    // The probe's first EF read: about 1.5 s on the HP laptop on AC and 3.5 s on battery (2026-11-22 phase logs);
+    // 10 s is about 3x the slower. A timed-out read only leaves the probe colder.
     private static readonly TimeSpan WarmupRead = TimeSpan.FromSeconds(10);
 
     public static async Task<string?> WaitAsync(string warmPath, string configPath, int parentId)
     {
         using var stop = new CancellationTokenSource();
-        var warmup = WarmAsync(warmPath, stop.Token);
+        // Its own task, so polling for the config never waits behind a synchronous model load.
+        var warmup = Task.Run(() => WarmAsync(warmPath, stop.Token));
         var waited = Stopwatch.StartNew();
         var parentChecked = Stopwatch.StartNew();
         while (!File.Exists(configPath))
@@ -29,22 +33,26 @@ internal static class ProbeSpare
                 ProbeLog.Phase("spare-warmup-failed " + failure);
                 return null;
             }
-            if (waited.Elapsed > Abandoned) return null;
+            if (waited.Elapsed > Abandoned)
+            {
+                ProbeLog.Phase("spare-abandoned");
+                return null;
+            }
             if (parentChecked.Elapsed > TimeSpan.FromMilliseconds(500))
             {
-                if (!ParentAlive(parentId)) return null;
+                if (!ParentAlive(parentId))
+                {
+                    ProbeLog.Phase("spare-parent-gone");
+                    return null;
+                }
                 parentChecked.Restart();
             }
             await Task.Delay(10);
         }
-        // Taken: the parent waits for this before it relies on the spare.
+        // Taken, before the config is read: the parent relies on this order to withdraw an untaken config safely.
         await File.WriteAllTextAsync(configPath + ".taken", "");
         stop.Cancel();
-        if (await warmup is { } late)
-        {
-            ProbeLog.Phase("spare-warmup-failed " + late);
-            return null;
-        }
+        if (await warmup is { } late) ProbeLog.Phase("spare-warmup-failed-after-taken " + late);
         ProbeLog.Phase("spare-given");
         return configPath;
     }
@@ -61,16 +69,23 @@ internal static class ProbeSpare
             _ = Confluent.Kafka.Library.Version; // loads librdkafka; no client, no connection
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(stop);
             bounded.CancelAfter(WarmupRead);
-            var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(warm.ConnectionString).WithProbeModel();
-            await using (var db = new AppDbContext(options.Options))
+            try
+            {
+                var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(warm.ConnectionString).WithProbeModel();
+                await using var db = new AppDbContext(options.Options);
                 _ = await db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(bounded.Token);
+            }
+            catch (OperationCanceledException) when (!stop.IsCancellationRequested)
+            {
+                ProbeLog.Phase("spare-warmup-read-timeout");
+                return null;
+            }
             ProbeLog.Phase("spare-ready");
             return null;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
-            // Stopped by the config, or the bounded read ran out: the probe goes on as it is.
-            return null;
+            return null; // stopped by the config: the probe goes on as it is
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -78,6 +93,7 @@ internal static class ProbeSpare
         }
     }
 
+    // A parent that cannot be read (access denied) counts as alive: Abandoned still ends the spare.
     private static bool ParentAlive(int parentId)
     {
         try
@@ -89,9 +105,9 @@ internal static class ProbeSpare
         {
             return false;
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            return false;
+            return true;
         }
     }
 }

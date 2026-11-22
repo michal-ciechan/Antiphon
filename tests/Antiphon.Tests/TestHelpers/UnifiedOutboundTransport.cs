@@ -60,6 +60,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // start, take its config or warm up is replaced by a probe started then, as before.
     private int _sparesLeft;
     private (Process Process, string ConfigPath)? _spare;
+    // A spare takes its config within its 10 ms poll (about 20 ms); a missed handoff only costs a probe started then.
     private static readonly TimeSpan SpareHandoff = TimeSpan.FromSeconds(5);
 
     private static ProcessStartInfo ProbeStart()
@@ -99,24 +100,31 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         }
     }
 
-    // The config, written whole and then named, and the spare's acknowledgement (it writes <config>.taken the moment it
-    // sees it). False when the spare has exited or does not take it within SpareHandoff (killed then by the caller).
+    // The config, written whole and then named, and the spare's acknowledgement: it writes <config>.taken the moment it
+    // sees the config and before it reads it. Not taken within SpareHandoff, the config is withdrawn first and .taken
+    // checked after: a spare that took it is the probe; one that did not can never read it, so the caller can kill it
+    // and start a probe then without two processes running one cut. False when the spare is not the probe.
     private static async Task<bool> HandToSpareAsync((Process Process, string ConfigPath) spare, string json)
     {
         if (spare.Process.HasExited) return false;
         await File.WriteAllTextAsync(spare.ConfigPath + ".tmp", json);
         File.Move(spare.ConfigPath + ".tmp", spare.ConfigPath);
+        var taken = spare.ConfigPath + ".taken";
         var waited = Stopwatch.StartNew();
         while (waited.Elapsed < SpareHandoff)
         {
-            if (File.Exists(spare.ConfigPath + ".taken")) return true;
-            if (spare.Process.HasExited) return false;
+            if (File.Exists(taken)) return true;
+            if (spare.Process.HasExited) break;
             await Task.Delay(5);
         }
-        return false;
+        try { File.Move(spare.ConfigPath, spare.ConfigPath + ".withdrawn"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return File.Exists(taken);
     }
 
-    private async Task StopSpareAsync()
+    private string _lastSparePhase = "";
+
+    private async Task StopSpareAsync(bool report = false)
     {
         if (_spare is not { } spare) return;
         _spare = null;
@@ -125,6 +133,11 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             if (!spare.Process.HasExited) spare.Process.Kill(entireProcessTree: true);
             // A killed child exits within a second here; the bound only stops a stuck kill holding up the world.
             await spare.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            if (report)
+            {
+                var stderr = await spare.Process.StandardError.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(2));
+                _lastSparePhase = stderr.Split((char)10).LastOrDefault(l => l.Contains("phase ", StringComparison.Ordinal))?.Trim() ?? "";
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -292,7 +305,13 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
                 _spare = null;
                 process = spare.Process;
             }
-            else await StopSpareAsync();
+            else
+            {
+                // Why the spare is lost (exit code, its last phase line: types only), then a probe started now.
+                var exit = spare.Process.HasExited ? spare.Process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "running";
+                await StopSpareAsync(report: true);
+                Console.WriteLine("c519-probe spare-lost exit=" + exit + " " + _lastSparePhase);
+            }
         }
         var warmed = process is not null;
         if (process is null)
