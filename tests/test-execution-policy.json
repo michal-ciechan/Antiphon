@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a4b5c2852d4a5c4504c9ddc10f4041ab332b5fdbd65b7a2c313fa6d77d726083",
+  "policyHash": "caa79b130f8fb22dcfbc18b72536915f669f574b3e26c0be9aee0cf297c4e998",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1451,10 +1451,11 @@
           "suite": "session-runner",
           "class": "C0824WindowsSlotHolderTests",
           "methods": [
+            "Cwd_census_skips_exited_process_with_retained_handle",
             "Rm_lock_defers_release"
           ],
           "platform": "linux",
-          "reason": "Windows Restart Manager lock probe. The method remains required on Windows.",
+          "reason": "Windows process-handle census and Restart Manager lock probes. Both methods remain required on Windows.",
           "owner": "CARD-0824"
         },
         {
