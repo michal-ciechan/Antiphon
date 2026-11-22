@@ -36,6 +36,23 @@ public sealed partial class ImpactedClassesSelectorTests
     ];
 
     [Test]
+    [Arguments("e983d6fe263af623a3da186a2260575f60cc4c5f", "scripts/restart-apphost.ps1")]
+    [Arguments("aab91e4aa86208526e31db85677376d0670497be", "scripts/lib/windows-phone-home-env.ps1")]
+    public async Task Graceful_stop_script_changes_select_shutdown_and_resume_tests(string commit, string path)
+    {
+        var root = Root();
+        var range = commit + "^.." + commit;
+        Git(root, "diff", "--name-only", range).ShouldBe([path]);
+
+        using var selected = await SelectAsync(root, range);
+        Names(selected, "kinds").ShouldContain("apphost-graceful-stop", path);
+        var filter = FilterRows(selected.RootElement, "filters")
+            .Single(row => row.Project == "tests/Antiphon.Tests").Filter;
+        filter.ShouldContain("(OperatorShutdownEndpointTests*)", Case.Sensitive, path);
+        filter.ShouldContain("(PhoneHomeRestartResumeTests*)", Case.Sensitive, path);
+    }
+
+    [Test]
     [Arguments("server/Application/Exceptions/InputDeliveryUncertainException.cs")]
     [Arguments("server/Application/Services/SessionMessageQueueService.cs")]
     [Arguments("server/Application/Services/AgentControlService.cs")]
