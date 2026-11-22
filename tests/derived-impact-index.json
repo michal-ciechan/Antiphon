@@ -9932,6 +9932,7 @@
         "LaunchModelArgumentAppenderTests",
         "ModelAliasTests",
         "ModelLevelAliasDisplayTests",
+        "PhoneHomeTaskDispatchProjectionTests",
         "ProviderQuotaRefusalAcceptanceTests",
         "RoutingExhaustedPlacementTests",
         "RoutingPinCandidateDispatchTests"
