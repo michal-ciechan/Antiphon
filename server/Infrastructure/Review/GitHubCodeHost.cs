@@ -30,9 +30,17 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
 
     public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
-    /// <summary>A machine user's review counts for branch protection; check runs need a GitHub App (design 8.2).</summary>
+    public const string RawMediaType = "application/vnd.github.raw";
+
+    /// <summary>
+    /// A machine user's review counts for branch protection; check runs need a GitHub App (design 8.2).
+    /// Resolving a thread needs GraphQL (the thread node id is not in any REST response), so it is off
+    /// until the GraphQL call lands; replies still post.
+    /// </summary>
     public CodeHostCapabilities Capabilities { get; } = new(
-        SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true);
+        SupportsCheckRuns: false, CanResolveThreads: false, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
+        CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
+        CanReadFiles: true);
 
     public async Task<CodeHostPullRequest> GetPullRequestAsync(CodeHostTarget target, CancellationToken ct)
     {
@@ -79,6 +87,154 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         !range.IsIncremental && target.PrNumber is { } number
             ? GetAsync(target, $"{RepoPath(target)}/pulls/{number}", DiffMediaType, ct)
             : GetAsync(target, ComparePath(target, range), DiffMediaType, ct);
+
+    /// <summary><c>GET compare/{from}...{to}</c>: <c>merge_base_commit</c>, <c>ahead_by</c>, <c>behind_by</c> and up to 300 files.</summary>
+    public async Task<CodeHostComparison> CompareAsync(CodeHostTarget target, string fromRef, string toRef, CancellationToken ct)
+    {
+        var body = await GetAsync(target, $"{RepoPath(target)}/compare/{EscapeRef(fromRef)}...{EscapeRef(toRef)}", JsonMediaType, ct);
+        using var doc = Parse(body, "comparison");
+        var root = doc.RootElement;
+        var files = root.TryGetProperty("files", out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray().Select(ParseFile).ToList()
+            : [];
+        return new CodeHostComparison(
+            CommitSha(root, "base_commit") ?? fromRef,
+            root.TryGetProperty("commits", out var commits) && commits.ValueKind == JsonValueKind.Array && commits.GetArrayLength() > 0
+                ? Text(commits[commits.GetArrayLength() - 1], "sha") ?? toRef
+                : toRef,
+            CommitSha(root, "merge_base_commit") ?? "",
+            Int(root, "ahead_by"),
+            Int(root, "behind_by"),
+            files);
+    }
+
+    /// <summary>
+    /// <c>GET compare/{baseRef}...{head}</c>: <c>base_commit</c> is the base tip, <c>merge_base_commit</c>
+    /// the merge base and <c>behind_by</c> the base commits the head lacks (D-37 option B).
+    /// </summary>
+    public async Task<CodeHostBranchState> GetBranchStateAsync(CodeHostTarget target, string baseRef, string headSha, CancellationToken ct)
+    {
+        var body = await GetAsync(target, $"{RepoPath(target)}/compare/{EscapeRef(baseRef)}...{EscapeRef(headSha)}", JsonMediaType, ct);
+        using var doc = Parse(body, "comparison");
+        var root = doc.RootElement;
+        var tip = CommitSha(root, "base_commit")
+            ?? throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub compared {baseRef}...{headSha} with no base commit.");
+        return new CodeHostBranchState(tip, CommitSha(root, "merge_base_commit") ?? "", Int(root, "behind_by"), Int(root, "ahead_by"));
+    }
+
+    /// <summary><c>GET git/trees/{sha}?recursive=1</c>, filtered to blobs under the directory.</summary>
+    public async Task<IReadOnlyList<string>> ListFilesAsync(CodeHostTarget target, string sha, string directory, CancellationToken ct)
+    {
+        var body = await GetAsync(target, $"{RepoPath(target)}/git/trees/{Uri.EscapeDataString(sha)}?recursive=1", JsonMediaType, ct);
+        using var doc = Parse(body, "tree");
+        var prefix = directory.Trim('/') + "/";
+        return doc.RootElement.TryGetProperty("tree", out var tree) && tree.ValueKind == JsonValueKind.Array
+            ? tree.EnumerateArray()
+                .Where(e => Text(e, "type") == "blob" && Text(e, "path") is { } p && p.StartsWith(prefix, StringComparison.Ordinal))
+                .Select(e => Text(e, "path")!)
+                .ToList()
+            : [];
+    }
+
+    /// <summary><c>GET contents/{path}?ref={sha}</c> as raw text; a 404 is null.</summary>
+    public async Task<string?> ReadFileAsync(CodeHostTarget target, string sha, string path, CancellationToken ct)
+    {
+        try
+        {
+            return await GetAsync(target, $"{RepoPath(target)}/contents/{EscapeRef(path)}?ref={Uri.EscapeDataString(sha)}", RawMediaType, ct);
+        }
+        catch (CodeHostException ex) when (ex.Kind == CodeHostFailureKind.NotFound)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// <c>POST pulls/{n}/reviews</c> with event <c>COMMENT</c>, then <c>GET pulls/{n}/reviews/{id}/comments</c>
+    /// for the comment ids (the create response does not carry them), matched by path and line in order.
+    /// </summary>
+    public async Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct)
+    {
+        var number = RequirePr(target);
+        var payload = new
+        {
+            commit_id = review.CommitSha,
+            body = review.Body,
+            @event = "COMMENT",
+            comments = review.Comments.Select(c => new { path = c.Path, line = c.Line, side = "RIGHT", body = c.Body }).ToArray(),
+        };
+        var created = await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/pulls/{number}/reviews", payload, ct);
+        using var doc = Parse(created, "review");
+        var reviewId = doc.RootElement.TryGetProperty("id", out var id) ? id.ToString() : "";
+        var url = Text(doc.RootElement, "html_url");
+        if (review.Comments.Count == 0 || reviewId.Length == 0)
+            return new CodeHostPostedReview(reviewId, url, []);
+
+        var listed = await GetAsync(target, $"{RepoPath(target)}/pulls/{number}/reviews/{reviewId}/comments?per_page={PageSize}", JsonMediaType, ct);
+        using var comments = Parse(listed, "review comments");
+        var remaining = comments.RootElement.ValueKind == JsonValueKind.Array ? comments.RootElement.EnumerateArray().ToList() : [];
+        var posted = new List<CodeHostPostedComment>();
+        foreach (var wanted in review.Comments)
+        {
+            var match = remaining.FirstOrDefault(c => Text(c, "path") == wanted.Path
+                && (Int(c, "line") == wanted.Line || Int(c, "original_line") == wanted.Line));
+            if (match.ValueKind != JsonValueKind.Object)
+                continue;
+            remaining.Remove(match);
+            posted.Add(new CodeHostPostedComment(wanted.Path, wanted.Line, match.GetProperty("id").ToString(), null, Text(match, "html_url")));
+        }
+
+        return new CodeHostPostedReview(reviewId, url, posted);
+    }
+
+    /// <summary><c>POST pulls/{n}/comments/{id}/replies</c>.</summary>
+    public async Task<CodeHostThreadReply> ReplyToThreadAsync(CodeHostTarget target, string commentId, string body, CancellationToken ct)
+    {
+        var created = await SendAsync(target, HttpMethod.Post,
+            $"{RepoPath(target)}/pulls/{RequirePr(target)}/comments/{Uri.EscapeDataString(commentId)}/replies", new { body }, ct);
+        using var doc = Parse(created, "reply");
+        return new CodeHostThreadReply(doc.RootElement.TryGetProperty("id", out var id) ? id.ToString() : "", Text(doc.RootElement, "html_url"));
+    }
+
+    /// <summary>Needs GraphQL <c>resolveReviewThread</c>; see <see cref="Capabilities"/>.</summary>
+    public Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct) =>
+        throw new CodeHostException(CodeHostFailureKind.Unsupported, "Resolving a GitHub thread needs the GraphQL API, which this adapter does not call yet.");
+
+    /// <summary><c>POST statuses/{sha}</c>; the description is cut to GitHub's 140 characters.</summary>
+    public async Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct)
+    {
+        var description = status.Description.Length <= 140 ? status.Description : status.Description[..139] + "…";
+        await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/statuses/{Uri.EscapeDataString(sha)}", new
+        {
+            state = status.State.ToString().ToLowerInvariant(),
+            target_url = status.TargetUrl,
+            description,
+            context = status.Context,
+        }, ct);
+    }
+
+    /// <summary><c>POST pulls/{n}/reviews</c> with event <c>APPROVE</c> at the head.</summary>
+    public async Task ApproveAsync(CodeHostTarget target, string headSha, string body, CancellationToken ct) =>
+        await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/pulls/{RequirePr(target)}/reviews",
+            new { commit_id = headSha, body, @event = "APPROVE" }, ct);
+
+    /// <summary><c>PUT pulls/{n}/update-branch</c>: asynchronous (202), so the new head is not known yet.</summary>
+    public async Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct)
+    {
+        var body = await SendAsync(target, HttpMethod.Put, $"{RepoPath(target)}/pulls/{RequirePr(target)}/update-branch",
+            new { expected_head_sha = expectedHeadSha }, ct);
+        string? message = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            message = Text(doc.RootElement, "message");
+        }
+        catch (JsonException)
+        {
+        }
+
+        return new CodeHostBranchUpdate(true, null, message);
+    }
 
     public static CodeHostPullRequest ParsePullRequest(JsonElement root)
     {
@@ -146,7 +302,7 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
                 return cached.Body;
             var body = await response.Content.ReadAsStringAsync(budget.Token);
             if (!response.IsSuccessStatusCode)
-                throw Failure(response, body, path);
+                throw Failure(response, body, "GET", path);
             if (response.Headers.ETag is { } etag)
                 cache.Set(key, etag.ToString(), body);
             return body;
@@ -161,7 +317,41 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         }
     }
 
-    private static CodeHostException Failure(HttpResponseMessage response, string body, string path)
+    /// <summary>One write with a JSON body. Never cached and never retried: a write is not idempotent.</summary>
+    private async Task<string> SendAsync(CodeHostTarget target, HttpMethod method, string path, object payload, CancellationToken ct)
+    {
+        var host = Host(target);
+        var uri = new Uri(new Uri((string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl).TrimEnd('/') + "/"), path);
+        using var request = new HttpRequestMessage(method, uri);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonMediaType));
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
+        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", ApiVersion);
+        if (!string.IsNullOrEmpty(host.Token))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        request.Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
+
+        var seconds = Math.Max(1, host.TimeoutSeconds);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(seconds));
+        try
+        {
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token);
+            var body = await response.Content.ReadAsStringAsync(budget.Token);
+            if (!response.IsSuccessStatusCode)
+                throw Failure(response, body, method.Method, path);
+            return body;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub {method.Method} {path}: {ex.Message}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub {method.Method} {path}: no response within {seconds}s.");
+        }
+    }
+
+    private static CodeHostException Failure(HttpResponseMessage response, string body, string method, string path)
     {
         var status = (int)response.StatusCode;
         var spent = response.Headers.TryGetValues("x-ratelimit-remaining", out var remaining) && remaining.FirstOrDefault() == "0";
@@ -175,7 +365,7 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
             400 or 422 => CodeHostFailureKind.InvalidRequest,
             _ => CodeHostFailureKind.Unavailable,
         };
-        return new CodeHostException(kind, $"GitHub GET {path}: HTTP {status}: {ErrorText(body)}", status);
+        return new CodeHostException(kind, $"GitHub {method} {path}: HTTP {status}: {ErrorText(body)}", status);
     }
 
     /// <summary>GitHub's <c>{"message"}</c> or the first 300 characters of the body.</summary>
@@ -228,6 +418,15 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
 
     private static string? Text(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static int Int(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var n) ? n : 0;
+
+    private static string? CommitSha(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var commit) && commit.ValueKind == JsonValueKind.Object ? Text(commit, "sha") : null;
+
+    /// <summary>A ref or path in a URL: each segment escaped, the slashes kept (<c>release/1.0</c>).</summary>
+    private static string EscapeRef(string value) => string.Join('/', value.Split('/').Select(Uri.EscapeDataString));
 }
 
 /// <summary>

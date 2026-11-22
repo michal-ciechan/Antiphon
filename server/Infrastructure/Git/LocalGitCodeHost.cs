@@ -14,8 +14,10 @@ public sealed class LocalGitCodeHost(GitWorkspaceService git) : ICodeHost
 {
     public bool Serves(ReviewHost kind) => kind == ReviewHost.Local;
 
+    /// <summary>Reads only: there is no conversation, no status and no remote to approve on or update (design 8.2).</summary>
     public CodeHostCapabilities Capabilities { get; } = new(
-        SupportsCheckRuns: false, CanResolveThreads: false, ApprovalCountsForMerge: false, SupportsAutoMerge: false);
+        SupportsCheckRuns: false, CanResolveThreads: false, ApprovalCountsForMerge: false, SupportsAutoMerge: false,
+        CanReadFiles: true);
 
     /// <summary>The commit pair: base and head resolved to SHAs, the title and description from the head commit.</summary>
     public async Task<CodeHostPullRequest> GetPullRequestAsync(CodeHostTarget target, CancellationToken ct)
@@ -64,6 +66,70 @@ public sealed class LocalGitCodeHost(GitWorkspaceService git) : ICodeHost
 
     public Task<string> GetDiffAsync(CodeHostTarget target, CodeHostRange range, CancellationToken ct) =>
         RunAsync(RequirePath(target), ct, "diff", "--find-renames", Spec(range), "--");
+
+    public async Task<CodeHostComparison> CompareAsync(CodeHostTarget target, string fromRef, string toRef, CancellationToken ct)
+    {
+        var path = RequirePath(target);
+        var from = await ResolveAsync(path, fromRef, ct);
+        var to = await ResolveAsync(path, toRef, ct);
+        var mergeBase = (await RunAsync(path, ct, "merge-base", from, to)).Trim();
+        var ahead = await CountAsync(path, $"{from}..{to}", ct);
+        var behind = await CountAsync(path, $"{to}..{from}", ct);
+        var files = await ListChangedFilesAsync(target, new CodeHostRange(from, to), ct);
+        return new CodeHostComparison(from, to, mergeBase, ahead, behind, files);
+    }
+
+    public async Task<CodeHostBranchState> GetBranchStateAsync(CodeHostTarget target, string baseRef, string headSha, CancellationToken ct)
+    {
+        var path = RequirePath(target);
+        var tip = await ResolveAsync(path, baseRef, ct);
+        var head = await ResolveAsync(path, headSha, ct);
+        var mergeBase = (await RunAsync(path, ct, "merge-base", tip, head)).Trim();
+        return new CodeHostBranchState(tip, mergeBase, await CountAsync(path, $"{head}..{tip}", ct), await CountAsync(path, $"{tip}..{head}", ct));
+    }
+
+    public async Task<IReadOnlyList<string>> ListFilesAsync(CodeHostTarget target, string sha, string directory, CancellationToken ct)
+    {
+        var path = RequirePath(target);
+        var commit = await ResolveAsync(path, sha, ct);
+        var prefix = directory.Trim('/');
+        if (!IsSafeRef(prefix))
+            throw new CodeHostException(CodeHostFailureKind.InvalidRequest, $"'{directory}' is not a directory path.");
+        var output = await RunAsync(path, ct, "ls-tree", "-r", "-z", "--name-only", commit, "--", prefix);
+        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    public async Task<string?> ReadFileAsync(CodeHostTarget target, string sha, string path, CancellationToken ct)
+    {
+        var repo = RequirePath(target);
+        var commit = await ResolveAsync(repo, sha, ct);
+        if (!IsSafeRef(path) || path.Contains(':'))
+            throw new CodeHostException(CodeHostFailureKind.InvalidRequest, $"'{path}' is not a file path.");
+        var (code, stdout, _) = await git.RunAsync(repo, ct, "show", $"{commit}:{path}");
+        return code == 0 ? stdout : null;
+    }
+
+    public Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct) =>
+        throw Unsupported("post a review");
+
+    public Task<CodeHostThreadReply> ReplyToThreadAsync(CodeHostTarget target, string commentId, string body, CancellationToken ct) =>
+        throw Unsupported("reply to a thread");
+
+    public Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct) => throw Unsupported("resolve a thread");
+
+    public Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct) =>
+        throw Unsupported("set a commit status");
+
+    public Task ApproveAsync(CodeHostTarget target, string headSha, string body, CancellationToken ct) => throw Unsupported("approve");
+
+    public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
+        throw Unsupported("update a branch");
+
+    private static CodeHostException Unsupported(string what) =>
+        new(CodeHostFailureKind.Unsupported, $"A local git host cannot {what}; findings stay in Antiphon (design 8.2).");
+
+    private async Task<int> CountAsync(string path, string range, CancellationToken ct) =>
+        int.TryParse((await RunAsync(path, ct, "rev-list", "--count", range)).Trim(), out var n) ? n : 0;
 
     /// <summary><c>from...head</c>: from the merge base, like a PR.</summary>
     private static string Spec(CodeHostRange range)

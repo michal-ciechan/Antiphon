@@ -122,6 +122,35 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
             ]);
 
         public Task<string> GetDiffAsync(CodeHostTarget target, CodeHostRange range, CancellationToken ct) => Task.FromResult(Diff);
+
+        public Task<CodeHostComparison> CompareAsync(CodeHostTarget target, string fromRef, string toRef, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<CodeHostBranchState> GetBranchStateAsync(CodeHostTarget target, string baseRef, string headSha, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<IReadOnlyList<string>> ListFilesAsync(CodeHostTarget target, string sha, string directory, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<string?> ReadFileAsync(CodeHostTarget target, string sha, string path, CancellationToken ct) => throw Unsupported();
+
+        public Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<CodeHostThreadReply> ReplyToThreadAsync(CodeHostTarget target, string commentId, string body, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct) => throw Unsupported();
+
+        public Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task ApproveAsync(CodeHostTarget target, string headSha, string body, CancellationToken ct) => throw Unsupported();
+
+        public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
+            throw Unsupported();
+
+        private static CodeHostException Unsupported() => new(CodeHostFailureKind.Unsupported, "The intake-only fake has no writes.");
     }
 
     /// <summary>Answers every question with a fixed, confident answer, as provider <c>jev</c> would.</summary>

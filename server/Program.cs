@@ -193,6 +193,8 @@ try
             }
         });
     builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
+    builder.Services.Configure<ReviewCompletionSettings>(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName));
+    builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
     builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
@@ -995,6 +997,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<JevSystemOneClient>();
     builder.Services.AddTransient<IDecisionModel>(sp => sp.GetRequiredService<JevSystemOneClient>());
     builder.Services.AddSingleton<IDecisionModel, StandingSeatDecisionModel>();
+    // No ICompletionModel is registered yet: without a configured chain, verify is skipped and says so.
+    builder.Services.AddScoped<CompletionChain>();
+    builder.Services.AddSingleton<IReviewAgentRunner, UnconfiguredReviewAgentRunner>();
     // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
     builder.Services.AddSingleton<CodeHostResponseCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());

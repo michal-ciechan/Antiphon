@@ -107,6 +107,32 @@ public sealed class ReviewDecisionChainEntry
     public string Transport { get; set; } = "Http";
 }
 
+/// <summary>
+/// Review engine completion providers and chains (design 7.1, 7.4), section <c>Review:Completions</c>.
+/// There are no defaults: until a chain is configured, a completion node (verify) is skipped and says so.
+/// </summary>
+public sealed class ReviewCompletionSettings
+{
+    public const string SectionName = "Review:Completions";
+
+    public Dictionary<string, ReviewCompletionProvider> Providers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Chains by name, for example <c>completions-cheap</c>: ordered provider entries.</summary>
+    public Dictionary<string, List<ReviewDecisionChainEntry>> Chains { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ReviewCompletionProvider
+{
+    /// <summary>The dialect an <c>ICompletionModel</c> serves, for example <c>anthropic-messages</c> or <c>seat</c>.</summary>
+    public string Dialect { get; set; } = "";
+
+    public string? Model { get; set; }
+
+    public int TimeoutSeconds { get; set; } = 120;
+
+    public override string ToString() => $"{Dialect} {Model}";
+}
+
 /// <summary>The review engine's own settings, section <c>Review</c>.</summary>
 public sealed class ReviewSettings
 {
@@ -132,6 +158,15 @@ public sealed class ReviewSettings
 
     /// <summary>Display names and teams by login, until org sync exists (design 12).</summary>
     public Dictionary<string, ReviewViewerSettings> Viewers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The instance check catalogue: a folder of <c>&lt;category&gt;/&lt;id&gt;.md</c> check files (design 9).
+    /// Repo checks at the base SHA override it by id; with neither, the built-in seed set is used.
+    /// </summary>
+    public string? InstanceChecksPath { get; set; }
+
+    /// <summary>The Antiphon web root that commit statuses link to (<c>{root}/reviews/{runId}</c>); absent, no link.</summary>
+    public string? PublicBaseUrl { get; set; }
 }
 
 public sealed class ReviewViewerSettings
