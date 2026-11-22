@@ -4158,6 +4158,12 @@
       ]
     },
     {
+      "path": "scripts/lib/windows-phone-home-env.ps1",
+      "classes": [
+        "ImpactedClassesSelectorTests"
+      ]
+    },
+    {
       "path": "scripts/new-review-scratch.ps1",
       "classes": [
         "C1677TempFamilyRegistryTests",
@@ -4201,6 +4207,7 @@
       "path": "scripts/restart-apphost.ps1",
       "classes": [
         "DockerStackDocumentationTests",
+        "ImpactedClassesSelectorTests",
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests",
         "SourceRevisionStampContractTests"
