@@ -44,6 +44,11 @@
     <EmbeddedResource Include="Application\Review\Workflows\pr-review.yaml">
       <LogicalName>Antiphon.Server.Review.pr-review.yaml</LogicalName>
     </EmbeddedResource>
+    <!-- Review engine (design 9): the built-in seed checks, used when no catalogue is configured. -->
+    <None Remove="Application\Review\Checks\Seed\**\*.md" />
+    <EmbeddedResource Include="Application\Review\Checks\Seed\**\*.md">
+      <LogicalName>Antiphon.Server.Review.Checks.Seed/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <!-- CARD-1987: one pg_stat_statements snapshot, shared with scripts/pg-qps.ps1. -->
     <EmbeddedResource Include="Infrastructure\Data\PgStatStatementsSnapshot.sql">
       <LogicalName>Antiphon.Server.PgStatStatementsSnapshot.sql</LogicalName>
