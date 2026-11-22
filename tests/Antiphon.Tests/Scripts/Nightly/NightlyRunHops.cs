@@ -139,13 +139,17 @@ public sealed class NightlyRcChain : IDisposable
         foreach (var file in SelectionInputs) Write(file, File.ReadAllText(Path.Combine(repo, file.Replace('/', Path.DirectorySeparatorChar))));
         using (var catalog = JsonDocument.Parse(File.ReadAllText(Path.Combine(repo, "tests", "test-selection-policy.json"))))
         {
-            var sets = catalog.RootElement.GetProperty("sets");
+            // $catalog.sets.sourceInputs + $catalog.sets.members.source: member enumeration over the sets.
             var inputs = new SortedSet<string>(StringComparer.Ordinal);
-            if (sets.TryGetProperty("sourceInputs", out var sourceInputs))
-                foreach (var item in sourceInputs.EnumerateArray()) if (item.GetString() is { Length: > 0 } path) inputs.Add(path);
-            if (sets.TryGetProperty("members", out var members))
-                foreach (var member in members.EnumerateArray())
-                    if (member.TryGetProperty("source", out var source) && source.GetString() is { Length: > 0 } path) inputs.Add(path);
+            foreach (var set in catalog.RootElement.GetProperty("sets").EnumerateArray())
+            {
+                if (set.TryGetProperty("sourceInputs", out var sourceInputs) && sourceInputs.ValueKind == JsonValueKind.Array)
+                    foreach (var item in sourceInputs.EnumerateArray()) if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } path) inputs.Add(path);
+                if (set.TryGetProperty("members", out var members) && members.ValueKind == JsonValueKind.Array)
+                    foreach (var member in members.EnumerateArray())
+                        if (member.ValueKind == JsonValueKind.Object && member.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.String
+                            && source.GetString() is { Length: > 0 } path) inputs.Add(path);
+            }
             foreach (var path in inputs)
                 if (!File.Exists(Path.Combine(Seed, path.Replace('/', Path.DirectorySeparatorChar)))) Write(path, "fixture source");
         }

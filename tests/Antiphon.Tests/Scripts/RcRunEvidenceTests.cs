@@ -255,8 +255,14 @@ public sealed class RcRunEvidenceTests
         var probe = Path.Combine(source, "scripts", "fixtures", "nightly", "c487-probe");
         // The fault run's tests child: the same files, a .git that names no repository.
         var faulted = Path.Combine(root, "faulted-checkout");
-        CopyTree(repo, faulted, top: false);
-        Directory.Delete(Path.Combine(faulted, ".git"), true);
+        foreach (var file in Directory.EnumerateFiles(repo, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(repo, file);
+            if (relative.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
+            var target = Path.Combine(faulted, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target, true);
+        }
         File.WriteAllText(Path.Combine(faulted, ".git"), "gitdir: " + Path.Combine(root, "no-such-git-dir") + "\n");
 
         var childLines = new List<string>();

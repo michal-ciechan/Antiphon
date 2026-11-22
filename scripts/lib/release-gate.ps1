@@ -78,8 +78,8 @@ function Push-ReleaseGateExactTag {
 # -------------------------------------------------------------- shared lock ---
 
 # W2-nightly S18: both locks are compiled. D-4's shared native-run lock is Antiphon.Nightly/ReleaseGateNativeLock.cs
-# (the two functions below are thin calls into it); the per-task run lock is NightlyRunLock.cs (the C# run core,
-# NightlyRun.cs, takes it since W2-nightly S20). They observe processes and the clock through the nightly-common seams (IsProcessAlive,
+# (the two functions below are thin calls into it); the per-task run lock is NightlyRunLock.cs (nightly-run-impl.ps1
+# calls it). They observe processes and the clock through the nightly-common seams (IsProcessAlive,
 # GetProcessStartTimeUtc, GetParentProcess, GetBootId, GetHostId, UtcNow) when a test sets them and through the
 # compiled process table otherwise, read on every call; run lines and traces go to Write-NightlyRunLine and
 # Write-NightlyTrace. One lock object per session holds what $script:ReleaseGateOwnsNativeLock held.

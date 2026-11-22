@@ -170,7 +170,8 @@ public sealed class NightlyRunParityTests
         var parameters = Parameters(scenario, s);
         var start = new ProcessStartInfo(pwsh || !OperatingSystem.IsWindows() ? "pwsh" : "powershell.exe") { WorkingDirectory = s.Root };
         start.Environment["ANTIPHON_SCRIPTS_DLL"] = NightlyRunWorld.StagedCli;
-        start.Environment.Remove("ANTIPHON_RC_RUN_EVIDENCE");
+        // The shadow evidence recorder is off on both sides (the in-process side binds an off recorder).
+        start.Environment["ANTIPHON_RC_RUN_EVIDENCE"] = "off";
         var passThru = s.Fixture.PathOf("passthru.json");
         if (!pwsh)
         {
