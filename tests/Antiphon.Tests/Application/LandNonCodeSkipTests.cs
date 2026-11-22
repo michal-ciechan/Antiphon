@@ -3328,7 +3328,7 @@ public sealed class LandNonCodeSkipTests
 
         public ValueTask DisposeAsync()
         {
-            try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+            try { ReadOnlyDirectory.Delete(_root); } catch (IOException) { }
             return ValueTask.CompletedTask;
         }
     }
