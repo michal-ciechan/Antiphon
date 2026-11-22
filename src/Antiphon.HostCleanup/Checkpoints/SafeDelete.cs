@@ -264,8 +264,12 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         var owner = FindOwner(start);
         if (owner is null)
             return allowOutsideRepository ? null : "not-a-repository";
-        if (TrackedInProcess(owner, [full], gitExecutable) is { } tracked)
-            return tracked ? "tracked" : null;
+        // No scope here, so never IndexChanged: only a removal scope compares versions.
+        switch (TrackedInProcess(owner, [full], gitExecutable))
+        {
+            case InProcessTracked.Tracked: return "tracked";
+            case InProcessTracked.Untracked: return null;
+        }
 
         var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
         var top = RunGit(git, owner, ["-C", owner, "rev-parse", "--show-toplevel"], timeoutMs);
