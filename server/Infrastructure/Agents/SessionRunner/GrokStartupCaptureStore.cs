@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Antiphon.Agents.Pty;
 
@@ -8,6 +9,12 @@ public static class GrokStartupCaptureStore
 {
     public const int SourceLimit = 8192;
     public const int FileLimit = 128 * 1024;
+    private const long DirectoryByteLimit = 50L * 1024 * 1024;
+    private const string NamePrefix = "grok-startup-";
+    private const string NameTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
+    private static readonly TimeSpan RetentionAge = TimeSpan.FromDays(7);
+    private static readonly TimeSpan CountGrace = TimeSpan.FromDays(1);
+    private static readonly object CaptureLock = new();
 
     public static string ResolveDirectory(string? configured) =>
         string.IsNullOrWhiteSpace(configured)
@@ -19,11 +26,16 @@ public static class GrokStartupCaptureStore
         bool mcpSeen, bool signInSeen, DateTimeOffset utcNow)
     {
         Directory.CreateDirectory(directory);
-        var name = $"grok-startup-{utcNow.UtcDateTime:yyyyMMddTHHmmssfffZ}-{sessionId:N}-{Guid.NewGuid():N}.txt";
+        var timestamp = utcNow.UtcDateTime.ToString(NameTimeFormat, CultureInfo.InvariantCulture);
+        var name = $"{NamePrefix}{timestamp}-{sessionId:N}-{Guid.NewGuid():N}.txt";
         var path = Path.Combine(directory, name);
-        File.WriteAllText(path, Format(sessionId, outcome, lastScreenReason, frame, elapsed,
-            positiveObservations, mcpSeen, signInSeen, utcNow), new UTF8Encoding(false));
-        Prune(directory, keep);
+        var content = Format(sessionId, outcome, lastScreenReason, frame, elapsed,
+            positiveObservations, mcpSeen, signInSeen, utcNow);
+        lock (CaptureLock)
+        {
+            File.WriteAllText(path, content, new UTF8Encoding(false));
+            Prune(directory, keep, utcNow.UtcDateTime);
+        }
         return path;
     }
 
@@ -101,15 +113,53 @@ public static class GrokStartupCaptureStore
         return sb.ToString();
     }
 
-    private static void Prune(string directory, int configuredKeep)
+    private static void Prune(string directory, int configuredKeep, DateTime utcNow)
     {
-        var keep = Math.Clamp(configuredKeep, 1, 100);
-        foreach (var file in new DirectoryInfo(directory).GetFiles("grok-startup-*.txt")
-            .OrderByDescending(x => x.Name, StringComparer.Ordinal).Skip(keep))
+        var keep = Math.Clamp(configuredKeep, 1, 200);
+        var captures = new List<(FileInfo File, DateTime CapturedAt, long Bytes)>();
+        foreach (var file in new DirectoryInfo(directory).EnumerateFiles($"{NamePrefix}*.txt"))
         {
-            try { file.Delete(); }
+            if (!TryGetCaptureTime(file.Name, out var capturedAt)
+                || (file.Attributes & FileAttributes.ReparsePoint) != 0)
+                continue;
+            try { captures.Add((file, capturedAt, file.Length)); }
+            catch (FileNotFoundException) { }
+        }
+
+        var count = captures.Count;
+        var bytes = captures.Sum(capture => capture.Bytes);
+        foreach (var capture in captures.OrderBy(capture => capture.File.Name, StringComparer.Ordinal))
+        {
+            var age = utcNow - capture.CapturedAt;
+            if (age < RetentionAge && bytes <= DirectoryByteLimit && (count <= keep || age < CountGrace))
+                break;
+            try
+            {
+                capture.File.Delete();
+                count--;
+                bytes -= capture.Bytes;
+            }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    private static bool TryGetCaptureTime(string name, out DateTime capturedAt)
+    {
+        const int timeLength = 19;
+        const int idLength = 32;
+        var timeEnd = NamePrefix.Length + timeLength;
+        var sessionEnd = timeEnd + 1 + idLength;
+        var captureEnd = sessionEnd + 1 + idLength;
+        capturedAt = default;
+        return name.Length == captureEnd + 4
+            && name.StartsWith(NamePrefix, StringComparison.Ordinal)
+            && name.EndsWith(".txt", StringComparison.Ordinal)
+            && name[timeEnd] == '-' && name[sessionEnd] == '-'
+            && Guid.TryParseExact(name.AsSpan(timeEnd + 1, idLength), "N", out _)
+            && Guid.TryParseExact(name.AsSpan(sessionEnd + 1, idLength), "N", out _)
+            && DateTime.TryParseExact(name.AsSpan(NamePrefix.Length, timeLength), NameTimeFormat,
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out capturedAt);
     }
 }

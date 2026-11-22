@@ -118,8 +118,8 @@ public class AgentRegistrySettings
     public int GrokTrustPromptSettleMs { get; set; } = 15000;
     /// <summary>Local diagnostic directory for failed Grok startup waits.</summary>
     public string? GrokStartupCaptureDirectory { get; set; }
-    /// <summary>Completed captures retained in that directory, clamped to 1..100.</summary>
-    public int GrokStartupCaptureKeep { get; set; } = 10;
+    /// <summary>Capture count target, clamped to 1..200. Captures in their first 24 hours are exempt from the count limit.</summary>
+    public int GrokStartupCaptureKeep { get; set; } = 200;
     public int GrokDoneQuietPeriodMs { get; set; } = 3000;
     public int GrokDoneMaxWaitMs { get; set; } = 300000;
 
