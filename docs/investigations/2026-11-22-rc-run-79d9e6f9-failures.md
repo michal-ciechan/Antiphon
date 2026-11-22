@@ -19,3 +19,9 @@ The [g132 retrospective](2026-11-10-why-missed-g132-windowsunitplatformadmission
 The [read-only Git fixture sweep](2026-11-22-why-missed-git-fixture-readonly-delete.md) (Debug `62b60ff2`) landed as `fd1a0c831415b5d76b42bb949311ecf75849cdf9` and added `test-fixture-cleanup` for `tests/**/*.cs`. Both historical ranges match that glob.
 The sweep's short pre-land scope centered on fixture teardown and its guard. Merge runs the subject's narrow witness rows, which left the Unit `MergeHighRadiusSubsetTests` outside the selection until Windows Full.
 When `tests/impacted-classes.json` changes, run the two historical range methods in `MergeHighRadiusSubsetTests` and the two historical kind-list methods in `ImpactedClassesSelectorTests`. The same coverage gap caused the [group 135 failure](2026-11-16-why-missed-g135-merge-subset-kinds.md).
+
+## Group 145 · Git fixture cleanup
+
+Nightly S19 (`cad15e980841e1713f645d19f354227832303761`) landed after the fixture cleanup sweep and added a raw recursive delete of the fixture's `.git` directory in `NightlyRunTests.C487_G002`.
+Short Merge replays the subject's own witnesses, which left the fixture cleanup guard outside S19's selection on the combined tree.
+Apply the existing `test-fixture-cleanup` trigger for `tests/**/*.cs` during short Merge and run `/*/*/TestFixtureCleanupGuardTests/*` on the combined tree before landing matching changes.

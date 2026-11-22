@@ -48,7 +48,7 @@ public sealed class NightlyRunTests
         {
             using var w = new NightlyRunWorld("g002");
             var gitDir = Path.Combine(w.Clone, ".git");
-            Directory.Delete(gitDir, true);
+            ReadOnlyDirectory.Delete(gitDir);
             File.WriteAllText(gitDir, "gitdir: C:\\other\\repo\\.git\\worktrees\\x\r\n");
             var r = w.Run();
             rows.Check(r.ExitCode == 3 && r.Refusal == "linked-worktree", "G002 " + kind, r.Refusal);
