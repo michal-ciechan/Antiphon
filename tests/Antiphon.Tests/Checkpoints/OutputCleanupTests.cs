@@ -1592,8 +1592,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write()
     {
-        if (!OperatingSystem.IsWindows())
-            Skip.Test("CARD-1310 Windows output custody");
+        Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(OutputCleanupTests), nameof(windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write));
 
         var root = InitGitRepo();
         var output = Path.Combine(root, "bin-c1310");
@@ -1671,8 +1670,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void windows_set_clock_and_foreign_dacl_are_not_adopted()
     {
-        if (!OperatingSystem.IsWindows())
-            Skip.Test("CARD-1318 Windows custody hardening");
+        Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(OutputCleanupTests), nameof(windows_set_clock_and_foreign_dacl_are_not_adopted));
 
         var root = InitGitRepo();
         var output = Path.Combine(root, "bin-c1318");
@@ -1720,8 +1718,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void windows_copied_old_change_time_is_adopted()
     {
-        if (!OperatingSystem.IsWindows())
-            Skip.Test("CARD-1318 Windows copy change time");
+        Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(OutputCleanupTests), nameof(windows_copied_old_change_time_is_adopted));
 
         var root = InitGitRepo();
         var old = Path.Combine(root, "package.dll");
@@ -1759,8 +1756,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void windows_sharing_violation_retries_then_adopts()
     {
-        if (!OperatingSystem.IsWindows())
-            Skip.Test("CARD-1318 Windows custody hardening");
+        Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(OutputCleanupTests), nameof(windows_sharing_violation_retries_then_adopts));
 
         var root = InitGitRepo();
         var output = Path.Combine(root, "bin-c1318");
