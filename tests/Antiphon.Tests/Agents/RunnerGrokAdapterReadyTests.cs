@@ -20,6 +20,74 @@ public class RunnerGrokAdapterReadyTests
     private static readonly string Ready = GrokStartupFixture.ReadyScreen();
     private const string Trust = "Do you trust the contents of this directory?\nYes, proceed  y\nNo, quit  n";
     private const string SignIn = "Approve in your browser to finish signing in.\nWaiting for approval...";
+    private static readonly string Working = Ready.Replace(GrokStartupScreen.EnabledHint,
+        "  Ctrl+c:cancel  │  Ctrl+;:queue", StringComparison.Ordinal);
+
+    [Test]
+    public async Task C2047_Working_at_deadline_stays_gated_until_positive_composer()
+    {
+        var client = new ScriptedClient(["initial frame", Working, Ready]);
+        var clock = new PollGateClock();
+        var directory = Directory.CreateTempSubdirectory("c2047-working-");
+        try
+        {
+            await using var adapter = NewAdapter(client, max: 60000, settle: 50,
+                captureDirectory: directory.FullName, time: clock);
+            await adapter.StartAsync(Spec(), CancellationToken.None);
+            var wait = adapter.WaitForReadyAsync(CancellationToken.None);
+
+            await AdvanceStartup(wait, clock, 1, TimeSpan.FromSeconds(60));
+            await AdvanceStartup(wait, clock, 2, TimeSpan.FromSeconds(10));
+            await AdvanceStartup(wait, clock, 3, TimeSpan.FromMilliseconds(50));
+
+            (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue("Working must permit later settled readiness");
+            client.SnapshotReads.ShouldBe(4);
+            client.Writes.ShouldBeEmpty();
+            directory.GetFiles().ShouldBeEmpty();
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Test]
+    public async Task C2047_Continuous_working_stops_at_the_ceiling()
+    {
+        var client = new ScriptedClient([Working]);
+        var clock = new PollGateClock();
+        var directory = Directory.CreateTempSubdirectory("c2047-ceiling-");
+        var logger = new TestLogger();
+        try
+        {
+            await using var adapter = NewAdapter(client, max: 60000,
+                captureDirectory: directory.FullName, time: clock, logger: logger);
+            await adapter.StartAsync(Spec(), CancellationToken.None);
+            var wait = adapter.WaitForReadyAsync(CancellationToken.None);
+
+            await AdvanceStartup(wait, clock, 1, TimeSpan.FromSeconds(60));
+            for (var ordinal = 2; ordinal <= 5; ordinal++)
+                await AdvanceStartup(wait, clock, ordinal, TimeSpan.FromSeconds(30));
+
+            (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
+            clock.GetUtcNow().ShouldBe(new PollGateClock().GetUtcNow().AddSeconds(180));
+            client.SnapshotReads.ShouldBe(6);
+            client.Writes.ShouldBeEmpty();
+            var capture = File.ReadAllText(directory.GetFiles().Single().FullName);
+            capture.ShouldContain("outcome: Deadline");
+            capture.ShouldContain("lastScreenReason: Working");
+            capture.ShouldContain("elapsedMs: 180000");
+            capture.ShouldContain("workingCeilingMs: 180000");
+            logger.Messages.Single().ShouldContain("workingCeilingMs=180000");
+        }
+        finally { directory.Delete(true); }
+    }
+
+    private static async Task AdvanceStartup(Task<bool> wait, PollGateClock clock,
+        int ordinal, TimeSpan advance)
+    {
+        var poll = clock.PollInstalled(ordinal);
+        var next = await Task.WhenAny(wait, poll).WaitAsync(TimeSpan.FromSeconds(5));
+        next.ShouldBe(poll, $"startup must stay gated before poll {ordinal}");
+        clock.Advance(advance);
+    }
 
     [Test]
     [Arguments(80, 24)]
@@ -751,11 +819,9 @@ public class RunnerGrokAdapterReadyTests
     {
         private readonly FakeTimeProvider _timer = new();
         private readonly Queue<TaskCompletionSource<TimeSpan>> _nextTimers = new();
-        private readonly TaskCompletionSource[] _polls =
-        [
-            new(TaskCreationOptions.RunContinuationsAsynchronously),
-            new(TaskCreationOptions.RunContinuationsAsynchronously)
-        ];
+        private readonly TaskCompletionSource[] _polls = Enumerable.Range(0, 5)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
         private readonly TaskCompletionSource _floorSleep =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _pollCount;
