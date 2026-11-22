@@ -296,7 +296,8 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
     // filesystem is not the native one, a path holds a character git would read as a pathspec glob or lies
     // outside the checkout, or the index is a layout GitInProcess declines. Case-insensitive on Windows, which can
     // only call more paths tracked (a refusal to delete), never fewer.
-    private bool? TrackedInProcess(string owner, IReadOnlyCollection<string> fullPaths, string? gitExecutable)
+    private bool? TrackedInProcess(string owner, IReadOnlyCollection<string> fullPaths, string? gitExecutable,
+        TrackedIndexScope? scope = null)
     {
         if (!string.IsNullOrWhiteSpace(gitExecutable)
             || context.Git is not CheckpointNativeGitRunner { RunsRealGit: true }
@@ -326,13 +327,23 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
             }
         }
+        // CARD-2052: inside one removal scope, a listing read while the index and its repository files kept one
+        // identity answers again for as long as they still have it; any change, or a stamp that cannot be read,
+        // reads the index again through every IndexListing check.
+        var stamp = scope is null ? null : TrackedIndexStamp.Read(context, owner);
+        if (scope?.Answer(owner, stamp, relatives) is { } cached) return cached;
         string? listing;
         context.CountInProcessIndexRead();
         try { listing = Antiphon.GitInProcess.InProcessGitStatus.IndexListing(owner, stage: false); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
             or TypeInitializationException or BadImageFormatException or EntryPointNotFoundException
-            or LibGit2Sharp.LibGit2SharpException) { return null; }
-        if (listing is null) return null;
+            or LibGit2Sharp.LibGit2SharpException) { scope?.Clear(); return null; }
+        if (listing is null) { scope?.Clear(); return null; }
+        if (scope is not null)
+        {
+            scope.Store(owner, stamp is not null && stamp == TrackedIndexStamp.Read(context, owner) ? stamp : null, listing);
+            if (scope.Answer(owner, stamp, relatives) is { } stored) return stored;
+        }
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var entry in listing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
             foreach (var relative in relatives)
@@ -370,6 +381,11 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
     // Paths that fit the command-line budget stay one invocation, in the same order.
     // A longer list is split. Any batch failure fails the call. Emptiness is the union.
     public string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null, int? commandLineBudget = null)
+        => PreflightRoots(repository, roots, scope: null, gitExecutable, timeoutMs, commandLineBudget);
+
+    // CARD-2052: the same check, answering the in-process index read from the scope while the index is unchanged.
+    internal string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, TrackedIndexScope? scope,
+        string? gitExecutable = null, int? timeoutMs = null, int? commandLineBudget = null)
     {
         if (roots.Count == 0)
             return "git-failed";
@@ -392,7 +408,7 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 return "path-unsafe";
             paths.Add(full);
         }
-        if (TrackedInProcess(owner, paths, gitExecutable) is { } tracked)
+        if (TrackedInProcess(owner, paths, gitExecutable, scope) is { } tracked)
             return tracked ? "tracked" : null;
 
         var prefix = new[] { "-C", owner, "ls-files", "-z", "--" };
