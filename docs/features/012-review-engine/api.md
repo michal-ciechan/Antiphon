@@ -12,8 +12,11 @@ first when the contract changes. Owner design: [design.md](design.md).
   policy).
 - Ids are GUID strings. Times are ISO-8601 UTC. Money is `costUsd: number`; the client formats it
   (under $1 → rounded cents, otherwise rounded dollars).
-- Errors are Problem Details from the `HttpException` hierarchy: 404 unknown id, 409 stale or illegal
-  transition, 422 validation.
+- Errors are Problem Details from the `HttpException` hierarchy: 404 unknown id, 403 not allowed
+  (e.g. the author deciding their own gate), 409 stale or illegal transition (e.g. dismissing an open
+  blocker), 422 validation. Intake and Refresh can also return 503 when the code host fails, with a
+  code of `review_code_host_rejected`, `review_code_host_rate_limited`,
+  `review_code_host_unavailable` or `review_code_host_too_large`.
 - Lists return `{ items: T[], total: number }`.
 
 ## Enums
@@ -70,7 +73,11 @@ interface NodeExecutionDto {
   startedAt: string | null; completedAt: string | null; summary: string | null
 }
 
-interface ReviewIterationDto { iteration: number; round: number; trigger: string /* 'opened' | 'push' | 'recheck' | 'another-round' | 'base-moved' … */; startedAt: string }
+interface ReviewIterationDto {
+  iteration: number; round: number; startedAt: string
+  trigger: string /* 'opened' | 'manual' | 'push' (Refresh saw a new head) | 'recheck' (Refresh of a failed run, same head) | 'another-round' | 'base-moved' … */
+  baseSha: string | null; headSha: string | null /* what this iteration reviewed; the next delta starts from headSha */
+}
 
 interface ReviewRunDetailDto extends ReviewRunSummaryDto {
   categories: string[]
@@ -141,10 +148,10 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 |---|---|---|---|
 | GET | `/api/review-runs` | `?status=&repo=&stage=&q=` | `{ items: ReviewRunSummaryDto[], total }` |
 | GET | `/api/review-runs/kpis` | | `ReviewKpisDto` |
-| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake) | `ReviewRunDetailDto` (201) |
+| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake through `ICodeHost`). `GitHub` needs `prNumber`. `Local` needs `baseSha` (any ref); `headSha` defaults to `HEAD`. The title defaults to the PR or commit title. | `ReviewRunDetailDto` (201) |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
-| POST | `/api/review-runs/{id}/refresh` | | 202; asks the code host for new events (the manual Refresh) |
+| POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` | `ReviewFindingDto` |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` (one submitted review) | `{ items: ReviewFindingDto[] }` |
 | GET | `/api/review-queue` | `?scope=Mine\|Teams\|All&login=` | `{ items: QueueItemDto[], total }` |
@@ -167,6 +174,8 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 |---|---|
 | v0 | First contract |
 | v0.1 | Client-track proposals accepted:<br>- `itemKey` and `outcome` on node executions<br>- `iterations[]`<br>- gate: `allowedDecisions`, `viewerCanDecide` and reason, `decidedBy`, `passes[]` (replaces `passedBy`), `assigneeDisplayName`<br>- section `collapsed`, and a GET by revision<br>- blast radius and the actual/estimated cost split on the summary<br>- `slaWorkingMinutes`<br>- owners as `{kind, name}`, and `openedByLogin`<br>- finding `hunk`<br>- diagnostic `severity`<br>- `GET /api/review-me` |
+
+| v0.2 | Server-track increment:<br>- iteration `baseSha` and `headSha`, and the `manual`, `push` and `recheck` triggers<br>- intake rules for `GitHub` and `Local`<br>- Refresh behaviour<br>- 403 and 503 codes<br><br>Planned, not served yet:<br>- a run-level `failureReason` (today it is in the failed node's `summary`)<br>- the all-repos `POST /api/review/refresh` (design §8.5) |
 
 ## Not in this slice
 
