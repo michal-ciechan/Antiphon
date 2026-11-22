@@ -2685,6 +2685,39 @@ public sealed class LandNonCodeSkipTests
     private const string ManifestPath = "server/Application/Services/LandVerificationBuildGraph.manifest.txt";
 
     [Test]
+    public async Task C_FT2_DisposeRemovesReadOnlyLooseObject()
+    {
+        var repo = await Ft2Repo.CreateAsync();
+        try
+        {
+            var head = await repo.HeadAsync();
+            var objectDirectory = Path.Combine(repo.Root, ".git", "objects", head[..2]);
+            var looseObject = Path.Combine(objectDirectory, head[2..]);
+            File.Exists(looseObject).ShouldBeTrue();
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(looseObject, File.GetAttributes(looseObject) | FileAttributes.ReadOnly);
+            }
+            else
+            {
+                File.SetUnixFileMode(looseObject, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+                // Unix unlink checks the directory's write permission.
+                File.SetUnixFileMode(objectDirectory, UnixFileMode.UserRead | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+
+            await repo.DisposeAsync();
+
+            Directory.Exists(repo.Root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(repo.Root))
+                ReadOnlyDirectory.Delete(repo.Root);
+        }
+    }
+
+    [Test]
     public async Task C_FT2_CurrentTargetManifestSkipsWhenEmbeddedDiffers()
     {
         await using var h = await CreateAsync();
@@ -3252,6 +3285,8 @@ public sealed class LandNonCodeSkipTests
     {
         private readonly string _root;
         private Ft2Repo(string root) => _root = root;
+
+        public string Root => _root;
 
         public static async Task<Ft2Repo> CreateAsync()
         {
