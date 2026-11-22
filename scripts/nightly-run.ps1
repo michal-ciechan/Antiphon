@@ -160,6 +160,17 @@ if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
     exit 3
 }
 
+# A value passed blank refuses, as the PowerShell run core did: 5.1 drops empty native arguments, so the CLI would
+# otherwise read a blank -Trigger as scheduled and a blank -CheckoutRoot as the production clone.
+foreach ($blank in @(@('Trigger', 'blank-trigger'), @('CheckoutRoot', 'blank-checkout-root'))) {
+    if ($PSBoundParameters.ContainsKey($blank[0]) -and [string]::IsNullOrWhiteSpace([string]$PSBoundParameters[$blank[0]])) {
+        [Console]::Error.WriteLine('nightly-run: ' + $blank[1])
+        $refused = New-NightlyRunLauncherRefusal -Code 2 -Refusal $blank[1]
+        if ($PassThru) { return $refused }
+        exit 2
+    }
+}
+
 . (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
 $arguments = @(
     '--suites', (@($Suites) -join ','),

@@ -437,6 +437,25 @@ public sealed class AntiphonCliLauncherTests
     }
 
     [Test]
+    [Arguments("-Trigger", "blank-trigger")]
+    [Arguments("-CheckoutRoot", "blank-checkout-root")]
+    public async Task Nightly_run_launcher_refuses_an_explicitly_blank_value(string parameter, string refusal)
+    {
+        // 5.1 drops an empty native argument, so the CLI would read a blank -Trigger as scheduled (credit) and a blank
+        // -CheckoutRoot as the production clone; the launcher refuses them as the PowerShell run core did.
+        using var fixture = RunCheckout();
+        var entry = fixture.PathOf("scripts", "nightly-run.ps1");
+        var state = fixture.PathOf("state");
+        var expected = NightlyRun.RecordLine(new NightlyRunResult { ExitCode = 2, Refusal = refusal });
+
+        var refused = await RunScript(fixture, entry, ["-StateRoot", state, parameter, ""], new Dictionary<string, string>());
+        refused.Exit.ShouldBe(2, refused.Stderr);
+        refused.Stdout.Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1].ShouldBe(expected);
+        refused.Stderr.Trim().ShouldBe("nightly-run: " + refusal);
+        Directory.Exists(state).ShouldBeFalse("a refusal runs nothing and writes nothing");
+    }
+
+    [Test]
     public async Task Nightly_run_launcher_that_cannot_start_the_cli_exits_9_with_a_record()
     {
         using var fixture = RunCheckout();
