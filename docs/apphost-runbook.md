@@ -116,10 +116,10 @@ and Postgres stay up.
 
 Use `-Hard` for a planned supervisor refresh: it also stops the supervisor and
 restarts ownership through the **Antiphon Session Runner** Scheduled Task.
-After the AppHost first starts on an rc with deploy-only SHA stamping, run the
-first desktop runner restart with `pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard`.
-The resident supervisor otherwise keeps its old build command and reports an
-unknown runner SHA. Run `scripts/check-daemon-build.ps1` after the restart and
+The first desktop runner restart after SHA stamp activation must use
+`pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard`.
+A soft restart can keep the old supervisor's build command and produce an
+unstamped runner. After the restart, run `scripts/check-daemon-build.ps1` and
 verify the full runner `build.commitSha` from `/capabilities` equals the checkout HEAD.
 
 Switching that runner between the direct mode and `desktop-win` is this kind of

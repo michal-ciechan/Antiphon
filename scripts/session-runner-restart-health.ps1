@@ -6,20 +6,32 @@ function Get-RunnerProcessIdentity([int]$ProcessId) {
     } catch { return $null }
 }
 
-function Invoke-RunnerHealthHttp([string]$Url, [double]$BudgetMs) {
+function Invoke-RunnerHealthHttp([string]$Url, [double]$BudgetMs, [switch]$ReadBody) {
     Add-Type -AssemblyName System.Net.Http
     $handler = [Net.Http.HttpClientHandler]::new()
     $handler.AllowAutoRedirect = $false
     $handler.UseProxy = $false
     $client = [Net.Http.HttpClient]::new($handler)
     $client.Timeout = [Threading.Timeout]::InfiniteTimeSpan
+    $completion = [Net.Http.HttpCompletionOption]::ResponseHeadersRead
+    if ($ReadBody) {
+        $completion = [Net.Http.HttpCompletionOption]::ResponseContentRead
+        $client.MaxResponseContentBufferSize = 65536
+    }
     $cts = [Threading.CancellationTokenSource]::new()
     $cts.CancelAfter([TimeSpan]::FromMilliseconds([Math]::Max(1, $BudgetMs)))
     $response = $null
     try {
-        $response = $client.GetAsync($Url, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cts.Token).GetAwaiter().GetResult()
+        $response = $client.GetAsync($Url, $completion, $cts.Token).GetAwaiter().GetResult()
+        if ($ReadBody) {
+            if ([int]$response.StatusCode -ne 200) { return $null }
+            return ($response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json -ErrorAction Stop)
+        }
         return @{ status = [int]$response.StatusCode; result = "http-$([int]$response.StatusCode)" }
-    } catch { return @{ status = 0; result = 'transport-error-or-timeout' } }
+    } catch {
+        if ($ReadBody) { return $null }
+        return @{ status = 0; result = 'transport-error-or-timeout' }
+    }
     finally { if ($response) { $response.Dispose() }; $cts.Dispose(); $client.Dispose(); $handler.Dispose() }
 }
 
@@ -95,6 +107,7 @@ public class AntiphonRestartTcpOwner {
         Utc = { [DateTime]::UtcNow.ToString('o') }
         Sleep = { param($ms) Start-Sleep -Milliseconds ([int][Math]::Ceiling($ms)) }
         Probe = { param($ms) Invoke-RunnerHealthHttp 'http://127.0.0.1:17204/health' $ms }
+        ProbeBuild = { Invoke-RunnerHealthHttp 'http://127.0.0.1:17204/capabilities' 1000 -ReadBody }
         Identity = {
             $owner = [AntiphonRestartTcpOwner]::Find(17204)
             if ($owner) { Get-RunnerProcessIdentity $owner }
@@ -308,5 +321,17 @@ function Invoke-RunnerRestart($Platform, [switch]$Hard, [switch]$KillSessions, [
     # Clock/observation failures must not suppress the front door's stable final JSON line.
     try { $result.observedAtUtc = & $Platform.Utc } catch { }
     try { $result.commandElapsedMs = [Math]::Round((& $Platform.Now) - $entry, 3) } catch { $result.commandElapsedMs = $null }
+    if ($result.outcome -eq 'healthy' -and -not $Hard -and $Platform.ProbeBuild) {
+        try {
+            $capabilities = & $Platform.ProbeBuild
+            # The deploy build in run-daemon.ps1 is expected to carry a full SHA.
+            if ($capabilities.build -is [pscustomobject] -and [string]$capabilities.build.commitSha -notmatch '\A[0-9a-f]{40}\z') {
+                $owner = & $Platform.Identity
+                if ($owner.pid -eq $result.runner.pid -and $owner.startTimeUtc -eq $result.runner.startTimeUtc) {
+                    Write-Host 'WARNING: first restart after the SHA stamp activation: re-run with -Hard' -ForegroundColor Yellow
+                }
+            }
+        } catch { } # An unavailable advisory must leave the observed result intact.
+    }
     return [pscustomobject]$result
 }
