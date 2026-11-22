@@ -91,8 +91,7 @@ public sealed class NightlyNativeOwnershipTests
         native.Assert((limits & 0x1800) == 0, "independent private job readback forbids both breakaway flags");
         native.Assert((limits & 0x2000) != 0, "independent private job readback enables kill on close");
         native.Release(r, "assignment");
-        native.WaitFor(() => File.Exists(Path.Combine(r.Root, "breakaway-result")), "breakaway result");
-        native.Assert(File.ReadAllText(Path.Combine(r.Root, "breakaway-result")).Trim() == "refused", "job forbids breakaway request");
+        native.Assert(ReadMarker(Path.Combine(r.Root, "breakaway-result")).Trim() == "refused", "job forbids breakaway request");
         native.Assert(!File.Exists(Path.Combine(r.Root, "breakaway-child.pid")), "no independently live breakaway descendant");
         native.Complete(r);
     }, cancellationToken);
@@ -175,8 +174,7 @@ public sealed class NightlyNativeOwnershipTests
         var owner = native.Launcher.Start(new NightlyLaunch(Fixture, [root, "retained-writer", Environment.ProcessId.ToString()], root, 30000, null,
             Path.Combine(root, "native.log"), NightlyCustody.Owned));
         native.Owners.Add(owner);
-        native.WaitFor(() => File.Exists(Path.Combine(root, "writer.handle")), "real duplicated stdout writer");
-        native.RetainedWriters.Add(long.Parse(File.ReadAllText(Path.Combine(root, "writer.handle"))));
+        native.RetainedWriters.Add(long.Parse(ReadMarker(Path.Combine(root, "writer.handle"))));
         native.WaitFor(() => owner.Observation.ChildrenExited, "retained writer root and job exited");
         native.Assert(owner.Completion.Wait(20000), "retained pipe writer cannot outlive independent drain deadline");
         var result = owner.Completion.GetAwaiter().GetResult();
@@ -343,6 +341,8 @@ public sealed class NightlyNativeOwnershipTests
 
     private sealed record NativeRun(string Root, NativeProcessOwner Owner, string Log);
 
+    private static string ReadMarker(string path) => LiveFixtureText.ReadPublishedAsync(path).GetAwaiter().GetResult();
+
     private sealed record EnvironmentEntry(string Name, string? Value);
 
     private static EnvironmentEntry[] Find(EnvironmentEntry[] observed, string name) =>
@@ -448,8 +448,7 @@ public sealed class NightlyNativeOwnershipTests
         public Process OpenHandle(NativeRun run, string name)
         {
             var file = Path.Combine(run.Root, name + ".pid");
-            WaitFor(() => File.Exists(file), name + " pid");
-            var process = Process.GetProcessById(int.Parse(File.ReadAllText(file)));
+            var process = Process.GetProcessById(int.Parse(ReadMarker(file)));
             _ = process.Handle;
             _ = process.StartTime;
             _handles.Add(process);
@@ -527,7 +526,7 @@ public sealed class NightlyNativeOwnershipTests
                 var childFile = Path.Combine(root, "breakaway-child.pid");
                 if (File.Exists(childFile))
                 {
-                    try { Hold(Process.GetProcessById(int.Parse(File.ReadAllText(childFile)))); }
+                    try { Hold(Process.GetProcessById(int.Parse(ReadMarker(childFile)))); }
                     catch (ArgumentException) { }
                 }
             }

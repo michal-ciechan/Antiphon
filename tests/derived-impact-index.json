@@ -26449,7 +26449,8 @@
       "path": "tests/Antiphon.Tests/TestHelpers/LiveFixtureText.cs",
       "classes": [
         "ChannelOutboundRecoveryTests",
-        "LiveFixtureTextTests"
+        "LiveFixtureTextTests",
+        "NightlyNativeOwnershipTests"
       ]
     },
     {
