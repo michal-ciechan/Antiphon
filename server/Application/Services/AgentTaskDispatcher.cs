@@ -2542,6 +2542,7 @@ public sealed partial class AgentTaskDispatcher
                 .OrderBy(m => m.Sequence)
                 .Select(m => new
                 {
+                    m.Id,
                     m.Status,
                     m.DeliveryAttempts,
                     m.SentAt,
@@ -2631,8 +2632,10 @@ public sealed partial class AgentTaskDispatcher
                 }
                 else if (!withholdKill)
                 {
+                    var history = briefRow is null ? null : await BootPromptDeliveryHistory.DescribeAsync(
+                        _db, briefRow.Id, briefRow.DeliveryAttempts, briefRow.LastDeliveryStartedAt, briefRow.DeliveryVerdict, ct);
                     var evidence = DescribeBriefQueueEvidence(
-                        briefRow?.Status, briefRow?.DeliveryAttempts ?? 0);
+                        briefRow?.Status, briefRow?.DeliveryAttempts ?? 0, history);
                     reason = started && briefNeverTyped
                         ? $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
                           + "the session has written prompts since dispatch, but none of them was this "
@@ -3123,16 +3126,14 @@ public sealed partial class AgentTaskDispatcher
         return await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) == RunnerAbsence.Positive;
     }
 
-    /// <summary>
-    /// CARD-0117 D7: the Pending-arm evidence used to read "every delivery attempt failed" when
-    /// <c>DeliveryAttempts</c> was 0 — the queue never tried, because the session was mid-turn
-    /// at every flush. Project the attempt count and say which it was.
-    /// </summary>
-    private string DescribeBriefQueueEvidence(QueuedMessageStatus? status, int deliveryAttempts) =>
-        status switch
+    private string DescribeBriefQueueEvidence(QueuedMessageStatus? status, int deliveryAttempts, string? history)
+    {
+        var queueState = status switch
         {
-            QueuedMessageStatus.Pending when deliveryAttempts <= 0
+            QueuedMessageStatus.Pending when deliveryAttempts <= 0 && history is null
                 => "the brief is still queued Pending and was never attempted",
+            QueuedMessageStatus.Pending when deliveryAttempts <= 0
+                => "the brief is still queued Pending",
             QueuedMessageStatus.Pending when deliveryAttempts >= _maxDeliveryAttempts
                 => "the brief is still queued Pending, parked at MaxDeliveryAttempts",
             QueuedMessageStatus.Pending
@@ -3142,6 +3143,8 @@ public sealed partial class AgentTaskDispatcher
             null => "no brief was queued for this task after dispatch",
             _ => $"brief status: {status}",
         };
+        return history is null ? queueState : $"{queueState}, {history}";
+    }
 
     private async Task<RunnerCapabilityMismatch?> TryGetRunnerCapabilityMismatchAsync(
         AgentTask task, Guid sessionId, CancellationToken ct)

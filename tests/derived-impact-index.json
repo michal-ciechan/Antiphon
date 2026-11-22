@@ -1859,9 +1859,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
-      "classes": 101,
+      "classes": 102,
       "reason": "cap",
-      "owed": 76,
+      "owed": 77,
       "first": [
         "CheckNoteDeliveryHandoffTests",
         "CompactionContinuationWireTests",
@@ -2211,9 +2211,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",

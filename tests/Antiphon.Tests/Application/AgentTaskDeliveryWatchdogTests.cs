@@ -163,6 +163,36 @@ public partial class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
+    public async Task A_legacy_refunded_boot_prompt_reports_only_its_known_attempt_history()
+    {
+        var (watchdog, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        try
+        {
+            await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
+            await using var db = CreateContext();
+            var lastStarted = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-2));
+            await db.SessionQueuedMessages.Where(m => m.AgentSessionId == task.AgentSessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LastDeliveryStartedAt, lastStarted)
+                    .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.NoComposerEvidence));
+
+            await watchdog.FailNeverStartedAsync(CancellationToken.None);
+
+            var failed = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldContain("attempted at least 1 time");
+            failed.FailureReason.ShouldContain($"last recorded attempt at {lastStarted:O}");
+            failed.FailureReason.ShouldContain("required composer evidence was not observed");
+            failed.FailureReason.ShouldNotContain("never attempted");
+            failed.FailureReason.ShouldNotContain("first attempt at");
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
     public async Task a_real_user_prompt_after_dispatch_means_the_task_is_left_alone()
     {
         // Slow work is the stall scan's business; a real prompt after dispatch proves delivery happened.
