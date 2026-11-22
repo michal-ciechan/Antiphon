@@ -20028,6 +20028,7 @@
     {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceSlotLedger.cs",
       "classes": [
+        "C0824WindowsSlotHolderTests",
         "C0824WorkspaceSlotColdResetTests",
         "C0824WorkspaceSlotCustodyTests",
         "C0824WorkspaceSlotOverflowTests",
