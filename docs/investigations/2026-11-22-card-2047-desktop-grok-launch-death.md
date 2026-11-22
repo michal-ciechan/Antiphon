@@ -12,15 +12,17 @@ All times are UTC on 2026-11-21. Task `6cdcd4c3-0454-4eb8-b3c0-04216f9d406c` was
 | --- | --- |
 | 06:46:35.291642 | Task created. |
 | 06:46:45.350272 | Task dispatched and Windows worktree recorded. |
-| 06:46:58.160890 | System message `dbed7dfa-82a5-4040-aa17-3022891b8d90` created. It remains `Pending`, with null sent and delivered timestamps. |
-| 06:47:58.295728 | Session `endedAt`. Status `Failed`, `lastTranscriptAt=null`. The server transcript returned HTTP 200, zero entries and `lastSequence=0`. There is no recorded `UserPrompt` or test execution. |
+| 06:46:58.160890 | System message `dbed7dfa-82a5-4040-aa17-3022891b8d90` created. It remains `Pending`, with zero delivery attempts and null sent and delivered timestamps. |
+| 06:47:58.295728 | Session `endedAt`. Status `Failed`, backend `PtyHost`, `exitCode=1`, `exitSignal=0`, `exitStopIntent=null`, `lastTranscriptAt=null`. The server transcript returned HTTP 200, zero entries and `lastSequence=0`. There is no recorded `UserPrompt` or test execution. |
 | 06:51:05.513162 | Task settled `Failed`, with `failureCode=null`. Its event records `Process exited (KilledByRequest, code 1). process exited with exit code 1 (ProcessExit)`. No Canceled event appears in the task history. |
 | 07:16 (reported) | Desktop runner restarted, per CARD-2047. No independent restart receipt was available. |
 | 07:27:10.538469 | Desktop ClaudeCode task `58834019-6695-4c5d-a36a-f0786694b954` dispatched. It succeeded at 07:46:40.390443 and session `be105aac-9c94-41c9-b9b2-f86d194f7162` has one `UserPrompt` among 106 transcript entries. This verifies later desktop delivery for ClaudeCode. |
 
 The session ended 72.945456 seconds after dispatch and 60.134838 seconds after the pending message was created. The latter is an elapsed-time comparison, since the launch worker's exact start of readiness polling is absent. Task settlement followed the exit by 187.217434 seconds.
 
-The evidence came from the configured server API. The successful reads were `GET /api/agent-tasks/6cdcd4c3`, `GET /api/sessions/{id}/transcript?since=0`, `GET /api/sessions/{id}/messages`, and scoped card and task reads for the related work. The agent detail and incidents routes returned HTTP 404 for the ephemeral agent, and the historic session buffer returned HTTP 500. Local attempts at the documented `scripts/logs.ps1 -Source session-runner` and `-Source pty-host` failed because the Linux mirror cannot read the Windows log locations. No command ran on the desktop.
+The evidence came from the configured server API. The successful reads were `GET /api/agent-tasks/6cdcd4c3`, `GET /api/sessions/{id}/transcript?since=0`, `GET /api/sessions/{id}/messages`, and scoped card and task reads for the related work. The agent detail and incidents routes returned HTTP 404 for the ephemeral agent, and the historic session buffer returned HTTP 500.
+
+The read-only `POST /api/diagnostics/bundle` for this session returned HTTP 200 after a timeout on the first request. Its `session.json` corroborates the raw exit and contains zero linked incidents. Every identifier match in the returned server and runner log tails was dated November 22, outside the November 21 launch window. The bundle tails only the newest available file per log source. Local attempts at `scripts/logs.ps1 -Source session-runner` and `-Source pty-host` could not reach the Windows historical log files. No command ran on the desktop. [DiagnosticsBundleService.cs, lines 167 and 365](../../server/Application/Services/DiagnosticsBundleService.cs#L167)
 
 ## Mechanism and alternatives
 
