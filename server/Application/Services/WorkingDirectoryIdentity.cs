@@ -37,7 +37,11 @@ namespace Antiphon.Server.Application.Services;
 /// <para>
 /// SQL side: <see cref="CandidateFilter{T}"/> is a translatable superset predicate evaluated by
 /// PostgreSQL that does not depend on the database's collation or ctype:
-/// <c>lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>. Under
+/// <c>lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>, guarded by
+/// the cheaper necessary condition <c>lower(replace(col, '\', '/') COLLATE "C") LIKE @pattern || '%'</c>
+/// so that <c>rtrim</c>, the costliest step per row, runs only on rows that already share the
+/// probe's spelling as a prefix (Review 0d322ed5: a full-table <c>rtrim</c> plus <c>ILIKE</c> cost
+/// 1.7 times the predicate it replaced). Under
 /// the <c>C</c> collation <c>lower</c> folds only ASCII letters, on every server, and <c>LIKE</c>
 /// compares code points (<c>_</c> matches exactly one). The pattern (<see cref="CandidatePattern"/>)
 /// is the probe's loose spelling (backslashes as slashes, trailing slashes trimmed) with each ASCII
@@ -141,8 +145,12 @@ public static class WorkingDirectoryIdentity
     /// <summary>
     /// A PostgreSQL-translatable predicate selecting a superset of the rows whose stored path is the
     /// same directory as <paramref name="path"/>
-    /// (<c>lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>, with
-    /// the pattern sent as a parameter). The explicit <c>C</c> collation gives the same result
+    /// (<c>lower(replace(col, '\', '/') COLLATE "C") LIKE @pattern || '%' ESCAPE '!' AND
+    /// lower(rtrim(replace(col, '\', '/'), '/') COLLATE "C") LIKE @pattern ESCAPE '!'</c>, with both
+    /// patterns sent as parameters). The first operand is implied by the second (trailing slashes
+    /// only extend a match of the trimmed spelling) and exists only so that PostgreSQL, which
+    /// evaluates the cheaper qual first and stops at the first false one, trims just the rows that
+    /// share the probe's prefix. The explicit <c>C</c> collation gives the same result
     /// whatever the database's collation and ctype are. It is server-only: it cannot be evaluated in
     /// process. Refine the result with <see cref="Same"/>; never treat a candidate as a match on its
     /// own.
@@ -151,27 +159,28 @@ public static class WorkingDirectoryIdentity
         Expression<Func<T, string?>> storedPath, string path)
     {
         ArgumentNullException.ThrowIfNull(storedPath);
-        var probe = new CandidateProbe(CandidatePattern(path));
+        var pattern = CandidatePattern(path);
+        var probe = new CandidateProbe(pattern + "%", pattern);
         var column = storedPath.Body;
-        var loose = Expression.Call(
-            Expression.Call(column, StringReplace, Expression.Constant("\\"), Expression.Constant("/")),
-            StringTrimEnd,
-            Expression.Constant('/'));
-        var folded = Expression.Call(
-            Expression.Call(Collate, Expression.Constant(EF.Functions), loose, Expression.Constant(CandidateCollation)),
-            StringToLower);
-        var pattern = Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Pattern));
-        var matches = Expression.Call(
-            Like,
-            Expression.Constant(EF.Functions),
-            folded,
-            pattern,
-            Expression.Constant(CandidatePatternEscape));
+        var slashed = Expression.Call(column, StringReplace, Expression.Constant("\\"), Expression.Constant("/"));
+        var trimmed = Expression.Call(slashed, StringTrimEnd, Expression.Constant('/'));
         var body = Expression.AndAlso(
-            Expression.NotEqual(column, Expression.Constant(null, typeof(string))),
-            matches);
+            Expression.AndAlso(
+                Expression.NotEqual(column, Expression.Constant(null, typeof(string))),
+                LikeUnderC(slashed, Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Prefix)))),
+            LikeUnderC(trimmed, Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Pattern))));
         return Expression.Lambda<Func<T, bool>>(body, storedPath.Parameters);
     }
+
+    private static MethodCallExpression LikeUnderC(Expression text, Expression pattern) =>
+        Expression.Call(
+            Like,
+            Expression.Constant(EF.Functions),
+            Expression.Call(
+                Expression.Call(Collate, Expression.Constant(EF.Functions), text, Expression.Constant(CandidateCollation)),
+                StringToLower),
+            pattern,
+            Expression.Constant(CandidatePatternEscape));
 
     private static string LooseSpelling(string path)
     {
@@ -220,10 +229,12 @@ public static class WorkingDirectoryIdentity
         typeof(RelationalDbFunctionsExtensions).GetMethod(nameof(RelationalDbFunctionsExtensions.Collate))!
             .MakeGenericMethod(typeof(string));
 
-    // A member access on a closure-like object, so EF Core sends the pattern as a SQL parameter
-    // instead of inlining it as a literal.
-    private sealed class CandidateProbe(string pattern)
+    // Member accesses on a closure-like object, so EF Core sends the patterns as SQL parameters
+    // instead of inlining them as literals.
+    private sealed class CandidateProbe(string prefix, string pattern)
     {
+        public string Prefix { get; } = prefix;
+
         public string Pattern { get; } = pattern;
     }
 }

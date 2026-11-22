@@ -184,17 +184,24 @@ public class WorkingDirectoryIdentityTests
     public void Invariant_lower_case_maps_each_code_point_to_one_code_point()
     {
         var targets = new HashSet<char>();
+        var violations = new List<string>();
         foreach (var value in ScalarValues())
         {
             var text = char.ConvertFromUtf32(value);
             var lower = text.ToLowerInvariant();
-            lower.Length.ShouldBe(text.Length, $"U+{value:X4}");
-            Rune.DecodeFromUtf16(lower, out _, out var consumed).ShouldBe(System.Buffers.OperationStatus.Done, $"U+{value:X4}");
-            consumed.ShouldBe(lower.Length, $"U+{value:X4}");
+            if (lower.Length != text.Length
+                || Rune.DecodeFromUtf16(lower, out _, out var consumed) != System.Buffers.OperationStatus.Done
+                || consumed != lower.Length)
+            {
+                violations.Add($"U+{value:X4}");
+                continue;
+            }
+
             if (value >= 0x80 && lower.Length == 1 && lower[0] < 0x80)
                 targets.Add(lower[0]);
         }
 
+        violations.ShouldBeEmpty();
         WorkingDirectoryIdentity.NonAsciiFoldTargets.Order().ShouldBe(targets.Order());
         WorkingDirectoryIdentity.NonAsciiFoldTargets.ShouldContain('k', "the Kelvin sign lower-cases to k");
         WorkingDirectoryIdentity.NonAsciiFoldTargets.ShouldAllBe(c => char.IsAsciiLetterLower(c));
@@ -241,8 +248,10 @@ public class WorkingDirectoryIdentityTests
 /// <c>lower(rtrim(replace(stored, '\', '/'), '/') COLLATE "C") LIKE pattern ESCAPE '!'</c>. Under the
 /// C collation <c>lower</c> folds only A-Z and <c>_</c> matches exactly one code point. It covers the
 /// patterns <see cref="WorkingDirectoryIdentity.CandidatePattern"/> emits (literals, <c>_</c> and
-/// <c>!</c> escapes, never a <c>%</c> wildcard). The PostgreSQL witnesses assert that the database
-/// returns exactly the rows this model admits.
+/// <c>!</c> escapes, never a <c>%</c> wildcard). The SQL also carries the untrimmed prefix guard
+/// <c>LIKE pattern || %</c>, which this trimmed match implies, so the model leaves it out; the
+/// PostgreSQL witnesses assert that the database returns exactly the rows this model admits, which
+/// is also the evidence that the guard drops nothing.
 /// </summary>
 internal static class CLocalePrefilterModel
 {
