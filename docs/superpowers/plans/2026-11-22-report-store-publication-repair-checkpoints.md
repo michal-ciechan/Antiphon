@@ -12,7 +12,7 @@ Review round 1 measured a shared cold build at 439 seconds and CP-1 through CP-3
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-g82-ba2664ff/ | custody | `/*/Antiphon.Tests.Application/AgentReportStoreTests/*` | R1 | Entire custody class | 30 | 1 |
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-g82-ba2664ff-final/ | custody | `/*/Antiphon.Tests.Application/AgentReportStoreTests/*` | R1 | Entire custody class | 30 | 1 |
 | CP-2 | S1 | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | Final guards | All nine classes | 84 | 2 |
 | CP-3 | S1 | CP-1 | impacted | `/*/*/(AgentReportStoreBudgetTests*)\|(AgentReportStoreLoadTests*)/*` | Storage deadline and load | Both storage classes | 22 | 2 |
 | CP-4 | S1 | CP-1 | delivery | `/*/Antiphon.Tests.Application/OutputDistillationDeliveryTests/*` | R2 | Entire delivery class | 81 | 6 |
