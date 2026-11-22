@@ -214,7 +214,16 @@ public class AgentReportStoreTests
     }
 
     [Test]
-    public async Task Publication_gate_serializes_two_store_instances()
+    public Task Publication_gate_serializes_two_store_instances() => VerifyPublicationGateAsync();
+
+    [Test]
+    public async Task Missing_publication_admission_signal_reports_the_timed_out_step()
+    {
+        var failure = await Should.ThrowAsync<TimeoutException>(() => VerifyPublicationGateAsync(signalAdmission: false));
+        failure.Message.ShouldBe("second store did not enter gate admission within 5s");
+    }
+
+    private static async Task VerifyPublicationGateAsync(bool signalAdmission = true)
     {
         await using var w = new ReportWorkspace();
         await w.InitializeAsync();
@@ -236,7 +245,7 @@ public class AgentReportStoreTests
             if (phase == "readback") Interlocked.Increment(ref moves);
         };
         var second = w.Store();
-        second.PublicationAdmissionPending = admissionPending;
+        if (signalAdmission) second.PublicationAdmissionPending = admissionPending;
         second.BeforeIoAsync = (phase, _) =>
         {
             // Only a successful move enters readback. Reusing the winner returns earlier.
