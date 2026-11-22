@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundUnifiedPathTests
 {
-    // World teardowns run in the background (World.DisposeAsync); none outlives its test.
+    // World teardowns run in the background (World.DisposeAsync); only a hung one outlives its test.
     [After(Test)]
     public Task DrainWorldTeardownsAsync() => World.DrainOwnTeardownsAsync();
 
@@ -195,16 +195,20 @@ public sealed class ChannelOutboundUnifiedPathTests
     // runs in the background while the next world is built and used. A world starts no process and has its own schema
     // and harness, so a teardown still running touches nothing the next one uses. Each teardown belongs to the test
     // that made it (its TUnit test id). A new world first waits for every teardown of its test but the latest, so at
-    // most one overlaps it; after each test its teardowns are awaited (After(Test); the class is NotInParallel), so no
-    // world outlives its test, and every failure (harness and schema both) fails the test that made it, naming the
-    // world. One that hangs past TeardownHung is reported once by its test and awaited, unbounded but for TUnit's hook
-    // timeout, before the class ends (After(Class)). Phase timings a world records may include one earlier world's
-    // teardown running beside them.
+    // most one of its test's teardowns overlaps it; after each test its teardowns are awaited (After(Test); the class
+    // is NotInParallel), and every failure (harness and schema both) fails the test that made it, naming the world.
+    // Only a teardown that hangs past TeardownHung outlives its test: its test reports it once and hands it to the class
+    // drain, so it may run beside later tests' worlds until the class ends (After(Class), which awaits it unbounded but
+    // for TUnit's hook timeout, and reports again only how it finally failed). Phase timings a world records may
+    // include one earlier world's teardown running beside them.
     private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key, Guid projectId) : IAsyncDisposable
     {
-        // A hang bound, not a budget (a teardown normally takes about 0.1 s here): UnifiedOutboundTransport's same 2 min,
-        // so a loaded qualification host's database drop is not cut short.
+        // A hang bound, not a budget, and only ever spent on a hang: a teardown here measured about 0.1 s (25 worlds,
+        // 2.5 s in all, HP laptop on AC, 2026-11-22). It is UnifiedOutboundTransport's same 2 min, sized for a loaded
+        // qualification host's DROP DATABASE WITH (FORCE), and one deadline covers every teardown a wait takes.
         private static readonly TimeSpan TeardownHung = TimeSpan.FromMinutes(2);
+        // The owner of a hung teardown handed to the class drain: never a TUnit test id, nor the "" of no test context.
+        private const string HandedOff = "<hung>";
         private static readonly List<(string Owner, string World, Task Teardown)> Teardowns = [];
         private int _disposed;
 
@@ -228,12 +232,20 @@ public sealed class ChannelOutboundUnifiedPathTests
             {
                 return await BuildAsync(schema, allowSystem, profile, attachmentsOnly, h => built = h);
             }
-            catch
+            catch (Exception buildFailure)
             {
-                // A world that failed part-way still drops what it made.
-                if (built is not null) await built.DisposeAsync();
-                await schema.DisposeAsync();
-                throw;
+                // A world that failed part-way still drops what it made, its database even when the harness dispose
+                // fails; the build failure stays first in what is reported.
+                var cleanup = new List<Exception>();
+                if (built is not null)
+                {
+                    try { await built.DisposeAsync(); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { cleanup.Add(ex); }
+                }
+                try { await schema.DisposeAsync(); }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { cleanup.Add(ex); }
+                if (cleanup.Count == 0) throw;
+                throw new AggregateException("World build failed, and so did its cleanup", [buildFailure, .. cleanup]);
             }
         }
 
@@ -339,7 +351,8 @@ public sealed class ChannelOutboundUnifiedPathTests
             await AwaitAsync(own);
         }
 
-        // Before the class ends: every teardown still listed, unbounded (TUnit's hook timeout still applies).
+        // Before the class ends: every teardown still listed, unbounded (TUnit's hook timeout still applies). A hung one
+        // its test already reported as still running is reported again only if it then fails, with its real cause.
         public static async Task DrainEveryTeardownAsync()
         {
             (string Owner, string World, Task Teardown)[] all;
@@ -354,21 +367,24 @@ public sealed class ChannelOutboundUnifiedPathTests
             Throw(failures);
         }
 
-        // Every entry awaited and every failure collected. An ended entry leaves the list; one past TeardownHung is
-        // reported and handed to the class drain (taken off its test, so no later wait reports it again).
+        // Every entry awaited, under one TeardownHung deadline for them all, and every failure collected. An ended entry
+        // leaves the list; one still running at the deadline is reported and handed to the class drain (taken off its
+        // test, so no later wait of a test reports it again).
         private static async Task AwaitAsync((string Owner, string World, Task Teardown)[] entries)
         {
             var failures = new List<Exception>();
+            var waited = System.Diagnostics.Stopwatch.StartNew();
             foreach (var entry in entries)
             {
-                try { await entry.Teardown.WaitAsync(TeardownHung); }
+                var left = TeardownHung - waited.Elapsed;
+                try { await entry.Teardown.WaitAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero); }
                 catch (TimeoutException)
                 {
-                    failures.Add(new TimeoutException($"World {entry.World} teardown still running after {TeardownHung.TotalMinutes:0} min"));
+                    failures.Add(new TimeoutException($"World {entry.World} teardown still running after the {TeardownHung.TotalMinutes:0} min hang bound"));
                     lock (Teardowns)
                     {
                         Teardowns.Remove(entry);
-                        Teardowns.Add(("", entry.World, entry.Teardown));
+                        Teardowns.Add((HandedOff, entry.World, entry.Teardown));
                     }
                     continue;
                 }
