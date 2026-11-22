@@ -7247,13 +7247,31 @@ selector_fixture() {
     selector_parent="$parent"
 }
 # An explicit text/eol=crlf checkout may differ from its index only by the
-# exact LF-to-CRLF expansion of the blob. Read the indexed attributes and
+# exact LF-to-CRLF expansion of the blob. Read the committed attributes and
 # expand the blob ourselves so no other conversion or repository driver runs.
 consider_crlf() {
-    local where="$1" path="$2" oid="$3" actual="$4" attrs_file="$5" converted
+    local where="$1" path="$2" oid="$3" actual="$4" attrs_file="$5"
+    local path_out admin attributes file_size blob_size converted
+    local -r max_crlf_bytes=16777216
     shift 5
     local -a attrs=()
-    "$@" check-attr --cached -z text eol -- "$path" > "$attrs_file" || fail $?
+    # sed holds a line and hash-object --stdin holds the expanded blob.
+    file_size="$(stat -c %s -- "$where/$path" 2>/dev/null)" || fail $?
+    [ "$file_size" -le "$max_crlf_bytes" ] || refuse_dirty index-content "$where"
+    blob_size="$("$@" cat-file -s "$oid")" || fail $?
+    [ "$blob_size" -le "$max_crlf_bytes" ] || refuse_dirty index-content "$where"
+    # Git overlays info/attributes even when the tree is explicit. The audit
+    # already disables system and user attributes. Allow only committed rules.
+    path_of "$@" rev-parse --absolute-git-dir 2>/dev/null || fail $?
+    admin="$path_out"
+    path_of "$@" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || fail $?
+    for attributes in "$admin/info/attributes" "$path_out/info/attributes"; do
+        [ ! -L "$attributes" ] || refuse_dirty index-content "$where"
+        if [ -e "$attributes" ]; then
+            [ -f "$attributes" ] && [ ! -s "$attributes" ] || refuse_dirty index-content "$where"
+        fi
+    done
+    "$@" check-attr --source=HEAD -z text eol -- "$path" > "$attrs_file" || fail $?
     mapfile -d '' -t attrs < "$attrs_file" || fail $?
     [ "${#attrs[@]}" = 6 ] || fail 2
     [[ "${attrs[2]}" == set && "${attrs[5]}" == crlf ]] || refuse_dirty index-content "$where"
