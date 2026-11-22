@@ -169,7 +169,11 @@ export function ResponseComposer({
         <Box>
           <Group justify="space-between" gap={4}>
             <Text size="xs" c="dimmed">
-              {finding.posted ? 'Posts to the thread as' : 'Saved in Antiphon (not posted inline) as'}
+              {subject.host === 'Local'
+                ? 'Saved in Antiphon (no pull request) as'
+                : finding.posted
+                  ? 'Posts to the thread as'
+                  : 'Saved in Antiphon (not posted inline) as'}
             </Text>
             {problem && (
               <Text size="xs" c="warning.4">

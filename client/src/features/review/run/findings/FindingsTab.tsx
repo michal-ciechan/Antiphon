@@ -26,7 +26,9 @@ export function FindingsTab({ run, findings, viewer, now }: { run: ReviewRunDeta
   const wide = useMediaQuery('(min-width: 1200px)', true)
   const respond = useRespondToFindings(run.id)
   const refresh = useRefreshReviewRun(run.id)
-  const groups = useMemo(() => groupFindings(findings), [findings])
+  // A local review (commit range, no pull request) has nowhere to post: replies stay in Antiphon.
+  const hostless = run.subject.host === 'Local'
+  const groups = useMemo(() => groupFindings(findings, hostless), [findings, hostless])
   const selected = findings.find((f) => f.id === selectedId) ?? groups[0]?.items[0]
   const gate = openGate(run) ?? lastDecidedGate(run)
   const isAuthor = viewer.login === run.subject.authorLogin
@@ -39,10 +41,13 @@ export function FindingsTab({ run, findings, viewer, now }: { run: ReviewRunDeta
     respond.mutate(responses, {
       onSuccess: (result) => {
         setDrafts({})
+        const replies = `${result.items.length} ${result.items.length === 1 ? 'reply' : 'replies'}`
         notifications.show({
           color: 'success',
-          title: `Posted ${result.items.length} ${result.items.length === 1 ? 'reply' : 'replies'}`,
-          message: `Saved in Antiphon; syncing to ${hostLabel} as one review signed by ${viewerName}.`,
+          title: hostless ? `Saved ${replies}` : `Posted ${replies}`,
+          message: hostless
+            ? 'Kept in Antiphon: this review has no pull request to post to.'
+            : `Saved in Antiphon; syncing to ${hostLabel} as one review signed by ${viewerName}.`,
         })
       },
     })
@@ -115,6 +120,7 @@ export function FindingsTab({ run, findings, viewer, now }: { run: ReviewRunDeta
         findings={findings}
         actorName={viewerName}
         hostLabel={hostLabel}
+        hostless={hostless}
         submitting={respond.isPending}
         onSubmit={submit}
         onDiscard={() => setDrafts({})}

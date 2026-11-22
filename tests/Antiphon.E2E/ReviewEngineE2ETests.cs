@@ -106,7 +106,7 @@ public class ReviewEngineE2ETests
             await Expect(detail).ToContainTextAsync($"F1 · {ReviewEngineScenario.FindingTitle}");
             await Expect(detail).ToContainTextAsync("src/Lease.cs:12");
             await Expect(detail).ToContainTextAsync(ReviewEngineScenario.LeaseAnchor);
-            await Expect(detail).ToContainTextAsync("not posted inline");
+            await Expect(detail).ToContainTextAsync("kept in Antiphon (no PR)");
             await PlaywrightFixture.CapturePageAsync(author, "round1_findings");
 
             var round1 = await RunAsync(runId);
@@ -124,9 +124,9 @@ public class ReviewEngineE2ETests
             await detail.GetByLabel("Reply text").FillAsync(Reply);
             var submit = author.GetByTestId("review-submit-replies");
             await Expect(submit).ToBeEnabledAsync();
-            await Expect(submit).ToContainTextAsync($"Post 1 reply to the code host as {ReviewEngineScenario.AuthorName} via Antiphon");
+            await Expect(submit).ToContainTextAsync($"Save 1 reply in Antiphon as {ReviewEngineScenario.AuthorName}");
             await submit.ClickAsync();
-            await Expect(author.GetByText("Posted 1 reply")).ToBeVisibleAsync(new() { Timeout = 15_000 });
+            await Expect(author.GetByText("Saved 1 reply")).ToBeVisibleAsync(new() { Timeout = 15_000 });
             await Expect(author.GetByTestId("review-finding-thread")).ToContainTextAsync(Reply, new() { Timeout = 15_000 });
             await Expect(f1).ToContainTextAsync("will fix", new() { Timeout = 15_000 });
 

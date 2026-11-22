@@ -10,6 +10,7 @@ export function SubmitBar({
   findings,
   actorName,
   hostLabel,
+  hostless = false,
   submitting,
   onSubmit,
   onDiscard,
@@ -18,6 +19,8 @@ export function SubmitBar({
   findings: ReviewFindingDto[]
   actorName: string
   hostLabel: string
+  /** No pull request to post to (a local review): replies are only saved in Antiphon. */
+  hostless?: boolean
   submitting: boolean
   onSubmit: () => void
   onDiscard: () => void
@@ -58,15 +61,23 @@ export function SubmitBar({
               Discard
             </Button>
           )}
-          <Tooltip
-            multiline
-            w={320}
-            label={`One ${hostLabel} review (one notification). Each reply is saved in Antiphon first, then posted to its thread; a failed post stays pending and is retried. Signed with your name, not an @mention, so nobody is pinged.`}
-          >
-            <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
-              signed "— {actorName} via Antiphon"
-            </Text>
-          </Tooltip>
+          {hostless ? (
+            <Tooltip multiline w={320} label="This review has no pull request, so nothing is posted anywhere. Replies are kept in Antiphon and still drive the next round.">
+              <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                no pull request · kept in Antiphon
+              </Text>
+            </Tooltip>
+          ) : (
+            <Tooltip
+              multiline
+              w={320}
+              label={`One ${hostLabel} review (one notification). Each reply is saved in Antiphon first, then posted to its thread; a failed post stays pending and is retried. Signed with your name, not an @mention, so nobody is pinged.`}
+            >
+              <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                signed "— {actorName} via Antiphon"
+              </Text>
+            </Tooltip>
+          )}
           <Button
             size="xs"
             leftSection={<TbSend size={14} />}
@@ -75,7 +86,9 @@ export function SubmitBar({
             onClick={onSubmit}
             data-testid="review-submit-replies"
           >
-            Post {n} {n === 1 ? 'reply' : 'replies'} to {hostLabel} as {actorName} via Antiphon
+            {hostless
+              ? `Save ${n} ${n === 1 ? 'reply' : 'replies'} in Antiphon as ${actorName}`
+              : `Post ${n} ${n === 1 ? 'reply' : 'replies'} to ${hostLabel} as ${actorName} via Antiphon`}
           </Button>
         </Group>
       </Group>

@@ -116,12 +116,20 @@ export function FindingDetail({
           </Text>
           <FindingStatusBadge status={f.status} />
           <SyncBadge state={f.syncState} />
-          {!f.posted && (
-            <Tooltip label="Below the round's bar or summary-only: stored in Antiphon, not posted inline">
+          {subject.host === 'Local' ? (
+            <Tooltip label="A local review has no pull request: findings and replies are kept in Antiphon">
               <Text size="xs" c="dimmed" fs="italic">
-                not posted inline
+                kept in Antiphon (no PR)
               </Text>
             </Tooltip>
+          ) : (
+            !f.posted && (
+              <Tooltip label="Below the round's bar or summary-only: stored in Antiphon, not posted inline">
+                <Text size="xs" c="dimmed" fs="italic">
+                  not posted inline
+                </Text>
+              </Tooltip>
+            )
           )}
         </Group>
         <Text fw={700} size="md" mt={4}>
