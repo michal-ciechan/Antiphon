@@ -481,23 +481,38 @@ public sealed class PostLandEarlyWarningTests
         {
             ["POST_LAND_WARNING_PLATFORM"] = "linux",
             ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
-            ["POST_LAND_WARNING_PLAN_DELAY_MS"] = "2000",
         };
 
-        // Two run-mode parents at once, each with its own run id and its own detached lane (same process: the lock
-        // owner is the pid and the run id).
-        var first = repo.RunAsync(plan: false, range: range, fileList: list, env: env);
-        var second = repo.RunAsync(plan: false, range: range, fileList: list, env: env);
-        var both = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(40));
-        var text = both[0].Text + both[1].Text;
-        both[0].Exit.ShouldBe(0, text);
-        both[1].Exit.ShouldBe(0, text);
-        await repo.WaitUnlockedAsync(TimeSpan.FromSeconds(20));
-        var states = Directory.EnumerateFiles(repo.ReceiptRoot, "lane-*.json")
-            .Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("state").GetString() ?? "")
-            .OrderBy(state => state, StringComparer.Ordinal)
-            .ToArray();
-        states.ShouldBe(new[] { "skipped-busy", "started" });
+        var selectorEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // The detached lane reaches the selector after taking lock.json, and keeps that lock
+        // until the test has received the second lane's marker.
+        var first = repo.RunAsync(plan: false, range: range, fileList: list, env: env, selector: request =>
+        {
+            selectorEntered.SetResult();
+            releaseFirst.Task.GetAwaiter().GetResult();
+            return TableSelector(request);
+        });
+
+        try
+        {
+            var started = await first;
+            started.Exit.ShouldBe(0, started.Text);
+            started.State.ShouldBe("started", started.Text);
+            await selectorEntered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+            var second = await repo.RunAsync(plan: false, range: range, fileList: list, env: env);
+            second.Exit.ShouldBe(0, second.Text);
+            second.State.ShouldBe("skipped-busy", second.Text);
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            await repo.WaitLanesAsync(TimeSpan.FromSeconds(20));
+        }
+
+        File.Exists(Path.Combine(repo.ReceiptRoot, "lock.json")).ShouldBeFalse();
         var shimText = await File.ReadAllTextAsync(shim);
         CountOf(shimText, "dotnet build").ShouldBe(1);
     }
@@ -997,12 +1012,13 @@ public sealed class PostLandEarlyWarningTests
         /// The seams as the CLI reads them (the POST_LAND_WARNING_* names), the selector over the fixture's table, and
         /// an in-process launcher for the detached lane that writes the lane's logs as the CLI's --child does.
         /// </summary>
-        internal PostLandSettings Settings(IReadOnlyDictionary<string, string>? env, IReadOnlyList<string>? slot)
+        private PostLandSettings Settings(IReadOnlyDictionary<string, string>? env, IReadOnlyList<string>? slot,
+            Func<PostLandSelectorRequest, PostLandSelection>? selector)
         {
             var settings = PostLandSettings.FromEnvironment(
                 name => env != null && env.TryGetValue(name, out var value) ? value : null,
                 DelegateScriptRunner.RepoRoot);
-            settings.Selector = TableSelector;
+            settings.Selector = selector ?? TableSelector;
             if (slot != null)
                 settings.SlotCommand = slot;
             settings.LaunchChild = launch =>
@@ -1022,7 +1038,8 @@ public sealed class PostLandEarlyWarningTests
 
         /// <summary>antiphon-scripts post-land-early-warning in-process: the same options, -Table when the fixture has one.</summary>
         internal Task<PlanResult> RunAsync(bool plan, string range, string? fileList, bool force = false,
-            IReadOnlyDictionary<string, string>? env = null, IReadOnlyList<string>? slot = null)
+            IReadOnlyDictionary<string, string>? env = null, IReadOnlyList<string>? slot = null,
+            Func<PostLandSelectorRequest, PostLandSelection>? selector = null)
         {
             var table = Path.Combine(Repo, "tests", "impacted-classes.json");
             var options = new PostLandOptions
@@ -1035,7 +1052,7 @@ public sealed class PostLandEarlyWarningTests
                 FileList = string.IsNullOrEmpty(fileList) ? null : fileList,
                 Table = File.Exists(table) ? table : null,
             };
-            var settings = Settings(env, slot);
+            var settings = Settings(env, slot, selector);
             return Task.Run(() =>
             {
                 CultureInfo.CurrentCulture = WarningCulture;
@@ -1129,21 +1146,6 @@ public sealed class PostLandEarlyWarningTests
             }
 
             throw new TimeoutException("receipt missing at " + path);
-        }
-
-        internal async Task WaitUnlockedAsync(TimeSpan budget)
-        {
-            await WaitLanesAsync(budget);
-            var lockPath = Path.Combine(ReceiptRoot, "lock.json");
-            var deadline = DateTime.UtcNow + budget;
-            while (DateTime.UtcNow < deadline)
-            {
-                if (!File.Exists(lockPath))
-                    return;
-                await Task.Delay(100);
-            }
-
-            throw new TimeoutException("lock still held at " + lockPath);
         }
 
         internal string Commit(string message, string date)

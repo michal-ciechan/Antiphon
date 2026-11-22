@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -136,11 +137,33 @@ namespace Antiphon.Nightly
             return "stale";
         }
 
-        /// <summary>
-        /// Takes the lock by renaming a written temp file onto it (three attempts). A stale lock is reclaimed by renaming
-        /// it aside and re-reading it there: only a still-stale claim is deleted, so one of two reclaimers wins.
-        /// </summary>
+        // File.Move without overwrite performs a destination check followed by rename on Linux. Serialize
+        // changes to the owner record across processes so that two contenders cannot both publish it.
+        private static Mutex WaitForLockUpdate(string path)
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (OperatingSystem.IsWindows()) fullPath = fullPath.ToUpperInvariant();
+            var name = "Global\\antiphon-post-land-lock-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fullPath)));
+            var mutex = new Mutex(false, name);
+            try { mutex.WaitOne(); }
+            catch (AbandonedMutexException) { /* The caller owns the mutex. Inspect the owner record as usual. */ }
+            catch
+            {
+                mutex.Dispose();
+                throw;
+            }
+            return mutex;
+        }
+
+        /// <summary>Takes the lock by publishing a complete owner record. A stale lock can be reclaimed.</summary>
         public static bool EnterLock(string path, string runId, int reclaimDelayMs = 0)
+        {
+            using var update = WaitForLockUpdate(path);
+            try { return EnterLockCore(path, runId, reclaimDelayMs); }
+            finally { update.ReleaseMutex(); }
+        }
+
+        private static bool EnterLockCore(string path, string runId, int reclaimDelayMs)
         {
             var parent = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
@@ -180,8 +203,13 @@ namespace Antiphon.Nightly
         /// <summary>Removes the lock only while it is this lane's.</summary>
         public static void ExitLock(string path, string runId)
         {
-            if (!File.Exists(path) || LockKind(path, runId) != "ours") return;
-            TryDelete(path);
+            using var update = WaitForLockUpdate(path);
+            try
+            {
+                if (!File.Exists(path) || LockKind(path, runId) != "ours") return;
+                TryDelete(path);
+            }
+            finally { update.ReleaseMutex(); }
         }
 
         private static void TryDelete(string path)
