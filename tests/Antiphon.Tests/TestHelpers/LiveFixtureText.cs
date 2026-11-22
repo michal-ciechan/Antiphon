@@ -2,6 +2,9 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal static class LiveFixtureText
 {
+    internal static Task<string> ReadPublishedAsync(string path, Func<string, FileShare, Stream>? open = null,
+        CancellationToken cancellationToken = default) => ReadAsync(path, open, cancellationToken);
+
     internal static async Task<string> ReadAsync(string path,
         Func<string, FileShare, Stream>? open = null, CancellationToken cancellationToken = default)
     {
