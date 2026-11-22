@@ -14,6 +14,11 @@ public sealed class CheckpointCleanupContext
     public ICheckpointGitRunner Git { get; }
     public TimeProvider Time { get; }
     public CheckpointCreationRegistry Registry { get; }
+
+    // CARD-2052: how many times SafeDelete read the git index in process for a tracked-path check.
+    private int _inProcessIndexReads;
+    internal int InProcessIndexReads => Volatile.Read(ref _inProcessIndexReads);
+    internal void CountInProcessIndexRead() => Interlocked.Increment(ref _inProcessIndexReads);
     public StringComparison PathComparison => Io.Platform == CheckpointPlatform.Windows
         ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 

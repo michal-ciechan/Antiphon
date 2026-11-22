@@ -42,6 +42,45 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.Exists(output).ShouldBeFalse();
     }
 
+    // CARD-2052: cleanup read and parsed the whole git index once per owned entry, so a 2,190-entry output
+    // took 4-5 minutes on server2 (Review ad310231). One removal reads it again only when its identity changes.
+    [Test]
+    public void owned_output_removal_does_not_read_the_git_index_once_per_entry()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner());
+        var write = new CheckpointWrite(context);
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var output = Path.Combine(root, "bin-c2052");
+        write.Require(write.CreateFreshDirectory(output, write.Under(root)));
+        var files = new List<string>();
+        for (var i = 0; i < 40; i++)
+        {
+            var directory = Path.Combine(output, "d" + (i % 4));
+            Directory.CreateDirectory(directory);
+            var file = Path.Combine(directory, i + ".dll");
+            File.WriteAllText(file, "COMPILER" + i);
+            files.Add(file);
+        }
+        var exited = CheckpointFixtures.AfterFileClock([.. files]);
+        write.Require(new CheckpointOutputLedger(context).Seal(output, exited));
+        var before = context.InProcessIndexReads;
+
+        var result = new CheckpointOutputCleanup(context).CleanOwnedOutputs(root, ["bin-c2052"], 0, false, false,
+            createdPaths: [output]);
+
+        result.Refusals.ShouldBeEmpty();
+        result.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(root, "tracked.txt")).ShouldBe("TRACKED");
+        var reads = context.InProcessIndexReads - before;
+        reads.ShouldBeGreaterThan(0, "the tracked-path checks are answered from the index in process");
+        reads.ShouldBeLessThanOrEqualTo(10, "46 entries; the index did not change during the removal");
+    }
+
     [Test]
     public void deletes_only_this_runs_bin_names()
     {
