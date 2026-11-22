@@ -66,6 +66,7 @@ public class RunnerGrokAdapterReadyTests
             for (var ordinal = 2; ordinal <= 5; ordinal++)
                 await AdvanceStartup(wait, clock, ordinal, TimeSpan.FromSeconds(30));
 
+            await AssertStartupEnded(wait, clock, 6, "Working must stop at the ceiling");
             (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
             client.SnapshotReads.ShouldBe(6);
             client.Writes.ShouldBeEmpty();
@@ -101,6 +102,8 @@ public class RunnerGrokAdapterReadyTests
                 await AdvanceStartup(wait, clock, 2, TimeSpan.FromSeconds(10));
                 await AdvanceStartup(wait, clock, 3, TimeSpan.FromMilliseconds(50));
             }
+            else
+                await AssertStartupEnded(wait, clock, 2, "Unknown without MCP must stop at the first deadline");
 
             (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(mcpSeen);
             client.SnapshotReads.ShouldBe(mcpSeen ? 4 : 2);
@@ -140,6 +143,7 @@ public class RunnerGrokAdapterReadyTests
             await AdvanceStartup(wait, clock, 2, TimeSpan.FromSeconds(10));
             await AdvanceStartup(wait, clock, 3, TimeSpan.FromSeconds(50));
 
+            await AssertStartupEnded(wait, clock, 4, "the second window must stop at its deadline");
             (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
             client.SnapshotReads.ShouldBe(4);
             client.StartCalls.ShouldBe(1);
@@ -168,6 +172,14 @@ public class RunnerGrokAdapterReadyTests
         var next = await Task.WhenAny(wait, poll).WaitAsync(TimeSpan.FromSeconds(5));
         next.ShouldBe(poll, $"startup must stay gated before poll {ordinal}");
         clock.Advance(advance);
+    }
+
+    private static async Task AssertStartupEnded(Task<bool> wait, PollGateClock clock,
+        int nextPollOrdinal, string expectation)
+    {
+        var next = await Task.WhenAny(wait, clock.PollInstalled(nextPollOrdinal))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        next.ShouldBe(wait, expectation);
     }
 
     [Test]
@@ -903,9 +915,10 @@ public class RunnerGrokAdapterReadyTests
 
     private sealed class PollGateClock : TimeProvider
     {
-        private readonly FakeTimeProvider _timer = new();
+        // ScriptedClient reports a UTC process start one minute before the launch.
+        private readonly FakeTimeProvider _timer = new(DateTimeOffset.UtcNow);
         private readonly Queue<TaskCompletionSource<TimeSpan>> _nextTimers = new();
-        private readonly TaskCompletionSource[] _polls = Enumerable.Range(0, 5)
+        private readonly TaskCompletionSource[] _polls = Enumerable.Range(0, 6)
             .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
             .ToArray();
         private readonly TaskCompletionSource _floorSleep =
