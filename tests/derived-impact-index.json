@@ -2132,18 +2132,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 75,
+      "classes": 76,
       "reason": "cap",
-      "owed": 50,
+      "owed": 51,
       "first": [
+        "PlanCoverageCommandTests",
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
         "CheckpointToolCopyCleanupTests",
         "CheckpointTempUsageTests",
         "WaitCommandTests",
         "CheckpointManifestTests",
-        "PlanCoverageBindingTests",
-        "CheckpointTrackedBaselineTests"
+        "PlanCoverageBindingTests"
       ]
     },
     {
@@ -24410,9 +24410,9 @@
         "CheckpointStatePublicationTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
+        "CheckpointWarmBuildTests",
         "OutputCleanupTests",
         "PhaseJournalKillDiagnosticTests",
-        "PlanCoverageCommandTests",
         "RerunPolicyTests",
         "RowRunnerTests",
         "RunSchedulerTests",
