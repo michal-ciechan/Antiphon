@@ -124,7 +124,7 @@ internal static partial class InProcessGitReads
     /// For runners that hand git's stderr to their callers as well (<c>WorktreeManager</c>,
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
-    /// <c>symbolic-ref -q</c> and <c>show-ref --verify --quiet</c>. Null runs git.
+    /// <c>symbolic-ref -q</c>, <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
     /// </summary>
     internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
     {
@@ -142,7 +142,7 @@ internal static partial class InProcessGitReads
         if (answer is null) return null;
         var silent = answer.ExitCode == 0
             || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q", _]
-                or ["show-ref", "--verify", "--quiet", _];
+                or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _];
         return silent ? (answer.ExitCode, answer.Output) : null;
     }
 
@@ -240,13 +240,15 @@ internal static partial class InProcessGitReads
                 return Commit(repo, "HEAD", peel: false);
 
             // rev-parse [--verify [--quiet]] <full ref>: the ref's own object id, unpeeled (a tag ref names its tag
-            // object). A direct ref only; a missing one is git's fatal answer, except --verify --quiet's silent 1
-            // when no ref of that name exists anywhere git would look (as show-ref --verify --quiet).
+            // object), when the name is that ref's only reading (OnlyReading). A direct ref only; a missing one is
+            // git's fatal answer, except --verify --quiet's silent 1 when nothing of that name, nor of any other
+            // reading, exists anywhere git would look.
             case "rev-parse" when a.Count == 2 && IsPlainRef(a[1]):
-                return Direct(repo, a[1]) is { } plain ? Ok(plain + "\n") : null;
+                return Direct(repo, a[1]) is { } plain && OnlyReading(repo, a[1]) ? Ok(plain + "\n") : null;
             case "rev-parse" when a.Count == 3 && a[1] == "--verify" && IsPlainRef(a[2]):
-                return Direct(repo, a[2]) is { } verified ? Ok(verified + "\n") : null;
+                return Direct(repo, a[2]) is { } verified && OnlyReading(repo, a[2]) ? Ok(verified + "\n") : null;
             case "rev-parse" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && IsPlainRef(a[3]):
+                if (!OnlyReading(repo, a[3])) return null;
                 if (Direct(repo, a[3]) is { } quiet) return Ok(quiet + "\n");
                 return repo.Refs[a[3]] is null && !HasLooseRef(repo, a[3]) ? Exit(1) : null;
 
@@ -260,12 +262,13 @@ internal static partial class InProcessGitReads
             // --git-path logs/HEAD | logs/<full ref>: git's common_list (path.c) keeps logs/HEAD per worktree and the
             // rest of logs/ in the common directory, except logs/refs/{bisect,rewritten,worktree}, left to git.
             case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path" && a[3] == "logs/HEAD":
-                return GitRealPath(repo.Info.Path) is { } worktreeDir ? Ok(worktreeDir + "/logs/HEAD\n") : null;
+                return GitRealPath(repo.Info.Path) is { } worktreeDir && GitPathBelow(worktreeDir, "logs/HEAD") is { } headLog
+                    ? Ok(headLog + "\n") : null;
             case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path"
                 && a[3].StartsWith("logs/", StringComparison.Ordinal) && IsPlainRef(a[3]["logs/".Length..])
                 && !PerWorktreeRef(a[3]["logs/".Length..]):
                 return CommonDirectory(repo.Info.Path) is { } common && GitRealPath(common) is { } commonDir
-                    ? Ok(commonDir + "/" + a[3] + "\n") : null;
+                    && GitPathBelow(commonDir, a[3]) is { } refLog ? Ok(refLog + "\n") : null;
 
             // show-ref --verify --quiet <ref>: 0 for a direct ref; the silent 1 only when no ref of that name exists
             // anywhere git would look (no packed or loose ref, not even a broken one).
@@ -492,6 +495,42 @@ internal static partial class InProcessGitReads
         return found;
     }
 
+    // Refs git keeps per worktree (path.c common_list): refs/bisect, refs/rewritten and refs/worktree, the names
+    // themselves and everything below them.
+    private static bool PerWorktreeRef(string name) =>
+        new[] { "refs/bisect", "refs/rewritten", "refs/worktree" }
+            .Any(p => name == p || name.StartsWith(p + "/", StringComparison.Ordinal));
+
+    // git's other ref_rev_parse_rules readings of a full ref name (refs/<n>, refs/tags/<n>, refs/heads/<n>,
+    // refs/remotes/<n>, refs/remotes/<n>/HEAD): none may exist in libgit2's view or as a loose file, or git would
+    // warn that the name is ambiguous, read a broken ref, or resolve a missing name through another reading.
+    private static bool OnlyReading(Repository repo, string name) =>
+        new[] { "refs/" + name, "refs/tags/" + name, "refs/heads/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" }
+            .All(candidate => repo.Refs[candidate] is null && !HasLooseRef(repo, candidate));
+
+    // git prints --git-path through strbuf_realpath_forgiving: each component below the git dir that exists is
+    // printed as it is on disk (its case, Windows' trailing dots and spaces, links resolved). Answered only when each
+    // existing component is spelled exactly as on disk and is no link; the first missing one ends the check, as git
+    // then appends the rest as typed.
+    private static string? GitPathBelow(string dir, string relative)
+    {
+        var current = dir;
+        foreach (var part in relative.Split('/'))
+        {
+            var next = Path.Combine(current, part);
+            var exact = Directory.Exists(current) && Directory.EnumerateFileSystemEntries(current)
+                .Any(entry => string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
+            if (!exact)
+            {
+                if (File.Exists(next) || Directory.Exists(next)) return null;
+                break;
+            }
+            if (File.GetAttributes(next).HasFlag(FileAttributes.ReparsePoint)) return null;
+            current = next;
+        }
+        return dir + "/" + relative;
+    }
+
     /// <summary>Whether a loose ref file of that name exists in the git directory or the common directory.</summary>
     private static bool HasLooseRef(Repository repo, string name)
     {
@@ -517,11 +556,6 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
-    // Refs git keeps per worktree (path.c common_list): refs/bisect, refs/rewritten, refs/worktree.
-    private static bool PerWorktreeRef(string name) =>
-        name.StartsWith("refs/bisect/", StringComparison.Ordinal) || name.StartsWith("refs/rewritten/", StringComparison.Ordinal)
-        || name.StartsWith("refs/worktree/", StringComparison.Ordinal);
-
     private static string? Direct(Repository repo, string name) =>
         IsPlainRef(name) && repo.Refs[name] is DirectReference direct && GitText.IsOid(direct.TargetIdentifier)
             ? direct.TargetIdentifier : null;
@@ -529,7 +563,8 @@ internal static partial class InProcessGitReads
     /// <summary>A full ref name git would accept as written (libgit2 normalises some it would refuse).</summary>
     private static bool IsPlainRef(string name)
     {
-        if (!name.StartsWith("refs/", StringComparison.Ordinal) || name.EndsWith('/') || name.EndsWith(".lock", StringComparison.Ordinal))
+        if (!name.StartsWith("refs/", StringComparison.Ordinal) || name.EndsWith('/') || name.EndsWith('.')
+            || name.EndsWith(".lock", StringComparison.Ordinal))
             return false;
         if (name.Contains("//") || name.Contains("..") || name.Contains("@{") || name.Contains("/.")) return false;
         foreach (var c in name)

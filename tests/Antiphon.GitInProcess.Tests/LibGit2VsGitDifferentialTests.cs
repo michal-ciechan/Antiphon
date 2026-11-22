@@ -60,6 +60,13 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/heads/no-such-branch");
         await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/bisect/bad");
         await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/worktree/x");
+        foreach (var perWorktree in new[] { "logs/refs/bisect", "logs/refs/rewritten", "logs/refs/worktree", "logs/refs/rewritten/x" })
+            await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", perWorktree);
+        // An existing log spelled otherwise than on disk: git prints the on-disk spelling (Windows), so git answers.
+        var branch = fixture.SourceRef["refs/heads/".Length..];
+        await CompareAsync(cwd, OperatingSystem.IsWindows() ? Expect.Fallback : Expect.Answered,
+            "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/heads/" + branch.ToUpperInvariant());
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/" + fixture.SourceRef + ".");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", fixture.TargetRef);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", fixture.SourceRef);
@@ -128,9 +135,18 @@ public sealed class LibGit2VsGitDifferentialTests
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "refs/tags/light", "refs/tags/annotated");
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", "refs/tags/annotated");
             await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "refs/tags/annotated^{commit}");
-            // Unpeeled: a tag ref names its tag object, packed or loose.
+            // Unpeeled: a tag ref names its tag object, packed or loose. Another reading of the name (here
+            // refs/heads/refs/tags/light) makes git warn or resolve it otherwise: git answers.
             await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "refs/tags/annotated");
             await CompareAsync(cwd, Expect.Answered, "rev-parse", "refs/tags/light");
+        }
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", "refs/heads/refs/tags/light", fixture.SeedSha);
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", "refs/heads/refs/heads/ghost", fixture.SeedSha);
+        foreach (var cwd in new[] { fixture.Repository, fixture.Source })
+        {
+            await CompareAsync(cwd, Expect.Fallback, "rev-parse", "refs/tags/light");
+            await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "refs/tags/light");
+            await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "--quiet", "refs/heads/ghost");
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", fixture.TargetRef);
         }
         await CompareAsync(fixture.Source, Expect.Answered, "symbolic-ref", "-q", "HEAD");
