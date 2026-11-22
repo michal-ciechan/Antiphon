@@ -117,40 +117,44 @@ internal static class WindowsSlotHolderQuery
     /// </summary>
     private static bool TryReadCwd(int pid, out string? cwd, out bool skipped)
     {
-        cwd = null;
-        skipped = false;
         var handle = OpenProcess(ProcessQueryInformation | ProcessVmRead, false, pid);
         if (handle == IntPtr.Zero)
         {
+            cwd = null;
             skipped = true;
             return true;
         }
 
         try
         {
-            if (!IsWow64Process(handle, out var wow64))
-                return false;
-            if (wow64)
-            {
-                skipped = true;
-                return true;
-            }
-
-            if (NtQueryInformationProcess(handle, ProcessBasicInformationClass, out var info, Marshal.SizeOf<ProcessBasicInformation>(), out _) != 0
-                || info.PebBaseAddress == IntPtr.Zero)
-                return false;
-
-            var parametersAddress = info.PebBaseAddress + 0x20;
-            if (!ReadPointer(handle, parametersAddress, out var parameters) || parameters == IntPtr.Zero)
-                return false;
-            if (!ReadUnicode(handle, parameters + 0x38, out cwd))
-                return false;
-            return true;
+            return TryReadOpenProcessCwd(handle, out cwd, out skipped);
         }
         finally
         {
             CloseHandle(handle);
         }
+    }
+
+    internal static bool TryReadOpenProcessCwd(IntPtr handle, out string? cwd, out bool skipped)
+    {
+        cwd = null;
+        skipped = false;
+        if (!IsWow64Process(handle, out var wow64))
+            return false;
+        if (wow64)
+        {
+            skipped = true;
+            return true;
+        }
+
+        if (NtQueryInformationProcess(handle, ProcessBasicInformationClass, out var info, Marshal.SizeOf<ProcessBasicInformation>(), out _) != 0
+            || info.PebBaseAddress == IntPtr.Zero)
+            return false;
+
+        var parametersAddress = info.PebBaseAddress + 0x20;
+        if (!ReadPointer(handle, parametersAddress, out var parameters) || parameters == IntPtr.Zero)
+            return false;
+        return ReadUnicode(handle, parameters + 0x38, out cwd);
     }
 
     private static bool CollectLocks(string root, List<WorkspaceSlotHolder> holders)
