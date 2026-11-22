@@ -54,6 +54,15 @@ const PlanReaderPage = lazy(() =>
 const CardThreadPage = lazy(() =>
   import('./features/thread/CardThreadPage').then((m) => ({ default: m.CardThreadPage })),
 )
+const ReviewRunsPage = lazy(() =>
+  import('./features/review/ReviewRunsPage').then((m) => ({ default: m.ReviewRunsPage })),
+)
+const ReviewRunPage = lazy(() =>
+  import('./features/review/ReviewRunPage').then((m) => ({ default: m.ReviewRunPage })),
+)
+const ReviewQueuePage = lazy(() =>
+  import('./features/review/ReviewQueuePage').then((m) => ({ default: m.ReviewQueuePage })),
+)
 
 const queryClient = new QueryClient()
 
@@ -182,6 +191,36 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Thread error">
                       <SuspenseBoundary variant="page">
                         <CardThreadPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="reviews"
+                  element={
+                    <ErrorBoundary fallbackTitle="Reviews error">
+                      <SuspenseBoundary variant="page">
+                        <ReviewRunsPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="reviews/:runId"
+                  element={
+                    <ErrorBoundary fallbackTitle="Review run error">
+                      <SuspenseBoundary variant="page">
+                        <ReviewRunPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="review-queue"
+                  element={
+                    <ErrorBoundary fallbackTitle="Review queue error">
+                      <SuspenseBoundary variant="page">
+                        <ReviewQueuePage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

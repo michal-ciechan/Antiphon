@@ -1,22 +1,38 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router'
-import { ReviewRunsPage } from './ReviewRunsPage'
+import { fakeReviewApi } from './reviewApi'
+import { ReviewStoryShell } from './ReviewStoryShell'
+import { EMPTY_RUNS_FILTERS, useReviewUiStore } from './useReviewUiStore'
+import { DEFAULT_REVIEW_VIEWER, useReviewViewerStore } from './useReviewViewerStore'
 
-const meta: Meta<typeof ReviewRunsPage> = {
+/** The real /reviews page against the in-memory fake API. Click a run to open its page. */
+const meta: Meta = {
   title: 'Review/Review runs',
-  component: ReviewRunsPage,
   parameters: { layout: 'fullscreen' },
-  decorators: [
-    (Story) => (
-      <QueryClientProvider client={new QueryClient()}>
-        <MemoryRouter>
-          <Story />
-        </MemoryRouter>
-      </QueryClientProvider>
-    ),
-  ],
+  beforeEach: () => {
+    fakeReviewApi.reset()
+    useReviewViewerStore.setState({ viewer: DEFAULT_REVIEW_VIEWER })
+    useReviewUiStore.setState({ runsView: 'table', runsFilters: EMPTY_RUNS_FILTERS })
+  },
 }
 export default meta
 
-export const Table: StoryObj<typeof ReviewRunsPage> = {}
+type Story = StoryObj
+
+/** The dense table with the KPI filter cards (default view). */
+export const Table: Story = { render: () => <ReviewStoryShell initialPath="/reviews" /> }
+
+/** The whose-move board. */
+export const Board: Story = {
+  beforeEach: () => {
+    useReviewUiStore.setState({ runsView: 'board' })
+  },
+  render: () => <ReviewStoryShell initialPath="/reviews" />,
+}
+
+/** "Waiting on humans" toggled on from its KPI card. */
+export const WaitingOnHumans: Story = {
+  beforeEach: () => {
+    useReviewUiStore.setState({ runsFilters: { ...EMPTY_RUNS_FILTERS, humans: true } })
+  },
+  render: () => <ReviewStoryShell initialPath="/reviews" />,
+}

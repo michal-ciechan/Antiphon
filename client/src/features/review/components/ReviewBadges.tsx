@@ -113,7 +113,7 @@ export function SyncBadge({ state, quietWhenSynced = true }: { state: SyncState;
 export function GateKindBadge({ kind }: { kind: GateKind }) {
   const m = GATE_KIND_META[kind]
   return (
-    <Badge size="xs" variant="light" color={m.color} radius="sm">
+    <Badge size="xs" variant="light" color={m.color} radius="sm" tt="none">
       {m.label}
     </Badge>
   )

@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react'
 import type { HubConnection } from '@microsoft/signalr'
 import { useQueryClient } from '@tanstack/react-query'
 import { keepSixKeys } from '../api/keepSix'
+import { reviewRunChangedKeys } from '../api/reviewEngine'
 
 /**
  * SignalR event → TanStack Query invalidation mapping.
@@ -175,6 +176,12 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     // names a revision only; the data comes from the scope GET (useSignalRInvalidation.test.ts V07).
     event: 'DispatchConcurrencyChanged',
     getKeys: () => [['dispatchConcurrency'], ['agentTasks', 'pipeline']],
+  },
+  {
+    // Review engine (docs/features/012-review-engine/api.md, SignalR section): one event per run
+    // change refreshes the runs list, the run and its findings, the queue and the KPIs.
+    event: 'ReviewRunChanged',
+    getKeys: (p) => reviewRunChangedKeys(typeof p.runId === 'string' ? p.runId : undefined),
   },
   {
     event: 'ScheduleChanged',

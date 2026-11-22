@@ -75,6 +75,8 @@ const NAV_ITEMS = [
   { to: '/agents', label: 'Agents' },
   { to: '/hosts', label: 'Hosts' },
   { to: '/channels', label: 'Channels' },
+  { to: '/reviews', label: 'Reviews' },
+  { to: '/review-queue', label: 'Review queue' },
   { to: '/orchestrator', label: 'Orchestrator' },
   { to: '/settings', label: 'Settings' },
 ]
