@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-coverage.ps1')
+. (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $lib 'c487-harness.ps1')
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $repo = Split-Path -Parent $here

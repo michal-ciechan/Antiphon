@@ -133,6 +133,8 @@ namespace Antiphon.Nightly
         /// <summary>
         /// $script:LiveLaneProtectedPaths: the policy and its readers. Each must exist at the seed (seed-object-missing),
         /// be the pre-S1 base's blob (baseline-drift) and hash as the candidate's file (reader-input-changed).
+        /// W2-nightly S27 deleted scripts/lib/nightly-coverage.ps1 (its readers are the compiled ones listed here), so it
+        /// is no longer a protected path: a candidate without it could never hash as the seed's file.
         /// </summary>
         public static IReadOnlyList<string> ProtectedPaths { get; } = new[]
         {
@@ -143,7 +145,6 @@ namespace Antiphon.Nightly
             "scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs",
             "scripts/lib/Antiphon.Nightly/DiagnosticLog.cs",
             "scripts/lib/Antiphon.Nightly/DiagScan.cs",
-            "scripts/lib/nightly-coverage.ps1",
         };
 
         /// <summary>
@@ -405,7 +406,7 @@ namespace Antiphon.Nightly
 
                 var readerRoot = _scratch.NewOwned(repoRoot, "reader" + Guid.NewGuid().ToString("N"));
                 CopyProtected(repoRoot, readerRoot);
-                File.AppendAllText(Path.Combine(readerRoot, "scripts", "lib", "nightly-coverage.ps1"), "\n# c1545 scratch\n" + Environment.NewLine, Encoding.ASCII);
+                File.AppendAllText(Path.Combine(readerRoot, "scripts", "lib", "Antiphon.Nightly", "NightlyPolicy.cs"), "\n// c1545 scratch\n" + Environment.NewLine, Encoding.ASCII);
                 Expect("reader-edit", With(new LiveLaneCensusMutant { AfterRoot = readerRoot }), "reader-input-changed");
 
                 var c680 = PolicyMutant(repoRoot, policy =>

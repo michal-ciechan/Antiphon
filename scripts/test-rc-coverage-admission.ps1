@@ -2,7 +2,8 @@
 # Offline admission regression from Debug d8f70e4c. No provider or qualification run.
 param([string]$ResultsDirectory, [string]$Case)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-coverage','c487-harness')) { . "$PSScriptRoot/lib/$name.ps1" }
+foreach ($name in @('nightly-common','c487-harness')) { . "$PSScriptRoot/lib/$name.ps1" }
+$null = Test-NightlyCoreAvailable
 $repo = Split-Path $PSScriptRoot -Parent
 $ResultsDirectory = New-C487Root $ResultsDirectory
 $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')

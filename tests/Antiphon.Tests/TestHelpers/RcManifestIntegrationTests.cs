@@ -211,13 +211,12 @@ public sealed class RcManifestIntegrationTests
     public Task InstrumentationAndIdentitySurvivePublication(CancellationToken cancellationToken) => InvariantAsync(async () =>
     {
         var work = C1514Support.FreshRoot();
-        // Resolve-QualificationTimingRoot (scripts/lib/test-phase-paths.ps1, still PowerShell).
+        // Resolve-QualificationTimingRoot, compiled (NightlyPaths.TimingRoot; W2-nightly S27 deleted scripts/lib/test-phase-paths.ps1).
         var log = Path.Combine(work, "v14-log");
         var set = Path.Combine(work, "v14-set");
-        var resolved = await ResolveTimingRoots(cancellationToken, ("", "", ""), ("", log, ""), (set, log, "mp-v14"));
-        resolved[0].ShouldBe("", "timing-root-removed-key-invented");
-        resolved[1].ShouldBe(Path.Combine(log, "timing"), "timing-root-present-empty-mismatch");
-        resolved[2].ShouldBe(set, "timing-root-set-mismatch");
+        NightlyPaths.TimingRoot("", "", "").ShouldBe("", "timing-root-removed-key-invented");
+        NightlyPaths.TimingRoot("", log, "").ShouldBe(Path.Combine(log, "timing"), "timing-root-present-empty-mismatch");
+        NightlyPaths.TimingRoot(set, log, "mp-v14").ShouldBe(set, "timing-root-set-mismatch");
         var run = await Qualify(work, "identity", "success", ["markdown-pdf", "observability"],
             Classes(("markdown-pdf", ["Fixture.One"]), ("observability", ["Fixture.Two"])), cancellationToken);
         run.FlatAtBarrier.ShouldBe("absent", "identity-flat-present-before-terminal " + run.FlatAtBarrier);
@@ -491,20 +490,6 @@ public sealed class RcManifestIntegrationTests
         var json = new JsonObject { ["ledger"] = ledger, ["receipt"] = receipt, ["returned"] = new JsonObject { ["ExitCode"] = run.ExitCode }, ["originalEvidence"] = evidence }.ToJsonString();
         var root = Path.GetDirectoryName(run.Log)!;
         return json.Replace(JsonSerializer.Serialize(root)[1..^1], "<root>").Replace(root, "<root>").Replace("mp-" + run.Name, "<run>");
-    }
-
-    // Resolve-QualificationTimingRoot, from scripts/lib/test-phase-paths.ps1 (still PowerShell).
-    private static async Task<string[]> ResolveTimingRoots(CancellationToken cancellationToken, params (string TimingRoot, string LogRoot, string RunId)[] calls)
-    {
-        var script = new StringBuilder(". (Join-Path '" + C1514Support.RepoRoot().Replace("'", "''") + "' 'scripts/lib/test-phase-paths.ps1');");
-        foreach (var (timingRoot, logRoot, runId) in calls)
-            script.Append("Write-Output ('RESOLVED=' + [string](Resolve-QualificationTimingRoot -TimingRoot '" + timingRoot.Replace("'", "''") + "' -LogRoot '" + logRoot.Replace("'", "''") + "' -RunId '" + runId + "'));");
-        var start = new ProcessStartInfo("pwsh");
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", "& { " + script + " }" }) start.ArgumentList.Add(argument);
-        var ran = await C1514Support.RunProcess(start, cancellationToken);
-        var values = ran.Text.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith("RESOLVED=", StringComparison.Ordinal)).Select(l => l["RESOLVED=".Length..]).ToArray();
-        values.Length.ShouldBe(calls.Length, "resolver-output " + ran.Text);
-        return values;
     }
 
     private static string Text(JsonElement? e, string name) =>

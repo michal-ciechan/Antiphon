@@ -978,9 +978,9 @@ can over-count; Appendix B gives the commands.
 | `scripts/lib/live-lane-receipt.ps1` | 359 | nightly/selection | ps 2 / test.cs 0 / docs 2 | no |  | 7 only | W2-nightly |
 | `scripts/lib/live-lane-run.ps1` | 234 | nightly/selection | ps 3 / test.cs 0 / docs 3 | no |  | 7 only | W2-nightly |
 | `scripts/lib/live-startup-timing.ps1` | 37 | nightly/selection | ps 9 / test.cs 0 / docs 1 | no |  | 5.1 named | W2-nightly |
-| `scripts/lib/nightly-common.ps1` | 1150 | nightly lib (PINNED) | ps 43 / test.cs 10 / docs 33 / C#:1 | yes (10) | **PIN** | 5.1 named | S3 (canonical JSON) / W2-nightly |
-| `scripts/lib/nightly-core.ps1` | 341 | nightly loader (PINNED) | ps 15 / test.cs 4 / docs 11 / C#:1 | yes (4) | **PIN** | 7 only | S3-S4 / W2-nightly (retire loader) |
-| `scripts/lib/nightly-coverage.ps1` | 1564 | nightly lib (PINNED) | ps 21 / test.cs 6 / docs 47 / C#:11 | yes (6) | **PIN** | 5.1 named | S4 (census) / W2-nightly |
+| `scripts/lib/nightly-common.ps1` | 1150 | nightly lib (PINNED) | ps 43 / test.cs 10 / docs 33 / C#:1 | yes (10) | **PIN** | 5.1 named | S3 (canonical JSON) / W2-nightly; shrunk in W2-nightly S27 to what W2-rc calls, unpinned from the live lane |
+| `scripts/lib/nightly-core.ps1` | 341 | nightly loader (PINNED) | ps 15 / test.cs 4 / docs 11 / C#:1 | yes (4) | **PIN** | 7 only | S3-S4 / W2-nightly (retire loader); shrunk in W2-nightly S27 to the loader, unpinned from the live lane |
+| `scripts/lib/nightly-coverage.ps1` | 1564 | nightly lib (PINNED) | ps 21 / test.cs 6 / docs 47 / C#:11 | yes (6) | **PIN** | 5.1 named | S4 (census) / W2-nightly; deleted in W2-nightly S27 (dot-sources, ReleaseAuthority.Scripts and both live-lane pins dropped) |
 | `scripts/lib/nightly-dispatch.ps1` | 248 | nightly/selection | ps 2 / test.cs 0 / docs 14 | no |  | 5.1 named | W2-nightly |
 | `scripts/lib/nightly-failure-history.ps1` | 713 | nightly/selection | ps 6 / test.cs 0 / docs 15 / C#:1 | no |  | 5.1 named | W2-nightly |
 | `scripts/lib/nightly-health.ps1` | 956 | nightly health (Windmill readiness) | ps 2 / test.cs 2 / docs 10 | yes (2) |  | 5.1 named | S5 |
@@ -1016,7 +1016,7 @@ can over-count; Appendix B gives the commands.
 | `scripts/lib/release-selection.ps1` | 493 | rc/release/qualification | ps 11 / test.cs 1 / docs 21 / C#:2 | yes (1) |  | 5.1 named | W2-rc |
 | `scripts/lib/runner-operator-token.ps1` | 13 | credential tool | ps 6 / test.cs 1 / docs 3 | yes (1) |  | unstated | S12 |
 | `scripts/lib/test-phase-evidence.ps1` | 3516 | nightly/selection | ps 7 / test.cs 6 / docs 14 / C#:10 | yes (6) |  | 5.1 named | W2-nightly |
-| `scripts/lib/test-phase-paths.ps1` | 61 | nightly/selection | ps 3 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-nightly |
+| `scripts/lib/test-phase-paths.ps1` | 61 | nightly/selection | ps 3 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-nightly; deleted in W2-nightly S27 (release-cut.ps1 calls `NightlyPaths.TimingRoot`) |
 | `scripts/lib/test-selection.ps1` | 379 | nightly/selection | ps 14 / test.cs 2 / docs 19 / C#:3 | yes (2) |  | 7 only | W2-nightly |
 | `scripts/lib/test-timings.ps1` | 218 | nightly/selection | ps 4 / test.cs 0 / docs 7 | no |  | 7 only | W2-nightly |
 | `scripts/lib/toolchain-floor.ps1` | 157 | nightly/selection | ps 6 / test.cs 2 / docs 0 | yes (2) |  | 5.1 named | W2-nightly |

@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $golden = Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-core')) {
+foreach ($name in @('nightly-common','nightly-core')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $null = Test-NightlyCoreAvailable

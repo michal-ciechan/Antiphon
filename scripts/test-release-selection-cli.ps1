@@ -5,7 +5,7 @@
 # without a baseline; each refusal is the worker's). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common', 'nightly-coverage', 'release-gate', 'release-selection', 'test-selection', 'c487-harness') {
+foreach ($name in 'nightly-common', 'release-gate', 'release-selection', 'test-selection', 'c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path -Parent $PSScriptRoot

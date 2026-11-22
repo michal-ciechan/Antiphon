@@ -3,7 +3,6 @@ param([string]$Case, [string]$ResultsDirectory, [string]$FilterHost)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
-. "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $repoRoot = Split-Path -Parent $PSScriptRoot

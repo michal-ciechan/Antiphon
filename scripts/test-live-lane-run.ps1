@@ -4,7 +4,6 @@ param([string]$Case, [string]$ResultsDirectory, [switch]$PrintInputDigest)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
-. "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 . "$PSScriptRoot/lib/live-lane-run.ps1"
@@ -14,18 +13,18 @@ $repo = Split-Path $PSScriptRoot -Parent
 # change updates $script:PinnedInputDigest to the value printed by
 #   pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest
 # The digest is over newline-normalised text, so LF and CRLF checkouts agree.
-# nightly-core.ps1 is the loader those readers dot-source. The census itself is
-# compiled (the readers require the core and keep no PowerShell copy), so the pin
-# also carries NightlyCore.cs: the class-name, exclusion-index and census code the
-# isolated reader runs. That reader loads the pinned PowerShell from its root and
-# uses this checkout's core, which this process built from the pinned source when
-# the checkout matches the pin. Each root's discovery.diag is parsed here, with
-# the same core, and handed in.
+# The policy reader and the census are compiled, so the pin carries their C#
+# sources (NightlyPolicy.cs, ExecutionPolicy.cs, DiscoveryIndex.cs, DiagnosticLog.cs,
+# DiagScan.cs and NightlyCore.cs: the class-name, exclusion-index and census code)
+# and no PowerShell (W2-nightly S27: nightly-coverage.ps1 is deleted; nightly-common.ps1
+# and the loader nightly-core.ps1 no longer take part in a census read). The isolated
+# reader reads a root's policy with this checkout's core, which this process built
+# from the pinned source when the checkout matches the pin. Each root's
+# discovery.diag is parsed here, with the same core, and handed in.
 $script:ProtectedInputs = @(
-    'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
+    'scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
     'scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs','scripts/lib/Antiphon.Nightly/DiagnosticLog.cs','scripts/lib/Antiphon.Nightly/DiagScan.cs',
-    'scripts/lib/nightly-coverage.ps1',
-    'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
+    'scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
 $script:PinnedInputDigest = '411fcbb19f98a4f1eb4268666e393136912a1623c65a49618c819d22c3da0921'
 function ConvertTo-LfText([string]$Text) {
@@ -244,23 +243,13 @@ function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Age
     [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50) + "`n")
 }
 function Read-Census($root) {
-    # A fresh runspace prevents script-level import guards from making a pinned
-    # reader silently resolve functions from the candidate (or the reverse).
-    # The pinned root has NightlyCore.cs and not src/Antiphon.IO.WriteBehind, so
-    # its loader's build identity is null. A core already loaded from this checkout
-    # then fails Assert-NightlyLoadedCoreIdentity with required-identity-unavailable.
-    # So the core is loaded and verified through the checkout's loader first, and
-    # the loader is re-bound to the checkout after the pinned scripts are dotted;
-    # the pinned census functions stay the ones from $root.
+    # A fresh runspace that loads only this checkout's loader: the census is compiled and
+    # the root holds no PowerShell reader (a pinned root has the protected inputs alone,
+    # and its policy and discovery are what the read takes from it).
     $discovery = [Antiphon.Nightly.NightlyDiagnosticLog]::Read("$root/scripts/fixtures/nightly/c487-probe/discovery.diag", 'discovery')
     $reader = {
         param($root, $discovery, $checkout)
-        $loader = $root
-        if (-not [string]::IsNullOrWhiteSpace($checkout)) { $loader = $checkout }
-        . "$loader/scripts/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
-        . "$root/scripts/lib/nightly-common.ps1"
-        . "$root/scripts/lib/nightly-coverage.ps1"
-        . "$loader/scripts/lib/nightly-core.ps1"
+        . "$checkout/scripts/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
         $policyRead = [Antiphon.Nightly.NightlyPolicy]::Read('', "$root/tests/test-execution-policy.json")
         $policy = $policyRead.Object
         $nodes = @($discovery.Nodes)
@@ -306,10 +295,10 @@ function Test-WrapperOnlyPaidManifest {
     Add-PolicyExclusion $beforeRoot
     Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     [IO.File]::WriteAllText($policyPath, $original)
-    $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
-    # The census is compiled, so no edit to the PowerShell reader or to the compiled census source changes a census
-    # read in this process: only the pin can see either.
-    [IO.File]::AppendAllText($reader, "`n# fixture edit`n")
+    $reader = Join-Path $beforeRoot 'scripts/lib/Antiphon.Nightly/NightlyPolicy.cs'
+    # The census is compiled, so no edit to the policy reader's source or to the compiled census source changes a
+    # census read in this process: only the pin can see either.
+    [IO.File]::AppendAllText($reader, "`n// fixture edit`n")
     $readerEdit = -not (Test-ProtectedInputs $beforeRoot)
     $coreRoot = Join-Path $ResultsDirectory 'pinned-core'
     Copy-ProtectedInputs $repo $coreRoot

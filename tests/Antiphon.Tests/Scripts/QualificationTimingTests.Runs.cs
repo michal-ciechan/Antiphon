@@ -15,8 +15,8 @@ namespace Antiphon.Tests.Scripts;
 // nightly-tests executor runs (NightlyDispatch.CoordinateOrFailure over a NightlySuiteRunner, the run state filled as
 // Invoke-AntiphonNightlyTests fills it) on a RecordingLauncher whose behaviour is the driver's StartProcess seam, and its
 // timing table is QualificationTiming.Report, which the executor copies into summary.json (timingChunks, suiteTimeline).
-// Still launching PowerShell: the timing-root resolver (scripts/lib/test-phase-paths.ps1, loaded by release-cut under
-// Windows PowerShell 5.1) and the release-cut legs (scripts/release-cut.ps1), both still production PowerShell.
+// Still launching PowerShell: the release-cut legs (scripts/release-cut.ps1, still production PowerShell). The timing-root
+// resolver is compiled (NightlyPaths.TimingRoot; W2-nightly S27 deleted scripts/lib/test-phase-paths.ps1).
 public sealed partial class QualificationTimingTests
 {
     private const string RunSha = "9f00008facfc48e75555c08df59887019b3f8dfe";
@@ -544,144 +544,29 @@ public sealed partial class QualificationTimingTests
             return lines.Length > 0 && lines[0].StartsWith("C487_INVOCATION=", StringComparison.Ordinal) ? string.Join("\n", lines.Skip(1)) : string.Join("\n", lines);
         }).ToArray();
 
-    // ---- the PowerShell 5.1 timing-root path -----------------------------------------------------------------------
+    // ---- the timing-root resolver ----------------------------------------------------------------------------------
 
-    // Windows PowerShell 5.1 compiles every Add-Type source with the legacy csc (.NET Framework, C# 5). test-phase-paths.ps1
-    // (release-cut.ps1's timing root under 5.1) compiles the Linux identity from these files there; the evidence itself is
-    // compiled (W2-nightly S07-S09; test-phase-evidence.ps1 is deleted in S17).
+    // Resolve-QualificationTimingRoot is compiled (NightlyPaths.TimingRoot); W2-nightly S27 deleted
+    // scripts/lib/test-phase-paths.ps1, and release-cut.ps1 calls the compiled rule for a blank timing root. A blank root
+    // resolves to LogRoot/timing-<run> (LogRoot/timing without a run id, blank without a log root); an explicit one is kept.
+    // The PowerShell 5.1 load of the old library (and its Add-Type of the Linux identity) has no subject left.
     [Test]
-    public void Ps51_add_type_sources_stay_netfx_clean()
-    {
-        var lib = Path.Combine(NightlyPlanCases.Repo, "scripts", "lib");
-        var findings = NetFxAddTypeFindings(
-            Path.Combine(lib, "test-phase-paths.ps1"),
-            Path.Combine(lib, "Antiphon.Nightly", "TestPhaseStreamReaders.cs"),
-            Path.Combine(lib, "Antiphon.Nightly", "TestPhaseLinuxIdentity.cs"));
-        var rows = new NightlyCaseRows();
-        rows.Check(findings.Count == 0, "ps51-add-type-netfx-clean", string.Join(" ", findings.Select(f => "PS51 " + f)));
-        rows.ShouldAllPass(1);
-    }
-
-    // Resolve-QualificationTimingRoot (scripts/lib/test-phase-paths.ps1, still production PowerShell: release-cut.ps1 and
-    // the nightly run load it) in a pwsh child: a blank root resolves to LogRoot/timing-<run>, an explicit one is kept.
-    // On Windows the same file loads under powershell.exe (5.1), as blank-TimingRoot release-cut.ps1 loads it.
-    [Test]
-    [Category("Integration")]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    [Timeout(120_000)]
-    public async Task Timing_root_resolver_loads_under_pwsh_and_powershell_exe(CancellationToken cancellationToken)
+    public void Timing_root_resolver_is_the_compiled_rule()
     {
         var rows = new NightlyCaseRows();
-        var root = NewRoot();
-        try
-        {
-            var paths = Path.Combine(NightlyPlanCases.Repo, "scripts", "lib", "test-phase-paths.ps1");
-            var script = Path.Combine(root, "resolve.ps1");
-            File.WriteAllText(script, ResolverScript, Encoding.ASCII);
-            var log = Path.Combine(root, "log");
-            Directory.CreateDirectory(log);
-            var result = Path.Combine(root, "pwsh.json");
-            var ran = await PowerShellChild(Pwsh(), [script, paths, log, result], cancellationToken);
-            using (var doc = JsonDocument.Parse(File.Exists(result) ? File.ReadAllText(result) : "{}"))
-            {
-                var r = doc.RootElement;
-                var resolved = Text(r, "resolved");
-                rows.Check(ran.ExitCode == 0 && Bool(r, "exists"), "resolver-exists", ran.Text);
-                rows.Check(!string.IsNullOrWhiteSpace(resolved), "blank-root-resolved", resolved);
-                rows.Check(Slashed(resolved).EndsWith("timing-run-1", StringComparison.Ordinal) || Slashed(resolved).EndsWith("/timing", StringComparison.Ordinal), "blank-root-retained", resolved);
-                rows.Check(Text(r, "kept") == Path.Combine(log, "explicit"), "explicit-root-kept", Text(r, "kept"));
-            }
-            if (!OperatingSystem.IsWindows())
-            {
-                Console.WriteLine("SKIP ps51-powershell-exe-load-pending-native pending-native: desktop lane loads scripts/lib/test-phase-paths.ps1 under powershell.exe; blank TimingRoot release-cut.ps1 is the production caller (-WhatIf skips that load)");
-                rows.ShouldAllPass(4);
-                return;
-            }
-            var ps51 = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-            if (!File.Exists(ps51))
-            {
-                Console.WriteLine("SKIP ps51-powershell-exe-load-pending-native pending-native: powershell.exe missing");
-                rows.ShouldAllPass(4);
-                return;
-            }
-            var result51 = Path.Combine(root, "ps51.json");
-            var ran51 = await PowerShellChild(ps51, [script, paths, log, result51], cancellationToken);
-            var loaded = false;
-            if (File.Exists(result51))
-            {
-                using var doc = JsonDocument.Parse(File.ReadAllText(result51));
-                loaded = Bool(doc.RootElement, "exists") && Bool(doc.RootElement, "identity") && Text(doc.RootElement, "kept") == Path.Combine(log, "explicit");
-            }
-            rows.Check(ran51.ExitCode == 0 && loaded, "ps51-powershell-exe-load-pending-native", ran51.Text);
-        }
-        finally { Cleanup(root); }
+        var log = Path.Combine(Path.GetTempPath(), "qtiming-resolver", "log");
+        var resolved = NightlyPaths.TimingRoot("", log, "run-1");
+        rows.Check(!string.IsNullOrWhiteSpace(resolved), "blank-root-resolved", resolved);
+        rows.Check(resolved == Path.Combine(log, "timing-run-1"), "blank-root-retained", resolved);
+        var kept = NightlyPaths.TimingRoot(Path.Combine(log, "explicit"), log, "run-1");
+        rows.Check(kept == Path.Combine(log, "explicit"), "explicit-root-kept", kept);
+        var unnamed = NightlyPaths.TimingRoot("", log, "");
+        var none = NightlyPaths.TimingRoot("", "", "run-1");
+        rows.Check(unnamed == Path.Combine(log, "timing") && none == "", "no-run-id-and-no-log-root", unnamed + " | " + none);
+        var cut = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "release-cut.ps1"));
+        rows.Check(cut.Contains("[Antiphon.Nightly.NightlyPaths]::TimingRoot(", StringComparison.Ordinal) && !cut.Contains("test-phase-paths.ps1", StringComparison.Ordinal),
+            "release-cut-calls-the-compiled-resolver");
         rows.ShouldAllPass(5);
-    }
-
-    // ASCII and 5.1-parseable: it runs under powershell.exe too.
-    private const string ResolverScript = """
-        param([string]$Paths, [string]$LogRoot, [string]$Result)
-        $ErrorActionPreference = 'Stop'
-        . $Paths
-        $exists = [bool](Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)
-        $identity = [bool](Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue)
-        $resolved = ''
-        $kept = ''
-        if ($exists) {
-            $resolved = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot $LogRoot -RunId 'run-1')
-            $kept = [string](Resolve-QualificationTimingRoot -TimingRoot (Join-Path $LogRoot 'explicit') -LogRoot $LogRoot -RunId 'run-1')
-        }
-        $out = New-Object PSObject -Property @{ exists = $exists; identity = $identity; resolved = $resolved; kept = $kept }
-        [IO.File]::WriteAllText($Result, ($out | ConvertTo-Json -Compress))
-        exit 0
-        """;
-
-    // Get-NetFxAddTypeFindings: each Add-Type here-string (and each .cs file Add-Type -Path compiles) scanned, comments
-    // removed, for the C# features the .NET Framework compiler of Windows PowerShell 5.1 lacks.
-    internal static List<string> NetFxAddTypeFindings(params string[] paths)
-    {
-        (string Name, string Pattern)[] rules =
-        [
-            ("ReadOnlySpan", @"\bReadOnlySpan\b"),
-            ("Span", @"\bSpan<"),
-            ("Memory", @"\bReadOnlyMemory\b|\bMemory<"),
-            ("stackalloc", @"\bstackalloc\b"),
-            ("is-not", @"\bis\s+not\b"),
-            ("switch-expression", @"\bswitch\s*\{|\bswitch\s+[^\s(]"),
-            ("ValueTuple", @"\bValueTuple\b"),
-            ("tuple-type", @"\(\s*(?:bool|byte|char|int|long|float|double|decimal|string|object|var)\s*,"),
-            ("Contains-char", @"\.Contains\(\s*'"),
-            ("ArrayPool", @"\bArrayPool\b"),
-            ("interpolation", "\\$\""),
-            ("null-conditional", @"\?\."),
-            ("nameof", @"\bnameof\s*\("),
-            ("out-var", @"\bout\s+var\b"),
-            ("TimeSpan.TryParse-provider", @"TimeSpan\s*\.\s*TryParse\s*\([^;\n]*,[^;\n]*,"),
-        ];
-        var single = new Regex(@"(?s)Add-Type(?:\s+-Language\s+\w+)?\s+-TypeDefinition\s+@'\r?\n(.*?)\r?\n'@");
-        var doubled = new Regex("(?s)Add-Type(?:\\s+-Language\\s+\\w+)?\\s+-TypeDefinition\\s+@\"\\r?\\n(.*?)\\r?\\n\"@");
-        var findings = new List<string>();
-        foreach (var path in paths)
-        {
-            if (!File.Exists(path)) { findings.Add(path + ":missing"); continue; }
-            var text = File.ReadAllText(path);
-            var blocks = new List<string>();
-            if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.IsNullOrWhiteSpace(text)) findings.Add(path + ":empty-source");
-                blocks.Add(text);
-            }
-            blocks.AddRange(single.Matches(text).Select(m => m.Groups[1].Value));
-            blocks.AddRange(doubled.Matches(text).Select(m => m.Groups[1].Value));
-            foreach (var block in blocks)
-            {
-                var source = Regex.Replace(block, @"(?s)/\*.*?\*/", " ");
-                source = Regex.Replace(source, @"(?m)//.*?$", " ");
-                foreach (var (name, pattern) in rules)
-                    if (Regex.IsMatch(source, pattern)) findings.Add(Path.GetFileName(path) + ":" + name);
-            }
-        }
-        return findings;
     }
 
     // ---- F2: release-cut seals the timing root --------------------------------------------------------------------
@@ -720,10 +605,8 @@ public sealed partial class QualificationTimingTests
         $ErrorActionPreference = 'Stop'
         $lib = Join-Path $Repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'release-gate.ps1')
         . (Join-Path $lib 'release-selection.ps1')
-        . (Join-Path $lib 'test-phase-paths.ps1')
         $out = [ordered]@{ blank = $false; explicit = $false; absent = $false; blankDetail = ''; explicitDetail = ''; absentDetail = ''; error = '' }
         try {
             New-Item -ItemType Directory -Path $CutRoot -Force | Out-Null
@@ -805,7 +688,7 @@ public sealed partial class QualificationTimingTests
             $absentCut = & $cut -ReleaseRoot $release -CoordinationRoot $coord -Ref 'rc/2026-10-27' -RunId 'absent-run' -TimingRoot '' -SeamsPath $cutSeam -SkipPublish -PassThru
             $absentAttempt = Join-Path (Join-Path $attempts 'absent-run') 'selection-attempt.json'
             $absentLog = Join-Path (Join-Path (Join-Path $release 'candidates') ([string]$candidate.CandidateId)) 'logs'
-            $absentExpected = Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot $absentLog -RunId 'absent-run'
+            $absentExpected = [Antiphon.Nightly.NightlyPaths]::TimingRoot('', $absentLog, 'absent-run')
             $absentOk = $false
             if (Test-Path -LiteralPath $absentAttempt) {
                 $absentDoc = Get-Content -LiteralPath $absentAttempt -Raw -Encoding UTF8 | ConvertFrom-Json

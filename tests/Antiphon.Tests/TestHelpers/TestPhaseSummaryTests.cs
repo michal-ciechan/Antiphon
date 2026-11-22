@@ -127,8 +127,8 @@ public sealed class TestPhaseSummaryTests
             C1514Support.Complete(writer.ShardPath!, "after-read").GetProperty("outcome").GetString().ShouldBe("Passed");
         }
         await C1514NativeProbe.VerifyAsync(cancellationToken);
-        // W2-nightly S17: test-phase-evidence.ps1 is deleted; test-phase-paths.ps1 stays (W2-rc) until S27.
-        foreach (var relative in new[] { "scripts/lib/test-phase-paths.ps1" })
+        // W2-nightly S27: test-phase-paths.ps1 is deleted; its timing root is in release-cut.ps1, which stays a 5.1-parseable entry.
+        foreach (var relative in new[] { "scripts/release-cut.ps1" })
         {
             var path = Path.Combine(C1514Support.RepoRoot(), relative);
             var text = File.ReadAllText(path);
@@ -147,7 +147,7 @@ public sealed class TestPhaseSummaryTests
             $ErrorActionPreference = 'Stop'
             $tokens = $null
             $errors = $null
-            foreach ($rel in @('scripts/lib/test-phase-paths.ps1')) {
+            foreach ($rel in @('scripts/release-cut.ps1')) {
                 [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $args[0] $rel), [ref]$tokens, [ref]$errors)
                 if ($errors -and $errors.Count -gt 0) { throw $errors[0].ToString() }
             }
@@ -253,7 +253,7 @@ public sealed class TestPhaseSummaryTests
 
         $root = $args[0]
         $found = $false
-        foreach ($rel in @('scripts/lib/test-phase-paths.ps1')) {
+        foreach ($rel in @('scripts/release-cut.ps1')) {
             $path = Join-Path $root $rel
             $tokens = $null
             $errors = $null

@@ -81,7 +81,7 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests),
         typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
-        typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
+        // W2-nightly S27: NativeLinuxPolicyMatcherParityTests runs in-process (no pwsh child) and left this floor.
         // CARD-1807: no Checkpoints class is listed here. A class in Antiphon.Tests.Checkpoints, a
         // sub-namespace, or a nested class of either joins the strict lane by carrying
         // [SharedCheckoutChild]. The census derives that set from the attributes, and the source walk

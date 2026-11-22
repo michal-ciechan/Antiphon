@@ -2,7 +2,7 @@
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
 param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'nightly-coverage', 'release-gate', 'test-selection', 'c487-harness')) {
+foreach ($name in @('nightly-common', 'release-gate', 'test-selection', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot

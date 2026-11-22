@@ -11,7 +11,7 @@ $AssemblyPath = [IO.Path]::GetFullPath($AssemblyPath)
 $ResultsDirectory = [IO.Path]::GetFullPath($ResultsDirectory)
 if (Test-Path -LiteralPath $ResultsDirectory) { throw 'fresh results directory required' }
 [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
-foreach ($name in @('nightly-common','nightly-coverage','nightly-core')) {
+foreach ($name in @('nightly-common','nightly-core')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $null = Test-NightlyCoreAvailable

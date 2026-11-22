@@ -6,8 +6,8 @@
 // Invoke-NightlyWatchedCommand (the host's launcher), ConvertTo-NightlyResultRecord and Invoke-AntiphonNightlyRun (the
 // completion record as the last stdout line), with the ownership and reparse helpers of nightly-common.ps1 it uses
 // (ConvertTo-NightlyResolvedPath, Resolve-NightlyReparsePath, Test-NightlyGitWorktree, Get-NightlyOriginUrl,
-// Test-NightlyPathContained, Test-NightlyRunContextOwnership); nightly-common.ps1 is a pinned input and keeps its copies
-// until S27.
+// Test-NightlyPathContained, Test-NightlyRunContextOwnership); S27 removed the nightly-common.ps1 copies no PowerShell
+// calls and kept the ones the W2-rc scripts call.
 //
 // Two rules differ from the PowerShell. The self-update hop: after a sync the run hops to the clone's
 // scripts/nightly-run.ps1 -NoSync with the same argv whenever this code's product root (the checkout the CLI was built

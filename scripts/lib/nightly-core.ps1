@@ -8,10 +8,10 @@
 # between source versions, so a changed source rebuilds warm (no restore, only the changed project). Windows
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
 # SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
-# (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (nightly-run.ps1, release-cut.ps1,
-# release-candidate.ps1, publish-release.ps1, promote-release.ps1) run under pwsh and require the core.
-# nightly-health.ps1 still runs under Windows PowerShell 5.1 (the readiness job) and reaches only nightly-common
-# functions that need no core.
+# (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (release-cut.ps1, release-candidate.ps1,
+# publish-release.ps1, promote-release.ps1) run under pwsh and require the core.
+# W2-nightly S27: the loader, the scripts CLI build and the refusal text are what the remaining PowerShell calls; the
+# evidence file system facade and the JSON file helpers had no caller left and are gone (EvidenceFiles, NightlyJson).
 
 function Get-NightlyCoreBuildIdentity {
     $projects = @(
@@ -258,52 +258,6 @@ function Assert-NightlyLoadedCoreIdentity {
     throw $detail
 }
 
-# ConvertFrom-Json of a file's text ([IO.File]::ReadAllText decoding; -StripBom also drops one leading U+FEFF left
-# after decoding). With the core loaded it is parsed from the file's UTF-8 bytes with System.Text.Json into the same
-# objects (Antiphon.Nightly/NightlyJson.cs); a document that is not one strict JSON object goes to ConvertFrom-Json
-# for its own result or error. -Omit names property paths the caller never reads ('suites[].exclusions': the
-# exclusions of every suites element), which the core then never builds; ConvertFrom-Json keeps them.
-function Read-NightlyJsonFile([string]$Path, [switch]$StripBom, [string[]]$Omit) {
-    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
-        $value = [Antiphon.Nightly.NightlyJson]::ReadFile($Path, [bool]$StripBom, [string[]]@($Omit | Where-Object { $_ }))
-        if ($null -ne $value) { return $value }
-    }
-    $text = [IO.File]::ReadAllText($Path)
-    if ($StripBom -and $text.Length -gt 0 -and [int][char]$text[0] -eq 0xFEFF) { $text = $text.Substring(1) }
-    return $text | ConvertFrom-Json
-}
-
-# "$Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8", streamed to the file with
-# System.Text.Json (NightlyJson.WriteFile: same content, not the same bytes - non-ASCII text unescaped, shortest
-# number forms). A value it does not write (an arbitrary .NET object, nesting past -Depth) or a path that is not
-# fully qualified is written by ConvertTo-Json.
-function Write-NightlyJsonFile([string]$Path, $Value, [int]$Depth = 8) {
-    Assert-NightlyCoreAvailable 'Write-NightlyJsonFile'
-    # No ConvertTo-Json fallback (CARD-2005): it builds the whole document as one string and ran out of memory
-    # on a full run's summary. A value the core cannot write is an error, and no part-written file is left.
-    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw ('nightly-json-write-failed path-not-absolute ' + $Path) }
-    $reason = ''
-    try { if (-not [Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { $reason = 'unsupported-value-or-depth' } }
-    catch { $reason = $_.Exception.GetBaseException().GetType().Name }
-    if ($reason) {
-        try { [IO.File]::Delete($Path) } catch { }
-        throw ('nightly-json-write-failed ' + $reason + ' ' + $Path)
-    }
-}
-
-# Evidence file system (EvidenceFiles in Antiphon.Nightly/EvidenceFiles.cs). Off unless a nightly run turns it
-# on (nightly-tests.ps1): then the evidence scripts' reads and writes go through one write-behind file system,
-# so writes land on a background thread and this process reads what it wrote. Off, every helper below is the
-# plain file call it replaced. ANTIPHON_NIGHTLY_DEFERRED_WRITES=off keeps it off.
-if ($null -eq $script:NightlyDeferEvidenceWrites) { $script:NightlyDeferEvidenceWrites = $false }
-
-function Enable-NightlyDeferredEvidenceWrites {
-    if ([string]$env:ANTIPHON_NIGHTLY_DEFERRED_WRITES -ieq 'off') { return }
-    Assert-NightlyCoreAvailable 'Enable-NightlyDeferredEvidenceWrites'
-    [Antiphon.Nightly.EvidenceFiles]::EnableWriteBehind()
-    $script:NightlyDeferEvidenceWrites = $true
-}
-
 # Code ported to the core keeps no PowerShell copy (2026-11-13): it loads the core here and refuses without it.
 function Assert-NightlyCoreAvailable([string]$Caller) {
     if (-not (Test-NightlyCoreAvailable)) { throw ('nightly-core-required ' + $Caller) }
@@ -316,121 +270,4 @@ function Get-NightlyRefusalText {
     $failure = $ErrorRecord.Exception
     if ($failure -is [Management.Automation.MethodInvocationException] -and $null -ne $failure.InnerException) { $failure = $failure.InnerException }
     return $failure.Message
-}
-
-function Disable-NightlyDeferredEvidenceWrites {
-    if (-not $script:NightlyDeferEvidenceWrites) { return }
-    $script:NightlyDeferEvidenceWrites = $false
-    Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::DisableWriteBehind())
-}
-
-function Write-NightlyEvidenceFailures([string[]]$Failures) {
-    foreach ($failure in @($Failures)) {
-        Write-Warning -WarningAction Continue ('deferred-evidence-write-failed: ' + $failure)
-    }
-}
-
-# Failures a deferred write already recorded. coverageComplete and testsPassed are false when any remain,
-# so the run summary and the returned verdict name them. An empty list leaves both true.
-# Flush before the peek: a peek alone can report complete while a failing write is still queued.
-function Get-NightlyDeferredEvidenceWriteVerdict {
-    if ('Antiphon.Nightly.EvidenceFiles' -as [type]) {
-        try { [void][Antiphon.Nightly.EvidenceFiles]::Flush() } catch { }
-    }
-    $reasons = @()
-    if ('Antiphon.Nightly.EvidenceFiles' -as [type]) {
-        foreach ($text in @([Antiphon.Nightly.EvidenceFiles]::PeekFailures())) {
-            if ([string]::IsNullOrWhiteSpace([string]$text)) { continue }
-            $reasons += ('deferred-evidence-write-failed: ' + [string]$text)
-        }
-    }
-    $complete = ($reasons.Count -eq 0)
-    return [pscustomobject]@{
-        coverageComplete = $complete
-        testsPassed = $complete
-        reasons = $reasons
-    }
-}
-
-# Invoke-AntiphonNightlyTests merges this into the summary before summary.json is written.
-# A failed verdict forces coverageComplete and testsPassed false and keeps every earlier reason.
-function Merge-NightlyDeferredEvidenceVerdict {
-    param($Reasons)
-    $verdict = Get-NightlyDeferredEvidenceWriteVerdict
-    $merged = New-Object System.Collections.Generic.List[string]
-    foreach ($reason in @($Reasons)) {
-        $text = [string]$reason
-        if ([string]::IsNullOrWhiteSpace($text)) { continue }
-        if (-not $merged.Contains($text)) { [void]$merged.Add($text) }
-    }
-    foreach ($evidenceWriteReason in @($verdict.reasons)) {
-        $text = [string]$evidenceWriteReason
-        if ([string]::IsNullOrWhiteSpace($text)) { continue }
-        if (-not $merged.Contains($text)) { [void]$merged.Add($text) }
-    }
-    return [pscustomobject]@{
-        reasons = @($merged.ToArray())
-        coverageComplete = [bool]$verdict.coverageComplete
-        testsPassed = [bool]$verdict.testsPassed
-    }
-}
-
-# Queues an atomic whole-file write when the evidence file system is on and returns $true; $false means the
-# caller writes it in line. SkipLinks: an existing directory or link is left alone.
-function Submit-NightlyDeferredEvidenceWrite([string]$Path, [string]$Text, [bool]$SkipLinks) {
-    if (-not $script:NightlyDeferEvidenceWrites) { return $false }
-    [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($Path, $Text, $SkipLinks)
-    return $true
-}
-
-# Barrier before anything that reads the disk directly (a listing, a copy, a stream, another process): waits
-# for the queued writes (of -Path only, when given).
-function Sync-NightlyDeferredEvidenceWrites([string]$Path = '') {
-    if (-not $script:NightlyDeferEvidenceWrites) { return }
-    if ($Path) { Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::Flush($Path)) }
-    else { Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::Flush()) }
-}
-
-# Test-Path -LiteralPath [-PathType Leaf|Container], seeing queued writes.
-function Test-NightlyEvidencePath([string]$Path, [string]$PathType = 'Any') {
-    if ($script:NightlyDeferEvidenceWrites) {
-        if ($PathType -eq 'Leaf') { return [Antiphon.Nightly.EvidenceFiles]::FileExists($Path) }
-        if ($PathType -eq 'Container') { return [Antiphon.Nightly.EvidenceFiles]::DirectoryExists($Path) }
-        return [Antiphon.Nightly.EvidenceFiles]::PathExists($Path)
-    }
-    return (Test-Path -LiteralPath $Path -PathType $PathType)
-}
-
-# [IO.File]::ReadAllText / ReadAllBytes / ReadAllLines, seeing queued writes.
-function Read-NightlyEvidenceText([string]$Path) {
-    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::ReadAllText($Path) }
-    return [System.IO.File]::ReadAllText($Path)
-}
-
-function Read-NightlyEvidenceBytes([string]$Path) {
-    if ($script:NightlyDeferEvidenceWrites) { return ,[Antiphon.Nightly.EvidenceFiles]::ReadAllBytes($Path) }
-    return ,[System.IO.File]::ReadAllBytes($Path)
-}
-
-function Read-NightlyEvidenceLines([string]$Path) {
-    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::ReadAllLines($Path) }
-    return [System.IO.File]::ReadAllLines($Path)
-}
-
-# Bytes of the path's queued write that has not landed yet, or -1.
-function Get-NightlyEvidencePendingLength([string]$Path) {
-    if (-not $script:NightlyDeferEvidenceWrites) { return -1 }
-    return [Antiphon.Nightly.EvidenceFiles]::PendingLength($Path)
-}
-
-# [IO.File]::WriteAllText / WriteAllLines with UTF-8 and no byte-order mark, queued when the evidence file
-# system is on.
-function Write-NightlyEvidenceText([string]$Path, [string]$Text) {
-    if ($script:NightlyDeferEvidenceWrites) { [Antiphon.Nightly.EvidenceFiles]::WriteAllText($Path, $Text); return }
-    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding $false))
-}
-
-function Write-NightlyEvidenceLines([string]$Path, [string[]]$Lines) {
-    if ($script:NightlyDeferEvidenceWrites) { [Antiphon.Nightly.EvidenceFiles]::WriteAllLines($Path, $Lines); return }
-    [System.IO.File]::WriteAllLines($Path, $Lines, (New-Object System.Text.UTF8Encoding $false))
 }

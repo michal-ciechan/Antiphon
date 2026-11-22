@@ -195,7 +195,7 @@ public sealed class NightlyScriptsTests
                      "nightly-run.ps1", "nightly-health.ps1",
                      "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
                      Path.Combine("lib", "nightly-common.ps1"),
-                     Path.Combine("lib", "nightly-coverage.ps1"),
+                     // W2-nightly S27: lib/nightly-coverage.ps1 is deleted.
                      // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).
                      Path.Combine("lib", "Antiphon.Scripts", "NightlyRunCommand.cs"),
                      // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted) and the

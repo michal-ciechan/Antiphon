@@ -24,7 +24,7 @@ public sealed class ReleaseImpactScriptTests
     private const string Selection = Project + "::Antiphon.Tests.Scripts.TestSelectionTests";
     private const string Publication = Project + "::Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests";
     private const string Contract = Project + "::Antiphon.Tests.Scripts.ReleaseGateAuthorityContractTests";
-    private const string Parity = Project + "::Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests";
+    private const string Twin = Project + "::Antiphon.Tests.Scripts.Nightly.ToolchainFloorTwinTests";
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
     private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicProbe";
@@ -91,15 +91,17 @@ public sealed class ReleaseImpactScriptTests
         AssertIncomplete(result);
     }
 
+    // W2-nightly S27: NativeLinuxPolicyMatcherParityTests runs in-process and scripts/lib/nightly-coverage.ps1 is deleted;
+    // the embedded path is the toolchain floor library the twin test's pwsh script dot-sources (it stays PowerShell).
     [Test]
-    public async Task EmbeddedPathReachesParityTest()
+    public async Task EmbeddedPathReachesTwinTest()
     {
         var result = Case(await Shared.Value, "real");
-        Kinds(result, "scripts/lib/nightly-coverage.ps1", Parity).ShouldContain("script:embedded");
-        Chain(result, "scripts/lib/nightly-coverage.ps1", Parity).ShouldBe(
-            [Tests + "NativeLinuxPolicyMatcherParityTests.cs", "scripts/lib/nightly-coverage.ps1"]);
+        Kinds(result, "scripts/lib/toolchain-floor.ps1", Twin).ShouldContain("script:embedded");
+        Chain(result, "scripts/lib/toolchain-floor.ps1", Twin).ShouldBe(
+            [Tests + "Nightly/ToolchainFloorTwinTests.cs", "scripts/lib/toolchain-floor.ps1"]);
         // Similar prose and near-miss names are not executable paths.
-        Classes(result, "scripts/lib/nightly-coverage.ps1").ShouldNotContain(Harmless);
+        Classes(result, "scripts/lib/toolchain-floor.ps1").ShouldNotContain(Harmless);
         Paths(result, Harmless).ShouldBeEmpty();
         AssertIncomplete(result);
     }
@@ -253,7 +255,7 @@ public sealed class ReleaseImpactScriptTests
         {
             Project, Tests + "ScriptHarness.cs", Tests + "ReleaseSelectionCliTests.cs", Tests + "TestSelectionTests.cs",
             Tests + "ReleaseGatePublicationAuthorityTests.cs", Tests + "ReleaseGateAuthorityContractTests.cs",
-            Tests + "NativeLinuxPolicyMatcherParityTests.cs",
+            Tests + "Nightly/ToolchainFloorTwinTests.cs",
         })
             files[path] = File.ReadAllText(Path.Combine(root, path));
         foreach (var (path, text) in ChainFixture()) files[path] = text;
@@ -262,8 +264,9 @@ public sealed class ReleaseImpactScriptTests
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
             Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
         };
-        foreach (var name in new[] { "ReleaseSelectionCliTests", "TestSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests", "NativeLinuxPolicyMatcherParityTests" })
+        foreach (var name in new[] { "ReleaseSelectionCliTests", "TestSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
+        consumers.Add(Consumer(Twin, Tests + "Nightly/ToolchainFloorTwinTests.cs"));
         return new { name = "real", files, consumers, maxVisits = 0 };
     }
 
@@ -276,9 +279,9 @@ public sealed class ReleaseImpactScriptTests
             {
                 public void Runs()
                 {
-                    var prose = "the nightly-coverage report runs later";
-                    var nearMiss = "scripts/lib/nightly-coverage.ps1.orig";
-                    var suffix = "see 'scripts/lib/nightly-coverage.ps1x' for details";
+                    var prose = "the toolchain-floor report runs later";
+                    var nearMiss = "scripts/lib/toolchain-floor.ps1.orig";
+                    var suffix = "see 'scripts/lib/toolchain-floor.ps1x' for details";
                 }
             }
             """,

@@ -195,7 +195,6 @@ function New-ReleaseSelectionAttemptCore {
     if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'selection-pwsh-required' }
     . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $PSScriptRoot 'release-gate.ps1')
-    . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
     . (Join-Path $PSScriptRoot 'test-selection.ps1')
     Assert-ReleaseSelectionCommit $Request.RepositoryRoot $Request.CandidateSha
     if ($Request.BaselineSha) { Assert-ReleaseSelectionCommit $Request.RepositoryRoot $Request.BaselineSha }

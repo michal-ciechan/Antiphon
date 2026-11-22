@@ -1,7 +1,7 @@
 #requires -Version 7.0
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-core','c487-harness')) {
+foreach ($name in @('nightly-common','nightly-core','c487-harness')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $null = Test-NightlyCoreAvailable

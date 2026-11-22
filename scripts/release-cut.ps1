@@ -119,10 +119,8 @@ try {
             if (-not [string]::IsNullOrWhiteSpace($TimingRoot) -and ($TimingRoot -cne $sealedTiming)) { throw 'selection-attempt-conflict' }
             $TimingRoot = $sealedTiming
         } elseif ([string]::IsNullOrWhiteSpace($TimingRoot)) {
-            if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
-                . (Join-Path $lib 'test-phase-paths.ps1')
-            }
-            $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot (Join-Path $candidateRoot 'logs') -RunId $RunId)
+            # The run's timing root under its log root (Resolve-QualificationTimingRoot, compiled: NightlyPaths.TimingRoot).
+            $TimingRoot = [string][Antiphon.Nightly.NightlyPaths]::TimingRoot('', (Join-Path $candidateRoot 'logs'), $RunId)
         }
         # Candidate journalling reads the remote ref; acquire its pinned object before
         # selection without changing the long-lived ref or repinning the journal.

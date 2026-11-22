@@ -1,15 +1,18 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+/// <summary>
+/// CARD-1613: the native Linux policy witness (NativeLinuxPolicyWitness.Excluded) and the nightly exclusion predicate
+/// (NightlyPolicy.NodeExcluded) agree on the same exclusion rows. In-process since W2-nightly S27: the predicate is
+/// compiled, and scripts/lib/nightly-coverage.ps1, which the pwsh child of this test dot-sourced, is deleted. The rows
+/// and nodes are the records the child built ([pscustomobject] Class and Methods; ClassName, a blank Type and Method).
+/// </summary>
+[Category("Unit")]
 public sealed class NativeLinuxPolicyMatcherParityTests
 {
     private const string Exclusions = """
@@ -24,9 +27,20 @@ public sealed class NativeLinuxPolicyMatcherParityTests
         ]
         """;
 
+    // The same rows as the nightly predicate reads them: Class, and Methods (empty: every method of the class).
+    private static readonly object[] Rows =
+    [
+        new PlainObject(("Class", "PhoneHomeMirrorJoinTests"), ("Methods", Array.Empty<object>())),
+        new PlainObject(("Class", "Outer+Inner"), ("Methods", new object[] { "Nested" })),
+        new PlainObject(("Class", "GenericProbe`1"), ("Methods", new object[] { "GenericCase" })),
+        new PlainObject(("Class", "CaseTwin"), ("Methods", new object[] { "Case" })),
+        new PlainObject(("Class", "OverloadProbe"), ("Methods", new object[] { "Case" })),
+        new PlainObject(("Class", "Ma\u00dfProbe"), ("Methods", Array.Empty<object>())),
+        new PlainObject(("Class", "CtorSuffix"), ("Methods", new object[] { "Runs" })),
+    ];
+
     [Test]
-    [Timeout(60_000)]
-    public async Task Matcher_agrees_with_nightly_exclusion_predicate(CancellationToken cancellationToken)
+    public void Matcher_agrees_with_nightly_exclusion_predicate()
     {
         var nodes = new (string ClassName, string Method, bool Excluded)[]
         {
@@ -50,90 +64,13 @@ public sealed class NativeLinuxPolicyMatcherParityTests
 
         using var document = JsonDocument.Parse(Exclusions);
         var exclusions = document.RootElement;
-        var root = RepoRoot();
-        var work = Directory.CreateTempSubdirectory("c1613-parity-").FullName;
-        var script = Path.Combine(work, "parity.ps1");
-        File.WriteAllText(script, Script(nodes), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        Process? process = null;
-        try
+        foreach (var (className, method, excluded) in nodes)
         {
-            var start = new ProcessStartInfo("pwsh")
-            {
-                WorkingDirectory = work,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            start.ArgumentList.Add("-NoProfile");
-            start.ArgumentList.Add("-File");
-            start.ArgumentList.Add(script);
-            start.ArgumentList.Add(root);
-            process = Process.Start(start)!;
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var text = await stdout;
-            var error = await stderr;
-            process.ExitCode.ShouldBe(0, error + text);
-            var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            lines.Length.ShouldBe(nodes.Length, text);
-            for (var i = 0; i < nodes.Length; i++)
-            {
-                var expected = NativeLinuxPolicyWitness.Excluded(nodes[i].ClassName, "", nodes[i].Method, exclusions);
-                expected.ShouldBe(nodes[i].Excluded, nodes[i].ClassName + " " + nodes[i].Method);
-                lines[i].ShouldBe(nodes[i].ClassName + "|" + nodes[i].Method + "|" + (expected ? "True" : "False"), text);
-            }
+            var label = className + " " + method;
+            var expected = NativeLinuxPolicyWitness.Excluded(className, "", method, exclusions);
+            expected.ShouldBe(excluded, label);
+            var node = new PlainObject(("ClassName", className), ("Type", ""), ("Method", method));
+            NightlyPolicy.NodeExcluded(node, Rows).ShouldBe(expected, label);
         }
-        finally
-        {
-            if (process is { HasExited: false })
-            {
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            }
-            process?.Dispose();
-            if (Directory.Exists(work))
-                Directory.Delete(work, recursive: true);
-        }
-    }
-
-    private static string Script((string ClassName, string Method, bool Excluded)[] nodes)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine("param([string]$Repo)");
-        builder.AppendLine("$ErrorActionPreference = 'Stop'");
-        builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-common.ps1')");
-        builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-core.ps1'); Assert-NightlyCoreAvailable 'parity'");
-        builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-coverage.ps1')");
-        builder.AppendLine("$rows = @(");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'PhoneHomeMirrorJoinTests'; Methods = @() }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'Outer+Inner'; Methods = @('Nested') }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'GenericProbe`1'; Methods = @('GenericCase') }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'CaseTwin'; Methods = @('Case') }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'OverloadProbe'; Methods = @('Case') }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'MaßProbe'; Methods = @() }");
-        builder.AppendLine("  [pscustomobject]@{ Class = 'CtorSuffix'; Methods = @('Runs') }");
-        builder.AppendLine(")");
-        foreach (var node in nodes)
-        {
-            var cls = node.ClassName.Replace("'", "''", StringComparison.Ordinal);
-            var method = node.Method.Replace("'", "''", StringComparison.Ordinal);
-            builder.AppendLine($"$hit = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded(([pscustomobject]@{{ ClassName = '{cls}'; Type = ''; Method = '{method}' }}), $rows)");
-            builder.AppendLine($"Write-Output ('{cls}|{method}|' + $hit)");
-        }
-
-        return builder.ToString();
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "Antiphon.Nightly", "NightlyPolicy.cs")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        throw new InvalidOperationException("scripts/lib/Antiphon.Nightly/NightlyPolicy.cs not found");
     }
 }

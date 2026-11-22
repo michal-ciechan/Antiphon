@@ -1,7 +1,6 @@
 // W2-nightly S15: the discovery producer (plan 2026-11-21-w2-nightly-port-slices.md, slice S15), the C# twin of
-// Invoke-NightlyProduceDiscovery (scripts/lib/nightly-coverage.ps1). That file is a pinned live-lane input
-// (scripts/test-live-lane-run.ps1 ProtectedInputs), so the PowerShell stays beside this until S27; nightly-tests.ps1 and
-// live-lane-manifest.ps1 keep calling it until S17. The class is not named NightlyDiscovery: that name is the per-node
+// Invoke-NightlyProduceDiscovery (scripts/lib/nightly-coverage.ps1, deleted in S27 with its live-lane pin; nightly-tests.ps1
+// and live-lane-manifest.ps1 called it until S17). The class is not named NightlyDiscovery: that name is the per-node
 // passes in NightlyCore.cs, which is pinned too. Discovery is never execution evidence.
 // Plain C#: no PowerShell types; the launch goes through the run's NightlyHost. ASCII only.
 #nullable disable

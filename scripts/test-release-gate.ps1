@@ -16,7 +16,6 @@ $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-. (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
 
@@ -2919,7 +2918,7 @@ function Test-C599A_ExecutionLedgerJoins {
 
     # G-300: the authority, plan, discovery and every executable script digest bind.
     $m = @()
-    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
+    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('script ' + $scriptRel) -Expect @('script-digest-mismatch:' + $scriptRel) -Mutate {
             Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.$scriptRel = ('0' * 64) }
         }
@@ -3717,7 +3716,7 @@ function Test-C1311_MovingTipAuthority {
     # D-2/D-5/D-6: a second SHA of the same rc ref gets its own candidate root.
     # The first authority and tag stay on the first SHA. Publish and promote of
     # that SHA refuse remote-candidate-moved once the live tip has moved.
-    # scriptHashes bind seven executable script files, never the moving tip.
+    # scriptHashes bind the five pinned script files and two source trees, never the moving tip.
     $fx = New-C599PublishFx -LongLivedCandidate
     $firstSha = [string]$fx.Head
     $secondSha = $ShaC
@@ -3847,7 +3846,7 @@ function Test-C1311_MovingTipAuthority {
     $have = @()
     if ($null -ne $authDoc -and $null -ne $authDoc.scriptHashes) { $have = @($authDoc.scriptHashes.PSObject.Properties.Name) }
     $fresh = [Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here)
-    $same = ($want.Count -eq 8 -and $have.Count -eq $want.Count)
+    $same = ($want.Count -eq 7 -and $have.Count -eq $want.Count)
     $omitsTip = $true
     foreach ($rel in $want) {
         if ($have -notcontains $rel) { $same = $false; continue }
@@ -4477,8 +4476,8 @@ function Test-C1339_PromoteAuthorityHash {
     $snap = Save-C1339Snapshot $fx
     $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
     $auth = Get-Content (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') -Raw | ConvertFrom-Json
-    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 8 -and
-        $auth.scriptHashes.'promote-release.ps1' -ceq ([Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here))['promote-release.ps1']) 'six script and two source-tree digests'
+    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 7 -and
+        $auth.scriptHashes.'promote-release.ps1' -ceq ([Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here))['promote-release.ps1']) 'five script and two source-tree digests'
     foreach ($missing in @($false, $true)) {
         $hashChecks += Invoke-C1339AuthorityVariant $fx $snap {
             Update-C599AAuthority $fx { param($a)

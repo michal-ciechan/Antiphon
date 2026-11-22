@@ -36,7 +36,6 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'promote-release'
-. (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
 
 function Write-PromoteLine { param([string]$Message) Write-Host ('[promote-release] {0}' -f $Message) }

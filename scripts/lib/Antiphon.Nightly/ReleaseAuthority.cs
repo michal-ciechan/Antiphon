@@ -251,10 +251,13 @@ namespace Antiphon.Nightly
         private static readonly Regex SourceFile = new Regex(@"\.(cs|csproj)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly Regex BuildOutput = new Regex("^(bin|obj)/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-        /// <summary>The scripts pinned by digest, relative to the scripts directory.</summary>
+        /// <summary>
+        /// The scripts pinned by digest, relative to the scripts directory. W2-nightly S27 deleted lib/nightly-coverage.ps1;
+        /// an older record that still binds it verifies, because Pinned checks only the keys listed here and SourceTrees.
+        /// </summary>
         public static readonly string[] Scripts =
         {
-            "publish-release.ps1", "promote-release.ps1", "lib/release-gate.ps1", "lib/nightly-coverage.ps1", "lib/nightly-common.ps1", "lib/nightly-core.ps1",
+            "publish-release.ps1", "promote-release.ps1", "lib/release-gate.ps1", "lib/nightly-common.ps1", "lib/nightly-core.ps1",
         };
 
         /// <summary>
