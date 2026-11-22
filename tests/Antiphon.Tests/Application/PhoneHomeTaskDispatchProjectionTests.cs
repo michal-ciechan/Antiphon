@@ -58,8 +58,8 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
         var now = DateTime.UtcNow;
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
-            // Exercise an already queued Shared task. Create/retry admission and cold-start
-            // authentication remain separate gates; an existing process needs neither.
+            // Warm reuse handles an already queued Shared task. This session represents a
+            // Frontier launch with its model recorded before the runner signed out.
             var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
             task.Workspace = WorkspaceMode.Shared;
             task.WorktreePath = null;
@@ -68,6 +68,7 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             {
                 Id = sessionId, DefinitionName = "codex", AgentKind = AgentKind.Codex,
                 Status = SessionStatus.Running, Cwd = workspace.Path,
+                EffectiveModelId = ModelLevelAliases.ForCodex(task.ModelLevel),
                 RunnerId = host.AllowedRunnerId, RunnerStoreId = host.StoreId, RunnerCwd = "/work/c959-warm",
                 Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
             });
