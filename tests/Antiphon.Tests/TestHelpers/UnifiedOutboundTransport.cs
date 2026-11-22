@@ -97,11 +97,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         try { await StartSpareAsync(); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            try { await StopSpareAsync(); }
-            catch (Exception stop) when (stop is not OutOfMemoryException)
-            {
-                Console.WriteLine("c519-probe spare-not-stopped " + stop.GetType().Name);
-            }
+            // StartSpareAsync sets _spare only once its process has started, so nothing is left to stop here.
             Console.WriteLine("c519-probe spare-not-started " + ex.GetType().Name);
         }
     }
@@ -441,9 +437,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // own schema, topic, Slack fake and gateway, so a teardown still running touches nothing the next one uses, and a
     // new world first waits for every teardown but the latest (AwaitEarlierTeardownsAsync), so at most one overlaps it:
     // this test's own failure is raised there, two worlds later, naming the failed world, or else at the test's drain.
-    // Every class that builds worlds drains its test's teardowns after each test, with any no test owns (DrainDisposals-
-    // Async in an After(Test) hook), and everything left before the shared broker goes (DrainAllDisposalsAsync in
-    // After(Class)): no world outlives its test, and a teardown failure fails the test that made it.
+    // Every class that builds worlds drains its test's own teardowns after each test (DrainDisposalsAsync in an
+    // After(Test) hook), and before the shared broker can go waits for every teardown still listed, reporting only those
+    // no test owns (DrainAllDisposalsAsync in After(Class), which runs outside the process limit beside the other C519
+    // class's tests): no world outlives its test, and a teardown failure fails the test that made it.
     // Timings a world records (reach, recovery) may include one earlier world's teardown running beside them.
     private static readonly object TeardownGate = new();
     private static readonly List<(string Owner, string World, Task Teardown)> Teardowns = [];
@@ -464,13 +461,13 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var world = Topic;
         var teardown = Task.Run(async () =>
         {
+            Exception? teardownFailure = null;
             try { await DisposeNowAsync(); }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                throw new InvalidOperationException($"World {world} teardown failed", ex);
-            }
-            if (spareFailure is not null)
-                throw new InvalidOperationException($"World {world} spare did not stop", spareFailure);
+            catch (Exception ex) when (ex is not OutOfMemoryException) { teardownFailure = ex; }
+            Exception[] failures = [.. new[] { spareFailure, teardownFailure }.OfType<Exception>()];
+            if (failures.Length > 0)
+                throw new InvalidOperationException($"World {world} teardown failed",
+                    failures.Length == 1 ? failures[0] : new AggregateException(failures));
         });
         lock (TeardownGate) Teardowns.Add((CurrentTest, world, teardown));
     }
@@ -491,7 +488,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         foreach (var entry in earlier)
         {
             try { await AwaitTeardownAsync(entry); }
-            catch (Exception ex) when (ex is not OutOfMemoryException && entry.Owner != current && entry.Owner != "") { continue; }
+            catch (Exception ex) when (ex is not OutOfMemoryException && entry.Owner != current) { continue; }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 lock (TeardownGate) Teardowns.Remove(entry);
@@ -501,15 +498,26 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         }
     }
 
-    // After each test: this test's teardowns and any no test owns, every failure collected.
+    // After each test: this test's own teardowns, every failure collected.
     public static Task DrainDisposalsAsync()
     {
         var current = CurrentTest;
-        return DrainAsync(t => t.Owner == current || t.Owner == "");
+        return DrainAsync(t => t.Owner == current);
     }
 
-    // Before the shared broker goes (After(Class)): every teardown still listed.
-    public static Task DrainAllDisposalsAsync() => DrainAsync(_ => true);
+    // Before the shared broker can go (After(Class)): waits for every teardown still listed, then takes and reports only
+    // those no test owns. Another test's (the other C519 class may be mid-test) stays listed for that test's drain.
+    public static async Task DrainAllDisposalsAsync()
+    {
+        (string Owner, string World, Task Teardown)[] listed;
+        lock (TeardownGate) listed = [.. Teardowns];
+        foreach (var entry in listed)
+        {
+            try { await AwaitTeardownAsync(entry); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { }
+        }
+        await DrainAsync(t => t.Owner == "");
+    }
 
     private static async Task DrainAsync(Func<(string Owner, string World, Task Teardown), bool> select)
     {
