@@ -57,6 +57,41 @@ public sealed class LiveLaneGateScanTests
         }
     }
 
+    [Test]
+    public void ScansHeadedFlagReadsAndIgnoresFixtureValues()
+    {
+        using var fixture = NightlyFixture.Create("live-lane-headed-gate");
+        var source = fixture.PathOf("HeadedGateCases.cs");
+        // Assemble the name at runtime to keep this scratch source out of the repository scan.
+        const string flag = "ANTIPHON_" + "HEADED_TESTS";
+        File.WriteAllText(source, $$"""
+            namespace Scratch;
+            public class HeadedGateCases
+            {
+                [Test]
+                public void RequiresFlag()
+                {
+                    if (Environment.GetEnvironmentVariable("{{flag}}") != "1")
+                        throw new InvalidOperationException();
+                }
+
+                [Test]
+                public void SeedsChildEnvironment()
+                {
+                    var childEnvironment = new Dictionary<string, string> { ["{{flag}}"] = "1" };
+                }
+
+                [Test]
+                public void LabelsChildEnvironmentCheck() => Console.WriteLine("{{flag}} is cleared");
+            }
+            """);
+
+        var scan = LiveLaneGateScan.Scan(fixture.Root, source);
+        scan.Unresolved.ShouldBe(0);
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlag"]);
+        scan.Gates.Single().Shapes.ShouldBe([flag]);
+    }
+
     private static string Key(JsonElement row) =>
         LiveLaneGateScan.IdentityKey(row.GetProperty("project").GetString(), row.GetProperty("namespace").GetString(),
             row.GetProperty("class").GetString(), row.GetProperty("method").GetString(),
