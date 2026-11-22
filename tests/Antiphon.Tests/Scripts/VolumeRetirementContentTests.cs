@@ -825,6 +825,94 @@ public sealed class VolumeRetirementContentTests
     }
 
     [Test]
+    [Arguments("checkout")]
+    [Arguments("edited-content")]
+    [Arguments("mixed-line-endings")]
+    [Arguments("unattributed-crlf")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Linked_worktree_requires_exact_content_for_explicit_crlf_checkout(string vector)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var (_, outer) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        var work = VolumeRetirementFixture.WorkMount(fixture);
+        var linked = Path.Combine(work, "worktrees", "ws-crlf");
+        var q = VolumeRetirementFixture.Quote;
+        var setup = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            cd {{q(outer)}}
+            git config core.autocrlf false
+            git config core.trustctime false
+            mkdir scripts
+            printf 'scripts/antiphon.cmd text eol=crlf\n' > .gitattributes
+            printf '@echo ok\nrem line\nrem eof' > scripts/antiphon.cmd
+            printf 'plain\n' > plain.cmd
+            git add .gitattributes scripts/antiphon.cmd plain.cmd
+            git commit -qm 'published line-ending fixtures'
+            git push -q origin HEAD
+            git worktree add -q --detach {{q(linked)}}
+            # Keep the primary checkout's raw bytes equal to the blob so the
+            # preview's result is attributable to the linked checkout.
+            cmp scripts/antiphon.cmd <(git show HEAD:scripts/antiphon.cmd)
+            cd {{q(linked)}}
+            git ls-files --eol -- scripts/antiphon.cmd
+            cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
+            case {{q(vector)}} in
+                edited-content)
+                    stamp={{q(Path.Combine(fixture.Root, "launcher.timestamp"))}}
+                    touch -m -t 200001010000 scripts/antiphon.cmd
+                    git update-index --refresh
+                    touch -r scripts/antiphon.cmd "$stamp"
+                    printf '@echo no\r\nrem line\r\nrem eof' > scripts/antiphon.cmd
+                    touch -m -r "$stamp" scripts/antiphon.cmd
+                    ;;
+                mixed-line-endings)
+                    printf '@echo ok\r\nrem line\nrem eof' > scripts/antiphon.cmd
+                    ;;
+                unattributed-crlf)
+                    git config core.autocrlf true
+                    printf 'plain\r\n' > plain.cmd
+                    git check-attr text eol -- plain.cmd
+                    ;;
+            esac
+            # All four cases must reach the audit's independent content check.
+            test -z "$(git status --porcelain)"
+            """);
+        setup.Exit.ShouldBe(0, setup.Output);
+        setup.Output.ShouldContain("w/crlf");
+        setup.Output.ShouldContain("attr/text eol=crlf");
+        if (vector == "unattributed-crlf")
+        {
+            setup.Output.ShouldContain("plain.cmd: text: unspecified");
+            setup.Output.ShouldContain("plain.cmd: eol: unspecified");
+        }
+
+        // The preview mounts the fixture at /work. Translate the linked pointers
+        // only after the real Git checkout and stat-cache witness are complete.
+        var pointer = Path.Combine(linked, ".git");
+        var adminPointer = Path.Combine(outer, ".git", "worktrees", "ws-crlf", "gitdir");
+        foreach (var path in new[] { pointer, adminPointer })
+        {
+            var original = await File.ReadAllTextAsync(path);
+            await File.WriteAllTextAsync(path, original.Replace(work, "/work", StringComparison.Ordinal));
+        }
+
+        var run = await VolumeRetirementFixture.Preview(fixture);
+        fixture.Removed.ShouldBeEmpty();
+        if (vector == "checkout")
+        {
+            run.Exit.ShouldBe(0, run.Output);
+            run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        }
+        else
+        {
+            run.Exit.ShouldBe(2, run.Output);
+            Diagnosis(run.Output).ShouldBe("RecycleWorktreeDirty audit check=index-content status=0 repo=worktrees/ws-crlf", run.Output);
+            run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        }
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Evidence_names_and_filesystem_shapes_fail_closed()
     {
