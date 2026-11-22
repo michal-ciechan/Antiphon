@@ -58,6 +58,8 @@ namespace Antiphon.Scripts
             [TestTimingReportCommand.Name] = TestTimingReportCommand.Run,
             // The timing journal writer answers every input itself: exit 0 written or already there, 1 refused (one stderr line), 2 usage.
             [TestTimingEventCommand.Name] = TestTimingEventCommand.Run,
+            // The change-aware selection proposal answers every input itself: exit 0 proposed, 2 refused (one stderr line) or usage.
+            [TestSelectionCommand.Name] = TestSelectionCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -97,7 +99,7 @@ namespace Antiphon.Scripts
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
-                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage);
+                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage);
             return Usage;
         }
 

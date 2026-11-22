@@ -16,4 +16,9 @@
     <PackageReference Include="PowerShellStandard.Library" Version="5.1.1" IncludeAssets="compile" PrivateAssets="all" />
     <ProjectReference Include="../../../src/Antiphon.IO.WriteBehind/Antiphon.IO.WriteBehind.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- CARD-1313: the selector identity (TestSelection.SelectorFiles). The running selector compares its own sources
+         with the candidate's blobs, so they travel with the assembly. -->
+    <EmbeddedResource Include="TestSelection.cs;TestSelectionCatalog.cs;TestSelectionGit.cs;TestSelectionJson.cs" LogicalName="selector/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
