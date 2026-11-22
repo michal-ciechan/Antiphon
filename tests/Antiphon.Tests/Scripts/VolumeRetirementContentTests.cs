@@ -829,6 +829,7 @@ public sealed class VolumeRetirementContentTests
     [Arguments("edited-content")]
     [Arguments("mixed-line-endings")]
     [Arguments("unattributed-crlf")]
+    [Arguments("other-declared-crlf")]
     [Arguments("common-info-attributes")]
     [Arguments("linked-info-attributes")]
     [Arguments("staged-attributes")]
@@ -846,9 +847,10 @@ public sealed class VolumeRetirementContentTests
             set -euo pipefail
             cd {{q(outer)}}
             git config core.autocrlf false
-            mkdir scripts
-            printf 'scripts/antiphon.cmd text eol=crlf\n' > .gitattributes
+            mkdir scripts other
+            printf 'scripts/antiphon.cmd text eol=crlf\nother/antiphon.cmd text eol=crlf\n' > .gitattributes
             printf '@echo ok\nrem line\nrem eof' > scripts/antiphon.cmd
+            printf '@echo other\n' > other/antiphon.cmd
             printf 'plain\n' > plain.cmd
             if [ {{q(vector)}} = oversized-crlf ]; then
                 printf 'large.cmd text eol=crlf\n' >> .gitattributes
@@ -856,17 +858,25 @@ public sealed class VolumeRetirementContentTests
                 { head -c 16777215 /dev/zero | tr '\000' x; printf '\n'; } > large.cmd
                 git add large.cmd
             fi
-            git add .gitattributes scripts/antiphon.cmd plain.cmd
+            git add .gitattributes scripts/antiphon.cmd other/antiphon.cmd plain.cmd
             git commit -qm 'published line-ending fixtures'
             git push -q origin HEAD
             git worktree add -q --detach {{q(linked)}}
             # Keep the primary checkout's raw bytes equal to the blob so the
             # preview's result is attributable to the linked checkout.
             cmp scripts/antiphon.cmd <(git show HEAD:scripts/antiphon.cmd)
+            cmp other/antiphon.cmd <(git show HEAD:other/antiphon.cmd)
             cd {{q(linked)}}
             git ls-files --eol -- scripts/antiphon.cmd
             cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
             test -z "$(git status --porcelain)"
+            if [ {{q(vector)}} = other-declared-crlf ]; then
+                cmp other/antiphon.cmd <(printf '@echo other\r\n')
+                git ls-files --eol -- other/antiphon.cmd |
+                    grep -Eq 'i/lf[[:space:]]+w/crlf[[:space:]]+attr/text eol=crlf[[:space:]]+other/antiphon\.cmd$'
+            else
+                git show HEAD:other/antiphon.cmd > other/antiphon.cmd
+            fi
             case {{q(vector)}} in
                 edited-content)
                     printf '@echo no\r\nrem line\r\nrem eof' > scripts/antiphon.cmd
