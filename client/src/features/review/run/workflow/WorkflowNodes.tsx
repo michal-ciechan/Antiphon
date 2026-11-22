@@ -207,7 +207,7 @@ export function SectionNodeView({ data }: NodeProps<SectionNode>) {
             {data.members.length} steps · collapsed
           </Text>
         </Group>
-        <Text size="10px" fw={600} style={{ color: hex }} truncate>
+        <Text size="10px" fw={600} style={{ color: r.status === 'NotReached' ? 'var(--mantine-color-dimmed)' : hex }} truncate>
           {r.text}
         </Text>
       </Group>
