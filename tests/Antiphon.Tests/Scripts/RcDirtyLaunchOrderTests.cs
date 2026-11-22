@@ -152,9 +152,9 @@ public sealed class RcDirtyLaunchOrderTests
             "full-seed-function-not-replaced");
         Note(!body.Contains("nightly-tests-impl", StringComparison.Ordinal), "library-does-not-pack");
         Note(!body.Contains("FixProven", StringComparison.OrdinalIgnoreCase), "library-does-not-honor-fix-proven");
-        // The full stopped-seed order is compiled (DispatchSchedule.StoppedSeedOrder in the nightly core).
-        var seed = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/DispatchSchedule.cs");
-        Note(seed.Contains("public static PSObject StoppedSeedOrder(", StringComparison.Ordinal), "full-seed-function-remains");
+        // Full stopped-seed ordering remains available when the dirty planner is off.
+        var stoppedSeedOrder = typeof(DispatchSchedule).GetMethod(nameof(DispatchSchedule.StoppedSeedOrder), [typeof(object[]), typeof(object)]);
+        Note(stoppedSeedOrder is { IsStatic: true }, "full-seed-function-remains");
     }
 
     // A caller names the deleted library or the compiled type.
