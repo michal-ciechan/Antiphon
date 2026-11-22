@@ -277,14 +277,15 @@ dotnet user-secrets set "Delegation:OrchestratorInstructions:StandingInstruction
 
 After the restart that loads it, section 8 shows that line and the two existing rollout lines.
 
-DW-3. Dry run, then execute. The helper writes the `desktop-win` map and the secret file and prints no value (`scripts/desktop-win-phase1-secrets.ps1:1-63`). Run it as the account that owns the secrets directory. Do not add `-SweepStranded` on the first run.
-
-```powershell
-pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
-pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
-```
-
-`desktop-win` phase 1 after that (clone `C:\Antiphon\runner\app`, `phone-home.phase1.json`, listen on 17214) stays operator work and is independent of the Windows Full. It is not started by this runbook. `GET /api/session-runners/desktop-win` is 404 until that registration exists.
+DW-3 now follows the [CARD-1744 phase-1 procedure](../superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-1-replaces-window-step-09).
+For phase 1, use the operator-approved window for the reviewed S4 candidate
+and the DW-3 repairs through `ddf2292a2`, which are in the November 22 serving
+rc `bd34a7ff6da9`. The activation pin in this November 20 runbook is
+historical. The operator runs the helper dry run and then `-Execute`, with no
+sweep, before the AppHost restart that loads the entry. The phase-1 clone
+uses 17214 and acceptance includes one local Windows Full beside it.
+`/api/session-runners/desktop-win/status` returns 404 until AppHost loads the
+map entry, then 200 even before the runner connects.
 
 CARD-1893 `HostLoadHistory:Bindings` stays an operator user-secrets write. The key values were not projected here. Do not invent them. Until they are written and loaded, `physicalHostKey` stays empty. That does not block the `RELEASED` runner roll.
 

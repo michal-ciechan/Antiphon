@@ -1364,7 +1364,7 @@ Windows API. It does not mean the base compose file turns the service on.
 | Id | Shape | Contract |
 |---|---|---|
 | A | server2 runs the phone-home runner only. The desktop runs AppHost (server, built client, Windows session runner, fake gateway, storybook), Postgres, and Redpanda. The public origin `https://antiphon.desktop.codeperf.net` fronts that desktop server. | Supported production today. |
-| A2 | Host-daemon Postgres on server2 (CARD-1406). The desktop server keeps running and changes its connection string. AppHost, autostart, and `deploy-server2.ps1` stay. | CARD-1401 / CARD-1406. Not a control-plane move. Not topology B. The decision treats it as not yet executed: it records CARD-1401 in Review and CARD-1406 in Backlog, and whether the operator has already run the CARD-1407 window is not visible from the checkout. Unverified. |
+| A2 | Host-daemon Postgres on server2 (CARD-1406). The desktop server keeps running and changes its connection string. AppHost, autostart, and `deploy-server2.ps1` stay. | The November 18 handoff reports the database switch at 17:37 UTC. CARD-1401 is in Review per card history rev 15 and CARD-1406 is in Review per card history rev 31. P-2 stays open pending the executed window and writer receipts, CARD-1408 monitor exit 0, and 24 hours with no rollback. The post-move backup receipts also remain open. |
 | B | server2 host daemon runs the server, Postgres, and the phone-home runner. The desktop remains a browser client and the Windows session runner (Herdr, Windows-platform tasks, rollback AppHost). The image's embedded client is `Dockerfile:67-70` (`wwwroot/index.html`). Aspire is not the production supervisor after cutover. | Accepted target. Not authorization to cut over. The ordered cards below are the only path. |
 | C | Two live control planes, with failover. | Unsupported. No card. |
 
@@ -1469,19 +1469,17 @@ CARD-1226 is a Windows CI assertion fix. It is not a deployment feature.
 
 ### Migration path
 
-Stay on A until a later card in this list lands. Keep dispatching to the server2 runner. The
-accepted order is CARD-1406, then CARD-1742, then CARD-1743, then CARD-1745, then CARD-1746, then
-CARD-1744. CARD-1407 is the existing database window inside the CARD-1406 step, not a new
-topology. Do not file another generic port card.
+Keep AppHost serving and keep dispatching to the server2 runner until the approved cutover.
+The table records the planned order. CARD-1407 is the database window inside step 1.
 
 | Order | Card | What it does | Gate |
 |---|---|---|---|
-| 1 | CARD-1406 (existing), then the CARD-1407 window | Host Postgres and scratch restore. Desktop server, new connection string, desktop volume kept. | Blocks the cutover. A2 does not move the control plane. |
-| 2 | CARD-1742 | Staging server compose against a scratch database, or against CARD-1406's service only after that card is Done. Phone-home origin unchanged. AppHost still production. | No cutover. |
-| 3 | CARD-1743 | Hangfire jobs survive a restart. Still one worker. | Blocks the cutover. |
-| 4 | CARD-1745 | SHA restart gate against the staging container. | Blocked by CARD-1742. |
-| 5 | CARD-1746 | Measure port 19092 before choosing a side, place the broker, then enable the bridge. | Blocked by CARD-1742. |
-| 6 | CARD-1744 | Cutover. Stop the desktop server first. One writer. Move origin, vhost, deploy-script API, and the key ring. Leave AppHost installed. | Blocked by CARD-1742, CARD-1406, and CARD-1743. Retires AppHost from the production path without uninstalling it. |
+| 1 | CARD-1406, then the CARD-1407 window | Host Postgres and scratch restore. Desktop server, new connection string, desktop volume kept. | CARD-1406 is in Review and remains a board dependency. Confirm P-1 and P-2 before cutover. |
+| 2 | CARD-1742 | Staging server compose against its own scratch database. Phone-home origin unchanged. AppHost still production. | Done on the board. P-3 still needs the operator's staging health, SHA and restart-persistence receipts. |
+| 3 | CARD-1743 | Hangfire jobs survive a restart. Still one worker. | Done on the board. The rehearsal still needs PostgreSql storage and the restart witness. |
+| 4 | CARD-1745 | SHA restart gate against the staging container. | Done per card history rev 10. |
+| 5 | CARD-1746 | Measure port 19092 before choosing a side, place the broker, then enable the bridge. | Done per card history rev 4. Bridge activation remains separately gated. |
+| 6 | CARD-1744 | Cutover. Stop the desktop server first. One writer. Move origin, vhost, deploy-script API, and key-ring protection. Leave AppHost installed. | InProgress. See [O-14 and the board dependencies](#o-14-and-the-board-dependencies). |
 
 Existing owners stay the owners: CARD-1401 parents the database move; CARD-1222 census; CARD-1223
 RC watch; CARD-1224 ceilings; CARD-1225 deny hook; CARD-0864 and CARD-0872 Herdr, which remains
@@ -2198,7 +2196,7 @@ Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `i
 
 ## Staging server on the server2 host (CARD-1742)
 
-`docker-compose.server2-staging-server.yml` is a staging Antiphon server on the server2 host daemon. The project is `antiphon-server2-staging`. It is not the phone-home runner project, not the nested dockerd, not Windmill, and not the desktop production database. It does not attach to the CARD-1406 host Postgres service. That service's operator drill is still owed, so this stack brings its own scratch Postgres on the network `antiphon-server2-staging`.
+`docker-compose.server2-staging-server.yml` is a staging Antiphon server on the server2 host daemon. The project is `antiphon-server2-staging`. It is not the phone-home runner project, not the nested dockerd, not Windmill, and not the desktop production database. It brings its own scratch Postgres on the network `antiphon-server2-staging`. The November 18 CARD-1406 scratch restore has a recorded operator sign-off. The full V-4 check and the P-3 staging receipts remain due.
 
 Services are `staging-state-init`, `staging-server`, and `staging-postgres`, so a mistaken project name cannot replace the phone-home runner's `state-init`. The scratch cluster volume is `antiphon-server2-staging_pgdata`, mounted only inside this project. Its image digest and password come from an untracked mode-0600 env file outside the repo (`ANTIPHON_STAGING_POSTGRES_IMAGE`, `POSTGRES_PASSWORD`). The image reference must be `postgres:16@sha256:` or `postgres@sha256:` plus 64 lowercase hex digits. There is no published database port. The server listens on `127.0.0.1:17420` only. The scratch cluster is limited to 1g and 1 CPU.
 
@@ -2214,6 +2212,16 @@ This is the topology B operating shape from the [CARD-1744 plan](superpowers/pla
 
 The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`. `-Execute` is host-only. Once this container is the control plane, `scripts/restart-linux-server.ps1` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts/restart-apphost.ps1` is the desktop rollback path. Until the window, `scripts/restart-apphost.ps1` remains the desktop production restart.
 
+### O-14 and the board dependencies
+
+CARD-1744 is InProgress per card history rev 35. The board shows CARD-1742,
+CARD-1743, CARD-1775, CARD-1776 and CARD-1777 as Done and their dependencies as
+resolved. CARD-1406 and CARD-1778 are in Review and still linked as open
+dependencies. O-14 authorizes the orchestrator to unlink CARD-1778 as a formal
+blocker. Moving the standing agents and specialists to the direct sidecar still
+belongs in the cutover window. Close CARD-1778 on the recorded re-home, as
+specified in the [adopted decisions](superpowers/plans/2026-11-19-card-1744-s4-s5-plan.md#operator-decisions-yesno-with-recommendation).
+
 ### Sidecar
 
 `server-session-runner` is the direct runner in this project. Its container is `antiphon-server2-server-server-session-runner-1`. Herdr is off. The server sets `SessionRunner__BaseUrl` to `http://server-session-runner:8080` and `SessionRunner__VerifyExecutablesOnServer` false, because the server image does not contain the agent executables. Standing agents are in [Standing agents and specialists on the sidecar (CARD-1778)](#standing-agents-and-specialists-on-the-sidecar-card-1778).
@@ -2228,7 +2236,7 @@ Host keys the compose interpolates: `SOURCE_REVISION`, `KEYRING_CERT_FILE`, `KEY
 
 Server keys that change behavior: `ConnectionStrings__DefaultConnection`, `SessionRunner__Enabled`, `SessionRunner__BaseUrl`, `SessionRunner__VerifyExecutablesOnServer`, `PhoneHomeRunner__Enabled`, `PhoneHomeRunner__Runners__server2__CallbackOrigin`, `PhoneHomeRunner__Runners__server2__SharedSecret`, `Delegation__ApiBaseUrl`, `Serilog__LogPath`, `AgentTui__KeyRingPath`, `AgentTui__KeyProtection__Mode`, `AgentTui__KeyProtection__CertificatePath`, `AgentTui__KeyProtection__CertificatePrivateKeyPath`, `Operator__TokenPath`, `Hangfire__ServerEnabled`, `Hangfire__Storage`, `ZombieCensus__Enabled`, `WorktreeLegacyRelease__Enabled`, `RunnerWorktreeRetention__Enabled`, `Schedules__Enabled`, `ChannelBridge__Enabled`, and `Digest__Enabled`. The compose file is the closed list, including the rest of the phone-home runner map and the agent executable names.
 
-`Hangfire__ServerEnabled` is true. `Hangfire__Storage` defaults to `InMemory` because CARD-1768 is on this tip and CARD-1774 A-1/A-2 are not. `ZombieCensus__Enabled` is false. `WorktreeLegacyRelease__Enabled` is false. `RunnerWorktreeRetention__Enabled` is true. `Digest__Enabled` is false.
+`Hangfire__ServerEnabled` is true. The serving rc includes CARD-1768 and CARD-1774, and the compose default for `Hangfire__Storage` is still `InMemory`. Select `HANGFIRE_STORAGE=PostgreSql` in the operator-owned environment and record recurring jobs surviving a restart with one worker to pass the persistence gate. `ZombieCensus__Enabled` is false. `WorktreeLegacyRelease__Enabled` is false. `RunnerWorktreeRetention__Enabled` is true. `Digest__Enabled` is false.
 
 ### Key-ring certificate custody
 
@@ -2250,7 +2258,7 @@ Do not run `scripts/restart-apphost.ps1` while the Linux server is a writer. Do 
 | R-2 | The Linux server has started and the public origin has not switched | On the host, `docker compose -p antiphon-server2-server stop`, then R-1. Restore `Project.LocalRepositoryPath` from the window's before column. |
 | R-3 | The public origin points at server2 | Switch the vhost back to the desktop first, stop the Linux project, confirm `pg_stat_activity` has no production-compose client, then R-1. Sessions launched on Linux are orphaned seats. |
 
-Phase 2 `desktop-win` rollback runs before R-2 and before R-3 when that mode was started. Delete `C:\Antiphon\runner\phone-home.json`, then run `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`. The AppHost restart is parent R-1, after `docker compose -p antiphon-server2-server stop` and after `pg_stat_activity` shows no production-compose client. `scripts/run-daemon.ps1` launches the service with `UseShellExecute` false, so a soft runner restart keeps the supervisor's environment. The adopted AppHost refusal while that file exists is exit 3 `REFUSED: phone-home-config-present`. This master implements that refusal. Unless `-StopOnly` is set, `scripts/restart-apphost.ps1` reads `C:\Antiphon\runner\phone-home.json` and, when that file exists, exits 3 before any stop or launch. `dev-aspire.ps1` reads the same path and, when the file exists, exits 3 before launch. Checkout `997f9b8d9ffc4ba870d2fd56caf7c03781591624` has no `scripts/lib/windows-phone-home-env.ps1`, and neither script reads the file. The 2026-11-19 gap plan read production `GET /api/version` as that commit. Whether production is still that commit is UNOBSERVED. Phase 2 still waits for an activated tip that contains the guard. A `phone-home.json` created on a checkout that lacks the guard leaves AppHost able to start, and the next checkout that has the guard then refuses to start. The steps are the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
+Phase 2 `desktop-win` rollback runs before R-2 and before R-3 when that mode was started. Delete `C:\Antiphon\runner\phone-home.json`, run `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`, and verify direct mode as specified in the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3). The AppHost restart is parent R-1, after `docker compose -p antiphon-server2-server stop` and after `pg_stat_activity` shows no production-compose client. S4 (`e1b42f895`) is in the serving rc. While the file exists, `scripts/restart-apphost.ps1` exits 3 with `REFUSED: phone-home-config-present` before any stop or launch unless `-StopOnly` is set. `dev-aspire.ps1` checks the same path before launch. While Linux is the writer, leave the phase-2 file and the maintenance marker in place.
 
 Maintenance on the desktop is the end state after a completed window: marker present (`logs/apphost.down-on-purpose`), the AppHost logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. The state observer reports `maintenance=true` on purpose. Clearing the marker is rollback, not the steady state.
 
@@ -2293,11 +2301,13 @@ unconfigured name keeps the Linux behaviour (Codex pinned to `/usr/local/bin/cod
 
 `desktop-win` is the Windows phone-home id for this desktop after the control plane moves. The production compose already requires its secret and home (`PHONE_HOME_DESKTOP_WIN_SHARED_SECRET`, `PHONE_HOME_DESKTOP_WIN_HOME`) and caps it at `MaxCapacity` 2. The build-slot default on Windows stays `http://localhost:17204/build-slots` (`scripts/lib/build-slot.ps1`). Phase 1 children and the phase 2 runner share that address. The procedure is the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md). O-12, the production rehearsal, is operator-only.
 
-Phase 1 runs from a separate clone, `C:\Antiphon\runner\app`, on port 17214, with `C:\Antiphon\runner\phone-home.phase1.json` and capacity 1. The AppHost keeps serving. This master has `-PhoneHomeConfigPath` on `autostart-session-runner.ps1`. The adopted phase 1 start is that script with `-PhoneHomeConfigPath` of the phase 1 file, from a normal terminal, on the side clone of a tip that has the parameter. An explicit path uses the port named in the file, so this file starts on 17214. With no config file, the direct plan still passes `--urls http://localhost:17204`. Checkout `997f9b8d9ffc4ba870d2fd56caf7c03781591624` has no parameters on that script and always passes `--urls http://localhost:17204`. Phase 1 uses the side clone. The fallback `start-windows-phone-home-runner.ps1 -RunnerId desktop-win -Port 17214 -Capacity 1` is for a clone whose autostart script lacks `-PhoneHomeConfigPath`. That fallback has no crash relaunch.
+Serving rc `rc/2026-11-30` was observed at `bd34a7ff6da9` on November 22. It contains the production compose entry and deploy refusals (`3027e64c4`), the platform scan fix that skips runners barred from delegated work (`ec316e433`), S4 supervision and the AppHost guard (`e1b42f895`), and the DW-3 secret helper repairs through `ddf2292a2`. The desktop AppHost's `desktop-win/status` still returned 404. The production compose entry ships in source, and the desktop entry must be written and loaded in the approved activation window.
 
-Phase 2 is the existing logon task `Antiphon Session Runner` on 17204, and only after an activated tip contains S4. This master's source contains S4. Phase 2 still waits for that activation. The operator writes `C:\Antiphon\runner\phone-home.json` (`runnerId` `desktop-win`, public `serverOrigin`, capacity 1, no secret) and an orchestrator runs `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`, only inside an operator-run rehearsal or window. A plain restart is the wrong switch: the service inherits the supervisor environment (`run-daemon.ps1` sets `UseShellExecute` false), and `-Hard` is what stops the supervisor and starts the task again (`session-runner-restart-health.ps1`). Capacity rises from 1 to 2 only after one Full run beside phase 2. The secret stays in `C:\Antiphon\runner\secrets\phone-home`.
+Phase 1 uses `autostart-session-runner.ps1 -PhoneHomeConfigPath C:\Antiphon\runner\phone-home.phase1.json` from the separate `C:\Antiphon\runner\app` clone, in a normal terminal. The explicit config selects loopback 17214 at capacity 1. AppHost keeps serving and the direct runner keeps 17204, including unpinned Windows tasks and build-slot grants. Follow the [opening gates and acceptance checks](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-1-replaces-window-step-09).
 
-While `phone-home.json` exists, `scripts/restart-apphost.ps1` and `dev-aspire.ps1` on this master exit 3 with `REFUSED: phone-home-config-present` before any stop or launch. `-StopOnly` on `scripts/restart-apphost.ps1` stays allowed. Checkout `997f9b8d9ffc4ba870d2fd56caf7c03781591624` does not implement that guard. AppHost already adopts any listener on 17204 as the direct runner (`Antiphon.AppHost/Program.cs`, `DaemonProcessService`), so the file and a desktop AppHost launch must not overlap.
+Phase 2 uses the existing logon task `Antiphon Session Runner` on 17204. Verify S4 on the activated candidate and confirm there is no Windows Full lease before swapping 17204. Inside the operator-run rehearsal or cutover window, the operator writes `C:\Antiphon\runner\phone-home.json` (`runnerId` `desktop-win`, the phase-2 `serverOrigin`, capacity 1, no secret). The orchestrator runs `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon` to recreate the supervisor and load the file. Capacity rises from 1 to 2 only after one local Windows Full run beside phase 2. The secret stays in `C:\Antiphon\runner\secrets\phone-home`.
+
+The phase-2 file triggers the S4 AppHost refusal described above. The phase-1 file leaves AppHost startup available because the guard checks only `C:\Antiphon\runner\phone-home.json`.
 
 A Windows phone-home runner does not run worktree retention. `RunnerWorkspaceRetention` is constructed only when phone-home is enabled and the process is Linux (`src/Antiphon.SessionRunner/Program.cs`). `C:\Antiphon\runner\work\worktrees` grows until someone clears it. The rate is UNOBSERVED.
 

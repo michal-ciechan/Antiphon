@@ -128,7 +128,12 @@ false, so a soft restart keeps the supervisor's environment and does not
 re-read `C:\Antiphon\runner\phone-home.json`. The file write, the `-Hard`
 restart, and the rollback order are the
 [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
-On this master, `scripts/autostart-session-runner.ps1` does not read that file.
+S4 (`e1b42f895`, in serving rc `bd34a7ff6da9`) makes
+`scripts/autostart-session-runner.ps1` check that path at supervisor startup.
+If present, it reads and validates the config for phone-home on 17204. If
+absent, the default launch is direct on 17204. An unreadable or invalid config
+is refused. The explicit `-PhoneHomeConfigPath` selects the phase-1 file on
+the side clone and permits its configured port 17214.
 `-KillSessions` is the destructive exception: it kills sessions as part of the
 restart. `POST http://localhost:17204/sessions/kill-all` kills sessions without
 being a runner restart. Neither belongs in routine restart recovery.
@@ -173,7 +178,7 @@ show a rebuild after the client change before checking the browser. Use
 |---|---|---|
 | 0 | Dashboard found (the `logs/apphost-dashboard-url.txt` that `dev-aspire.ps1` writes, or an HTTP answer on 17205), API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
 | 1 | Build failed; the launcher exited nonzero or this launch's AppHost exited with nothing on 17202 (both end the wait at once); or the health wait ran out: no launch progress for `-TimeoutSec` (default 150 seconds) or the `-MaxWaitSec` hard cap (default 600 seconds) was reached. The output names the limit that ended the wait and the last progress signal with its age. | Read logs (earlier launches are kept as `logs/apphost.log.1` to `.10`); after a timeout the child may still be launching. Do not immediately rerun. |
-| 3 | Refused: worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock; nothing killed. Adopted S4, absent from `scripts/restart-apphost.ps1` and `dev-aspire.ps1` on master `a789c87770d31a77687f75a619c5af646d1ce91f`: exit 3 `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. Recovery — delete that file, run `scripts/restart-session-runner.ps1 -Hard`, and retry — applies only after the Linux project is stopped (`docker compose -p antiphon-server2-server stop`) and `pg_stat_activity` shows no production-compose client (parent R-2, parent R-3, and rehearsal RB in the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md)). While the Linux server is the writer, including mid-window, this refusal means stop: leave the file in place and do not retry. `-StopOnly` stays allowed. | Inspect ownership and both locks; update the canonical checkout if the expected SHA is wrong; wait for the existing launch. Mid-window, `phone-home-config-present` is the guard working: stop. |
+| 3 | Refused on worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock. Nothing is killed. S4 (`e1b42f895`) also makes `scripts/restart-apphost.ps1` and `dev-aspire.ps1` emit `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. `-StopOnly` stays allowed. | Inspect ownership and both locks. Update the canonical checkout if the expected SHA is wrong, or wait for the existing launch. While Linux is the writer, leave the phase-2 file in place and stop. For an approved rollback, follow the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3) and wait for the Linux project to stop and `pg_stat_activity` to show no production-compose client before retrying AppHost. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
 | 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
 

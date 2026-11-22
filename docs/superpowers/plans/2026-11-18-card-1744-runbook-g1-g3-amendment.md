@@ -9,10 +9,12 @@ at `ff06bf9354d84725f8c3f3d99a9cf900d8930210` (branch `feat/card-task-b56e40f0`,
 not on master) names a later front-door docs sweep as its slice 9. That sweep
 is after the window. This amendment is not that sweep.
 
-Checked against `origin/master` `a789c87770d31a77687f75a619c5af646d1ce91f`.
-The task branch base `751f3a0bba4000234a6aa88508228e8583838824` has the same
-bytes for every file quoted below. S4 is absent at that tip: there is no
-`scripts/lib/windows-phone-home-env.ps1`, and no script reads `phone-home.json`.
+The original draft used master `a789c87770d31a77687f75a619c5af646d1ce91f`.
+The November 22 serving rc `rc/2026-11-30` at `bd34a7ff6da9` contains the
+production `desktop-win` entry (`3027e64c4`), the platform scan fix (`ec316e433`),
+S4 supervision and the AppHost launch guard (`e1b42f895`), and the DW-3 helper
+repairs through `ddf2292a2`. AppHost still serves and `desktop-win/status`
+returned 404. Phase-1 acceptance is pending.
 
 Adopted operator decisions for this window (2026-11-19): O-10 (phase 1 through
 the autostart path), O-11 (AppHost launch refusal while `phone-home.json`
@@ -28,13 +30,13 @@ use `-Hard`. Phase 2 starts at capacity 1.
 
 | Fact | Where |
 |---|---|
-| The logon script has no parameters. It always launches `--urls http://localhost:17204` and writes `logs\session-runner.log` under its own repo root. | `scripts/autostart-session-runner.ps1:20-27`, `:46-55` |
+| The logon script checks `C:\Antiphon\runner\phone-home.json` by default. An absent default file selects direct mode on 17204. A valid default file selects phone-home on 17204. An explicit `-PhoneHomeConfigPath` selects the phase-1 file and its configured port. It writes `logs\session-runner.log` under its own repo root. | `scripts/autostart-session-runner.ps1:23`, `:42-78`, `scripts/lib/windows-phone-home-env.ps1` |
 | The logon task runs that script from the checkout that registered it, task name `Antiphon Session Runner`, `RestartCount 3`, interactive. | `scripts/install-autostart.ps1:83`, `:191-194`, `:211` |
 | `run-daemon.ps1` starts the service with `UseShellExecute = $false` (`:166`) and appends stdout to `-LogFile` (`:174-176`). The child therefore keeps the supervisor process environment. A soft restart does not re-read a config file. | `scripts/run-daemon.ps1:166`, `:174-176` |
 | `-Hard` stops the supervisor and starts the Scheduled Task again. Without `-Hard`, and while a supervisor pid is recorded, the restart only stops the service. `-KillSessions` is a different switch. | `scripts/session-runner-restart-health.ps1:226-233`, `:120-122`; `scripts/restart-session-runner.ps1:23` |
 | AppHost adopts whatever is already listening on 17204 and treats it as the direct `session-runner`. | `Antiphon.AppHost/Program.cs:33-39`; `Antiphon.AppHost/Supervisor/DaemonProcessService.cs:34-37` |
-| `restart-apphost.ps1` exit 3 today is the worktree guard, `-WhatIf` without `-StopOnly`, an in-flight lock, or SHA admission. It does not read `phone-home.json`. `-StopOnly` can still run. Port 17204 is excluded from the ports it stops. | `scripts/restart-apphost.ps1:94-97`, `:112-115`, `:125-128` |
-| `dev-aspire.ps1` exit 3 today is the worktree guard, before it writes `logs\apphost.launch.lock`. It does not read `phone-home.json`. | `dev-aspire.ps1:22-39` |
+| `restart-apphost.ps1` refuses with exit 3 `REFUSED: phone-home-config-present` when the phase-2 path exists. `-StopOnly` can still run. Port 17204 is excluded from the ports it stops. | `scripts/restart-apphost.ps1:103-111` |
+| `dev-aspire.ps1` also refuses with exit 3 when the phase-2 path exists, before writing `logs\apphost.launch.lock`. | `dev-aspire.ps1:31-37` |
 | The foreground Windows starter refuses runner ids `local` and `desktop`, reads the secret from `<Root>\secrets\phone-home`, and sets `Serilog__LogPath` to `<Root>/state/logs`. Default `-Root` is `C:\Antiphon\runner`, default `-Port` is 17214. It runs the exe in the foreground. | `scripts/start-windows-phone-home-runner.ps1:29-39`, `:51-56`, `:75-97`, `:109-110` |
 | The Windows build-slot default is `http://localhost:17204/build-slots`. A set `ANTIPHON_BUILD_SLOTS_URL` wins. Whether the desktop has that variable set is UNOBSERVED. | `scripts/lib/build-slot.ps1:27-29` |
 | Worktree retention is constructed only when phone-home is enabled and the process is Linux. | `src/Antiphon.SessionRunner/Program.cs:82-100` |
@@ -62,7 +64,7 @@ A delegate does not connect to the production Postgres, deploy, restart, or star
 - Desktop restarts that the standing rules already allow stay outside the rehearsal and the window. `restart-apphost.ps1 -ExpectedServerSha <tip>` is the pre-window phase 1 activation, after the operator's user-secrets edit: pull the main checkout, check `logs\apphost.restart.lock` and `logs\apphost.launch.lock` first, then restart from `C:\src\Antiphon`. That AppHost restart is not allowed mid-window, and not while the Linux server is the writer. An exit 3 `phone-home-config-present` in that window means stop.
 - The phase 2 file and the `-Hard` refresh belong only to the operator-run rehearsal or the window: `restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`. Read the desktop build-slot list before any 17204 swap.
 - Phase 1 witnesses: two pinned Windows Debug tasks, one land, the Full-run comparison, and the service-pid relaunch check.
-- Board edits, including O-14 on CARD-1778 and the CARD-1744 card text. This docs task does not edit cards.
+- O-14 board edit: unlink CARD-1778 as a formal blocker of CARD-1744. The link is still open per CARD-1744 history rev 35. Re-home the standing agents and specialists during the window and close CARD-1778 on the re-home record. [Board dependency snapshot](../../docker-stack.md#o-14-and-the-board-dependencies)
 - Before the rehearsal and the window: keep-six holds, the parent step 1.1 land drain, and the O-9 read below.
 
 ### Operator only
@@ -79,32 +81,58 @@ A delegate does not connect to the production Postgres, deploy, restart, or star
 
 ## Phase 1 replaces window step 0.9
 
-Parent step 0.9 only writes `C:\Antiphon\runner\secrets\phone-home` when `desktop-win` is wanted that day. O-10 replaces that step with phase 1, after the rc that contains S4 is activated, between Full runs.
+O-10 replaces parent step 0.9. Open phase 1 only in the operator-approved
+activation window for the reviewed rc candidate, between local Windows Full
+runs. Confirm S4 is active on the current serving rc and present on the exact
+reviewed candidate, along with the `desktop-win` entry, platform scan fix and
+DW-3 helper repairs. Check the canonical checkout and both AppHost locks.
+The phase-2 file must be absent and the direct runner and its build-slot broker
+must be healthy on 17204. [RC activation gates](../../release-gates.md)
 
-1. Clone `C:\Antiphon\runner\app` at the activated rc tip. Operator.
-2. Write the shared secret to `C:\Antiphon\runner\secrets\phone-home`, owner-only. The file is the one the starter already requires (`start-windows-phone-home-runner.ps1:51-56`). Do not put the secret in JSON. Operator.
-3. Add the desktop `antiphon-server` user-secrets entry `PhoneHomeRunner:Runners:desktop-win:*` with the compose entry's shape (`docker-compose.server2-server.yml:70-84`), except `MaxCapacity=1` and `HostWorkspaceRoot=C:\src\Antiphon`. Operator. The AppHost restart that loads the entry is the activation batch, not a delegate.
-4. Write `C:\Antiphon\runner\phone-home.phase1.json`, ASCII JSON, keys only: `runnerId` `desktop-win`, `serverOrigin` the public origin, `capacity` `1`, `port` `17214`. No secret key. Adopted schema. The reader that accepts this file is S4 and is not on this master.
-5. From a normal terminal, not an agent shell:
+1. From the candidate checkout in a normal Windows operator shell, the owner
+   of the secrets directory runs the DW-3 dry run. Review the planned map and
+   the displayed paths and status without displaying secret values. Verify the
+   runner account and its Claude, Codex and Grok profile homes match the map.
+   The Claude and Grok witnesses require signed-in homes. If either half of
+   the shared secret already exists, verify that the file is owner-only and
+   matches the `SharedSecret` entry before proceeding. Resolve a mismatch or
+   ambiguous key under operator custody. With an empty pair the helper creates
+   both halves. Use neither `-SweepStranded` nor `-SweepBackups` on this first
+   invocation or its apply.
 
-   `pwsh -NoProfile -File C:\Antiphon\runner\app\scripts\autostart-session-runner.ps1 -PhoneHomeConfigPath C:\Antiphon\runner\phone-home.phase1.json`
+   ```powershell
+   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
+   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
+   ```
 
-   That `-PhoneHomeConfigPath` parameter is the adopted S4 signature. On this master the script has no parameters (`autostart-session-runner.ps1:18-55`).
+2. After a successful apply, verify the matched owner-only file
+   `C:\Antiphon\runner\secrets\phone-home` and `antiphon-server` map
+   `PhoneHomeRunner:Runners:desktop-win:*`, with `MaxCapacity=1`, delegated work
+   enabled, matching provider homes and no standing agent. Verify the separate
+   ASCII `C:\Antiphon\runner\phone-home.phase1.json` has `runnerId` `desktop-win`,
+   the public `serverOrigin`, `capacity` `1` and `port` `17214`, with no secret.
+3. Load the map by activating the reviewed rc from `C:\src\Antiphon` with
+   `scripts/restart-apphost.ps1 -ExpectedServerSha <candidate-sha>` in that
+   window. Check `/api/version` against the exact candidate SHA and confirm
+   `/api/session-runners/desktop-win/status` changes from 404 to HTTP 200 for a
+   configured runner. It can remain unavailable until the runner connects.
+4. The operator starts the side clone `C:\Antiphon\runner\app` at that SHA in
+   a normal terminal. AppHost continues to serve beside the direct runner on
+   17204, and the S4 supervisor owns the phase-1 listener on loopback 17214.
 
-The phase 1 file is not the phase 2 path. The AppHost keeps running beside 17214. AppHost adoption is port 17204 only (`Antiphon.AppHost/Program.cs:37`).
+   ```powershell
+   pwsh -NoProfile -File C:\Antiphon\runner\app\scripts\autostart-session-runner.ps1 -PhoneHomeConfigPath C:\Antiphon\runner\phone-home.phase1.json
+   ```
 
-**Fallback if S4 is not on that rc.** Do not hold the rc. Start phase 1 with the script that exists today, from the clone, from a normal terminal:
-
-`pwsh -NoProfile -File C:\Antiphon\runner\app\scripts\start-windows-phone-home-runner.ps1 -RunnerId desktop-win -Port 17214 -Capacity 1`
-
-That path has no supervisor relaunch (`start-windows-phone-home-runner.ps1:109-110`). A reboot needs a manual start. S4 then rides the following rc, which is activated before the rehearsal.
+The historical foreground fallback has no service PID relaunch. The adopted
+phase-1 acceptance uses the supervised S4 path.
 
 **Witnesses (orchestrator, UNOBSERVED until run).**
 
-- `GET /api/session-runners`: `desktop-win` is windows, available, eligible, capacity 1.
-- Two Windows Debug tasks with `-Runner desktop-win -Platform Windows` complete, and one lands.
-- One Windows Full run finishes beside phase 1. Record desktop CPU and wall time against the previous run.
-- `GET /api/session-runners/desktop-win/status` stays available across one relaunch: stop only the pid in `C:\Antiphon\runner\app\logs\session-runner.service.pid`.
+- `GET /api/session-runners` and `/api/session-runners/desktop-win/status` show Windows registration, `available=true`, `dispatchEligible=true` and capacity 1. Unpinned Windows work still routes to the direct desktop runner.
+- Run two pinned Worktree Debug witnesses with `-Runner desktop-win -Platform Windows`, one Claude and one Grok. For each, record the task and session IDs, transcript-confirmed `UserPrompt`, the report and the released seat. Record one successful land and build-slot grants from 17204.
+- Between tasks, stop only the side clone's service PID from `C:\Antiphon\runner\app\logs\session-runner.service.pid`. Record the supervisor relaunching a new service PID and `desktop-win` returning to available and dispatch-eligible. Record the List, lease and recovery logs.
+- Finish one local Windows Full run alongside phase 1 from the detached qualification checkout at the exact candidate SHA, using its normal native lock and 17204 build-slot lease. Record the result, desktop CPU and wall time against the previous Full.
 
 **Phase 1 rollback.**
 
@@ -125,13 +153,13 @@ Parent step 3.4 starts `start-windows-phone-home-runner.ps1 -RunnerId desktop-wi
 
    `pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard`
 
-**Why `-Hard`.** The phone-home variables live in the supervisor process. `run-daemon.ps1:166` sets `UseShellExecute = $false`, so the service inherits that process environment, and a later soft restart only stops the service (`session-runner-restart-health.ps1:229-233`). `-Hard` stops the supervisor and starts `Antiphon Session Runner` again (`:231-233`, `:122`), which re-runs `autostart-session-runner.ps1`. Exit 0 means `http://127.0.0.1:17204/health` returned 200 for the main checkout's executable (`:255-263`). On this master the autostart script does not read the JSON, so this step changes mode only after S4 is on the tip the task launches.
+**Why `-Hard`.** The phone-home variables live in the supervisor process. `run-daemon.ps1:166` sets `UseShellExecute = $false`, so the service inherits that process environment, and a later soft restart only stops the service (`session-runner-restart-health.ps1:229-233`). `-Hard` stops the supervisor and starts `Antiphon Session Runner` again (`:231-233`, `:122`). The S4 startup script then checks and reads `phone-home.json`. Exit 0 means `http://127.0.0.1:17204/health` returned 200 for the main checkout's executable (`:255-263`). Record eligible registration separately.
 
 Checks, UNOBSERVED until run:
 
 - `GET /api/session-runners/desktop-win/status` is available and eligible.
 - `pwsh -NoProfile -File scripts/build-slot.ps1 -Label probe -- pwsh -NoProfile -Command "exit 0"` prints a granted `BUILD SLOT` line. The broker address is the default in `build-slot.ps1:29`.
-- `pwsh -NoProfile -File scripts/restart-apphost.ps1` exits 3 with `REFUSED: phone-home-config-present` and stops nothing. That text is the adopted O-11 guard. It is not in `scripts/restart-apphost.ps1` on this master. Until S4 is activated, do not start the AppHost while `phone-home.json` exists: `DaemonProcessService` would adopt the 17204 listener as the direct runner (`DaemonProcessService.cs:34-37`).
+- `pwsh -NoProfile -File scripts/restart-apphost.ps1` exits 3 with `REFUSED: phone-home-config-present` and stops nothing. That S4 guard implements O-11 and prevents AppHost from adopting the phase-2 listener on 17204 as the direct runner.
 
 After one Full run has finished beside phase 2, the operator may raise `capacity` from 1 to 2 in the JSON and run `-Hard` again. Compose `MaxCapacity` 2 is the ceiling (`docker-compose.server2-server.yml:79`).
 
