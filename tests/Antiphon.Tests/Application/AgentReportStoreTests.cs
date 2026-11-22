@@ -229,8 +229,10 @@ public class AgentReportStoreTests
         await w.InitializeAsync();
         var task = w.Task("exact full report é🙂");
         var path = w.Expected(task);
-        var firstAtMove = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timeout = TimeSpan.FromSeconds(5);
+        using var writes = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var firstAtMove = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var admissionPending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var moves = 0;
 
@@ -239,8 +241,8 @@ public class AgentReportStoreTests
         {
             if (phase == "publication-move")
             {
-                firstAtMove.TrySetResult();
-                await release.Task.WaitAsync(ct);
+                firstAtMove.TrySetResult(true);
+                await WaitForStepAsync(release.Task, "first writer was not released", ct);
             }
             if (phase == "readback") Interlocked.Increment(ref moves);
         };
@@ -253,32 +255,70 @@ public class AgentReportStoreTests
             return Task.CompletedTask;
         };
 
-        var firstWrite = first.StoreAsync(task, CancellationToken.None);
-        Task secondWrite = Task.CompletedTask;
+        var firstWrite = first.StoreAsync(task, writes.Token);
+        Task writers = firstWrite;
+        Exception? failure = null;
         try
         {
-            await firstAtMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForStepAsync(firstAtMove.Task, "first writer did not reach the post-check hold point");
             File.Exists(path).ShouldBeFalse();
 
-            var contender = second.StoreAsync(task, CancellationToken.None);
-            secondWrite = contender;
-            var pending = await admissionPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var contender = second.StoreAsync(task, writes.Token);
+            var joined = Task.WhenAll(firstWrite, contender);
+            writers = joined;
+            var pending = await WaitForStepAsync(admissionPending.Task, "second store did not enter gate admission");
             pending.ShouldBeTrue("the second store must wait while the first owns publication");
             File.Exists(path).ShouldBeFalse();
 
-            release.TrySetResult();
-            foreach (var result in await Task.WhenAll(firstWrite, contender))
+            release.TrySetResult(true);
+            foreach (var result in await WaitForStepAsync(joined, "writers did not complete"))
                 result.Path.ShouldBe(path, result.Reason);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
         }
         finally
         {
-            release.TrySetResult();
-            await Task.WhenAll(firstWrite, secondWrite);
+            release.TrySetResult(true);
+            var cleanup = failure is null ? writers : Task.WhenAll(writers, writes.CancelAsync());
+            try
+            {
+                await cleanup.WaitAsync(timeout);
+            }
+            catch (TimeoutException ex) when (!ReferenceEquals(cleanup.Exception?.InnerException, ex))
+            {
+                var cleanupFailure = new TimeoutException($"cleanup join timed out after {timeout.TotalSeconds}s", ex);
+                if (failure is null) throw cleanupFailure;
+                throw new AggregateException(failure, cleanupFailure);
+            }
+            catch (OperationCanceledException) when (failure is not null && writes.IsCancellationRequested)
+            {
+                // Cleanup observed the cancellation requested after the original failure.
+            }
+            catch (Exception cleanupFailure) when (failure is not null)
+            {
+                if (!ReferenceEquals(failure, cleanupFailure))
+                    throw new AggregateException(failure, cleanupFailure);
+            }
         }
 
         moves.ShouldBe(1);
         (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(task.Result!));
         Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
+
+        async Task<T> WaitForStepAsync<T>(Task<T> operation, string step, CancellationToken ct = default)
+        {
+            try
+            {
+                return await operation.WaitAsync(timeout, ct);
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException($"{step} within {timeout.TotalSeconds}s", ex);
+            }
+        }
     }
 
     [Test]
