@@ -20,16 +20,19 @@ public sealed class LibGit2VsGitDifferentialTests
 {
     private enum Expect { Answered, Fallback, Either }
 
-    private static async Task<LandingGitResult> GitAsync(string cwd, params string[] args)
+    private static async Task<LandingGitResult> GitAsync(string cwd, params string[] args) =>
+        (await GitWithErrorAsync(cwd, args)).Result;
+
+    private static async Task<(LandingGitResult Result, string Error)> GitWithErrorAsync(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         foreach (var a in args) start.ArgumentList.Add(a);
         using var p = Process.Start(start)!;
-        var output = await p.StandardOutput.ReadToEndAsync();
-        await p.StandardError.ReadToEndAsync();
+        var output = p.StandardOutput.ReadToEndAsync();
+        var error = p.StandardError.ReadToEndAsync();
         await p.WaitForExitAsync();
-        return new LandingGitResult(p.ExitCode, output, "");
+        return (new LandingGitResult(p.ExitCode, await output, ""), await error);
     }
 
     private static async Task CompareAsync(string cwd, Expect expect, params string[] args)
@@ -38,10 +41,12 @@ public sealed class LibGit2VsGitDifferentialTests
         var answer = InProcessGitReads.TryAnswer(cwd, args);
         if (expect == Expect.Fallback) { answer.ShouldBeNull("must fall back to git: " + shape); return; }
         if (answer is null) { expect.ShouldNotBe(Expect.Answered, "must be answered in process: " + shape); return; }
-        var git = await GitAsync(cwd, args);
+        var (git, error) = await GitWithErrorAsync(cwd, args);
         answer.ExitCode.ShouldBe(git.ExitCode, shape);
         answer.Output.ShouldBe(git.Output, shape);
         if (answer.ExitCode != 0) answer.Diagnostic.ShouldBe($"git_exit_{answer.ExitCode}", shape);
+        // An answer the stderr-forwarding runners take (TryAnswerSilently) is only one git gives without a word.
+        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null) error.ShouldBeEmpty("git wrote to stderr: " + shape);
     }
 
     /// <summary>Every handled shape, answered and equal to git, for a checkout root.</summary>
@@ -62,11 +67,17 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/worktree/x");
         foreach (var perWorktree in new[] { "logs/refs/bisect", "logs/refs/rewritten", "logs/refs/worktree", "logs/refs/rewritten/x" })
             await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", perWorktree);
-        // An existing log spelled otherwise than on disk: git prints the on-disk spelling (Windows), so git answers.
+        // An existing log spelled otherwise than on disk: git prints the on-disk spelling where the file system
+        // ignores case, so git answers there.
         var branch = fixture.SourceRef["refs/heads/".Length..];
-        await CompareAsync(cwd, OperatingSystem.IsWindows() ? Expect.Fallback : Expect.Answered,
+        var ignoresCase = cwd != cwd.ToUpperInvariant() && Directory.Exists(cwd.ToUpperInvariant());
+        await CompareAsync(cwd, ignoresCase ? Expect.Fallback : Expect.Answered,
             "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/heads/" + branch.ToUpperInvariant());
         await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/" + fixture.SourceRef + ".");
+        // Through an existing reflog file: git's "Not a directory" (128).
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/" + fixture.SourceRef + "/x");
+        // A missing name with a describe tail (-g<hex>) is a commit to git.
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "--quiet", "refs/heads/nope-1-g" + head[..7]);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", fixture.TargetRef);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", fixture.SourceRef);
@@ -147,6 +158,7 @@ public sealed class LibGit2VsGitDifferentialTests
             await CompareAsync(cwd, Expect.Fallback, "rev-parse", "refs/tags/light");
             await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "refs/tags/light");
             await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "--quiet", "refs/heads/ghost");
+            await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "refs/tags/light^{commit}");
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", fixture.TargetRef);
         }
         await CompareAsync(fixture.Source, Expect.Answered, "symbolic-ref", "-q", "HEAD");

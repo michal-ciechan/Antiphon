@@ -250,7 +250,8 @@ internal static partial class InProcessGitReads
             case "rev-parse" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && IsPlainRef(a[3]):
                 if (!OnlyReading(repo, a[3])) return null;
                 if (Direct(repo, a[3]) is { } quiet) return Ok(quiet + "\n");
-                return repo.Refs[a[3]] is null && !HasLooseRef(repo, a[3]) ? Exit(1) : null;
+                // A name no ref answers may still be a describe name (<anything>-g<hex>) git resolves to a commit.
+                return repo.Refs[a[3]] is null && !HasLooseRef(repo, a[3]) && !DescribeName.IsMatch(a[3]) ? Exit(1) : null;
 
             // Paths, printed as git prints them (real path, forward slashes on Windows).
             case "rev-parse" when a.Count == 2 && a[1] == "--absolute-git-dir":
@@ -450,7 +451,9 @@ internal static partial class InProcessGitReads
     {
         if (!(revision == "HEAD" || IsPlainRef(revision) || GitText.IsOid(revision)))
             return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel) : null;
-        if (revision != "HEAD" && IsPlainRef(revision) && repo.Refs[revision] is null) return null;
+        // A full ref only as its name's only reading: another one makes git warn of ambiguity on stderr.
+        if (revision != "HEAD" && IsPlainRef(revision) && (repo.Refs[revision] is null || !OnlyReading(repo, revision)))
+            return null;
         var target = repo.Lookup(revision);
         var commit = target as Commit ?? (peel ? target?.Peel<Commit>() : null);
         return commit is null ? null : Ok(commit.Sha + "\n");
@@ -512,13 +515,20 @@ internal static partial class InProcessGitReads
     // printed as it is on disk (its case, Windows' trailing dots and spaces, links resolved). Answered only when each
     // existing component is spelled exactly as on disk and is no link; the first missing one ends the check, as git
     // then appends the rest as typed.
+    // Only a missing component is forgiven: a path through an existing file is git's "Not a directory" (exit 128).
     private static string? GitPathBelow(string dir, string relative)
     {
         var current = dir;
         foreach (var part in relative.Split('/'))
         {
+            if (!Directory.Exists(current))
+            {
+                if (File.Exists(current)) return null;
+                break;
+            }
             var next = Path.Combine(current, part);
-            var exact = Directory.Exists(current) && Directory.EnumerateFileSystemEntries(current)
+            // The name itself as the search pattern (IsPlainRef keeps wildcards out): no whole-directory listing.
+            var exact = Directory.EnumerateFileSystemEntries(current, part)
                 .Any(entry => string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
             if (!exact)
             {
@@ -530,6 +540,10 @@ internal static partial class InProcessGitReads
         }
         return dir + "/" + relative;
     }
+
+    // git's get_describe_name reading of a name no ref answers: a tail of -g and hex digits names a commit.
+    private static readonly System.Text.RegularExpressions.Regex DescribeName =
+        new("-g[0-9a-fA-F]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>Whether a loose ref file of that name exists in the git directory or the common directory.</summary>
     private static bool HasLooseRef(Repository repo, string name)
