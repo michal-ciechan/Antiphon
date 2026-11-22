@@ -1546,6 +1546,19 @@
     {
       "project": "Antiphon.Tests",
       "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexBootPointerCanaryTests",
+      "method": "Real_Codex_consumes_and_submits_the_boot_pointer",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
       "class": "CodexBootWedgeProbeTests",
       "method": "C1521_Cold_pointer_records_write_consume_enter_and_receipt",
       "arguments": [],
@@ -2085,6 +2098,32 @@
       "arguments": [],
       "shapes": [
         "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.TestHelpers",
+      "class": "RcManifestScaleTests",
+      "method": "ScaleReplay",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.TestHelpers",
+      "class": "RcManifestScaleTests",
+      "method": "ScaleSamples",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
       ],
       "disposition": "diagnostic",
       "owner": "CARD-1545",
