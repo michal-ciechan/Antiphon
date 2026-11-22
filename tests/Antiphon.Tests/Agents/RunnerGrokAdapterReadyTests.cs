@@ -290,7 +290,7 @@ public class RunnerGrokAdapterReadyTests
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
                 TrustSettle = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(1),
                 TimeProvider = trustClock,
-                OnFailure = (outcome, _, _, _, _, _, _) => trustOutcome = outcome },
+                OnFailure = failure => trustOutcome = failure.Outcome },
             (_, _) => Task.CompletedTask);
         await trustClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
         var heldReadTimer = trustClock.NextTimerInstalled();
@@ -389,7 +389,7 @@ public class RunnerGrokAdapterReadyTests
                 TrustSettle = TimeSpan.Zero,
                 PollInterval = TimeSpan.FromMilliseconds(1),
                 TimeProvider = new AlreadyExpiredClock(),
-                OnFailure = (reason, _, _, _, _, _, _) => outcome = reason,
+                OnFailure = failure => outcome = failure.Outcome,
             }).GetAwaiter().GetResult();
         GrokReadyWait.SnapshotFaultGate.Value = null;
         return (ready, outcome);
@@ -456,7 +456,7 @@ public class RunnerGrokAdapterReadyTests
                 Settle = TimeSpan.Zero,
                 PollInterval = TimeSpan.FromMilliseconds(1),
                 TimeProvider = clock,
-                OnFailure = (reason, _, _, _, _, _, _) => outcome = reason,
+                OnFailure = failure => outcome = failure.Outcome,
             },
             answerTrust ? (_, _) => Task.CompletedTask : null);
 
@@ -766,7 +766,7 @@ public class RunnerGrokAdapterReadyTests
             }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
                 Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(1),
                 TimeProvider = failureClock,
-                OnFailure = (outcome, _, _, _, _, _, _) => failureOutcome = outcome });
+                OnFailure = failure => failureOutcome = failure.Outcome });
             await failureClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
             failureClock.Advance(TimeSpan.FromMilliseconds(1));
             var snapshotFailureReady = await snapshotFailureWait.WaitAsync(TimeSpan.FromSeconds(5));

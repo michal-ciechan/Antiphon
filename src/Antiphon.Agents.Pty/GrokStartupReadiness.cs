@@ -88,14 +88,8 @@ public sealed class GrokReadyTracker(TimeSpan settle)
 
     public bool Observe(GrokStartupObservation observation, TimeSpan elapsed)
     {
-        McpEverSeen |= observation.McpVisible;
-        LastReason = observation.Reason;
-        if (!observation.IsReady)
-        {
-            Reset();
-            LastReason = observation.Reason;
-            return false;
-        }
+        RecordScreen(observation);
+        if (!observation.IsReady) return false;
         if (_region != observation.Region)
         {
             _region = observation.Region;
@@ -107,12 +101,23 @@ public sealed class GrokReadyTracker(TimeSpan settle)
         return PositiveObservations >= 2 && elapsed - _since >= (settle > TimeSpan.Zero ? settle : TimeSpan.Zero);
     }
 
+    internal void RecordScreen(GrokStartupObservation observation)
+    {
+        McpEverSeen |= observation.McpVisible;
+        LastReason = observation.Reason;
+        if (!observation.IsReady) Reset();
+    }
+
     public void Reset()
     {
         _region = null;
         PositiveObservations = 0;
     }
 }
+
+public sealed record GrokStartupFailure(
+    GrokStartupReason Outcome, GrokStartupReason LastReason, GrokStartupSnapshot? Frame,
+    TimeSpan Elapsed, int Positives, bool McpSeen, bool SignInSeen, TimeSpan? WorkingCeiling);
 
 public sealed class GrokReadyWaitOptions
 {
@@ -122,12 +127,13 @@ public sealed class GrokReadyWaitOptions
     public TimeSpan TrustSettle { get; init; } = TimeSpan.FromSeconds(15);
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(50);
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
-    public Action<GrokStartupReason, GrokStartupReason, GrokStartupSnapshot?, TimeSpan, int, bool, bool>? OnFailure { get; init; }
+    public Action<GrokStartupFailure>? OnFailure { get; init; }
     public Action<GrokStartupSnapshot>? OnSignIn { get; init; }
 }
 
 /// <summary>
-/// One monotonic deadline covers reads, trust, settling and minimum process age.
+/// A monotonic deadline covers reads, trust, settling and minimum process age.
+/// A current Working screen can extend that deadline in bounded steps.
 /// A snapshot that has already completed is still classified when that budget
 /// elapsed during the preceding poll, so a sign-in screen records its launch block.
 /// A snapshot that is still pending is cancelled and is not awaited past the budget.
@@ -135,6 +141,9 @@ public sealed class GrokReadyWaitOptions
 /// </summary>
 public static class GrokReadyWait
 {
+    private static readonly TimeSpan WorkingStep = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultWorkingCeiling = TimeSpan.FromSeconds(180);
+
     /// <summary>
     /// Test-only fault injection. Production leaves this unset. The regression
     /// test faults the snapshot after the observer is attached and before the
@@ -154,6 +163,9 @@ public static class GrokReadyWait
         ct.ThrowIfCancellationRequested();
         var time = options.TimeProvider;
         var started = time.GetTimestamp();
+        var deadline = options.MaxWait;
+        var workingCeiling = deadline > DefaultWorkingCeiling ? deadline : DefaultWorkingCeiling;
+        var workingExtended = false;
         var tracker = new GrokReadyTracker(options.Settle);
         GrokStartupSnapshot? last = null;
         var signInSeen = false;
@@ -161,19 +173,34 @@ public static class GrokReadyWait
         TimeSpan? trustAt = null;
         bool Fail(GrokStartupReason outcome)
         {
-            options.OnFailure?.Invoke(outcome, tracker.LastReason, last, time.GetElapsedTime(started),
-                tracker.PositiveObservations, tracker.McpEverSeen, signInSeen);
+            options.OnFailure?.Invoke(new GrokStartupFailure(outcome, tracker.LastReason, last,
+                time.GetElapsedTime(started), tracker.PositiveObservations, tracker.McpEverSeen,
+                signInSeen, workingExtended ? workingCeiling : null));
             return false;
         }
+        bool ExtendWorking(TimeSpan elapsed)
+        {
+            if (trustAt is not null || tracker.LastReason != GrokStartupReason.Working
+                || deadline >= workingCeiling)
+                return false;
+
+            var nextDeadline = deadline + WorkingStep;
+            if (nextDeadline > workingCeiling) nextDeadline = workingCeiling;
+            if (elapsed >= nextDeadline) return false;
+
+            deadline = nextDeadline;
+            workingExtended = true;
+            return true;
+        }
         if (isExited?.Invoke() == true) return Fail(GrokStartupReason.Exited);
-        if (options.MaxWait <= TimeSpan.Zero) return Fail(GrokStartupReason.Deadline);
+        if (deadline <= TimeSpan.Zero) return Fail(GrokStartupReason.Deadline);
 
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             if (isExited?.Invoke() == true) return Fail(GrokStartupReason.Exited);
             var elapsed = time.GetElapsedTime(started);
-            var outerRemaining = options.MaxWait - elapsed;
+            var outerRemaining = deadline - elapsed;
             var trustExpired = false;
             var readBudget = outerRemaining;
             if (trustAt is { } trustStarted && options.TrustSettle > TimeSpan.Zero)
@@ -189,11 +216,16 @@ public static class GrokReadyWait
                 // A fault is observed before that test. Cancel a read that is still
                 // pending; do not await it.
                 if (!TryTakeCompleted(snapshotAsync, ct, out frame, out var faulted))
+                {
+                    if (!faulted && outerRemaining <= TimeSpan.Zero
+                        && ExtendWorking(time.GetElapsedTime(started)))
+                        continue;
                     return Fail(faulted
                         ? GrokStartupReason.SnapshotFailure
                         : outerRemaining <= TimeSpan.Zero
                             ? GrokStartupReason.Deadline
                             : GrokStartupReason.Trust);
+                }
             }
             else
             {
@@ -203,6 +235,8 @@ public static class GrokReadyWait
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
+                    elapsed = time.GetElapsedTime(started);
+                    if (elapsed >= deadline && ExtendWorking(elapsed)) continue;
                     return Fail(trustAt is not null && options.TrustSettle > TimeSpan.Zero
                         ? GrokStartupReason.Trust : GrokStartupReason.Deadline);
                 }
@@ -224,18 +258,27 @@ public static class GrokReadyWait
                 if (frame is not null) options.OnSignIn?.Invoke(frame);
                 return Fail(GrokStartupReason.SignIn);
             }
-            if (elapsed >= options.MaxWait) return Fail(GrokStartupReason.Deadline);
-            if (trustExpired && observation.Reason == GrokStartupReason.Trust)
-                return Fail(GrokStartupReason.Trust);
-            if (observation.Reason == GrokStartupReason.Trust)
+            if (elapsed >= deadline)
+            {
+                // The boundary read can identify the latest screen. It cannot
+                // contribute a positive observation after the deadline.
+                if (frame is not null)
+                {
+                    tracker.RecordScreen(observation);
+                    if (observation.Reason != GrokStartupReason.Trust) trustAt = null;
+                }
+                if (!ExtendWorking(elapsed)) return Fail(GrokStartupReason.Deadline);
+            }
+            else if (observation.Reason == GrokStartupReason.Trust)
             {
                 tracker.Observe(observation, elapsed);
+                if (trustExpired) return Fail(GrokStartupReason.Trust);
                 if (!trustWritten && writeAsync is not null)
                 {
                     try
                     {
                         await Bounded(token => writeAsync(GrokTrustPromptDetector.AffirmativeKey, token),
-                            options.MaxWait - elapsed, time, ct);
+                            deadline - elapsed, time, ct);
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
@@ -260,12 +303,13 @@ public static class GrokReadyWait
                 {
                     ct.ThrowIfCancellationRequested();
                     if (isExited?.Invoke() == true) return Fail(GrokStartupReason.Exited);
-                    if (time.GetElapsedTime(started) >= options.MaxWait) return Fail(GrokStartupReason.Deadline);
+                    if (time.GetElapsedTime(started) >= deadline) return Fail(GrokStartupReason.Deadline);
                     return true;
                 }
             }
-            var remaining = options.MaxWait - time.GetElapsedTime(started);
-            if (remaining <= TimeSpan.Zero) return Fail(GrokStartupReason.Deadline);
+            elapsed = time.GetElapsedTime(started);
+            if (elapsed >= deadline && !ExtendWorking(elapsed)) return Fail(GrokStartupReason.Deadline);
+            var remaining = deadline - elapsed;
             var delay = options.PollInterval > TimeSpan.Zero ? options.PollInterval : TimeSpan.FromMilliseconds(50);
             await Task.Delay(delay < remaining ? delay : remaining, time, ct);
         }

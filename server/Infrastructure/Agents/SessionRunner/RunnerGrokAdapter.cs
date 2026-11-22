@@ -368,26 +368,27 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
             throw new InvalidOperationException("RunnerGrokAdapter not started.");
     }
 
-    private void StoreStartupCapture(GrokStartupReason outcome, GrokStartupReason lastScreenReason,
-        GrokStartupSnapshot? frame, TimeSpan elapsed, int positives, bool mcpSeen, bool signInSeen)
+    private void StoreStartupCapture(GrokStartupFailure failure)
     {
+        var (outcome, lastScreenReason, frame, elapsed, positives, mcpSeen, signInSeen, workingCeiling) = failure;
+        var timing = workingCeiling is { } ceiling ? $" workingCeilingMs={(long)ceiling.TotalMilliseconds}" : "";
         try
         {
             var path = GrokStartupCaptureStore.Write(
                 GrokStartupCaptureStore.ResolveDirectory(_settings.GrokStartupCaptureDirectory),
                 _settings.GrokStartupCaptureKeep, _terminal.SessionId, outcome, lastScreenReason,
-                frame, elapsed, positives, mcpSeen, signInSeen, _time.GetUtcNow());
+                frame, elapsed, positives, mcpSeen, signInSeen, _time.GetUtcNow(), workingCeiling);
             _logger?.LogWarning(
-                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} frameAt={FrameAt} positives={PositiveObservations} mcpSeen={McpSeen} capture={CapturePath}",
+                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} frameAt={FrameAt} positives={PositiveObservations} mcpSeen={McpSeen} capture={CapturePath}{Timing}",
                 _terminal.SessionId, outcome, lastScreenReason, (long)elapsed.TotalMilliseconds,
-                frame?.Sequence, frame?.CapturedAt, positives, mcpSeen, path);
+                frame?.Sequence, frame?.CapturedAt, positives, mcpSeen, path, timing);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             _logger?.LogWarning(
-                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} positives={PositiveObservations} mcpSeen={McpSeen} captureWriteFailed=true",
+                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} positives={PositiveObservations} mcpSeen={McpSeen} captureWriteFailed=true{Timing}",
                 _terminal.SessionId, outcome, lastScreenReason, (long)elapsed.TotalMilliseconds,
-                frame?.Sequence, positives, mcpSeen);
+                frame?.Sequence, positives, mcpSeen, timing);
         }
     }
 }

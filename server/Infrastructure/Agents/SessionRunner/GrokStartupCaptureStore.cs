@@ -23,14 +23,14 @@ public static class GrokStartupCaptureStore
     public static string Write(string directory, int keep, Guid sessionId,
         GrokStartupReason outcome, GrokStartupReason lastScreenReason,
         GrokStartupSnapshot? frame, TimeSpan elapsed, int positiveObservations,
-        bool mcpSeen, bool signInSeen, DateTimeOffset utcNow)
+        bool mcpSeen, bool signInSeen, DateTimeOffset utcNow, TimeSpan? workingCeiling = null)
     {
         Directory.CreateDirectory(directory);
         var timestamp = utcNow.UtcDateTime.ToString(NameTimeFormat, CultureInfo.InvariantCulture);
         var name = $"{NamePrefix}{timestamp}-{sessionId:N}-{Guid.NewGuid():N}.txt";
         var path = Path.Combine(directory, name);
         var content = Format(sessionId, outcome, lastScreenReason, frame, elapsed,
-            positiveObservations, mcpSeen, signInSeen, utcNow);
+            positiveObservations, mcpSeen, signInSeen, utcNow, workingCeiling);
         lock (CaptureLock)
         {
             File.WriteAllText(path, content, new UTF8Encoding(false));
@@ -42,7 +42,7 @@ public static class GrokStartupCaptureStore
     public static string Format(Guid sessionId, GrokStartupReason outcome,
         GrokStartupReason lastScreenReason, GrokStartupSnapshot? frame,
         TimeSpan elapsed, int positiveObservations, bool mcpSeen, bool signInSeen,
-        DateTimeOffset utcNow)
+        DateTimeOffset utcNow, TimeSpan? workingCeiling = null)
     {
         var sb = new StringBuilder();
         sb.Append("session: ").Append(sessionId).Append('\n');
@@ -50,6 +50,8 @@ public static class GrokStartupCaptureStore
         sb.Append("outcome: ").Append(outcome).Append('\n');
         sb.Append("lastScreenReason: ").Append(lastScreenReason).Append('\n');
         sb.Append("elapsedMs: ").Append((long)elapsed.TotalMilliseconds).Append('\n');
+        if (workingCeiling is { } ceiling)
+            sb.Append("workingCeilingMs: ").Append((long)ceiling.TotalMilliseconds).Append('\n');
         sb.Append("positiveObservations: ").Append(positiveObservations).Append('\n');
         sb.Append("mcpSeen: ").Append(mcpSeen).Append('\n');
         sb.Append("frameSequence: ").Append(frame?.Sequence.ToString() ?? "none").Append('\n');
