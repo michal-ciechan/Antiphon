@@ -52,12 +52,15 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public Guid ProjectId { get; set; }
     private bool _gatewayStarted;
 
-    // warmProbes: the next probe child is started ahead (a spare, ProbeSpare) and warmed while this world goes on: its
-    // runtime start, compiled model and first database and Kafka connections overlap the parent's own work, and it does
-    // nothing else until StartProbeAsync gives it its config, then starts the next spare. Each probe is still its own
-    // fresh process, killed or recovering as before; only its start moves earlier. The last spare is killed unused.
-    private bool _warmProbes;
+    // warmProbes: how many probe children this world will start. Each is started ahead as a spare (ProbeSpare), the
+    // first when the world is ready and each next one when the one before is handed its config, and warmed meanwhile
+    // (runtime, compiled model, the Kafka native library, one read of the world's database), so its start overlaps the
+    // parent's own work. It does nothing else until StartProbeAsync gives it its config. Each probe is still its own
+    // fresh process, killed or recovering as before; only its start moves earlier. A spare is optional: one that cannot
+    // start, take its config or warm up is replaced by a probe started then, as before.
+    private int _sparesLeft;
     private (Process Process, string ConfigPath)? _spare;
+    private static readonly TimeSpan SpareHandoff = TimeSpan.FromSeconds(5);
 
     private static ProcessStartInfo ProbeStart()
     {
@@ -79,7 +82,38 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         start.ArgumentList.Add("--spare");
         start.ArgumentList.Add(root + ".warm.json");
         start.ArgumentList.Add(root + ".config");
+        start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _spare = (Process.Start(start) ?? throw new InvalidOperationException("Spare probe did not start"), root + ".config");
+    }
+
+    // The next spare, when this world still has a probe to start; never a failure of the probe already running.
+    private async Task TryStartSpareAsync()
+    {
+        if (_sparesLeft <= 0 || _spare is not null) return;
+        _sparesLeft--;
+        try { await StartSpareAsync(); }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await StopSpareAsync();
+            Console.WriteLine("c519-probe spare-not-started " + ex.GetType().Name);
+        }
+    }
+
+    // The config, written whole and then named, and the spare's acknowledgement (it writes <config>.taken the moment it
+    // sees it). False when the spare has exited or does not take it within SpareHandoff (killed then by the caller).
+    private static async Task<bool> HandToSpareAsync((Process Process, string ConfigPath) spare, string json)
+    {
+        if (spare.Process.HasExited) return false;
+        await File.WriteAllTextAsync(spare.ConfigPath + ".tmp", json);
+        File.Move(spare.ConfigPath + ".tmp", spare.ConfigPath);
+        var waited = Stopwatch.StartNew();
+        while (waited.Elapsed < SpareHandoff)
+        {
+            if (File.Exists(spare.ConfigPath + ".taken")) return true;
+            if (spare.Process.HasExited) return false;
+            await Task.Delay(5);
+        }
+        return false;
     }
 
     private async Task StopSpareAsync()
@@ -89,9 +123,13 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         try
         {
             if (!spare.Process.HasExited) spare.Process.Kill(entireProcessTree: true);
+            // A killed child exits within a second here; the bound only stops a stuck kill holding up the world.
             await spare.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
         }
-        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception) { }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Console.WriteLine("c519-probe spare-not-stopped " + ex.GetType().Name);
+        }
         finally { spare.Process.Dispose(); }
     }
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
@@ -99,7 +137,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public static async Task<UnifiedOutboundTransport> CreateAsync(RedpandaContainer broker,
         bool gatewayStarted = true, Action<IServiceCollection>? configure = null,
         Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
-        TimeProvider? clock = null, bool warmProbes = false)
+        TimeProvider? clock = null, int warmProbes = 0)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var topic = "c519-" + Guid.NewGuid().ToString("N");
@@ -166,12 +204,9 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             Conversation = conversation, ChannelId = channelId,
         };
         await File.WriteAllBytesAsync(world.SourcePath, world.OriginalBytes);
-        if (warmProbes)
-        {
-            world._warmProbes = true;
-            await world.StartSpareAsync();
-        }
         if (gatewayStarted) await world.StartGatewayAsync();
+        world._sparesLeft = warmProbes;
+        await world.TryStartSpareAsync();
         return world;
     }
 
@@ -249,25 +284,26 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         // The compiled model this probe build generated (ProbeGeneratedModel), or none: the probe then builds it.
         var model = await ProbeGeneratedModel.PathAsync();
         var json = JsonSerializer.Serialize(ProbeConfigFor(marker, barrier, offset, refuseOutcome, mode, deliveryId, stallPoint, model));
-        Process process;
-        if (_spare is { } spare && !spare.Process.HasExited)
+        Process? process = null;
+        if (_spare is { } spare)
         {
-            _spare = null;
-            // Written whole, then named: the spare only ever reads a complete config.
-            await File.WriteAllTextAsync(spare.ConfigPath + ".tmp", json);
-            File.Move(spare.ConfigPath + ".tmp", spare.ConfigPath);
-            process = spare.Process;
+            if (await HandToSpareAsync(spare, json))
+            {
+                _spare = null;
+                process = spare.Process;
+            }
+            else await StopSpareAsync();
         }
-        else
+        var warmed = process is not null;
+        if (process is null)
         {
-            await StopSpareAsync();
             await File.WriteAllTextAsync(config, json);
             var start = ProbeStart();
             start.ArgumentList.Add(config);
             process = Process.Start(start) ?? throw new InvalidOperationException("Probe did not start");
         }
-        var owned = new OwnedProbe(process, marker, source);
-        if (_warmProbes) await StartSpareAsync();
+        var owned = new OwnedProbe(process, marker, source, warmed);
+        await TryStartSpareAsync();
         return owned;
     }
 
@@ -324,7 +360,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // The first recovery after a real child death (crash tests) or an operator retry (crash and transport tests), for
     // a test run once per source kind: a fresh child for the main kind, and for every kind where the caller asks
     // (coldForEveryKind: the attempt-death test's first cut, so each kind's uncertain marking, failure recorder and
-    // retry republish also run in a cold process on the compiled model); otherwise in process. Every cut keeps a
+    // retry republish also run in a fresh process on the compiled model); otherwise in process. Every cut keeps a
     // cross-process recovery when the main row runs; the kind changes the source a recovery publishes, which the
     // in-process recovery runs on the same code. In process it keeps the child's whole ProbeDeadline: right after a
     // kill it may wait for Postgres to end the dead child's backend and its locks, which a child's own start hid.
@@ -398,7 +434,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         }
     }
 
-    internal sealed class OwnedProbe(Process process, string marker, string source) : IAsyncDisposable
+    // warmed: a spare started ahead (its age counts from its handoff), else started now; the timing lines say which.
+    internal sealed class OwnedProbe(Process process, string marker, string source, bool warmed = false) : IAsyncDisposable
     {
         private readonly Task<string> _stdout = process.StandardOutput.ReadToEndAsync();
         private readonly Task<string> _stderr = process.StandardError.ReadToEndAsync();
@@ -423,7 +460,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
                     + $" (exit {process.ExitCode}): " + await _stderr);
             await AssertMarkerAsync(point);
             // One line per cut so Full-run TRX stdout yields the reach p95 for this budget.
-            Console.WriteLine($"c519-probe reach {point} {_age.ElapsedMilliseconds} ms");
+            Console.WriteLine($"c519-probe reach {point} {_age.ElapsedMilliseconds} ms {(warmed ? "warm" : "cold")}");
         }
         private async Task<string> StallReportAsync(string point, TimeSpan budget)
         {
@@ -460,7 +497,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             var budget = ProbeDeadline + ProbeStartupAndExit;
             try { await process.WaitForExitAsync().WaitAsync(budget - _age.Elapsed); }
             catch (TimeoutException) { throw new TimeoutException(await StallReportAsync("recovery completion", budget)); }
-            Console.WriteLine($"c519-probe complete {_age.ElapsedMilliseconds} ms");
+            Console.WriteLine($"c519-probe complete {_age.ElapsedMilliseconds} ms {(warmed ? "warm" : "cold")}");
             await Task.WhenAll(_stdout, _stderr).WaitAsync(TimeSpan.FromSeconds(10));
             process.ExitCode.ShouldBe(0, await _stderr);
         }

@@ -48,7 +48,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
     {
         var broker = await SharedBroker.GetAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true);
+        // Probe children: the death's, then the main kind's first recovery (FirstRecoveryAsync).
+        await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: kind == "main" ? 2 : 1);
         await w.SeedCrashSourceAsync(kind);
         await using (var child = await w.StartProbeAsync(cut))
         {
@@ -115,7 +116,11 @@ public sealed class ChannelOutboundUnifiedCrashTests
         {
             var broker = await SharedBroker.GetAsync();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true);
+            // Probe children: the death's, then the first restart's and the retry republish's where they are fresh
+            // children (FirstRecoveryAsync; a published cut has no retry).
+            var fresh = kind == "main" || coldFirstCut && cut == cuts[0];
+            await using var w = await UnifiedOutboundTransport.CreateAsync(broker,
+                warmProbes: 1 + (fresh ? 1 : 0) + (fresh && cut != "published-committed" ? 1 : 0));
             await w.SeedCrashSourceAsync(kind);
             var accepted = cut is "producer-accepted" or "outcome-refused" or "published-committed";
             var published = cut == "published-committed";

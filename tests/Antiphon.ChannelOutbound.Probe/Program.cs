@@ -20,9 +20,10 @@ using Microsoft.Extensions.Options;
 // external runner is loaded by this crash probe.
 if (args is ["--generate-model", var modelDir]) return ProbeModelGenerator.Run(modelDir);
 // A spare (ProbeSpare): warmed first, then the probe its config, once given, describes.
-if (args is ["--spare", var warmPath, var givenPath])
+if (args is ["--spare", var warmPath, var givenPath, var parent])
 {
-    if (await ProbeSpare.WaitAsync(warmPath, givenPath) is not { } given) return 2;
+    if (await ProbeSpare.WaitAsync(warmPath, givenPath, int.Parse(parent, System.Globalization.CultureInfo.InvariantCulture))
+        is not { } given) return 3;
     args = [given];
 }
 if (args.Length != 1 || !File.Exists(args[0])) return 2;

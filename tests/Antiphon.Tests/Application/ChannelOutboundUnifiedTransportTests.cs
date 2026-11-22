@@ -124,7 +124,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     await using var scope = w.H.Provider.CreateAsyncScope();
                     await scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().RetryUncertainAsync(row.Id, true, scenario.Token);
                     // The republish after the operator's retry (a fresh child's for the main kind; the trailing and
-                    // machine rows start no child here: the attempt-death test runs their retry republish cold).
+                    // machine rows start no child here: the attempt-death test runs their retry republish in a fresh one).
                     await w.FirstRecoveryAsync(kind);
                 }
             }
@@ -429,7 +429,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var workerEvents = new WorkerTurnBus();
             var delegation = new DelegationSettings { MaxConcurrentTasks = 16 };
-            await using var w = await UnifiedOutboundTransport.CreateAsync(broker, warmProbes: true, configure: services =>
+            // Probe children: conversion-task-committed's, the dispatch probe's, before-conversion-claim's and the first
+            // recovery's.
+            await using var w = await UnifiedOutboundTransport.CreateAsync(broker,
+                warmProbes: 2 + (cut is "conversion-dispatched" or "enqueue-refused" ? 1 : 0) + (cut == "result-committed" ? 1 : 0),
+                configure: services =>
             {
                 services.AddSingleton(Options.Create(delegation));
                 services.AddSingleton<IEventBus>(workerEvents);
