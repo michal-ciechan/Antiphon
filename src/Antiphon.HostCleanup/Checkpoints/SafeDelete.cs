@@ -327,6 +327,7 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
             }
         }
         string? listing;
+        context.CountInProcessIndexRead();
         try { listing = Antiphon.GitInProcess.InProcessGitStatus.IndexListing(owner, stage: false); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
             or TypeInitializationException or BadImageFormatException or EntryPointNotFoundException
