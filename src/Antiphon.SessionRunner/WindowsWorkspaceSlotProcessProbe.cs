@@ -52,6 +52,8 @@ internal static class WindowsSlotHolderQuery
 {
     private const uint ProcessQueryInformation = 0x0400;
     private const uint ProcessVmRead = 0x0010;
+    private const uint Synchronize = 0x0010_0000;
+    private const uint WaitObject0 = 0;
     private const int ProcessBasicInformationClass = 0;
     private const int ErrorSharingViolation = 32;
     private const int ErrorLockViolation = 33;
@@ -112,12 +114,16 @@ internal static class WindowsSlotHolderQuery
     }
 
     /// <summary>
-    /// A same-bitness cwd we cannot read fails the census. Access denied and a 32-bit process are
-    /// skipped: this runner cannot see them, the same bound as an unreadable uid on Linux.
+    /// An unreadable cwd of a same-bitness process fails the census unless that process has exited.
+    /// Access denied and a 32-bit process are skipped as before.
     /// </summary>
     private static bool TryReadCwd(int pid, out string? cwd, out bool skipped)
     {
-        var handle = OpenProcess(ProcessQueryInformation | ProcessVmRead, false, pid);
+        const uint readAccess = ProcessQueryInformation | ProcessVmRead;
+        var handle = OpenProcess(readAccess | Synchronize, false, pid);
+        // Keep reading processes that grant the original access even if they deny waiting.
+        if (handle == IntPtr.Zero)
+            handle = OpenProcess(readAccess, false, pid);
         if (handle == IntPtr.Zero)
         {
             cwd = null;
@@ -139,14 +145,27 @@ internal static class WindowsSlotHolderQuery
     {
         cwd = null;
         skipped = false;
-        if (!IsWow64Process(handle, out var wow64))
-            return false;
-        if (wow64)
+        if (IsWow64Process(handle, out var wow64))
         {
-            skipped = true;
-            return true;
+            if (wow64)
+            {
+                skipped = true;
+                return true;
+            }
+
+            if (TryReadProcessParametersCwd(handle, out cwd))
+                return true;
         }
 
+        // Exit can unmap the PEB between opening the process and reading it. Check the
+        // same handle so a recycled PID cannot turn an unreadable live process into a skip.
+        skipped = WaitForSingleObject(handle, 0) == WaitObject0;
+        return skipped;
+    }
+
+    private static bool TryReadProcessParametersCwd(IntPtr handle, out string? cwd)
+    {
+        cwd = null;
         if (NtQueryInformationProcess(handle, ProcessBasicInformationClass, out var info, Marshal.SizeOf<ProcessBasicInformation>(), out _) != 0
             || info.PebBaseAddress == IntPtr.Zero)
             return false;
@@ -332,6 +351,9 @@ internal static class WindowsSlotHolderQuery
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool IsWow64Process(IntPtr process, out bool wow64);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] buffer, int size, out int read);
