@@ -831,6 +831,7 @@ public sealed class VolumeRetirementContentTests
     [Arguments("unattributed-crlf")]
     [Arguments("common-info-attributes")]
     [Arguments("linked-info-attributes")]
+    [Arguments("staged-attributes")]
     [Arguments("oversized-crlf")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Linked_worktree_requires_exact_content_for_explicit_crlf_checkout(string vector)
@@ -888,28 +889,33 @@ public sealed class VolumeRetirementContentTests
                     mkdir "$admin/info"
                     printf 'scripts/antiphon.cmd -text\n' > "$admin/info/attributes"
                     ;;
+                staged-attributes)
+                    git check-attr --cached text eol -- plain.cmd
+                    printf 'plain.cmd text eol=crlf\n' >> .gitattributes
+                    git add .gitattributes
+                    printf 'plain\r\n' > plain.cmd
+                    git check-attr --cached text eol -- plain.cmd
+                    ;;
                 oversized-crlf)
                     test "$(git cat-file -s HEAD:large.cmd)" = 16777216
                     test "$(stat -c %s large.cmd)" = 16777217
-                    git ls-files --eol -- large.cmd
+                    git ls-files --eol -- large.cmd | grep -Eq 'i/lf[[:space:]]+w/crlf[[:space:]]+attr/text eol=crlf[[:space:]]+large\.cmd$'
                     ;;
             esac
             """);
         setup.Exit.ShouldBe(0, setup.Output);
         setup.Output.ShouldContain("w/crlf");
         setup.Output.ShouldContain("attr/text eol=crlf");
-        if (vector is "unattributed-crlf" or "common-info-attributes")
+        if (vector is "unattributed-crlf" or "common-info-attributes" or "staged-attributes")
         {
             setup.Output.ShouldContain("plain.cmd: text: unspecified");
             setup.Output.ShouldContain("plain.cmd: eol: unspecified");
         }
-        if (vector == "common-info-attributes")
+        if (vector is "common-info-attributes" or "staged-attributes")
         {
             setup.Output.ShouldContain("plain.cmd: text: set");
             setup.Output.ShouldContain("plain.cmd: eol: crlf");
         }
-        if (vector == "oversized-crlf")
-            setup.Output.ShouldContain("attr/text eol=crlf\tlarge.cmd");
         if (vector != "checkout")
         {
             // Simulate a clean stat-cache decision so only the linked checkout's
