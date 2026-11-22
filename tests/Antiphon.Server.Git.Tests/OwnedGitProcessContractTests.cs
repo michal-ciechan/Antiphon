@@ -177,6 +177,29 @@ public sealed class OwnedGitProcessContractTests
     }
 
     [Test]
+    public async Task Ambiguous_cleanup_never_returns_the_lifecycle_to_terminating()
+    {
+        // CARD-1876 A4: Unconfirmed after an ambiguous launch is already past Terminating.
+        var release = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operations = new FakeOperations
+        {
+            StartFailure = new IOException("launch detail"),
+            Signal = (_, _, _) => new(release.Task)
+        };
+        await using var owner = new OwnedGitProcess(operations);
+        owner.Start(StartInfo()).State.ShouldBe(OwnedGitLaunchState.Ambiguous);
+        var cleanup = owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(1));
+        try
+        {
+            cleanup.IsCompleted.ShouldBeFalse();
+            owner.State.ShouldBe(OwnedGitLifecycle.Unconfirmed);
+        }
+        finally { release.TrySetResult(1); }
+        (await cleanup.WaitAsync(TimeSpan.FromSeconds(5))).Joined.ShouldBeFalse();
+        owner.State.ShouldBe(OwnedGitLifecycle.Unconfirmed);
+    }
+
+    [Test]
     public void Missing_root_or_contradictory_no_child_are_ambiguous()
     {
         using var missing = new OwnedGitProcess(new FakeOperations { Launch = new(OwnedGitLaunchState.Started, null) });
