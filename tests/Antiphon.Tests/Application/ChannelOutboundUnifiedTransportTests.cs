@@ -52,7 +52,12 @@ public sealed class ChannelOutboundUnifiedTransportTests
 
     // Disposed once both C519 classes have finished (else after the assembly), never by one class alone.
     [After(Class)]
-    public static Task SharedBrokerClassFinishedAsync() => SharedRedpandaBroker.C519.ClassFinishedAsync(nameof(ChannelOutboundUnifiedTransportTests));
+    public static async Task SharedBrokerClassFinishedAsync()
+    {
+        // Every world teardown still listed ends before the shared broker can go.
+        try { await UnifiedOutboundTransport.DrainAllDisposalsAsync(); }
+        finally { await SharedRedpandaBroker.C519.ClassFinishedAsync(nameof(ChannelOutboundUnifiedTransportTests)); }
+    }
 
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
