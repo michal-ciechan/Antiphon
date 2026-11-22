@@ -156,9 +156,12 @@ public partial class ProjectReadinessTests
             .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe));
 
         var sql = query.ToQueryString();
-        sql.ShouldContain("rtrim(replace(");
-        sql.ShouldContain("ILIKE @");
+        Console.WriteLine(sql);
+        sql.ShouldContain("lower(rtrim(replace(");
+        sql.ShouldContain("COLLATE \"C\")");
+        sql.ShouldContain(" LIKE @");
         sql.ShouldContain("ESCAPE '!'");
+        sql.ShouldNotContain("ILIKE");
 
         await using var command = query.CreateDbCommand();
         command.CommandText = "EXPLAIN " + command.CommandText;
@@ -251,6 +254,10 @@ public partial class ProjectReadinessTests
                 .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe))
                 .Select(a => a.Id)
                 .ToListAsync()).ToHashSet();
+            var pattern = WorkingDirectoryIdentity.CandidatePattern(probe);
+            stored.Where(row => admitted.Contains(row.Key)).Select(row => row.Value).Order(StringComparer.Ordinal)
+                .ShouldBe(stored.Values.Where(path => CLocalePrefilterModel.Admits(path, pattern)).Order(StringComparer.Ordinal),
+                    $"the database must evaluate the prefilter exactly as the C-collation model for probe '{probe}'");
             foreach (var (id, path) in stored)
             {
                 if (!WorkingDirectoryIdentity.Same(path, probe))
