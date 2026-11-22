@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -156,7 +157,7 @@ public class DelegationScopeHoldTests
     public async Task a_worktree_task_dispatches_over_a_shared_holder_with_one_warning()
     {
         using var workspace = new TempWorkspace();
-        var launches = new DispatcherAdmissionFixture.RecordingSink();
+        var launches = new WorkspaceLaunchSink();
         var dispatcher = CreateDispatcher(launches: launches);
         var holder = await SeedRunningTaskAsync(
             workspace.Path, WorkspaceMode.Shared, "delivery", title: "the shared writer",
@@ -177,7 +178,7 @@ public class DelegationScopeHoldTests
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched,
             "a worktree collides at merge, not at dispatch: " + dispatched.FailureReason);
-        launches.Sessions.ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
+        launches.SessionsUnder(workspace.Path).ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
         (await verify.AgentTaskEvents
                 .AnyAsync(e => e.AgentTaskId == isolated.Id && e.Type == AgentTaskEventType.Held))
             .ShouldBeFalse();
@@ -195,7 +196,7 @@ public class DelegationScopeHoldTests
     public async Task two_worktree_tasks_in_one_area_both_run()
     {
         using var workspace = new TempWorkspace();
-        var launches = new DispatcherAdmissionFixture.RecordingSink();
+        var launches = new WorkspaceLaunchSink();
         var dispatcher = CreateDispatcher(launches: launches);
         await SeedRunningTaskAsync(
             workspace.Path, WorkspaceMode.Worktree, "delivery", title: "worktree one",
@@ -208,7 +209,7 @@ public class DelegationScopeHoldTests
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == second.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
-        launches.Sessions.ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
+        launches.SessionsUnder(workspace.Path).ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
         (await verify.AgentTaskEvents
                 .CountAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Warning))
             .ShouldBe(1);
@@ -297,7 +298,7 @@ public class DelegationScopeHoldTests
     // ---- helpers ---------------------------------------------------------------------------
 
     private static AgentTaskDispatcher CreateDispatcher(bool serialiseSharedWriters = true,
-        DispatcherAdmissionFixture.RecordingSink? launches = null)
+        IAgentTaskLaunchSink? launches = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -323,7 +324,7 @@ public class DelegationScopeHoldTests
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
-        services.AddSingleton<IAgentTaskLaunchSink>(launches ?? new DispatcherAdmissionFixture.RecordingSink());
+        services.AddSingleton<IAgentTaskLaunchSink>(launches ?? new WorkspaceLaunchSink());
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
@@ -457,6 +458,29 @@ public class DelegationScopeHoldTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    /// <summary>
+    /// Records each launch with its working directory. The tick dispatches every Queued row in the
+    /// shared fixture database, so a launch count must be scoped to the test's own workspace: rc run
+    /// 557cdb63 (Windows Full, seeded order) saw three launches where this test made one.
+    /// </summary>
+    private sealed class WorkspaceLaunchSink : IAgentTaskLaunchSink
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<(Guid SessionId, string Cwd)> _launches = new();
+
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+            _launches.Enqueue((sessionId, spec.Cwd));
+
+        public IReadOnlyList<Guid> SessionsUnder(string root)
+        {
+            var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return _launches
+                .Where(l => (Path.GetFullPath(l.Cwd) + Path.DirectorySeparatorChar).StartsWith(prefix, comparison))
+                .Select(l => l.SessionId)
+                .ToList();
+        }
+    }
 
     private sealed class TempWorkspace : IDisposable
     {
