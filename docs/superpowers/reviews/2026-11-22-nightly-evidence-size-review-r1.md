@@ -65,4 +65,14 @@ Land-graph `-Check` at that same clean source exited 0, `approved`, digest `A9BB
 
 ## Advisory
 
-`NightlyCoreGoldenTests.Evidence_files_match_the_goldens` still comments that the identity comparison is against the PowerShell body. The assertion is the committed golden file and the C# reader. The comment should be corrected by a docs change. It does not hold the land.
+`NightlyCoreGoldenTests.Evidence_files_match_the_goldens` still comments that the identity comparison is against the PowerShell body. The assertion is the committed golden file and the C# reader. The comment should be corrected by a docs change. It does not hold the land. Filed as CARD-2055 (`6c199287-5bfc-4f34-9a42-e07943582592`), Backlog, Low/Normal. No existing card matched the search.
+
+## Gates after the review commit
+
+Evidence-diff `5411db8db92428e3db563485d3ee6c86ca3b8d64..200a3f4eb10af2306ec9f22ce76cd6018773c138`: commits=2, entries=0, violations=0, exit 0. That second commit is this document. It is not a new test run. A later evidence-diff of the commit that adds this section is reported with the review and is not a new test run.
+
+`git merge-tree --write-tree origin/master HEAD` at `200a3f4eb10af2306ec9f22ce76cd6018773c138` against `565d2239a26144b748cd846aa14954b679b23959` exited 0 and wrote `9da31280e7e763a40944036c47b3708aa56c2182`.
+
+Land-graph `-Check` at that commit exited 0, `approved`, same digest `A9BB27C595EA171463F0ED13725E198AA64385B1744B9E0BA2D211829C65A7CF`, count 80.
+
+OS witness lint `scripts/check-os-witnesses.ps1` over `5411db8db92428e3db563485d3ee6c86ca3b8d64..200a3f4eb10af2306ec9f22ce76cd6018773c138` with this document as the plan exited 2: `ambiguous string literal: interpolated C# and PowerShell here-strings are unsupported`. The declaration names `Evidence_files_match_the_goldens` and CP-4. The checker refuses to lex `NightlyCoreGoldenTests.cs` because other methods in that file use interpolated strings (`$"..."`). It therefore cannot bind the golden method. The execution receipts are unchanged: CP-1 passed the method, and CP-4 passed the stat probe 29/0. The Windows startup census obligation stays pending for a later rc pick. The declaration was not committed.
