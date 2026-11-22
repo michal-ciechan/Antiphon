@@ -766,9 +766,10 @@ projects once is the same obligation when a full solution build is the wrong sco
 `TestHelpers` glob is not safe: each mirror links a different subset, and a glob pulls helpers
 that do not compile there. The native output directory is the warm cache; this rule adds no
 second one. The narrow witness for the link census is `/*/*/LinkedTestHelperClosureTests/*`.
-The 11-class guard union (the classification, lane-category and
+The guard union (the classification, lane-category, fixture cleanup and
 Linux-policy guards covering `tests/Shared/TestClassificationGuardTests.cs`,
 `tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`,
+`tests/Antiphon.Tests/Infrastructure/TestFixtureCleanupGuardTests.cs`,
 `tests/Shared/NativeLinuxPolicyWitness.cs` and
 `tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs`, and the policy-hash
 inputs under [release-gates.md](release-gates.md)) runs only when a subject touches a
@@ -815,7 +816,7 @@ or edits the generated file. The full wording stays here, outside section 8's si
 
 A Merge batch's final-tree run always appends one cheap fixed high-radius subset, independent of what the subjects' reports name. Each test project in that subset is its own CHECKPOINT row, so an omission is visible. The rc cut (Merge "Cut the new rc line") runs the same rows on the cut pin before pushing the rc ref and does not push that ref while the row is red for any project.
 
-Code and Merge briefs also name a guard batch that is not this fixed subset. That batch is the filter in [the default Code/Review recipe](testing-and-build.md#default-codereview-recipe), and it includes `TestLaneCategoryGuardTests`. The fixed high-radius rows below do not. A brief that names the eight classes and omits `TestLaneCategoryGuardTests` does not run the Unit-xor-Integration census.
+Code and Merge briefs name the guard filter in the default Code/Review recipe. It includes `TestLaneCategoryGuardTests` for the Unit-xor-Integration census and `TestFixtureCleanupGuardTests` for Git fixture cleanup. [Default Code/Review recipe](testing-and-build.md#default-codereview-recipe)
 
 The fixed classes are always `TestTimingOperationLabelTests`, `AppDbContextModelTests`, `ContractSnapshotTests`, `CheckpointReceiptSafetyTests`, and `HostCleanupCheckpointReceiptTests`, plus the land notification family (CARD-1801): `AgentTaskLandHeldNotificationTests`, `AgentTaskLandNotificationParkFollowUpTests`, `AgentTaskLandNotificationPersistenceTests`, `AgentTaskLandNotificationReconcileLoadTests`, `AgentTaskLandNotificationRecoveryTests`, `AgentTaskLandNotificationRescanTests`, `AgentTaskLandReceiptWatermarkSafetyTests`, `AgentTaskLandReceiptWatermarkTests`, and `ReceiptScanDestinationIntegrationTests`. The fixed methods are the A5 pair, the `ReleaseGatePlatformTests` cases `LinuxOnlyWindowsExclusionPolicy` and `C1686_LinuxOnlyCensus`.
 

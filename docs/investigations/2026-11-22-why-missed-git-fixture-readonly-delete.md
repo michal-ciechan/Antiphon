@@ -85,4 +85,3 @@ qualification run reaches the fixture.
 
 [FT-2 read-only Git object teardown](2026-11-22-why-missed-rc-run-3528e6b1-ft2-readonly-git-objects.md)
 covers the same Windows behavior in `Ft2Repo`.
-
