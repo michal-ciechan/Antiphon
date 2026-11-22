@@ -2452,18 +2452,18 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
+        "NightlyRunTests",
         "PhoneHomeMirrorJoinTests",
         "ProjectReadinessTests",
         "ProjectSetupServiceTests",
         "RcHistoricalEvidenceTests",
-        "RemoteScriptContractTests",
-        "ShellFixtureLineEndingContractTests"
+        "RemoteScriptContractTests"
       ]
     }
   ],
