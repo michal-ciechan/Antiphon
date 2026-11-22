@@ -913,8 +913,8 @@ can over-count; Appendix B gives the commands.
 | `scripts/dispatch-concurrency.ps1` | 201 | orchestrator HTTP tool | ps 1 / test.cs 1 / docs 4 | yes (1) |  | 5.1 named | S8 |
 | `scripts/distiller.ps1` | 82 | HTTP/ops tool | ps 0 / test.cs 0 / docs 5 | no |  | unstated | W2-http |
 | `scripts/export-expected-duration-roster.ps1` | 56 | nightly/selection | ps 0 / test.cs 2 / docs 2 | yes (2) |  | 5.1 named | W2-nightly |
-| `scripts/export-nightly-prior-failures.ps1` | 16 | nightly/selection | ps 0 / test.cs 0 / docs 5 | no |  | 5.1 named | W2-nightly |
-| `scripts/export-nightly-stopped-run-seed.ps1` | 19 | nightly/selection | ps 1 / test.cs 0 / docs 5 | no |  | 5.1 named | W2-nightly |
+| `scripts/export-nightly-prior-failures.ps1` | 16 | nightly/selection | ps 0 / test.cs 0 / docs 5 | no |  | 5.1 named | W2-nightly; deleted in W2-nightly S26 (`antiphon-scripts export-nightly-prior-failures`) |
+| `scripts/export-nightly-stopped-run-seed.ps1` | 19 | nightly/selection | ps 1 / test.cs 0 / docs 5 | no |  | 5.1 named | W2-nightly; deleted in W2-nightly S26 (`antiphon-scripts export-nightly-stopped-run-seed`) |
 | `scripts/fixtures/c1339-fixture-state.ps1` | 126 | test driver/fixture | ps 1 / test.cs 0 / docs 0 | no |  | unstated | W2-rc-T |
 | `scripts/fixtures/c1339-release-git.ps1` | 146 | test driver/fixture | ps 2 / test.cs 0 / docs 1 | no |  | unstated | W2-rc-T |
 | `scripts/fixtures/c1500-status.ps1` | 162 | test driver/fixture | ps 1 / test.cs 0 / docs 3 | no |  | 5.1 named | W2-rc-T |
@@ -1027,7 +1027,7 @@ can over-count; Appendix B gives the commands.
 | `scripts/measure-host-stats-overhead.ps1` | 200 | cleanup/ops | ps 0 / test.cs 0 / docs 3 | no |  | 7 only | W2-ops |
 | `scripts/measure-linux-shared-compiler.ps1` | 171 | cleanup/ops | ps 1 / test.cs 0 / docs 3 | no |  | 7 only | W2-ops |
 | `scripts/measure-session-state-cache.ps1` | 444 | cleanup/ops | ps 0 / test.cs 1 / docs 5 | yes (1) |  | 7 only | W2-ops |
-| `scripts/merge-nightly-seeds.ps1` | 487 | nightly/selection | ps 1 / test.cs 0 / docs 9 | no |  | 5.1 named | W2-nightly |
+| `scripts/merge-nightly-seeds.ps1` | 487 | nightly/selection | ps 1 / test.cs 0 / docs 9 | no |  | 5.1 named | W2-nightly; deleted in W2-nightly S26 (`antiphon-scripts merge-nightly-seeds`) |
 | `scripts/migrate-stage-pins-to-cells.ps1` | 256 | HTTP/ops tool | ps 0 / test.cs 1 / docs 6 | yes (1) |  | 5.1 named | W2-http |
 | `scripts/model-availability.ps1` | 151 | HTTP/ops tool | ps 2 / test.cs 1 / docs 9 | yes (1) |  | 5.1 named | W2-http |
 | `scripts/new-review-scratch.ps1` | 31 | land/selection/orchestrator support | ps 1 / test.cs 1 / docs 3 / C#:1 | yes (1) |  | 7 only | W2-land |

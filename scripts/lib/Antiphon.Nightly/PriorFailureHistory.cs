@@ -1,4 +1,4 @@
-// The failure history, compiled: the export of a closed run's prior failures (export-nightly-prior-failures.ps1), its
+// The failure history, compiled: the export of a closed run's prior failures (antiphon-scripts export-nightly-prior-failures), its
 // schema and reader, the executors' dispatch-history intake (a history or a stopped-run seed) and the resolver that maps
 // its members onto the current plan. This replaces scripts/lib/nightly-failure-history.ps1; scripts call these methods.
 //

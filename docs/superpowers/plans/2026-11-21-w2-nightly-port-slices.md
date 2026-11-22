@@ -365,7 +365,7 @@ omit empty values. Exit 9 is reserved for the launcher.
 | `live-lane-run` | `--lane --candidate-ref --expected-sha --manifest --coordination-root --results-root` | result code (20 = native-unqualified) |
 | `live-lane-status` | `--lane [--candidate-sha] [--repository-root] [--attestation] [--history] [--reuse-policy AlwaysRerun\|Bounded24h] [--context] [--use-record]` | 0/2 |
 | `live-lane-input-digest` | `[--root]` | 0 |
-| `export-nightly-prior-failures` | `--run-directory --output-path` | 0/1 |
+| `export-nightly-prior-failures` | `--run-directory --output-path` | 0/2 (2 = refused, the error record on stdout, as the script did) |
 | `export-nightly-stopped-run-seed` | `--run-directory --output-path --source-run-id --source-candidate-id --source-sha --timing-root` | 0/1 |
 | `merge-nightly-seeds` | forwards the current argv (`-Seed` and `-Proven` repeat) | as today |
 

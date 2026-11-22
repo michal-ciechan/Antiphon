@@ -41,6 +41,12 @@ namespace Antiphon.Scripts
             [NightlyReportCommand.Name] = NightlyReportCommand.Run,
             // The phase-timing summary answers every input itself: exit 0 written, 1 failed (one stderr line), 2 usage.
             [SummarizeTestPhasesCommand.Name] = SummarizeTestPhasesCommand.Run,
+            // The failure-history export answers every input itself: exit 0 written, 2 refused (the error record on stdout) or usage.
+            [Antiphon.Nightly.NightlySeedCommands.ExportPriorFailures] = NightlySeedCommand.Run,
+            // The stopped-run seed export answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
+            [Antiphon.Nightly.NightlySeedCommands.ExportStoppedRunSeed] = NightlySeedCommand.Run,
+            // The seed merge takes the operator's argv: exit 0 merged, 2 refused, 3 merged under -Strict with an identity unplaced or open.
+            [Antiphon.Nightly.NightlySeedCommands.MergeSeeds] = NightlySeedCommand.Run,
             // The release selection answers exactly or hands back NotHandled (exit 10).
             ["select-release"] = SelectRelease,
         };
@@ -65,7 +71,7 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
             return Usage;
         }
 

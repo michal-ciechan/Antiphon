@@ -261,9 +261,10 @@ internal sealed class SeedWorld : IDisposable
 
     /// <summary>
     /// Invoke-MergeNightlySeeds: the operator's argv (-Seed and -Proven repeat). In-process through the compiled merge (the
-    /// script's own catch is exit 2 with the message); with cli, pwsh -File scripts/merge-nightly-seeds.ps1 end to end.
+    /// command's own catch is exit 2 with the message); with cli, the antiphon-scripts merge-nightly-seeds command
+    /// (NightlySeedCommands.Run with that argv, in-process): its exit code and what it wrote to stdout and stderr.
     /// </summary>
-    public static async Task<MergeResult> Merge(string[] seeds, string output, string report, string decision = "", string[]? proven = null, string repo = "",
+    public static Task<MergeResult> Merge(string[] seeds, string output, string report, string decision = "", string[]? proven = null, string repo = "",
         bool strict = false, bool cli = false)
     {
         var argv = new List<string>();
@@ -276,17 +277,19 @@ internal sealed class SeedWorld : IDisposable
         argv.Add("-ReportPath"); argv.Add(report);
         if (cli)
         {
-            var run = await Pwsh.Run(["-NoProfile", "-File", Path.Combine(Repo, "scripts", "merge-nightly-seeds.ps1"), .. argv], TimeSpan.FromSeconds(120));
-            return new MergeResult(run.Code, run.Text);
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var code = NightlySeedCommands.Run([NightlySeedCommands.MergeSeeds, .. argv], stdout, stderr);
+            return Task.FromResult(new MergeResult(code, stdout.ToString() + stderr));
         }
         try
         {
             var outcome = SeedMerge.Run(argv.ToArray());
-            return new MergeResult(outcome.Code, string.Join("\n", outcome.Lines ?? []));
+            return Task.FromResult(new MergeResult(outcome.Code, string.Join("\n", outcome.Lines ?? [])));
         }
         catch (Exception ex)
         {
-            return new MergeResult(2, ex.Message);
+            return Task.FromResult(new MergeResult(2, ex.Message));
         }
     }
 

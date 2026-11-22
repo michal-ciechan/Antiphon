@@ -2199,7 +2199,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "8ccfe9b0821984d0b0ee1fa656dc2810d8857cf2c5ae1d3c095fd92f86fddc6b",
+    "hash": "3deb29e634298f86d86d1aa5da3cf726cfd5f161091a62f5ce3c54ab09b2c717",
     "path": "tests/test-selection-policy.json"
   }
 }

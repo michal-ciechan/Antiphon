@@ -14,9 +14,10 @@ namespace Antiphon.Tests.Scripts;
 
 // W2-nightly S14: the cases of scripts/test-nightly-stopped-seed.ps1, in-process with the same names and the same one row each
 // ("SS <case>.contract", its condition and detail). The seed export, reader, ingress, resolver, schedule and merge are the
-// compiled core's. Still-PowerShell entries are launched where a case is about them: export-nightly-stopped-run-seed.ps1
-// (SiblingTimingFromSummary), merge-nightly-seeds.ps1 (the CLI legs of CumulativeMergeUnion and CumulativeMergePrintsDigest)
-// and nightly-run.ps1 / nightly-run-impl.ps1 / nightly-tests.ps1 (PublicHopsForwardAcknowledgement).
+// compiled core's. The operator commands run in-process through their handler (NightlySeedCommands.Run with the CLI argv, W2-nightly
+// S26): antiphon-scripts export-nightly-stopped-run-seed (SiblingTimingFromSummary) and merge-nightly-seeds (the CLI legs of
+// CumulativeMergeUnion and CumulativeMergePrintsDigest). The still-PowerShell entries nightly-run.ps1 / nightly-run-impl.ps1 /
+// nightly-tests.ps1 are launched where a case is about them (PublicHopsForwardAcknowledgement).
 // The seed statics (the link cache, the Windows identity switch, the read barrier) are process-wide: one case at a time.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -48,6 +49,9 @@ public sealed class RcStoppedRunSeedTests
     }
 
     private static Task Case(string name, Func<SeedWorld, (bool Ok, string Detail)> body) => Case(name, w => Task.FromResult(body(w)));
+
+    /// <summary>The source of the export-nightly-stopped-run-seed and merge-nightly-seeds commands (their synopsis).</summary>
+    private static string SeedCommandSource => Path.Combine(Repo, "scripts", "lib", "Antiphon.Nightly", "NightlySeedCommands.cs");
 
     private static bool Eq(string? a, string b) => string.Equals(a ?? "", b, StringComparison.OrdinalIgnoreCase);
 
@@ -326,15 +330,18 @@ public sealed class RcStoppedRunSeedTests
     });
 
     [Test, Timeout(300_000)]
-    public Task SiblingTimingFromSummary(CancellationToken token) => Case(nameof(SiblingTimingFromSummary), async w =>
+    public Task SiblingTimingFromSummary(CancellationToken token) => Case(nameof(SiblingTimingFromSummary), w =>
     {
         var layout = SiblingLayout(w.PathOf("logs"), RunId, RunName);
         WriteSeedSummary(layout.Run, layout.Timing, RunId, A40);
         var outPath = w.PathOf("sibling-seed.json");
         var before = SnapshotTree(layout.Run, layout.Timing);
-        var export = Path.Combine(Repo, "scripts", "export-nightly-stopped-run-seed.ps1");
-        var run = await Pwsh.Run(["-NoProfile", "-File", export, "-RunDirectory", layout.Run, "-OutputPath", outPath, "-SourceCandidateId", "rc-synthetic-old", "-SourceSha", A40],
-            TimeSpan.FromSeconds(180));
+        // antiphon-scripts export-nightly-stopped-run-seed, in-process through its handler.
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var code = NightlySeedCommands.Run([NightlySeedCommands.ExportStoppedRunSeed, "--run-directory", layout.Run, "--output-path", outPath,
+            "--source-candidate-id", "rc-synthetic-old", "--source-sha", A40], stdout, stderr);
+        var run = (Code: code, Text: stdout.ToString() + stderr);
         var exitOk = run.Code == 0 && File.Exists(outPath);
         var after = SnapshotTree(layout.Run, layout.Timing);
         var torn = false;
@@ -1497,14 +1504,15 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(300_000)]
     public Task CumulativeMergeLaunchDefaults(CancellationToken token) => Case(nameof(CumulativeMergeLaunchDefaults), w =>
     {
-        var raw = File.ReadAllBytes(Path.Combine(Repo, "scripts", "merge-nightly-seeds.ps1"));
+        // The merge command's synopsis (scripts/merge-nightly-seeds.ps1 until W2-nightly S26).
+        var raw = File.ReadAllBytes(SeedCommandSource);
         var ascii = raw.All(b => b <= 127);
         var text = Encoding.ASCII.GetString(raw);
         const string sentence = "A later green proves an identity only when that seed's source SHA contains the fix commit, or --Proven names that run.";
         var nightly = File.ReadAllText(Path.Combine(Repo, "scripts", "nightly-run.ps1"));
         var declares = nightly.Contains("[string]$PriorFailuresPath", StringComparison.Ordinal) && nightly.Contains("[string]$PriorFailuresDigest", StringComparison.Ordinal)
             && nightly.Contains("[switch]$AcceptCrossCandidateSeed", StringComparison.Ordinal) && nightly.Contains("[string]$SeedSourceCandidateId", StringComparison.Ordinal);
-        var noCall = !nightly.Contains("merge-nightly-seeds.ps1", StringComparison.Ordinal);
+        var noCall = !nightly.Contains("merge-nightly-seeds", StringComparison.Ordinal);
         var hasSentence = text.Contains(sentence, StringComparison.Ordinal);
         return (ascii && hasSentence && declares && noCall, "ascii=" + B(ascii) + "; sentence=" + B(hasSentence) + "; declares=" + B(declares) + "; noCall=" + B(noCall));
     });
@@ -1588,7 +1596,7 @@ public sealed class RcStoppedRunSeedTests
         var merged = await Merge([older, newer], outPath, w.PathOf("print-report.json"), cli: true);
         var fileDigest = File.Exists(outPath) ? PriorFailureHistory.Digest(outPath) : "";
         const string note = "A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.";
-        var scriptText = File.ReadAllText(Path.Combine(Repo, "scripts", "merge-nightly-seeds.ps1"));
+        var scriptText = File.ReadAllText(SeedCommandSource);
         var printed = !string.IsNullOrWhiteSpace(fileDigest) && merged.Text.Contains("digest=" + fileDigest, StringComparison.Ordinal);
         var noted = scriptText.Contains(note, StringComparison.Ordinal) && merged.Text.Contains(note, StringComparison.Ordinal);
         return (merged.Code == 0 && Regex.IsMatch(fileDigest, "^[a-f0-9]{64}$") && printed && noted,

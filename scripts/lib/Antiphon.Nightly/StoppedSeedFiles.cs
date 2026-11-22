@@ -1,4 +1,4 @@
-// The stopped-run seed's files: the builder (Export, behind export-nightly-stopped-run-seed.ps1), the reader, the content
+// The stopped-run seed's files: the builder (Export, behind export-nightly-stopped-run-seed), the reader, the content
 // hash, the summary prefix and the timing root. Scripts call these directly; there is no PowerShell layer.
 //
 // Same checks, same refusal texts: the walk and every read are link-checked (HistoryLinkCache), every input is hashed

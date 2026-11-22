@@ -1,4 +1,4 @@
-// The cumulative seed merge, compiled: the body of scripts/merge-nightly-seeds.ps1, which is now its command line.
+// The cumulative seed merge, compiled: antiphon-scripts merge-nightly-seeds (NightlySeedCommands) forwards its argv here.
 //
 // Merges stopped-run seeds into one operator-seed-from-stopped-run envelope and a deterministic report. Chunk rows and
 // evidence come from the newest seed; failedTests lists the identities not yet proven, each placed in the newest
@@ -65,7 +65,7 @@ namespace Antiphon.Nightly
 
         private static Exit Refuse(string reason) => new Exit(2, reason);
 
-        /// <summary>merge-nightly-seeds.ps1 with these arguments (-Seed and -Proven repeat; -Strict is a switch).</summary>
+        /// <summary>merge-nightly-seeds with these arguments (-Seed and -Proven repeat; -Strict is a switch).</summary>
         public static SeedMergeOutcome Run(string[] args)
         {
             var links = new HistoryLinkCache();
