@@ -110,6 +110,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         // unlink. Preflight already names tracked, link, and git outcomes.
         // A content or creation-record mismatch is a different fact.
         var stage = directory ? "directory" : "file";
+        index.BeginDecision();
         if (SafeWrite.Preflight(root, [full], index) is { } preflight)
             return PerEntryRefusal(full, stage, "preflight=" + preflight);
         if (!SafeWrite.MatchesCreation(full))
@@ -117,6 +118,10 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         if (context.Registry.Identity(full) is not { } expected)
             return "left in place: " + full;
         context.BeforeOwnedUnlink?.Invoke(full);
+        // CARD-2052 Review d1e0f4ca D-1: the unlink happens only while the index is still the version the tracked
+        // decision above was read from; a stage, reset or rewrite since then refuses this entry.
+        if (!index.DecisionStillHolds(context))
+            return PerEntryRefusal(full, stage, "preflight=index-changed-before-unlink");
         try
         {
             Io.DeleteAnchored(full, expected, directory);
