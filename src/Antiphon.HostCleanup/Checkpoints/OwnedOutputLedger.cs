@@ -116,6 +116,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             return PerEntryRefusal(full, stage, "content-or-creation-record-mismatch");
         if (context.Registry.Identity(full) is not { } expected)
             return "left in place: " + full;
+        context.BeforeOwnedUnlink?.Invoke(full);
         try
         {
             Io.DeleteAnchored(full, expected, directory);
@@ -124,6 +125,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         {
             return "left in place: " + full;
         }
+        context.AfterOwnedUnlink?.Invoke(full);
         return null;
     }
 

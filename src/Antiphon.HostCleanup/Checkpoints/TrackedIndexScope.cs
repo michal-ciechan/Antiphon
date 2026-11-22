@@ -85,9 +85,9 @@ internal sealed record TrackedIndexStamp(
     {
         try
         {
-            var io = context.Io;
+            CheckpointStat Stat(string path) => context.IndexStampStat is { } seam ? seam(path, context.Io.CustodyStat(path)) : context.Io.CustodyStat(path);
             var dotGitPath = Path.Combine(owner, ".git");
-            var dotGit = io.CustodyStat(dotGitPath);
+            var dotGit = Stat(dotGitPath);
             string gitDirectory;
             var dotGitText = "";
             if (dotGit.Kind == "directory")
@@ -100,13 +100,13 @@ internal sealed record TrackedIndexStamp(
             else
                 return null;
 
-            var index = io.CustodyStat(Path.Combine(gitDirectory, "index"));
+            var index = Stat(Path.Combine(gitDirectory, "index"));
             if (index.Kind != "file" || index.Inode == 0 || index.Changed == 0)
                 return null;
-            var config = io.CustodyStat(Path.Combine(gitDirectory, "config"));
-            var worktreeConfig = io.CustodyStat(Path.Combine(gitDirectory, "config.worktree"));
+            var config = Stat(Path.Combine(gitDirectory, "config"));
+            var worktreeConfig = Stat(Path.Combine(gitDirectory, "config.worktree"));
             var commonDirPath = Path.Combine(gitDirectory, "commondir");
-            var commonDirFile = io.CustodyStat(commonDirPath);
+            var commonDirFile = Stat(commonDirPath);
             var commonDirText = "";
             var commonConfig = new CheckpointStat("absent", 0, 0, 0, 0, 0);
             if (commonDirFile.Kind == "file")
@@ -114,7 +114,7 @@ internal sealed record TrackedIndexStamp(
                 if (Pointer(commonDirPath, commonDirFile, "") is not { } common)
                     return null;
                 commonDirText = common;
-                commonConfig = io.CustodyStat(Path.Combine(Path.GetFullPath(common, gitDirectory), "config"));
+                commonConfig = Stat(Path.Combine(Path.GetFullPath(common, gitDirectory), "config"));
             }
             else if (commonDirFile.Kind != "absent")
                 return null;

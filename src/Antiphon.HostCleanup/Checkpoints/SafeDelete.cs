@@ -338,6 +338,7 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
             or TypeInitializationException or BadImageFormatException or EntryPointNotFoundException
             or LibGit2Sharp.LibGit2SharpException) { scope?.Clear(); return null; }
+        context.AfterInProcessIndexRead?.Invoke(fullPaths);
         if (listing is null) { scope?.Clear(); return null; }
         if (scope is not null)
         {

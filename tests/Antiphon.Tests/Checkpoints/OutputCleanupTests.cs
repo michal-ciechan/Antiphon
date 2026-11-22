@@ -67,6 +67,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         }
         var exited = CheckpointFixtures.AfterFileClock([.. files]);
         write.Require(new CheckpointOutputLedger(context).Seal(output, exited));
+        SettleIndex(Path.Combine(root, ".git"));
         var before = context.InProcessIndexReads;
 
         var result = new CheckpointOutputCleanup(context).CleanOwnedOutputs(root, ["bin-c2052"], 0, false, false,
@@ -95,6 +96,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var dll = Path.Combine(output, "app.dll");
         File.WriteAllText(dll, "COMPILER");
         var scope = new TrackedIndexScope();
+        SettleIndex(Path.Combine(root, ".git"));
 
         delete.PreflightRoots(root, [dll], scope).ShouldBeNull();
         var reads = context.InProcessIndexReads;
@@ -109,6 +111,238 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         context.InProcessIndexReads.ShouldBeGreaterThan(reads, "a changed index is read again");
         delete.PreflightRoots(root, [output], scope).ShouldBe("tracked");
         delete.PreflightRoots(root, [Path.Combine(output, "other.dll")], scope).ShouldBeNull();
+    }
+
+    // CARD-2052 Review r1 (d1e0f4ca) D-1: the index changed while the target's tracked check read it (the target was
+    // staged then). The listing that read returned is older than the index and never authorizes the unlink.
+    [Test]
+    public void index_staged_during_the_tracked_read_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        File.WriteAllText(Path.Combine(root, "other.txt"), "OTHER");
+        CommitAll(root);
+        File.WriteAllText(Path.Combine(root, "other.txt"), "OTHER CHANGED");
+        var (context, output, target) = TrackedIndexFixture(root);
+        var unlinks = 0;
+        // An unrelated add after the deep entries makes the target's check read the index again.
+        context.AfterOwnedUnlink = _ => { if (++unlinks == 2) Git(root, "add", "--", "other.txt"); };
+        var staged = false;
+        context.AfterInProcessIndexRead = paths =>
+        {
+            if (staged || !paths.Any(path => Path.GetFileName(path) == "target.dll")) return;
+            staged = true;
+            CheckpointFixtureProcess.Git(root, "add", "-f", "--", "bin-c2052/d/target.dll");
+        };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        staged.ShouldBeTrue("the target's tracked check read the index in process");
+        unlinks.ShouldBe(2);
+        AssertTargetKept(root, output, target, result);
+    }
+
+    // CARD-2052 Review r1 D-1: the target was staged after its decision and before its unlink. The unlink happens
+    // only while the index is still the version the decision was read from.
+    [Test]
+    public void index_staged_between_decision_and_unlink_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var (context, output, target) = TrackedIndexFixture(root);
+        context.BeforeOwnedUnlink = full =>
+        {
+            if (Path.GetFileName(full) == "target.dll")
+                CheckpointFixtureProcess.Git(root, "add", "-f", "--", "bin-c2052/d/target.dll");
+        };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        AssertTargetKept(root, output, target, result);
+    }
+
+    // CARD-2052 Review r1 D-2: an equal-size in-place rewrite of the index inside one timestamp tick keeps its inode,
+    // size and both times (the seam reports them unmoved). The index content's own checksum still changed, and the
+    // rewritten index lists the target.
+    [Test]
+    public void equal_size_index_rewrite_with_unmoved_metadata_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        Directory.CreateDirectory(Path.Combine(root, "bin-c2053", "d"));
+        File.WriteAllText(Path.Combine(root, "bin-c2053", "d", "target.dll"), "TRACKED ELSEWHERE");
+        CommitAll(root);
+        var (context, output, target) = TrackedIndexFixture(root);
+        var index = Path.Combine(root, ".git", "index");
+        CheckpointStat? frozen = null;
+        context.IndexStampStat = (path, stat) =>
+        {
+            if (Path.GetFileName(path) != "index") return stat;
+            frozen ??= stat with { Modified = stat.Modified - 60_000_000_000L, Changed = stat.Changed - 60_000_000_000L };
+            return frozen.Value;
+        };
+        var before = context.InProcessIndexReads;
+        var readsAtRewrite = -1;
+        var unlinks = 0;
+        context.AfterOwnedUnlink = _ =>
+        {
+            if (++unlinks != 2) return;
+            readsAtRewrite = context.InProcessIndexReads - before;
+            RewriteIndexPathInPlace(index, "bin-c2053/d/target.dll", "bin-c2052/d/target.dll");
+        };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        readsAtRewrite.ShouldBe(1, "both deep entries were answered from one listing: the scope was reusing it");
+        CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
+        AssertTargetKept(root, output, target, result);
+    }
+
+    // CARD-2052 Review r1 D-3: core.worktree written into the repository config in place, with the config file's
+    // metadata unmoved, maps the index entry target.dll onto the owned output's target. Git then calls it tracked.
+    [Test]
+    public void core_worktree_rewrite_with_unmoved_config_metadata_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "target.dll"), "TRACKED AT THE ROOT");
+        CommitAll(root);
+        var (context, output, target) = TrackedIndexFixture(root);
+        SettleIndex(Path.Combine(root, ".git"));
+        var config = Path.Combine(root, ".git", "config");
+        CheckpointStat? frozen = null;
+        context.IndexStampStat = (path, stat) =>
+        {
+            if (!string.Equals(path, config, StringComparison.Ordinal)) return stat;
+            frozen ??= stat;
+            return frozen.Value;
+        };
+        var unlinks = 0;
+        context.AfterOwnedUnlink = _ =>
+        {
+            if (++unlinks != 2) return;
+            var text = File.ReadAllText(config) + "[core]\n\tworktree = " + Path.Combine(output, "d").Replace('\\', '/') + "\n";
+            using var stream = new FileStream(config, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            stream.Write(Encoding.UTF8.GetBytes(text));
+        };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        frozen.ShouldNotBeNull("the stamp observed the repository config");
+        unlinks.ShouldBe(2);
+        AssertTargetKept(root, output, target, result);
+    }
+
+    // CARD-2052 Review r1 D-3: an included config can hold settings (core.worktree among them) no stamped file
+    // shows, so a repository with any include is never answered from the scope: every entry reads the index.
+    [Test]
+    public void config_include_reads_the_index_for_every_entry()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        CheckpointFixtureProcess.Git(root, "config", "include.path", "extra.config");
+        File.WriteAllText(Path.Combine(root, ".git", "extra.config"), "[user]\n\tname = card-2052\n");
+        var (context, output, _) = TrackedIndexFixture(root);
+        SettleIndex(Path.Combine(root, ".git"));
+        var before = context.InProcessIndexReads;
+        var readsAfterTwo = -1;
+        var unlinks = 0;
+        context.AfterOwnedUnlink = _ => { if (++unlinks == 2) readsAfterTwo = context.InProcessIndexReads - before; };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        result.Refusals.ShouldBeEmpty();
+        result.Deleted.ShouldBe([output]);
+        readsAfterTwo.ShouldBe(2, "an include declines reuse: each deep entry read the index");
+    }
+
+    // CARD-2052 Review r1 D-3: a linked worktree whose common directory gains config.worktree (per-worktree config
+    // the fresh read leaves to git) stops answering from the scope at once.
+    [Test]
+    public void linked_worktree_common_config_worktree_reads_the_index_again()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var linked = Path.Combine(TempDir(), "linked");
+        CheckpointFixtureProcess.Git(root, "worktree", "add", "-b", "c2052-linked", linked);
+        var (context, output, _) = TrackedIndexFixture(linked);
+        SettleIndex(Path.Combine(root, ".git", "worktrees", "linked"));
+        var before = context.InProcessIndexReads;
+        var readsAtChange = -1;
+        var unlinks = 0;
+        context.AfterOwnedUnlink = _ =>
+        {
+            if (++unlinks != 2) return;
+            readsAtChange = context.InProcessIndexReads - before;
+            File.WriteAllText(Path.Combine(root, ".git", "config.worktree"), "[core]\n");
+        };
+
+        var result = CleanTrackedIndexFixture(context, linked, output);
+
+        result.Refusals.ShouldBeEmpty();
+        result.Deleted.ShouldBe([output]);
+        readsAtChange.ShouldBe(1, "the two deep entries were answered from one listing before the change");
+        (context.InProcessIndexReads - before).ShouldBeGreaterThan(1, "the entries after the change read the index again");
+    }
+
+    // An owned output of two deep files, the target one level up and the ledger at its top: the removal reaches the
+    // deep files first, then the target.
+    private (CheckpointCleanupContext Context, string Output, string Target) TrackedIndexFixture(string root)
+    {
+        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner());
+        var write = new CheckpointWrite(context);
+        var output = Path.Combine(root, "bin-c2052");
+        write.Require(write.CreateFreshDirectory(output, write.Under(root)));
+        var deep = Path.Combine(output, "d", "e");
+        Directory.CreateDirectory(deep);
+        var files = new[] { Path.Combine(deep, "a.dll"), Path.Combine(deep, "b.dll"), Path.Combine(output, "d", "target.dll") };
+        foreach (var file in files)
+            File.WriteAllText(file, "COMPILER " + Path.GetFileName(file));
+        write.Require(new CheckpointOutputLedger(context).Seal(output, CheckpointFixtures.AfterFileClock(files)));
+        return (context, output, files[2]);
+    }
+
+    private static CleanResult CleanTrackedIndexFixture(CheckpointCleanupContext context, string root, string output) =>
+        new CheckpointOutputCleanup(context).CleanOwnedOutputs(root, ["bin-c2052"], 0, false, false, createdPaths: [output]);
+
+    // The untracked deep files are gone; the target, tracked now, is still there and the refusal names it.
+    private static void AssertTargetKept(string root, string output, string target, CleanResult result)
+    {
+        File.Exists(Path.Combine(output, "d", "e", "a.dll")).ShouldBeFalse("an untracked owned file is still removed");
+        File.Exists(Path.Combine(output, "d", "e", "b.dll")).ShouldBeFalse("an untracked owned file is still removed");
+        File.Exists(target).ShouldBeTrue("a file the index lists is never unlinked");
+        result.Deleted.ShouldBeEmpty();
+        string.Join("\n", result.Refusals).ShouldContain("target.dll");
+        File.Exists(Path.Combine(root, ".git", "index")).ShouldBeTrue();
+    }
+
+    // The index was last written over a minute ago, so the racy-git window (2 s) cannot decline reuse.
+    private static void SettleIndex(string gitDirectory) =>
+        File.SetLastWriteTimeUtc(Path.Combine(gitDirectory, "index"), DateTime.UtcNow.AddMinutes(-1));
+
+    // Rewrite one entry's path to another of the same length, in place (same inode and size), with a fresh checksum.
+    private static void RewriteIndexPathInPlace(string index, string from, string to)
+    {
+        var data = File.ReadAllBytes(index);
+        var at = data.AsSpan().IndexOf(Encoding.UTF8.GetBytes(from));
+        at.ShouldBeGreaterThanOrEqualTo(0, "the index lists " + from);
+        Encoding.UTF8.GetBytes(to).CopyTo(data, at);
+        System.Security.Cryptography.SHA1.HashData(data.AsSpan(0, data.Length - 20)).CopyTo(data, data.Length - 20);
+        using var stream = new FileStream(index, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        stream.Write(data);
     }
 
     [Test]
