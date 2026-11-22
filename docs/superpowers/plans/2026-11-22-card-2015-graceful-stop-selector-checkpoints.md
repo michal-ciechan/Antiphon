@@ -20,7 +20,7 @@ The classes in scope can be bounded by the filters below. The final selection ha
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | witness-final | tests/Antiphon.Tests -> bin-c2015/ | graceful-stop-selector | `/*/Antiphon.Tests.Scripts/ImpactedClassesSelectorTests/Graceful_stop_script_changes_select_shutdown_and_resume_tests` | V-1 | 0 failed, 0 skipped on final slice | 2 | 7 | true |
+| CP-1 | final | tests/Antiphon.Tests -> bin-c2015/ | graceful-stop-selector | `/*/Antiphon.Tests.Scripts/ImpactedClassesSelectorTests/Graceful_stop_script_changes_select_shutdown_and_resume_tests` | V-1 | 0 failed, 0 skipped on final slice | 2 | 7 | true |
 | CP-2 | final | CP-1 | selector | `/*/Antiphon.Tests.Scripts/ImpactedClassesSelectorTests/*` | V-2 | 0 failed, 0 skipped | 1 | 4 | true |
 | CP-3 | final | CP-1 | index | `/*/Antiphon.Tests.Scripts/DerivedImpactIndexTests/*` | V-3 | 0 failed, 0 skipped | 1 | 2 | true |
 | CP-4 | final | CP-1 | graceful-stop-integrations | `/*/*/(OperatorShutdownEndpointTests*)\|(PhoneHomeRestartResumeTests*)/*` | V-4 | 0 failed, 0 skipped | 5 | 2 | true |
