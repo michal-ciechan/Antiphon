@@ -48,7 +48,6 @@ $inventory = @(
     @{ s='antiphon'; c='OwnedProcessTreeTests'; m='C448_SnapshotFailureKillsTheChildAndLeavesTheGrandchild'; owner='CARD-0448' }
     @{ s='antiphon'; c='OwnedProcessTreeTests'; m='C448_ProductionKillPassesTheServerPid'; owner='CARD-0448' }
     @{ s='antiphon'; c='CheckpointReceiptStallBudgetTests'; m='healthy_receipts_complete_with_every_pool_worker_occupied'; owner='CARD-1601' }
-    @{ s='antiphon'; c='PosixHarnessToolTests'; m='Capture_identity_resolves_git_sh_instead_of_hard_coded_bin_sh'; owner='CARD-1323' }
     @{ s='antiphon'; c='PosixHarnessToolTests'; m='Cutover_window_completes_without_cat_grep_or_tr_on_path'; owner='CARD-1323' }
     @{ s='antiphon'; c='AgentReportStoreBudgetTests'; m='Slow_git_response_does_not_spend_write_budget'; owner='CARD-1605' }
     @{ s='antiphon'; c='CardRelationshipScriptTests'; m='Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns'; owner='CARD-1323' }
