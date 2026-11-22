@@ -229,22 +229,28 @@ public sealed class C0824RefOnlyContinuationTests
     public async Task Runner_redirect_requires_old_custody_and_rejects_desktop()
     {
         await RefOnlyRedirectWitness.VerifyAsync();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Queued);
+        await f.CreateSourceAsync(remote: true);
+        await using var db = f.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+        await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
+        task.AgentSessionId = null;
+
         foreach (var runner in new string?[] { null, "desktop", "local" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Queued);
-            await f.CreateSourceAsync(remote: true);
-            await using (var db = f.Db())
-            {
-                var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
-                await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
-                task.AgentSessionId = null; task.RunnerId = runner;
-                await db.SaveChangesAsync();
-            }
+            task.RunnerId = runner;
+            await db.SaveChangesAsync();
             await f.DispatchAsync();
-            f.Launches.Calls.ShouldBeEmpty("redirect-refused:desktop");
-            await using var verify = f.Db();
-            (await verify.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId).Select(e => e.Detail).ToListAsync())
-                .ShouldContain(d => d.Contains("ref_only_requires_remote_runner", StringComparison.Ordinal));
+            var binding = runner ?? "<null>";
+            f.Launches.Calls.ShouldBeEmpty($"RefOnly refused desktop binding {binding}");
+            var holds = await db.AgentTaskEvents
+                .Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Held).ToListAsync();
+            holds.ShouldContain(e => e.Detail.Contains("ref_only_requires_remote_runner", StringComparison.Ordinal),
+                $"RefOnly refusal for desktop binding {binding}");
+
+            // Each alias must produce a fresh refusal even though the task and repository are shared.
+            db.AgentTaskEvents.RemoveRange(holds);
+            await db.SaveChangesAsync();
         }
     }
 
