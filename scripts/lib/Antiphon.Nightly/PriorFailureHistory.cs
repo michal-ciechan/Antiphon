@@ -68,6 +68,17 @@ namespace Antiphon.Nightly
 
         private static object ReadJson(string path, string[] omit) => NightlyJson.ReadFile(path, true, omit);
 
+        // W2-nightly S15: the reader and the dispatch intake also run without PowerShell (the plain nightly-tests run):
+        // their documents are PlainObjects there and PSObjects under PowerShell, as ReadFile reads them.
+        private static object ReadDocument(string path, string[] omit) => NightlyJson.ReadFile(path, true, omit);
+
+        private static object Rec(params object[] pairs)
+        {
+            var properties = new (string, object)[pairs.Length / 2];
+            for (var i = 0; i < properties.Length; i++) properties[i] = ((string)pairs[2 * i], pairs[2 * i + 1]);
+            return PsValue.Record(properties);
+        }
+
         private static void Fields(object o, params string[] names)
         {
             var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -200,7 +211,7 @@ namespace Antiphon.Nightly
             var full = Path.GetFullPath(Path.Combine(root, relative));
             if (!StoppedSeedFiles.UnderRoot(full, root)) throw Refuse("evidence-path-escape");
             NoLink(full);
-            return Obj("FullPath", full, "RelativePath", relative, "Exists", File.Exists(full) || Directory.Exists(full), "Rebound", rebound, "Original", path);
+            return Rec("FullPath", full, "RelativePath", relative, "Exists", File.Exists(full) || Directory.Exists(full), "Rebound", rebound, "Original", path);
         }
 
         /// <summary>
@@ -325,7 +336,8 @@ namespace Antiphon.Nightly
                 if (_evidence.TryGetValue(relative, out var prior)) { if ((string)prior["sha256"] != digest) throw Refuse("evidence-changed"); }
                 else _evidence.Add(relative, new OrderedDictionary { { "relativePath", relative }, { "sha256", digest }, { "kind", kind } });
                 if ((bool)PsValue.Prop(artifact, "Rebound")) _rebindings.Add(new OrderedDictionary { { "original", Str(artifact, "Original") }, { "relativePath", relative } });
-                return artifact;
+                // The export runs under PowerShell: the record is a PSObject.
+                return (PSObject)artifact;
             }
 
             private void Member(string suite, string className, string reason, OrderedDictionary observation)
@@ -684,7 +696,7 @@ namespace Antiphon.Nightly
             if (expectedDigest != null && (string.IsNullOrWhiteSpace(expectedDigest) || !Sha64.IsMatch(expectedDigest))) throw Refuse("history-digest-mismatch");
             var digest = Digest(path);
             if (!string.IsNullOrEmpty(expectedDigest) && digest != expectedDigest) throw Refuse("history-digest-mismatch");
-            var history = ReadJson(path, null) ?? throw Refuse("history-schema: JSON");
+            var history = ReadDocument(path, null) ?? throw Refuse("history-schema: JSON");
             AssertSchema(history);
             if (string.IsNullOrEmpty(runDirectory)) runDirectory = Str(history, "sourceRoot");
             if (string.IsNullOrEmpty(runDirectory)) throw Refuse("history-provenance: source root required");
@@ -699,8 +711,8 @@ namespace Antiphon.Nightly
             }
             if (summaries != 1) throw Refuse("history-provenance: summary missing");
             // Provenance needs the top-level fields only.
-            var summary = ReadJson(Path.Combine(root, "summary.json"), new[] { "suites", "dispatchProgress", "suiteExclusions" }) ?? throw Refuse("history-provenance");
-            if (!True(summary, "runId") && True(summary, "invocationId")) SetNote(summary, "runId", Str(summary, "invocationId"));
+            var summary = ReadDocument(Path.Combine(root, "summary.json"), new[] { "suites", "dispatchProgress", "suiteExclusions" }) ?? throw Refuse("history-provenance");
+            if (!True(summary, "runId") && True(summary, "invocationId")) PsValue.SetNote(summary, "runId", Str(summary, "invocationId"));
             var attempt = "unknown";
             if (True(summary, "attempt")) attempt = Str(summary, "attempt");
             else if (True(summary, "selection") && True(PsValue.Prop(summary, "selection"), "attempt")) attempt = Str(PsValue.Prop(summary, "selection"), "attempt");
@@ -746,7 +758,7 @@ namespace Antiphon.Nightly
             {
                 if (string.IsNullOrEmpty(path)) throw Refuse(fallback);
                 NoLink(path);
-                var probe = ReadJson(path, null) ?? throw Refuse("history-schema: JSON");
+                var probe = ReadDocument(path, null) ?? throw Refuse("history-schema: JSON");
                 object history, previous;
                 if (PsOps.HasName(probe, "seedKind"))
                 {
@@ -764,7 +776,7 @@ namespace Antiphon.Nightly
                 else
                 {
                     var read = Read(path, string.IsNullOrEmpty(expectedDigest) ? null : expectedDigest, null);
-                    var summary = ReadJson(Path.Combine(Str(read, "sourceRoot"), "summary.json"), OmitBulk) ?? throw Refuse("history-schema: summary");
+                    var summary = ReadDocument(Path.Combine(Str(read, "sourceRoot"), "summary.json"), OmitBulk) ?? throw Refuse("history-schema: summary");
                     if (In(PsValue.Prop(summary, "outcome"), new[] { "Working", "Running" })) throw Refuse("history-run-not-closed");
                     var progress = PsValue.Prop(summary, "dispatchProgress");
                     if (PsValue.IsTrue(progress) && PsOps.HasName(progress, "liveness") && !PsOps.StrEqValue(PsValue.Prop(progress, "liveness"), "closed")) throw Refuse("history-liveness-unknown");
@@ -788,12 +800,12 @@ namespace Antiphon.Nightly
                     }
                     if (Digest(copy) != digest) throw Refuse("history-digest-mismatch");
                 }
-                return Obj("History", history, "PreviousRun", previous, "Digest", digest, "Path", copy, "FallbackReason", "", "Warning", null);
+                return Rec("History", history, "PreviousRun", previous, "Digest", digest, "Path", copy, "FallbackReason", "", "Warning", null);
             }
             catch (Exception e)
             {
                 var reason = StoppedSeedFiles.Message(e);
-                return Obj("History", null, "PreviousRun", null, "Digest", "", "Path", path, "FallbackReason", reason,
+                return Rec("History", null, "PreviousRun", null, "Digest", "", "Path", path, "FallbackReason", reason,
                     "Warning", reason == "history-not-requested" ? null : "failed-first fallback: " + reason);
             }
         }

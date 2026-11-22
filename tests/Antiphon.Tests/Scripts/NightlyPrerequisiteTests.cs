@@ -8,18 +8,39 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1350. The prerequisite cases run from the harness default loop and from these wrappers. C1391_LintGate (W2-nightly
-/// S12) runs the production entry scripts/nightly-tests.ps1 end to end on a seamed npm fixture, from C#.
+/// CARD-1350. The prerequisite cases. C487_PrerequisiteGate runs in-process on NightlyTests.Run since W2-nightly S15 (it was
+/// the scripts/test-nightly-tests.ps1 case); C487_PrerequisiteSettle is still the nightly-run harness case (S19).
+/// C1391_LintGate (W2-nightly S12) runs the production entry scripts/nightly-tests.ps1 end to end on a seamed npm fixture,
+/// from C#, until S17 wires the C#.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyPrerequisiteTests
 {
+    /// <summary>A failed npm build is a prerequisite. Later steps must not run, and the summary must not claim the tests passed.</summary>
     [Test]
-    public Task C487_PrerequisiteGate() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C487",
-            nameof(C487_PrerequisiteGate), 1,
-            ["C487 prerequisite npm build stops the pipeline and summary testsPassed is false"]);
+    public void C487_PrerequisiteGate()
+    {
+        using var world = NightlyTestsRunTests.NpmWorld(out _, out _);
+        world.Behaviour = launch => NightlyTestsWorld.Result(Regex.IsMatch(string.Join(" ", launch.Arguments), "(^| )run build($| )") ? 2 : 0, "");
+        var result = world.Run(o => o.Suites = ["client"]);
+        var launches = world.Launcher.Launches.Select(l => string.Join(" ", l.Arguments)).ToArray();
+        var sawCi = launches.Any(j => Regex.IsMatch(j, "(^| )ci($| )"));
+        var sawBuild = launches.Any(j => Regex.IsMatch(j, "(^| )run build($| )"));
+        var sawLater = launches.Any(j => Regex.IsMatch(j, "(^| )run lint($| )") || Regex.IsMatch(j, @"Antiphon\.sln") || Regex.IsMatch(j, @"test-client\.ps1"));
+        var summary = NightlyTestsWorld.Summary(result);
+        var hasSummary = summary.ValueKind == JsonValueKind.Object;
+        var reasons = NightlyTestsWorld.SummaryReasons(result);
+        var reason = reasons.Contains("prerequisite-failed:npm run build", StringComparer.Ordinal);
+        var summaryPass = hasSummary && summary.GetProperty("testsPassed").GetBoolean();
+        var summaryComplete = hasSummary && summary.GetProperty("coverageComplete").GetBoolean();
+        var rows = new NightlyCaseRows();
+        rows.Check(sawCi && sawBuild && !sawLater && result.ExitCode != 0 && !result.TestsPassed && hasSummary && !summaryPass && !summaryComplete && reason,
+            "C487 prerequisite npm build stops the pipeline and summary testsPassed is false",
+            "ci=" + sawCi + " build=" + sawBuild + " later=" + sawLater + " exit=" + result.ExitCode + " pass=" + result.TestsPassed + " summaryPass=" + (hasSummary ? summaryPass.ToString() : "missing")
+            + " reasons=" + string.Join(",", reasons));
+        rows.ShouldAllPass(1);
+    }
 
     [Test]
     public Task C487_PrerequisiteSettle() =>

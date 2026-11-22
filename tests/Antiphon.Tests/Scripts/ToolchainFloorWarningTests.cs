@@ -141,16 +141,49 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Run exit code unchanged by the warning"
             ]);
 
+    /// <summary>
+    /// W2-nightly S15, in-process (was the scripts/test-nightly-tests.ps1 case): NightlyTests.ToolchainPreflight records the
+    /// versions the host probe reads (never the real git), the floors and the warning, and the run's preflight block calls it
+    /// after the disk row and before the summary is built (the source-text row reads NightlyTests.cs).
+    /// </summary>
     [Test]
-    public Task C1698_SummaryRecordsToolchain() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1698",
-            nameof(C1698_SummaryRecordsToolchain), 4,
-            [
-                "C1698 Summary records the git version and floor",
-                "C1698 Summary records the SDK version",
-                "C1698 Summary records the warning",
-                "C1698 Summary preflight block records the toolchain"
-            ]);
+    public void C1698_SummaryRecordsToolchain()
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c1698-summary");
+        var repo = Antiphon.Tests.Scripts.Nightly.NightlyPlanCases.Repo;
+        Directory.CreateDirectory(fixture.PathOf("docker"));
+        File.Copy(Path.Combine(repo, "docker", "git-minimum-version.sh"), fixture.PathOf("docker", "git-minimum-version.sh"));
+        File.Copy(Path.Combine(repo, "global.json"), fixture.PathOf("global.json"));
+        var host = fixture.Host();
+        var toolchain = Antiphon.Nightly.NightlyTests.ToolchainPreflight(fixture.Root, host);
+        var json = Antiphon.Nightly.NightlyJson.Text(new System.Collections.Specialized.OrderedDictionary
+        {
+            { "preflight", new System.Collections.Specialized.OrderedDictionary { { "toolchain", toolchain } } },
+        }, 8) ?? "";
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var back = doc.RootElement.GetProperty("preflight").GetProperty("toolchain");
+        System.Text.Json.JsonElement? Tool(string name)
+        {
+            foreach (var t in back.GetProperty("tools").EnumerateArray()) if (t.GetProperty("tool").GetString() == name) return t;
+            return null;
+        }
+        var git = Tool("git");
+        var sdk = Tool("dotnet-sdk");
+        var warnings = back.GetProperty("warnings").EnumerateArray().ToArray();
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        rows.Check(git is { } g && g.GetProperty("found").GetString() == "2.42.0" && g.GetProperty("floor").GetString() == "2.43" && g.GetProperty("status").GetString() == "below-floor",
+            "C1698 Summary records the git version and floor", json);
+        rows.Check(sdk is { } s && s.GetProperty("found").GetString() == "10.0.204" && s.GetProperty("status").GetString() == "ok", "C1698 Summary records the SDK version", json);
+        rows.Check(warnings.Length == 1 && (warnings[0].GetProperty("message").GetString() ?? "").StartsWith("WARNING: git 2.42.0 is below the minimum 2.43", StringComparison.Ordinal),
+            "C1698 Summary records the warning", json);
+        var run = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "NightlyTests.cs"));
+        var call = run.IndexOf("preflight[\"toolchain\"] = ToolchainPreflight(repoRoot, host);", StringComparison.Ordinal);
+        var disk = run.IndexOf("preflight[\"disk\"] = new OrderedDictionary", StringComparison.Ordinal);
+        var write = run.IndexOf("{ \"preflight\", preflight }", StringComparison.Ordinal);
+        rows.Check(call > disk && disk > 0 && write > call, "C1698 Summary preflight block records the toolchain", "disk=" + disk + " call=" + call + " write=" + write);
+        rows.ShouldAllPass(4, "C1698 Summary records the git version and floor", "C1698 Summary records the SDK version", "C1698 Summary records the warning",
+            "C1698 Summary preflight block records the toolchain");
+    }
 
     /// <summary>W2-nightly S03: the run core checks with the compiled twin (ToolchainFloor.cs), so a broken
     /// toolchain-floor.ps1 (kept for the restart chain) changes nothing in the run.</summary>
@@ -163,13 +196,42 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Run does not load the toolchain library: unparsable"
             ]);
 
-    /// <summary>summary.json as a real Invoke-AntiphonNightlyTests run writes it to disk.</summary>
+    /// <summary>
+    /// W2-nightly S15, in-process (was the scripts/test-nightly-tests.ps1 case): summary.json as a real NightlyTests.Run writes
+    /// it to disk, the clone carrying every policy project and the two floor sources, the versions read through the host probe.
+    /// </summary>
     [Test]
-    public Task C1698_SummaryJsonRecordsToolchain() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1698",
-            nameof(C1698_SummaryJsonRecordsToolchain), 2,
-            [
-                "C1698 Summary json on disk records the versions and floors",
-                "C1698 Summary json on disk records the warning"
-            ]);
+    public void C1698_SummaryJsonRecordsToolchain()
+    {
+        using var world = new Antiphon.Tests.Scripts.Nightly.NightlyTestsWorld("c1698-json");
+        var repo = Antiphon.Tests.Scripts.Nightly.NightlyPlanCases.Repo;
+        Directory.CreateDirectory(Path.Combine(world.Clone, "docker"));
+        File.Copy(Path.Combine(repo, "docker", "git-minimum-version.sh"), Path.Combine(world.Clone, "docker", "git-minimum-version.sh"));
+        File.Copy(Path.Combine(repo, "global.json"), Path.Combine(world.Clone, "global.json"));
+        var r = world.Run();
+        var summaryPath = Path.Combine(world.Logs, "summary.json");
+        var json = File.Exists(summaryPath) ? File.ReadAllText(summaryPath) : "";
+        System.Text.Json.JsonElement? git = null, sdk = null;
+        System.Text.Json.JsonElement[] warnings = [];
+        if (json.Length > 0)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var tc = doc.RootElement.GetProperty("preflight").GetProperty("toolchain").Clone();
+            foreach (var t in tc.GetProperty("tools").EnumerateArray())
+            {
+                if (t.GetProperty("tool").GetString() == "git") git = t;
+                if (t.GetProperty("tool").GetString() == "dotnet-sdk") sdk = t;
+            }
+            warnings = tc.GetProperty("warnings").EnumerateArray().ToArray();
+        }
+        var detail = "exit=" + r.ExitCode + " error=" + r.Error + " summary=" + (json.Length > 0 ? "present" : "missing");
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        rows.Check(git is { } g && g.GetProperty("found").GetString() == "2.42.0" && g.GetProperty("floor").GetString() == "2.43" && g.GetProperty("status").GetString() == "below-floor"
+            && sdk is { } s && s.GetProperty("found").GetString() == "10.0.204" && s.GetProperty("floor").GetString() == "10.0.204" && s.GetProperty("status").GetString() == "ok",
+            "C1698 Summary json on disk records the versions and floors", detail);
+        rows.Check(warnings.Length == 1 && warnings[0].GetProperty("tool").GetString() == "git"
+            && (warnings[0].GetProperty("message").GetString() ?? "").StartsWith("WARNING: git 2.42.0 is below the minimum 2.43; lands will fail", StringComparison.Ordinal),
+            "C1698 Summary json on disk records the warning", detail);
+        rows.ShouldAllPass(2, "C1698 Summary json on disk records the versions and floors", "C1698 Summary json on disk records the warning");
+    }
 }

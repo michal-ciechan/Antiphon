@@ -137,33 +137,17 @@ public sealed class NightlyScriptsTests
     }
 
     [Test]
-    public async Task Shared_tree_WhatIf_exits_3_naming_the_guard()
+    public void Shared_tree_WhatIf_exits_3_naming_the_guard()
     {
-        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-tests.ps1");
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(scriptPath);
-        startInfo.ArgumentList.Add("-RepoRoot");
-        startInfo.ArgumentList.Add(@"C:\src\Antiphon");
-        startInfo.ArgumentList.Add("-Suites");
-        startInfo.ArgumentList.Add("client");
-        startInfo.ArgumentList.Add("-WhatIf");
+        // W2-nightly S15: in-process on NightlyTests.Run (the C# of nightly-tests.ps1); the guard refuses before anything
+        // under the shared tree is read.
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("s15-shared-tree");
+        var options = Antiphon.Nightly.NightlyTestsOptions.Parse(["--repo-root", @"C:\src\Antiphon", "--suites", "client", "--what-if"]);
+        var result = Antiphon.Nightly.NightlyTests.Run(options, fixture.Host());
+        var output = fixture.Out.ToString() + fixture.Error;
 
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        var output = await stdout + await stderr;
-
-        process.ExitCode.ShouldBe(3, output);
+        result.ProcessExitCode.ShouldBe(3, output);
+        result.Refusal.ShouldBe("shared-tree");
         output.ShouldContain("REFUSED");
         output.ShouldContain(@"C:\src\Antiphon");
         output.ShouldContain("AllowSharedTree");

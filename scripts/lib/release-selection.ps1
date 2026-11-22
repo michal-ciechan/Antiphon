@@ -3,11 +3,15 @@
 # Keep this bridge ASCII and 5.1 parseable. The selector is loaded only in pwsh 7.
 . (Join-Path $PSScriptRoot 'nightly-common.ps1')
 
+# W2-nightly S15: the capability check, the attempt reader and the member rule are compiled
+# (Antiphon.Nightly/ReleaseSelectionAttempt.cs); these three are thin calls that keep the refusal texts.
 function Assert-ReleaseSelectionCapability {
     param([string]$SelectionMode)
-    $command = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($SelectionMode -cne 'Full' -and -not $command) { throw 'selection-pwsh-required' }
-    return $command
+    Assert-NightlyCoreAvailable 'Assert-ReleaseSelectionCapability'
+    try { $path = [Antiphon.Nightly.ReleaseSelectionAttempt]::AssertCapability($SelectionMode, $env:PATH) }
+    catch { throw (Get-NightlyRefusalText $_) }
+    if (-not $path) { return $null }
+    return [pscustomobject]@{ Name = [IO.Path]::GetFileName($path); Source = $path; Path = $path }
 }
 
 function Assert-ReleaseSelectionPath {
@@ -316,39 +320,17 @@ function New-ReleaseSelectionAttempt {
 
 function Read-ReleaseSelectionAttempt {
     param([hashtable]$Expected)
-    foreach ($pair in @(@('SelectionAttemptPath','SelectionAttemptDigest'), @('SelectionPath','SelectionDigest'))) {
-        $path = [string]$Expected[$pair[0]]; $digest = [string]$Expected[$pair[1]]
-        if (-not $path -or $digest -cnotmatch '^[0-9a-f]{64}$' -or
-            -not (Test-Path -LiteralPath $path -PathType Leaf) -or (Test-NightlyAncestorReparse $path) -or
-            (Get-NightlyFileSha256 $path) -cne $digest) { throw 'selection-hop-digest' }
-    }
-    $attempt = Get-Content -LiteralPath $Expected.SelectionAttemptPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $selection = Get-Content -LiteralPath $Expected.SelectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($attempt.format -cne 'antiphon-release-selection-attempt-v1' -or $selection.format -cne 'antiphon-release-selection-v1' -or
-        $attempt.selectionDigest -cne $Expected.SelectionDigest -or $attempt.effectiveMode -cne 'Full' -or
-        $attempt.coverageScope -cne 'Full' -or $selection.effectiveMode -cne 'Full' -or $selection.coverageScope -cne 'Full') { throw 'selection-hop-scope' }
-    foreach ($pair in @(@('candidateSha','CandidateSha'), @('baselineSha','BaselineSha'), @('requestedMode','SelectionMode'),
-        @('runId','RunId'), @('attempt','Attempt'), @('profile','Profile'), @('timingRoot','TimingRoot'),
-        @('releaseIntentPath','ReleaseIntentPath'), @('trainManifestPath','TrainManifestPath'),
-        @('baselineReceiptPath','BaselineReceiptPath'), @('qualificationPath','QualificationPath'))) {
-        if ([string]$attempt.($pair[0]) -cne [string]$Expected[$pair[1]]) { throw ('selection-hop-' + $pair[0]) }
-    }
-    if ($selection.candidateSha -cne $Expected.CandidateSha -or $selection.baselineSha -cne $Expected.BaselineSha) { throw 'selection-hop-candidateSha' }
-    if ([string]$attempt.trainDigest -cne (Get-ReleaseSelectionTrainDigest $Expected)) { throw 'selection-hop-trainDigest' }
-    if ($attempt.repository -cne $Expected.Repository -or $attempt.candidateId -cne $Expected.CandidateId -or
-        $attempt.candidateRef -cne ($Expected.CandidateRef -replace '^origin/', '')) { throw 'selection-hop-candidate' }
-    $root = Join-Path (Join-Path (Join-Path (Join-Path $Expected.ReleaseRoot 'candidates') $Expected.CandidateId) 'attempts') $Expected.RunId
-    foreach ($pair in @(@('SelectionAttemptPath','selection-attempt.json'),@('SelectionPath','selection.json'))) {
-        $expectedPath = Assert-ReleaseSelectionPath (Join-Path $root $pair[1]) $Expected.ReleaseRoot $Expected.RepositoryRoot
-        if ($expectedPath -cne [IO.Path]::GetFullPath($Expected[$pair[0]])) { throw 'selection-hop-path' }
-    }
-    return $attempt
+    Assert-NightlyCoreAvailable 'Read-ReleaseSelectionAttempt'
+    try { return [Antiphon.Nightly.ReleaseSelectionAttempt]::Read([Antiphon.Nightly.ReleaseSelectionRequest]::From($Expected)) }
+    catch { throw (Get-NightlyRefusalText $_) }
 }
 
 function Resolve-ReleaseSelectionMembers {
     param($Attempt, [object[]]$FullMembers, [object[]]$ProposedMembers)
-    if ($Attempt.effectiveMode -ceq 'Full' -and $Attempt.coverageScope -ceq 'Full') { return $FullMembers }
-    throw 'selected-execution-unqualified'
+    Assert-NightlyCoreAvailable 'Resolve-ReleaseSelectionMembers'
+    try { $members = [Antiphon.Nightly.ReleaseSelectionAttempt]::ResolveMembers($Attempt, $FullMembers, $ProposedMembers) }
+    catch { throw (Get-NightlyRefusalText $_) }
+    return $members
 }
 
 function Get-ReleaseSelectionDeclaredSwitches {

@@ -102,8 +102,8 @@ namespace Antiphon.Nightly
             if (!Sha64.IsMatch(contentHash) || !string.Equals(actualHash, contentHash, StringComparison.Ordinal)) throw new NightlyRefusal("seed-hash-mismatch");
             var content = NightlyJson.ParseText(payloadText, 1024, true) ?? throw new NightlyRefusal("seed-schema");
             foreach (var field in new[] { "seedKind", "sourceRunId", "sourceCandidateId", "sourceSha" })
-                SetNote(content, field, PsValue.Str(PsValue.Prop(envelope, field)));
-            SetNote(content, "createdAtUtc", PsValue.Prop(envelope, "createdAtUtc"));
+                PsValue.SetNote(content, field, PsValue.Str(PsValue.Prop(envelope, field)));
+            PsValue.SetNote(content, "createdAtUtc", PsValue.Prop(envelope, "createdAtUtc"));
             StoppedSeed.AssertContent(content);
             // S1's resolver remains the single class -> new-plan chunk mapper: one member per suite and class, in the
             // order their first failure appears, observed in each failure's chunk.

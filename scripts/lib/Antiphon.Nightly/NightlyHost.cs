@@ -107,6 +107,13 @@ namespace Antiphon.Nightly
         public required TextWriter Trace { get; init; }
 
         /// <summary>
+        /// W2-nightly S15: this process's environment as a run reads it (PATH and ComSpec for the npm launcher, the phase
+        /// variables, ANTIPHON_RC_RUN_EVIDENCE, ANTIPHON_TEST_TIMING_ROOT): a variable's value, null when it is unset. Not
+        /// required: the default reads this process's environment; a test answers its own instead of changing it.
+        /// </summary>
+        public Func<string, string> Variables { get; init; } = Environment.GetEnvironmentVariable;
+
+        /// <summary>
         /// The production host: the system clock, NightlyNativeGit.Run, a WatchedLauncher that first lands queued
         /// evidence writes (their failures go to error as warnings), the real process table and host probe, and no trace.
         /// </summary>
