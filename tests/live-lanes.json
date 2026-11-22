@@ -2105,6 +2105,19 @@
     },
     {
       "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts.Nightly",
+      "class": "NightlyTestsRunTests",
+      "method": "C487_G044",
+      "arguments": [],
+      "shapes": [
+        "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
       "namespace": "Antiphon.Tests.TestHelpers",
       "class": "RcManifestScaleTests",
       "method": "ScaleReplay",
