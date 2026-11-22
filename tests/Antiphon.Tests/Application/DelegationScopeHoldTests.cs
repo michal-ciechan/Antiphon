@@ -163,8 +163,15 @@ public class DelegationScopeHoldTests
             branch: "feat/holder");
         var isolated = await SeedQueuedTaskAsync(
             workspace.Path, WorkspaceMode.Worktree, "delivery");
+        // The tick dispatches every Queued row in the shared fixture database, not only this
+        // test's: rc run 557cdb63 recorded three launches here on Windows. Seed one foreign
+        // Queued row on purpose so the launch assertion is proven to count this task alone.
+        using var foreignWorkspace = new TempWorkspace();
+        var foreign = await SeedQueuedTaskAsync(
+            foreignWorkspace.Path, WorkspaceMode.Worktree, "delivery", title: "another suite's task");
 
         await dispatcher.TickAsync(CancellationToken.None);
+        await SettleAsync(foreign.Id);
 
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id);
