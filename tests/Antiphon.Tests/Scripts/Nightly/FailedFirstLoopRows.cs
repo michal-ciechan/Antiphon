@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// <summary>
 /// W2-nightly S14: the rows of the actual-loop cases of scripts/test-nightly-failed-first.ps1 (Test-ActualLoopFollowsSchedule,
 /// Test-FFPreviousRunChain, Test-FFHeartbeatBindings with Test-FFHeartbeatLiveness, Test-JournalCustodySurvivesInterleaving),
-/// the same conditions over the real nightly-tests.ps1 entry and the heartbeat probe.
+/// the same conditions over the real nightly-tests.ps1 entry and the compiled heartbeat (QualificationHeartbeat, W2-nightly S10).
 /// </summary>
 internal static class FailedFirstLoopRows
 {
@@ -190,39 +190,38 @@ internal static class FailedFirstLoopRows
         }
         var timing = Path.Combine(dir, "timing");
         var path = Path.Combine(timing, "groups-planned.json");
-        using var probe = HeartbeatProbe.Start(Path.Combine(root, "heartbeat-probe"));
         var collision = true;
         foreach (var sid in new[] { "antiphon", "session-runner", "antiphon" })
         {
-            probe.Write(timing, sid, "all-group-3", "heartbeat-run", "2");
+            Identity(timing, sid, "all-group-3", "heartbeat-run", "2");
             var expected = sid == "session-runner" ? 60.0 : 1800.0;
-            var legacy = probe.Cost(path, "all-group-3");
-            var qualified = probe.Cost(path, "all-group-3", sid, "heartbeat-run", "2");
-            if (legacy != expected || qualified != expected || probe.Budget(legacy).Minutes != Math.Max(10, expected / 60)) collision = false;
+            var legacy = Cost(path, "all-group-3");
+            var qualified = Cost(path, "all-group-3", sid, "heartbeat-run", "2");
+            if (legacy != expected || qualified != expected || QualificationHeartbeat.IdleBudget(legacy).Minutes != Math.Max(10, expected / 60)) collision = false;
         }
         rows.Check(collision, c + "heartbeatCollision");
         var legacyOk = true;
         foreach (var (chunk, seconds) in new[] { ("all-group-3", 1800.0), ("all-group-4", 120.0) })
         {
-            probe.Write(timing, "antiphon", chunk, "heartbeat-run", "2");
-            if (probe.Cost(path, chunk) != seconds) legacyOk = false;
+            Identity(timing, "antiphon", chunk, "heartbeat-run", "2");
+            if (Cost(path, chunk) != seconds) legacyOk = false;
         }
         rows.Check(legacyOk, c + "heartbeatLegacy");
-        probe.Write(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
-        var bad = probe.Cost(path, "all-group-3", "session-runner", "heartbeat-run", "2") == null && probe.Cost(path, "all-group-3", "antiphon", "wrong-run", "2") == null
-            && probe.Cost(path, "all-group-3", "antiphon", "heartbeat-run", "9") == null && probe.Cost(path, "All-group-3") == null;
-        probe.Write(timing, "antiphon", "all-group-3", "heartbeat-run", "2", "Idle");
-        bad = bad && probe.Cost(path, "all-group-3") == null;
-        probe.Write(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
+        Identity(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
+        var bad = Cost(path, "all-group-3", "session-runner", "heartbeat-run", "2") == null && Cost(path, "all-group-3", "antiphon", "wrong-run", "2") == null
+            && Cost(path, "all-group-3", "antiphon", "heartbeat-run", "9") == null && Cost(path, "All-group-3") == null;
+        Identity(timing, "antiphon", "all-group-3", "heartbeat-run", "2", "Idle");
+        bad = bad && Cost(path, "all-group-3") == null;
+        Identity(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
         var sidecar = Path.Combine(timing, "antiphon-all-group-3.timing.json");
         H.WriteJson(sidecar, new OrderedDictionary { { "lastPhase", "complete" } });
-        bad = bad && probe.Cost(path, "all-group-3") == null;
+        bad = bad && Cost(path, "all-group-3") == null;
         H.WriteJson(sidecar, new OrderedDictionary { { "lastPhase", "run" } });
-        var idle = new OrderedDictionary { { "suite", "antiphon" }, { "chunk", "all-group-3" }, { "run", "heartbeat-run" }, { "attempt", "2" }, { "state", "Idle" } };
-        bad = bad && probe.Cost(path, "all-group-3", observer: idle) == null;
+        // The identity changes while it is read (an Idle write between the read and the digest check).
+        bad = bad && Cost(path, "all-group-3", identityRead: active => Identity(Path.GetDirectoryName(active)!, "antiphon", "all-group-3", "heartbeat-run", "2", "Idle")) == null;
         // Rebind the changed plan hash so each absent field is the discriminating defect, rather than a stale digest
         // accidentally rejecting the fixture.
-        probe.Write(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
+        Identity(timing, "antiphon", "all-group-3", "heartbeat-run", "2");
         var planPath = Path.Combine(timing, "groups-planned-antiphon.json");
         var indexPath = Path.Combine(timing, "groups-planned-index.json");
         var activePath = Path.Combine(timing, "active-chunk.json");
@@ -239,7 +238,7 @@ internal static class FailedFirstLoopRows
             plan.Remove(field); active.Remove(field); AntiphonRow(index).Remove(field);
             Write(planPath, plan); Write(indexPath, index);
             active["planDigest"] = PriorFailureHistory.Digest(planPath); Write(activePath, active);
-            if (probe.Cost(path, "all-group-3") != null) bad = false;
+            if (Cost(path, "all-group-3") != null) bad = false;
             Restore();
         }
         foreach (var variant in new[] { "index-version", "plan-version", "chunk-path", "header-type" })
@@ -255,14 +254,14 @@ internal static class FailedFirstLoopRows
             }
             Write(planPath, plan); Write(indexPath, index);
             active["planDigest"] = PriorFailureHistory.Digest(planPath); Write(activePath, active);
-            if (probe.Cost(path, lookup) != null) bad = false;
+            if (Cost(path, lookup) != null) bad = false;
             Restore();
         }
         rows.Check(bad, c + "heartbeatRefusals");
-        Liveness(root, timing, probe, rows, c);
+        Liveness(root, timing, rows, c);
     }
 
-    private static void Liveness(string root, string bindingDirectory, HeartbeatProbe probe, NightlyCaseRows rows, string c)
+    private static void Liveness(string root, string bindingDirectory, NightlyCaseRows rows, string c)
     {
         var ok = true;
         var detail = new StringBuilder();
@@ -318,11 +317,11 @@ internal static class FailedFirstLoopRows
                     pointer["metadataDigest"] = PriorFailureHistory.Digest(metaPath);
                 }
                 File.WriteAllText(pointerPath, pointer.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
-                var cost = probe.Cost(Path.Combine(timing, "groups-planned.json"), "all-group-3");
+                var cost = Cost(Path.Combine(timing, "groups-planned.json"), "all-group-3");
                 var expected = "unknown";
                 var matches = cost == null;
                 if (variant is "valid-empty" or "valid-prefix") { expected = "1800"; matches = cost == 1800; }
-                else if (probe.Budget(cost).Source != "default-unknown-group") matches = false;
+                else if (QualificationHeartbeat.IdleBudget(cost).Source != "default-unknown-group") matches = false;
                 detail.Append("LIVENESS ").Append(variant).Append(" expected=").Append(expected).Append(" actual=")
                     .Append(cost == null ? "unknown" : cost.Value.ToString(CultureInfo.InvariantCulture)).Append("; ");
                 if (!matches) ok = false;
@@ -402,24 +401,23 @@ internal static class FailedFirstLoopRows
                     || S(identity.Value, "attempt") != "1" || S(identity.Value, "state") != "Active") identities = false;
             }
         }
-        var idle = ActiveIdentity(Path.Combine(a.Root, "timing"));
+        var idle = QualificationHeartbeat.ReadActiveChunkIdentity(Path.Combine(a.Root, "timing"));
         var prices = a.Trace.Launches.Concat(plain.Trace.Launches).All(l => l.ProvenBinding
             ? l.LegacyCost == l.PlannedCost && l.QualifiedCost == l.PlannedCost && l.LegacyCost != null
             : l.LegacyCost == null && l.QualifiedCost == null);
-        rows.Check(identities && H.Str(idle, "state") == "Idle" && prices, c + "activeIdentity");
+        rows.Check(identities && idle?.State == "Idle" && prices, c + "activeIdentity");
     }
 
     // ReadExecutedPrefix's unresolved flag, when the result carries one.
     private static bool Unresolved(object read) => PsValue.IsTrue(PsValue.Prop(read, "Unresolved"));
 
-    /// <summary>Read-QualificationActiveChunkIdentity's checks, in the core: the bytes decoded, parsed and stamped with their digest.</summary>
-    public static object? ActiveIdentity(string directory)
-    {
-        var path = Path.Combine(directory, "active-chunk.json");
-        if (!File.Exists(path)) return null;
-        var bytes = File.ReadAllBytes(path);
-        return TestPhaseRecords.ActiveChunkIdentity(NightlyJson.ParseText(TestPhaseRecords.DecodeText(bytes), 1024, true), bytes);
-    }
+    // The active-chunk identity writer and the planned cost of the compiled heartbeat (W2-nightly S10); suite, run and
+    // attempt are bound only when given.
+    private static bool Identity(string directory, string suite, string chunk, string run, string attempt, string state = "Active") =>
+        QualificationHeartbeat.WriteActiveChunkIdentity(directory, suite, chunk, run, attempt, state).Written;
+
+    private static double? Cost(string path, string chunk, string? suite = null, string? run = null, string? attempt = null, Action<string>? identityRead = null) =>
+        QualificationHeartbeat.PlannedCost(path, chunk, suite, run, attempt, identityRead).Seconds;
 
     private static string Tail(string output) => output.Length <= 1500 ? output : output[^1500..];
 }

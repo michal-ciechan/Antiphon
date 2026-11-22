@@ -14,8 +14,8 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// W2-nightly S14: the actual-loop fixtures of scripts/test-nightly-failed-first.ps1. Invoke-FFActualLoop runs the real
 /// nightly-tests.ps1 entry (still PowerShell until S17) as a pwsh child on a seams file whose StartProcess stands in
 /// for the test hosts (it writes each chunk's TRX and diagnostic from the planned ids and records every launch,
-/// discovery, build and active identity as a JSON line); the loop fixtures, the loop history and the heartbeat probe
-/// (the qualification heartbeat's identity writer and planned-cost reader are still PowerShell until S10) are here.
+/// discovery, build and active identity as a JSON line); the loop fixtures and the loop history are here. The seams read
+/// the active identity and the planned cost through the compiled heartbeat (QualificationHeartbeat, W2-nightly S10).
 /// </summary>
 internal static class FailedFirstLoopCases
 {
@@ -176,7 +176,7 @@ internal static class FailedFirstLoopCases
                     Write-FFTrace ([ordered]@{ kind = 'discovery'; suite = $sid })
                     Write-FFDiagnostic $diag @($s.nodes) 'Discovered'
                 } elseif ($sid) {
-                    $active = Read-QualificationActiveChunkIdentity $timing
+                    $active = [Antiphon.Nightly.QualificationHeartbeat]::ReadActiveChunkIdentity($timing)
                     $state.Active++
                     $s = @($state.Fixture.suites | Where-Object { $_.id -ceq $sid })[0]
                     $planPath = Join-Path $timing ('groups-planned-' + $sid + '.json')
@@ -195,8 +195,8 @@ internal static class FailedFirstLoopCases
                     $legacyCost = $null; $qualifiedCost = $null
                     if (-not $state.Fixture.replay) {
                         $lookup = Join-Path $timing 'groups-planned.json'
-                        $legacyCost = Get-QualificationGroupPlannedSeconds $lookup $cid
-                        $qualifiedCost = Get-QualificationGroupPlannedSeconds $lookup $cid $sid 'actual-run' '1'
+                        $legacyCost = [Antiphon.Nightly.QualificationHeartbeat]::PlannedCost($lookup, $cid).Seconds
+                        $qualifiedCost = [Antiphon.Nightly.QualificationHeartbeat]::PlannedCost($lookup, $cid, $sid, 'actual-run', '1').Seconds
                     }
                     $provenBinding = [bool]($active -and $active.sourceDigest -cmatch '^[a-f0-9]{40}$' -and $active.policyDigest -cmatch '^[a-f0-9]{64}$' -and $active.costFileDigest -cmatch '^[a-f0-9]{64}$' -and $active.assemblyDigest -cmatch '^[a-f0-9]{64}$')
                     # With UseAppHost=false the host is dotnet exec <assembly>: retain the assembly as well as its launcher.
@@ -210,9 +210,12 @@ internal static class FailedFirstLoopCases
                     Write-FFNodeTrx $trx $nodes $outcome
                     Write-FFDiagnostic $diag $nodes $outcome
                     $settled = [IO.File]::Exists((Join-Path $timing 'groups-executed.json'))
+                    # The identity under the active-chunk.json names.
+                    $identity = $null
+                    if ($active) { $identity = [ordered]@{ format = $active.Format; state = $active.State; generation = $active.Generation; runId = $active.RunId; attempt = $active.Attempt; suite = $active.Suite; chunk = $active.Chunk; planFile = $active.PlanFile; planDigest = $active.PlanDigest; sourceDigest = $active.SourceDigest; policyDigest = $active.PolicyDigest; costFileDigest = $active.CostFileDigest; assemblyDigest = $active.AssemblyDigest; identityDigest = $active.IdentityDigest } }
                     Write-FFTrace ([ordered]@{ kind = 'launch'; suite = $sid; chunk = $cid; key = ($sid + '/' + $cid); host = $testHost; launcher = $FilePath; nodes = @($nodes | ForEach-Object { [string]$_.Uid })
                         filter = (Get-FFArgument $ArgumentList '--treenode-filter'); legacyCost = $legacyCost; qualifiedCost = $qualifiedCost; plannedCost = $group.plannedSeconds
-                        provenBinding = $provenBinding; identity = $active; settled = $settled; active = $state.Active })
+                        provenBinding = $provenBinding; identity = $identity; settled = $settled; active = $state.Active })
                     $state.Active--
                     return [pscustomobject]@{ ExitCode = $code; TimedOut = $timeout; ChildrenExited = $true; CleanupComplete = $true; JobEmptyObserved = $true; LogText = '' }
                 } elseif ($ArgumentList -contains 'Antiphon.sln') { Write-FFTrace ([ordered]@{ kind = 'build' }) }
@@ -366,126 +369,5 @@ internal static class FailedFirstLoopCases
         Directory.CreateDirectory(target);
         foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)));
         foreach (var directory in Directory.EnumerateDirectories(source)) CopyTree(directory, Path.Combine(target, Path.GetFileName(directory)));
-    }
-
-    // ---- the heartbeat probe ------------------------------------------------------------------------------------
-
-    private static readonly string ProbeText = """
-        # W2-nightly S14: the qualification heartbeat's identity writer, planned-cost reader and idle budget (still
-        # PowerShell until S10), one JSON request per stdin line, one '@@ ' JSON answer per request.
-        param([string]$Repo)
-        $ErrorActionPreference = 'Stop'
-        . (Join-Path $Repo 'scripts/lib/nightly-core.ps1')
-        Assert-NightlyCoreAvailable 'ff-heartbeat-probe'
-        . (Join-Path $Repo 'scripts/lib/qualification-supervisor-heartbeat.ps1')
-        function Send-FFProbe($Value) { [Console]::Out.WriteLine('@@ ' + (ConvertTo-Json -InputObject $Value -Compress -Depth 8)); [Console]::Out.Flush() }
-        Send-FFProbe @{ ok = $true; value = 'ready'; error = '' }
-        while ($true) {
-            $line = [Console]::In.ReadLine()
-            if ($null -eq $line) { break }
-            $q = $line | ConvertFrom-Json
-            $answer = [ordered]@{ ok = $true; value = $null; error = '' }
-            try {
-                switch ($q.op) {
-                    'write' { $answer.value = [bool](Write-QualificationActiveChunkIdentity -Directory $q.dir -SuiteId $q.suite -ChunkId $q.chunk -RunId $q.run -Attempt $q.attempt -State $q.state 3>$null) }
-                    'cost' {
-                        $splat = @{ Path = [string]$q.path; ChunkId = [string]$q.chunk }
-                        if ($q.PSObject.Properties.Name -contains 'suite') { $splat.SuiteId = [string]$q.suite }
-                        if ($q.PSObject.Properties.Name -contains 'run') { $splat.RunId = [string]$q.run }
-                        if ($q.PSObject.Properties.Name -contains 'attempt') { $splat.Attempt = [string]$q.attempt }
-                        $script:FFObserver = $q.observer
-                        if ($null -ne $q.observer) {
-                            $script:QualificationIdentityReadObserver = { param($activePath); $o = $script:FFObserver; [void](Write-QualificationActiveChunkIdentity (Split-Path -Parent $activePath) $o.suite $o.chunk $o.run $o.attempt $o.state 3>$null) }
-                        }
-                        try { $answer.value = Get-QualificationGroupPlannedSeconds @splat } finally { $script:QualificationIdentityReadObserver = $null; $script:FFObserver = $null }
-                    }
-                    'budget' { $b = Get-QualificationHeartbeatIdleBudget $q.seconds; $answer.value = [ordered]@{ minutes = [double]$b.minutes; source = [string]$b.source } }
-                    'read' { $answer.value = Read-QualificationActiveChunkIdentity ([string]$q.dir) }
-                }
-            } catch { $answer.ok = $false; $answer.error = $_.Exception.Message }
-            Send-FFProbe $answer
-        }
-        """;
-
-    /// <summary>A pwsh child holding the heartbeat library, asked one JSON request at a time.</summary>
-    public sealed class HeartbeatProbe : IDisposable
-    {
-        private readonly Process _process;
-        private readonly StringBuilder _errors = new();
-
-        private HeartbeatProbe(Process process) => _process = process;
-
-        public static HeartbeatProbe Start(string directory)
-        {
-            Directory.CreateDirectory(directory);
-            var script = Path.Combine(directory, "heartbeat-probe.ps1");
-            File.WriteAllText(script, ProbeText, new UTF8Encoding(false));
-            var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Repo", H.Repo }) start.ArgumentList.Add(argument);
-            var probe = new HeartbeatProbe(Process.Start(start)!);
-            probe._process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (probe._errors) probe._errors.AppendLine(e.Data); };
-            probe._process.BeginErrorReadLine();
-            probe.Answer();
-            return probe;
-        }
-
-        private JsonElement Answer()
-        {
-            while (true)
-            {
-                var read = _process.StandardOutput.ReadLineAsync();
-                if (!read.Wait(TimeSpan.FromSeconds(180))) throw new TimeoutException("heartbeat probe did not answer: " + _errors);
-                var line = read.Result ?? throw new InvalidOperationException("heartbeat probe exited: " + _errors);
-                if (!line.StartsWith("@@ ", StringComparison.Ordinal)) continue;
-                using var doc = JsonDocument.Parse(line[3..]);
-                var answer = doc.RootElement.Clone();
-                if (!B(answer, "ok")) throw new InvalidOperationException("heartbeat probe: " + S(answer, "error"));
-                return answer.TryGetProperty("value", out var value) ? value.Clone() : default;
-            }
-        }
-
-        private JsonElement Ask(object request)
-        {
-            _process.StandardInput.WriteLine(H.JsonText(request));
-            _process.StandardInput.Flush();
-            return Answer();
-        }
-
-        /// <summary>Write-QualificationActiveChunkIdentity.</summary>
-        public bool Write(string directory, string suite, string chunk, string run, string attempt, string state = "Active") =>
-            Ask(new OrderedDictionary { { "op", "write" }, { "dir", directory }, { "suite", suite }, { "chunk", chunk }, { "run", run }, { "attempt", attempt }, { "state", state } }).ValueKind == JsonValueKind.True;
-
-        /// <summary>Get-QualificationGroupPlannedSeconds (suite, run and attempt bound only when given); null is unknown.</summary>
-        public double? Cost(string path, string chunk, string? suite = null, string? run = null, string? attempt = null, OrderedDictionary? observer = null)
-        {
-            var request = new OrderedDictionary { { "op", "cost" }, { "path", path }, { "chunk", chunk } };
-            if (suite != null) request["suite"] = suite;
-            if (run != null) request["run"] = run;
-            if (attempt != null) request["attempt"] = attempt;
-            request["observer"] = observer;
-            var value = Ask(request);
-            return value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
-        }
-
-        /// <summary>Get-QualificationHeartbeatIdleBudget.</summary>
-        public (double Minutes, string Source) Budget(double? seconds)
-        {
-            var value = Ask(new OrderedDictionary { { "op", "budget" }, { "seconds", seconds } });
-            return (N(value, "minutes"), S(value, "source"));
-        }
-
-        /// <summary>Read-QualificationActiveChunkIdentity; null when unavailable.</summary>
-        public JsonElement? Read(string directory)
-        {
-            var value = Ask(new OrderedDictionary { { "op", "read" }, { "dir", directory } });
-            return value.ValueKind == JsonValueKind.Object ? value : null;
-        }
-
-        public void Dispose()
-        {
-            try { _process.StandardInput.Close(); } catch (IOException) { }
-            if (!_process.WaitForExit(15000)) { try { _process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } }
-            _process.Dispose();
-        }
     }
 }
