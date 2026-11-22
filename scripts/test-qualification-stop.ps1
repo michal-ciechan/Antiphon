@@ -607,34 +607,98 @@ function C1507_TaskDirCopyLoadsCheckoutLibrary {
         'a task-directory copy of stop-supervisor.ps1 loads its libraries from -CheckoutRoot' ($code.ToString() + ' ' + $text)
 }
 
+function ConvertTo-C1507Argument([string]$Value) {
+    # Windows command-line quoting (CommandLineToArgvW rules, also used by .NET on Unix).
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $slashes = 0
+    foreach ($ch in $Value.ToCharArray()) {
+        if ($ch -eq [char]92) { $slashes++; continue }
+        if ($ch -eq [char]34) { [void]$sb.Append([string]::new([char]92, 2 * $slashes + 1)); [void]$sb.Append([char]34) }
+        else { [void]$sb.Append([string]::new([char]92, $slashes)); [void]$sb.Append($ch) }
+        $slashes = 0
+    }
+    [void]$sb.Append([string]::new([char]92, 2 * $slashes))
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+function Invoke-C1507Child([string[]]$Argv) {
+    # Separate stdout, stderr and exit code; no 2>&1 under Stop (Windows PowerShell 5.1 safe).
+    $quoted = @()
+    foreach ($a in $Argv) { $quoted += (ConvertTo-C1507Argument $a) }
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $script:pwsh
+    $psi.Arguments = $quoted -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $errTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(60000)) {
+        try { $p.Kill() } catch { }
+        throw 'child pwsh did not exit within 60 s'
+    }
+    $p.WaitForExit()
+    return @{ Code = $p.ExitCode; Out = $outTask.Result; Err = $errTask.Result }
+}
+
 function C1507_NonCheckoutRootRefusedBeforeImport {
-    # CARD-2045 Review r1: a directory without checkout metadata must not supply the stop
-    # implementation, even when it holds genuine-looking helpers at the checkout-relative paths.
+    # CARD-2045 Review r1/r2: a directory without checkout metadata, a checkout that lacks a
+    # required helper, and an explicitly blank -CheckoutRoot must not supply the stop
+    # implementation. The refusal is on stderr, stdout stays empty, and nothing changes.
     $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
     Copy-Item -LiteralPath $script:stopScript -Destination (Join-Path $fixture.Task 'stop-supervisor.ps1')
     $copied = Join-Path $fixture.Task 'stop-supervisor.ps1'
     $marker = 'C2045-STALE-HELPER-LOADED'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $helperText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'qualification/qualification-stop.ps1'))
+    $staleHelper = "[Console]::Out.WriteLine('" + $marker + "')`r`n" + $helperText
     $stale = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-export')
     [void][IO.Directory]::CreateDirectory((Join-Path $stale 'scripts/qualification'))
     [void][IO.Directory]::CreateDirectory((Join-Path $stale 'scripts/lib'))
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    $helperText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'qualification/qualification-stop.ps1'))
-    [IO.File]::WriteAllText((Join-Path $stale 'scripts/qualification/qualification-stop.ps1'), ("[Console]::Out.WriteLine('" + $marker + "')`r`n" + $helperText), $utf8)
+    [IO.File]::WriteAllText((Join-Path $stale 'scripts/qualification/qualification-stop.ps1'), $staleHelper, $utf8)
     foreach ($name in @('qualification-supervisor.ps1', 'rc-qualification-status.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('lib/' + $name)) -Destination (Join-Path $stale ('scripts/lib/' + $name))
     }
+    # A checkout (.git directory) whose stop helper is missing; its library is present.
+    $noStop = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-nostop')
+    [void][IO.Directory]::CreateDirectory((Join-Path $noStop '.git'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $noStop 'scripts/qualification'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $noStop 'scripts/lib'))
+    foreach ($name in @('qualification-supervisor.ps1', 'rc-qualification-status.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('lib/' + $name)) -Destination (Join-Path $noStop ('scripts/lib/' + $name))
+    }
+    # A linked worktree (.git file) whose stop helper is present but whose library is missing.
+    $noLib = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-nolib')
+    [void][IO.Directory]::CreateDirectory((Join-Path $noLib 'scripts/qualification'))
+    [IO.File]::WriteAllText((Join-Path $noLib '.git'), "gitdir: /nonexistent/worktrees/c1507`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $noLib 'scripts/qualification/qualification-stop.ps1'), $staleHelper, $utf8)
     $empty = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-empty')
     [void][IO.Directory]::CreateDirectory($empty)
     $absent = Join-Path $script:scratch ([guid]::NewGuid().ToString('N') + '-absent')
     $lockBefore = Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')
-    foreach ($row in @(@('populated non-checkout', $stale), @('empty', $empty), @('absent', $absent))) {
+    # Blank rows use the in-checkout script: omitting -CheckoutRoot there would reach the helper.
+    $rows = @(
+        @('populated non-checkout', $copied, $stale, 'no .git file or directory at its root'),
+        @('empty', $copied, $empty, 'no .git file or directory at its root'),
+        @('absent', $copied, $absent, 'not an existing directory'),
+        @('checkout missing qualification-stop.ps1', $copied, $noStop, 'missing scripts/qualification/qualification-stop.ps1'),
+        @('checkout missing qualification-supervisor.ps1', $copied, $noLib, 'missing scripts/lib/qualification-supervisor.ps1'),
+        @('blank', $script:stopScript, '', 'blank value'),
+        @('whitespace', $script:stopScript, '   ', 'blank value')
+    )
+    foreach ($row in $rows) {
         foreach ($confirm in @($false, $true)) {
-            $argv = @('-NoProfile', '-NonInteractive', '-File', $copied, '-CheckoutRoot', $row[1], '-TaskRoot', $fixture.Task, '-CoordinationRoot', $fixture.Coord, '-RunId', $fixture.RunId, '-Reason', 'operator replacement')
+            $argv = @('-NoProfile', '-NonInteractive', '-File', $row[1], '-CheckoutRoot', $row[2], '-TaskRoot', $fixture.Task, '-CoordinationRoot', $fixture.Coord, '-RunId', $fixture.RunId, '-Reason', 'operator replacement')
             if ($confirm) { $argv += '-Confirm' }
-            $text = @(& $script:pwsh @argv 2>&1) -join "`n"
-            $code = $LASTEXITCODE
-            Assert-C1507 ($code -eq 6 -and $text -match 'refused' -and $text -match 'CheckoutRoot' -and $text -notmatch $marker -and $text -notmatch 'dry-run' -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore) `
-                ('a ' + $row[0] + ' -CheckoutRoot is refused before any helper import (confirm=' + $confirm + ')') ($code.ToString() + ' ' + $text)
+            $r = Invoke-C1507Child $argv
+            $ok = ($r.Code -eq 6 -and $r.Out.Length -eq 0 -and $r.Err.Contains('refused') -and $r.Err.Contains('-CheckoutRoot') -and $r.Err.Contains($row[3]) -and -not $r.Err.Contains($marker) -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore)
+            Assert-C1507 $ok `
+                ('a ' + $row[0] + ' -CheckoutRoot is refused on stderr before any helper import (confirm=' + $confirm + ')') ('exit=' + $r.Code + ' stdout=[' + $r.Out + '] stderr=[' + $r.Err + ']')
         }
     }
 }
