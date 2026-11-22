@@ -445,7 +445,7 @@ namespace Antiphon.Nightly
                     Git(host, checkoutRoot, "git reset --hard FETCH_HEAD failed with exit {0}", "reset", "--hard", "FETCH_HEAD");
                     RepairLineEndings(host, checkoutRoot);
                     // These untracked root markers authorize both the self-update hop and later runs.
-                    // The CLI build (bin-launcher, git-ignored) survives the clean: the next run's build is incremental, not cold.
+                    // The CLI build (bin-launcher, git-ignored) survives the clean: the next run rebuilds only what changed, not from scratch.
                     Git(host, checkoutRoot, "git clean -fdx failed with exit {0}", "clean", "-fdx", "-e", "/.antiphon-nightly-owned", "-e", "/.antiphon-release-owned", "-e", "/bin-launcher/");
                     sha = (host.RunGit(checkoutRoot, "rev-parse", "HEAD").Output ?? "").Trim();
                     state["sha"] = sha;
