@@ -237,6 +237,7 @@ public partial class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
         ConfigureHostLoadModel(modelBuilder);
+        ConfigureReviewEngineModel(modelBuilder);
 
         modelBuilder.Entity<SessionQueuedMessage>().HasIndex(m => m.SourceTaskSupervisionNoticeId)
             .IsUnique().HasFilter("\"SourceTaskSupervisionNoticeId\" IS NOT NULL");

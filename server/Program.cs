@@ -16,6 +16,8 @@ using Antiphon.Messaging.Client;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Review;
+using Antiphon.Server.Application.Review.Decisions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
@@ -31,6 +33,7 @@ using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.IssueTrackers;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
+using Antiphon.Server.Infrastructure.Review;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
@@ -157,6 +160,26 @@ try
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
+    // Review engine (docs/features/012-review-engine). DemoSeedEnabled and AllowViewerHeader follow
+    // the environment when absent: on in Development only.
+    var reviewSection = builder.Configuration.GetSection(ReviewSettings.SectionName);
+    builder.Services.AddOptions<ReviewSettings>().Bind(reviewSection).PostConfigure(s =>
+    {
+        s.DemoSeedEnabled = reviewSection.GetValue<bool?>(nameof(ReviewSettings.DemoSeedEnabled)) ?? builder.Environment.IsDevelopment();
+        s.AllowViewerHeader = reviewSection.GetValue<bool?>(nameof(ReviewSettings.AllowViewerHeader)) ?? builder.Environment.IsDevelopment();
+    });
+    builder.Services.AddOptions<ReviewDecisionSettings>()
+        .Bind(builder.Configuration.GetSection(ReviewDecisionSettings.SectionName))
+        .PostConfigure(s =>
+        {
+            s.ApplyDefaults();
+            // A provider names its key by configuration key only; the value never reaches a log.
+            foreach (var provider in s.Providers.Values)
+            {
+                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
+                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
+            }
+        });
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
     builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
@@ -947,6 +970,18 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
 
     // GitHub integration (FR59-FR64) — feature-flagged per project
     builder.Services.AddHttpClient<IGitHubService, GitHubService>();
+    // Review engine: runs, findings, gates, workflow graph and decision chains.
+    builder.Services.AddSingleton<ReviewWorkflowService>();
+    builder.Services.AddScoped(sp => ReviewViewer.Resolve(
+        sp.GetRequiredService<IOptions<ReviewSettings>>().Value,
+        sp.GetRequiredService<IHttpContextAccessor>().HttpContext?.Request.Headers[ReviewViewer.HeaderName].ToString(),
+        sp.GetRequiredService<ICurrentUser>().UserName));
+    builder.Services.AddScoped<ReviewService>();
+    builder.Services.AddScoped<ReviewDemoSeeder>();
+    builder.Services.AddScoped<DecisionChain>();
+    builder.Services.AddHttpClient<JevSystemOneClient>();
+    builder.Services.AddTransient<IDecisionModel>(sp => sp.GetRequiredService<JevSystemOneClient>());
+    builder.Services.AddSingleton<IDecisionModel, StandingSeatDecisionModel>();
     builder.Services.AddHttpClient<GitHubIssuesTracker>();
     builder.Services.AddHttpClient<LinearTracker>();
     builder.Services.AddHttpClient<JiraTracker>();
@@ -1316,6 +1351,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapPlanEndpoints();
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
+    app.MapReviewRunEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");

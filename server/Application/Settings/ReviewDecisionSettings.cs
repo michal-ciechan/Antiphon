@@ -117,4 +117,25 @@ public sealed class ReviewSettings
     /// Development, off elsewhere (Program.cs).
     /// </summary>
     public bool DemoSeedEnabled { get; set; }
+
+    /// <summary>
+    /// The review viewer until identity lands (api.md <c>GET /api/review-me</c>). Absent, the
+    /// current user's name is used. Mutations record this viewer as the actor.
+    /// </summary>
+    public string? DefaultViewerLogin { get; set; }
+
+    /// <summary>
+    /// Lets the <c>X-Review-Viewer</c> header pick the viewer. Development only: absent, it follows
+    /// the environment like <see cref="DemoSeedEnabled"/>.
+    /// </summary>
+    public bool AllowViewerHeader { get; set; }
+
+    /// <summary>Display names and teams by login, until org sync exists (design 12).</summary>
+    public Dictionary<string, ReviewViewerSettings> Viewers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ReviewViewerSettings
+{
+    public string? DisplayName { get; set; }
+    public List<string> Teams { get; set; } = [];
 }

@@ -52,3 +52,7 @@ or corpus questions found while implementing. Each row says what to test and why
 | R-5 | `ReviewRunChanged` published once per mutation, with the run id. | Needs a factory subclass with a recording `IEventBus`. |
 | R-6 | `POST /api/review-runs/demo` is 404 when `Review:DemoSeedEnabled` is false. | The test host runs in Development, where the default is on. |
 | R-7 | Migration up/down on a predecessor clone: `Down` throws (additive rule). | Run the migration and model classes before review. |
+| R-8 | Viewer resolution (v0.1): `Review:DefaultViewerLogin`, the `X-Review-Viewer` header honoured only with `Review:AllowViewerHeader`, `Review:Viewers` display names and teams; the author's own gate shows `viewerCanDecide: false` and a decision is 403. | Implemented; only the default viewer is exercised over HTTP. |
+| R-9 | `costActualUsd` / `costEstimatedUsd` split by cost basis; `costUsd` is their sum. | Computed from node executions; not asserted. |
+| R-10 | `GET /api/review-workflows/revisions/{id}` for an unknown id (404) and the get-or-create race on the revision hash. | Only the happy path is covered. |
+| R-11 | Queue `Mine` includes unassigned gates of the viewer's teams; `slaWorkingMinutes` is the breach budget (480). | Implemented, untested. |
