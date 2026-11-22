@@ -318,13 +318,14 @@ public sealed class JqRunnerImageContractTests
         public void WriteJq(string path)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, "#!" + _bash + "\n" + """
+            // CARD-2057: a spawn on another lane forks this process's descriptors until its own exec.
+            // An in-process write handle on the fake jq can then make its exec fail with ETXTBSY.
+            FixtureExecutable.Write(path, "#!" + _bash + "\n" + """
                 printf '%s\0' "$0" "$#" "$@" "$HOME" >> "$JQ_TRACE"
                 printf '%s\n' "$JQ_STDOUT"
                 printf '%s' "$JQ_STDERR" >&2
                 exit "$JQ_EXIT"
                 """ + "\n");
-            File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32("755", 8));
         }
 
         public string LinkJq(string directory, string target)
