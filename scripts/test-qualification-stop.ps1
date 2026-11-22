@@ -591,6 +591,22 @@ function C1507_EntryRefusesOffWindows {
     Assert-C1507 $ascii 'stop scripts are ASCII' 'non-ascii byte'
 }
 
+function C1507_TaskDirCopyLoadsCheckoutLibrary {
+    # CARD-2045: the rc runbook copies scripts/qualification into the task directory. A copied
+    # stop-supervisor.ps1 must load qualification-stop.ps1 and its ..\lib from -CheckoutRoot.
+    $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    foreach ($name in @('stop-supervisor.ps1', 'qualification-stop.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('qualification/' + $name)) -Destination (Join-Path $fixture.Task $name)
+    }
+    $copied = Join-Path $fixture.Task 'stop-supervisor.ps1'
+    $checkout = Split-Path $PSScriptRoot -Parent
+    $lockBefore = Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')
+    $text = @(& $script:pwsh -NoProfile -NonInteractive -File $copied -CheckoutRoot $checkout -TaskRoot $fixture.Task -CoordinationRoot $fixture.Coord -RunId $fixture.RunId -Reason 'operator replacement' 2>&1) -join "`n"
+    $code = $LASTEXITCODE
+    Assert-C1507 ($code -eq 2 -and $text -match 'dry-run' -and $text -match 'pid=4100' -and $text -match 'ownerPid=4300' -and $text -notmatch 'qualification-supervisor\.ps1' -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore) `
+        'a task-directory copy of stop-supervisor.ps1 loads its libraries from -CheckoutRoot' ($code.ToString() + ' ' + $text)
+}
+
 try {
     $selected = @(
         'C1507_StopOrder',
@@ -604,7 +620,8 @@ try {
         'C1507_PostKillReusedSkipsTheCensus',
         'C1507_FaultAfterKillKeepsTheKillList',
         'C1507_OwedNativeWindowsStop',
-        'C1507_EntryRefusesOffWindows'
+        'C1507_EntryRefusesOffWindows',
+        'C1507_TaskDirCopyLoadsCheckoutLibrary'
     )
     if ($Case -ne 'Smoke') {
         if ($selected -notcontains $Case) { throw ('unknown case ' + $Case) }
