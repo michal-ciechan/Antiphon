@@ -636,7 +636,14 @@ public class LinuxCgroupCustodyTests
         public string WaitForNonce(string nonceFile) =>
             "j=0; while [ ! -f \"" + nonceFile + "\" ] && [ \"$j\" -lt 100 ]; do j=$((j+1)); sleep 0.1; done";
 
-        private Guid? TrackedContainerId => Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
+        private Guid? _trackedContainerId;
+
+        // CARD-1929: tracking.json is immutable once committed, so the first id read through the
+        // valid binding is kept. A body that loses the host (its TempDir, and the store with it, is
+        // deleted) and opens a successor store at that root invalidates this binding; cleanup must
+        // still find and drain the tree it owns instead of re-reading through the dead identity.
+        private Guid? TrackedContainerId => _trackedContainerId
+            ??= Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
 
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
