@@ -27584,6 +27584,7 @@
       "classes": [
         "DirectSessionRunnerClientDisposalTests",
         "OwnedPtyFixtureCleanupWindowsTests",
+        "RunnerGrokAdapterReadyTests",
         "WorktreeLockDiagnosticsWindowsTests"
       ]
     },
