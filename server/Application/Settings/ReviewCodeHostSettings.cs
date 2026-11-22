@@ -44,6 +44,12 @@ public sealed class ReviewCodeHost
     /// </summary>
     public string? BaseUrl { get; set; }
 
+    /// <summary>
+    /// The GraphQL endpoint (thread resolution). Absent, it follows <see cref="BaseUrl"/>:
+    /// <c>https://api.github.com/graphql</c>, or <c>https://ghe.example.com/api/graphql</c> for <c>…/api/v3</c>.
+    /// </summary>
+    public string? GraphQlUrl { get; set; }
+
     /// <summary>The configuration key that holds the personal access token. Never the token itself.</summary>
     public string? TokenConfigKey { get; set; }
 

@@ -89,8 +89,8 @@ or corpus questions found while implementing. Each row says what to test and why
 ## The whole workflow (`ReviewWorkflowExecutor`, `server/Application/Review/Execution/`)
 
 Covered: `ReviewEndToEndApiTests` (a human path with findings, a fix, an approval gate, a base move
-and a branch update; a bot path), `ReviewExecutorApiTests` (no agent runner: the fan-out fails
-loudly), `ReviewRoundsPolicyTests` and `ReviewCheckParserTests`. E-1 and E-8 are now covered by the
+and a branch update; a bot path), `ReviewExecutorApiTests` (no project maps the repo: the real
+reviewer runner fails the fan-out loudly), `ReviewRoundsPolicyTests` and `ReviewCheckParserTests`. E-1 and E-8 are now covered by the
 human path.
 
 | # | Test later | Why |
@@ -105,7 +105,7 @@ human path.
 | X-8 | Refresh while parked at a gate with a moved head closes the gate (Done, no decision, a `superseded:` reason) and skips its node. | Implemented in `SupersedeGatesAsync`; untested. |
 | X-9 | A PR closed (not merged) on the code host ends the run Closed from any parked node. | Merged is covered; Closed shares the code path. |
 | X-10 | Verify: a disproved finding (p < 0.5) is dropped and recorded; a bypass finding is kept; a refused answer keeps it; a wrong request id fails the node; no chain configured is Skipped with the reason and findings pass through. | The scripted verifier holds everything; the skip path runs only by reading. |
-| X-11 | Reviewer answer that does not parse: one retry, then the child fails with the error codes; a `Pending` answer parks the child Waiting with its handle and the run queued, then completes on a later pass. | The scripted reviewer always answers valid ABF at once. |
+| X-11 | Reviewer answer that does not parse: one retry, then the child fails with the error codes; a `Pending` answer parks the child Waiting with its handle and the run queued, then completes on a later pass. | The scripted reviewer always answers valid ABF at once. The `Pending` path is now covered by `ReviewDelegationRunnerApiTests`; the retry is not (G-6). |
 | X-12 | Collate: duplicates across groups keep the most severe and merge flags; a duplicate of an open finding is dropped as such; an anchor outside the diff resolves through `ReadFileAsync` and is summary-only; an unresolvable anchor is dropped. | Anchors are unit tested; the dedupe paths are not. |
 | X-13 | Select: more than 128 candidates split across calls; a refused `applies` is included; the round bar drops a check whose severity cannot clear it (a nit check in round 2) unless it is a bypass check. | Implemented; the seed set is 7 checks. |
 | X-14 | Check catalogue: the instance folder (`Review:InstanceChecksPath`) and the repo's `.antiphon/review/checks/` at the base SHA (a repo check overrides an instance check by id); a file that does not parse is skipped and named in the select summary; the seed set is used only when both are empty. | Only the seed set runs end to end; the scripted host reads no files. |
@@ -117,3 +117,29 @@ human path.
 | X-20 | `LocalGitCodeHost` compare, branch state, `ls-tree` and `show` over a fixture repo; every write is `Unsupported`. | Needs the git spawn lane (see C-1). |
 | X-21 | Migration `AddReviewEngineExecution`: `Down` throws, and the tip-rewind fixtures detach the new tables and columns. | Same gap as E-11. |
 | X-22 | Lease takeover in the middle of a fan-out: a second executor resumes the Waiting fan-out without re-running finished reviewers. | Needs two executors on one schema (E-6). |
+
+## Reviewers, completions and thread resolution (`DelegationReviewAgentRunner`, `ICompletionModel`s, GitHub GraphQL)
+
+Covered: `ReviewDelegationRunnerApiTests` (the real runner under the executor with the delegation
+seam scripted: a read-only Review task in a worktree at the head, the node parked Waiting with the
+task id, completed from the task's report; a failed task fails the node), `CompletionModelTests`
+(the OpenAI-compatible adapter's request, answer, usage, cost header and error kinds; a 429 falling
+back to the Anthropic Messages adapter in a chain; the default chain; the delegate seat and its
+deadline cancel) and `GitHubThreadResolutionTests` (thread ids read at publish, the mutation, a
+comment id mapped across pages, GraphQL error kinds, the endpoint).
+
+| # | Test later | Why |
+|---|---|---|
+| G-1 | `AgentTaskReviewGateway` against the real `AgentTaskService` on a fixture repo: the created row is Worker/Review, Worktree, `WorktreeBaseRequestedRef` = head, `CommitOnSettle` Never, project from the caller, no parent and no reply routing; `StartRefAvailability` finds the head locally after the PR fetch. | Needs a git fixture repo in `Delegation:AllowedRoots` and a host whose dispatcher does not race the test; the seam is scripted instead. |
+| G-2 | `StartRefAvailability.TryFetchPullRequestHeadAsync` over a fixture origin with `refs/pull/<n>/head`: a fetch under the repository lease, a head already present (no fetch), a moved PR (the ref lacks the SHA), no origin, a busy lease past the network deadline. | Needs the git spawn lane (see C-1). |
+| G-3 | Reviewer timeout: a task older than `Review:Agents:TimeoutMinutes` is cancelled and the node fails; a Blocked task is cancelled and fails with its question; a deleted task fails. | Implemented; needs a controllable clock or a seeded `CreatedAt` in the scripted seam. |
+| G-4 | A pack over `InlinePackMaxChars`: the brief carries the `GET /api/review-runs/{id}/packs/...` pointer (group key escaped) and stays under the 20,000-character goal limit; the route 404s for an unknown group. | Only the inlined pack and the route's happy path run. |
+| G-5 | Project mapping: a `Review:Agents:Repos` row by id and by name, a row's `LocalPath` overriding the project's, two projects matching one repo (fails and names both), an archived project ignored, a local subject matched by `LocalRepositoryPath`. | URL forms are unit tested; the rest run only by reading. |
+| G-6 | The parse-failure retry with the real runner: the second attempt dispatches a new task (attempt 2) and the first task's report is discarded. | The fan-out retry is generic; with the delegation runner it costs a second agent run, so the brief may want the parse errors. Decide whether to pass them. |
+| G-7 | A remote runner reviewer (`Review:Agents:Runner` = server2): the task's mirror has the PR head, and `ANTIPHON_API` from the runner reaches the pack route. | Needs server2; the brief's pointer assumes the runner can call the server. |
+| G-8 | Anthropic adapter alone: `refusal` and `max_tokens` stop reasons are schema failures (the chain moves on), `AuthScheme: bearer`, a base URL ending in `/v1`, 529 rate limited, the price table when no usage is returned. | One fallback path covers the happy mapping. |
+| G-9 | OpenAI adapter: content as an array of parts, `finish_reason: length`, `MaxOutputTokens` sent as `max_tokens`, the price table when the proxy sends no cost header. | Implemented, untested. |
+| G-10 | Verify through a real chat model: the `decision-response/1.0` template in the instructions is answered in ABF by Luna/Haiku over LiteLLM and parsed; record a sanitised fixture. | Needs the first live call from work (like OQ-2 for Jev). |
+| G-11 | The delegate seat under the executor: verify blocks the walk for up to the entry's `TimeoutSeconds` (240, under the 300 s lease); a slower seat times out and the chain moves on. Making verify park like the reviewer node is the follow-up if seats become the default. | Bounded synchronous wait by design for now. |
+| G-12 | Finding sync with a finding posted before thread ids were recorded: the resolve passes the comment id and GitHub maps it; a GraphQL `FORBIDDEN` (token without pull-request write) marks the response Failed after the reply posted. | The mapping is unit tested on the adapter; the sync path with GitHub is not. |
+| G-13 | GraphQL thread listing on a PR with more than 1,000 threads stops at 10 pages and the thread is reported not found. | Limit not modelled. |

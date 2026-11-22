@@ -895,6 +895,36 @@ Jev's probabilities are calibrated; the chat fallbacks' are not.
 Thresholds are set per provider. TypeSafe's examples (0.3 and 0.5) are illustrations, not
 defaults.
 
+### 7.6 Configuration (first implementation)
+
+Keys are named by configuration key only (`ApiKeyConfigKey`, `TokenConfigKey`) and resolved at
+startup; a key's value is never stored in these sections or logged.
+
+- **Reviewers, `Review:Agents`.** Each reviewer group is one read-only delegate task: role `Role`
+  (default `Review`), a fresh worktree cut at the reviewed head SHA, never committed on settle,
+  agent `Kind` (default `ClaudeCode`) at the level of the group's tier (`Levels`: `deep` High,
+  `standard` Medium), on `Runner` when set (absent is the delegation default runner, `local` the
+  desktop). A repo maps to a project by a `Repos` row (`Repo`, `ProjectId` or `Project`, optional
+  `LocalPath`), else by the project whose `GitRepositoryUrl` ends in `owner/name` (GitHub) or whose
+  `LocalRepositoryPath` is the subject's path (local git); with no match the reviewer node fails
+  and names the fix. A GitHub PR head is fetched from origin's `refs/pull/<n>/head` into the
+  project's checkout first. The pack is inlined in the brief up to `InlinePackMaxChars` (16,000);
+  a larger pack is read from `GET /api/review-runs/{id}/packs/{iteration}/{group}`. The reviewer
+  node is asynchronous: it records the task id, parks Waiting with the run queued, and completes on
+  a later pass from the task's final report. A task not finished after `TimeoutMinutes` (90) is
+  cancelled and the node fails.
+- **Completions, `Review:Completions`.** Providers by id with a `Dialect`: `openai-chat`
+  (`BaseUrl`, `Model`, key; `litellm-chat` defaults to Jev's key, `Review:Secrets:JevApiKey`),
+  `anthropic-messages` (`anthropic`: Claude Haiku 5.5 at `https://api.anthropic.com`, key
+  `Review:Secrets:AnthropicApiKey`; `AuthScheme: bearer` for a gateway, optional `Effort`), and
+  `delegation` (`haiku-delegate`, `luna-delegate`: a Low read-only delegate task, bounded by the
+  entry's `TimeoutSeconds`, 240). When no `completions-cheap` chain is configured, it is built from
+  the HTTP providers that have their URL, key and model; seats join only by configuration. An
+  empty chain skips verify and says so.
+- **Thread resolution.** GitHub threads are resolved over GraphQL at the host's
+  `Review:CodeHosts:Hosts:<id>:GraphQlUrl`, which defaults from `BaseUrl` (`/api/graphql` for
+  GitHub Enterprise Server). The token needs pull requests read/write.
+
 ## 8. Code host
 
 ### 8.1 `ICodeHost`

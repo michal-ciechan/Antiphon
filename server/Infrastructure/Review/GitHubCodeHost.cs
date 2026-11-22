@@ -34,13 +34,36 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
 
     /// <summary>
     /// A machine user's review counts for branch protection; check runs need a GitHub App (design 8.2).
-    /// Resolving a thread needs GraphQL (the thread node id is not in any REST response), so it is off
-    /// until the GraphQL call lands; replies still post.
+    /// Threads are resolved over GraphQL (<c>resolveReviewThread</c>): the thread node id is in no REST
+    /// response, so a posted review reads its threads once over GraphQL (<see cref="PostReviewAsync"/>).
     /// </summary>
     public CodeHostCapabilities Capabilities { get; } = new(
-        SupportsCheckRuns: false, CanResolveThreads: false, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
+        SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
         CanReadFiles: true);
+
+    /// <summary>The PR's review threads, a page at a time: each thread's node id and its first comment's database id.</summary>
+    public const string ReviewThreadsQuery = """
+        query($owner: String!, $name: String!, $number: Int!, $after: String) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes { id isResolved comments(first: 1) { nodes { databaseId } } }
+              }
+            }
+          }
+        }
+        """;
+
+    public const string ResolveThreadMutation = """
+        mutation($threadId: ID!) {
+          resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } }
+        }
+        """;
+
+    /// <summary>GitHub lists at most this many threads per page; a PR is read up to <see cref="MaxThreadPages"/> pages.</summary>
+    private const int MaxThreadPages = 10;
 
     public async Task<CodeHostPullRequest> GetPullRequestAsync(CodeHostTarget target, CancellationToken ct)
     {
@@ -184,7 +207,157 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
             posted.Add(new CodeHostPostedComment(wanted.Path, wanted.Line, match.GetProperty("id").ToString(), null, Text(match, "html_url")));
         }
 
+        if (posted.Count == 0)
+            return new CodeHostPostedReview(reviewId, url, posted);
+
+        // The thread ids, so a later resolution is one mutation. A failure here leaves them null: the
+        // review is posted, and resolving looks the thread up by its comment instead.
+        try
+        {
+            var threads = await ThreadIdsByCommentAsync(target, ct);
+            posted = posted.Select(c => threads.TryGetValue(c.CommentId, out var thread) ? c with { ThreadId = thread } : c).ToList();
+        }
+        catch (CodeHostException)
+        {
+        }
+
         return new CodeHostPostedReview(reviewId, url, posted);
+    }
+
+    /// <summary>
+    /// GraphQL <c>resolveReviewThread</c>. <paramref name="threadId"/> is the thread's node id, or the
+    /// database id of the REST comment that started it (all digits), which is mapped to the thread through
+    /// <c>repository.pullRequest.reviewThreads</c> first. An already-resolved thread is left alone.
+    /// </summary>
+    public async Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct)
+    {
+        var id = threadId.Trim();
+        if (id.Length == 0)
+            throw new CodeHostException(CodeHostFailureKind.InvalidRequest, "No thread id to resolve.");
+        if (id.All(char.IsAsciiDigit))
+        {
+            var threads = await ThreadIdsByCommentAsync(target, ct);
+            id = threads.TryGetValue(id, out var found)
+                ? found
+                : throw new CodeHostException(CodeHostFailureKind.NotFound, $"No review thread on {target.Repo}#{target.PrNumber} starts with comment {threadId}.");
+        }
+
+        using var doc = await GraphQlAsync(target, ResolveThreadMutation, new Dictionary<string, object?> { ["threadId"] = id }, ct);
+        var resolved = doc.RootElement.GetProperty("data").TryGetProperty("resolveReviewThread", out var payload)
+            && payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("thread", out var thread) && thread.ValueKind == JsonValueKind.Object
+            && thread.TryGetProperty("isResolved", out var flag) && flag.ValueKind == JsonValueKind.True;
+        if (!resolved)
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub did not report thread {id} as resolved.");
+    }
+
+    /// <summary>The PR's review threads by the database id of their first comment (paged GraphQL <c>reviewThreads</c>).</summary>
+    public async Task<IReadOnlyDictionary<string, string>> ThreadIdsByCommentAsync(CodeHostTarget target, CancellationToken ct)
+    {
+        var parts = RepoPath(target).Split('/');
+        var number = RequirePr(target);
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? after = null;
+        for (var page = 0; page < MaxThreadPages; page++)
+        {
+            using var doc = await GraphQlAsync(target, ReviewThreadsQuery, new Dictionary<string, object?>
+            {
+                ["owner"] = Uri.UnescapeDataString(parts[1]),
+                ["name"] = Uri.UnescapeDataString(parts[2]),
+                ["number"] = number,
+                ["after"] = after,
+            }, ct);
+            var data = doc.RootElement.GetProperty("data");
+            if (!data.TryGetProperty("repository", out var repo) || repo.ValueKind != JsonValueKind.Object
+                || !repo.TryGetProperty("pullRequest", out var pr) || pr.ValueKind != JsonValueKind.Object)
+                throw new CodeHostException(CodeHostFailureKind.NotFound, $"GitHub GraphQL found no pull request {target.Repo}#{number}.");
+            var threads = pr.GetProperty("reviewThreads");
+            foreach (var node in threads.GetProperty("nodes").EnumerateArray())
+            {
+                if (Text(node, "id") is not { } nodeId || !node.TryGetProperty("comments", out var first)
+                    || !first.TryGetProperty("nodes", out var firstNodes) || firstNodes.ValueKind != JsonValueKind.Array || firstNodes.GetArrayLength() == 0)
+                    continue;
+                if (firstNodes[0].TryGetProperty("databaseId", out var databaseId) && databaseId.ValueKind == JsonValueKind.Number)
+                    map[databaseId.GetRawText()] = nodeId;
+            }
+
+            var info = threads.GetProperty("pageInfo");
+            if (!info.TryGetProperty("hasNextPage", out var more) || more.ValueKind != JsonValueKind.True)
+                break;
+            after = Text(info, "endCursor");
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// <c>{api root}/api/graphql</c> for GitHub Enterprise Server (<c>…/api/v3</c>), <c>{root}/graphql</c>
+    /// otherwise (<c>https://api.github.com/graphql</c>), or the host's <c>GraphQlUrl</c>.
+    /// </summary>
+    public static Uri GraphQlEndpoint(ReviewCodeHost host)
+    {
+        if (!string.IsNullOrWhiteSpace(host.GraphQlUrl))
+            return new Uri(host.GraphQlUrl.Trim(), UriKind.Absolute);
+        var root = (string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl.Trim()).TrimEnd('/');
+        return new Uri(root.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase) ? root[..^"v3".Length] + "graphql" : root + "/graphql", UriKind.Absolute);
+    }
+
+    /// <summary>
+    /// One GraphQL POST. A non-2xx is mapped like REST; a 200 with <c>errors</c> is mapped by the first
+    /// error's type (NOT_FOUND, FORBIDDEN, RATE_LIMITED; anything else is an invalid request).
+    /// </summary>
+    private async Task<JsonDocument> GraphQlAsync(CodeHostTarget target, string query, IReadOnlyDictionary<string, object?> variables, CancellationToken ct)
+    {
+        var host = Host(target);
+        using var request = new HttpRequestMessage(HttpMethod.Post, GraphQlEndpoint(host));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
+        if (!string.IsNullOrEmpty(host.Token))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        request.Content = new StringContent(JsonSerializer.Serialize(new { query, variables }), System.Text.Encoding.UTF8, "application/json");
+
+        var seconds = Math.Max(1, host.TimeoutSeconds);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(seconds));
+        string body;
+        try
+        {
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token);
+            body = await response.Content.ReadAsStringAsync(budget.Token);
+            if (!response.IsSuccessStatusCode)
+                throw Failure(response, body, "POST", "graphql");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub POST graphql: {ex.Message}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub POST graphql: no response within {seconds}s.");
+        }
+
+        var doc = Parse(body, "GraphQL response");
+        if (doc.RootElement.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+        {
+            var first = errors[0];
+            var type = Text(first, "type");
+            var message = Text(first, "message") ?? "GraphQL error";
+            doc.Dispose();
+            throw new CodeHostException(type switch
+            {
+                "NOT_FOUND" => CodeHostFailureKind.NotFound,
+                "FORBIDDEN" or "INSUFFICIENT_SCOPES" => CodeHostFailureKind.Rejected,
+                "RATE_LIMITED" => CodeHostFailureKind.RateLimited,
+                _ => CodeHostFailureKind.InvalidRequest,
+            }, $"GitHub GraphQL: {message}");
+        }
+
+        if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            doc.Dispose();
+            throw new CodeHostException(CodeHostFailureKind.Unavailable, "GitHub GraphQL answered with no data.");
+        }
+
+        return doc;
     }
 
     /// <summary><c>POST pulls/{n}/comments/{id}/replies</c>.</summary>
@@ -195,10 +368,6 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         using var doc = Parse(created, "reply");
         return new CodeHostThreadReply(doc.RootElement.TryGetProperty("id", out var id) ? id.ToString() : "", Text(doc.RootElement, "html_url"));
     }
-
-    /// <summary>Needs GraphQL <c>resolveReviewThread</c>; see <see cref="Capabilities"/>.</summary>
-    public Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct) =>
-        throw new CodeHostException(CodeHostFailureKind.Unsupported, "Resolving a GitHub thread needs the GraphQL API, which this adapter does not call yet.");
 
     /// <summary><c>POST statuses/{sha}</c>; the description is cut to GitHub's 140 characters.</summary>
     public async Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct)

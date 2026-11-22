@@ -52,7 +52,11 @@ public interface ICodeHost
     /// <summary>Replies in the thread that <paramref name="commentId"/> started.</summary>
     Task<CodeHostThreadReply> ReplyToThreadAsync(CodeHostTarget target, string commentId, string body, CancellationToken ct);
 
-    /// <summary>Resolves a thread by its host thread id (<see cref="CodeHostPostedComment.ThreadId"/>).</summary>
+    /// <summary>
+    /// Resolves a thread by its host thread id (<see cref="CodeHostPostedComment.ThreadId"/>). When no
+    /// thread id was recorded, callers pass the id of the comment that started the thread; GitHub maps
+    /// it to the thread itself.
+    /// </summary>
     Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct);
 
     /// <summary>Sets a commit status on <paramref name="sha"/> (design 4.11).</summary>

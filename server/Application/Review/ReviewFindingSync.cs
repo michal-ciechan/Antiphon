@@ -66,7 +66,8 @@ public sealed class ReviewFindingSync(AppDbContext db, CodeHostRouter router, IE
                 {
                     await binding.Host.ReplyToThreadAsync(binding.Target, finding.ExternalCommentId, ReplyText(evt), ct);
                     var resolves = Resolving.Contains(evt.Action) || (evt.Action == ReviewFindingAction.Fixed && evt.ActorLogin == Execution.ReviewWalk.BotLogin);
-                    if (resolves && binding.Host.Capabilities.CanResolveThreads && finding.ExternalThreadId is { } thread)
+                    // A thread id not recorded at publish is looked up by the comment that started it (GitHub GraphQL).
+                    if (resolves && binding.Host.Capabilities.CanResolveThreads && (finding.ExternalThreadId ?? finding.ExternalCommentId) is { } thread)
                         await binding.Host.ResolveThreadAsync(binding.Target, thread, ct);
                     evt.SyncState = ReviewSyncState.Synced;
                 }
