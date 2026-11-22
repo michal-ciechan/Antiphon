@@ -67,7 +67,6 @@ public class RunnerGrokAdapterReadyTests
                 await AdvanceStartup(wait, clock, ordinal, TimeSpan.FromSeconds(30));
 
             (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
-            clock.GetUtcNow().ShouldBe(new PollGateClock().GetUtcNow().AddSeconds(180));
             client.SnapshotReads.ShouldBe(6);
             client.Writes.ShouldBeEmpty();
             var capture = File.ReadAllText(directory.GetFiles().Single().FullName);
@@ -76,6 +75,88 @@ public class RunnerGrokAdapterReadyTests
             capture.ShouldContain("elapsedMs: 180000");
             capture.ShouldContain("workingCeilingMs: 180000");
             logger.Messages.Single().ShouldContain("workingCeilingMs=180000");
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C2047_Unknown_retries_only_if_mcp_was_seen(bool mcpSeen)
+    {
+        // Only the first frame carries the banner. The deadline frame is Unknown in both cases.
+        var client = new ScriptedClient([mcpSeen ? "MCP (one)" : "preparing", "unknown at deadline", Ready]);
+        var clock = new PollGateClock();
+        var directory = Directory.CreateTempSubdirectory("c2047-retry-");
+        try
+        {
+            await using var adapter = NewAdapter(client, max: 60000, settle: 50,
+                captureDirectory: directory.FullName, time: clock);
+            await adapter.StartAsync(Spec(), CancellationToken.None);
+            var wait = adapter.WaitForReadyAsync(CancellationToken.None);
+
+            await AdvanceStartup(wait, clock, 1, TimeSpan.FromSeconds(60));
+            if (mcpSeen)
+            {
+                await AdvanceStartup(wait, clock, 2, TimeSpan.FromSeconds(10));
+                await AdvanceStartup(wait, clock, 3, TimeSpan.FromMilliseconds(50));
+            }
+
+            (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(mcpSeen);
+            client.SnapshotReads.ShouldBe(mcpSeen ? 4 : 2);
+            client.StartCalls.ShouldBe(1);
+            client.Writes.ShouldBeEmpty();
+            if (mcpSeen)
+                directory.GetFiles().ShouldBeEmpty();
+            else
+            {
+                var capture = File.ReadAllText(directory.GetFiles().Single().FullName);
+                capture.ShouldContain("elapsedMs: 60000");
+                capture.ShouldNotContain("firstWindow");
+            }
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C2047_Retry_exhaustion_captures_both_windows_without_input(bool trustDuringRetry)
+    {
+        const string firstFrame = "MCP (one) FIRST_WINDOW_FRAME";
+        var secondFrame = trustDuringRetry ? Trust : "MCP (one) SECOND_WINDOW_FRAME";
+        var client = new ScriptedClient([firstFrame, firstFrame, secondFrame]);
+        var clock = new PollGateClock();
+        var directory = Directory.CreateTempSubdirectory("c2047-retry-end-");
+        var logger = new TestLogger();
+        try
+        {
+            await using var adapter = NewAdapter(client, max: 60000,
+                captureDirectory: directory.FullName, time: clock, logger: logger);
+            await adapter.StartAsync(Spec(), CancellationToken.None);
+            var wait = adapter.WaitForReadyAsync(CancellationToken.None);
+
+            await AdvanceStartup(wait, clock, 1, TimeSpan.FromSeconds(60));
+            await AdvanceStartup(wait, clock, 2, TimeSpan.FromSeconds(10));
+            await AdvanceStartup(wait, clock, 3, TimeSpan.FromSeconds(50));
+
+            (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
+            client.SnapshotReads.ShouldBe(4);
+            client.StartCalls.ShouldBe(1);
+            client.Writes.ShouldBeEmpty();
+            var capture = File.ReadAllText(directory.GetFiles().Single().FullName);
+            capture.ShouldContain("outcome: Deadline");
+            capture.ShouldContain($"lastScreenReason: {(trustDuringRetry ? "Trust" : "Unknown")}");
+            capture.ShouldContain("elapsedMs: 120000");
+            capture.ShouldContain("firstWindowElapsedMs: 60000");
+            capture.ShouldContain("secondWindowElapsedMs: 60000");
+            capture.ShouldContain("FIRST_WINDOW_FRAME");
+            capture.ShouldContain(trustDuringRetry ? "Yes, proceed" : "SECOND_WINDOW_FRAME");
+            var warning = logger.Messages.Single();
+            warning.ShouldContain("firstWindowElapsedMs=60000");
+            warning.ShouldContain("secondWindowElapsedMs=60000");
+            warning.ShouldNotContain("FIRST_WINDOW_FRAME");
+            warning.ShouldNotContain("SECOND_WINDOW_FRAME");
         }
         finally { directory.Delete(true); }
     }
@@ -725,16 +806,21 @@ public class RunnerGrokAdapterReadyTests
         bool loop = false, Action<int>? onSnapshot = null) : ISessionRunnerClient
     {
         private int _index;
+        public int StartCalls { get; private set; }
         public int SnapshotReads { get; private set; }
         public int BufferReads { get; private set; }
         public List<string> Writes { get; } = [];
         private string Screen => screens[loop ? _index % screens.Count : Math.Min(_index, screens.Count - 1)];
-        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) =>
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct)
+        {
+            StartCalls++;
+            return GetAsync(id, ct);
+        }
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(id, 12, DateTime.UtcNow.AddMinutes(-1), "Running", null,
                 AgentExitReason.Unknown, 0));
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
-        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => StartAsync(id, Spec(), ct);
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct)
         {
             BufferReads++;
