@@ -89,13 +89,14 @@ internal static partial class InProcessGitReads
         var patterns = a.Skip(2).ToList();
         if (patterns.Any(p => p.Length == 0 || p.StartsWith('-') || p.IndexOfAny(GlobCharacters) >= 0)) return null;
         var lines = new List<(string Name, string Sha, string Symref)>();
-        // Two names that differ only in case (a loose Foo beside a packed foo): on a case-insensitive file system
-        // libgit2 reads one through the other's loose file, where git's iterator keeps them apart.
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Two names that differ only in case (a loose Foo beside a packed foo): where the file system ignores case,
+        // libgit2 reads one through the other's loose file while git's iterator keeps both values apart. Anywhere
+        // in the repository, as a loose name outside the pattern still shadows a packed one inside it.
+        var seen = IgnoresCase(repo.Info.Path) ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
         foreach (var reference in repo.Refs)
         {
             var name = reference.CanonicalName;
-            if (!seen.Add(name)) return null;
+            if (seen is not null && !seen.Add(name)) return null;
             if (!name.StartsWith("refs/", StringComparison.Ordinal)) continue;
             // A literal pattern matches the whole name or a prefix ending at a '/'.
             if (patterns.Count > 0 && !patterns.Any(p => name == p || name.StartsWith(p, StringComparison.Ordinal)
@@ -134,6 +135,14 @@ internal static partial class InProcessGitReads
     }
 
     private enum RefFormat { NameSha, ShaName, Name, NameShaSymref }
+
+    // Whether the file system holding the git directory ignores case (its own path found in another case).
+    private static bool IgnoresCase(string gitDir)
+    {
+        var upper = gitDir.ToUpperInvariant();
+        var lower = gitDir.ToLowerInvariant();
+        return upper != lower && Directory.Exists(upper) && Directory.Exists(lower);
+    }
 
     private static LandingGitResult? DiffTree(Repository repo, IReadOnlyList<string> a)
     {

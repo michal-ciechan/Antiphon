@@ -194,7 +194,17 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(fixture.Source, Expect.Fallback, perWorktree);
         await CompareAsync(fixture.Source, Expect.Fallback, "for-each-ref", "--format=%(refname)");
         await fixture.RequiredAsync(fixture.Source, "update-ref", "-d", "refs/bisect/bad");
-        // A loose ref spelled otherwise beside a packed one (case-insensitive file systems): git's.
+        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/chain", "refs/antiphon/salvage/sym");
+        await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname) %(symref)",
+            "refs/antiphon/salvage/");
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", "-d", "--no-deref", "refs/antiphon/salvage/chain");
+        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/dangling", "refs/heads/no-such-branch");
+        foreach (var format in formats)
+            await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", format, "refs/antiphon/salvage/");
+
+        // Last, as it packs every ref: a loose ref spelled otherwise beside a packed one where the file system ignores
+        // case. git lists both values, libgit2 would read the loose file for both: git's. A by-name read is the
+        // loose file's value in git too, so it stays answered (and equal).
         var ignoresCase = fixture.Repository != fixture.Repository.ToUpperInvariant()
             && Directory.Exists(fixture.Repository.ToUpperInvariant());
         if (ignoresCase)
@@ -206,17 +216,10 @@ public sealed class LibGit2VsGitDifferentialTests
             await File.WriteAllTextAsync(Path.Combine(common, "refs", "antiphon", "case", "Foo"),
                 (await fixture.RequiredAsync(fixture.Repository, "rev-parse", fixture.TargetRef)).Trim() + "\n");
             await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname)", "refs/antiphon/case/");
-            await CompareAsync(fixture.Repository, Expect.Fallback, "show-ref", "--verify", "--hash", "refs/antiphon/case/foo");
-            await CompareAsync(fixture.Repository, Expect.Fallback, "rev-parse", "--verify", "refs/antiphon/case/foo");
-            File.Delete(Path.Combine(common, "refs", "antiphon", "case", "Foo"));
+            await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname)", "refs/heads/");
+            await CompareAsync(fixture.Repository, Expect.Answered, "show-ref", "--verify", "--hash", "refs/antiphon/case/foo");
+            await CompareAsync(fixture.Repository, Expect.Answered, "rev-parse", "--verify", "refs/antiphon/case/foo");
         }
-        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/chain", "refs/antiphon/salvage/sym");
-        await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", "--format=%(refname) %(objectname) %(symref)",
-            "refs/antiphon/salvage/");
-        await fixture.RequiredAsync(fixture.Repository, "update-ref", "-d", "--no-deref", "refs/antiphon/salvage/chain");
-        await fixture.RequiredAsync(fixture.Repository, "symbolic-ref", "refs/antiphon/salvage/dangling", "refs/heads/no-such-branch");
-        foreach (var format in formats)
-            await CompareAsync(fixture.Repository, Expect.Fallback, "for-each-ref", format, "refs/antiphon/salvage/");
     }
 
     [Test]

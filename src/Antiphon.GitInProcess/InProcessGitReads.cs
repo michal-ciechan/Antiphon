@@ -572,20 +572,8 @@ internal static partial class InProcessGitReads
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
     private static string? Direct(Repository repo, string name) =>
-        IsPlainRef(name) && !LooseSpelledOtherwise(repo, name) && repo.Refs[name] is DirectReference direct
-            && GitText.IsOid(direct.TargetIdentifier)
+        IsPlainRef(name) && repo.Refs[name] is DirectReference direct && GitText.IsOid(direct.TargetIdentifier)
             ? direct.TargetIdentifier : null;
-
-    // A loose ref file reached by the name but spelled otherwise on disk (refs/heads/Foo for refs/heads/foo on a
-    // case-insensitive file system): libgit2 reads that file for the name, where git may read a packed ref.
-    private static bool LooseSpelledOtherwise(Repository repo, string name)
-    {
-        var gitDir = repo.Info.Path;
-        if (CommonDirectory(gitDir) is not { } common) return true;
-        foreach (var dir in new[] { gitDir, common })
-            if (File.Exists(Path.Combine(dir, name)) && GitPathBelow(dir, name) is null) return true;
-        return false;
-    }
 
     /// <summary>A full ref name git would accept as written (libgit2 normalises some it would refuse).</summary>
     private static bool IsPlainRef(string name)
