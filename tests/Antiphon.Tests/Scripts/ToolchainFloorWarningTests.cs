@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
 
@@ -130,16 +131,38 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-tests-impl.ps1"
             ]);
 
+    /// <summary>
+    /// W2-nightly S19, in-process (was the scripts/test-nightly-run.ps1 case): NightlyRun.Run prints a toolchain floor warning
+    /// before the tests hop and keeps the same exit code and phase; the versions come from the host probe, never the real git.
+    /// </summary>
     [Test]
-    public Task C1698_RunPrintsToolchainWarning() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1698",
-            nameof(C1698_RunPrintsToolchainWarning), 4,
-            [
-                "C1698 Run prints the git floor warning",
-                "C1698 Run prints none at the floor",
-                "C1698 Run warns before the tests hop",
-                "C1698 Run exit code unchanged by the warning"
-            ]);
+    public void C1698_RunPrintsToolchainWarning()
+    {
+        (string[] Lines, Antiphon.Nightly.NightlyRunResult Result) Run(string gitVersion)
+        {
+            using var w = new Antiphon.Tests.Scripts.Nightly.NightlyRunWorld("c1698-run");
+            var repo = Antiphon.Tests.Scripts.Nightly.NightlyPlanCases.Repo;
+            Directory.CreateDirectory(Path.Combine(w.Clone, "docker"));
+            File.Copy(Path.Combine(repo, "docker", "git-minimum-version.sh"), Path.Combine(w.Clone, "docker", "git-minimum-version.sh"));
+            File.Copy(Path.Combine(repo, "global.json"), Path.Combine(w.Clone, "global.json"));
+            w.Probe.Versions["git"] = "git version " + gitVersion;
+            var result = w.Run(o => o.NoSync = true);
+            return (w.OutLines, result);
+        }
+        var below = Run("2.42.0");
+        var at = Run("2.43.0");
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var warn = below.Lines.Count(l => Regex.IsMatch(l, @"WARNING: git 2\.42\.0 is below the minimum 2\.43; lands will fail"));
+        rows.Check(warn == 1, "C1698 Run prints the git floor warning", string.Join(" | ", below.Lines));
+        rows.Check(!at.Lines.Any(l => l.Contains("WARNING:", StringComparison.Ordinal)), "C1698 Run prints none at the floor", string.Join(" | ", at.Lines));
+        var warnAt = Array.FindIndex(below.Lines, l => Regex.IsMatch(l, "WARNING: git"));
+        var hop = Array.FindIndex(below.Lines, l => Regex.IsMatch(l, "running .*nightly-tests"));
+        rows.Check(warnAt >= 0 && hop > warnAt, "C1698 Run warns before the tests hop", "warning=" + warnAt + " hop=" + hop);
+        rows.Check(below.Result.ExitCode == at.Result.ExitCode && below.Result.Phase == at.Result.Phase, "C1698 Run exit code unchanged by the warning",
+            "below=" + below.Result.ExitCode + "/" + below.Result.Phase + " at=" + at.Result.ExitCode + "/" + at.Result.Phase);
+        rows.ShouldAllPass(4, "C1698 Run prints the git floor warning", "C1698 Run prints none at the floor", "C1698 Run warns before the tests hop",
+            "C1698 Run exit code unchanged by the warning");
+    }
 
     /// <summary>
     /// W2-nightly S15, in-process (was the scripts/test-nightly-tests.ps1 case): NightlyTests.ToolchainPreflight records the

@@ -24,37 +24,136 @@ public sealed class NightlyScriptsTests
             "C2044 blank ReleaseRoot is refused before recording a run and named in the final JSON",
             "C2044 explicit ReleaseRoot creates the selection in the supplied root");
 
+    /// <summary>
+    /// CARD-1854, in-process since W2-nightly S19 (was the scripts/test-nightly-run.ps1 case): real tracked files, with only
+    /// the native stdout decoding and quoting simulated in the git seam; NightlyRun.RepairLineEndings is the C# of
+    /// Repair-NightlyCheckoutLineEndings.
+    /// </summary>
     [Test]
-    public Task C1854_EolRepairHardening() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1854",
-            nameof(C1854_EolRepairHardening), 11,
-            [
-                "C1854 real reused clone has three stale tracked files",
-                "C1854 missing decoded and C-quoted paths are discriminating inputs",
-                "C1854 mixed repair completes despite missing decoded path",
-                "C1854 valid literal path is rewritten to LF",
-                "C1854 skipped files retain their bytes",
-                "C1854 checkout receives only the existing unquoted path",
-                "C1854 mixed repair logs two skipped paths",
-                "C1854 skipped-only repair logs count without checkout",
-                "C1854 real non-ASCII paths repair when decoded correctly",
-                "C1854 clean repair remains silent",
-                "C1854 repaired clone has clean tracked status"
-            ], new ScriptHarnessOptions(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(10)),
-            CancellationToken.None);
+    public void C1854_EolRepairHardening()
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c1854");
+        var seed = fixture.PathOf("seed");
+        var clone = fixture.PathOf("clone");
+        Directory.CreateDirectory(seed);
+        string Git(string directory, params string[] arguments) => Antiphon.Tests.Scripts.Nightly.NightlyRunWorld.FixtureGit(directory, arguments);
+        string[] commit = ["-c", "user.name=Eol Test", "-c", "user.email=eol@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m"];
+        const string plain = "selector [one].ps1";
+        var unicode = "unicode-" + (char)0x00e9 + ".ps1";
+        var quoted = "quoted-" + (char)0x4e2d + ".ps1";
+        Git(seed, "init", "-q", "-b", "master");
+        Git(seed, "config", "--local", "core.autocrlf", "false");
+        foreach (var name in new[] { plain, unicode, quoted }) File.WriteAllBytes(Path.Combine(seed, name), "a\nb\n"u8.ToArray());
+        Git(seed, "add", ".");
+        Git(seed, [.. commit, "before-attribute"]);
+        Git(fixture.Root, "clone", "-q", "-c", "core.autocrlf=true", seed, clone);
+        File.WriteAllBytes(Path.Combine(seed, ".gitattributes"), "*.ps1 text eol=lf\n"u8.ToArray());
+        Git(seed, "add", ".gitattributes");
+        Git(seed, [.. commit, "pin-lf"]);
+        Git(clone, "fetch", "-q", "origin", "master");
+        Git(clone, "reset", "--hard", "FETCH_HEAD");
+        bool Crlf(string name) => File.ReadAllBytes(Path.Combine(clone, name)).Contains((byte)13);
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var crlf = new[] { plain, unicode, quoted }.Count(Crlf);
+        rows.Check(crlf == 3, "C1854 real reused clone has three stale tracked files", crlf.ToString());
 
-    /// <summary>rc ae84478d g126: the sync rewrites working files whose bytes predate an eol attribute.</summary>
+        // Model UTF-8 bytes decoded with the console OEM code page on Windows PS 5.1.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var mangled = Encoding.GetEncoding(437).GetString(Encoding.UTF8.GetBytes(unicode));
+        var quotedLine = Git(clone, "-c", "core.quotePath=true", "ls-files", "--eol").Split('\n').First(l => l.Contains("\"quoted-", StringComparison.Ordinal));
+        var quotedPath = quotedLine.TrimEnd('\r').Split('\t', 2)[1];
+        rows.Check(mangled != unicode && !File.Exists(Path.Combine(clone, mangled)) && quotedPath.StartsWith('"'), "C1854 missing decoded and C-quoted paths are discriminating inputs");
+        var checkouts = new List<string>();
+        Antiphon.Nightly.NightlyHost Host(Antiphon.Nightly.NightlyGit git) => new()
+        {
+            Clock = TimeProvider.System, Git = git, Launcher = new Antiphon.Tests.Scripts.Nightly.RecordingLauncher(),
+            Processes = new Antiphon.Tests.Scripts.Nightly.FakeProcessTable(), Probe = new Antiphon.Tests.Scripts.Nightly.FakeHostProbe(),
+            Out = fixture.Out, Error = fixture.Error, Trace = TextWriter.Null,
+        };
+        var seamed = Host((directory, arguments) =>
+        {
+            var run = Antiphon.Nightly.NightlyNativeGit.Run(directory, arguments);
+            var text = run.Output;
+            if (arguments.Contains("ls-files")) text = text.Replace(unicode, mangled).Replace(quoted, quotedPath);
+            if (arguments.Contains("checkout-index")) checkouts.Add(string.Join("|", arguments));
+            return new Antiphon.Nightly.NightlyGitResult(run.ExitCode, text);
+        });
+        string Repair(Antiphon.Nightly.NightlyHost host)
+        {
+            var before = fixture.Out.ToString().Length;
+            Antiphon.Nightly.NightlyRun.RepairLineEndings(host, clone);
+            return fixture.Out.ToString()[before..];
+        }
+        var failure = "";
+        var log = "";
+        try { log = Repair(seamed); }
+        catch (Exception ex) { failure = ex.Message; }
+        rows.Check(failure.Length == 0, "C1854 mixed repair completes despite missing decoded path", failure);
+        rows.Check(!Crlf(plain), "C1854 valid literal path is rewritten to LF");
+        rows.Check(Crlf(unicode) && Crlf(quoted), "C1854 skipped files retain their bytes");
+        rows.Check(checkouts.Count == 1 && checkouts[0] == "checkout-index|-f|-u|--|" + plain, "C1854 checkout receives only the existing unquoted path", string.Join(";", checkouts));
+        rows.Check(Regex.IsMatch(log, @"nightly sync: rewriting 1 working file\(s\).*skipped=2"), "C1854 mixed repair logs two skipped paths", log);
+        checkouts.Clear();
+        log = Repair(seamed);
+        rows.Check(checkouts.Count == 0 && Regex.IsMatch(log, @"nightly sync: rewriting 0 working file\(s\).*skipped=2"), "C1854 skipped-only repair logs count without checkout", log);
+        // The real git with correctly decoded non-ASCII paths (NightlyNativeGit reads UTF-8).
+        var real = Host(Antiphon.Nightly.NightlyNativeGit.Run);
+        Repair(real);
+        var remaining = new[] { plain, unicode, quoted }.Count(Crlf);
+        rows.Check(remaining == 0, "C1854 real non-ASCII paths repair when decoded correctly", remaining.ToString());
+        log = Repair(real);
+        rows.Check(string.IsNullOrWhiteSpace(log), "C1854 clean repair remains silent", log);
+        var status = Git(clone, "status", "--porcelain", "--untracked-files=no");
+        rows.Check(string.IsNullOrWhiteSpace(status), "C1854 repaired clone has clean tracked status", status);
+        rows.ShouldAllPass(11);
+    }
+
+    /// <summary>
+    /// rc ae84478d g126, in-process since W2-nightly S19: the sync rewrites working files whose bytes predate an eol attribute.
+    /// A reused clone made under core.autocrlf=true before *.ps1 eol=lf kept CRLF through fetch and reset --hard; the fixture
+    /// sets core.autocrlf in the clone itself.
+    /// </summary>
     [Test]
-    public Task C1313_ReusedCloneEolRepair() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1313",
-            nameof(C1313_ReusedCloneEolRepair), 5,
-            [
-                "C1313 reused clone checked the selector out CRLF",
-                "C1313 reused clone sync completes",
-                "C1313 reused clone selector is LF after sync",
-                "C1313 reused clone leaves a file without an eol attribute as configured",
-                "C1313 reused clone is clean after the eol repair"
-            ]);
+    public void C1313_ReusedCloneEolRepair()
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c1313");
+        var seed = fixture.PathOf("seed");
+        var remote = seed.Replace('\\', '/');
+        var clone = fixture.PathOf("clone");
+        var state = fixture.PathOf("state");
+        Directory.CreateDirectory(seed);
+        string Git(string directory, params string[] arguments) => Antiphon.Tests.Scripts.Nightly.NightlyRunWorld.FixtureGit(directory, arguments);
+        string[] commit = ["-c", "user.name=Eol Test", "-c", "user.email=eol@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m"];
+        Git(seed, "init", "-q", "-b", "master");
+        Git(seed, "config", "--local", "core.autocrlf", "false");
+        File.WriteAllBytes(Path.Combine(seed, "sel.ps1"), "a\nb\n"u8.ToArray());
+        File.WriteAllBytes(Path.Combine(seed, "other.txt"), "c\nd\n"u8.ToArray());
+        Git(seed, "add", "sel.ps1", "other.txt");
+        Git(seed, [.. commit, "before-attribute"]);
+        Git(fixture.Root, "clone", "-q", "-c", "core.autocrlf=true", remote, clone);
+        File.WriteAllText(Path.Combine(clone, ".antiphon-nightly-owned"), "{\"origin\":\"" + remote + "\",\"kind\":\"nightly-clone\"}");
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var before = File.ReadAllBytes(Path.Combine(clone, "sel.ps1"));
+        rows.Check(before.Contains((byte)13), "C1313 reused clone checked the selector out CRLF", before.Length.ToString());
+        // The attribute lands later; the selector blob itself does not change.
+        File.WriteAllBytes(Path.Combine(seed, ".gitattributes"), "*.ps1 text eol=lf\n"u8.ToArray());
+        Git(seed, "add", ".gitattributes");
+        Git(seed, [.. commit, "pin-ps1-lf"]);
+        var run = Antiphon.Nightly.NightlyRun.Run(new Antiphon.Nightly.NightlyRunOptions
+        {
+            CheckoutRoot = clone, StateRoot = state, LogRoot = Path.Combine(state, "logs"), RemoteUrl = remote, Ref = "master", Trigger = "manual", WhatIf = true,
+            CoordinationRoot = fixture.PathOf("coord"),
+        }, Antiphon.Tests.Scripts.Nightly.NightlyRunTests.RealGitHost(fixture));
+        rows.Check(run.ExitCode == 0 && run.Phase == "whatif", "C1313 reused clone sync completes", run.Refusal + " " + run.Phase + " " + run.ExitCode + "\n" + fixture.Out);
+        var after = File.ReadAllBytes(Path.Combine(clone, "sel.ps1"));
+        rows.Check(!after.Contains((byte)13) && after.Length == 4, "C1313 reused clone selector is LF after sync", after.Length.ToString());
+        var other = File.ReadAllBytes(Path.Combine(clone, "other.txt"));
+        rows.Check(other.Contains((byte)13), "C1313 reused clone leaves a file without an eol attribute as configured", other.Length.ToString());
+        // The ownership marker is untracked by design; only tracked paths must be clean.
+        var status = Git(clone, "status", "--porcelain", "--untracked-files=no");
+        rows.Check(string.IsNullOrWhiteSpace(status), "C1313 reused clone is clean after the eol repair", status);
+        rows.ShouldAllPass(5);
+    }
 
     [Test]
     public void The_three_scripts_are_ascii_only()
@@ -76,6 +175,10 @@ public sealed class NightlyScriptsTests
                      // W2-nightly S06: the nightly report's C# and its command.
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyReport.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "NightlyReportCommand.cs"),
+                     // W2-nightly S19: the run core's C# and the nightly-tests command.
+                     Path.Combine("lib", "Antiphon.Nightly", "NightlyRun.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "NightlyRunOptions.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "NightlyTestsCommand.cs"),
                      Path.Combine("lib", "c487-harness.ps1"),
                      // CARD-1698: the toolchain floor library and the restart entry points that load it.
                      Path.Combine("lib", "toolchain-floor.ps1"),

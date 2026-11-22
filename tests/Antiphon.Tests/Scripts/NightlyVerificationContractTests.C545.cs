@@ -594,13 +594,7 @@ public sealed partial class NightlyVerificationContractTests
 
     // ---- PowerShell harness cases (CARD-0545 S1, S4, S5) ----
 
-    [Test]
-    public Task C545_ResultLine() => RunHarnessCaseAsync("test-nightly-run.ps1", "C545", "C545_ResultLine", 16,
-        "C545 ResultLine refusal last line is the JSON record",
-        "C545 ResultLine dst-summer localDueDate 2026-07-01",
-        "C545 ResultLine green flags equal last-run.json",
-        "C545 ResultLine no-report reportDelivered false and no green file");
-
+    // C545_ResultLine runs in-process in Nightly.NightlyRunTests (W2-nightly S19, on NightlyRun.Run).
     // C545_JobResultFetch, C545_WatchdogFresh, C545_WatchdogStale and C545_ReadinessRouting run in-process in
     // Nightly.NightlyHealthTests (W2-nightly S05 deleted scripts/test-nightly-health.ps1).
 

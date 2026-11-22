@@ -179,19 +179,17 @@ public sealed class NightlyDiscoveryParserTests
     }
 
     /// <summary>
-    /// G087 already runs from the report harness default loop. These cases must run unattended, not only from -Case: the run
-    /// harness default loop runs the prerequisite settle case, and the fixture class chunks (in-process since W2-nightly
-    /// S11), the fixture type name (S15) and the prerequisite gate (S15, NightlyPrerequisiteTests) are tests.
+    /// G087 already runs from the report harness default loop. These cases must run unattended, not only from -Case: the
+    /// fixture class chunks (in-process since W2-nightly S11), the fixture type name (S15), the prerequisite gate (S15) and the
+    /// prerequisite settle case (S19, both NightlyPrerequisiteTests) are tests.
     /// </summary>
     [Test]
     public void C1044_UnattendedCases()
     {
-        var scripts = Path.Combine(Repo, "scripts");
-        var runElse = ElseText(Path.Combine(scripts, "test-nightly-run.ps1"), "foreach ($fn in $cases)");
         var missing = new List<string>();
-        if (runElse.IndexOf("Test-C487_PrerequisiteSettle", StringComparison.Ordinal) < 0) missing.Add("Test-C487_PrerequisiteSettle");
         foreach (var (type, name) in new[] { (typeof(NightlyDiscoveryParserTests), nameof(C1044_FixtureClassChunks)), (typeof(NightlyDiscoveryParserTests), nameof(C1044_FixtureTypeName)),
-                     (typeof(NightlyPrerequisiteTests), nameof(NightlyPrerequisiteTests.C487_PrerequisiteGate)) })
+                     (typeof(NightlyPrerequisiteTests), nameof(NightlyPrerequisiteTests.C487_PrerequisiteGate)),
+                     (typeof(NightlyPrerequisiteTests), nameof(NightlyPrerequisiteTests.C487_PrerequisiteSettle)) })
             if (type.GetMethod(name)?.GetCustomAttribute<TestAttribute>() == null) missing.Add(name);
         var rows = new NightlyCaseRows();
         rows.Check(missing.Count == 0, "C1044 unattended harness loop runs fixture and prerequisite cases", string.Join(",", missing));
@@ -351,25 +349,4 @@ public sealed class NightlyDiscoveryParserTests
         "TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = "
         + uid + " }, DisplayName = " + method + ", Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Antiphon.Tests.Application, TypeName = "
         + typeName + ", MethodName = " + method + ", MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, DiscoveredTestNodeStateProperty { Explanation =  } ] } }";
-
-    /// <summary>Get-C1044ElseText: the last "} else {" branch (up to Write-C487Evidence) that contains the marker.</summary>
-    private static string ElseText(string path, string marker)
-    {
-        var text = File.ReadAllText(path);
-        var cursor = 0;
-        var found = "";
-        while (cursor < text.Length)
-        {
-            var idx = text.IndexOf("} else {", cursor, StringComparison.Ordinal);
-            if (idx < 0) break;
-            var end = text.IndexOf("Write-C487Evidence", idx, StringComparison.Ordinal);
-            if (end > idx)
-            {
-                var branch = text.Substring(idx, end - idx);
-                if (branch.IndexOf(marker, StringComparison.Ordinal) >= 0) found = branch;
-            }
-            cursor = idx + 8;
-        }
-        return found;
-    }
 }

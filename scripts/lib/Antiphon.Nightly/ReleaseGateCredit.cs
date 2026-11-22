@@ -25,6 +25,21 @@ namespace Antiphon.Nightly
         public string RequestedKind { get; init; }
     }
 
+    /// <summary>W2-nightly S19: a candidate ref as ReleaseGateCredit.Candidate reads it (CandidateRef's fields, plain).</summary>
+    public sealed class ReleaseGateCandidate
+    {
+        public bool Ok { get; init; }
+        public string Reason { get; init; } = "";
+        public string Stamp { get; init; } = "";
+        public string Kind { get; init; } = "";
+        public string CandidateId { get; init; } = "";
+        public string Ref { get; init; } = "";
+        public DateTime CutUtc { get; init; }
+    }
+
+    /// <summary>W2-nightly S19: a credit kind's store (StatePaths' Root and GreenPath, plain).</summary>
+    public sealed record ReleaseGateCreditStore(string CreditKind, string Root, string GreenPath);
+
     public static class ReleaseGateCredit
     {
         public const string DefaultReleaseRoot = @"C:\Antiphon\releases";
@@ -75,6 +90,17 @@ namespace Antiphon.Nightly
             if (!parsed.Ok) return Note("Ok", false, "Reason", parsed.Reason, "Stamp", parsed.Stamp, "CandidateId", "", "Ref", "", "Kind", parsed.Kind);
             return Note("Ok", true, "Reason", "", "Stamp", parsed.Stamp, "Kind", parsed.Kind, "CandidateId", parsed.CandidateId, "Ref", parsed.Ref,
                 "CutUtc", parsed.CutUtc);
+        }
+
+        /// <summary>W2-nightly S19: CandidateRef over plain values, for a caller without PowerShell (NightlyRun).</summary>
+        public static ReleaseGateCandidate Candidate(string reference, string sha)
+        {
+            var parsed = ParseCandidateRef(reference, sha);
+            return new ReleaseGateCandidate
+            {
+                Ok = parsed.Ok, Reason = parsed.Reason, Stamp = parsed.Stamp, Kind = parsed.Kind, CandidateId = parsed.Ok ? parsed.CandidateId : "",
+                Ref = parsed.Ok ? parsed.Ref : "", CutUtc = parsed.CutUtc,
+            };
         }
 
         private sealed class ParsedCandidateRef
@@ -319,6 +345,22 @@ namespace Antiphon.Nightly
             if (!string.Equals(creditKind, "master-scheduled", StringComparison.OrdinalIgnoreCase)) throw new NightlyRefusal("unknown credit kind " + creditKind);
             return Note("CreditKind", creditKind, "Root", stateRoot ?? "", "GreenPath", Join(stateRoot, "last-complete-green.json"), "JournalPath", "",
                 "ManifestPath", "", "PublishJournalPath", "");
+        }
+
+        /// <summary>
+        /// W2-nightly S19: StatePaths' Root and GreenPath over plain values, for a caller without PowerShell (NightlyRun).
+        /// The same refusals.
+        /// </summary>
+        public static ReleaseGateCreditStore CreditStore(string creditKind, string stateRoot, string releaseRoot, string candidateId)
+        {
+            if (string.Equals(creditKind, "rc-release", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(candidateId)) throw new NightlyRefusal("rc credit requires a candidate id");
+                var root = CandidateRoot(releaseRoot, candidateId);
+                return new ReleaseGateCreditStore(creditKind, root, Join(root, "complete-green.json"));
+            }
+            if (!string.Equals(creditKind, "master-scheduled", StringComparison.OrdinalIgnoreCase)) throw new NightlyRefusal("unknown credit kind " + creditKind);
+            return new ReleaseGateCreditStore(creditKind, stateRoot ?? "", Join(stateRoot, "last-complete-green.json"));
         }
 
         /// <summary>

@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1350. The prerequisite cases. C487_PrerequisiteGate runs in-process on NightlyTests.Run since W2-nightly S15 (it was
-/// the scripts/test-nightly-tests.ps1 case); C487_PrerequisiteSettle is still the nightly-run harness case (S19).
+/// the scripts/test-nightly-tests.ps1 case); C487_PrerequisiteSettle on NightlyRun.Run since S19 (the nightly-run harness case).
 /// C1391_LintGate (W2-nightly S12) runs the production entry scripts/nightly-tests.ps1 end to end on a seamed npm fixture,
 /// from C#, until S17 wires the C#.
 /// </summary>
@@ -42,11 +42,33 @@ public sealed class NightlyPrerequisiteTests
         rows.ShouldAllPass(1);
     }
 
+    /// <summary>
+    /// In-process since W2-nightly S19 (was the scripts/test-nightly-run.ps1 case, on NightlyRun.Run): a child that exits
+    /// nonzero while summary.json still says testsPassed must not leave that success flag settled beside last-run.json.
+    /// </summary>
     [Test]
-    public Task C487_PrerequisiteSettle() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C487",
-            nameof(C487_PrerequisiteSettle), 1,
-            ["C487 prerequisite settle summary testsPassed matches last-run"]);
+    public void C487_PrerequisiteSettle()
+    {
+        using var w = new NightlyRunWorld("c487-settle");
+        w.Clock = NightlyRunWorld.At("2026-09-17T23:35:00Z");
+        w.Behaviour = NightlyRunWorld.TestsHop(NightlyRunWorld.C545Summary(true), 2);
+        var result = w.Run(o => { o.NoSync = true; o.NoReport = false; o.RunId = "c545-npm-build-failed-" + Guid.NewGuid().ToString("N")[..8]; });
+        var last = w.OutLines[^1];
+        using var record = JsonDocument.Parse(last);
+        var summaryPath = record.RootElement.GetProperty("summaryPath").GetString() ?? "";
+        var summaryPassed = true;
+        if (summaryPath.Length > 0 && File.Exists(summaryPath))
+        {
+            using var summary = JsonDocument.Parse(File.ReadAllText(summaryPath));
+            summaryPassed = summary.RootElement.GetProperty("testsPassed").GetBoolean();
+        }
+        var recordPassed = record.RootElement.GetProperty("testsPassed").GetBoolean();
+        var statePassed = NightlyRunWorld.Json(w.LastRunPath) is { } state && state.GetProperty("testsPassed").GetBoolean();
+        var rows = new NightlyCaseRows();
+        rows.Check(!recordPassed && !statePassed && !summaryPassed, "C487 prerequisite settle summary testsPassed matches last-run",
+            "exit=" + result.ExitCode + " record=" + recordPassed + " state=" + statePassed + " summary=" + summaryPassed + " path=" + summaryPath);
+        rows.ShouldAllPass(1);
+    }
 
     private sealed record LintRun(int ExitCode, bool TestsPassed, bool CoverageComplete, string[] Reasons, string Launches, string Output);
 

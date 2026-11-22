@@ -39,6 +39,8 @@ namespace Antiphon.Scripts
             [NightlyHealthCommand.Name] = NightlyHealthCommand.Run,
             // The nightly run card answers every input itself: exit 0 done, 1 summary missing or unreadable, 2 usage, 3 board unreachable.
             [NightlyReportCommand.Name] = NightlyReportCommand.Run,
+            // The nightly tests run answers every input itself: exit 0 green or WhatIf, 1 failed, 2 refused before the run, 3 refusal.
+            [NightlyTestsCommand.Name] = NightlyTestsCommand.Run,
             // The phase-timing summary answers every input itself: exit 0 written, 1 failed (one stderr line), 2 usage.
             [SummarizeTestPhasesCommand.Name] = SummarizeTestPhasesCommand.Run,
             // The failure-history export answers every input itself: exit 0 written, 2 refused (the error record on stdout) or usage.
@@ -73,7 +75,7 @@ namespace Antiphon.Scripts
         private static int WriteUsage()
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
+                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
             return Usage;
         }
 
