@@ -13,39 +13,77 @@ namespace Antiphon.Tests.Scripts;
 
 // CARD-1514 S1. Portable contracts for the rc timing instrumentation.
 // Native Windows owner proof is CP-2 and is not discharged here. The manifests, the summary and the phase-timing
-// variables are the production C# (W2-nightly S09), called in-process; the owner, setup and call-site cases still run
-// the still-PowerShell nightly-tests executor (scripts/lib/nightly-tests-impl.ps1) in a pwsh child.
+// variables are the production C# (W2-nightly S09), called in-process, as are the owner observation and the setup
+// phases (S12's NightlyChunkRunner, since S16); only the call-site case still runs the still-PowerShell nightly-tests
+// executor (scripts/lib/nightly-tests-impl.ps1, Invoke-AntiphonNightlyTests) in a pwsh child.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFullTimingContractTests
 {
+    // W2-nightly S16: Publish-NightlyChunkObservation is NightlyChunkRunner.ObservationVerdict and
+    // TestPhaseManifests.WriteExecuted (S09/S12), called in-process with the owner record the pwsh child built.
     [Test]
     [Timeout(60_000)]
-    public async Task OwnerObservationIsPersisted(CancellationToken cancellationToken)
+    public Task OwnerObservationIsPersisted(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(OwnerScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("persisted").GetBoolean().ShouldBeTrue("root exit and descendant image were not persisted");
-        observed.GetProperty("image").GetString().ShouldBe("OwnedChild.exe");
-        observed.GetProperty("blankImage").GetString().ShouldBe("unknown");
-        observed.GetProperty("missedImage").GetString().ShouldBe("unknown", "missed pid was left as a live image");
-        observed.GetProperty("missedOnlyImage").GetString().ShouldBe("unknown", "pid that exited before capture was dropped");
-        observed.GetProperty("missedContainsLive").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("missedContainsBlank").GetBoolean().ShouldBeFalse("blank image is not a missed pid");
-        observed.GetProperty("jobEmpty").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("drainMilliseconds").GetDouble().ShouldBe(7);
-        observed.GetProperty("executionMilliseconds").GetDouble().ShouldBe(20);
-        observed.GetProperty("launchMilliseconds").GetDouble().ShouldBe(10);
-        observed.GetProperty("cleanupMilliseconds").GetDouble().ShouldBe(4);
-        observed.GetProperty("childrenExited").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("outputDrained").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("remainingProcessCount").GetInt32().ShouldBe(0);
-        observed.GetProperty("rootExitedAtUtc").GetString().ShouldBe("2026-10-29T00:00:02.0000000Z");
-        observed.GetProperty("rootStartedAtUtc").GetString().ShouldBe("2026-10-29T00:00:00.0000000Z");
-        observed.GetProperty("runId").GetString().ShouldBe("run-1");
-        observed.GetProperty("attempt").GetString().ShouldBe("1");
-        observed.GetProperty("attempt2Preserved").GetBoolean().ShouldBeTrue("rerun overwrote the first owner observation");
+        var work = FreshRoot();
+        var scope = JournalFixtures.Scope();
+        object OwnerRun(string retainedImage) => new PlainObject(
+            ("ExitCode", 0),
+            ("RootStartedAtUtc", "2026-10-29T00:00:00.0000000Z"),
+            ("RootExitedAtUtc", "2026-10-29T00:00:02.0000000Z"),
+            ("JobEmptyObserved", true),
+            ("RemainingProcessCount", 0),
+            ("LaunchMilliseconds", 10),
+            ("ExecutionMilliseconds", 20),
+            ("CleanupMilliseconds", 4),
+            ("DrainMilliseconds", 7),
+            ("ChildrenExited", true),
+            ("OutputDrained", true),
+            ("MissedDescendantPids", new object[] { 45, 46 }),
+            ("DescendantIdentities", new object[] { "43:2026-10-29T00:00:00.1000000Z", "44:2026-10-29T00:00:00.2000000Z", "45:2026-10-29T00:00:00.3000000Z" }),
+            ("DescendantImages", new object[] { retainedImage, "", "LiveName" }),
+            ("DescendantExitedAtUtc", new object[] { "2026-10-29T00:00:01.5000000Z", "", "" }));
+        void Publish(string image, string attempt)
+        {
+            var verdict = NightlyChunkRunner.ObservationVerdict(OwnerRun(image), true, true);
+            TestPhaseManifests.WriteExecuted(verdict, work, Path.Combine(work, "missing.trx"), "antiphon", "all-group-1", "run-1", attempt, 1, null, scope);
+        }
+        Publish("OwnedChild.exe", "1");
+        Publish("Other.exe", "2");
+        var firstPath = Path.Combine(work, "timing", "owner-antiphon-all-group-1-run-1-1.json");
+        var secondPath = Path.Combine(work, "timing", "owner-antiphon-all-group-1-run-1-2.json");
+        File.Exists(firstPath).ShouldBeTrue("root exit and descendant image were not persisted");
+        var raw = File.ReadAllText(firstPath);
+        using var first = JsonDocument.Parse(raw);
+        var doc = first.RootElement;
+        string Image(JsonElement owner, int pid) =>
+            owner.TryGetProperty("descendants", out var rows) ? rows.EnumerateArray().Where(r => r.GetProperty("pid").GetInt32() == pid)
+                .Select(r => r.TryGetProperty("image", out var i) ? i.GetString() ?? "" : "").FirstOrDefault() ?? "" : "";
+        var missed = doc.GetProperty("missedDescendantPids").EnumerateArray().Select(p => p.GetInt32()).ToList();
+        Image(doc, 43).ShouldBe("OwnedChild.exe");
+        Image(doc, 44).ShouldBe("unknown");
+        Image(doc, 45).ShouldBe("unknown", "missed pid was left as a live image");
+        Image(doc, 46).ShouldBe("unknown", "pid that exited before capture was dropped");
+        missed.ShouldContain(45);
+        missed.ShouldNotContain(44, "blank image is not a missed pid");
+        doc.GetProperty("jobEmpty").GetBoolean().ShouldBeTrue();
+        doc.GetProperty("drainMilliseconds").GetDouble().ShouldBe(7);
+        doc.GetProperty("executionMilliseconds").GetDouble().ShouldBe(20);
+        doc.GetProperty("launchMilliseconds").GetDouble().ShouldBe(10);
+        doc.GetProperty("cleanupMilliseconds").GetDouble().ShouldBe(4);
+        doc.GetProperty("childrenExited").GetBoolean().ShouldBeTrue();
+        doc.GetProperty("outputDrained").GetBoolean().ShouldBeTrue();
+        doc.GetProperty("remainingProcessCount").GetInt32().ShouldBe(0);
+        System.Text.RegularExpressions.Regex.Match(raw, "\"rootExitedAtUtc\"\\s*:\\s*\"([^\"]*)\"").Groups[1].Value.ShouldBe("2026-10-29T00:00:02.0000000Z");
+        System.Text.RegularExpressions.Regex.Match(raw, "\"rootStartedAtUtc\"\\s*:\\s*\"([^\"]*)\"").Groups[1].Value.ShouldBe("2026-10-29T00:00:00.0000000Z");
+        doc.GetProperty("runId").GetString().ShouldBe("run-1");
+        doc.GetProperty("attempt").GetString().ShouldBe("1");
+        File.Exists(secondPath).ShouldBeTrue("rerun overwrote the first owner observation");
+        using var second = JsonDocument.Parse(File.ReadAllText(secondPath));
+        Image(second.RootElement, 43).ShouldBe("Other.exe", "rerun overwrote the first owner observation");
+        Directory.Delete(work, recursive: true);
+        return Task.CompletedTask;
     }
 
     // W2-nightly S09: the planned manifests, launch completion and the run summary are the production C#
@@ -265,23 +303,52 @@ public sealed class RcFullTimingContractTests
         return Task.CompletedTask;
     }
 
+    // W2-nightly S16: Write-NightlyPrerequisitePhases is NightlyChunkRunner.WritePrerequisitePhases (S12), called
+    // in-process. The pwsh child ran once per TZ; a process cannot change its own zone, so the zones are the inputs' offsets
+    // instead: the same instants given as UTC text (what the child passed), as a UTC DateTime, and as DateTimeOffsets at
+    // each zone's offset.
     [Test]
     [Timeout(90_000)]
-    public async Task SetupPhasesAreNonoverlapping(CancellationToken cancellationToken)
+    public Task SetupPhasesAreNonoverlapping(CancellationToken cancellationToken)
     {
-        foreach (var timeZone in new[] { "UTC", "America/New_York", "Asia/Kolkata" })
+        var origin = new DateTimeOffset(2026, 10, 29, 0, 0, 0, TimeSpan.Zero);
+        var forms = new (string Zone, Func<int, object> At)[]
         {
-            var root = FreshRoot();
-            var observed = await Run(SetupScript, cancellationToken, root, timeZone);
-            var detail = timeZone + " " + observed.GetProperty("text").GetString();
-            observed.GetProperty("exitCode").GetInt32().ShouldBe(0, detail);
-            observed.GetProperty("countedOnce").GetBoolean().ShouldBeTrue(detail);
-            observed.GetProperty("setupSeconds").GetDouble().ShouldBe(9, detail);
-            observed.GetProperty("perChunkBuildSum").GetDouble().ShouldBe(6, detail);
-            observed.GetProperty("overlapped").GetBoolean().ShouldBeFalse(detail);
-            observed.GetProperty("stampUtc").GetBoolean().ShouldBeTrue(detail);
-            observed.GetProperty("stampOverlapped").GetBoolean().ShouldBeFalse(detail);
+            ("UTC text", s => origin.AddSeconds(s).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture)),
+            ("UTC DateTime", s => origin.AddSeconds(s).UtcDateTime),
+            ("America/New_York", s => origin.AddSeconds(s).ToOffset(TimeSpan.FromHours(-4))),
+            ("Asia/Kolkata", s => origin.AddSeconds(s).ToOffset(new TimeSpan(5, 30, 0))),
+        };
+        foreach (var (zone, at) in forms)
+        {
+            var work = FreshRoot();
+            var timing = TestPhaseManifests.TimingDirectory(work, "");
+            NightlyChunkRunner.WritePrerequisitePhases(work, timing, at(0), 1, at(1), 6, at(7), 2, at(9), 0);
+            foreach (var chunk in new[] { "a", "b" })
+                QualificationTiming.Update(new ChunkTimingUpdate { LogRoot = work, TimingRoot = Path.Combine(work, "timing"), Suite = "antiphon", Chunk = chunk, LastPhase = "run", BuildSeconds = 6, RunId = "run-1", Attempt = "1" }, DateTime.UtcNow);
+            var account = QualificationTiming.SetupAccounting(timing);
+            var detail = zone + " " + File.ReadAllText(Path.Combine(timing, "setup-phases.json"));
+            account.CountedOnce.ShouldBeTrue(detail);
+            account.SetupSeconds.ShouldBe(9, detail);
+            account.PerChunkBuildSum.ShouldBe(6, detail);
+            account.Overlapped.ShouldBeFalse(detail);
+            account.FirstStartUtcTicks.ShouldBe(origin.UtcTicks, detail);
+
+            var stampRoot = Path.Combine(work, "stamp-root");
+            Directory.CreateDirectory(stampRoot);
+            var stampTiming = TestPhaseManifests.TimingDirectory(stampRoot, "");
+            QualificationTiming.WriteRunPhase(stampTiming, "npm-ci", "2026-10-30T10:00:00.5698141Z", "2026-10-30T12:00:00.5698141Z", 7200);
+            QualificationTiming.WriteRunPhase(stampTiming, "npm-build", "2026-10-30T06:00:00.5698141Z", "2026-10-30T07:00:00.5698141Z", 3600);
+            var rawStamp = File.ReadAllText(Path.Combine(stampRoot, "timing", "setup-phases.json"));
+            (rawStamp.Contains("\"startedAt\":\"2026-10-30T10:00:00.5698141Z\"", StringComparison.Ordinal)
+                && rawStamp.Contains("\"endedAt\":\"2026-10-30T12:00:00.5698141Z\"", StringComparison.Ordinal)).ShouldBeTrue(zone + " stamp-not-iso " + rawStamp);
+            var stampAccount = QualificationTiming.SetupAccounting(stampTiming);
+            stampAccount.Overlapped.ShouldBeFalse(zone + " stamp-phases-overlapped");
+            stampAccount.FirstStartUtcTicks.ShouldBe(DateTimeOffset.Parse("2026-10-30T10:00:00.5698141Z", System.Globalization.CultureInfo.InvariantCulture).UtcTicks, zone + " stamp-ticks-shifted");
+            foreach (var chunk in new[] { "a", "b" }) QualificationTiming.Forget(work, "antiphon", chunk);
+            Directory.Delete(work, recursive: true);
         }
+        return Task.CompletedTask;
     }
 
     [Test]
@@ -466,7 +533,7 @@ public sealed class RcFullTimingContractTests
         return path;
     }
 
-    private static async Task<JsonElement> Run(string body, CancellationToken cancellationToken, string root, string timeZone = null)
+    private static async Task<JsonElement> Run(string body, CancellationToken cancellationToken, string root)
     {
         var script = Path.Combine(Path.GetTempPath(), "rcspeed-" + Guid.NewGuid().ToString("N") + ".ps1");
         await File.WriteAllTextAsync(script, body, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
@@ -476,8 +543,6 @@ public sealed class RcFullTimingContractTests
         start.ArgumentList.Add(script);
         start.ArgumentList.Add(C1514Support.RepoRoot());
         start.ArgumentList.Add(root);
-        if (!string.IsNullOrEmpty(timeZone))
-            start.Environment["TZ"] = timeZone;
         var ran = await C1514Support.RunProcess(start, cancellationToken);
         var resultPath = Path.Combine(root, "observation.json");
         if (!File.Exists(resultPath))
@@ -486,232 +551,6 @@ public sealed class RcFullTimingContractTests
         var copy = doc.RootElement.Clone();
         return copy;
     }
-
-    private const string OwnerScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $problems = New-Object System.Collections.Generic.List[string]
-        $persisted = $false
-        $image = ''
-        $blankImage = ''
-        $missedImage = ''
-        $missedOnlyImage = ''
-        $missedContainsLive = $false
-        $missedContainsBlank = $false
-        $jobEmpty = $false
-        $drain = 0.0
-        $execution = 0.0
-        $launch = 0.0
-        $cleanup = 0.0
-        $childrenExited = $false
-        $outputDrained = $false
-        $remaining = -1
-        $exited = ''
-        $rootStarted = ''
-        $runId = ''
-        $attempt = ''
-        $attempt2Preserved = $false
-        try {
-            $lib = Join-Path $repo 'scripts/lib'
-            . (Join-Path $lib 'nightly-common.ps1')
-            . (Join-Path $lib 'test-phase-evidence.ps1')
-            . (Join-Path $lib 'nightly-tests-impl.ps1')
-            if (-not (Get-Command Publish-NightlyChunkObservation -ErrorAction SilentlyContinue)) {
-                throw 'production Publish-NightlyChunkObservation is missing'
-            }
-            function New-OwnerRun([string]$retainedImage) {
-                return [pscustomobject]@{
-                    ExitCode = 0
-                    RootStartedAtUtc = '2026-10-29T00:00:00.0000000Z'
-                    RootExitedAtUtc = '2026-10-29T00:00:02.0000000Z'
-                    JobEmptyObserved = $true
-                    RemainingProcessCount = 0
-                    LaunchMilliseconds = 10
-                    ExecutionMilliseconds = 20
-                    CleanupMilliseconds = 4
-                    DrainMilliseconds = 7
-                    ChildrenExited = $true
-                    OutputDrained = $true
-                    MissedDescendantPids = @(45, 46)
-                    DescendantIdentities = @(
-                        '43:2026-10-29T00:00:00.1000000Z',
-                        '44:2026-10-29T00:00:00.2000000Z',
-                        '45:2026-10-29T00:00:00.3000000Z'
-                    )
-                    DescendantImages = @($retainedImage, '', 'LiveName')
-                    DescendantExitedAtUtc = @('2026-10-29T00:00:01.5000000Z', '', '')
-                }
-            }
-            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'OwnedChild.exe') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
-            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'Other.exe') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '2' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
-            $timing = Join-Path $work 'timing'
-            $firstPath = Join-Path $timing 'owner-antiphon-all-group-1-run-1-1.json'
-            $secondPath = Join-Path $timing 'owner-antiphon-all-group-1-run-1-2.json'
-            if (-not (Test-Path -LiteralPath $firstPath)) { throw 'owner sidecar missing' }
-            $raw = [IO.File]::ReadAllText($firstPath)
-            $doc = $raw | ConvertFrom-Json
-            $persisted = $true
-            $exitedMatch = [regex]::Match($raw, '"rootExitedAtUtc"\s*:\s*"([^"]*)"')
-            if ($exitedMatch.Success) { $exited = $exitedMatch.Groups[1].Value }
-            $startedMatch = [regex]::Match($raw, '"rootStartedAtUtc"\s*:\s*"([^"]*)"')
-            if ($startedMatch.Success) { $rootStarted = $startedMatch.Groups[1].Value }
-            function Read-Text([object]$Obj, [string]$Name) {
-                if ($null -eq $Obj -or $Obj.PSObject.Properties.Name -notcontains $Name) { return '' }
-                return [string]$Obj.$Name
-            }
-            $runId = Read-Text $doc 'runId'
-            $attempt = Read-Text $doc 'attempt'
-            if ($doc.PSObject.Properties.Name -contains 'jobEmpty') { $jobEmpty = [bool]$doc.jobEmpty }
-            if ($doc.PSObject.Properties.Name -contains 'drainMilliseconds') { $drain = [double]$doc.drainMilliseconds }
-            if ($doc.PSObject.Properties.Name -contains 'executionMilliseconds') { $execution = [double]$doc.executionMilliseconds }
-            if ($doc.PSObject.Properties.Name -contains 'launchMilliseconds') { $launch = [double]$doc.launchMilliseconds }
-            if ($doc.PSObject.Properties.Name -contains 'cleanupMilliseconds') { $cleanup = [double]$doc.cleanupMilliseconds }
-            if ($doc.PSObject.Properties.Name -contains 'childrenExited') { $childrenExited = [bool]$doc.childrenExited }
-            if ($doc.PSObject.Properties.Name -contains 'outputDrained') { $outputDrained = [bool]$doc.outputDrained }
-            if ($doc.PSObject.Properties.Name -contains 'remainingProcessCount') { $remaining = [int]$doc.remainingProcessCount }
-            $missedIds = @()
-            if ($doc.PSObject.Properties.Name -contains 'missedDescendantPids') { $missedIds = @($doc.missedDescendantPids) }
-            foreach ($id in $missedIds) {
-                if ([int]$id -eq 45) { $missedContainsLive = $true }
-                if ([int]$id -eq 44) { $missedContainsBlank = $true }
-                if ([int]$id -eq 46) { $missedOnlySeen = $true }
-            }
-            if ($doc.PSObject.Properties.Name -contains 'descendants') {
-                foreach ($row in @($doc.descendants)) {
-                    $rowPid = 0
-                    if ($row.PSObject.Properties.Name -contains 'pid') { $rowPid = [int]$row.pid }
-                    $rowImage = ''
-                    if ($row.PSObject.Properties.Name -contains 'image') { $rowImage = [string]$row.image }
-                    if ($rowPid -eq 43) { $image = $rowImage }
-                    if ($rowPid -eq 44) { $blankImage = $rowImage }
-                    if ($rowPid -eq 45) { $missedImage = $rowImage }
-                    if ($rowPid -eq 46) { $missedOnlyImage = $rowImage }
-                }
-            }
-            if ((Test-Path -LiteralPath $secondPath)) {
-                $second = [IO.File]::ReadAllText($secondPath) | ConvertFrom-Json
-                $secondImage = ''
-                if ($second.PSObject.Properties.Name -contains 'descendants') {
-                    foreach ($row in @($second.descendants)) {
-                        if ([int]$row.pid -eq 43) { $secondImage = [string]$row.image }
-                    }
-                }
-                if ($image -eq 'OwnedChild.exe' -and $secondImage -eq 'Other.exe') { $attempt2Preserved = $true }
-            }
-        } catch {
-            $problems.Add([string]$_.Exception.Message)
-        }
-        if (-not $persisted) { $problems.Add('owner-not-persisted') }
-        if ($image -ne 'OwnedChild.exe') { $problems.Add('retained-image-missing') }
-        if ($blankImage -ne 'unknown') { $problems.Add('blank-image-not-unknown') }
-        if ($missedImage -ne 'unknown') { $problems.Add('missed-live-image-not-unknown') }
-        if ($missedOnlyImage -ne 'unknown') { $problems.Add('exited-before-capture-dropped') }
-        if (-not $missedContainsLive) { $problems.Add('missed-list-dropped-live') }
-        if ($missedContainsBlank) { $problems.Add('blank-image-marked-missed') }
-        if ($rootStarted -ne '2026-10-29T00:00:00.0000000Z') { $problems.Add('root-start-missing') }
-        if ($runId -ne 'run-1' -or $attempt -ne '1') { $problems.Add('run-attempt-missing') }
-        if (-not $attempt2Preserved) { $problems.Add('rerun-overwrote-owner') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            persisted = [bool]$persisted
-            image = [string]$image
-            blankImage = [string]$blankImage
-            missedImage = [string]$missedImage
-            missedOnlyImage = [string]$missedOnlyImage
-            missedContainsLive = [bool]$missedContainsLive
-            missedContainsBlank = [bool]$missedContainsBlank
-            jobEmpty = [bool]$jobEmpty
-            drainMilliseconds = [double]$drain
-            executionMilliseconds = [double]$execution
-            launchMilliseconds = [double]$launch
-            cleanupMilliseconds = [double]$cleanup
-            childrenExited = [bool]$childrenExited
-            outputDrained = [bool]$outputDrained
-            remainingProcessCount = [int]$remaining
-            rootExitedAtUtc = [string]$exited
-            rootStartedAtUtc = [string]$rootStarted
-            runId = [string]$runId
-            attempt = [string]$attempt
-            attempt2Preserved = [bool]$attempt2Preserved
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
-        """;
-
-    private const string SetupScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        . (Join-Path $lib 'nightly-tests-impl.ps1')
-        $exit = 0
-        $text = ''
-        $problems = New-Object System.Collections.Generic.List[string]
-        $countedOnce = $false
-        $setup = -1.0
-        $sum = -1.0
-        $overlapped = $true
-        $stampUtc = $false
-        $stampOverlapped = $true
-        try {
-            if (-not (Get-Command Write-NightlyPrerequisitePhases -ErrorAction SilentlyContinue)) {
-                $problems.Add('prerequisite-writer-missing')
-            } else {
-                Write-NightlyPrerequisitePhases -LogRoot $work -NpmCiStarted '2026-10-29T00:00:00.0000000Z' -NpmCiSeconds 1 -NpmBuildStarted '2026-10-29T00:00:01.0000000Z' -NpmBuildSeconds 6 -LintStarted '2026-10-29T00:00:07.0000000Z' -LintSeconds 2 -DotnetStarted '2026-10-29T00:00:09.0000000Z' -DotnetSeconds 0
-            }
-            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $work; TimingRoot = (Join-Path $work 'timing'); Suite = 'antiphon'; Chunk = 'a'; LastPhase = 'run'; BuildSeconds = 6; RunId = 'run-1'; Attempt = '1' }, (Get-NightlyUtcNow))
-            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $work; TimingRoot = (Join-Path $work 'timing'); Suite = 'antiphon'; Chunk = 'b'; LastPhase = 'run'; BuildSeconds = 6; RunId = 'run-1'; Attempt = '1' }, (Get-NightlyUtcNow))
-            $acct = [Antiphon.Nightly.QualificationTiming]::SetupAccounting((Get-TestPhaseTimingDirectory -RunDirectory $work))
-            $countedOnce = [bool]$acct.countedOnce
-            $setup = [double]$acct.setupSeconds
-            $sum = [double]$acct.perChunkBuildSum
-            $overlapped = [bool]$acct.overlapped
-            if (-not $countedOnce) { $problems.Add('counted-more-than-once') }
-            if ([double]$setup -ne 9) { $problems.Add(('setup-seconds=' + [string]$setup)) }
-            if ([double]$sum -ne 6) { $problems.Add(('per-chunk-build-sum=' + [string]$sum)) }
-            if ($overlapped) { $problems.Add('phases-overlapped') }
-            $stampRoot = Join-Path $work 'stamp-root'
-            New-Item -ItemType Directory -Path $stampRoot -Force | Out-Null
-            [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot), 'npm-ci', '2026-10-30T10:00:00.5698141Z', '2026-10-30T12:00:00.5698141Z', 7200)
-            [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot), 'npm-build', '2026-10-30T06:00:00.5698141Z', '2026-10-30T07:00:00.5698141Z', 3600)
-            $stampPath = Join-Path (Join-Path $stampRoot 'timing') 'setup-phases.json'
-            $rawStamp = ''
-            if (Test-Path -LiteralPath $stampPath) { $rawStamp = [IO.File]::ReadAllText($stampPath) }
-            $stampUtc = $rawStamp.Contains('"startedAt":"2026-10-30T10:00:00.5698141Z"') -and $rawStamp.Contains('"endedAt":"2026-10-30T12:00:00.5698141Z"')
-            if (-not $stampUtc) { $problems.Add('stamp-not-iso') }
-            $stampAcct = [Antiphon.Nightly.QualificationTiming]::SetupAccounting((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot))
-            $stampOverlapped = [bool]$stampAcct.overlapped
-            if ($stampOverlapped) { $problems.Add('stamp-phases-overlapped') }
-            if ($stampUtc) {
-                $hasTicks = ($stampAcct.PSObject.Properties.Name -contains 'firstStartUtcTicks') -and ($null -ne $stampAcct.firstStartUtcTicks)
-                if (-not $hasTicks) { $problems.Add('stamp-ticks-missing') }
-                else {
-                    $expectedTicks = [int64]([datetimeoffset]::Parse('2026-10-30T10:00:00.5698141Z').UtcTicks)
-                    if ([int64]$stampAcct.firstStartUtcTicks -ne $expectedTicks) { $problems.Add('stamp-ticks-shifted') }
-                }
-            }
-        } catch {
-            $problems.Add([string]$_.Exception.Message)
-        }
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            countedOnce = [bool]$countedOnce
-            setupSeconds = [double]$setup
-            perChunkBuildSum = [double]$sum
-            overlapped = [bool]$overlapped
-            stampUtc = [bool]$stampUtc
-            stampOverlapped = [bool]$stampOverlapped
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 4))
-        """;
 
     private const string CallSiteScript = """
         $ErrorActionPreference = 'Stop'

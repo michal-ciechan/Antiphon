@@ -10,11 +10,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 // The chunk timing sidecar, its terminal reads and the timing report (Antiphon.Nightly.QualificationTiming), called
-// in-process: no PowerShell. These were the timing cases of scripts/test-qualification-timing.ps1. The class runs
-// alone: the budget and read-log seams are process-wide.
+// in-process: no PowerShell. These were the timing cases of the qualification timing driver; its run, environment,
+// capture and release-cut cases are in QualificationTimingTests.Runs.cs (W2-nightly S16). The class runs alone: the
+// budget and read-log seams are process-wide.
 [Category("Unit")]
 [NotInParallel(nameof(QualificationTimingTests))]
-public sealed class QualificationTimingTests
+public sealed partial class QualificationTimingTests
 {
     private const string Run = "2026-10-27T00:00:00.0000000Z";
 
@@ -406,7 +407,8 @@ public sealed class QualificationTimingTests
         finally { Cleanup(root); }
     }
 
-    // A linked chunk-* directory is not a chunk: the phase reader refuses it, and reads a real one beside it.
+    // A linked chunk-* directory is not a chunk: the phase reader and the summary reader (TestPhaseRunSummary.Rows, which
+    // flags chunk-link-refused) both refuse it, and both read a real one beside it.
     [Test]
     public void A_linked_chunk_directory_is_refused()
     {
@@ -417,7 +419,8 @@ public sealed class QualificationTimingTests
             var outside = Path.Combine(root, "outside");
             Directory.CreateDirectory(timing);
             Directory.CreateDirectory(outside);
-            File.WriteAllText(Path.Combine(outside, "cases-42-link1.jsonl"), Header("run-link", "g-link", "1", "antiphon", 42, "link1") + "\n" + FixtureLine("fix-link", "fixture-setup", 1500) + "\n");
+            const string summaryCase = "{\"recordKind\":\"complete\",\"testId\":\"link-case\",\"className\":\"C\",\"method\":\"M\",\"args\":[],\"startOffsetMs\":0,\"endOffsetMs\":1,\"outcome\":\"Passed\",\"phases\":[],\"processes\":[],\"exclusive\":{\"db\":0,\"host\":0,\"process\":0,\"fs\":0,\"network\":0,\"fixture\":0},\"overlapMs\":0,\"remainderMs\":0,\"childUnionMs\":0,\"droppedPhaseCount\":0,\"shared\":false,\"incomplete\":false}";
+            File.WriteAllText(Path.Combine(outside, "cases-42-link1.jsonl"), Header("run-link", "g-link", "1", "antiphon", 42, "link1") + "\n" + FixtureLine("fix-link", "fixture-setup", 1500) + "\n" + summaryCase + "\n");
             var link = Path.Combine(timing, QualificationTiming.ChunkDirectoryName("g-link", "run-link", "1", "antiphon"));
             try { Directory.CreateSymbolicLink(link, outside); }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
@@ -430,8 +433,15 @@ public sealed class QualificationTimingTests
             refused.FixtureSetupSeconds.ShouldBeNull("symlinked-chunk-directory-is-refused");
             QualificationTiming.DirectoryKind(link).ShouldBe("symlink");
             var real = ChunkDir(timing, "g-real", "run-link", "1", "antiphon");
-            File.WriteAllText(Path.Combine(real, "cases-42-link1.jsonl"), Header("run-link", "g-real", "1", "antiphon", 42, "link1") + "\n" + FixtureLine("fix-real", "fixture-setup", 1500) + "\n");
+            File.WriteAllText(Path.Combine(real, "cases-42-link1.jsonl"), Header("run-link", "g-real", "1", "antiphon", 42, "link1") + "\n" + FixtureLine("fix-real", "fixture-setup", 1500)
+                + "\n" + summaryCase.Replace("link-case", "real-case") + "\n");
             QualificationTiming.PhaseSums(timing, "g-real", "run-link", "antiphon", "1").FixtureSetupSeconds.ShouldBe(1.5, "real-chunk-beside-the-link-is-read");
+            var planned = new PlainObject(("version", 1), ("runId", "run-link"), ("assembly", "Antiphon.Tests"));
+            var summary = TestPhaseRunSummary.Rows(planned, root, Antiphon.Tests.TestHelpers.JournalFixtures.Scope());
+            var ids = summary.Tests.Select(t => PsValue.Str(PsValue.Prop(t, "testId"))).ToList();
+            summary.Quality.ShouldContain("chunk-link-refused", "symlinked-chunk-directory-is-refused");
+            ids.ShouldNotContain("link-case", "symlinked-chunk-directory-is-refused");
+            ids.ShouldContain("real-case", "symlinked-chunk-directory-is-refused");
         }
         finally { Cleanup(root); }
     }
