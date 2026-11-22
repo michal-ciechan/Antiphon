@@ -128,7 +128,7 @@ internal sealed class RcAdmissionEvidenceFixture
             ["fullAnchor"] = new JsonObject
             {
                 ["kind"] = "executed-full", ["admissionState"] = "verified", ["sourceSha"] = sourceSha, ["closureDigest"] = AnchorDigest,
-                ["completedAtUtc"] = "2026-11-12T12:00:00Z",
+                ["completedAtUtc"] = "2026-11-12T12:00:00Z", ["platform"] = "windows",
             },
             ["releaseEvidence"] = new JsonObject
             {

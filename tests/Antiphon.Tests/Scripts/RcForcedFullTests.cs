@@ -45,7 +45,7 @@ public sealed class RcForcedFullTests
     private static JsonObject Anchor(string when = "2026-11-12T12:00:00Z") => new()
     {
         ["kind"] = "executed-full", ["admissionState"] = "verified", ["completedAtUtc"] = when, ["sourceSha"] = new string('1', 40),
-        ["closureDigest"] = new string('a', 64),
+        ["closureDigest"] = new string('a', 64), ["platform"] = "windows",
     };
 
     /// <summary>The decision's arguments; a null anchor is no anchor at all.</summary>
@@ -200,7 +200,7 @@ public sealed class RcForcedFullTests
     {
         ["validationState"] = "verified", ["mode"] = "Full", ["coverageComplete"] = true, ["requiredCount"] = 12, ["executedCount"] = 10,
         ["expectedSkipCount"] = 2, ["carriedCount"] = 0, ["failedCount"] = 0, ["unexpectedSkipCount"] = 0, ["completedAtUtc"] = "2026-11-13T11:59:00Z",
-        ["sourceSha"] = new string('2', 40), ["closureDigest"] = new string('b', 64),
+        ["sourceSha"] = new string('2', 40), ["closureDigest"] = new string('b', 64), ["platform"] = "windows",
         ["forcedFull"] = new JsonArray(JsonValue.Create("explicit-force-full"), JsonValue.Create("full-anchor-expired")),
     };
 
@@ -249,4 +249,71 @@ public sealed class RcForcedFullTests
         var timeless = RcForcedFull.ExecutedFullAnchor(Element(noTime), Now);
         (!timeless.Eligible && string.Join("|", timeless.Reasons) == "closure-time-unknown").ShouldBeTrue("missing execution time");
     }
+    /// <summary>
+    /// CARD-1872 A-2: the anchor must be a WINDOWS Full. A Linux (or platformless) Full closure cannot become an
+    /// anchor, the anchor it makes carries its platform, and a Linux or platformless anchor is unproven.
+    /// </summary>
+    [Test]
+    public void LinuxFullCannotRenewWindowsAnchor()
+    {
+        var windows = RcForcedFull.ExecutedFullAnchor(Element(Closure()), Now);
+        windows.Eligible.ShouldBeTrue("windows Full refused: " + string.Join("|", windows.Reasons));
+        windows.FullAnchor!["platform"].ShouldBe("windows", "anchor lost its platform");
+        foreach (var platform in new object?[] { "linux", "Windows", "", null, 1 })
+        {
+            var closure = Closure();
+            closure["platform"] = Value(platform);
+            var refused = RcForcedFull.ExecutedFullAnchor(Element(closure), Now);
+            (refused.Eligible == false && refused.FullAnchor == null).ShouldBeTrue("non-windows Full renewed the anchor: " + platform);
+            string.Join("|", refused.Reasons).ShouldBe("closure-not-windows", "closure platform " + platform);
+        }
+        var absent = Closure();
+        absent.Remove("platform");
+        string.Join("|", RcForcedFull.ExecutedFullAnchor(Element(absent), Now).Reasons).ShouldBe("closure-not-windows", "platformless closure");
+        foreach (var platform in new object?[] { "linux", "Windows", null })
+        {
+            var arguments = new Arguments();
+            arguments.FullAnchor!["platform"] = Value(platform);
+            Expect(Decide(arguments), ["full-anchor-unproven"], "anchor platform " + platform);
+        }
+        var platformless = new Arguments();
+        platformless.FullAnchor!.Remove("platform");
+        Expect(Decide(platformless), ["full-anchor-unproven"], "platformless anchor");
+    }
+
+    /// <summary>
+    /// CARD-1872 A-1: records read from JSON text keep ISO-8601 timestamps as strings, so an anchor or closure this
+    /// library wrote, read back through the sealed reader, still lets the incremental path activate. (PowerShell's
+    /// default ConvertFrom-Json would make them DateTime values and force Full.)
+    /// </summary>
+    [Test]
+    public void JsonReadTimestampsStayStrings()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "c1872-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            JsonElement Read(string name, JsonNode node)
+            {
+                var path = Path.Combine(dir, name);
+                File.WriteAllText(path, node.ToJsonString());
+                return RcAdmission.ReadJson(path, RcAdmission.FileDigest(path));
+            }
+            var closure = Read("closure.json", Closure());
+            Field(closure, "completedAtUtc").ValueKind.ShouldBe(JsonValueKind.String, "closure timestamp not a string");
+            var made = RcForcedFull.ExecutedFullAnchor(closure, Now);
+            made.Eligible.ShouldBeTrue("closure read from JSON refused: " + string.Join("|", made.Reasons));
+            var anchor = Read("anchor.json", JsonNode.Parse(RcForcedFull.ToElement(made.FullAnchor!).GetRawText())!);
+            Field(anchor, "completedAtUtc").ValueKind.ShouldBe(JsonValueKind.String, "anchor timestamp not a string");
+            var a = new Arguments();
+            Expect(RcForcedFull.Decision(Element(a.CurrentContract), Element(a.BaselineContract), Element(a.Evidence), anchor, Now, false), [],
+                "anchor read from JSON forced Full");
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    private static JsonElement Field(JsonElement o, string name) => RcForcedFull.Field(o, name);
 }
