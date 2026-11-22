@@ -98,7 +98,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
 
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
     public Task C519_Attempt_death_stays_uncertain(string kind) =>
-        PublicationAsync(kind, ["publishing-committed", "before-producer-call", "producer-entered"]);
+        PublicationAsync(kind, ["publishing-committed", "before-producer-call", "producer-entered"], coldFirstCut: true);
 
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
     public Task C519_Accepted_death_stays_uncertain(string kind) =>
@@ -108,7 +108,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
     public Task C519_Published_death_never_replays(string kind) =>
         PublicationAsync(kind, ["published-committed"]);
 
-    private static async Task PublicationAsync(string kind, string[] cuts)
+    // coldFirstCut: every kind's first recoveries at cuts[0] are fresh children (UnifiedOutboundTransport.FirstRecoveryAsync).
+    private static async Task PublicationAsync(string kind, string[] cuts, bool coldFirstCut = false)
     {
         foreach (var cut in cuts)
         {
@@ -132,11 +133,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
             }
             for (var restart = 0; restart < 2; restart++)
             {
-                // The first restart after the death (a fresh child for the main kind, and for every kind at the first
-                // attempt cut, so each kind's uncertain marking and failure recorder also run in a cold process on the
-                // compiled model); the second runs in process.
-                await (restart > 0 ? w.RecoverAsync()
-                    : cut == "publishing-committed" ? w.ChildRecoverAsync() : w.FirstRecoveryAsync(kind));
+                // The first restart after the death is a first recovery; the second runs in process.
+                await (restart > 0 ? w.RecoverAsync() : w.FirstRecoveryAsync(kind, coldFirstCut && cut == cuts[0]));
                 var row = (await w.DeliveryAsync(kind))!;
                 row.Id.ShouldBe(deliveryId);
                 row.State.ShouldBe(published ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.PublishUncertain);
@@ -160,8 +158,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
                 await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
                     service.RetryUncertainAsync(deliveryId, false, default));
                 await service.RetryUncertainAsync(deliveryId, true, default);
-                // The republish after the operator's retry (a fresh child's for the main kind).
-                await w.FirstRecoveryAsync(kind);
+                // The republish after the operator's retry is a first recovery too.
+                await w.FirstRecoveryAsync(kind, coldFirstCut && cut == cuts[0]);
                 await w.AssertReceiptAsync(accepted ? 2 : 1);
                 (await w.DeliveryAsync(kind))!.PublicationAttempts.ShouldBe(2);
                 await AssertSourceAsync(w, kind, true);

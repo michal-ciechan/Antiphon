@@ -124,7 +124,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     await using var scope = w.H.Provider.CreateAsyncScope();
                     await scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().RetryUncertainAsync(row.Id, true, scenario.Token);
                     // The republish after the operator's retry (a fresh child's for the main kind; the trailing and
-                    // machine rows start no child, and their cross-process cover is the main row's).
+                    // machine rows start no child here: the attempt-death test runs their retry republish cold).
                     await w.FirstRecoveryAsync(kind);
                 }
             }

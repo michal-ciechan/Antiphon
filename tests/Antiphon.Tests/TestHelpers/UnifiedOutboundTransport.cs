@@ -227,8 +227,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // 2026-11-22: p50 331, p95 1278, max 2810 ms, n=328; the max is a first recovery in the process, which also pays
     // the graph's JIT and EF warm-up). Not 2x p95: server2 and Windows Full are unmeasured and run other tests in
     // the same process, so it keeps about 5x that max until they are measured; a stall still fails in half the
-    // child's 30 s. A trailing or machine first recovery starts right after a kill (FirstRecoveryAsync) and may wait
-    // for Postgres to end the dead child's backend and its locks, which a child's own start used to hide.
+    // child's 30 s. A first recovery in process (FirstRecoveryAsync) has the child's whole ProbeDeadline instead.
     private static readonly TimeSpan InProcessRecoveryDeadline = TimeSpan.FromSeconds(15);
 
     // A restart's recovery: the probe's own unified recovery graph (UnifiedRecoveryProbe: its own services, clock,
@@ -237,12 +236,14 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // the compiled model ProbeModelComparison pins to it), without a child's runtime start, JIT and EF warm-up (about
     // 6 s of each 6-7 s recovery child on the HP laptop). Every death is still a real killed child (StartProbeAsync);
     // the first recovery after a death or an operator retry is a fresh child for the main kind (FirstRecoveryAsync).
-    public async Task RecoverAsync(int? offset = null)
+    public Task RecoverAsync(int? offset = null) => RecoverInProcessAsync(offset, InProcessRecoveryDeadline, "in-process");
+
+    private async Task RecoverInProcessAsync(int? offset, TimeSpan deadline, string label)
     {
         var started = Stopwatch.StartNew();
         var marker = Path.Combine(H.TempRoot, "recover-" + Guid.NewGuid().ToString("N") + ".json");
         var config = ProbeConfigFor(marker, null, RecoveryOffset(offset), false, "unified", null, null, null)
-            with { DeadlineSeconds = (int)InProcessRecoveryDeadline.TotalSeconds };
+            with { DeadlineSeconds = (int)deadline.TotalSeconds };
         int code;
         try
         {
@@ -255,24 +256,26 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
                 + ProbeLog.Describe(ex));
         }
         code.ShouldBe(0);
-        Console.WriteLine($"c519-probe recover in-process {started.ElapsedMilliseconds} ms");
+        Console.WriteLine($"c519-probe recover {label} {started.ElapsedMilliseconds} ms");
     }
 
-    // The first recovery after a real child death or an operator retry, for a test run once per source kind: a fresh
-    // child for the main kind, in process for trailing and machine. Every cut keeps its cross-process recovery (the
-    // main kind's: the compiled model, a cold process), and the kind changes the source a recovery publishes, which
-    // the in-process recovery runs on the same code, not how a fresh process starts.
-    // The per-cut cross-process guarantee holds when the main row runs (a rerun of one trailing or machine row alone
-    // has none); an unknown kind is refused, so a new kind chooses.
-    public Task FirstRecoveryAsync(string kind) => kind switch
+    // The first recovery after a real child death (crash tests) or an operator retry (crash and transport tests), for
+    // a test run once per source kind: a fresh child for the main kind, and for every kind where the caller asks
+    // (coldForEveryKind: the attempt-death test's first cut, so each kind's uncertain marking, failure recorder and
+    // retry republish also run in a cold process on the compiled model); otherwise in process. Every cut keeps a
+    // cross-process recovery when the main row runs; the kind changes the source a recovery publishes, which the
+    // in-process recovery runs on the same code. In process it keeps the child's whole ProbeDeadline: right after a
+    // kill it may wait for Postgres to end the dead child's backend and its locks, which a child's own start hid.
+    // The kind is checked first, so a new kind is refused before any recovery runs.
+    public async Task FirstRecoveryAsync(string kind, bool coldForEveryKind = false)
     {
-        "main" => ChildRecoverAsync(),
-        "trailing" or "machine" => RecoverAsync(),
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "A C519 source kind is main, trailing or machine."),
-    };
+        if (kind is not ("main" or "trailing" or "machine"))
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A C519 source kind is main, trailing or machine.");
+        if (kind == "main" || coldForEveryKind) await ChildRecoverAsync();
+        else await RecoverInProcessAsync(null, ProbeDeadline, "first-in-process");
+    }
 
-    // A recovery in a fresh child process: the main kind's first one after a real child death or an operator retry,
-    // and every kind's at the first attempt cut.
+    // A recovery in a fresh child process (FirstRecoveryAsync decides when).
     public async Task ChildRecoverAsync(int? offset = null)
     {
         await using var child = await StartProbeAsync(null, RecoveryOffset(offset));
