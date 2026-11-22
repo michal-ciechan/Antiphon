@@ -66,6 +66,7 @@ public sealed class LiveLaneGateScanTests
         const string flag = "ANTIPHON_" + "HEADED_TESTS";
         File.WriteAllText(source, $$"""
             namespace Scratch;
+            [Category("Unit")]
             public class HeadedGateCases
             {
                 [Test]

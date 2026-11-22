@@ -151,9 +151,9 @@ namespace Antiphon.Nightly
         private static readonly Regex ExplicitAttr = new Regex(@"\[Explicit(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex TestAttr = new Regex(@"\[Test(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex GateShapeAttr = new Regex(@"\[GateShape\(", RegexOptions.IgnoreCase);
-        // The source stripper removes ordinary string delimiters. Match the flag as the argument of a lookup.
+        // The source stripper removes ordinary string delimiters. Match the lookup's positional or named variable.
         private static readonly Regex HeadedRead = new Regex(
-            @"\bEnvironment\s*\.\s*GetEnvironmentVariable\s*\(\s*ANTIPHON_HEADED_TESTS\s*[,)]",
+            @"\bEnvironment\s*\.\s*GetEnvironmentVariable\s*\(\s*(?:variable\s*:\s*)?ANTIPHON_HEADED_TESTS\s*[,)]",
             RegexOptions.IgnoreCase);
         private static readonly Regex SkipIf = new Regex("SkipIfNotEligible", RegexOptions.IgnoreCase);
         private static readonly Regex RealCli = new Regex("RealCliStub", RegexOptions.IgnoreCase);
