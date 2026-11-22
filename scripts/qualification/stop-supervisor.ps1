@@ -14,6 +14,7 @@ owner pid is dead, the run id matches, and the preserved bytes are unchanged.
 Appends the stop reason to TaskRoot\supervisor.log. A log write failure still
 returns the JSON result. Does not edit last-run.json and does not remove run.lock.
 A non-Windows host exits 5 and does not stop a process or change a file.
+For a task-directory copy, pass -CheckoutRoot to load qualification-stop.ps1 and its library from the checkout.
 Do not point this at a live qualification unless the operator has decided to stop that run.
 ASCII-only, Windows PowerShell 5.1 safe.
 #>
@@ -23,10 +24,13 @@ param(
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$Reason,
     [string]$EvidenceRoot,
-    [switch]$Confirm
+    [switch]$Confirm,
+    [string]$CheckoutRoot
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'qualification-stop.ps1')
+if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
+$CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
+. (Join-Path $CheckoutRoot 'scripts/qualification/qualification-stop.ps1')
 if (-not $Confirm) {
     Write-Output (Get-QualificationStopDryRunText -TaskRoot $TaskRoot -CoordinationRoot $CoordinationRoot -RunId $RunId)
     exit 2
