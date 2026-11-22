@@ -1,0 +1,26 @@
+{
+  "scenario": "selection-whatif",
+  "result": {
+    "ExitCode": 0,
+    "Selected": [
+      "antiphon",
+      "session-runner",
+      "pty-host",
+      "agents-pty",
+      "messaging",
+      "client",
+      "scripts",
+      "e2e",
+      "markdown-pdf",
+      "observability",
+      "server-git",
+      "resilience",
+      "git-in-process"
+    ]
+  },
+  "trace": [
+    "\u003CTS\u003E git rev-parse HEAD",
+    "GIT rev-parse HEAD"
+  ],
+  "files": {}
+}

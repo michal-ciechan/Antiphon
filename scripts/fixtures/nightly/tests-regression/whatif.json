@@ -1,0 +1,11 @@
+{
+  "scenario": "whatif",
+  "result": {
+    "ExitCode": 0,
+    "Selected": [
+      "antiphon"
+    ]
+  },
+  "trace": [],
+  "files": {}
+}

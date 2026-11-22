@@ -16,6 +16,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../CheckpointProcessRunner.cs" Link="CheckpointProcessRunner.cs" />
+    <!-- The nightly-tests command prepares its owned children as Set-AntiphonBuildDriverEnvironment does (CARD-1506). -->
+    <Compile Include="../BuildDriverEnvironment.cs" Link="BuildDriverEnvironment.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The rc commands call the compiled core's plain C# (ledger, admission, plans); PowerShell is never loaded. -->

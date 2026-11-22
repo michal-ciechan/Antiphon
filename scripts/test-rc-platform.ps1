@@ -285,14 +285,15 @@ function New-C1323ExecutionFixture {
 function Write-C1323ExecutionSeams($Fixture, $Platform) {
     $path = Join-Path $Fixture.Root "$Platform.ps1"
     $template = @'
-$script:NightlyClassCostPath = '__ROOT__/class-costs.json'
-$script:NightlyClassCostTable = $null
 $env:PATH = '__ROOT__/commands' + [IO.Path]::PathSeparator + $env:PATH
 $NightlySeams = @{
+    # W2-nightly S17: the class-cost file of the in-process nightly tests run (c487-nightly-tests.ps1).
+    ClassCostPath = '__ROOT__/class-costs.json'
     HostPlatform = { return '__PLATFORM__' }
     E2EPrerequisites = { return @{ Ok = $true; Rows = @(@{ name = 'offline-browser'; exitCode = 0 }) } }
     StartProcess = {
         param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+__HOP__
         __CHILD_WRITERS__
         Add-Content -LiteralPath '__ROOT__/__PLATFORM__-commands.log' -Value ($FilePath + ' ' + ($ArgumentList -join ' '))
         $argv = @($ArgumentList)
@@ -334,16 +335,17 @@ $NightlySeams = @{
     $writers = @('Write-C487Trx', 'Write-C487Execution', 'Write-C487Discovery') | ForEach-Object {
         'function ' + $_ + " {`n" + (Get-Command $_ -CommandType Function).Definition + "`n}"
     }
-    $text = $template.Replace('__CHILD_WRITERS__', ($writers -join "`n")).Replace('__ROOT__', $Fixture.Root.Replace("'", "''")).Replace('__PLATFORM__', $Platform)
+    $text = $template.Replace('__HOP__', (Get-C487NightlyTestsHopSeamText)).Replace('__CHILD_WRITERS__', ($writers -join "`n")).Replace('__ROOT__', $Fixture.Root.Replace("'", "''")).Replace('__PLATFORM__', $Platform)
     [IO.File]::WriteAllText($path, $text)
     return $path
 }
 
 function Test-C1323_PlatformExecution {
-    foreach ($name in @('nightly-tests-impl', 'nightly-run-impl')) { . "$PSScriptRoot/lib/$name.ps1" }
+    # W2-nightly S17: the direct runs are NightlyTests.Run in this process on the seams (c487-nightly-tests.ps1).
+    . "$PSScriptRoot/lib/nightly-run-impl.ps1"
     $fx = New-C1323ExecutionFixture
     $linuxSeams = Write-C1323ExecutionSeams $fx 'linux'
-    $linux = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/linux-direct" -Profile rc -Sha $fx.Sha -SeamsPath $linuxSeams
+    $linux = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $fx.Clone; LogRoot = "$($fx.Root)/linux-direct"; Profile = 'rc'; Sha = $fx.Sha; SeamsPath = $linuxSeams }
     $launched = @(Get-Content "$($fx.Root)/linux-launched.txt")
     $portable = Same-C1323Set $launched @('unclassified', 'legacy-sibling')
     Assert-C1323 $portable 'linux-launches-only-portable-cases' ($launched -join ',')
@@ -361,7 +363,7 @@ function Test-C1323_PlatformExecution {
     Assert-C1323 ($launched -contains 'unclassified' -and $launched -contains 'legacy-sibling' -and $launched -notcontains 'legacy-live') 'optin-and-legacy-method-semantics'
 
     $windowsSeams = Write-C1323ExecutionSeams $fx 'windows'
-    $windows = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/windows-direct" -Profile rc -Sha $fx.Sha -SeamsPath $windowsSeams
+    $windows = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $fx.Clone; LogRoot = "$($fx.Root)/windows-direct"; Profile = 'rc'; Sha = $fx.Sha; SeamsPath = $windowsSeams }
     $launched = @(Get-Content "$($fx.Root)/windows-launched.txt")
     Assert-C1323 (Same-C1323Set $launched @($fx.Nodes.uid | Where-Object { $_ -ne 'legacy-live' })) 'windows-retains-delivery-cases' ($launched -join ',')
     $summary = Get-Content $windows.SummaryPath -Raw | ConvertFrom-Json
@@ -390,7 +392,7 @@ function Test-C1323_PlatformExecution {
         }
     }
     $unknownSeams = Write-C1323ExecutionSeams $fx 'unknown'
-    $unknown = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/unknown" -Profile rc -Sha $fx.Sha -SeamsPath $unknownSeams
+    $unknown = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $fx.Clone; LogRoot = "$($fx.Root)/unknown"; Profile = 'rc'; Sha = $fx.Sha; SeamsPath = $unknownSeams }
     $refusalRecord = ConvertTo-Json (ConvertTo-NightlyResultRecord $unknown) -Compress
     $expectedRefusal = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":"","refusal":"unsupported-host-platform"}'
     Assert-C1323 ($unknown.ExitCode -eq 3 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log") -and $refusalRecord -ceq $expectedRefusal) 'unknown-platform-launches-nothing'

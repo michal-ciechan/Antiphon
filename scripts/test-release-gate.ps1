@@ -19,7 +19,6 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
-. (Join-Path $lib 'nightly-tests-impl.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
 
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
@@ -953,19 +952,24 @@ function Test-C599_CreditVerdicts {
 }
 
 function Test-C599_SelectionHopExitCodes {
+    # W2-nightly S17: the selection self hop (Invoke-NightlyWatchedCommand with -SelectionAttemptPath; the selection hop
+    # Invoke-ReleaseSelectionHop is deleted) is a real pwsh child whose quoted arguments keep spaces and empty values.
     $root = New-C599Root
     $child = Join-Path $root 'exit child.ps1'
     Set-Content -LiteralPath $child -Encoding ASCII -Value @'
-param([int]$Code, [string]$Value, [string]$Marker)
-[IO.File]::WriteAllText($Marker, $Value)
+param([int]$Code, [string]$Value, [string]$Marker, [string]$SelectionAttemptPath, [string]$Empty = 'unset')
+[IO.File]::WriteAllText($Marker, ($Value + '|' + $SelectionAttemptPath + '|' + $Empty))
 exit $Code
 '@
     foreach ($code in @(0, 4, 7)) {
         $marker = Join-Path $root ('received-{0}.txt' -f $code)
         $value = 'value with spaces'
-        $result = Invoke-ReleaseSelectionHop -WorkingDirectory $root -ArgumentList @(
-            '-File', $child, '-Code', [string]$code, '-Value', $value, '-Marker', $marker)
+        $attempt = Join-Path $root 'selection attempt.json'
+        $result = Invoke-NightlyWatchedCommand -WorkingDirectory $root -FilePath 'pwsh' -ArgumentList @(
+            '-NoProfile', '-NonInteractive', '-File', $child, '-Code', [string]$code, '-Value', $value, '-Marker', $marker,
+            '-SelectionAttemptPath', $attempt, '-Empty', '')
         $received = if (Test-Path -LiteralPath $marker) { [IO.File]::ReadAllText($marker) } else { '' }
+        $value = $value + '|' + $attempt + '|'
         Assert-C487 -Cond ($result.ExitCode -eq $code -and $received -ceq $value) `
             -Name ('C599 SelectionHopExitCodes child exit {0} and spaced argument survive' -f $code) `
             -Detail ('expected={0} actual={1} received=[{2}]' -f $code, $result.ExitCode, $received)
@@ -995,7 +999,9 @@ function New-C599RunFx {
         [void](Invoke-C599RealGit $seed @('config', 'core.autocrlf', 'false'))
         Copy-Item -LiteralPath $lib -Destination (Join-Path $seed 'scripts/lib') -Recurse
         Copy-C487NightlyCoreDependency -Root $seed
-        foreach ($file in @('nightly-run.ps1', 'nightly-tests.ps1', 'select-test-rosters.ps1')) {
+        # W2-nightly S17: the tests hop is the nightly-tests command, whose sources (scripts/lib/Antiphon.Scripts and
+        # Antiphon.Nightly) the scripts/lib copy above carries; the seams run it in process (c487-nightly-tests.ps1).
+        foreach ($file in @('nightly-run.ps1', 'select-test-rosters.ps1')) {
             Copy-Item -LiteralPath (Join-Path $here $file) -Destination (Join-Path $seed ('scripts/' + $file))
         }
         foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json')) {
@@ -1196,9 +1202,14 @@ function Test-C599_ParameterHops {
     foreach ($p in @('ExpectedSha', 'CandidateId', 'ReleaseRoot', 'CoordinationRoot')) {
         Assert-C487 -Cond ($impl -match ("'-" + $p + "'")) -Name ('C599 ParameterHops the self-reexec hop forwards -{0}' -f $p)
     }
-    $tests = Get-Content -LiteralPath (Join-Path $here 'nightly-tests.ps1') -Raw
-    Assert-C487 -Cond (($tests -match '\[string\]\$Profile =') -and ($tests -match '\[string\]\$ExpectedSha =')) -Name 'C599 ParameterHops nightly-tests.ps1 accepts -Profile and -ExpectedSha'
-    Assert-C487 -Cond ($impl -match "'-Profile', \`$Profile,") -Name 'C599 ParameterHops the tests hop forwards -Profile'
+    # W2-nightly S17: the tests hop is the nightly-tests command; its flags are NightlyTestsOptions', built from the run
+    # core's request (NightlyRunParts.TestsHopOptions).
+    $valued = @([Antiphon.Nightly.NightlyTestsOptions]::Valued)
+    Assert-C487 -Cond (($valued -ccontains '--profile') -and ($valued -ccontains '--expected-sha')) -Name 'C599 ParameterHops nightly-tests accepts --profile and --expected-sha'
+    $hopArgs = @([Antiphon.Nightly.NightlyRunParts]::TestsHopCliArguments([Antiphon.Nightly.TestsHopRequest]@{ CheckoutRoot = 'C:\clone'; RunDir = 'C:\logs'; Profile = 'rc'; ExpectedSha = $ShaA; Trigger = 'rc' }))
+    $forwards = ($impl -match 'Profile = \$Profile;') -and ([array]::IndexOf($hopArgs, '--profile') -ge 0) -and ($hopArgs[[array]::IndexOf($hopArgs, '--profile') + 1] -ceq 'rc') -and
+        ([Antiphon.Nightly.NightlyTestsOptions]::Parse([string[]]$hopArgs).ExpectedSha -ceq $ShaA)
+    Assert-C487 -Cond $forwards -Name 'C599 ParameterHops the tests hop forwards -Profile' -Detail ($hopArgs -join ' ')
 }
 
 function Test-C599_CloneOwnership {

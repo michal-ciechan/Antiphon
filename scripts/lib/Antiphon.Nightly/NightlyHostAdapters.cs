@@ -1,8 +1,9 @@
 // W2-nightly S12: host parts for a caller that is still PowerShell (plan 2026-11-21-w2-nightly-port-slices.md, section 2).
-// nightly-tests-impl.ps1 (Get-NightlyRunHost) builds the NightlyHost of a chunk or an owned launch from its seams: the
-// UtcNow seam as a clock (DelegateTimeProvider), the TracePath seam as the trace (AppendingTraceWriter), and the
-// StartProcess, WaitCleanup and NativeActiveCount seams as a launcher (DelegateLauncher). Without seams it uses
-// TimeProvider.System, no trace and OwnedLauncher. Plain C#: the delegates are the caller's; no PowerShell types. ASCII only.
+// The C487 harness (scripts/lib/c487-nightly-tests.ps1, W2-nightly S17; nightly-tests-impl.ps1 Get-NightlyRunHost before)
+// builds the NightlyHost of a nightly tests run from its seams: the UtcNow seam as a clock (DelegateTimeProvider), the
+// TracePath seam as the trace (AppendingTraceWriter), the StartProcess, WaitCleanup and NativeActiveCount seams as a
+// launcher (DelegateLauncher), and the HostPlatform, DockerInfo, DiskFree and ToolchainVersions seams as the probe
+// (DelegateHostProbe). Plain C#: the delegates are the caller's; no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.IO;
@@ -63,6 +64,42 @@ namespace Antiphon.Nightly
 
         /// <inheritdoc />
         public override void WriteLine(string value) => File.AppendAllText(_path, (value ?? "") + NewLine, Encoding.ASCII);
+    }
+
+    /// <summary>
+    /// W2-nightly S17: a host probe whose answers delegates give (the HostPlatform, DockerInfo, DiskFree and
+    /// ToolchainVersions seams of a caller that is still PowerShell); a null delegate answers as the fallback probe.
+    /// </summary>
+    public sealed class DelegateHostProbe : INightlyHostProbe
+    {
+        private readonly Func<string> _platform;
+        private readonly Func<NightlyProbeRow> _docker;
+        private readonly Func<NightlyProbeRow> _diskFree;
+        private readonly Func<string, string> _toolVersion;
+        private readonly INightlyHostProbe _fallback;
+
+        /// <summary>Each delegate may be null; fallback null is the production probe (NightlyHostProbe).</summary>
+        public DelegateHostProbe(Func<string> platform, Func<NightlyProbeRow> docker, Func<NightlyProbeRow> diskFree, Func<string, string> toolVersion,
+            INightlyHostProbe fallback)
+        {
+            _platform = platform;
+            _docker = docker;
+            _diskFree = diskFree;
+            _toolVersion = toolVersion;
+            _fallback = fallback ?? new NightlyHostProbe();
+        }
+
+        /// <inheritdoc />
+        public string Platform() => _platform != null ? _platform() : _fallback.Platform();
+
+        /// <inheritdoc />
+        public NightlyProbeRow Docker() => _docker != null ? _docker() : _fallback.Docker();
+
+        /// <inheritdoc />
+        public NightlyProbeRow DiskFree() => _diskFree != null ? _diskFree() : _fallback.DiskFree();
+
+        /// <inheritdoc />
+        public string ToolVersion(string tool) => _toolVersion != null ? _toolVersion(tool) : _fallback.ToolVersion(tool);
     }
 
     /// <summary>

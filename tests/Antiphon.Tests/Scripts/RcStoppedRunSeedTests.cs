@@ -16,8 +16,8 @@ namespace Antiphon.Tests.Scripts;
 // ("SS <case>.contract", its condition and detail). The seed export, reader, ingress, resolver, schedule and merge are the
 // compiled core's. The operator commands run in-process through their handler (NightlySeedCommands.Run with the CLI argv, W2-nightly
 // S26): antiphon-scripts export-nightly-stopped-run-seed (SiblingTimingFromSummary) and merge-nightly-seeds (the CLI legs of
-// CumulativeMergeUnion and CumulativeMergePrintsDigest). The still-PowerShell entries nightly-run.ps1 / nightly-run-impl.ps1 /
-// nightly-tests.ps1 are launched where a case is about them (PublicHopsForwardAcknowledgement).
+// CumulativeMergeUnion and CumulativeMergePrintsDigest). The still-PowerShell entries nightly-run.ps1 / nightly-run-impl.ps1 are
+// launched where a case is about them (PublicHopsForwardAcknowledgement); its executor hop is the nightly-tests command.
 // The seed statics (the link cache, the Windows identity switch, the read barrier) are process-wide: one case at a time.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -265,12 +265,13 @@ public sealed class RcStoppedRunSeedTests
     });
 
     // nightly-run-impl.ps1's run core (Invoke-AntiphonNightlyRun on C487 seams: the self hop to nightly-run.ps1 and the
-    // executor hop to nightly-tests.ps1) and the real wrapper parameter blocks, in one pwsh child: still-PowerShell entries.
+    // executor hop, W2-nightly S17 the nightly-tests command) and the real nightly-run.ps1 parameter block, in one pwsh child:
+    // still-PowerShell entries; the nightly-tests command's own parser (NightlyTestsOptions) reads the executor's flags.
     private const string PublicHopsScript = """
         param([string]$HopsRepo, [string]$Root, [string]$SeedPath, [string]$HopsOut)
         $ErrorActionPreference = 'Stop'
         $hopScripts = Join-Path $HopsRepo 'scripts'
-        foreach ($name in 'nightly-common','nightly-coverage','nightly-tests-impl','c487-harness') { . (Join-Path $hopScripts ('lib/' + $name + '.ps1')) }
+        foreach ($name in 'nightly-common','nightly-coverage','c487-harness') { . (Join-Path $hopScripts ('lib/' + $name + '.ps1')) }
         $result = [ordered]@{ selfHop = $false; executorHop = $false; wrappers = $false; history = $false; error = '' }
         try {
             . (Join-Path $hopScripts 'lib/nightly-run-impl.ps1')
@@ -285,11 +286,11 @@ public sealed class RcStoppedRunSeedTests
             $runArgs.NoSync=$true;$runArgs.RunId='synthetic-new-nosync'
             $direct=Invoke-AntiphonNightlyRun @runArgs
             $text=[IO.File]::ReadAllText($trace)
-            $result.executorHop=[bool]($text -match 'EXEC.*nightly-tests.ps1.*-AcceptCrossCandidateSeed.*-SeedSourceCandidateId rc-synthetic-old')
+            $result.executorHop=[bool]($text -match 'EXEC antiphon-scripts nightly-tests .*--seed-source-candidate-id rc-synthetic-old.*--accept-cross-candidate-seed')
             # Exercise both real wrapper parameter blocks and splats, replacing only their final implementation function in
             # a private copied fixture.
             $wrappers=$true
-            foreach($kind in @('run','tests')){
+            foreach($kind in @('run')){
                 $wrapperRoot=Join-Path $fxRoot ('wrapper-'+$kind);$lib=Join-Path $wrapperRoot 'lib';[void][IO.Directory]::CreateDirectory($lib)
                 Copy-Item -LiteralPath (Join-Path $hopScripts ('nightly-'+$kind+'.ps1')) -Destination $wrapperRoot
                 foreach($name in @('nightly-common','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
@@ -303,6 +304,8 @@ public sealed class RcStoppedRunSeedTests
                 $received=& (Join-Path $wrapperRoot ('nightly-'+$kind+'.ps1')) -PriorFailuresPath $SeedPath -AcceptCrossCandidateSeed -SeedSourceCandidateId rc-synthetic-old -PassThru
                 $wrappers=$wrappers -and $received.Accepted -and $received.Source -ceq 'rc-synthetic-old' -and $received.Path -ceq $SeedPath
             }
+            $tests=[Antiphon.Nightly.NightlyTestsOptions]::Parse([string[]]@('--prior-failures-path',$SeedPath,'--accept-cross-candidate-seed','--seed-source-candidate-id','rc-synthetic-old'))
+            $wrappers=$wrappers -and $tests.AcceptCrossCandidateSeed -and $tests.SeedSourceCandidateId -ceq 'rc-synthetic-old' -and $tests.PriorFailuresPath -ceq $SeedPath
             $result.wrappers=[bool]$wrappers
             $result.history=[IO.Directory]::Exists((Join-Path $state 'history'))
         } catch { $result.error = (Get-NightlyRefusalText $_) }

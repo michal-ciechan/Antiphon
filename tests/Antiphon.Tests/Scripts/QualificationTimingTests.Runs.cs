@@ -548,14 +548,13 @@ public sealed partial class QualificationTimingTests
 
     // Windows PowerShell 5.1 compiles every Add-Type source with the legacy csc (.NET Framework, C# 5). test-phase-paths.ps1
     // (release-cut.ps1's timing root under 5.1) compiles the Linux identity from these files there; the evidence itself is
-    // compiled (W2-nightly S07-S09) and test-phase-evidence.ps1 compiles nothing.
+    // compiled (W2-nightly S07-S09; test-phase-evidence.ps1 is deleted in S17).
     [Test]
     public void Ps51_add_type_sources_stay_netfx_clean()
     {
         var lib = Path.Combine(NightlyPlanCases.Repo, "scripts", "lib");
         var findings = NetFxAddTypeFindings(
             Path.Combine(lib, "test-phase-paths.ps1"),
-            Path.Combine(lib, "test-phase-evidence.ps1"),
             Path.Combine(lib, "Antiphon.Nightly", "TestPhaseStreamReaders.cs"),
             Path.Combine(lib, "Antiphon.Nightly", "TestPhaseLinuxIdentity.cs"));
         var rows = new NightlyCaseRows();

@@ -84,13 +84,14 @@ internal static class C1514Support
             var dir = new DirectoryInfo(start);
             while (dir is not null)
             {
-                if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "test-phase-evidence.ps1")))
+                // W2-nightly S17: test-phase-evidence.ps1 is deleted; test-phase-paths.ps1 (W2-rc) stays until S27.
+                if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "test-phase-paths.ps1")))
                     return dir.FullName;
                 dir = dir.Parent;
             }
         }
 
-        throw new InvalidOperationException("scripts/lib/test-phase-evidence.ps1 not found");
+        throw new InvalidOperationException("scripts/lib/test-phase-paths.ps1 not found");
     }
 
     public static string StagedProbe() =>

@@ -641,7 +641,7 @@ public sealed class NightlyRunTests
         start.Environment["ANTIPHON_NIGHTLY_DEFERRED_WRITES"] = "off";
         var run = await C1514Support.RunProcess(start, cancellationToken);
         run.ExitCode.ShouldBe(3, run.Text);
-        run.Text.ShouldContain("REFUSED: nightly-tests.ps1 will not run in the shared tree.");
+        run.Text.ShouldContain("REFUSED: nightly-tests will not run in the shared tree.");
         run.Text.ShouldNotContain("WhatIf: would run");
 
         var usage = new ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetTempPath() };

@@ -326,7 +326,7 @@ function Test-C1698_WindowsPowerShellSyntax {
 
     $files = @('scripts/lib/toolchain-floor.ps1', 'restart-server.ps1', 'scripts/restart-session-runner.ps1',
         'scripts/session-runner-restart-health.ps1', 'scripts/nightly-run.ps1', 'scripts/lib/nightly-run-impl.ps1',
-        'scripts/nightly-tests.ps1', 'scripts/lib/nightly-tests-impl.ps1')
+        'scripts/lib/antiphon-cli.ps1')
     foreach ($f in $files) {
         $path = Join-Path $repo $f
         $tokens = $null; $errors = $null

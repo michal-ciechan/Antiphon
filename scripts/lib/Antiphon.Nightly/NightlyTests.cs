@@ -5,10 +5,11 @@
 // (Get-NightlyToolchainPreflight) and Invoke-NightlyExactRoster. CARD-0124 / CARD-0487: it never clones, fetches, resets
 // or otherwise changes git state.
 //
-// Not wired: scripts/nightly-tests.ps1 still runs the PowerShell, and NightlyTestsParityTests runs both on the same seams.
-// S17 makes this the nightly-tests command and deletes the PowerShell. Every observation of the machine goes through the
-// run's NightlyHost (clock, git, launcher, probe, environment, writers); the collaborators that are another slice's
-// (the active-chunk identity, S10) and the E2E prerequisite observation are NightlyTestsBindings, null by default.
+// W2-nightly S17: this is the nightly tests run (antiphon-scripts nightly-tests, NightlyTestsCommand); scripts/nightly-tests.ps1
+// and nightly-tests-impl.ps1 are deleted. Every observation of the machine goes through the run's NightlyHost (clock, git,
+// launcher, probe, environment, writers); the collaborators that are not observations (the evidence recorder, the
+// active-chunk identity, the E2E prerequisite observation, the class-cost file) are NightlyTestsBindings: the command binds
+// NightlyTestsBindings.Production, a test its own.
 // Plain C#: no PowerShell types; the records the core returns are read through PsValue. ASCII only.
 #nullable disable
 using System;
@@ -60,7 +61,7 @@ namespace Antiphon.Nightly
         /// <summary>0 on the refusals the PowerShell reported a launch count for; null otherwise.</summary>
         public int? LaunchCount { get; set; }
 
-        /// <summary>scripts/nightly-tests.ps1's process exit: 3 on a refusal, else ExitCode.</summary>
+        /// <summary>The nightly-tests command's process exit (scripts/nightly-tests.ps1's before W2-nightly S17): 3 on a refusal, else ExitCode.</summary>
         public int ProcessExitCode => string.IsNullOrEmpty(Refusal) ? ExitCode : 3;
     }
 
@@ -81,6 +82,34 @@ namespace Antiphon.Nightly
 
         /// <summary>The class-cost file the launch planner prices with; null: scripts/lib/nightly-class-costs.json of the product root.</summary>
         public string ClassCostPath { get; set; }
+
+        /// <summary>
+        /// W2-nightly S17: the publication scope of the run's timing root, read at each use (Get-TestPhasePublicationScope:
+        /// a test's commit barrier and commit fault stand in for the journal's file system); null: the command's scope.
+        /// </summary>
+        public Func<string, TestPhasePublicationScope> PublicationScope { get; set; }
+
+        /// <summary>W2-nightly S17: observes the bound writer context once it is open ($script:TestPhaseExecutedContext); null: none.</summary>
+        public Action<TestPhaseJournalContext> ExecutedContext { get; set; }
+
+        /// <summary>
+        /// W2-nightly S17: the bindings of the nightly-tests command, as scripts/lib/nightly-tests-impl.ps1 bound them for a
+        /// run without seams (Set-NightlyRunStateBindings): the shadow evidence recorder from ANTIPHON_RC_RUN_EVIDENCE
+        /// (unseamed, its refusal lines on the run's output), the real E2E prerequisite check (no observation bound), the
+        /// heartbeat's active-chunk identity (QualificationHeartbeat.ActiveChunkWriter, its warnings on the run's error) and
+        /// the product root's class-cost file (the entry script's own scripts/lib/nightly-class-costs.json).
+        /// </summary>
+        public static NightlyTestsBindings Production(NightlyHost host)
+        {
+            if (host == null) throw new ArgumentNullException(nameof(host));
+            return new NightlyTestsBindings
+            {
+                RcEvidence = new RcRunEvidenceRecorder(host.Variables("ANTIPHON_RC_RUN_EVIDENCE"), false, false, line => NightlyTests.RunLine(host, line)),
+                E2EPrerequisites = null,
+                ActiveChunk = QualificationHeartbeat.ActiveChunkWriter(text => NightlyTests.Warn(host, text)),
+                ClassCostPath = NightlyTests.DefaultClassCostPath(),
+            };
+        }
     }
 
     /// <summary>The nightly tests run and its helpers.</summary>
@@ -178,10 +207,10 @@ namespace Antiphon.Nightly
 
             if (NightlyPaths.IsSharedTree(repoRoot) && !options.AllowSharedTree)
             {
-                output.WriteLine("REFUSED: nightly-tests.ps1 will not run in the shared tree.");
+                output.WriteLine("REFUSED: nightly-tests will not run in the shared tree.");
                 output.WriteLine("  RepoRoot: " + repoRoot);
                 output.WriteLine("  Isolated clone: " + NightlyPaths.IsolatedClone);
-                output.WriteLine("  Re-run with -AllowSharedTree only for a deliberate shared-tree run.");
+                output.WriteLine("  Re-run with --allow-shared-tree only for a deliberate shared-tree run.");
                 return new NightlyTestsResult { ExitCode = 3, Refusal = "shared-tree" };
             }
 
@@ -270,7 +299,7 @@ namespace Antiphon.Nightly
             var summaryPath = Path.Combine(logRoot, "summary.json");
             var invocationId = runId;
             var timingRoot = NightlyPaths.TimingRoot(options.TimingRoot, logRoot, runId);
-            TestPhasePublicationScope Scope() => PublicationScope(timingRoot);
+            TestPhasePublicationScope Scope() => bindings.PublicationScope?.Invoke(timingRoot) ?? PublicationScope(timingRoot);
             var phaseTimingDirectory = TestPhaseManifests.TimingDirectory(logRoot, timingRoot);
             TestPhaseJournalContext publicationContext = null;
             TestPhaseJournalContext executedContext = null;
@@ -279,6 +308,7 @@ namespace Antiphon.Nightly
             {
                 publicationContext = TestPhasePublication.Open(logRoot, timingRoot, invocationId, attempt, "", publicationSource, "", false, false, Scope());
                 if (!publicationContext.Refused) executedContext = publicationContext;
+                if (executedContext != null) bindings.ExecutedContext?.Invoke(executedContext);
             }
             catch (Exception) { FailureMarker(logRoot, timingRoot, "phase-summary-failed"); }
             var rcEvidence = bindings.RcEvidence ?? new RcRunEvidenceRecorder(host.Variables("ANTIPHON_RC_RUN_EVIDENCE"), false, false, line => RunLine(host, line));
@@ -449,7 +479,7 @@ namespace Antiphon.Nightly
                             ExpectedSkipRoster = expectedSkipRoster,
                             RcSkipRoster = rcSkipRoster,
                             ExplicitPhaseRoot = host.Variables("ANTIPHON_TEST_PHASE_ROOT") ?? "",
-                            ClassCostPath = bindings.ClassCostPath ?? ClassCostPath(),
+                            ClassCostPath = bindings.ClassCostPath ?? DefaultClassCostPath(),
                             NpmOk = npmOk,
                             DotnetOk = dotnetOk,
                             LintBlocksPipeline = lintBlocksPipeline,
@@ -796,7 +826,8 @@ namespace Antiphon.Nightly
         internal static TestPhasePublicationScope PublicationScope(string timingRoot) =>
             new TestPhasePublicationScope(timingRoot ?? "", TestPhaseRunSummary.CommandEdition, "1", null, null);
 
-        private static string ClassCostPath()
+        /// <summary>scripts/lib/nightly-class-costs.json of the product root; "" when there is no product root.</summary>
+        public static string DefaultClassCostPath()
         {
             var root = ProductRoot();
             return root == null ? "" : Path.Combine(root, "scripts", "lib", "nightly-class-costs.json");

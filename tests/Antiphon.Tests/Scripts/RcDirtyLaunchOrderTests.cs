@@ -116,13 +116,20 @@ public sealed class RcDirtyLaunchOrderTests
         Note(order.EffectiveMode == "Full", "result-effective-mode-full");
         Note(!order.TrustTransition, "no-trust-transition");
         Note(order.Activation == "off" && order.Shadow, "activation-off");
-        foreach (var name in new[] { "release-cut.ps1", "nightly-run.ps1", "nightly-tests.ps1" })
+        foreach (var name in new[] { "release-cut.ps1", "nightly-run.ps1" })
         {
             var text = RcInputFixtureRepository.ReadSource("scripts/" + name);
             Note(text.Contains("ValidateSet('Full', 'Shadow', 'ChangeAware')", StringComparison.Ordinal), name + "-modes-unchanged");
             Note(!HasDirtyOrderCaller(text), name + "-has-no-dirty-order-caller");
             Note(!text.Contains("Incremental", StringComparison.Ordinal), name + "-has-no-incremental-mode");
         }
+        // W2-nightly S17: the nightly tests run is the nightly-tests command (scripts/nightly-tests.ps1 is deleted): its modes
+        // are NightlyTestsOptions', Full by default.
+        var testsOptions = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/NightlyTestsOptions.cs");
+        var testsRun = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/NightlyTests.cs");
+        Note(NightlyTestsOptions.SelectionModes.SequenceEqual(["Full", "Shadow", "ChangeAware"]) && new NightlyTestsOptions().SelectionMode == "Full", "nightly-tests-modes-unchanged");
+        Note(!HasDirtyOrderCaller(testsOptions) && !HasDirtyOrderCaller(testsRun), "nightly-tests-has-no-dirty-order-caller");
+        Note(!testsOptions.Contains("Incremental", StringComparison.Ordinal) && !testsRun.Contains("Incremental", StringComparison.Ordinal), "nightly-tests-has-no-incremental-mode");
         var selection = RcInputFixtureRepository.ReadSource("scripts/lib/release-selection.ps1");
         Note(selection.Contains("effectiveMode='Full'", StringComparison.Ordinal), "release-selection-effective-mode-full");
         var compiled = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Scripts/ReleaseSelection.cs");

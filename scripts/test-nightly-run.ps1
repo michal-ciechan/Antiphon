@@ -95,8 +95,9 @@ function Invoke-C545ResultLineRun {
     param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
     Add-Content -LiteralPath '$($fx.Trace)' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
     `$a = @(`$ArgumentList)
-    `$logIdx = [array]::IndexOf(`$a, '-LogRoot')
-    if ((`$a -join ' ') -match 'nightly-tests\.ps1' -and `$logIdx -ge 0) {
+    # W2-nightly S17: the tests hop is the nightly-tests command (antiphon-scripts nightly-tests --log-root <dir> ...).
+    `$logIdx = [array]::IndexOf(`$a, '--log-root')
+    if ([string]`$FilePath -eq 'antiphon-scripts' -and [string]`$a[0] -eq 'nightly-tests' -and `$logIdx -ge 0) {
         `$dir = [string]`$a[`$logIdx + 1]
         New-Item -ItemType Directory -Path `$dir -Force | Out-Null
         [System.IO.File]::WriteAllText((Join-Path `$dir 'summary.json'), '$summaryJson')
@@ -193,7 +194,7 @@ function Test-C1698_RunLibraryLoadFailure {
         foreach ($d in @('scripts/lib', 'docker')) { New-Item -ItemType Directory -Path (Join-Path $copy $d) -Force | Out-Null }
         # The harness, the entry scripts the fixture clone copies, and the whole library directory.
         # [IO.File]::Copy: per-file Copy-Item over the library costs tens of seconds on Linux.
-        foreach ($n in @('test-nightly-run.ps1', 'nightly-run.ps1', 'nightly-tests.ps1')) {
+        foreach ($n in @('test-nightly-run.ps1', 'nightly-run.ps1')) {
             [IO.File]::Copy((Join-Path $here $n), (Join-Path $copy (Join-Path 'scripts' $n)))
         }
         foreach ($f in [IO.Directory]::GetFiles($lib)) { [IO.File]::Copy($f, (Join-Path (Join-Path $copy 'scripts') (Join-Path 'lib' ([IO.Path]::GetFileName($f))))) }
@@ -225,7 +226,7 @@ function Test-C1698_RunLibraryLoadFailure {
         $w = -1; $hop = -1
         for ($i = 0; $i -lt $lines.Count; $i++) {
             if ($w -lt 0 -and $lines[$i] -match 'WARNING: the toolchain floor check failed') { $w = $i }
-            if ($hop -lt 0 -and $lines[$i] -match 'running .*nightly-tests\.ps1') { $hop = $i }
+            if ($hop -lt 0 -and $lines[$i] -match 'running antiphon-scripts nightly-tests') { $hop = $i }
         }
         $ok = $null -ne $child -and $null -ne $at.Result -and [int]$child.exitCode -eq [int]$at.Result.ExitCode -and
             [string]$child.phase -eq [string]$at.Result.Phase -and $w -lt 0 -and $hop -ge 0

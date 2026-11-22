@@ -298,12 +298,12 @@ function Get-C1313FilterDiscovery {
     return [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($parsed.Nodes, ([Antiphon.Nightly.NightlyDiagnosticLog]::AssemblyHash($FilterHost)))
 }
 function Test-C1313_ExactExpandedExecution {
-    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
+    # W2-nightly S17: the exact roster is NightlyTests.ExactRoster (Invoke-C487NightlyExactRoster, c487-nightly-tests.ps1).
     $discovery=Get-C1313FilterDiscovery
     $expected=@($discovery.nodes | Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -cin @('One','Rows')})
     $dir=Join-Path $ResultsDirectory 'execution'
     $members=@(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'},@{class='Antiphon.Tests.FilterHost.C1313Offline';method='Rows'})
-    $actual=Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ResultsDirectory $dir -Environment @{C1313_SENTINEL=(Join-Path $ResultsDirectory 'forbidden.txt')}
+    $actual=Invoke-C487NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ResultsDirectory $dir -Environment @{C1313_SENTINEL=(Join-Path $ResultsDirectory 'forbidden.txt')}
     $readback=Get-Content (Join-Path $dir 'receipt.json') -Raw|ConvertFrom-Json
     # Retain child TRX/diagnostics after ScriptHarness reclaims its owned scratch.
     $retained=Join-Path $repoRoot ('.antiphon/test-output/c1313/'+[guid]::NewGuid().ToString('N'))
@@ -447,8 +447,7 @@ function Test-C1313_NewUidRemainder {
     $new=@($discovery.nodes|Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -ceq 'Rows'})[0].uid
     $known=@($discovery.nodes.uid|Where-Object {$_ -cne $new})
     $r=[Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($discovery, $members, $known)
-    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
-    $refused='';try{[void](Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ClassifiedUids $known -ResultsDirectory (Join-Path $ResultsDirectory 'must-not-launch'))}catch{$refused=$_.Exception.Message}
+    $refused='';try{[void](Invoke-C487NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ClassifiedUids $known -ResultsDirectory (Join-Path $ResultsDirectory 'must-not-launch'))}catch{$refused=$_.Exception.Message}
     Assert-C487 ($r.Widened -and $r.RequiredUids -ccontains $new -and $r.RequiredUids.Count -eq $discovery.nodes.Count -and $refused.StartsWith('new-uid-required') -and -not (Test-Path (Join-Path $ResultsDirectory 'must-not-launch'))) 'C1313 new-uid-required' $refused
 }
 

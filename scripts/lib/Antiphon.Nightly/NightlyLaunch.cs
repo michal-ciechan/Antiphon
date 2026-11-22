@@ -342,4 +342,36 @@ namespace Antiphon.Nightly
             return null;
         }
     }
+
+    /// <summary>
+    /// W2-nightly S17: one launcher for both custodies, as a production run needs them: a Watched launch (a hop) runs on
+    /// the watched launcher, an Owned one (a build, a test host, a discovery) on the owned launcher. Cleanup is waited for
+    /// on the owned launcher when the result carries the native owner's observation, else on the watched one.
+    /// </summary>
+    public sealed class CustodyLauncher : INightlyLauncher
+    {
+        private readonly INightlyLauncher _watched;
+        private readonly INightlyLauncher _owned;
+
+        /// <summary>watched runs Watched custody, owned runs Owned custody; both are required.</summary>
+        public CustodyLauncher(INightlyLauncher watched, INightlyLauncher owned)
+        {
+            _watched = watched ?? throw new ArgumentNullException(nameof(watched));
+            _owned = owned ?? throw new ArgumentNullException(nameof(owned));
+        }
+
+        /// <inheritdoc />
+        public NightlyLaunchResult Run(NightlyLaunch launch)
+        {
+            if (launch == null) throw new ArgumentNullException(nameof(launch));
+            return launch.Custody == NightlyCustody.Owned ? _owned.Run(launch) : _watched.Run(launch);
+        }
+
+        /// <inheritdoc />
+        public bool WaitCleanup(NightlyLaunchResult result) =>
+            result != null && result.Owner != null ? _owned.WaitCleanup(result) : _watched.WaitCleanup(result);
+
+        /// <inheritdoc />
+        public int NativeActiveCount => _owned.NativeActiveCount;
+    }
 }

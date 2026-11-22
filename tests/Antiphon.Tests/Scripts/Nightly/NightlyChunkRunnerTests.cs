@@ -606,8 +606,9 @@ public sealed class NightlyChunkRunnerTests
         var lib = Path.Combine(NightlyPlanCases.Repo, "scripts", "lib");
         var ownerText = File.ReadAllText(Path.Combine(lib, "Antiphon.Nightly", "NativeProcessOwner.cs"));
         rows.Check(ownerText.Contains("NightlyCompletionGrace.Wait(") && ownerText.Contains("2x") && ownerText.Contains("p95"), "group4 native loop waits on the named grace constant");
-        var implText = File.ReadAllText(Path.Combine(lib, "nightly-tests-impl.ps1"));
-        rows.Check(!implText.Contains("function Invoke-NightlyCompletionGrace"), "group4 powershell grace copy is not a second implementation");
+        // W2-nightly S17: no PowerShell library keeps a grace copy (nightly-tests-impl.ps1, which once did, is deleted).
+        var graceCopies = Directory.GetFiles(lib, "*.ps1").Where(f => File.ReadAllText(f).Contains("function Invoke-NightlyCompletionGrace")).Select(Path.GetFileName).ToArray();
+        rows.Check(graceCopies.Length == 0, "group4 powershell grace copy is not a second implementation", string.Join(",", graceCopies));
 
         var stamp = new DateTime(2026, 11, 10, 0, 0, 0, DateTimeKind.Utc);
         File.SetLastWriteTimeUtc(matchDiag, stamp);
@@ -625,7 +626,8 @@ public sealed class NightlyChunkRunnerTests
         rows.Check(!skipText.Contains("execution-stop-to-exit-seconds="), "group4 chunk log omits stop-to-exit when the markers were absent", skipText);
         rows.Check(Watchdog.HarnessHangField(true) == "completed-but-hung", "group4 summary harnessHang reason is completed-but-hung");
         rows.Check(Watchdog.HarnessHangField(false) == "", "group4 summary harnessHang is empty when the chunk is not a hang");
-        rows.Check(implText.Contains("harnessHang =") && implText.Contains("NightlyWatchdog]::HarnessHangField"), "group4 summary records harnessHang beside the red result");
+        var runText = File.ReadAllText(Path.Combine(lib, "Antiphon.Nightly", "NightlyTests.cs"));
+        rows.Check(runText.Contains("{ \"harnessHang\", NightlyWatchdog.HarnessHangField("), "group4 summary records harnessHang beside the red result");
         var noteText = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "docs", "investigations", "2026-11-10-why-missed-session-runner-group4-post-completion-hang.md"));
         rows.Check(noteText.Contains("publicationTerminal") && noteText.Contains("failed-run") && noteText.Contains("<ResultSummary"),
             "group4 note records the opening-tag reader and publicationTerminal failed-run");

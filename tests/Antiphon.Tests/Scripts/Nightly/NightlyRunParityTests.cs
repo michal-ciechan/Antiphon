@@ -17,12 +17,11 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// scenario; then NightlyRun.Run runs each in-process on a twin NightlyRunWorld. Compared: the result object and its JSON, the
 /// last stdout line (the completion record), the exit code, the launches (the tests hop, the self hop and the report), the
 /// git calls, and every file under the state, coordination and release roots and the clone (not its .git). Folded: each
-/// side's root, timestamps, the continuing pid, and the hop's spelling: the PowerShell tests hop is pwsh -File
-/// nightly-tests.ps1 with -Name flags and -SeamsPath, the C# one `dotnet exec &lt;cli&gt; nightly-tests` with --kebab flags, so
-/// both are compared as the nightly-tests options they parse to; the self hop drops the PowerShell's -SeamsPath (seams never
-/// cross a process in C#); the report is the StartProcess seam's antiphon-scripts call on one side and the report binding's
-/// call on the other. The PowerShell's selection hop (Invoke-ReleaseSelectionHop's JSON-splatted pwsh child) is replaced in
-/// the seams file by the StartProcess seam, so it records its argv as every other hop does; the C# never takes that path.
+/// side's root, timestamps, the continuing pid, and the hop's spelling: the PowerShell tests hop is the StartProcess seam's
+/// antiphon-scripts nightly-tests call (W2-nightly S17: the command, never the selection hop), the C# one
+/// `dotnet exec &lt;cli&gt; nightly-tests`, both with --kebab flags and compared as the nightly-tests options they parse to; the
+/// self hop drops the PowerShell's -SeamsPath (seams never cross a process in C#); the report is the StartProcess seam's
+/// antiphon-scripts nightly-report call on one side and the report binding's call on the other.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -308,7 +307,6 @@ public sealed class NightlyRunParityTests
             .Concat(world.Reports.Select(r => FoldText("nightly-report --summary " + r.Summary + (string.IsNullOrWhiteSpace(r.PreviousSummary) ? "" : " --previous-summary " + r.PreviousSummary), world.Root)))
             .ToArray();
 
-    private static readonly string[] TestsSwitches = ["AcceptCrossCandidateSeed", "AllowSharedTree", "WhatIf", "PassThru"];
 
     /// <summary>One launch in the spelling both sides share (see the class comment).</summary>
     private static string NormalLaunch(string file, string[] args, string root)
@@ -316,18 +314,8 @@ public sealed class NightlyRunParityTests
         var fileIndex = Array.IndexOf(args, "-File");
         if (file == "dotnet" && args.Length >= 3 && args[2] == "nightly-tests")
             return FoldText("nightly-tests " + string.Join(" ", NightlyTestsOptions.Parse(args.Skip(3).ToArray()).ToArguments()), root);
-        if (fileIndex >= 0 && fileIndex + 1 < args.Length && args[fileIndex + 1].EndsWith("nightly-tests.ps1", StringComparison.OrdinalIgnoreCase))
-        {
-            var kebab = new List<string>();
-            for (var i = fileIndex + 2; i < args.Length; i++)
-            {
-                var name = args[i].TrimStart('-');
-                if (name == "SeamsPath") { i++; continue; }
-                kebab.Add("--" + Regex.Replace(name, "(?<!^)([A-Z])", "-$1").ToLowerInvariant());
-                if (!TestsSwitches.Contains(name)) kebab.Add(i + 1 < args.Length ? args[++i] : "");
-            }
-            return FoldText("nightly-tests " + string.Join(" ", NightlyTestsOptions.Parse(kebab).ToArguments()), root);
-        }
+        if (file == "antiphon-scripts" && args.Length >= 1 && args[0] == "nightly-tests")
+            return FoldText("nightly-tests " + string.Join(" ", NightlyTestsOptions.Parse(args.Skip(1).ToArray()).ToArguments()), root);
         if (file == "antiphon-scripts") return FoldText(string.Join(" ", args), root);
         var kept = new List<string>();
         for (var i = 0; i < args.Length; i++)
@@ -429,7 +417,7 @@ public sealed class NightlyRunParityTests
     /// <summary>
     /// The scenario lines after Write-C487Seams: the pinned clock and the toolchain versions FakeHostProbe answers; a
     /// StartProcess that records each launch (the trace's EXEC line and one JSON line), answers the report with its exit and
-    /// the tests hop by writing the scenario's summary into its -LogRoot; and the selection hop routed to that StartProcess.
+    /// the tests hop (antiphon-scripts nightly-tests) by writing the scenario's summary into its --log-root.
     /// </summary>
     private const string SeamsExtra = """
         $NightlySeams.UtcNow = { return [datetime]::Parse('__UTCNOW__', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
@@ -439,9 +427,8 @@ public sealed class NightlyRunParityTests
             $a = @($ArgumentList)
             Add-Content -LiteralPath '__TRACE__' -Value (('EXEC {0} {1}' -f $FilePath, ($a -join ' '))) -Encoding ASCII
             Add-Content -LiteralPath '__LAUNCHES__' -Value (ConvertTo-Json -Compress -InputObject ([ordered]@{ file = [string]$FilePath; args = [string[]]$a })) -Encoding UTF8
-            if ([string]$FilePath -eq 'antiphon-scripts') { return @{ ExitCode = __REPORT__; TimedOut = $false; Pid = 2 } }
-            if (($a -join ' ') -match 'nightly-tests\.ps1') {
-                $logIdx = [array]::IndexOf($a, '-LogRoot')
+            if ([string]$FilePath -eq 'antiphon-scripts' -and $a.Count -ge 1 -and [string]$a[0] -eq 'nightly-tests') {
+                $logIdx = [array]::IndexOf($a, '--log-root')
                 if ('__SUMMARY__' -and $logIdx -ge 0) {
                     $dir = [string]$a[$logIdx + 1]
                     New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -449,12 +436,8 @@ public sealed class NightlyRunParityTests
                 }
                 return @{ ExitCode = __TESTEXIT__; TimedOut = $false; Pid = 2 }
             }
+            if ([string]$FilePath -eq 'antiphon-scripts') { return @{ ExitCode = __REPORT__; TimedOut = $false; Pid = 2 } }
             return @{ ExitCode = 0; TimedOut = $false; Pid = 2 }
-        }
-        function script:Invoke-ReleaseSelectionHop {
-            param([string[]]$ArgumentList, [string]$WorkingDirectory)
-            $answer = @($script:NightlySeams.StartProcess.Invoke('pwsh', $ArgumentList, $WorkingDirectory, 0, $null))[0]
-            return [pscustomobject]@{ ExitCode = [int]$answer.ExitCode; TimedOut = $false; Pid = 2 }
         }
         """;
 

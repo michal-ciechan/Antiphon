@@ -250,11 +250,13 @@ public sealed class RcIncrementalShadowTests
     private void AssertOffSwitch()
     {
         const string modeLine = "    [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',";
-        foreach (var name in new[] { "release-cut.ps1", "nightly-run.ps1", "nightly-tests.ps1" })
+        foreach (var name in new[] { "release-cut.ps1", "nightly-run.ps1" })
         {
             var lines = File.ReadAllLines(Path.Combine(RcInputFixtureRepository.SourceRoot, "scripts", name));
             Note(lines.Any(line => line == modeLine), "mode list " + name);
         }
+        // W2-nightly S17: the nightly-tests command's mode list (scripts/nightly-tests.ps1 is deleted): the same three, Full by default.
+        Note(NightlyTestsOptions.SelectionModes.SequenceEqual(["Full", "Shadow", "ChangeAware"]) && new NightlyTestsOptions().SelectionMode == "Full", "mode list nightly-tests"); 
         var sha = new string('a', 40);
         Dictionary<string, object?> State(string scope) => new(StringComparer.Ordinal)
         {

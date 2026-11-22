@@ -7,7 +7,6 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
 . "$PSScriptRoot/lib/release-selection.ps1"
-. "$PSScriptRoot/lib/nightly-tests-impl.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $ResultsDirectory = New-C487Root $ResultsDirectory
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -39,7 +38,8 @@ function New-Fx {
     [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
     Copy-Item "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib') -Recurse
     Copy-C487NightlyCoreDependency -Root $seed
-    foreach ($file in @('nightly-run.ps1','nightly-tests.ps1','release-cut.ps1','release-candidate.ps1','select-test-rosters.ps1')) {
+    # W2-nightly S17: the tests hop is the nightly-tests command; its sources are the scripts/lib copy above.
+    foreach ($file in @('nightly-run.ps1','release-cut.ps1','release-candidate.ps1','select-test-rosters.ps1')) {
         Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $seed "scripts/$file")
     }
     foreach ($file in @('tests/test-execution-policy.json','tests/test-selection-policy.json','global.json')) {
@@ -100,7 +100,8 @@ function Invoke-Workload($Fx, $Request, $Log = '') {
         Profile='rc';Trigger='rc';RunId=$Request.RunId;SeamsPath=$Fx.Seams;PassThru=$true;ReleaseRoot=$Fx.Release;CandidateId=$Request.CandidateId;Repository=$Fx.Repository}
     foreach ($key in @('SelectionMode','BaselineSha','BaselineReceiptPath','QualificationPath','TimingRoot','ReleaseIntentPath','TrainManifestPath',
         'SelectionAttemptPath','SelectionAttemptDigest','SelectionPath','SelectionDigest','Attempt')) { $splat[$key]=$Request[$key] }
-    return & "$PSScriptRoot/nightly-tests.ps1" @splat
+    # W2-nightly S17: the nightly tests run in this process on the workload seams (nightly-tests.ps1 is deleted).
+    return (Invoke-C487NightlyTests -Parameters $splat)
 }
 function Get-FxDiscovery {
     . "$PSScriptRoot/lib/checkpoint-process-runner.ps1"
@@ -118,7 +119,7 @@ function Invoke-FxRoster($Selection, $Discovery, $Label) {
     $proposed = @($full[0])
     $members = @(Resolve-ReleaseSelectionMembers $Selection $full $proposed)
     $dir = Join-Path $ResultsDirectory $Label
-    $receipt = Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $Discovery -Members $members -ResultsDirectory $dir `
+    $receipt = Invoke-C487NightlyExactRoster -AssemblyPath $FilterHost -Discovery $Discovery -Members $members -ResultsDirectory $dir `
         -Environment @{C1313_SENTINEL=(Join-Path $ResultsDirectory 'forbidden.txt')}
     $terminals = @(); foreach ($trx in Get-ChildItem $dir -Recurse -Filter run.trx) { $terminals += @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx.FullName)) }
     return ($receipt.complete -and $terminals.Count -eq 4 -and

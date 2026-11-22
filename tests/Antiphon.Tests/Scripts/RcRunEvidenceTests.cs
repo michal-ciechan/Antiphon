@@ -154,14 +154,14 @@ public sealed class RcRunEvidenceTests
         Contract(nameof(InterruptedWriterLeavesNotRun));
     }
 
-    // The call sites the two still-PowerShell impl scripts use, the chunk runner (W2-nightly S12: the launch, the chunk
-    // record and its shadow parse moved there from nightly-tests-impl.ps1) and the suite runner (W2-nightly S13: the
-    // suite's discovery record moved there with the suite preparation).
-    private const string TestsImpl = "scripts/lib/nightly-tests-impl.ps1";
+    // The call sites: the nightly tests run (W2-nightly S17: NightlyTests.cs; nightly-tests-impl.ps1 is deleted), the run core
+    // (still PowerShell), the chunk runner (W2-nightly S12: the launch, the chunk record and its shadow parse) and the suite
+    // runner (W2-nightly S13: the suite's discovery record moved there with the suite preparation).
+    private const string TestsImpl = "scripts/lib/Antiphon.Nightly/NightlyTests.cs";
     private const string RunImpl = "scripts/lib/nightly-run-impl.ps1";
     private const string ChunkRunner = "scripts/lib/Antiphon.Nightly/NightlyChunkRunner.cs";
     private const string SuiteRunner = "scripts/lib/Antiphon.Nightly/NightlySuiteRunner.cs";
-    private const string BuildCall = "(Get-NightlyRcRunEvidence).Build(";
+    private const string BuildCall = "rcEvidence.Build(";
     private const string DiscoveryCall = "s.RcEvidence?.DiscoveryOnce(";
     private const string LaunchCall = "c.RcEvidence?.Launch(";
     private const string RevisionCall = "c.RcEvidence.ChunkRevision(";
@@ -243,11 +243,10 @@ public sealed class RcRunEvidenceTests
         var sha = Git(repo, "rev-parse", "HEAD");
         Git(repo, "remote", "add", "origin", "https://github.com/michal-ciechan/Antiphon");
         Git(repo, "config", "core.longpaths", "true");
-        // The checkout runs its own nightly-tests.ps1 and scripts/lib (bin and obj left out), and the core's
-        // WriteBehind sources, as Copy-C487NightlyCoreDependency copied them.
+        // The checkout runs its own scripts/lib (bin and obj left out: the nightly-tests command's sources and the C487 harness),
+        // and the core's WriteBehind sources, as Copy-C487NightlyCoreDependency copied them.
         var scripts = Path.Combine(repo, "scripts");
         Directory.CreateDirectory(scripts);
-        File.Copy(Path.Combine(source, "scripts", "nightly-tests.ps1"), Path.Combine(scripts, "nightly-tests.ps1"), true);
         CopyTree(Path.Combine(source, "scripts", "lib"), Path.Combine(scripts, "lib"), top: true);
         var writeBehind = Path.Combine(repo, "src", "Antiphon.IO.WriteBehind");
         Directory.CreateDirectory(writeBehind);
@@ -343,9 +342,10 @@ public sealed class RcRunEvidenceTests
 
     private static string Quote(string path) => path.Replace("'", "''");
 
-    // The nightly-run seams (a PowerShell file the production entry dot-sources). The tests hop runs the checkout's
-    // nightly-tests.ps1 for real; S6B_FAULT_CHILD_GIT=1 gives that child a git configuration every real git call
-    // refuses. The test host is faked from the c487 probe's diagnostics and TRX.
+    // The nightly-run seams (a PowerShell file the production entry dot-sources). The tests hop (W2-nightly S17: the
+    // nightly-tests command, which takes no seams) runs for real in this process on the same seams (Invoke-C487NightlyTestsHop
+    // of the checkout's scripts/lib/c487-nightly-tests.ps1), its output in the child log; S6B_FAULT_CHILD_GIT=1 gives it a git
+    // configuration every real git call refuses. The test host is faked from the c487 probe's diagnostics and TRX.
     private static string Seams(string trace, string childLog, string probe, string sha) => $$"""
         $NightlySeams = @{
             TracePath = '{{Quote(trace)}}'
@@ -359,22 +359,13 @@ public sealed class RcRunEvidenceTests
                 param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
                 $joined = @($ArgumentList) -join ' '
                 Add-Content -LiteralPath '{{Quote(trace)}}' -Value (('EXEC {0} {1}' -f $FilePath, $joined)) -Encoding ASCII
-                if ($joined -match 'nightly-tests\.ps1') {
-                    $psi = New-Object System.Diagnostics.ProcessStartInfo
-                    $psi.FileName = 'pwsh'
-                    $psi.WorkingDirectory = $WorkingDirectory
-                    $psi.UseShellExecute = $false
-                    $psi.RedirectStandardOutput = $true
-                    $psi.RedirectStandardError = $true
-                    if ($env:S6B_FAULT_CHILD_GIT -eq '1') { $psi.Environment['GIT_CONFIG_PARAMETERS'] = 'fault' }
-                    foreach ($arg in @($ArgumentList)) { [void]$psi.ArgumentList.Add([string]$arg) }
-                    $proc = [System.Diagnostics.Process]::Start($psi)
-                    $outTask = $proc.StandardOutput.ReadToEndAsync()
-                    $errTask = $proc.StandardError.ReadToEndAsync()
-                    $proc.WaitForExit()
-                    $text = $outTask.GetAwaiter().GetResult() + [Environment]::NewLine + $errTask.GetAwaiter().GetResult()
-                    Add-Content -LiteralPath '{{Quote(childLog)}}' -Value $text -Encoding UTF8
-                    return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; Pid = $proc.Id; ChildrenExited = $true; CleanupComplete = $true; OutputDrainTimedOut = $false; LogText = '' }
+                if ([string]$FilePath -eq 'antiphon-scripts' -and [string]@($ArgumentList)[0] -eq 'nightly-tests') {
+                    . (Join-Path $WorkingDirectory 'scripts/lib/c487-nightly-tests.ps1')
+                    $savedGit = $env:GIT_CONFIG_PARAMETERS
+                    if ($env:S6B_FAULT_CHILD_GIT -eq '1') { $env:GIT_CONFIG_PARAMETERS = 'fault' }
+                    try { $hop = Invoke-C487NightlyTestsHop -Seams $script:NightlySeams -ArgumentList @($ArgumentList) -WorkingDirectory $WorkingDirectory -LogPath '{{Quote(childLog)}}' }
+                    finally { $env:GIT_CONFIG_PARAMETERS = $savedGit }
+                    return @{ ExitCode = [int]$hop.ExitCode; TimedOut = $false; Pid = $PID; ChildrenExited = $true; CleanupComplete = $true; OutputDrainTimedOut = $false; LogText = '' }
                 }
                 $list = @($ArgumentList)
                 function Take([string]$name) {

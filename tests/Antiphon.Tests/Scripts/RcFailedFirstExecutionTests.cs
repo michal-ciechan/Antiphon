@@ -8,9 +8,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1404/1514: failed-first execution through the real coordinator, suite runner, journal and nightly-tests.ps1
-/// entry. W2-nightly S14: in-process (the actual-loop cases still run the PowerShell nightly-tests.ps1 entry as a pwsh
-/// child until S17; the qualification heartbeat is compiled since S10); were cases of scripts/test-nightly-failed-first.ps1.
+/// CARD-1404/1514: failed-first execution through the real coordinator, suite runner, journal and nightly tests run.
+/// W2-nightly S14: in-process (the actual-loop cases run NightlyTests.Run on their seams file in a pwsh child since S17, the
+/// entry nightly-tests.ps1 deleted; the qualification heartbeat is compiled since S10); were cases of
+/// scripts/test-nightly-failed-first.ps1.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]

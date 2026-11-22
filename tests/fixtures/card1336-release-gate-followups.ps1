@@ -34,22 +34,6 @@ $observerPath = Join-Path (Split-Path -Parent $SeamsPath) ('OBSERVATION-' + $Run
 
 '@
     $source = $source.Insert($ast.ParamBlock.Extent.EndOffset, $observer.Replace('OBSERVATION', $Kind))
-    if ($Kind -ceq 'workload') {
-        # Observe the production result and provide a deliberately optimistic
-        # synthetic report field. No identity or admission function is substituted.
-        $tail = @'
-[IO.File]::WriteAllText((Join-Path (Split-Path -Parent $SeamsPath) ('workload-result-' + $RunId + '.json')), (ConvertTo-Json $result -Depth 12))
-if ($result.SummaryPath -and (Test-Path -LiteralPath $result.SummaryPath)) {
-    $synthetic = Get-Content -LiteralPath $result.SummaryPath -Raw | ConvertFrom-Json
-    $synthetic | Add-Member -NotePropertyName reportDelivered -NotePropertyValue $true -Force
-    $synthetic | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $result.SummaryPath
-}
-
-'@
-        $anchor = 'if ($PassThru) { return $result }'
-        if (-not $source.Contains($anchor)) { throw 'Workload observation anchor missing' }
-        $source = $source.Replace($anchor, $tail + $anchor)
-    }
     [IO.File]::WriteAllText($Path, $source, $utf8)
 }
 
@@ -64,11 +48,11 @@ function New-C1336Candidate {
     [void](Git-C1336 $seed @('config', 'core.autocrlf', 'false'))
     [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
     Copy-Item (Join-Path $repoRoot 'scripts/lib') (Join-Path $seed 'scripts/lib') -Recurse
-    foreach ($name in @('nightly-run.ps1', 'nightly-tests.ps1', 'select-test-rosters.ps1')) {
+    # W2-nightly S17: the workload is the nightly-tests command (its sources are scripts/lib); the seams observe it below.
+    foreach ($name in @('nightly-run.ps1', 'select-test-rosters.ps1')) {
         Copy-Item (Join-Path $repoRoot "scripts/$name") (Join-Path $seed "scripts/$name")
     }
     Add-C1336Observer (Join-Path $seed 'scripts/nightly-run.ps1') 'hop'
-    Add-C1336Observer (Join-Path $seed 'scripts/nightly-tests.ps1') 'workload'
     foreach ($name in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json')) {
         Write-C1336File $seed $name ([IO.File]::ReadAllText((Join-Path $repoRoot $name)))
     }
@@ -135,6 +119,8 @@ Set-Item Function:script:Get-NightlyDefaultStateRoot { return '$($master.Replace
         if ($suiteExecutables -cnotcontains $required) { throw "Fixture suite executable census lacks $required" }
     }
     Add-Content $seams ('$script:C1336SuiteExecutables = @(' + (($suiteExecutables | ForEach-Object { "'" + $_ + "'" }) -join ', ') + ')')
+    Add-Content $seams ('$script:C1336ObservationRoot = ''' + $root.Replace("'", "''") + '''')
+    Add-Content $seams ('$script:C1336HopScript = ''' + (Join-Path $repoRoot 'scripts/lib/c487-nightly-tests.ps1').Replace("'", "''") + '''')
     # The shared synthetic native I/O helper is wrapped in a fail-closed target
     # allowlist; no unexpected executable can fall through to a real process.
     Add-Content $seams @'
@@ -157,6 +143,23 @@ $NightlySeams.StartProcess = {
     if ($FilePath -ceq 'antiphon-scripts' -and $args.Count -ge 3 -and $args[0] -ceq 'nightly-report' -and $args[1] -ceq '--summary') {
         [IO.File]::WriteAllText(($args[2] + '.report-receipt'), 'inert local report I/O')
         $allowed = $true
+    }
+    # W2-nightly S17: the workload is the nightly-tests command. Record the options it received, run it in this process
+    # on these seams (the selection hop ran nightly-tests.ps1 on them), record its result, and provide a deliberately
+    # optimistic synthetic report field. No identity or admission function is substituted.
+    if ($FilePath -ceq 'antiphon-scripts' -and $args.Count -ge 1 -and $args[0] -ceq 'nightly-tests') {
+        $options = [Antiphon.Nightly.NightlyTestsOptions]::Parse([string[]]@($args | Select-Object -Skip 1))
+        [IO.File]::WriteAllText((Join-Path $script:C1336ObservationRoot ('workload-' + $options.RunId + '.json')), (ConvertTo-Json $options -Depth 8))
+        . $script:C1336HopScript
+        $hop = Invoke-C487NightlyTestsHop -Seams $script:NightlySeams -ArgumentList $args -WorkingDirectory $WorkingDirectory
+        $result = $hop.Result
+        [IO.File]::WriteAllText((Join-Path $script:C1336ObservationRoot ('workload-result-' + $options.RunId + '.json')), (ConvertTo-Json $result -Depth 12))
+        if ($result -and $result.SummaryPath -and (Test-Path -LiteralPath $result.SummaryPath)) {
+            $synthetic = Get-Content -LiteralPath $result.SummaryPath -Raw | ConvertFrom-Json
+            $synthetic | Add-Member -NotePropertyName reportDelivered -NotePropertyValue $true -Force
+            $synthetic | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $result.SummaryPath
+        }
+        return $hop
     }
     if ($leaf -in @('pwsh', 'pwsh.exe') -and $fileIndex -ge 0) {
         $target = [IO.Path]::GetFileName(([string]$args[$fileIndex + 1] -replace '\\', '/'))

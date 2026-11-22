@@ -104,7 +104,8 @@ public sealed class SourceRevisionStampContractTests
         var builders = new (string Path, string Token)[]
         {
             ("scripts/lib/nightly-core.ps1", "dotnet build"),
-            ("scripts/lib/nightly-tests-impl.ps1", "dotnet build Antiphon.sln"),
+            // W2-nightly S17: the nightly tests run (nightly-tests-impl.ps1 is deleted) builds Antiphon.sln unstamped.
+            ("scripts/lib/Antiphon.Nightly/NightlyTests.cs", "\"build\", \"Antiphon.sln\""),
             ("scripts/lib/land-audit-tool.ps1", "dotnet build"),
             ("server/Application/Services/AgentTaskLandService.cs", "\"build\", \"--artifacts-path\""),
             ("tools/Antiphon.Checkpoints/Execution/BuildStep.cs", "\"build\", project"),

@@ -506,8 +506,8 @@ public sealed class NightlyTestsRunTests
 
     /// <summary>
     /// CARD-1626: the census stays an exact inventory. Each row is pinned by id and path, so a dropped, added or renamed row
-    /// fails G056; a deliberate census edit moves this pin with it (and the same list in scripts/test-nightly-tests.ps1
-    /// until S17 deletes that driver).
+    /// fails G056; a deliberate census edit moves this pin with it (the PowerShell G056 of scripts/test-nightly-tests.ps1 is
+    /// deleted with that driver in W2-nightly S17: this is the one inventory).
     /// </summary>
     private static readonly string[] ScriptCensusInventory =
     [

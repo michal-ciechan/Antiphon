@@ -124,7 +124,9 @@ public sealed class NightlyHostTests
         var host = NightlyHost.Production(output, error);
 
         host.Clock.ShouldBeSameAs(TimeProvider.System);
-        host.Launcher.ShouldBeOfType<WatchedLauncher>();
+        // W2-nightly S17: both custodies (a hop is Watched, a build or test host Owned); an owned launch never runs on the watched launcher.
+        host.Launcher.ShouldBeOfType<CustodyLauncher>();
+        host.Launcher.NativeActiveCount.ShouldBe(0);
         host.Out.ShouldBeSameAs(output);
         host.Error.ShouldBeSameAs(error);
         host.Trace.ShouldBeSameAs(TextWriter.Null);

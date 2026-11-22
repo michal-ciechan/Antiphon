@@ -10,6 +10,8 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+# W2-nightly S17: the selection self hop quotes its arguments as the launcher does (ConvertTo-AntiphonCliQuotedArgument).
+. (Join-Path $PSScriptRoot 'antiphon-cli.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside
 # Invoke-AntiphonNightlyRunCore kept the function only for that call and left
@@ -113,7 +115,15 @@ function Invoke-NightlyWatchedCommand {
         [hashtable]$Environment = $null
     )
     if ($ArgumentList -contains '-SelectionAttemptPath') {
-        return Invoke-ReleaseSelectionHop -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+        # W2-nightly S17: the self hop of a bound selection (the clone's nightly-run.ps1 -NoSync; the tests hop is the
+        # nightly-tests command, Invoke-NightlyTestsHop). Always a real pwsh child, as the selection hop
+        # (Invoke-ReleaseSelectionHop, deleted) started it, with its seams in -SeamsPath. Each argument is quoted for
+        # the command line, so spaces, empty values and Unicode survive a 5.1 parent as the JSON splat kept them.
+        $pwsh = Assert-ReleaseSelectionCapability 'Shadow'
+        $line = (@($ArgumentList | ForEach-Object { ConvertTo-AntiphonCliQuotedArgument ([string]$_) }) -join ' ')
+        $proc = Start-NightlyProcess -StartParams @{ FilePath = $pwsh.Source; ArgumentList = $line; WorkingDirectory = $WorkingDirectory
+            PassThru = $true; NoNewWindow = $true; Wait = $true } -Environment $Environment
+        try { return [pscustomobject]@{ ExitCode = $proc.ExitCode; TimedOut = $false; Pid = $proc.Id } } finally { $proc.Dispose() }
     }
     Write-NightlyTrace -Kind 'exec' -Message ($FilePath + ' ' + ($ArgumentList -join ' '))
     if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
@@ -154,6 +164,31 @@ function Invoke-NightlyReportHop {
         finally { Pop-Location }
     }
     if ($code -eq 9) { return 3 }
+    return $code
+}
+
+function Invoke-NightlyTestsHop {
+    # W2-nightly S17: the tests hop is the compiled nightly-tests command (antiphon-scripts nightly-tests,
+    # Antiphon.Nightly/NightlyTests.cs; nightly-tests.ps1 is deleted), never the selection hop. It runs through the
+    # checkout's own launcher (CheckoutRoot's scripts/lib/antiphon-cli.ps1, as the hop ran the checkout's
+    # nightly-tests.ps1; this checkout's when the clone has none) in CheckoutRoot. The StartProcess seam replaces that
+    # process start as it does every other hop's (FilePath antiphon-scripts): seams never cross into the CLI. Returns the
+    # command's exit code (3 on a refusal). The launcher's own 9 (the CLI could not be built or started) throws, as a
+    # tests child that could not start did.
+    param([string[]]$ArgumentList, [string]$CheckoutRoot)
+    $arguments = @('nightly-tests') + @($ArgumentList)
+    if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
+        $run = Invoke-NightlyWatchedCommand -FilePath 'antiphon-scripts' -ArgumentList $arguments -WorkingDirectory $CheckoutRoot
+        return [int]$run.ExitCode
+    }
+    Write-NightlyTrace -Kind 'exec' -Message ('antiphon-scripts ' + ($arguments -join ' '))
+    $launcher = Join-Path $CheckoutRoot (Join-Path 'scripts' (Join-Path 'lib' 'antiphon-cli.ps1'))
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { $launcher = Join-Path $PSScriptRoot 'antiphon-cli.ps1' }
+    Push-Location -LiteralPath $CheckoutRoot
+    try {
+        $code = [int](& { param([string]$Launcher, [string[]]$Arguments) . $Launcher; Invoke-AntiphonCli -Command 'nightly-tests' -Arguments $Arguments } $launcher @($ArgumentList))
+    } finally { Pop-Location }
+    if ($code -eq 9) { throw 'nightly-tests-cli-unavailable' }
     return $code
 }
 
@@ -694,17 +729,13 @@ function Invoke-AntiphonNightlyRunCore {
             Write-NightlyRunLine ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message)
         }
 
-        $testsScript = Join-Path $CheckoutRoot (Join-Path 'scripts' 'nightly-tests.ps1')
-        if (-not (Test-Path -LiteralPath $testsScript)) {
-            $testsScript = Join-Path $PSScriptRoot '..\nightly-tests.ps1'
-        }
+        # W2-nightly S17: the tests hop is the nightly-tests command (Invoke-NightlyTestsHop), its --kebab flags built in
+        # one place (NightlyRunParts.TestsHopOptions). No -SeamsPath: seams never cross into the CLI.
         $gitRefLabel = ('origin/{0}' -f $Ref)
-        $testArgs = [Antiphon.Nightly.NightlyRunParts]::TestsHopArguments([Antiphon.Nightly.TestsHopRequest]@{ TestsScript = $testsScript; CheckoutRoot = $CheckoutRoot; RunDir = $runDir; Sha = $sha; GitRefLabel = $gitRefLabel; Trigger = $Trigger; Profile = $Profile; RunId = $RunId; Repository = $Repository; SelectionMode = $SelectionMode; BaselineSha = $BaselineSha; BaselineReceiptPath = $BaselineReceiptPath; QualificationPath = $QualificationPath; TimingRoot = $TimingRoot; TrainManifestPath = $TrainManifestPath; ReleaseIntentPath = $ReleaseIntentPath; SelectionAttemptPath = $SelectionAttemptPath; SelectionAttemptDigest = $SelectionAttemptDigest; SelectionPath = $SelectionPath; SelectionDigest = $SelectionDigest; Attempt = $Attempt; ReleaseRoot = $ReleaseRoot; CandidateId = $CandidateId; ExpectedSha = $ExpectedSha; Suites = $Suites; SeamsPath = $SeamsPath; PriorFailuresPath = $PriorFailuresPath; PriorFailuresDigest = $PriorFailuresDigest; AcceptCrossCandidateSeed = [bool]($AcceptCrossCandidateSeed); SeedSourceCandidateId = $SeedSourceCandidateId; RcEvidenceRoot = $rcEvidenceRoot })
-        Write-NightlyRunLine ('running {0}' -f $testsScript)
-        $script:NightlyHopCommand = 'pwsh ' + ($testArgs -join ' ')
-        $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
-        $testExit = [int]$testRun.ExitCode
-        if ($null -eq $testExit) { $testExit = 1 }
+        $testArgs = [Antiphon.Nightly.NightlyRunParts]::TestsHopCliArguments([Antiphon.Nightly.TestsHopRequest]@{ CheckoutRoot = $CheckoutRoot; RunDir = $runDir; Sha = $sha; GitRefLabel = $gitRefLabel; Trigger = $Trigger; Profile = $Profile; RunId = $RunId; Repository = $Repository; SelectionMode = $SelectionMode; BaselineSha = $BaselineSha; BaselineReceiptPath = $BaselineReceiptPath; QualificationPath = $QualificationPath; TimingRoot = $TimingRoot; TrainManifestPath = $TrainManifestPath; ReleaseIntentPath = $ReleaseIntentPath; SelectionAttemptPath = $SelectionAttemptPath; SelectionAttemptDigest = $SelectionAttemptDigest; SelectionPath = $SelectionPath; SelectionDigest = $SelectionDigest; Attempt = $Attempt; ReleaseRoot = $ReleaseRoot; CandidateId = $CandidateId; ExpectedSha = $ExpectedSha; Suites = $Suites; PriorFailuresPath = $PriorFailuresPath; PriorFailuresDigest = $PriorFailuresDigest; AcceptCrossCandidateSeed = [bool]($AcceptCrossCandidateSeed); SeedSourceCandidateId = $SeedSourceCandidateId; RcEvidenceRoot = $rcEvidenceRoot })
+        Write-NightlyRunLine 'running antiphon-scripts nightly-tests'
+        $script:NightlyHopCommand = 'antiphon-scripts nightly-tests ' + ($testArgs -join ' ')
+        $testExit = [int](Invoke-NightlyTestsHop -ArgumentList $testArgs -CheckoutRoot $CheckoutRoot)
 
         $summaryPath = Join-Path $runDir 'summary.json'
         $summary = $null

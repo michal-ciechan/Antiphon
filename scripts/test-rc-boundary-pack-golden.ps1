@@ -12,9 +12,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $golden = Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-core')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
+$null = Test-NightlyCoreAvailable
+# W2-nightly S17: the production class-cost file (nightly-tests-impl.ps1, which named it, is deleted).
+$script:NightlyClassCostPath = Join-Path $PSScriptRoot 'lib/nightly-class-costs.json'
+$script:NightlyClassCostTable = $null
 $utf8 = [Text.UTF8Encoding]::new($false)
 # 2x the quiet post-change p95 (5.881s) is 12s. A later pack on this host took
 # 14.5s while other script cases were running, which overlaps the old quiet

@@ -13,7 +13,8 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// <summary>
 /// W2-nightly S14: the rows of the actual-loop cases of scripts/test-nightly-failed-first.ps1 (Test-ActualLoopFollowsSchedule,
 /// Test-FFPreviousRunChain, Test-FFHeartbeatBindings with Test-FFHeartbeatLiveness, Test-JournalCustodySurvivesInterleaving),
-/// the same conditions over the real nightly-tests.ps1 entry and the compiled heartbeat (QualificationHeartbeat, W2-nightly S10).
+/// the same conditions over the nightly tests run (NightlyTests.Run on the loop seams since W2-nightly S17; the entry
+/// nightly-tests.ps1 is deleted) and the compiled heartbeat (QualificationHeartbeat, W2-nightly S10).
 /// </summary>
 internal static class FailedFirstLoopRows
 {

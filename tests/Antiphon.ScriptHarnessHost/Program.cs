@@ -10,6 +10,9 @@ if (!string.IsNullOrWhiteSpace(cacheProbe))
 
 if (args.Length >= 1 && args[0] == "cli-echo")
     return CliEcho(args);
+// W2-nightly S17: a named command echoed as cli-echo is (CLI_ECHO_COMMAND, e.g. nightly-tests), so a launcher test sees the argv a production hop hands the CLI.
+if (args.Length >= 1 && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLI_ECHO_COMMAND")) && args[0] == Environment.GetEnvironmentVariable("CLI_ECHO_COMMAND"))
+    return CliEcho(args);
 if (args.Length >= 5 && args[0] == "post-land-slot")
     return PostLandSlot(args);
 if (args.Length == 9 && args[0] == "post-land-lock")

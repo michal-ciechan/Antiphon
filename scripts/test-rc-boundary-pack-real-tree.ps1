@@ -11,9 +11,13 @@ $AssemblyPath = [IO.Path]::GetFullPath($AssemblyPath)
 $ResultsDirectory = [IO.Path]::GetFullPath($ResultsDirectory)
 if (Test-Path -LiteralPath $ResultsDirectory) { throw 'fresh results directory required' }
 [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-core')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
+$null = Test-NightlyCoreAvailable
+# W2-nightly S17: the production class-cost file (nightly-tests-impl.ps1, which named it, is deleted).
+$script:NightlyClassCostPath = Join-Path $PSScriptRoot 'lib/nightly-class-costs.json'
+$script:NightlyClassCostTable = $null
 # The caller produces this fresh diagnostic with a gated, foreground
 # dotnet run --no-build --list-tests. No Windows-only native owner is needed.
 $parseWatch = [Diagnostics.Stopwatch]::StartNew()

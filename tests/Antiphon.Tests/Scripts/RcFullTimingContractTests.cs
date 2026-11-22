@@ -14,8 +14,8 @@ namespace Antiphon.Tests.Scripts;
 // CARD-1514 S1. Portable contracts for the rc timing instrumentation.
 // Native Windows owner proof is CP-2 and is not discharged here. The manifests, the summary and the phase-timing
 // variables are the production C# (W2-nightly S09), called in-process, as are the owner observation and the setup
-// phases (S12's NightlyChunkRunner, since S16); only the call-site case still runs the still-PowerShell nightly-tests
-// executor (scripts/lib/nightly-tests-impl.ps1, Invoke-AntiphonNightlyTests) in a pwsh child.
+// phases (S12's NightlyChunkRunner, since S16); only the call-site case runs a pwsh child: NightlyTests.Run on its
+// seams files (Invoke-C487NightlyTests, W2-nightly S17; the executor nightly-tests-impl.ps1 is deleted).
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFullTimingContractTests
@@ -210,7 +210,8 @@ public sealed class RcFullTimingContractTests
             .Select(path => Path.GetRelativePath(repo, path))
             .ToArray();
         callers.ShouldBeEmpty("production still loads the host-stats probe");
-        var implText = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "nightly-tests-impl.ps1"));
+        // W2-nightly S17: the executor is NightlyTests.cs (nightly-tests-impl.ps1 is deleted).
+        var implText = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "NightlyTests.cs"));
         var productionUnwired = !implText.Contains("function Start-NightlyHostSampling", StringComparison.OrdinalIgnoreCase)
             && !implText.Contains("qualification-host-stats", StringComparison.Ordinal)
             && !implText.Contains("Antiphon.SessionRunner.dll", StringComparison.Ordinal)
@@ -562,10 +563,9 @@ public sealed class RcFullTimingContractTests
         $env:PATH = $bin + [IO.Path]::PathSeparator + $env:PATH
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-coverage.ps1')
-        . (Join-Path $lib 'release-gate.ps1')
-        . (Join-Path $lib 'release-selection.ps1')
-        . (Join-Path $lib 'nightly-tests-impl.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
+        # W2-nightly S17: the run is NightlyTests.Run on each seams file (Invoke-C487NightlyTests; nightly-tests-impl.ps1 is deleted).
+        . (Join-Path $lib 'c487-harness.ps1')
         $log = Join-Path $work 'run'
         $timing = Join-Path $work 'timing'
         New-Item -ItemType Directory -Path $log -Force | Out-Null
@@ -651,17 +651,17 @@ public sealed class RcFullTimingContractTests
         $successPlanningSeconds = 0.0
         $supplementalIsMarker = $false
         try {
-            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $log -TimingRoot $timing -Suites @('scripts') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'call-site' -Trigger 'manual' -SeamsPath $seamPath -AllowSharedTree
+            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $log; TimingRoot = $timing; Suites = @('scripts'); Profile = 'nightly'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'call-site'; Trigger = 'manual'; SeamsPath = $seamPath; AllowSharedTree = $true }
         } catch {
             $problems.Add('scripts-threw')
         }
         try {
-            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $planningLog -TimingRoot $timing -Suites @('antiphon') -Profile 'rc' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'planning-site' -Trigger 'manual' -SeamsPath $planningSeamPath -AllowSharedTree
+            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $planningLog; TimingRoot = $timing; Suites = @('antiphon'); Profile = 'rc'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'planning-site'; Trigger = 'manual'; SeamsPath = $planningSeamPath; AllowSharedTree = $true }
         } catch {
             $problems.Add('planning-threw')
         }
         try {
-            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $supplementalLog -TimingRoot $timing -Suites @('antiphon') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'supplemental-site' -Trigger 'manual' -SeamsPath $supplementalSeamPath -AllowSharedTree
+            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $supplementalLog; TimingRoot = $timing; Suites = @('antiphon'); Profile = 'nightly'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'supplemental-site'; Trigger = 'manual'; SeamsPath = $supplementalSeamPath; AllowSharedTree = $true }
         } catch {
             $problems.Add('supplemental-threw')
         }
@@ -670,7 +670,7 @@ public sealed class RcFullTimingContractTests
         New-Item -ItemType Directory -Path $successLog -Force | Out-Null
         New-Item -ItemType Directory -Path $successTiming -Force | Out-Null
         try {
-            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $successLog -TimingRoot $successTiming -Suites @('antiphon') -Profile 'rc' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'planning-success' -Trigger 'manual' -SeamsPath $supplementalSeamPath -AllowSharedTree
+            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $successLog; TimingRoot = $successTiming; Suites = @('antiphon'); Profile = 'rc'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'planning-success'; Trigger = 'manual'; SeamsPath = $supplementalSeamPath; AllowSharedTree = $true }
         } catch {
             $problems.Add('planning-success-threw')
         }

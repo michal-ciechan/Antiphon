@@ -11,9 +11,9 @@ using H = Antiphon.Tests.Scripts.Nightly.FailedFirstHistoryCases;
 namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
-/// W2-nightly S14: the actual-loop fixtures of scripts/test-nightly-failed-first.ps1. Invoke-FFActualLoop runs the real
-/// nightly-tests.ps1 entry (still PowerShell until S17) as a pwsh child on a seams file whose StartProcess stands in
-/// for the test hosts (it writes each chunk's TRX and diagnostic from the planned ids and records every launch,
+/// W2-nightly S14: the actual-loop fixtures of scripts/test-nightly-failed-first.ps1. Invoke-FFActualLoop runs the nightly
+/// tests run (NightlyTests.Run since W2-nightly S17: Invoke-C487NightlyTests of scripts/lib/c487-nightly-tests.ps1; the entry
+/// nightly-tests.ps1 is deleted) in a pwsh child on a seams file whose StartProcess stands in for the test hosts (it writes each chunk's TRX and diagnostic from the planned ids and records every launch,
 /// discovery, build and active identity as a JSON line); the loop fixtures and the loop history are here. The seams read
 /// the active identity and the planned cost through the compiled heartbeat (QualificationHeartbeat, W2-nightly S10).
 /// </summary>
@@ -225,21 +225,25 @@ internal static class FailedFirstLoopCases
         """;
 
     private static readonly string RunnerText = """
-        # W2-nightly S14: runs scripts/nightly-tests.ps1 with the splat in args.json and writes its -PassThru result as JSON.
+        # W2-nightly S17: the nightly tests run (NightlyTests.Run) on the splat in args.json and its seams file, its result as JSON.
         param([string]$ArgsPath, [string]$ResultPath)
         $ErrorActionPreference = 'Stop'
         $a = [IO.File]::ReadAllText($ArgsPath) | ConvertFrom-Json -AsHashtable
+        $lib = Join-Path $a.RepoRoot 'scripts/lib'
+        . (Join-Path $lib 'nightly-common.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
+        . (Join-Path $lib 'c487-harness.ps1')
         $splat = @{}
         foreach ($k in $a.Keys) { $splat[$k] = $a[$k] }
-        $out = @(& (Join-Path $a.RepoRoot 'scripts/nightly-tests.ps1') @splat -AllowSharedTree -PassThru)
-        $result = @($out | Where-Object { $null -ne $_ -and $null -ne $_.PSObject.Properties['ExitCode'] }) | Select-Object -Last 1
+        $splat.AllowSharedTree = $true
+        $result = Invoke-C487NightlyTests -Parameters $splat
         [IO.File]::WriteAllText($ResultPath, (ConvertTo-Json -InputObject ([ordered]@{ ExitCode = $result.ExitCode; testsPassed = [bool]$result.testsPassed; coverageComplete = [bool]$result.coverageComplete }) -Compress))
         """;
 
     /// <summary>
     /// Invoke-FFActualLoop: the fixture's suites as the policy's rc required suites (their chunks as the declared
     /// chunks; the replay keeps its Windows exclusions, the small fixture none), a Fixture.Never exclusion per suite
-    /// unless noExclusions, run through the real nightly-tests.ps1 entry with the loop seams; history, when given, is
+    /// unless noExclusions, run as the nightly tests run (NightlyTests.Run) on the loop seams; history, when given, is
     /// its prior-failures file.
     /// </summary>
     public static async Task<LoopRun> Run(string root, LoopFixture fx, string name, string? historyPath, string variant = "pass", bool noExclusions = false,
@@ -304,7 +308,7 @@ internal static class FailedFirstLoopCases
         H.WriteJson(argsPath, args);
         var resultPath = System.IO.Path.Combine(dir, "result.json");
         var output = await Pwsh(runner, ["-ArgsPath", argsPath, "-ResultPath", resultPath], dir, TimeSpan.FromMinutes(15), cancellationToken);
-        if (!File.Exists(resultPath)) throw new InvalidOperationException("nightly-tests.ps1 wrote no result (" + name + "):\n" + output);
+        if (!File.Exists(resultPath)) throw new InvalidOperationException("the nightly tests run wrote no result (" + name + "):\n" + output);
         var result = ReadJson(resultPath);
         var trace = new LoopTrace();
         var tracePath = System.IO.Path.Combine(dir, "trace.jsonl");

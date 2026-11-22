@@ -116,7 +116,7 @@ public sealed class ToolchainFloorWarningTests
     [Test]
     public Task C1698_WindowsPowerShellSyntax() =>
         ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_WindowsPowerShellSyntax), 18,
+            nameof(C1698_WindowsPowerShellSyntax), 17,
             [
                 "C1698 Syntax scan flags ternary",
                 "C1698 Syntax scan flags null-coalescing",
@@ -128,7 +128,7 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Windows PowerShell 5.1 syntax: restart-server.ps1",
                 "C1698 Windows PowerShell 5.1 syntax: scripts/session-runner-restart-health.ps1",
                 "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-run-impl.ps1",
-                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-tests-impl.ps1"
+                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/antiphon-cli.ps1"
             ]);
 
     /// <summary>

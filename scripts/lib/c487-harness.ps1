@@ -3,6 +3,8 @@
 
 if ($script:C487HarnessLoaded) { return }
 $script:C487HarnessLoaded = $true
+# W2-nightly S17: the nightly tests run in this process on a driver's seams (nightly-tests.ps1 is deleted).
+. (Join-Path $PSScriptRoot 'c487-nightly-tests.ps1')
 
 $script:C487Passed = 0
 $script:C487Failed = 0
@@ -52,7 +54,7 @@ function New-C487Root {
     return (ConvertTo-NightlyCanonicalPath -Path $ResultsDirectory)
 }
 
-# A checkout that runs nightly-tests.ps1 needs the compiled core (scripts/lib/Antiphon.Nightly), which builds
+# A checkout that runs the nightly core needs the compiled core (scripts/lib/Antiphon.Nightly), which builds
 # against src/Antiphon.IO.WriteBehind: copy that project's sources next to a copied scripts/lib. The bytes are
 # the repository's, so the checkout shares the already built core.
 function Copy-C487NightlyCoreDependency {
@@ -76,10 +78,23 @@ function New-C487OwnedClone {
     $scripts = Join-Path $clone 'scripts'
     New-Item -ItemType Directory -Path $scripts -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-run.ps1') -Destination (Join-Path $scripts 'nightly-run.ps1') -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-tests.ps1') -Destination (Join-Path $scripts 'nightly-tests.ps1') -Force
     Copy-Item -LiteralPath $PSScriptRoot -Destination (Join-Path $scripts 'lib') -Recurse -Force
     Copy-C487NightlyCoreDependency -Root $clone
     return $clone
+}
+
+# W2-nightly S17: the StartProcess lines that answer the nightly-tests hop of a bound selection in this process. The
+# selection hop (Invoke-ReleaseSelectionHop, deleted) started nightly-tests.ps1 as a real child on the forwarded seams;
+# the nightly-tests command takes no seams, so the seams run it here on the same seams (c487-nightly-tests.ps1,
+# Invoke-C487NightlyTestsHop). Any other hop still gets the seam's own answer.
+function Get-C487NightlyTestsHopSeamText {
+    $hop = (Join-Path $PSScriptRoot 'c487-nightly-tests.ps1').Replace("'", "''")
+    return @"
+    if ([string]`$FilePath -ceq 'antiphon-scripts' -and [string]@(`$ArgumentList)[0] -ceq 'nightly-tests' -and @(`$ArgumentList) -ccontains '--selection-attempt-path') {
+        . '$hop'
+        return (Invoke-C487NightlyTestsHop -Seams `$script:NightlySeams -ArgumentList @(`$ArgumentList) -WorkingDirectory `$WorkingDirectory)
+    }
+"@
 }
 
 function Write-C487Seams {
@@ -94,6 +109,7 @@ function Write-C487Seams {
     )
     $extraText = ''
     if ($Extra) { $extraText = $Extra.ToString() }
+    $hopText = Get-C487NightlyTestsHopSeamText
     $wait = ''
     if ($WaitGitSubcommand) {
         $wait = @"
@@ -117,6 +133,7 @@ function Write-C487Seams {
     }
     StartProcess = {
         param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
+$hopText
         Add-Content -LiteralPath '$TracePath' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
         return @{ ExitCode = 0; TimedOut = `$false; Pid = 2; ChildrenExited = `$true; LogText = 'C487_INVOCATION fake' }
     }
@@ -235,9 +252,11 @@ function Write-C487NativePassSeams {
     $rowText = $trxLiteral -join ', '
     $nodeText = $nodeLiteral -join ', '
     $omitLiteral = $(if ($OmitDiscovery) { '$true' } else { '$false' })
+    $hopText = Get-C487NightlyTestsHopSeamText
     $extra = [scriptblock]::Create(@"
 `$NightlySeams.StartProcess = {
     param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
+$hopText
     Add-Content -LiteralPath '$TracePath' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
     `$trx = ''
     `$resultsDir = ''

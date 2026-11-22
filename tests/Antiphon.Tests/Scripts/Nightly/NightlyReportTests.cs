@@ -349,7 +349,8 @@ public sealed class NightlyReportTests
                      ("NightlyReport.cs is ASCII-only", Path.Combine("scripts", "lib", "Antiphon.Nightly", "NightlyReport.cs")),
                      ("NightlyReportCommand.cs is ASCII-only", Path.Combine("scripts", "lib", "Antiphon.Scripts", "NightlyReportCommand.cs")),
                      ("nightly-run.ps1 is ASCII-only", Path.Combine("scripts", "nightly-run.ps1")),
-                     ("nightly-tests.ps1 is ASCII-only", Path.Combine("scripts", "nightly-tests.ps1")),
+                     // W2-nightly S17: the tests hop is the nightly-tests command (scripts/nightly-tests.ps1 is deleted).
+                     ("NightlyTestsCommand.cs is ASCII-only", Path.Combine("scripts", "lib", "Antiphon.Scripts", "NightlyTestsCommand.cs")),
                  })
             rows.Eq(File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, path)).Count(b => b > 127), 0, name);
         rows.ShouldPass(4);

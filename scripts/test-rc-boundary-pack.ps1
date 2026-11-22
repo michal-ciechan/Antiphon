@@ -1,9 +1,13 @@
 #requires -Version 7.0
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','c487-harness')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-core','c487-harness')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
+$null = Test-NightlyCoreAvailable
+# W2-nightly S17: the production class-cost file (nightly-tests-impl.ps1, which named it, is deleted).
+$script:NightlyClassCostPath = Join-Path $PSScriptRoot 'lib/nightly-class-costs.json'
+$script:NightlyClassCostTable = $null
 $root = New-C487Root $ResultsDirectory
 $script:errors = [Collections.Generic.List[string]]::new()
 function Note([bool]$Ok, [string]$Why) { if (-not $Ok) { $script:errors.Add($Why) } }

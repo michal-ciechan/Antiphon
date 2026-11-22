@@ -13,8 +13,9 @@ namespace Antiphon.Tests.TestHelpers;
 // CARD-1514 M2. Real qualification publication and recovery (W2-nightly S08; these were the v9-v14 cases of
 // ManifestPublicationHarness.ps1). The publication, the executed manifest and the summary are the production C#
 // (TestPhasePublication, TestPhaseManifests, TestPhaseRunSummary: the summarize-test-phases command in-process, S09), in-process
-// where a case drives them directly; the qualification loop is still PowerShell, so the cases start its production entry
-// (scripts/nightly-tests.ps1 with a seams file, as the harness passed one).
+// where a case drives them directly. The qualification loop is NightlyTests.Run since W2-nightly S17 (scripts/nightly-tests.ps1 is
+// deleted): the cases run it in a pwsh child on the seams file the harness passed (Invoke-C487NightlyTests,
+// scripts/lib/c487-nightly-tests.ps1), its commit fault and bound writer read through the journal seams.
 // The harness ran the loop without deferred evidence writes; so do these (ANTIPHON_NIGHTLY_DEFERRED_WRITES=off).
 // NotInParallel: the evidence file system and the cultures are process-wide.
 [Category("Integration")]
@@ -394,10 +395,12 @@ public sealed class RcManifestIntegrationTests
         (int ExitCode, string Text) ran;
         try
         {
-            ran = await RunEntry("nightly-tests.ps1", [
-                "-RepoRoot", C1514Support.RepoRoot(), "-LogRoot", log, "-TimingRoot", timing, "-Suites", string.Join(",", suites), "-Profile", "nightly",
-                "-Sha", Sha40, "-GitRef", "origin/master", "-RunId", "mp-" + name, "-Attempt", "1", "-Trigger", "manual", "-SeamsPath", seam,
-                "-PolicyPath", policy, "-AllowSharedTree"], cancellationToken, new Dictionary<string, string>
+            ran = await RunNightlyTests(new Dictionary<string, object>
+                {
+                    ["RepoRoot"] = C1514Support.RepoRoot(), ["LogRoot"] = log, ["TimingRoot"] = timing, ["Suites"] = suites, ["Profile"] = "nightly",
+                    ["Sha"] = Sha40, ["GitRef"] = "origin/master", ["RunId"] = "mp-" + name, ["Attempt"] = 1, ["Trigger"] = "manual", ["SeamsPath"] = seam,
+                    ["PolicyPath"] = policy, ["AllowSharedTree"] = true,
+                }, cancellationToken, new Dictionary<string, string>
                 {
                     ["MP_STATE"] = state, ["MP_TIMING"] = timing, ["MP_LOG"] = log, ["MP_MODE"] = mode, ["ANTIPHON_NIGHTLY_DEFERRED_WRITES"] = "off",
                 });
@@ -516,11 +519,13 @@ public sealed class RcManifestIntegrationTests
     private static string Tail(string text) => text.Length <= 1500 ? text : text[^1500..];
 
     // Write-MpSeam: the qualification's seams (a fake test host that writes TRX and diagnostics from the argv), with the
-    // publication fault window and the barrier observations. It is dot-sourced inside the entry, so its helpers live in
-    // the StartProcess block; $script: is the entry's script scope, where the publication reads the commit seams and the
-    // bound writer context.
+    // publication fault window and the barrier observations. Its helpers live in the StartProcess block. The run reads the
+    // commit fault through the PublicationScope seam and hands the bound writer context to the ExecutedContext seam (W2-nightly
+    // S17: the journal seams of Invoke-C487NightlyTests); both travel in $global: variables.
     private const string SeamText = """
         $NightlySeams = @{
+            PublicationScope = { param($TimingRoot) [Antiphon.Nightly.TestPhasePublicationScope]::new([string]$TimingRoot, [Antiphon.Nightly.TestPhaseRunSummary]::CommandEdition, '1', $null, $global:MpCommitFault) }
+            ExecutedContext = { param($Context) $global:MpExecutedContext = $Context }
             DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
             DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
             StartProcess = {
@@ -559,7 +564,7 @@ public sealed class RcManifestIntegrationTests
                 $state = [string]$env:MP_STATE
                 $utf8 = New-Object System.Text.UTF8Encoding $false
                 # The bound writer's prefix rescans so far (the harness counted Invoke-TestPhasePrefixRescan).
-                $bound = $script:TestPhaseExecutedContext
+                $bound = $global:MpExecutedContext
                 if ($null -ne $bound) { [System.IO.File]::WriteAllText((Join-Path $state "rescans.txt"), [string]$bound.PrefixRescans, $utf8) }
                 $items = @($ArgumentList)
                 $argsText = $items -join " "
@@ -629,9 +634,9 @@ public sealed class RcManifestIntegrationTests
                     $remaining = 2
                     $remainPath = Join-Path $state "fault-remaining.txt"
                     if (Test-Path -LiteralPath $remainPath) { $remaining = [int][System.IO.File]::ReadAllText($remainPath) }
-                    $script:TestPhaseCommitFault = [pscustomobject]@{ Stage = $stage; Remaining = $remaining }
+                    $global:MpCommitFault = [pscustomobject]@{ Stage = $stage; Remaining = $remaining }
                 } elseif ($faultAt -gt 0) {
-                    $script:TestPhaseCommitFault = $null
+                    $global:MpCommitFault = $null
                 }
                 $filter = Get-MpArgValue -ArgumentList $items -Name "--treenode-filter"
                 $className = Get-MpFilterClass -Filter $filter

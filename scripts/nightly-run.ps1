@@ -15,7 +15,7 @@
     ASCII-only on purpose - parseable under Windows PowerShell 5.1.
 
 .PARAMETER Suites
-    Forwarded to nightly-tests.ps1. Default comes from tests/test-execution-policy.json.
+    Forwarded to the nightly-tests command (antiphon-scripts nightly-tests). Default comes from tests/test-execution-policy.json.
 
 .PARAMETER NoReport
     Skip the report (antiphon-scripts nightly-report; still writes last-run.json). Cannot claim delivery

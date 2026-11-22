@@ -14,7 +14,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-2005. The production summary writer streams a 1,274-row document, keeps each suite's exclusion list once, and
 /// never converts the whole chunk list to text. Since W2-nightly S12 the writer is NightlyRunSummary (the run's
-/// Write-NightlyRunSummary is a wrapper over it) and the witness runs in-process (it was scripts/test-nightly-summary-witness.ps1
+/// WriteRunSummary, once Write-NightlyRunSummary, is a wrapper over it) and the witness runs in-process (it was scripts/test-nightly-summary-witness.ps1
 /// under a 768 MiB DOTNET_GCHeapHardLimit): the bound is the writer's own allocation. The report reads the summary
 /// in-process too (NightlyReport since W2-nightly S06).
 /// </summary>
@@ -26,14 +26,17 @@ public sealed class NightlySummaryWitnessTests
     [Test]
     public void C2005_SummaryBuildDoesNotConvertTheChunkList()
     {
-        var impl = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "nightly-tests-impl.ps1"));
-        var body = FunctionBody(impl, "Write-NightlyRunSummary");
-        body.ShouldContain("[Antiphon.Nightly.NightlyRunSummary]::Write($summary, @($suiteResults), $dispatchSchedule");
-        body.ShouldNotContain("ConvertTo-Json");
+        // W2-nightly S17: the run is NightlyTests.Run (nightly-tests-impl.ps1 is deleted); its Write-NightlyRunSummary is WriteRunSummary.
+        var impl = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "Antiphon.Nightly", "NightlyTests.cs")).Replace("\r\n", "\n");
+        var start = impl.IndexOf("public static void WriteRunSummary(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThan(0, "the run's summary writer");
+        var body = impl[start..impl.IndexOf("\n        }\n", start, StringComparison.Ordinal)];
+        body.ShouldContain("NightlyRunSummary.Write(summary, suiteResults, dispatchSchedule");
+        body.ShouldNotContain("NightlyJson.Text");
         body.ShouldNotContain("suites=@(");
         body.ShouldNotContain("suites = @(");
-        Regex.Matches(impl, @"Write-NightlyRunSummary -summary \$summary -suiteResults \$suiteResults").Count
-            .ShouldBe(1, "Invoke-AntiphonNightlyTests must call the production summary writer");
+        Regex.Matches(impl, @"WriteRunSummary\(summary, suiteResults\.ToArray\(\), dispatchSchedule").Count
+            .ShouldBe(1, "NightlyTests.Run must call the production summary writer");
 
         var writer = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "Antiphon.Nightly", "NightlyRunSummary.cs"));
         Regex.Matches(writer, @"WriteJson\(summaryPath, summary, Depth\)").Count.ShouldBe(1, "one streamed write of the summary");

@@ -114,21 +114,24 @@ namespace Antiphon.Nightly
         public Func<string, string> Variables { get; init; } = Environment.GetEnvironmentVariable;
 
         /// <summary>
-        /// The production host: the system clock, NightlyNativeGit.Run, a WatchedLauncher that first lands queued
-        /// evidence writes (their failures go to error as warnings), the real process table and host probe, and no trace.
+        /// The production host: the system clock, NightlyNativeGit.Run, a launcher for both custodies (CustodyLauncher: a
+        /// WatchedLauncher for the hops, an OwnedLauncher for the builds and test hosts, W2-nightly S17) that first lands
+        /// queued evidence writes (their failures go to error as warnings), the real process table and host probe, and no
+        /// trace. prepareChild adjusts an owned child's start information (Set-AntiphonBuildDriverEnvironment; null: nothing).
         /// </summary>
-        public static NightlyHost Production(TextWriter output, TextWriter error)
+        public static NightlyHost Production(TextWriter output, TextWriter error, Action<ProcessStartInfo> prepareChild = null)
         {
             if (output == null) throw new ArgumentNullException(nameof(output));
             if (error == null) throw new ArgumentNullException(nameof(error));
+            void Flush()
+            {
+                foreach (var failure in EvidenceFiles.Flush()) error.WriteLine("WARNING: deferred-evidence-write-failed: " + failure);
+            }
             return new NightlyHost
             {
                 Clock = TimeProvider.System,
                 Git = NightlyNativeGit.Run,
-                Launcher = new WatchedLauncher(() =>
-                {
-                    foreach (var failure in EvidenceFiles.Flush()) error.WriteLine("WARNING: deferred-evidence-write-failed: " + failure);
-                }),
+                Launcher = new CustodyLauncher(new WatchedLauncher(Flush), new OwnedLauncher(Flush, prepareChild)),
                 Processes = new NightlyProcessTable(),
                 Probe = new NightlyHostProbe(),
                 Out = output,

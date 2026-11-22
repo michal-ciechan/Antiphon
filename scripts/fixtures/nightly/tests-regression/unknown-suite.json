@@ -1,0 +1,12 @@
+{
+  "scenario": "unknown-suite",
+  "result": {
+    "Error": "unknown suite typo-suite",
+    "ExitCode": 2,
+    "LaunchCount": 0,
+    "coverageComplete": false,
+    "testsPassed": false
+  },
+  "trace": [],
+  "files": {}
+}

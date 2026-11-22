@@ -160,13 +160,16 @@ public sealed class NightlyScriptsTests
     {
         foreach (var name in new[]
                  {
-                     "nightly-tests.ps1", "nightly-run.ps1", "nightly-health.ps1",
-                     "test-nightly-run.ps1", "test-nightly-tests.ps1",
+                     "nightly-run.ps1", "nightly-health.ps1",
+                     "test-nightly-run.ps1",
                      "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
                      Path.Combine("lib", "nightly-common.ps1"),
                      Path.Combine("lib", "nightly-coverage.ps1"),
                      Path.Combine("lib", "nightly-run-impl.ps1"),
-                     Path.Combine("lib", "nightly-tests-impl.ps1"),
+                     // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted) and the
+                     // C487 harness's in-process run.
+                     Path.Combine("lib", "Antiphon.Nightly", "NightlyTests.cs"),
+                     Path.Combine("lib", "c487-nightly-tests.ps1"),
                      // W2-nightly S05: the readiness evaluator's C# and the launcher it runs through.
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealth.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealthWindmill.cs"),
@@ -197,8 +200,11 @@ public sealed class NightlyScriptsTests
     [Test]
     public void Nightly_tests_script_has_no_git_mutations_or_alternate_output_path()
     {
-        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-tests.ps1");
-        var text = File.ReadAllText(path, Encoding.UTF8);
+        // W2-nightly S17: the nightly tests run is the nightly-tests command (scripts/nightly-tests.ps1 is deleted).
+        var lib = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib");
+        var text = File.ReadAllText(Path.Combine(lib, "Antiphon.Nightly", "NightlyTests.cs"), Encoding.UTF8)
+            + File.ReadAllText(Path.Combine(lib, "Antiphon.Scripts", "NightlyTestsCommand.cs"), Encoding.UTF8);
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "nightly-tests.ps1")).ShouldBeFalse();
         text.ShouldNotContain("git pull");
         text.ShouldNotContain("git checkout");
         text.ShouldNotContain("git stash");
@@ -242,7 +248,7 @@ public sealed class NightlyScriptsTests
     [Test]
     public void Shared_tree_WhatIf_exits_3_naming_the_guard()
     {
-        // W2-nightly S15: in-process on NightlyTests.Run (the C# of nightly-tests.ps1); the guard refuses before anything
+        // W2-nightly S15: in-process on NightlyTests.Run (the nightly-tests command since S17); the guard refuses before anything
         // under the shared tree is read.
         using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("s15-shared-tree");
         var options = Antiphon.Nightly.NightlyTestsOptions.Parse(["--repo-root", @"C:\src\Antiphon", "--suites", "client", "--what-if"]);
@@ -253,7 +259,8 @@ public sealed class NightlyScriptsTests
         result.Refusal.ShouldBe("shared-tree");
         output.ShouldContain("REFUSED");
         output.ShouldContain(@"C:\src\Antiphon");
-        output.ShouldContain("AllowSharedTree");
+        // W2-nightly S17: the command names its own flag.
+        output.ShouldContain("--allow-shared-tree");
         output.ShouldNotContain("WhatIf: would run");
     }
 }
