@@ -144,7 +144,7 @@ public sealed class SourceRevisionStampContractTests
         finally
         {
             if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
+                ReadOnlyDirectory.Delete(root);
         }
     }
 

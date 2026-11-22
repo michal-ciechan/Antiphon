@@ -44,6 +44,9 @@
     <Compile Include="..\Shared\TestAppHostPath.cs" Link="TestSupport\TestAppHostPath.cs" />
     <Compile Include="..\Shared\NativeWindowsGate.cs" Link="TestSupport\NativeWindowsGate.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestSupport\ReadOnlyDirectory.cs" />
+    <Compile Include="..\Shared\TestTiming.cs" Link="TestSupport\TestTiming.cs" />
+    <Compile Include="..\Shared\TestTrace.cs" Link="TestSupport\TestTrace.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <Import Project="../Shared/FakeProviderOutput.targets" />

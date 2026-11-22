@@ -1623,7 +1623,7 @@ internal sealed class HostJqFixture : IDisposable
     public void Dispose()
     {
         if (Linked is not null && Directory.Exists(Linked)) Directory.Delete(Linked, true);
-        if (Directory.Exists(Root)) Directory.Delete(Root, true);
+        if (Directory.Exists(Root)) ReadOnlyDirectory.Delete(Root);
     }
 }
 internal sealed record HostJqRun(int Exit, string Stdout, string Stderr) { internal string Output => Stdout + Stderr; }

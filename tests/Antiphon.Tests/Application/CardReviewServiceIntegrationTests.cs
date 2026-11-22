@@ -611,7 +611,7 @@ public class CardReviewServiceIntegrationTests
         try
         {
             if (Directory.Exists(path))
-                Directory.Delete(path, recursive: true);
+                ReadOnlyDirectory.Delete(path);
         }
         catch
         {

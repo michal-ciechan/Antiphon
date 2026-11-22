@@ -1149,9 +1149,9 @@ public class DelegateCheckProbeTests
 
         public void Dispose()
         {
-            try { Directory.Delete(Path, recursive: true); }
+            try { ReadOnlyDirectory.Delete(Path); }
             catch (IOException) { /* a stray lock must not fail the test */ }
-            catch (UnauthorizedAccessException) { /* git's read-only object files */ }
+            catch (UnauthorizedAccessException) { /* a stray lock must not fail the test */ }
         }
     }
 

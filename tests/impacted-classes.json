@@ -470,6 +470,15 @@
       ]
     },
     {
+      "id": "test-fixture-cleanup",
+      "globs": [
+        "tests/**/*.cs"
+      ],
+      "classes": [
+        "TestFixtureCleanupGuardTests"
+      ]
+    },
+    {
       "id": "e2e-source-roster",
       "globs": [
         "tests/Antiphon.E2E/**/*.cs"

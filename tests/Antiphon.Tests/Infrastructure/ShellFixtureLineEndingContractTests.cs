@@ -193,7 +193,7 @@ public sealed class ShellFixtureLineEndingContractTests
         {
             foreach (var file in Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories))
                 File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(Root, recursive: true);
+            ReadOnlyDirectory.Delete(Root);
         }
     }
 }

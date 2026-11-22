@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
@@ -203,7 +204,7 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
         await Server.DisposeAsync();
         try
         {
-            Directory.Delete(Root, recursive: true);
+            ReadOnlyDirectory.Delete(Root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

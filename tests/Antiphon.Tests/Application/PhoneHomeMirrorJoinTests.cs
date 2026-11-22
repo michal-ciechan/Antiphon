@@ -553,7 +553,7 @@ public sealed class PhoneHomeMirrorJoinTests
             _runnerStop.Dispose();
             if (_root is not null)
             {
-                try { Directory.Delete(_root, recursive: true); }
+                try { ReadOnlyDirectory.Delete(_root); }
                 catch (IOException) { }
             }
         }

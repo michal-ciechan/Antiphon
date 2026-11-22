@@ -425,7 +425,7 @@ public class ReviewLoopTests
         }
         finally
         {
-            try { Directory.Delete(repoRoot, recursive: true); } catch { /* best effort */ }
+            try { ReadOnlyDirectory.Delete(repoRoot); } catch { /* best effort */ }
         }
     }
 
@@ -608,7 +608,7 @@ public class ReviewLoopTests
                 await db.Agents.Where(a => a.Id == AgentId).ExecuteDeleteAsync();
             }
             await Provider.DisposeAsync();
-            try { Directory.Delete(Workspace, recursive: true); } catch { /* best effort */ }
+            try { ReadOnlyDirectory.Delete(Workspace); } catch { /* best effort */ }
         }
     }
 

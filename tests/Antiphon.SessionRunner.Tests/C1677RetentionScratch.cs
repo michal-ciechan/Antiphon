@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -249,7 +250,7 @@ internal sealed class C1677RetentionScratch : IDisposable
         try
         {
             if (Directory.Exists(Root))
-                Directory.Delete(Root, recursive: true);
+                ReadOnlyDirectory.Delete(Root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

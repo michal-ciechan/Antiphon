@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -493,8 +494,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.CreateDirectory(output);
         var sentinel = Path.Combine(output, "out.dll");
         File.WriteAllText(sentinel, "keep");
-        Directory.Delete(Path.Combine(root, ".git", "objects"), recursive: true);
-        Directory.Delete(Path.Combine(root, ".git", "refs"), recursive: true);
+        ReadOnlyDirectory.Delete(Path.Combine(root, ".git", "objects"));
+        ReadOnlyDirectory.Delete(Path.Combine(root, ".git", "refs"));
         File.Delete(Path.Combine(root, ".git", "HEAD"));
 
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-safe"], 0, false, false, createdPaths: [output]);

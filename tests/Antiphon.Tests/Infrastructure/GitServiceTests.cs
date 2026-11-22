@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Infrastructure.Git;
 using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -274,7 +275,7 @@ public class GitServiceTests
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(repoPath, recursive: true);
+            ReadOnlyDirectory.Delete(repoPath);
         }
         catch
         {

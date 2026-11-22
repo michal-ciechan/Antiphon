@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 namespace Antiphon.Tests.Checkpoints;
 
 /// <summary>
@@ -110,7 +111,7 @@ internal static class FixtureGitInProcess
             // fails here (git would re-init it and keep libgit2's branch).
             if (created && (Directory.Exists(dotGit) || File.Exists(dotGit)))
             {
-                try { Directory.Delete(dotGit, recursive: true); }
+                try { ReadOnlyDirectory.Delete(dotGit); }
                 catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
                 {
                     throw new IOException("fixture init of " + repository + " failed in process and its .git could not be removed", ex);

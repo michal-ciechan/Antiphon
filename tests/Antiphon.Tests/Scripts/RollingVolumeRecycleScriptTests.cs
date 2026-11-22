@@ -939,7 +939,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
         }
 
         using (var dirty = new C1008HostFixture(main: false))
@@ -991,7 +991,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(unpublishedRoot)) Directory.Delete(unpublishedRoot, recursive: true);
+            if (Directory.Exists(unpublishedRoot)) ReadOnlyDirectory.Delete(unpublishedRoot);
         }
 
         using (var unknown = new C1008HostFixture(main: false))
@@ -1029,7 +1029,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(linkedRoot)) Directory.Delete(linkedRoot, recursive: true);
+            if (Directory.Exists(linkedRoot)) ReadOnlyDirectory.Delete(linkedRoot);
         }
     }
 
@@ -1127,7 +1127,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(unpublishedRoot)) Directory.Delete(unpublishedRoot, recursive: true);
+            if (Directory.Exists(unpublishedRoot)) ReadOnlyDirectory.Delete(unpublishedRoot);
         }
 
         // A foreign receipt is history, not a refusal and not an image choice.
@@ -2983,7 +2983,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
         }
     }
 
@@ -3066,7 +3066,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
         }
     }
 
@@ -3555,6 +3555,6 @@ internal sealed class C1008HostFixture : IDisposable
     public void Dispose()
     {
         using var teardownPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
-        Directory.Delete(Root, recursive: true);
+        ReadOnlyDirectory.Delete(Root);
     }
 }

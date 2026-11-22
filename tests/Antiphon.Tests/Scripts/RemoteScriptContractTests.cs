@@ -2423,7 +2423,7 @@ public sealed class RemoteScriptContractTests
             else if (fault == "stale") File.WriteAllText(Path.Combine(repo, ".git/refs/remotes/origin/master"), new string('0', 40));
             else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
             else if (fault == "escaping-link") Directory.CreateSymbolicLink(Path.Combine(bad.Root, "work/escape"), bad.Root);
-            else if (fault == "missing-object") Directory.Delete(Path.Combine(repo, ".git/objects"), true);
+            else if (fault == "missing-object") ReadOnlyDirectory.Delete(Path.Combine(repo, ".git/objects"));
             var refused = await bad.Run(); bad.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + fault);
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
             var audit = C1008Audit(bad);

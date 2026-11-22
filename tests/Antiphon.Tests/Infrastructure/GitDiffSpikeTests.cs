@@ -359,7 +359,7 @@ public class GitDiffSpikeTests
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(repoPath, recursive: true);
+            ReadOnlyDirectory.Delete(repoPath);
         }
         catch
         {

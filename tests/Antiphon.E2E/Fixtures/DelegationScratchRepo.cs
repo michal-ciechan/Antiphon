@@ -1,3 +1,5 @@
+using Antiphon.Tests.TestHelpers;
+
 namespace Antiphon.E2E;
 
 /// <summary>
@@ -132,8 +134,8 @@ public sealed class DelegationScratchRepo : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(Path, recursive: true); }
+        try { ReadOnlyDirectory.Delete(Path); }
         catch (IOException) { /* a live pty's lock must not fail the test */ }
-        catch (UnauthorizedAccessException) { /* git's read-only object files */ }
+        catch (UnauthorizedAccessException) { /* a live pty's lock must not fail the test */ }
     }
 }
