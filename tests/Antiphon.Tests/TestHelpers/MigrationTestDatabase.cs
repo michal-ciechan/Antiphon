@@ -18,6 +18,28 @@ internal static class MigrationTestDatabase
     public static Task<IsolatedTestSchema> CreateReversibleTipAsync(CancellationToken ct = default) =>
         CreateAsync(LastReversibleMigration, ct);
 
+    /// <summary>The review engine migration. Its Down throws, so a rewind detaches an empty copy instead.</summary>
+    public const string ReviewEngineMigration = "20261122173647_AddReviewEngine";
+
+    /// <summary>The message <c>AddReviewEngine.Down</c> throws, which the detach repeats for stored rows.</summary>
+    public const string ReviewEngineDowngradeRefusal = "Review engine tables cannot be discarded by a downgrade.";
+
+    /// <summary>Every table <c>AddReviewEngine</c> creates, dependents before the tables they reference.</summary>
+    public static readonly string[] ReviewEngineTables =
+    [
+        "ReviewContextPacks", "ReviewFindingEvents", "ReviewGatePasses", "ReviewIterations", "ReviewNodeExecutions",
+        "ReviewPackLedgerEntries", "ReviewFindings", "ReviewGates", "ReviewRuns", "ReviewSubjects",
+        "ReviewWorkflowRevisions",
+    ];
+
+    private static readonly string ReviewEngineRowsSql =
+        "SELECT (" + string.Join(" OR ", ReviewEngineTables.Select(t => $"EXISTS (SELECT 1 FROM \"{t}\")"))
+        + ")::int AS \"Value\"";
+
+    private static readonly string ReviewEngineDetachSql =
+        string.Concat(ReviewEngineTables.Select(t => $"DROP TABLE IF EXISTS \"{t}\";\n"))
+        + $"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '{ReviewEngineMigration}';";
+
     public static string[] Names()
     {
         using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions("Host=localhost;Database=metadata_only"));
@@ -27,7 +49,8 @@ internal static class MigrationTestDatabase
     /// <summary>
     /// Drops additive objects whose Down methods throw, and their history rows, so a cloned tip
     /// can return to <see cref="LastReversibleMigration"/> before an older reversible migration runs.
-    /// An empty requested-model alias is detached first, then an empty land-verification addition.
+    /// Empty review engine tables are detached first, then an empty requested-model alias, then an
+    /// empty land-verification addition.
     /// A stored value is refused with the migration's own message and is not dropped.
     /// Historical seeds that insert the current <c>AgentTask</c> shape into a pre-alias schema are
     /// covered by <see cref="RequestedModelAliasSchema"/> on every fixture context, because those
@@ -35,6 +58,7 @@ internal static class MigrationTestDatabase
     /// </summary>
     public static async Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default)
     {
+        await DetachReviewEngineAsync(db, ct);
         await DetachRequestedModelAliasAsync(db, ct);
         await DetachLandVerificationFailureAsync(db, ct);
         await db.Database.ExecuteSqlRawAsync(
@@ -64,6 +88,27 @@ internal static class MigrationTestDatabase
                 '20261108121426_Card1773TranscriptPromptStampIndex',
                 '20261110213738_Card1294ShadowCohort');
             """, ct);
+    }
+
+    /// <summary>
+    /// <c>AddReviewEngine.Down</c> always throws. A tip clone whose review engine tables are all
+    /// empty drops every one of them and the history row here. A stored review row in any of them is
+    /// refused with that same message; this helper does not call Down and does not discard the rows.
+    /// </summary>
+    public static async Task DetachReviewEngineAsync(AppDbContext db, CancellationToken ct = default)
+    {
+        var present = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'ReviewRuns'
+            """).SingleAsync(ct);
+        if (present == 0)
+            return;
+
+        var recorded = await db.Database.SqlQueryRaw<int>(ReviewEngineRowsSql).SingleAsync(ct);
+        if (recorded > 0)
+            throw new NotSupportedException(ReviewEngineDowngradeRefusal);
+
+        await db.Database.ExecuteSqlRawAsync(ReviewEngineDetachSql, ct);
     }
 
     /// <summary>

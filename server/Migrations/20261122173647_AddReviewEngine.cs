@@ -416,8 +416,7 @@ namespace Antiphon.Server.Migrations
             // Operator rule (2026-11-07): Down fails safely. Dropping these tables would lose every
             // review run, iteration and its pinned SHAs, finding, response, gate decision, node output,
             // context pack and code-host thread link.
-            throw new NotSupportedException(
-                "The review engine tables hold review history; a downgrade cannot drop them.");
+            throw new NotSupportedException("Review engine tables cannot be discarded by a downgrade.");
         }
     }
 }

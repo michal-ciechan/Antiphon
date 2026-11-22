@@ -22,6 +22,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
     private const string LandFailure = "20261119045705_AddLandVerificationFailure";
     private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
+    private const string ReviewEngine = "20261122173647_AddReviewEngine";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -57,7 +58,8 @@ public sealed class C1514HostLoadMigrationTests
         chain[previous + 6].ShouldBe(Summary, "transcript-summary-follows-shadow-cohort");
         chain[previous + 7].ShouldBe(LandFailure, "land-verification-failure-follows-transcript-summary");
         chain[previous + 8].ShouldBe(ModelAlias, "requested-model-alias-follows-land-verification-failure");
-        (chain.Length - previous).ShouldBe(9, "requested-model-alias-is-the-tip");
+        chain[previous + 9].ShouldBe(ReviewEngine, "review-engine-follows-requested-model-alias");
+        (chain.Length - previous).ShouldBe(10, "review-engine-is-the-tip");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
@@ -88,7 +90,7 @@ public sealed class C1514HostLoadMigrationTests
             "IX_HostLoadHourlyRollups_Age", "IX_HostLoadSamples_DerivedAge"]);
     }
 
-    [Test, Arguments(Telemetry), Arguments(Membership), Arguments(Catchup), Arguments(ShadowCohort), Arguments(LandFailure), Arguments(ModelAlias)]
+    [Test, Arguments(Telemetry), Arguments(Membership), Arguments(Catchup), Arguments(ShadowCohort), Arguments(LandFailure), Arguments(ModelAlias), Arguments(ReviewEngine)]
     public void BothDownOperationsRefuseDestructiveDowngrade(string migration)
     {
         var error = Should.Throw<NotSupportedException>(() => _ = Migration(migration).DownOperations);
