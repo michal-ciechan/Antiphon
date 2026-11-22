@@ -193,6 +193,7 @@ try
             }
         });
     builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
+    builder.Services.Configure<ReviewAgentSettings>(builder.Configuration.GetSection(ReviewAgentSettings.SectionName));
     builder.Services.Configure<ReviewCompletionSettings>(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName));
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
@@ -999,7 +1000,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddSingleton<IDecisionModel, StandingSeatDecisionModel>();
     // No ICompletionModel is registered yet: without a configured chain, verify is skipped and says so.
     builder.Services.AddScoped<CompletionChain>();
-    builder.Services.AddSingleton<IReviewAgentRunner, UnconfiguredReviewAgentRunner>();
+    // Reviewers are read-only Review delegate tasks in a worktree at the head (design 4.7, Review:Agents).
+    builder.Services.AddScoped<IReviewTaskGateway, AgentTaskReviewGateway>();
+    builder.Services.AddScoped<IReviewAgentRunner, DelegationReviewAgentRunner>();
     // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
     builder.Services.AddSingleton<CodeHostResponseCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());

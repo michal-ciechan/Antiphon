@@ -2,6 +2,8 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -40,6 +42,18 @@ public static class ReviewRunEndpoints
 
         runs.MapGet("/{id:guid}/findings", async (Guid id, string? status, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.ListFindingsAsync(id, ParseEnum<ReviewFindingStatus>("status", status), ct)));
+
+        // A reviewer's context pack as text, for a reviewer task whose pack is too large to inline in its brief.
+        runs.MapGet("/{id:guid}/packs/{iteration:int}/{group}", async (Guid id, int iteration, string group, AppDbContext db, CancellationToken ct) =>
+        {
+            var content = await db.ReviewContextPacks.AsNoTracking()
+                .Where(p => p.RunId == id && p.Iteration == iteration && p.GroupKey == group)
+                .Select(p => p.Content)
+                .SingleOrDefaultAsync(ct)
+                ?? throw new NotFoundException("Review context pack", $"{id}/{iteration}/{group}",
+                    $"Review run {id} has no context pack for group '{group}' in iteration {iteration}.");
+            return Results.Text(content, "text/markdown; charset=utf-8");
+        });
 
         runs.MapPost("/{id:guid}/refresh", async (Guid id, ReviewService service, CancellationToken ct) =>
         {

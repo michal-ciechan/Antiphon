@@ -141,6 +141,44 @@ public sealed class StartRefAvailability(
     }
 
     /// <summary>
+    /// Review engine reviewers (design 4.7). A GitHub PR head that this repository does not have (a
+    /// fork's branch is never on origin's heads) is fetched from origin's <c>refs/pull/&lt;n&gt;/head</c>
+    /// into <c>refs/antiphon/review/pull/&lt;n&gt;</c>, bounded and under the same lease as a start SHA, so
+    /// a worktree can be cut at <paramref name="headSha"/>. Returns null once the commit resolves, else
+    /// why it could not be fetched.
+    /// </summary>
+    public async Task<string?> TryFetchPullRequestHeadAsync(string repoPath, int prNumber, string headSha, CancellationToken ct)
+    {
+        if (await ResolvesAsync(repoPath, headSha + "^{commit}", ct))
+            return null;
+        if (prNumber <= 0)
+            return $"PR number {prNumber} is not valid";
+        var remote = await RunBoundedAsync(repoPath, ["remote", "get-url", "origin"], LocalGitTimeout, ct);
+        if (remote.TimedOut || !remote.Result!.Succeeded)
+            return "the repository has no readable 'origin' remote";
+        var target = $"refs/antiphon/review/pull/{prNumber}";
+        var network = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await using (await AcquireLeaseAsync(repoPath, target, network, ct))
+            {
+                var fetch = await RunBoundedAsync(repoPath,
+                    ["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", "origin", $"+refs/pull/{prNumber}/head:{target}"],
+                    _fetchTimeout - network.Elapsed, ct);
+                if (fetch.TimedOut)
+                    return $"fetching refs/pull/{prNumber}/head from origin did not finish within {_fetchTimeout.TotalSeconds:0}s";
+                if (!fetch.Result!.Succeeded)
+                    return $"fetching refs/pull/{prNumber}/head from origin failed ({fetch.Result.Diagnostic})";
+            }
+        }
+        catch (ServiceUnavailableException ex) { return ex.Message; }
+        if (!await ResolvesAsync(repoPath, headSha + "^{commit}", ct))
+            return $"origin's refs/pull/{prNumber}/head does not contain {headSha} (the PR moved; Refresh the run)";
+        logger.LogInformation("Fetched PR {PrNumber} head {HeadSha} from origin into {RepoPath} for a reviewer", prNumber, headSha, repoPath);
+        return null;
+    }
+
+    /// <summary>
     /// The fetch writes refs and objects, so it runs under the repository mutation lease like every
     /// other repository mutation. A busy lease is polled, never waited on past the network deadline.
     /// </summary>

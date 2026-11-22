@@ -73,6 +73,8 @@ public static class ReviewReviewSteps
             .ToDictionaryAsync(p => p.GroupKey, ct);
         var runner = walk.Services.GetRequiredService<IReviewAgentRunner>();
         var logger = walk.Services.GetRequiredService<ILogger<ReviewWalkLog>>();
+        var subject = walk.Run.Subject;
+        var localPath = subject.Host == ReviewHost.Local ? walk.Binding.Target.LocalPath : null;
         foreach (var group in groups)
         {
             var child = walk.Latest(childNodeId, group.Key) ?? walk.NewExecution(childNodeId, childKind, group.Key);
@@ -89,16 +91,19 @@ public static class ReviewReviewSteps
             await walk.Db.SaveChangesAsync(ct);
             var previous = ReviewWalk.Output<ReviewerOutput>(child);
             var attempt = previous?.Attempts ?? 1;
+            var unchanged = false;
             try
             {
                 while (true)
                 {
                     var result = await runner.RunAsync(new ReviewAgentRequest(walk.Run.Id, walk.Iteration.Iteration, walk.Run.Round, group.Key,
-                        pack.Content, pack.Hash, group.CheckIds, walk.Run.Subject.Repo, walk.Run.Subject.PrNumber, walk.HeadSha, attempt,
-                        previous?.Handle), ct);
+                        pack.Content, pack.Hash, group.CheckIds, subject.Repo, subject.PrNumber, walk.Iteration.HeadSha ?? walk.HeadSha, attempt,
+                        previous?.Handle, group.Tier, subject.Host, localPath), ct);
                     Usage(child, result.Usage);
                     if (result.Status == ReviewAgentStatus.Pending)
                     {
+                        // A reviewer still running under the same handle changes nothing on the code host.
+                        unchanged = previous?.Handle is { } polled && polled == result.Handle;
                         child.Status = ReviewNodeStatus.Waiting;
                         child.Summary = $"reviewer running ({result.Handle})";
                         child.OutputJson = ReviewWalk.ToJson(new ReviewerOutput([], [], null, [], result.Handle, attempt));
@@ -140,6 +145,8 @@ public static class ReviewReviewSteps
             }
 
             await walk.Db.SaveChangesAsync(ct);
+            if (unchanged)
+                continue;
             var done = groups.Count(g => walk.Latest(childNodeId, g.Key)?.Status == ReviewNodeStatus.Succeeded);
             await walk.SetStatusAsync(ReviewWalk.ReviewStatusContext, CodeHostStatusState.Pending, $"{done}/{groups.Count} reviewers done", ct);
         }

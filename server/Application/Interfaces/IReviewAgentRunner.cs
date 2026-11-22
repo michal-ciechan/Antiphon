@@ -18,7 +18,11 @@ public interface IReviewAgentRunner
     Task<ReviewAgentResult> RunAsync(ReviewAgentRequest request, CancellationToken ct);
 }
 
-/// <summary>One reviewer group's work: its pack (and hash), its assigned checks, and where the change lives.</summary>
+/// <summary>
+/// One reviewer group's work: its pack (and hash), its assigned checks, and where the change lives.
+/// <see cref="Tier"/> is the group's tier (<c>deep</c> or <c>standard</c>); <see cref="LocalPath"/>
+/// is the repository of a local-git subject.
+/// </summary>
 public sealed record ReviewAgentRequest(
     Guid RunId,
     int Iteration,
@@ -31,7 +35,10 @@ public sealed record ReviewAgentRequest(
     int? PrNumber,
     string HeadSha,
     int Attempt,
-    string? Handle = null);
+    string? Handle = null,
+    string? Tier = null,
+    ReviewHost Host = ReviewHost.GitHub,
+    string? LocalPath = null);
 
 public enum ReviewAgentStatus
 {
@@ -45,6 +52,9 @@ public enum ReviewAgentStatus
 public sealed record ReviewAgentResult(ReviewAgentStatus Status, string? Text, string? Handle = null, ReviewAgentUsage? Usage = null)
 {
     public static ReviewAgentResult Completed(string text, ReviewAgentUsage? usage = null) => new(ReviewAgentStatus.Completed, text, null, usage);
+
+    /// <summary>Started (or still running) under <paramref name="handle"/>; the executor polls it on a later pass.</summary>
+    public static ReviewAgentResult Pending(string handle) => new(ReviewAgentStatus.Pending, null, handle);
 }
 
 /// <summary>What the reviewer cost: a seat is <c>api-equivalent</c> (D-20).</summary>

@@ -15,8 +15,9 @@ namespace Antiphon.Tests.Review;
 /// <summary>
 /// Manual intake through an intake-only fake code host, then the executor's walk over the real host
 /// and Postgres: intake, delta, categorise and select (a fake decision model with fixed answers),
-/// group and packs, then the reviewer fan-out, which fails loudly because no reviewer agent runner is
-/// configured. The whole workflow with scripted reviewers is <see cref="ReviewEndToEndApiTests"/>.
+/// group and packs, then the reviewer fan-out, which fails loudly because no Antiphon project maps the
+/// repo, so the real reviewer runner has no checkout to dispatch into. The whole workflow with scripted
+/// reviewers is <see cref="ReviewEndToEndApiTests"/>.
 /// </summary>
 [Category("Integration")]
 [ClassDataSource<ReviewExecutorApiTests.Factory>(Shared = SharedType.PerClass)]
@@ -24,8 +25,11 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
 {
     private static readonly TimeSpan WalkTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>The real reviewer runner's refusal when no Antiphon project maps the repo.</summary>
+    private const string NoProject = DelegationReviewAgentRunner.NoProjectPrefix + " acme/widgets";
+
     [Test]
-    public async Task Manual_intake_walks_to_the_reviewers_and_fails_loudly_with_no_agent_runner()
+    public async Task Manual_intake_walks_to_the_reviewers_and_fails_loudly_with_no_project_for_the_repo()
     {
         using var client = factory.CreateClient();
 
@@ -81,10 +85,10 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         nodes["group"].GetProperty("status").GetString().ShouldBe("Succeeded");
         nodes["packs"].GetProperty("status").GetString().ShouldBe("Succeeded");
         nodes["review"].GetProperty("status").GetString().ShouldBe("Failed");
-        nodes["review"].GetProperty("summary").GetString()!.ShouldContain(UnconfiguredReviewAgentRunner.Reason);
+        nodes["review"].GetProperty("summary").GetString()!.ShouldContain(NoProject);
         var reviewers = all.Where(n => n.GetProperty("nodeId").GetString() == "reviewer").ToList();
         reviewers.ShouldNotBeEmpty();
-        reviewers.ShouldAllBe(n => n.GetProperty("status").GetString() == "Failed" && n.GetProperty("summary").GetString() == UnconfiguredReviewAgentRunner.Reason);
+        reviewers.ShouldAllBe(n => n.GetProperty("status").GetString() == "Failed" && n.GetProperty("summary").GetString()!.StartsWith(NoProject));
         nodes.ShouldNotContainKey("collate");
 
         // The fake answers only categorise's questions, so every applies question is refused and
