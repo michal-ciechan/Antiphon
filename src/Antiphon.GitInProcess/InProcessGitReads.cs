@@ -239,6 +239,17 @@ internal static partial class InProcessGitReads
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
                 return Commit(repo, "HEAD", peel: false);
 
+            // rev-parse [--verify [--quiet]] <full ref>: the ref's own object id, unpeeled (a tag ref names its tag
+            // object). A direct ref only; a missing one is git's fatal answer, except --verify --quiet's silent 1
+            // when no ref of that name exists anywhere git would look (as show-ref --verify --quiet).
+            case "rev-parse" when a.Count == 2 && IsPlainRef(a[1]):
+                return Direct(repo, a[1]) is { } plain ? Ok(plain + "\n") : null;
+            case "rev-parse" when a.Count == 3 && a[1] == "--verify" && IsPlainRef(a[2]):
+                return Direct(repo, a[2]) is { } verified ? Ok(verified + "\n") : null;
+            case "rev-parse" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && IsPlainRef(a[3]):
+                if (Direct(repo, a[3]) is { } quiet) return Ok(quiet + "\n");
+                return repo.Refs[a[3]] is null && !HasLooseRef(repo, a[3]) ? Exit(1) : null;
+
             // Paths, printed as git prints them (real path, forward slashes on Windows).
             case "rev-parse" when a.Count == 2 && a[1] == "--absolute-git-dir":
                 return PathAnswer(repo.Info.Path);
@@ -246,6 +257,15 @@ internal static partial class InProcessGitReads
                 return PathAnswer(CommonDirectory(repo.Info.Path));
             case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path" && a[3] == "index.lock":
                 return GitRealPath(repo.Info.Path) is { } dir ? Ok(dir + "/index.lock\n") : null;
+            // --git-path logs/HEAD | logs/<full ref>: git's common_list (path.c) keeps logs/HEAD per worktree and the
+            // rest of logs/ in the common directory, except logs/refs/{bisect,rewritten,worktree}, left to git.
+            case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path" && a[3] == "logs/HEAD":
+                return GitRealPath(repo.Info.Path) is { } worktreeDir ? Ok(worktreeDir + "/logs/HEAD\n") : null;
+            case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path"
+                && a[3].StartsWith("logs/", StringComparison.Ordinal) && IsPlainRef(a[3]["logs/".Length..])
+                && !PerWorktreeRef(a[3]["logs/".Length..]):
+                return CommonDirectory(repo.Info.Path) is { } common && GitRealPath(common) is { } commonDir
+                    ? Ok(commonDir + "/" + a[3] + "\n") : null;
 
             // show-ref --verify --quiet <ref>: 0 for a direct ref; the silent 1 only when no ref of that name exists
             // anywhere git would look (no packed or loose ref, not even a broken one).
@@ -497,6 +517,11 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
+    // Refs git keeps per worktree (path.c common_list): refs/bisect, refs/rewritten, refs/worktree.
+    private static bool PerWorktreeRef(string name) =>
+        name.StartsWith("refs/bisect/", StringComparison.Ordinal) || name.StartsWith("refs/rewritten/", StringComparison.Ordinal)
+        || name.StartsWith("refs/worktree/", StringComparison.Ordinal);
+
     private static string? Direct(Repository repo, string name) =>
         IsPlainRef(name) && repo.Refs[name] is DirectReference direct && GitText.IsOid(direct.TargetIdentifier)
             ? direct.TargetIdentifier : null;

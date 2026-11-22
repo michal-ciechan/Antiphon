@@ -55,6 +55,17 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--absolute-git-dir");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-common-dir");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-path", "logs/" + fixture.SourceRef);
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/heads/no-such-branch");
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/bisect/bad");
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--path-format=absolute", "--git-path", "logs/refs/worktree/x");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", fixture.TargetRef);
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", fixture.SourceRef);
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", fixture.SourceRef);
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", "refs/heads/no-such-branch");
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "refs/heads/no-such-branch");
+        await CompareAsync(cwd, Expect.Fallback, "rev-parse", "--verify", "refs/heads/no-such-branch");
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", fixture.TargetRef, fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--exists", fixture.SourceRef);
@@ -117,6 +128,9 @@ public sealed class LibGit2VsGitDifferentialTests
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "refs/tags/light", "refs/tags/annotated");
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", "refs/tags/annotated");
             await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "refs/tags/annotated^{commit}");
+            // Unpeeled: a tag ref names its tag object, packed or loose.
+            await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "refs/tags/annotated");
+            await CompareAsync(cwd, Expect.Answered, "rev-parse", "refs/tags/light");
             await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--hash", fixture.TargetRef);
         }
         await CompareAsync(fixture.Source, Expect.Answered, "symbolic-ref", "-q", "HEAD");
