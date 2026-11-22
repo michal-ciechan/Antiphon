@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text;
@@ -58,7 +59,7 @@ public class CardCliE2ETests
         }
         foreach (var dir in _tempDirs)
         {
-            try { Directory.Delete(dir, recursive: true); }
+            try { ReadOnlyDirectory.Delete(dir); }
             catch (IOException) { /* best effort */ }
         }
     }

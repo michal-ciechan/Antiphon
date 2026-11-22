@@ -168,7 +168,7 @@ public sealed class LandingFixtureGitInProcessTests
         Directory.CreateDirectory(nested);
         (await fixture.Git.RunAsync(nested, ["init", "-b", "master"], CancellationToken.None)).Succeeded.ShouldBeTrue();
         LandingFixtureGitInProcess.TryRun(fixture.Git, fixture.Source, ["add", "."]).ShouldBeNull();
-        Directory.Delete(nested, recursive: true);
+        ReadOnlyDirectory.Delete(nested);
 
         // A test that watches or rewrites commands sees every one run as git; the harness's evidence writer (which
         // writes for no command run in process) does not count.

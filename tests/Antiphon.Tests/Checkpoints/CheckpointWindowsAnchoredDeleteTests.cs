@@ -138,7 +138,7 @@ public sealed class CheckpointWindowsAnchoredDeleteTests
             // Remove a junction itself before recursing, including failed setup/assertions.
             var junction = Path.Combine(Root, "junction");
             if (DirectoryLink.IsLink(junction)) Directory.Delete(junction, recursive: false);
-            if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+            if (Directory.Exists(Root)) ReadOnlyDirectory.Delete(Root);
         }
     }
 }

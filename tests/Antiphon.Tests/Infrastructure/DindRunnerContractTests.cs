@@ -289,7 +289,7 @@ public sealed class DindRunnerContractTests
                 (await Git(root, "remote", "get-url", "origin")).Trim().ShouldBe(url);
             }
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { ReadOnlyDirectory.Delete(root); }
     }
 
     [Test]

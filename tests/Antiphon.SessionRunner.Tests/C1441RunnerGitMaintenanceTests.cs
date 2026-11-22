@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Globalization;
 using Shouldly;
@@ -40,7 +41,7 @@ public sealed class C1441RunnerGitMaintenanceTests
         finally
         {
             if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
+                ReadOnlyDirectory.Delete(root);
         }
     }
 
@@ -119,7 +120,7 @@ public sealed class C1441RunnerGitMaintenanceTests
         finally
         {
             if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
+                ReadOnlyDirectory.Delete(root);
         }
     }
 

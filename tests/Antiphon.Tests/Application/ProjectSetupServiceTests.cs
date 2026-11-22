@@ -290,7 +290,7 @@ public class ProjectSetupServiceTests
 
     private static void Cleanup(string path)
     {
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+        try { if (Directory.Exists(path)) ReadOnlyDirectory.Delete(path); }
         catch (IOException) { }
     }
 

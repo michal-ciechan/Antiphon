@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -60,7 +61,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         }
         else
         {
-            if (part == "HEAD") File.Delete(path); else Directory.Delete(path, true);
+            if (part == "HEAD") File.Delete(path); else ReadOnlyDirectory.Delete(path);
             if (variant == "directory-head") Directory.CreateDirectory(path);
         }
         var before = InspectionDigest(f.Root);

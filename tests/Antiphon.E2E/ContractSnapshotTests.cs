@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -180,7 +181,7 @@ public class ContractSnapshotTests
         }
         finally
         {
-            try { Directory.Delete(workspace, recursive: true); } catch { /* best effort */ }
+            try { ReadOnlyDirectory.Delete(workspace); } catch { /* best effort */ }
         }
     }
 

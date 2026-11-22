@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Antiphon.Server.Application.Dtos;
@@ -491,7 +492,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         await Rig.DisposeAsync();
         try
         {
-            Directory.Delete(Root, recursive: true);
+            ReadOnlyDirectory.Delete(Root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

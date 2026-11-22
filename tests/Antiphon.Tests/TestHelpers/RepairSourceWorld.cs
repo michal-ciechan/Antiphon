@@ -419,7 +419,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         if (Services is not null) await Services.DisposeAsync();
         if (Schema is not null) await Schema.DisposeAsync();
         Repo.Dispose();
-        try { Directory.Delete(Remote, true); } catch { }
+        try { ReadOnlyDirectory.Delete(Remote); } catch { }
     }
 
     internal sealed record WorldSnapshot(

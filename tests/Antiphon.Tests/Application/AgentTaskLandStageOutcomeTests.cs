@@ -842,7 +842,7 @@ public class AgentTaskLandStageOutcomeTests
 
         public void Dispose()
         {
-            try { Directory.Delete(Path, recursive: true); }
+            try { ReadOnlyDirectory.Delete(Path); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
