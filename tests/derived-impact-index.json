@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 160,
+      "classes": 161,
       "reason": "cap",
-      "owed": 135,
+      "owed": 136,
       "first": [
         "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 348,
+      "classes": 349,
       "reason": "allowlist"
     },
     {
@@ -2147,9 +2147,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
@@ -2433,6 +2433,22 @@
         "DefaultRunnerRerouteTests",
         "AgentTaskCardBindingTests",
         "PhoneHomeQueuedTurnTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/ReadOnlyDirectory.cs",
+      "classes": 34,
+      "reason": "cap",
+      "owed": 9,
+      "first": [
+        "GitServiceTests",
+        "LandingFixtureGitInProcessTests",
+        "PhoneHomeMirrorJoinTests",
+        "ProjectReadinessTests",
+        "ProjectSetupServiceTests",
+        "RcHistoricalEvidenceTests",
+        "RemoteScriptContractTests",
+        "ShellFixtureLineEndingContractTests"
       ]
     }
   ],
@@ -21084,6 +21100,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorktreeListTests.cs",
+      "classes": [
+        "TestFixtureCleanupGuardTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
       "classes": [
         "RcManifestIntegrationTests"
@@ -22186,6 +22208,12 @@
       "path": "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTests.cs",
       "classes": [
         "GrokStartupReadinessTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs",
+      "classes": [
+        "TestFixtureCleanupGuardTests"
       ]
     },
     {
@@ -24323,6 +24351,12 @@
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointShapeWindowsFixture.cs",
       "classes": [
         "CheckpointShapeConflictTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointSourceStateTests.cs",
+      "classes": [
+        "TestFixtureCleanupGuardTests"
       ]
     },
     {
@@ -27847,15 +27881,27 @@
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskLandBareRepositoryCleanupTests",
+        "AgentTaskLandStageOutcomeTests",
+        "AgentTaskWorktreeContinuityTests",
+        "C1441RunnerGitMaintenanceTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "C1818GcOwnerRobustnessTests",
+        "CardCliE2ETests",
+        "CardReviewServiceIntegrationTests",
+        "CheckpointWindowsAnchoredDeleteTests",
         "CompletedCardWorkspaceRemovalTests",
+        "ContractSnapshotTests",
+        "DelegateCheckProbeTests",
+        "DindRunnerContractTests",
+        "GitDiffSpikeTests",
         "LandGraphAuditCleanupTests",
         "LandNonCodeSkipTests",
+        "OutputCleanupTests",
         "PostLandEarlyWarningTests",
         "QualificationCheckoutSourceTests",
-        "RcHistoricalEvidenceTests",
         "ReportBudgetWorkspacePortabilityTests",
+        "ReviewLoopTests",
+        "RollingVolumeRecycleScriptTests",
         "TestTimingChokePointTests",
         "VolumeRetirementHostProofTests"
       ]
