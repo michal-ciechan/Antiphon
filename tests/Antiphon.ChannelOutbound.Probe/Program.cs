@@ -184,9 +184,27 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     string? LaunchSpecPath = null, string? ExpectedSourceSha = null, string? StallPoint = null,
     int DeadlineSeconds = 30, string? CompiledModelPath = null);
 
-internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
+// Wall time moved by the parent's offset. With a timer scale below 1 its timers (the recovery host's scan cycles)
+// fire that much sooner; the time it reads is unchanged.
+internal sealed class ProbeClock(int offsetSeconds, double timerScale = 1) : TimeProvider
 {
     public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow().AddSeconds(offsetSeconds);
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+        timerScale == 1
+            ? base.CreateTimer(callback, state, dueTime, period)
+            : new ScaledTimer(base.CreateTimer(callback, state, Scale(dueTime), Scale(period)), this);
+
+    // Zero and infinite (negative) spans keep their meaning.
+    private TimeSpan Scale(TimeSpan span) => span <= TimeSpan.Zero ? span : span * timerScale;
+
+    // PeriodicTimer creates its timer stopped and starts it with Change.
+    private sealed class ScaledTimer(ITimer inner, ProbeClock clock) : ITimer
+    {
+        public bool Change(TimeSpan dueTime, TimeSpan period) => inner.Change(clock.Scale(dueTime), clock.Scale(period));
+        public void Dispose() => inner.Dispose();
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
 }
 
 internal sealed class EvidenceProducer(string path) : IAntiphonMessagingProducer
