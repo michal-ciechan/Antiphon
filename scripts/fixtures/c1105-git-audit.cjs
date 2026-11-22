@@ -161,7 +161,7 @@ function snapshot() {
     return out.join('\n');
 }
 // Every Git start carries the no-fetch, no-system/global-config and no-commit-graph values.
-const required = {GIT_NO_LAZY_FETCH:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_CONFIG_COUNT:'2',
+const required = {GIT_NO_LAZY_FETCH:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_CONFIG_COUNT:'7',
     GIT_CONFIG_KEY_0:'core.commitGraph', GIT_CONFIG_VALUE_0:'false', GIT_CONFIG_KEY_1:'gc.writeCommitGraph', GIT_CONFIG_VALUE_1:'false'};
 let events = [];
 function audit(timeout = 45000) {
