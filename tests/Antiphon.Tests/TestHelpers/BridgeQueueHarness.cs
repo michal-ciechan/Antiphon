@@ -105,6 +105,31 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public AppDbContext CreateObserverContext() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
 
+    // The store options every harness context uses. They differ from TestDbFixture's (no interceptors), so EF builds
+    // and caches a second model for them, process-wide, on a harness's first context.
+    private static void UseStore(DbContextOptionsBuilder o, string connectionString) =>
+        o.UseNpgsql(connectionString, npgsql =>
+        {
+            npgsql.MigrationsAssembly("Antiphon.Server");
+            npgsql.SetPostgresVersion(16, 0);
+        });
+
+    /// <summary>
+    /// Builds the model a harness context uses, as a harness registers it (AddDbContext with UseStore and no
+    /// ConfigureDbContext), so the first harness does not pay for it (about 1.3 s on the HP laptop on AC). It needs no
+    /// database: the connection string is part of neither EF's internal service provider key nor its model cache key,
+    /// so TestDbFixture runs this while PostgreSQL starts.
+    /// </summary>
+    internal static void WarmModel()
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => UseStore(o, "Host=harness-model-warmup"));
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        _ = scope.ServiceProvider.GetRequiredService<AppDbContext>().Model;
+    }
+
     public static async Task<BridgeQueueHarness> CreateAsync(HarnessOptions? options = null)
     {
         using var span = TestTrace.Span("harness create");
@@ -121,11 +146,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(options.ConnectionString ?? TestDbFixture.ConnectionString, npgsql =>
-            {
-                npgsql.MigrationsAssembly("Antiphon.Server");
-                npgsql.SetPostgresVersion(16, 0);
-            });
+            UseStore(o, options.ConnectionString ?? TestDbFixture.ConnectionString);
             options.ConfigureDbContext?.Invoke(o);
         });
         var eventBus = new MockEventBus();

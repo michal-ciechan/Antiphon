@@ -32,16 +32,34 @@ public class TestDbFixture
 			return;
 		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
 			return;
-		await Lifecycle.EnsureReadyAsync().ConfigureAwait(false);
-
 		// Image/cache hits can prepare PostgreSQL without constructing an EF context. Pay the
-		// process-wide provider/model cost once here, before concurrent timed bodies start.
-		using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "runtime-model"))
-		using (var db = new AppDbContext(Lifecycle.CreateDbContextOptions()))
-		{
-			_ = db.Model;
-			_ = db.Database.ProviderName;
-		}
+		// process-wide provider/model costs once here, before concurrent timed bodies start: this
+		// fixture's options and BridgeQueueHarness's (no interceptors, so a second model). A model
+		// needs no database, so both are built while PostgreSQL starts; the connection string is
+		// part of neither EF's internal service provider key nor its model cache key.
+		var models = Task.WhenAll(
+			Task.Run(() =>
+			{
+				using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "runtime-model"))
+				using (var db = new AppDbContext(TestDbFixtureLifecycle.BuildOptions("Host=runtime-model-warmup")))
+				{
+					_ = db.Model;
+					_ = db.Database.ProviderName;
+				}
+			}),
+			Task.Run(() =>
+			{
+				using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "harness-model"))
+					BridgeQueueHarness.WarmModel();
+			}));
+		Exception? startFailure = null;
+		try { await Lifecycle.EnsureReadyAsync().ConfigureAwait(false); }
+		catch (Exception ex) { startFailure = ex; }
+		// A failed start still waits for the builds, so none outlives the hook, and stays the failure reported.
+		try { await models.ConfigureAwait(false); }
+		catch (Exception) when (startFailure is not null) { }
+		if (startFailure is not null)
+			System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(startFailure);
 	}
 
 	public static async Task DisposeAsync()
