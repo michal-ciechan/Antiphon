@@ -824,7 +824,7 @@ Legacy unsealed copies retain their current-process ledger behavior.
 
 ### CARD-1545 CP-30 census scope (CARD-1645)
 
-`scripts/test-live-lane-manifest.ps1 -Case FullCensusUnchanged` (CP-30) is a commission-scoped historical check. It proves that the S1 commission introduced no drift relative to the landing target. It does not compare against a seed of the caller's choosing, and it is not a check to re-run on later trees.
+`scripts/antiphon live-lane-census` (CP-30; until W2-nightly S25 it was `scripts/test-live-lane-manifest.ps1 -Case FullCensusUnchanged`, now `LiveLaneCensus` in `scripts/lib/Antiphon.Nightly/LiveLaneCensus.cs`) is a commission-scoped historical check. It proves that the S1 commission introduced no drift relative to the landing target. It does not compare against a seed of the caller's choosing, and it is not a check to re-run on later trees.
 
 - **Scope line.** The command first prints `census scope=commission not-run-on-later-trees`. The same line names the seed, the pre-S1 base, the head, `target=<ref>@<sha>`, the fixture blob and `fixture=unauthenticated`.
 - **The fixture is not authenticated.** It is a committed blob the seed author wrote. A Review compares that blob with an independent CP-27/CP-28 recapture before relying on it.
@@ -833,7 +833,7 @@ Legacy unsealed copies retain their current-process ledger behavior.
 - **Re-seeding.** Do not re-pin the census to make a later tree pass. Re-seed at the merge-base instead.
 - **Residual.** A tree that is already on the target, such as the master tip, is not diagnosed. CP-30 is simply not run there.
 - **Declared additions.** A declared addition is identified by project, namespace, class and method together. A twin elsewhere is `undeclared-new-uid`, and a declared identity absent from the after set is `declared-additive-missing`.
-- **Witnesses.** Synthetic engine and scratch-Git witnesses carry these rules: `LiveLaneInventoryTests.CensusAdditiveIdentity` and `LiveLaneInventoryTests.CensusTargetScope`.
+- **Witnesses.** Synthetic engine and scratch-Git witnesses carry these rules: `LiveLaneInventoryTests.CensusAdditiveIdentity` and `LiveLaneInventoryTests.CensusTargetScope`. `LiveLaneCensusTests` pins the seed lists, the declared pre-S1 base, the policy hash and the refusal without a context.
 
 ### Live-lane sink audit residuals (CARD-1645)
 

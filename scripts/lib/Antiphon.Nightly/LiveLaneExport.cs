@@ -22,10 +22,14 @@ namespace Antiphon.Nightly
         public static LiveLaneVerdict No(string reason) => new LiveLaneVerdict(false, reason);
     }
 
+    /// <summary>One producer's provenance in the context (producerProvenance.&lt;project&gt;): its source and assembly hash.</summary>
+    public sealed record LiveLaneProvenance(string Project, string SourceSha, string AssemblyHash);
+
     /// <summary>
     /// The portable context of a live-lane commission (Read-LiveLaneContextObject): the JSON in
     /// ANTIPHON_LIVE_PORTABLE_CONTEXT, or the file it names. The roster rows read mode, exportRequired, sourceSha,
-    /// runId and the two export paths.
+    /// runId and the two export paths; the census (LiveLaneCensus, W2-nightly S25) also reads the candidate root, the
+    /// seed, the pre-S1 base, the landing target, the fixture binding, the producers' provenance and receipts.
     /// </summary>
     public sealed class LiveLaneContext
     {
@@ -35,6 +39,25 @@ namespace Antiphon.Nightly
         public string RunId { get; init; } = "";
         public string Cp25Export { get; init; } = "";
         public string Cp1Export { get; init; } = "";
+        public string CandidateRoot { get; init; } = "";
+        public string CensusBaseSha { get; init; } = "";
+        public string PreS1BaseSha { get; init; } = "";
+        public string LandingTarget { get; init; } = "";
+        public string FixturePath { get; init; } = "";
+        public string FixtureBlob { get; init; } = "";
+        public string CheckpointResults { get; init; } = "";
+
+        /// <summary>producerProvenance's rows in the context's order; null when it has none (a baseline context).</summary>
+        public IReadOnlyList<LiveLaneProvenance> ProducerProvenance { get; init; }
+
+        /// <summary>Get-LiveLaneProp $provenance $project: the first row whose name matches, ignoring case; null when none.</summary>
+        public static LiveLaneProvenance FindProvenance(IReadOnlyList<LiveLaneProvenance> provenance, string project)
+        {
+            if (provenance == null) return null;
+            foreach (var row in provenance)
+                if (string.Equals(row.Project, project ?? "", StringComparison.OrdinalIgnoreCase)) return row;
+            return null;
+        }
 
         /// <summary>The context ANTIPHON_LIVE_PORTABLE_CONTEXT names (variables: this process's environment when null); null when there is none.</summary>
         public static LiveLaneContext FromEnvironment(Func<string, string> variables = null) =>
@@ -56,6 +79,15 @@ namespace Antiphon.Nightly
             using var doc = LiveLaneJson.Parse(text);
             var root = doc.RootElement;
             var flag = LiveLaneJson.Prop(root, "exportRequired");
+            List<LiveLaneProvenance> provenance = null;
+            var rows = LiveLaneJson.Prop(root, "producerProvenance");
+            if (rows != null)
+            {
+                provenance = new List<LiveLaneProvenance>();
+                if (rows.Value.ValueKind == JsonValueKind.Object)
+                    foreach (var row in rows.Value.EnumerateObject())
+                        provenance.Add(new LiveLaneProvenance(row.Name, LiveLaneJson.Field(row.Value, "sourceSha"), LiveLaneJson.Field(row.Value, "assemblyHash")));
+            }
             return new LiveLaneContext
             {
                 Mode = LiveLaneJson.Field(root, "mode"),
@@ -64,6 +96,14 @@ namespace Antiphon.Nightly
                 RunId = LiveLaneJson.Field(root, "runId"),
                 Cp25Export = LiveLaneJson.Field(root, "cp25Export"),
                 Cp1Export = LiveLaneJson.Field(root, "cp1Export"),
+                CandidateRoot = LiveLaneJson.Field(root, "candidateRoot"),
+                CensusBaseSha = LiveLaneJson.Field(root, "censusBaseSha"),
+                PreS1BaseSha = LiveLaneJson.Field(root, "preS1BaseSha"),
+                LandingTarget = LiveLaneJson.Field(root, "landingTarget"),
+                FixturePath = LiveLaneJson.Field(root, "fixturePath"),
+                FixtureBlob = LiveLaneJson.Field(root, "fixtureBlob"),
+                CheckpointResults = LiveLaneJson.Field(root, "checkpointResults"),
+                ProducerProvenance = provenance,
             };
         }
     }
@@ -435,9 +475,8 @@ namespace Antiphon.Nightly
         /// The witness of D-4 skip-receipt (the old ProducerReceipt case): a missing receipt, a red row, a row still running
         /// and a foreign build each refuse with their reason, and a green receipt is accepted. censusRefusesRed (the
         /// census over a red receipt: repo, source, receipt root; true when it refused with producer-row-not-green) is the
-        /// case's census check, census-skipped-receipt; the census is still PowerShell (S25), so a caller without it
-        /// passes null and the check is skipped. Problems: missing-shape, red-shape, timeout-shape, foreign-shape,
-        /// green-shape, census-skipped-receipt. None: accepted.
+        /// case's census check, census-skipped-receipt (LiveLaneCensus.RefusesRedReceipt); null skips it. Problems:
+        /// missing-shape, red-shape, timeout-shape, foreign-shape, green-shape, census-skipped-receipt. None: accepted.
         /// </summary>
         public static IReadOnlyList<string> ProducerReceiptWitness(string repoRoot, Func<string, string, string, bool> censusRefusesRed = null)
         {

@@ -32,8 +32,11 @@
     },
     {
       "group": "live-lane-manifest",
-      "paths": ["scripts/test-live-lane-manifest.ps1"],
-      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
+      "paths": ["scripts/lib/Antiphon.Nightly/LiveLaneRoster.cs", "scripts/lib/Antiphon.Nightly/LiveLaneCensus.cs"],
+      "suites": [
+        "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ]
     },
     {
       "group": "custody-shell",

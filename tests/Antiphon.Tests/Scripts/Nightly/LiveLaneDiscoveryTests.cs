@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -8,9 +7,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
-/// W2-nightly S24. The live-lane discovery, roster, export, receipt and scratch of live-lane-manifest.ps1, compiled
+/// W2-nightly S24. The live-lane discovery, roster, export, receipt and scratch of the old live-lane-manifest.ps1, compiled
 /// (scripts/lib/Antiphon.Nightly/LiveLane*.cs): the old ExtraArgumentDecoyFirst, ExportPending, ProducerReceipt,
-/// ScratchResidue, BindManifest and WriteFixture cases of scripts/test-live-lane-manifest.ps1, in-process. The
+/// ScratchResidue, BindManifest and WriteFixture cases of the old driver (scripts/test-live-lane-manifest.ps1), in-process. The
 /// roster rows themselves are LiveLaneInventoryTests.ExactCoreRoster and LiveClaudeInventoryTests.ExactPtyCoreRoster.
 /// Scratch lives under .antiphon/live-lane-capture and is removed.
 /// </summary>
@@ -33,14 +32,11 @@ public sealed class LiveLaneDiscoveryTests
         problems.ShouldBeEmpty(string.Join('\n', problems));
     }
 
-    /// <summary>
-    /// The receipt shapes. The case's census check (census-skipped-receipt) needs the census, which is still
-    /// PowerShell: FullCensusUnchanged runs it until S25.
-    /// </summary>
+    /// <summary>The receipt shapes, and the census refusing a red receipt (census-skipped-receipt, W2-nightly S25).</summary>
     [Test]
     public void ProducerReceipt()
     {
-        var problems = LiveLaneReceipt.ProducerReceiptWitness(Repo);
+        var problems = LiveLaneReceipt.ProducerReceiptWitness(Repo, LiveLaneCensus.RefusesRedReceipt);
         problems.ShouldBeEmpty(string.Join('\n', problems));
     }
 
@@ -49,7 +45,7 @@ public sealed class LiveLaneDiscoveryTests
     public void ScratchResidue()
     {
         var repo = Repo;
-        var problems = LiveLaneScratch.ScratchResidueWitness(repo, LiveLaneManifestFiles.FixtureRel, ProtectedPaths(repo));
+        var problems = LiveLaneScratch.ScratchResidueWitness(repo, LiveLaneManifestFiles.FixtureRel, LiveLaneCensus.ProtectedPaths);
         problems.ShouldBeEmpty(string.Join('\n', problems));
     }
 
@@ -146,16 +142,6 @@ public sealed class LiveLaneDiscoveryTests
         }
     }
 
-    /// <summary>The census's protected inputs: $script:LiveLaneProtectedPaths of scripts/lib/live-lane-manifest.ps1 (S25 moves the census).</summary>
-    private static string[] ProtectedPaths(string repo)
-    {
-        var text = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "live-lane-manifest.ps1"));
-        var block = Regex.Match(text, @"\$script:LiveLaneProtectedPaths = @\((?<body>[^)]*)\)");
-        block.Success.ShouldBeTrue("LiveLaneProtectedPaths");
-        var paths = Regex.Matches(block.Groups["body"].Value, "'([^']+)'").Select(m => m.Groups[1].Value).ToArray();
-        paths.ShouldNotBeEmpty();
-        return paths;
-    }
 
     private static string Refusal(Action action) => Should.Throw<InvalidOperationException>(action).Message;
 

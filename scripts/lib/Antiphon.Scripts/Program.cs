@@ -56,6 +56,12 @@ namespace Antiphon.Scripts
             ["live-lane-roster"] = LiveLaneRosterCommand,
             ["live-lane-bind-manifest"] = LiveLaneBindManifest,
             ["live-lane-write-fixture"] = LiveLaneWriteFixture,
+            // The live-lane census (the CP-30 row) answers every input itself: exit 0 accepted, 1 a witness, a refusal case or
+            // residue failed (or refused: one stderr line), 2 no context or the census refused. The policy hash: exit 0
+            // printed, 1 refused, 2 usage. The S1a group: the checkpoint tool's exit code, 1 refused, 2 usage.
+            ["live-lane-census"] = LiveLaneCensusCommand,
+            ["live-lane-emit-policy-hash"] = LiveLaneEmitPolicyHash,
+            ["live-lane-group"] = LiveLaneGroup,
             // The release selection answers exactly or hands back NotHandled (exit 10).
             ["select-release"] = SelectRelease,
         };
@@ -81,7 +87,7 @@ namespace Antiphon.Scripts
         {
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
-                + " | " + LiveLaneWriteFixtureUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
+                + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage);
             return Usage;
         }
 
@@ -190,6 +196,79 @@ namespace Antiphon.Scripts
                 }
                 Console.WriteLine(Antiphon.Nightly.LiveLaneManifestFiles.WriteFixture(repository, flags.TryGetValue("--capture-dir", out var capture) ? capture : null, sourceSha));
                 return Handled;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        private const string LiveLaneCensusUsage = "live-lane-census [--repository <dir>]";
+        private const string LiveLaneEmitPolicyHashUsage = "live-lane-emit-policy-hash --policy-root <dir> [--policy-path <file>]";
+        private const string LiveLaneGroupUsage = "live-lane-group --group <S1a|S1a-baseline> --tool-dll <dll> [--repository <dir>] [--checkpoint-manifest <yaml>]"
+            + " [--expected-source-sha <sha>] [--census-base-sha <sha>]";
+
+        // W2-nightly S25: the FullCensusUnchanged case (CP-30), a commission-scoped check over the context that
+        // ANTIPHON_LIVE_PORTABLE_CONTEXT names (docs/testing-and-build.md); the witnesses first, then the census lines.
+        private static int LiveLaneCensusCommand(string[] args)
+        {
+            var flags = Flags(args, new[] { "--repository" }, new string[0]);
+            if (flags == null)
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneCensusUsage);
+                return Usage;
+            }
+            try
+            {
+                var repository = System.IO.Path.GetFullPath(flags.TryGetValue("--repository", out var given) ? given : Environment.CurrentDirectory);
+                return Antiphon.Nightly.LiveLaneCensus.FullCensusUnchanged(repository, () => Antiphon.Nightly.LiveLaneContext.FromEnvironment(), Console.Out);
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        // W2-nightly S25: the EmitPolicyHash case. Prints the policy hash of --policy-path, or of the root's
+        // tests/test-execution-policy.json.
+        private static int LiveLaneEmitPolicyHash(string[] args)
+        {
+            var flags = Flags(args, new[] { "--policy-root", "--policy-path" }, new string[0]);
+            if (flags == null || !flags.TryGetValue("--policy-root", out var root) || string.IsNullOrWhiteSpace(root))
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneEmitPolicyHashUsage);
+                return Usage;
+            }
+            try
+            {
+                Console.WriteLine(Antiphon.Nightly.LiveLaneCensus.EmitPolicyHash(root, flags.TryGetValue("--policy-path", out var path) ? path : ""));
+                return Handled;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.Message);
+                return Refused;
+            }
+        }
+
+        // W2-nightly S25: the Group case (the S1a commission): writes the group's context, then runs its checkpoint rows.
+        private static int LiveLaneGroup(string[] args)
+        {
+            var flags = Flags(args, new[] { "--group", "--tool-dll", "--repository", "--checkpoint-manifest", "--expected-source-sha", "--census-base-sha" }, new string[0]);
+            if (flags == null || !flags.ContainsKey("--group") || !flags.ContainsKey("--tool-dll"))
+            {
+                Console.Error.WriteLine("usage: antiphon-scripts " + LiveLaneGroupUsage);
+                return Usage;
+            }
+            string F(string name) => flags.TryGetValue(name, out var v) ? v : "";
+            try
+            {
+                var repository = System.IO.Path.GetFullPath(flags.TryGetValue("--repository", out var given) ? given : Environment.CurrentDirectory)
+                    .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+                return Antiphon.Nightly.LiveLaneCensus.RunGroup(repository, F("--group"), F("--tool-dll"), F("--checkpoint-manifest"), F("--expected-source-sha"),
+                    F("--census-base-sha"));
             }
             catch (Exception e)
             {

@@ -2,7 +2,7 @@
 // leaf of <repo>/.antiphon/live-lane-capture and every dangling census commit is a loose object of the repository;
 // each is recorded in a ledger when it is made, and Clear removes exactly what the ledger holds, also after a failure.
 // Nothing is written under the system temp directory (TempResidue lists the antiphon-live-lane-* names there, for
-// the witness). The PowerShell census (live-lane-manifest.ps1, until S25) keeps one LiveLaneScratch per session.
+// the witness). The census (LiveLaneCensus, W2-nightly S25) keeps one LiveLaneScratch per census session.
 // Plain C#. ASCII-only.
 using System;
 using System.Collections.Generic;
@@ -242,7 +242,7 @@ namespace Antiphon.Nightly
 
         // The scratch part of Get-LiveLaneCensusSeedMaterial: the fixture and the protected inputs at seed, as blobs, in an
         // owned directory "seed<blob 12><guid>"; null when the fixture has no blob at seed or a copy failed.
-        private string SeedCopy(string repoRoot, string seed, string fixtureRel, IReadOnlyList<string> protectedPaths)
+        internal string SeedCopy(string repoRoot, string seed, string fixtureRel, IReadOnlyList<string> protectedPaths)
         {
             var blob = Git(repoRoot, "rev-parse", seed + ":" + fixtureRel).Text;
             if (string.IsNullOrWhiteSpace(blob)) return null;
