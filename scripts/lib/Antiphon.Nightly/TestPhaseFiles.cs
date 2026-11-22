@@ -121,8 +121,9 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// PathIdentity's kind and size without the wrapper object. On Linux: lstat, 'regular' for a regular
-        /// file, 'unsupported' for anything else (a link, FIFO, directory), 'missing' for ENOENT.
+        /// PathIdentity's kind and size without the wrapper object. Size is zero unless the kind is 'regular'.
+        /// On Linux: lstat, 'regular' for a regular file, 'unsupported' for a link, FIFO or directory,
+        /// 'missing' for ENOENT.
         /// </summary>
         public static string Kind(string path, out long size)
         {
@@ -138,8 +139,9 @@ namespace Antiphon.Nightly
         {
             size = 0;
             if (FileIdentity.LStat(path, out LinuxStat stat) != 0) return Marshal.GetLastWin32Error() == 2 ? "missing" : "unreadable";
+            if ((stat.Mode & 0xF000) != 0x8000) return "unsupported";
             size = stat.Size;
-            return (stat.Mode & 0xF000) == 0x8000 ? "regular" : "unsupported";
+            return "regular";
         }
 
         private static string WindowsKind(string path, out long size)
