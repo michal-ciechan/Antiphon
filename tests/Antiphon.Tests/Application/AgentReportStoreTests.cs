@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Files;
@@ -211,6 +212,64 @@ public class AgentReportStoreTests
             release.TrySetResult();
             await pending;
         }
+    }
+
+    [Test]
+    public async Task Publication_gate_serializes_two_store_instances()
+    {
+        await using var w = new ReportWorkspace();
+        await w.InitializeAsync();
+        var task = w.Task("exact full report é🙂");
+        var path = w.Expected(task);
+        var firstAtMove = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admissionPending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var moves = 0;
+
+        var first = w.Store();
+        first.BeforeIoAsync = async (phase, ct) =>
+        {
+            if (phase == "publication-move")
+            {
+                firstAtMove.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
+            if (phase == "readback") Interlocked.Increment(ref moves);
+        };
+        var second = w.Store();
+        second.PublicationAdmissionPending = admissionPending;
+        second.BeforeIoAsync = (phase, _) =>
+        {
+            // Only a successful move enters readback. Reusing the winner returns earlier.
+            if (phase == "readback") Interlocked.Increment(ref moves);
+            return Task.CompletedTask;
+        };
+
+        var firstWrite = first.StoreAsync(task, CancellationToken.None);
+        Task<AgentReportStorageResult>? secondWrite = null;
+        try
+        {
+            await firstAtMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            File.Exists(path).ShouldBeFalse();
+
+            secondWrite = second.StoreAsync(task, CancellationToken.None);
+            var pending = await admissionPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            pending.ShouldBeTrue("the second store must wait while the first owns publication");
+            File.Exists(path).ShouldBeFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(firstWrite, secondWrite ?? Task.CompletedTask);
+        }
+
+        var winner = await firstWrite;
+        var contender = await secondWrite!;
+        winner.Path.ShouldBe(path, winner.Reason);
+        contender.Path.ShouldBe(path, contender.Reason);
+        moves.ShouldBe(1);
+        (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(task.Result!));
+        Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
     }
 
     [Test]

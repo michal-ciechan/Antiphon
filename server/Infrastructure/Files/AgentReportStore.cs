@@ -24,6 +24,7 @@ public sealed class AgentReportStore(
 
     internal Func<CancellationToken, Task>? BeforePublishAsync { get; set; }
     internal Func<string, CancellationToken, Task>? BeforeIoAsync { get; set; }
+    internal TaskCompletionSource<bool>? PublicationAdmissionPending { get; set; }
 
     // Two-wave preparation policy: one default Git allowance plus one more for every remaining command.
     // This is not scaled from configured Git timeouts and is not a measured p95.
@@ -112,7 +113,9 @@ public sealed class AgentReportStore(
             if (BeforePublishAsync is not null) await BeforePublishAsync(token);
             if (BeforeIoAsync is not null) await BeforeIoAsync("publish", token);
             var gate = PublicationGates[Math.Abs(task.Id.GetHashCode() % PublicationGates.Length)];
-            await gate.WaitAsync(token);
+            var admission = gate.WaitAsync(token);
+            PublicationAdmissionPending?.TrySetResult(!admission.IsCompleted);
+            await admission;
             try
             {
                 // Another attempt may have published while this one was staging its bytes.
@@ -123,6 +126,7 @@ public sealed class AgentReportStore(
                     return new(path, null);
                 }
 
+                if (BeforeIoAsync is not null) await BeforeIoAsync("publication-move", token);
                 token.ThrowIfCancellationRequested();
                 File.Move(temporary, path, overwrite: true);
                 temporary = null;
