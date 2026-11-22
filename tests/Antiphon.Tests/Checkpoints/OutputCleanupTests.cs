@@ -139,9 +139,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
         var result = CleanTrackedIndexFixture(context, root, output);
 
+        AssertTargetKept(root, output, target, result);
         staged.ShouldBeTrue("the target's tracked check read the index in process");
         unlinks.ShouldBe(2);
-        AssertTargetKept(root, output, target, result);
     }
 
     // CARD-2052 Review r1 D-1: the target was staged after its decision and before its unlink. The unlink happens
@@ -187,21 +187,22 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             frozen ??= stat with { Modified = stat.Modified - 60_000_000_000L, Changed = stat.Changed - 60_000_000_000L };
             return frozen.Value;
         };
-        var before = context.InProcessIndexReads;
-        var readsAtRewrite = -1;
+        var readsAtFirst = -1;
+        var readsBetween = -1;
         var unlinks = 0;
         context.AfterOwnedUnlink = _ =>
         {
-            if (++unlinks != 2) return;
-            readsAtRewrite = context.InProcessIndexReads - before;
+            if (++unlinks == 1) readsAtFirst = context.InProcessIndexReads;
+            if (unlinks != 2) return;
+            readsBetween = context.InProcessIndexReads - readsAtFirst;
             RewriteIndexPathInPlace(index, "bin-c2053/d/target.dll", "bin-c2052/d/target.dll");
         };
 
         var result = CleanTrackedIndexFixture(context, root, output);
 
-        readsAtRewrite.ShouldBe(1, "both deep entries were answered from one listing: the scope was reusing it");
-        CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
         AssertTargetKept(root, output, target, result);
+        readsBetween.ShouldBe(0, "the second deep entry was answered from the first one's listing: the scope was reusing it");
+        CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
     }
 
     // CARD-2052 Review r1 D-3: core.worktree written into the repository config in place, with the config file's
@@ -235,9 +236,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
         var result = CleanTrackedIndexFixture(context, root, output);
 
+        AssertTargetKept(root, output, target, result);
         frozen.ShouldNotBeNull("the stamp observed the repository config");
         unlinks.ShouldBe(2);
-        AssertTargetKept(root, output, target, result);
     }
 
     // CARD-2052 Review r1 D-3: an included config can hold settings (core.worktree among them) no stamped file
@@ -254,16 +255,20 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(root, ".git", "extra.config"), "[user]\n\tname = card-2052\n");
         var (context, output, _) = TrackedIndexFixture(root);
         SettleIndex(Path.Combine(root, ".git"));
-        var before = context.InProcessIndexReads;
-        var readsAfterTwo = -1;
+        var readsAtFirst = -1;
+        var readsBetween = -1;
         var unlinks = 0;
-        context.AfterOwnedUnlink = _ => { if (++unlinks == 2) readsAfterTwo = context.InProcessIndexReads - before; };
+        context.AfterOwnedUnlink = _ =>
+        {
+            if (++unlinks == 1) readsAtFirst = context.InProcessIndexReads;
+            if (unlinks == 2) readsBetween = context.InProcessIndexReads - readsAtFirst;
+        };
 
         var result = CleanTrackedIndexFixture(context, root, output);
 
         result.Refusals.ShouldBeEmpty();
         result.Deleted.ShouldBe([output]);
-        readsAfterTwo.ShouldBe(2, "an include declines reuse: each deep entry read the index");
+        readsBetween.ShouldBe(1, "an include declines reuse: the second deep entry read the index again");
     }
 
     // CARD-2052 Review r1 D-3: a linked worktree whose common directory gains config.worktree (per-worktree config
@@ -280,13 +285,16 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "worktree", "add", "-b", "c2052-linked", linked);
         var (context, output, _) = TrackedIndexFixture(linked);
         SettleIndex(Path.Combine(root, ".git", "worktrees", "linked"));
-        var before = context.InProcessIndexReads;
+        var readsAtFirst = -1;
+        var readsBetween = -1;
         var readsAtChange = -1;
         var unlinks = 0;
         context.AfterOwnedUnlink = _ =>
         {
-            if (++unlinks != 2) return;
-            readsAtChange = context.InProcessIndexReads - before;
+            if (++unlinks == 1) readsAtFirst = context.InProcessIndexReads;
+            if (unlinks != 2) return;
+            readsAtChange = context.InProcessIndexReads;
+            readsBetween = readsAtChange - readsAtFirst;
             File.WriteAllText(Path.Combine(root, ".git", "config.worktree"), "[core]\n");
         };
 
@@ -294,8 +302,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
         result.Refusals.ShouldBeEmpty();
         result.Deleted.ShouldBe([output]);
-        readsAtChange.ShouldBe(1, "the two deep entries were answered from one listing before the change");
-        (context.InProcessIndexReads - before).ShouldBeGreaterThan(1, "the entries after the change read the index again");
+        readsBetween.ShouldBe(0, "the second deep entry was answered from the first one's listing before the change");
+        context.InProcessIndexReads.ShouldBeGreaterThan(readsAtChange, "the entries after the change read the index again");
     }
 
     // An owned output of two deep files, the target one level up and the ledger at its top: the removal reaches the
