@@ -3181,6 +3181,7 @@
     {
       "path": "docs/bootstrap.md",
       "classes": [
+        "DockerStackDocumentationTests",
         "GrokRunnerImageContractTests",
         "StandingPipelinePolicyDocumentationTests",
         "ZombieCensusPlatformTests"
@@ -3712,6 +3713,12 @@
       "classes": [
         "CardFilePrivacyScriptTests",
         "MigrateStagePinsScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/check-daemon-build.ps1",
+      "classes": [
+        "DockerStackDocumentationTests"
       ]
     },
     {
