@@ -235,15 +235,36 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             // place", and the tracked pid is the shim's own pid, which is what it execs into.
             custody.RecordStartIntent();
             _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
-            custody.RecordTracking(_conn.Pid);
-            // CARD-1931 R1: the child is spawned and tracked; nothing below may fail the launch.
-            // Missing, ambiguous or late accounting, or a placement journal I/O failure, is not
-            // placement. Natural finality then stays Unknown.
+            // CARD-1931 R1: the shim enters the tree a few ms before the payload can fork, which
+            // can be sooner than the durable tracking write returns, so a containment that places
+            // after the spawn is observed from the spawn on, concurrently with that write. Only a
+            // zero-bound containment, which placed inside the spawn, reads once after tracking.
+            var tracked = new TaskCompletionSource<DateTime?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var containment = _containment;
+            var root = _conn.Pid;
+            Task<PtyRootPlacement?> Observe() => ObserveRootPlacementAsync(containment, root, tracked.Task,
+                ReadProcessStartUtc, RootPidExited, TimeProvider.System, launchStarted,
+                static async _ => await Task.Yield(), ct);
+            var observing = containment.PlacementSettleBound > TimeSpan.Zero ? Task.Run(Observe) : null;
             try
             {
-                if (await ObserveRootPlacementAsync(_containment, _conn.Pid, custody.TrackedStartTimeUtc,
-                        ReadProcessStartUtc, RootPidExited, TimeProvider.System, launchStarted,
-                        static async _ => await Task.Yield(), ct) is { } placement)
+                custody.RecordTracking(root);
+                tracked.TrySetResult(custody.TrackedStartTimeUtc);
+            }
+            catch
+            {
+                tracked.TrySetResult(null);
+                if (observing is not null)
+                    try { await observing; } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                throw;
+            }
+
+            // The child is spawned and tracked; nothing below may fail the launch. Missing,
+            // ambiguous or late accounting, or a placement journal I/O failure, is not placement.
+            // Natural finality then stays Unknown.
+            try
+            {
+                if (await (observing ?? Observe()) is { } placement)
                     custody.RecordLinuxPlacement(placement);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -712,8 +733,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// CARD-1931: the tracked generation observed as the SOLE member of its own tree. The Linux
     /// shim places itself after the spawn has returned and only into an empty tree, so the tree
     /// is re-read until its first nonempty sample. Placement is that sample holding exactly
-    /// <paramref name="rootPid"/>, whose start time (the source <see cref="IPtyCustodyJournal.RecordTracking"/>
-    /// read) equals <paramref name="trackedStartUtc"/>, with the root still live. A mixed or
+    /// <paramref name="rootPid"/>, live, whose start time read at once after the sample (the
+    /// source <see cref="IPtyCustodyJournal.RecordTracking"/> reads) equals the tracked start
+    /// <paramref name="trackedStartUtc"/> completes with once tracking is durable. A mixed or
     /// foreign first sample, another generation, an exited root or unreadable accounting is null:
     /// a later sample cannot say who entered first.
     /// <para>
@@ -726,12 +748,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// </para>
     /// </summary>
     internal static async Task<PtyRootPlacement?> ObserveRootPlacementAsync(
-        IPtyCustodyContainment containment, int rootPid, DateTime? trackedStartUtc,
+        IPtyCustodyContainment containment, int rootPid, Task<DateTime?> trackedStartUtc,
         Func<int, DateTime?> readStartUtc, Func<int, bool> rootExited, TimeProvider clock,
         long launchStarted, Func<CancellationToken, Task> pause, CancellationToken ct)
     {
-        if (trackedStartUtc is not { } tracked)
-            return null;
         var bound = containment.PlacementSettleBound;
         bool Expired() => ct.IsCancellationRequested
             || (bound > TimeSpan.Zero && clock.GetElapsedTime(launchStarted) >= bound);
@@ -756,9 +776,20 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 // First membership decides, once. Only a tree holding exactly the root proves it.
                 if (sample.Count != 1 || sample.Pids.Count != 1 || sample.Pids[0] != rootPid)
                     return null;
-                if (readStartUtc(rootPid) is not { } observed || observed != tracked)
+                // Read the generation at once, before an exited root could be reaped and reused.
+                if (readStartUtc(rootPid) is not { } observed || rootExited(rootPid))
                     return null;
-                if (rootExited(rootPid) || Expired())
+                DateTime? tracked;
+                try
+                {
+                    tracked = await trackedStartUtc.WaitAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                if (tracked != observed || Expired())
                     return null;
                 return new(rootPid, observed);
             }

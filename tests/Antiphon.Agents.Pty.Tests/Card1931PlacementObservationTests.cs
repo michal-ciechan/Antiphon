@@ -81,6 +81,41 @@ public sealed class Card1931PlacementObservationTests
     }
 
     [Test]
+    public async Task C1931_Sole_sample_before_tracking_completes_is_placed_once_tracked()
+    {
+        var tracking = new TaskCompletionSource<DateTime?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var world = new World([Empty, Sole(Root), Members(Root, Other)]) { TrackedTask = tracking.Task };
+        var observing = world.ObserveAsync();
+        observing.IsCompleted.ShouldBeFalse("the sole sample waits for the durable tracking start");
+        world.Tree.Reads.ShouldBe(2, "the first nonempty sample is taken before tracking returns");
+        tracking.SetResult(Tracked);
+        (await observing).ShouldBe(new PtyRootPlacement(Root, Tracked));
+        world.Tree.Reads.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task C1931_Tracking_completing_after_the_deadline_is_rejected()
+    {
+        var tracking = new TaskCompletionSource<DateTime?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var world = new World([Sole(Root)]) { TrackedTask = tracking.Task };
+        var observing = world.ObserveAsync();
+        world.Clock.Advance(Bound);
+        tracking.SetResult(Tracked);
+        (await observing).ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1931_Cancellation_while_waiting_for_tracking_is_no_placement()
+    {
+        using var cts = new CancellationTokenSource();
+        var tracking = new TaskCompletionSource<DateTime?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var world = new World([Sole(Root)]) { TrackedTask = tracking.Task };
+        var observing = world.ObserveAsync(cts.Token);
+        cts.Cancel();
+        (await observing).ShouldBeNull();
+    }
+
+    [Test]
     public async Task C1931_Exited_sole_root_is_no_placement()
     {
         var world = new World([Sole(Root)]) { Exited = true };
@@ -176,6 +211,8 @@ public sealed class Card1931PlacementObservationTests
         public ScriptedTree Tree { get; } = new(samples);
         public ManualClock Clock { get; } = new();
         public DateTime? TrackedStart { get; init; } = Tracked;
+        /// <summary>When set, the tracked start completes only once the test says so.</summary>
+        public Task<DateTime?>? TrackedTask { get; init; }
         public DateTime? ObservedStart { get; init; } = Tracked;
         public bool Exited { get; init; }
         public bool Unreadable { init => Tree.Unreadable = value; }
@@ -187,7 +224,7 @@ public sealed class Card1931PlacementObservationTests
 
         public Task<PtyRootPlacement?> ObserveAsync(CancellationToken ct = default)
         {
-            return PtyAgentRunner.ObserveRootPlacementAsync(Tree, Root, TrackedStart,
+            return PtyAgentRunner.ObserveRootPlacementAsync(Tree, Root, TrackedTask ?? Task.FromResult(TrackedStart),
                 pid =>
                 {
                     pid.ShouldBe(Root);
