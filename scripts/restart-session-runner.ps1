@@ -13,10 +13,13 @@
     No desired-state writes, process stops, PID deletion or Scheduled Task calls.
 .PARAMETER Hard
     Refresh the supervisor for a planned deployment.
+    Required for the first desktop runner restart after SHA stamp activation.
 .PARAMETER KillSessions
     Also kill detached sessions.
 .EXAMPLE
     pwsh -NoProfile -File scripts/restart-session-runner.ps1
+.EXAMPLE
+    pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard
 .EXAMPLE
     pwsh -NoProfile -File scripts/restart-session-runner.ps1 -WaitOnly -TimeoutSec 180
 #>

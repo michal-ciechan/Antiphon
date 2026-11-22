@@ -39,6 +39,15 @@ wait is **180 seconds**, beginning after restart actions. `-TimeoutSec` accepts 
 positive integer override. This is headroom based on two measured restarts, not a
 latency percentile, guaranteed bound or startup speed improvement.
 
+The first desktop runner restart after SHA stamp activation must use
+`pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard` to load the
+supervisor's updated build command. After the restart, run
+`scripts/check-daemon-build.ps1` and verify the runner's `build.commitSha` from
+`/capabilities` equals the checkout HEAD. If the verified runner reports an
+unstamped build after a soft restart or a continued wait, the script prints
+the `-Hard` hint as a warning. The health result and exit code still reflect
+readiness.
+
 The final `RUNNER RESTART RESULT:` line contains compact JSON. Outcomes are
 `healthy` (exit 0, a completed HTTP 200 from the verified runner), `wait-expired`
 (exit 2, readiness unconfirmed), `action-failed` (exit 1, a concrete validation,
