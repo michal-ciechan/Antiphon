@@ -25,9 +25,11 @@ namespace Antiphon.Tests.Application;
 internal sealed class C0824SlotTransportWorld : IAsyncDisposable
 {
     private readonly object _sync = new();
+    private readonly IWorkspaceSlotProcessProbe? _slotProcesses;
 
-    private C0824SlotTransportWorld(string root)
+    private C0824SlotTransportWorld(string root, IWorkspaceSlotProcessProbe? slotProcesses)
     {
+        _slotProcesses = slotProcesses;
         Root = root;
         Origin = Path.Combine(root, "origin");
         Clone = Path.Combine(root, "repo");
@@ -55,9 +57,11 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// </summary>
     public static async Task<C0824SlotTransportWorld> StartAsync(
         Action<DelegationSettings>? tweak = null, Action<IServiceCollection>? configure = null,
-        Action<PhoneHomeRunnerSettings>? runnerSettings = null, Action<IServiceCollection>? configureHost = null)
+        Action<PhoneHomeRunnerSettings>? runnerSettings = null, Action<IServiceCollection>? configureHost = null,
+        IWorkspaceSlotProcessProbe? slotProcesses = null)
     {
-        var world = new C0824SlotTransportWorld(Path.Combine(Path.GetTempPath(), "c0824-transport-" + Guid.NewGuid().ToString("N")));
+        var root = Path.Combine(Path.GetTempPath(), "c0824-transport-" + Guid.NewGuid().ToString("N"));
+        var world = new C0824SlotTransportWorld(root, slotProcesses);
         world.BuildRepository();
         var git = new ScratchLandingGit(world);
         world.Rig = await Rig.StartAsync(settings =>
@@ -107,7 +111,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
             psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
             return Process.Start(psi);
         }, publishedBranch: "main");
-        var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity);
+        var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity, processes: _slotProcesses);
         service.SlotPool = pool;
         var runner = new PhoneHomeCommandDispatcher(new RuntimeStub(Rig.Host.StoreId), settings);
         runner.UseWorkspace(service);
@@ -157,7 +161,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
             RunnerRepository = repository, RunnerCloneSource = Origin, AllowedCloneSources = [Origin],
             CapacityStatePath = Path.Combine(Root, "target-capacity"), Capacity = 2,
             WorkspaceSlots = new PhoneHomeWorkspaceSlotSettings { Enabled = true, Headroom = 2 } };
-        var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity);
+        var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity, processes: _slotProcesses);
         service.SlotPool = pool;
         var runner = new PhoneHomeCommandDispatcher(new RuntimeStub(storeId), settings);
         runner.UseWorkspace(service);

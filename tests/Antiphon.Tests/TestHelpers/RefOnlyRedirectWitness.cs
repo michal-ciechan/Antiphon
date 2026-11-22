@@ -20,6 +20,8 @@ internal static class RefOnlyRedirectWitness
         // One schema, host and pair of recipients for the whole method. Each variant
         // leases a distinct task/ref; restoring its single fault must reach target preparation.
             const string target = "redirect-target";
+            // The fixture owns both slot roots and awaits its Git children. Supply the empty
+            // holder result so unrelated desktop process churn cannot defer a release.
             await using var world = await C0824SlotTransportWorld.StartAsync(runnerSettings: settings =>
             {
                 settings.AllowDelegatedTasks = true;
@@ -27,7 +29,7 @@ internal static class RefOnlyRedirectWitness
                 settings.ClaudeAuthProbeEnabled = false;
                 settings.Runners[settings.AllowedRunnerId] = PhoneHomeRunnerCatalog.FromLegacy(settings);
                 settings.Runners[target] = PhoneHomeRunnerCatalog.FromLegacy(settings);
-            });
+            }, slotProcesses: new NoSlotHolders());
             var rig = world.Rig;
             var targetStore = Guid.NewGuid();
             var recipient = world.CreatePeerRunner(target, targetStore);
@@ -168,5 +170,10 @@ internal static class RefOnlyRedirectWitness
             await using var finished = rig.NewDb();
             await finished.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
         }
+    }
+
+    private sealed class NoSlotHolders : IWorkspaceSlotProcessProbe
+    {
+        public IReadOnlyList<WorkspaceSlotHolder> Holders(string path) => [];
     }
 }
