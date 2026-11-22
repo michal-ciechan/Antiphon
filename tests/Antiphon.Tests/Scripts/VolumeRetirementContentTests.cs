@@ -829,6 +829,9 @@ public sealed class VolumeRetirementContentTests
     [Arguments("edited-content")]
     [Arguments("mixed-line-endings")]
     [Arguments("unattributed-crlf")]
+    [Arguments("common-info-attributes")]
+    [Arguments("linked-info-attributes")]
+    [Arguments("oversized-crlf")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Linked_worktree_requires_exact_content_for_explicit_crlf_checkout(string vector)
     {
@@ -846,6 +849,12 @@ public sealed class VolumeRetirementContentTests
             printf 'scripts/antiphon.cmd text eol=crlf\n' > .gitattributes
             printf '@echo ok\nrem line\nrem eof' > scripts/antiphon.cmd
             printf 'plain\n' > plain.cmd
+            if [ {{q(vector)}} = oversized-crlf ]; then
+                printf 'large.cmd text eol=crlf\n' >> .gitattributes
+                # An indexed blob exactly 16 MiB crosses the limit when Git adds one CR.
+                { head -c 16777215 /dev/zero | tr '\000' x; printf '\n'; } > large.cmd
+                git add large.cmd
+            fi
             git add .gitattributes scripts/antiphon.cmd plain.cmd
             git commit -qm 'published line-ending fixtures'
             git push -q origin HEAD
@@ -868,16 +877,39 @@ public sealed class VolumeRetirementContentTests
                     printf 'plain\r\n' > plain.cmd
                     git check-attr text eol -- plain.cmd
                     ;;
+                common-info-attributes)
+                    git check-attr --cached text eol -- plain.cmd
+                    printf 'plain.cmd text eol=crlf\n' > "$(git rev-parse --path-format=absolute --git-common-dir)/info/attributes"
+                    printf 'plain\r\n' > plain.cmd
+                    git check-attr --cached text eol -- plain.cmd
+                    ;;
+                linked-info-attributes)
+                    admin="$(git rev-parse --absolute-git-dir)"
+                    mkdir "$admin/info"
+                    printf 'scripts/antiphon.cmd -text\n' > "$admin/info/attributes"
+                    ;;
+                oversized-crlf)
+                    test "$(git cat-file -s HEAD:large.cmd)" = 16777216
+                    test "$(stat -c %s large.cmd)" = 16777217
+                    git ls-files --eol -- large.cmd
+                    ;;
             esac
             """);
         setup.Exit.ShouldBe(0, setup.Output);
         setup.Output.ShouldContain("w/crlf");
         setup.Output.ShouldContain("attr/text eol=crlf");
-        if (vector == "unattributed-crlf")
+        if (vector is "unattributed-crlf" or "common-info-attributes")
         {
             setup.Output.ShouldContain("plain.cmd: text: unspecified");
             setup.Output.ShouldContain("plain.cmd: eol: unspecified");
         }
+        if (vector == "common-info-attributes")
+        {
+            setup.Output.ShouldContain("plain.cmd: text: set");
+            setup.Output.ShouldContain("plain.cmd: eol: crlf");
+        }
+        if (vector == "oversized-crlf")
+            setup.Output.ShouldContain("attr/text eol=crlf\tlarge.cmd");
         if (vector != "checkout")
         {
             // Simulate a clean stat-cache decision so only the linked checkout's
