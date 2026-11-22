@@ -6083,6 +6083,7 @@
     {
       "path": "server/Application/Interfaces/IAgentReportStore.cs",
       "classes": [
+        "AgentReportStoreTests",
         "C0824RefOnlyReadTests",
         "OutputDistillationApplyRaceTests"
       ]
