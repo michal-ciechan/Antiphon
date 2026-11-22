@@ -6,7 +6,6 @@ if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-. (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
 
 # S6b shadow run evidence (RcRunEvidenceRecorder): one recorder per tests run, made at its first use, after the
 # seams are imported. Off by ANTIPHON_RC_RUN_EVIDENCE, suppressed under the process or git seams unless it is
@@ -165,8 +164,8 @@ function Set-NightlyRunStateBindings {
     $State.PublishObservation = [Action[Antiphon.Nightly.NightlyExecutedObservation]]{ param($Seen)
         [void][Antiphon.Nightly.TestPhaseManifests]::WriteExecuted($Seen.Verdict, $Seen.LogRoot, $Seen.TrxPath, $Seen.Suite, $Seen.Chunk, $Seen.RunId, $Seen.Attempt,
             $Seen.HostWallSeconds, $script:TestPhaseExecutedContext, (Get-TestPhasePublicationScope)) }
-    $State.ActiveChunk = [Action[Antiphon.Nightly.NightlyActiveChunk]]{ param($Active)
-        [void](Write-QualificationActiveChunkIdentity -Directory $Active.Directory -SuiteId $Active.Suite -ChunkId $Active.Chunk -RunId $Active.RunId -Attempt $Active.Attempt -State $Active.State) }
+    # The active-chunk identity is compiled (QualificationHeartbeat.ActiveChunkWriter, W2-nightly S10).
+    $State.ActiveChunk = [Antiphon.Nightly.QualificationHeartbeat]::ActiveChunkWriter([Action[string]]{ param($Text) Write-Warning -WarningAction Continue $Text })
     $State.PublicationScope = [Func[Antiphon.Nightly.TestPhasePublicationScope]]{ Get-TestPhasePublicationScope }
     $State.Warning = [Action[string]]{ param($Text) Write-Warning -WarningAction Continue $Text }
 }

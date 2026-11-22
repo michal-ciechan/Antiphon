@@ -116,7 +116,7 @@ try {
             $wrapper = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'rc-qualification-status.ps1'), [ref]$null, [ref]$null)
             $wrapperNames = @($wrapper.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) -join ','
             Note ($wrapperNames -ceq 'CandidateId,RunId,StateRoot,CoordinationRoot,ReleaseRoot,PassThru') ('wrapper parameters ' + $wrapperNames)
-            foreach ($path in @('lib/rc-qualification-status.ps1', 'rc-qualification-status.ps1', 'lib/qualification-supervisor-heartbeat.ps1')) {
+            foreach ($path in @('lib/rc-qualification-status.ps1', 'rc-qualification-status.ps1', 'lib/Antiphon.Nightly/QualificationHeartbeat.cs')) {
                 $text = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot $path))
                 Note (-not $text.Contains('qualification-eta')) ($path + ' reads the ETA script')
             }

@@ -14,8 +14,10 @@ TaskRoot\own-last-run.json (a copy with completedAt is never replaced by one wit
 observe.ps1 can credit the run after the next run overwrites the shared last-run.json.
 The supervisor never stops, signals, or restarts a process and never clears a lock. Its death
 does not end the run: observe.ps1 reads last-run.json completedAt as the end signal.
+The heartbeat is compiled (Antiphon.Nightly/QualificationHeartbeat.cs): nightly-core.ps1 loads the core at the first
+poll, so it needs pwsh; a poll that cannot load it logs HEARTBEAT-ERROR and the next poll retries.
 The starter supplies -CheckoutRoot when launching this script from the task-directory copy.
-ASCII-only, Windows PowerShell 5.1 safe.
+ASCII-only.
 #>
 [CmdletBinding()]
 param(
@@ -35,7 +37,7 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $PSScriptRoot '../..' }
 $CheckoutRoot = (Resolve-Path -LiteralPath $CheckoutRoot).ProviderPath
 . (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor.ps1')
-. (Join-Path $CheckoutRoot 'scripts/lib/qualification-supervisor-heartbeat.ps1')
+. (Join-Path $CheckoutRoot 'scripts/lib/nightly-core.ps1')
 $log = Join-Path $TaskRoot 'supervisor.log'
 $heartbeat = Join-Path $TaskRoot 'supervisor-heartbeat.json'
 # Copy our run's last-run.json into TaskRoot; a failed copy never ends the supervisor.
@@ -79,7 +81,7 @@ try {
     Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'launch-child.json') -Text (([ordered]@{ pid = $child.Id; processStartedAt = $childStart; runId = $RunId }) | ConvertTo-Json -Compress)
     Write-QualificationSupervisorLine -Path $log -Text ("LAUNCHED pid={0} started={1} script={2}" -f $child.Id, $childStart, $LaunchScript)
 
-    $previous = $null
+    $monitor = $null
     $hangReported = $false
     $nextProgress = [datetime]::UtcNow.AddMinutes($ProgressMinutes)
     while (-not $child.WaitForExit($PollSeconds * 1000)) {
@@ -95,11 +97,12 @@ try {
             $newest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
             $newestName = ''
             if ($newest) { $newestName = $newest.Name }
-            $beat = Update-QualificationSupervisorHeartbeat -NowUtc ([datetime]::UtcNow) -Processes (Get-QualificationProcessTable) `
-                -ChunkRootPid $child.Id -ExcludedPids @($self.Id) -Previous $previous -Trx $trx -Bytes $bytes -Newest $newestName `
-                -PlannedSeconds $null -DefaultIdleMinutes $HangMinutes
-            Write-QualificationSupervisorHeartbeat -Record $beat -Path $heartbeat
-            $previous = $beat
+            # The system clock and this host's process table; the previous heartbeat is kept once its file is written.
+            if ($null -eq $monitor) {
+                Assert-NightlyCoreAvailable 'supervise-rc'
+                $monitor = [Antiphon.Nightly.QualificationHeartbeatMonitor]::Production($HangMinutes)
+            }
+            $beat = $monitor.Beat($heartbeat, $child.Id, [int[]]@($self.Id), $trx, $bytes, $newestName)
             if ($beat.hangSuspected -and -not $hangReported) {
                 $hangReported = $true
                 $line = "HANG_SUSPECTED idleMinutes={0} reason={1} (observe only; nothing is stopped)" -f $beat.idleMinutes, $beat.hangReason

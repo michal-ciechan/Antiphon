@@ -316,6 +316,18 @@ namespace Antiphon.Nightly
             }
         }
 
+        /// <summary>
+        /// Whether ConvertFrom-Json reads this JSON text value as a date: ParseText with dates makes it a DateTime, or
+        /// hands a "/Date(" text to ConvertFrom-Json, which does (QualificationHeartbeat's text fields must stay text).
+        /// </summary>
+        internal static bool ReadsAsDate(string text)
+        {
+            if (text == null) return false;
+            if (text.StartsWith("/Date(", StringComparison.Ordinal)) return true;
+            return text.Length >= 19 && text.Length <= 40 && text[0] >= '0' && text[0] <= '9' && text[10] == 'T'
+                && DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out _) && IsIsoShape(text);
+        }
+
         // yyyy-MM-ddTHH:mm:ss, then optional .fraction, then optional Z or +HH:mm / -HH:mm.
         private static bool IsIsoShape(string s)
         {

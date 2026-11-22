@@ -140,7 +140,7 @@ namespace Antiphon.Nightly
         /// <summary>The executed manifest (TestPhaseManifests.WriteExecuted into the bound writer context); null writes none.</summary>
         public Action<NightlyExecutedObservation> PublishObservation { get; set; }
 
-        /// <summary>Write-QualificationActiveChunkIdentity; null records none.</summary>
+        /// <summary>The active-chunk identity writer (QualificationHeartbeat.ActiveChunkWriter); null records none.</summary>
         public Action<NightlyActiveChunk> ActiveChunk { get; set; }
 
         /// <summary>Get-TestPhasePublicationScope, read at each use (its commit seams may change during a run); null: the timing root's plain scope.</summary>

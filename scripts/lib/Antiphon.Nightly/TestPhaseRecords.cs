@@ -94,7 +94,8 @@ namespace Antiphon.Nightly
             }
         }
 
-        // ---- active-chunk.json (qualification-supervisor-heartbeat.ps1) ----
+        // ---- active-chunk.json (QualificationHeartbeat.cs reads and writes it; these keep the PowerShell readings the
+        // NightlyCoreGoldenTests goldens were made from) ----
 
         private static readonly string[] ActiveStringFields =
         {
@@ -108,7 +109,7 @@ namespace Antiphon.Nightly
         private static readonly Regex Sha256Pattern = new Regex("^[a-f0-9]{64}$");
 
         /// <summary>
-        /// The text of active-chunk.json bytes as Read-QualificationActiveChunkIdentity decodes them: a
+        /// The text of active-chunk.json bytes as QualificationHeartbeat.ReadActiveChunkIdentity decodes them: a
         /// StreamReader over the bytes, UTF-8 unless a byte-order mark says otherwise.
         /// </summary>
         public static string DecodeText(byte[] bytes)
@@ -118,8 +119,9 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Read-QualificationActiveChunkIdentity's checks on the parsed record (ConvertFrom-Json of the bytes): the
-        /// record with identityDigest (SHA-256 of exactly those bytes) added, or null where the function returns null.
+        /// The active-chunk identity checks of the deleted Read-QualificationActiveChunkIdentity on the parsed record
+        /// (ConvertFrom-Json of the bytes): the record with identityDigest (SHA-256 of exactly those bytes) added, or null
+        /// where it returned null. QualificationHeartbeat.ReadActiveChunkIdentity makes the same checks on plain JSON.
         /// </summary>
         public static object ActiveChunkIdentity(object record, byte[] bytes)
         {
@@ -153,7 +155,7 @@ namespace Antiphon.Nightly
             }
         }
 
-        /// <summary>Get-QualificationBytesDigest: lower-case hex SHA-256 of the bytes.</summary>
+        /// <summary>Lower-case hex SHA-256 of the bytes (the active-chunk identity digest and plan snapshot key).</summary>
         public static string Sha256Hex(byte[] bytes)
         {
             using (var sha = System.Security.Cryptography.SHA256.Create())

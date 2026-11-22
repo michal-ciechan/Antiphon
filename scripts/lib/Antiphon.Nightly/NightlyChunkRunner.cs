@@ -11,7 +11,7 @@
 // outcome; the suite state changes in place. A failure is the outcome's Error, after the state it reached, as the
 // dot-sourced PowerShell left its caller's variables when it threw. Collaborators the caller binds are delegates a plain
 // caller may leave null: the executed manifest (TestPhaseManifests.WriteExecuted, S09), the active-chunk identity
-// (Write-QualificationActiveChunkIdentity) and the discovery producer (Invoke-NightlyProduceDiscovery).
+// (QualificationHeartbeat.ActiveChunkWriter) and the discovery producer (Invoke-NightlyProduceDiscovery).
 // Plain C#: no PowerShell types; the records the core returns are read through PsValue. ASCII only.
 #nullable disable
 using System;
@@ -187,7 +187,7 @@ namespace Antiphon.Nightly
         /// <summary>The executed manifest (TestPhaseManifests.WriteExecuted) for a native chunk's observation; null writes none.</summary>
         public Action<NightlyExecutedObservation> PublishObservation { get; set; }
 
-        /// <summary>Write-QualificationActiveChunkIdentity; null records none.</summary>
+        /// <summary>The active-chunk identity writer (QualificationHeartbeat.ActiveChunkWriter); null records none.</summary>
         public Action<NightlyActiveChunk> ActiveChunk { get; set; }
 
         /// <summary>Invoke-NightlyProduceDiscovery for a chunk that left a TRX but no discovery; null refuses (discovery-producer-unavailable).</summary>

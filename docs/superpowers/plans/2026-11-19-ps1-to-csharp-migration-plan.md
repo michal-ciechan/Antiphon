@@ -995,7 +995,7 @@ can over-count; Appendix B gives the commands.
 | `scripts/lib/post-land-early-warning.ps1` | 1178 | land/selection/orchestrator support | ps 1 / test.cs 1 / docs 3 | yes (1) |  | unstated | W2-land |
 | `scripts/lib/qualification-graph.ps1` | 422 | rc/release/qualification | ps 1 / test.cs 0 / docs 2 | no |  | 7 only | W2-rc |
 | `scripts/lib/qualification-host-stats.ps1` | 115 | nightly/selection | ps 0 / test.cs 1 / docs 1 | yes (1) |  | 5.1 named | W2-nightly |
-| `scripts/lib/qualification-supervisor-heartbeat.ps1` | 644 | rc/release/qualification | ps 6 / test.cs 0 / docs 8 / C#:1 | no |  | 5.1 named | W2-rc |
+| `scripts/lib/qualification-supervisor-heartbeat.ps1` | 644 | rc/release/qualification | ps 6 / test.cs 0 / docs 8 / C#:1 | no |  | 5.1 named | W2-rc; deleted in W2-nightly S10 (`Antiphon.Nightly/QualificationHeartbeat.cs`) |
 | `scripts/lib/qualification-supervisor.ps1` | 324 | rc/release/qualification | ps 5 / test.cs 0 / docs 1 | no |  | 5.1 named | W2-rc |
 | `scripts/lib/rc-admission.ps1` | 321 | rc/release/qualification | ps 6 / test.cs 0 / docs 10 | no |  | 7 only | W2-rc |
 | `scripts/lib/rc-baseline.ps1` | 128 | rc/release/qualification | ps 1 / test.cs 0 / docs 5 | no |  | 7 only | W2-rc |
@@ -1196,7 +1196,7 @@ can over-count; Appendix B gives the commands.
 | `scripts/test-qualification-eta.ps1` | 198 | test driver/fixture | ps 0 / test.cs 1 / docs 1 | yes (1) |  | 5.1 named | W2-nightly-T |
 | `scripts/test-qualification-graph.ps1` | 421 | test driver/fixture | ps 1 / test.cs 1 / docs 2 | yes (1) |  | 7 only | W2-nightly-T |
 | `scripts/test-qualification-stop.ps1` | 622 | test driver/fixture | ps 0 / test.cs 0 / docs 2 | no |  | 5.1 named | W2-nightly-T |
-| `scripts/test-qualification-supervisor-heartbeat.ps1` | 267 | test driver/fixture | ps 0 / test.cs 1 / docs 3 | yes (1) |  | 5.1 named | W2-nightly-T |
+| `scripts/test-qualification-supervisor-heartbeat.ps1` | 267 | test driver/fixture | ps 0 / test.cs 1 / docs 3 | yes (1) |  | 5.1 named | W2-nightly-T; deleted in W2-nightly S10 (in-process `RcFullWatchdogHarnessTests`) |
 | `scripts/test-qualification-supervisor.ps1` | 517 | test driver/fixture | ps 0 / test.cs 1 / docs 3 | yes (1) |  | 5.1 named | W2-nightly-T |
 | `scripts/test-qualification-timing.ps1` | 2012 | test driver/fixture | ps 0 / test.cs 1 / docs 2 | yes (1) |  | 7 only | W2-nightly-T |
 | `scripts/test-rc-admission-reader.ps1` | 114 | test driver/fixture | ps 2 / test.cs 0 / docs 0 | no |  | 7 only | W2-rc-T |
@@ -1264,7 +1264,7 @@ can over-count; Appendix B gives the commands.
 | `tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1` | 389 | test driver/fixture | ps 0 / test.cs 2 / docs 1 | yes (2) |  | 5.1 named | W2-deploy-T |
 | `tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1` | 37 | test driver/fixture | ps 0 / test.cs 1 / docs 1 | yes (1) |  | unstated | W2-deploy-T |
 | `tests/Antiphon.Tests/Scripts/Fixtures/directory-link.ps1` | 20 | fixture: PowerShell is the subject | ps 0 / test.cs 2 / docs 3 | yes (2) |  | 7 only | KEEP-subject |
-| `tests/Antiphon.Tests/Scripts/Fixtures/rc-full-watchdog-witness.ps1` | 731 | test driver/fixture | ps 0 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-rc-T |
+| `tests/Antiphon.Tests/Scripts/Fixtures/rc-full-watchdog-witness.ps1` | 731 | test driver/fixture | ps 0 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-rc-T; deleted in W2-nightly S10 (in-process `RcFullWatchdogTests`) |
 | `tests/Antiphon.Tests/Scripts/Fixtures/script-harness-process.ps1` | 108 | fixture: PowerShell is the subject | ps 0 / test.cs 1 / docs 4 | yes (1) |  | unstated | KEEP-subject |
 | `tests/Antiphon.Tests/TestHelpers/ManifestPublicationHarness.ps1` | 1920 | test driver/fixture | ps 0 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-rc-T; deleted in W2-nightly S08 |
 | `tests/fixtures/card1336-release-gate-followups.ps1` | 491 | test driver/fixture | ps 1 / test.cs 1 / docs 6 | yes (1) |  | 7 only | W2-rc-T |
