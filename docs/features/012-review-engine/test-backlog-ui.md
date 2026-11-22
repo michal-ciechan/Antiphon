@@ -273,3 +273,4 @@ Not covered yet: GitHub-shaped hosts (posted findings, thread sync, statuses), A
 steer, Close, dismiss and dispute flows, pass and assign from the queue, demo data, and failure
 states (a failed run and Refresh's recheck).
 
+| UI-FS-1 | Workflow fullscreen: `?graph=fullscreen` opens it and Back/Exit leaves it; a step click opens the floating window and a drag moves it; the validation window; browser fullscreen is refused quietly in an iframe. | Checked once by hand with a headless Edge script against Storybook (open, click collate, drag -560/+208, exit); no automated test. |

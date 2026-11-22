@@ -33,6 +33,9 @@ export const FindingsAsGateReviewer: Story = { beforeEach: asHugo, render: () =>
 /** payments-api#618 mid fan-out (iteration 3, reviewers 3/4) on the workflow graph. */
 export const WorkflowLive: Story = { render: () => <ReviewStoryShell initialPath={run(618, 'workflow')} /> }
 
+/** The same run with the graph full screen (`?graph=fullscreen`); click a step for the floating details window. */
+export const WorkflowFullscreen: Story = { render: () => <ReviewStoryShell initialPath={`${run(618, 'workflow')}&graph=fullscreen`} /> }
+
 /** A failed run (a reviewer lost its seat) on the workflow graph; the header shows the failed step's summary. Refresh rechecks it. */
 export const WorkflowFailed: Story = { render: () => <ReviewStoryShell initialPath={run(1851, 'workflow')} /> }
 

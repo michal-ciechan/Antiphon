@@ -1,9 +1,10 @@
-import { Alert, Badge, Box, Button, Group, Paper, SegmentedControl, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Box, Button, Group, Modal, Paper, Popover, SegmentedControl, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { Background, Controls, MarkerType, ReactFlow, type Edge, type EdgeTypes, type Node, type NodeTypes } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useMemo, useState } from 'react'
-import { TbChevronDown, TbChevronRight, TbShieldCheck } from 'react-icons/tb'
+import { TbArrowsMaximize, TbArrowsMinimize, TbChevronDown, TbChevronRight, TbInfoCircle, TbMaximize, TbMinimize, TbShieldCheck } from 'react-icons/tb'
+import { useSearchParams } from 'react-router'
 import { getApiErrorMessage } from '../../../../api/client'
 import type { NodeKind, ReviewRunDetailDto, WorkflowGraphDto } from '../../../../api/reviewEngine'
 import { QueryErrorAlert } from '../../components/ReviewProblem'
@@ -12,6 +13,8 @@ import { NODE_STATUS_META } from '../../reviewMeta'
 import { shaRange, triggerLabel } from '../../reviewFormat'
 import { useReviewWorkflow, useValidateWorkflow } from '../../useReview'
 import { useReviewUiStore } from '../../useReviewUiStore'
+import { FloatingWindow } from './FloatingWindow'
+import { useDocumentFullscreen } from './useDocumentFullscreen'
 import { NodeSidePanel, ValidationPanel } from './NodeSidePanel'
 import { backEdgeTaken, edgeTakenIn, execsIn, groupByItem, iterationInfo, iterationsOf, rollupStatus } from './overlay'
 import { NODE_H, NODE_W, layoutWorkflow, sectionNodeId, type LaidEdge } from './workflowLayout'
@@ -31,9 +34,40 @@ function edgeColor(e: LaidEdge, graph: WorkflowGraphDto, taken: boolean): string
   return EDGE_GREY
 }
 
+function WorkflowLegend({ hint }: { hint: string }) {
+  return (
+    <Stack gap={6}>
+      <SectionLabel>Legend</SectionLabel>
+      {(['Succeeded', 'Running', 'Waiting', 'Failed', 'Pending', 'NotReached'] as const).map((s) => (
+        <Group key={s} gap={6}>
+          <Box w={14} h={10} style={{ borderRadius: 2, border: `2px ${s === 'NotReached' || s === 'Pending' ? 'dashed' : 'solid'} ${NODE_STATUS_META[s].hex}` }} />
+          <Text size="xs">{NODE_STATUS_META[s].label}</Text>
+        </Group>
+      ))}
+      <Group gap={6}>
+        <Box w={18} h={3} style={{ background: EDGE_TAKEN, borderRadius: 2 }} />
+        <Text size="xs">edge taken in this iteration (from each step's outcome)</Text>
+      </Group>
+      <Group gap={6}>
+        <Badge size="xs" variant="outline" color="orange" tt="none">
+          ↺ 1/20
+        </Badge>
+        <Text size="xs">back edge: times taken / iteration limit</Text>
+      </Group>
+      <Text size="xs" c="dimmed">
+        {hint}
+      </Text>
+    </Stack>
+  )
+}
+
+/** `?graph=fullscreen` opens the graph full screen; it is a deep link, and Back leaves it. */
+const FULLSCREEN_PARAM = 'graph'
+
 /**
  * The run overlaid on its workflow graph: status colours, fan-out items by `itemKey`, the edges the
  * run took (from each execution's `outcome`) highlighted, and iteration counts on back edges.
+ * Fullscreen shows the same graph filling the window, with step details in a floating window.
  */
 function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: WorkflowGraphDto; now: number }) {
   const iterations = useMemo(() => iterationsOf(run), [run])
@@ -46,6 +80,26 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const setAllCollapsed = useReviewUiStore((s) => s.setAllSectionsCollapsed)
   const validate = useValidateWorkflow()
   const wide = useMediaQuery('(min-width: 1100px)', true)
+  const [params, setParams] = useSearchParams()
+  const fullscreen = params.get(FULLSCREEN_PARAM) === 'fullscreen'
+  const browser = useDocumentFullscreen()
+  const openFullscreen = () => {
+    setParams((p) => {
+      p.set(FULLSCREEN_PARAM, 'fullscreen')
+      return p
+    })
+    browser.enter()
+  }
+  const closeFullscreen = () => {
+    browser.exit()
+    setParams(
+      (p) => {
+        p.delete(FULLSCREEN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+  }
 
   // the workflow's default (`collapsed`) until the viewer toggles a section
   const collapsed = useMemo(() => {
@@ -153,10 +207,37 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
     .filter((n) => n.nodeId === selectedId)
     .sort((a, b) => a.iteration - b.iteration || Date.parse(a.startedAt ?? '') - Date.parse(b.startedAt ?? ''))
 
-  return (
-    <Stack gap="xs">
-      <Group justify="space-between" wrap="wrap" gap="xs">
-        <Group gap={6} wrap="wrap">
+  // One canvas definition, rendered inline and (when open) in the fullscreen view.
+  const canvas = (variant: 'inline' | 'fullscreen') => (
+    <ReactFlow
+      key={`${variant}:${collapseKey}`}
+      nodes={flowNodes}
+      edges={flowEdges}
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      fitView
+      fitViewOptions={{ padding: variant === 'fullscreen' ? 0.04 : 0.06 }}
+      minZoom={0.2}
+      maxZoom={variant === 'fullscreen' ? 2.4 : 1.6}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      proOptions={{ hideAttribution: true }}
+      colorMode="dark"
+      onNodeClick={(_, n) => {
+        if (n.type === 'step') setSelectedId(n.id)
+      }}
+      onPaneClick={() => setSelectedId(null)}
+    >
+      <Background gap={24} size={1} color="#2c2e33" />
+      <Controls showInteractive={false} />
+    </ReactFlow>
+  )
+
+  const subjectLabel = `${run.subject.repo}${run.subject.prNumber ? `#${run.subject.prNumber}` : ''}`
+
+  const controls = (
+    <>
+      <Group gap={6} wrap="wrap">
           <Text size="xs" c="dimmed">
             Sections
           </Text>
@@ -209,69 +290,110 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
             {graph.name} · {graph.hash.slice(7, 19)}
           </Text>
         </Group>
+    </>
+  )
+
+  const validationBody = (
+    <>
+      {validate.data && <ValidationPanel result={validate.data} />}
+      {validate.error && (
+        <Alert color="danger" variant="light" p={6}>
+          <Text size="xs">{getApiErrorMessage(validate.error, 'Validation failed.')}</Text>
+        </Alert>
+      )}
+    </>
+  )
+
+  return (
+    <Stack gap="xs">
+      <Group justify="space-between" wrap="wrap" gap="xs">
+        {controls}
+        <Tooltip label="Open the graph full screen; click a step to see its details in a floating window">
+          <Button size="compact-xs" variant="default" leftSection={<TbArrowsMaximize size={12} />} onClick={openFullscreen} data-testid="review-workflow-fullscreen-open">
+            Fullscreen
+          </Button>
+        </Tooltip>
       </Group>
       <Box style={{ display: 'grid', gridTemplateColumns: wide ? 'minmax(0, 1fr) 360px' : 'minmax(0, 1fr)', gap: 12, alignItems: 'start' }}>
         <Paper withBorder radius="md" h={wide ? 680 : 520} style={{ overflow: 'hidden' }}>
-          <ReactFlow
-            key={collapseKey}
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.06 }}
-            minZoom={0.2}
-            maxZoom={1.6}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            proOptions={{ hideAttribution: true }}
-            colorMode="dark"
-            onNodeClick={(_, n) => {
-              if (n.type === 'step') setSelectedId(n.id)
-            }}
-            onPaneClick={() => setSelectedId(null)}
-          >
-            <Background gap={24} size={1} color="#2c2e33" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+          {canvas('inline')}
         </Paper>
         <Stack gap="sm">
-          {validate.data && <ValidationPanel result={validate.data} />}
-          {validate.error && (
-            <Alert color="danger" variant="light" p={6}>
-              <Text size="xs">{getApiErrorMessage(validate.error, 'Validation failed.')}</Text>
-            </Alert>
-          )}
+          {validationBody}
           <Paper withBorder radius="md" p="sm">
             {selectedDef ? (
               <NodeSidePanel def={selectedDef} execs={selectedExecs} iteration={iteration} now={now} />
             ) : (
-              <Stack gap={6}>
-                <SectionLabel>Legend</SectionLabel>
-                {(['Succeeded', 'Running', 'Waiting', 'Failed', 'Pending', 'NotReached'] as const).map((s) => (
-                  <Group key={s} gap={6}>
-                    <Box w={14} h={10} style={{ borderRadius: 2, border: `2px ${s === 'NotReached' || s === 'Pending' ? 'dashed' : 'solid'} ${NODE_STATUS_META[s].hex}` }} />
-                    <Text size="xs">{NODE_STATUS_META[s].label}</Text>
-                  </Group>
-                ))}
-                <Group gap={6}>
-                  <Box w={18} h={3} style={{ background: EDGE_TAKEN, borderRadius: 2 }} />
-                  <Text size="xs">edge taken in this iteration (from each step's outcome)</Text>
-                </Group>
-                <Group gap={6}>
-                  <Badge size="xs" variant="outline" color="orange" tt="none">
-                    ↺ 1/20
-                  </Badge>
-                  <Text size="xs">back edge: times taken / iteration limit</Text>
-                </Group>
-                <Text size="xs" c="dimmed">
-                  Click a step for its description, parameters and every execution. Click a collapsed section to expand it.
-                </Text>
-              </Stack>
+              <WorkflowLegend hint="Click a step for its description, parameters and every execution. Click a collapsed section to expand it." />
             )}
           </Paper>
         </Stack>
       </Box>
+
+      <Modal
+        opened={fullscreen}
+        onClose={closeFullscreen}
+        fullScreen
+        withCloseButton={false}
+        padding={0}
+        radius={0}
+        transitionProps={{ transition: 'fade', duration: 120 }}
+        styles={{ body: { height: '100dvh', padding: 0 } }}
+      >
+        <Box data-testid="review-workflow-fullscreen" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#141517' }}>
+          <Group justify="space-between" wrap="wrap" gap="xs" px="sm" py={6} style={{ borderBottom: '1px solid var(--mantine-color-dark-4)' }}>
+            <Group gap="sm" wrap="wrap" style={{ minWidth: 0 }}>
+              <Text size="sm" fw={600}>
+                {subjectLabel} · workflow
+              </Text>
+              {controls}
+            </Group>
+            <Group gap={6} wrap="nowrap" style={{ marginLeft: 'auto' }}>
+              <Popover position="bottom-end" withArrow shadow="md" width={320}>
+                <Popover.Target>
+                  <Button size="compact-xs" variant="subtle" color="gray" leftSection={<TbInfoCircle size={12} />}>
+                    Legend
+                  </Button>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <WorkflowLegend hint="Click a step to open its details in a floating window; drag the window by its title bar." />
+                </Popover.Dropdown>
+              </Popover>
+              <Tooltip label={browser.active ? 'Leave browser fullscreen (keeps this view)' : 'Browser fullscreen (hides the browser chrome)'}>
+                <ActionIcon variant="subtle" color="gray" onClick={browser.active ? browser.exit : browser.enter} aria-label="Toggle browser fullscreen">
+                  {browser.active ? <TbArrowsMinimize size={16} /> : <TbMaximize size={16} />}
+                </ActionIcon>
+              </Tooltip>
+              <Button size="compact-xs" variant="light" leftSection={<TbMinimize size={12} />} onClick={closeFullscreen} data-testid="review-workflow-fullscreen-exit">
+                Exit fullscreen
+              </Button>
+            </Group>
+          </Group>
+          <Box style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            {fullscreen && canvas('fullscreen')}
+            {selectedDef && (
+              <FloatingWindow
+                key="node"
+                title={selectedDef.id}
+                badge={
+                  <Badge size="xs" variant="light" color="gray" tt="none">
+                    {selectedDef.kind}
+                  </Badge>
+                }
+                onClose={() => setSelectedId(null)}
+                testId="review-workflow-node-window"
+              >
+                <NodeSidePanel def={selectedDef} execs={selectedExecs} iteration={iteration} now={now} />
+              </FloatingWindow>
+            )}
+            {(validate.data || validate.error) && (
+              <FloatingWindow key="validation" title="Validation" anchor="bottom-left" width={420} onClose={() => validate.reset()}>
+                {validationBody}
+              </FloatingWindow>
+            )}
+          </Box>
+        </Box>
+      </Modal>
     </Stack>
   )
 }
