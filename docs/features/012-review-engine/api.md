@@ -43,8 +43,9 @@ interface ReviewSubjectDto {
   id: string; host: ReviewHost; repo: string /* owner/name */; prNumber: number | null
   title: string; url: string | null; authorLogin: string; authorDisplayName: string | null
   authorResolvedBy: string | null /* e.g. 'Co-authored-by' when the PR author was a service account */
+  openedByLogin: string /* the account that opened the PR; differs from authorLogin when the author was resolved */
   baseRef: string; headRef: string; baseSha: string; headSha: string
-  owners: string[] /* code-owner teams/users of the changed paths */
+  owners: { kind: 'Team' | 'User'; name: string }[] /* code owners of the changed paths */
 }
 
 interface BlastRadiusDto { reach: number; externalContract: number; data: number; rollbackAtRelease: number; reversalAfterMonths: number; exposure: number } // 1-5 each, or null when not categorised
@@ -54,20 +55,27 @@ interface ReviewRunSummaryDto {
   round: number; botOnlyRounds: number; needsHumanApproval: boolean | null
   openFindings: number; openBlockers: number
   models: string[] /* distinct resolved models used, e.g. 'jev-1.14.0', 'gpt-5.6-luna' */
-  costUsd: number; startedAt: string; updatedAt: string
+  costUsd: number /* actual + estimated */; costActualUsd: number /* API calls */; costEstimatedUsd: number /* seat API-equivalent */
+  blastRadius: BlastRadiusDto | null
+  startedAt: string; updatedAt: string
   waitingOn: 'Author' | 'Humans' | 'Bot' | null
 }
 
 interface NodeExecutionDto {
   id: string; nodeId: string; iteration: number; kind: NodeKind; status: NodeStatus
+  itemKey: string | null /* fan-out item, e.g. the reviewer group 'security' */
+  outcome: string | null /* the outgoing edge label taken, e.g. 'moved', 'clean' */
   provider: string | null; model: string | null; transport: Transport | null
   inputTokens: number; outputTokens: number; costUsd: number
   startedAt: string | null; completedAt: string | null; summary: string | null
 }
 
+interface ReviewIterationDto { iteration: number; round: number; trigger: string /* 'opened' | 'push' | 'recheck' | 'another-round' | 'base-moved' … */; startedAt: string }
+
 interface ReviewRunDetailDto extends ReviewRunSummaryDto {
-  blastRadius: BlastRadiusDto | null; categories: string[]
+  categories: string[]
   workflowRevisionId: string | null
+  iterations: ReviewIterationDto[]
   nodes: NodeExecutionDto[]          // every execution across iterations
   gates: ReviewGateDto[]
 }
@@ -83,6 +91,7 @@ interface ReviewFindingDto {
   severity: Severity; flags: string[] /* 'security', 'data-loss' */; bypassesRoundBar: boolean
   confidence: number; filePath: string; lineStart: number | null; lineEnd: number | null
   anchor: string; title: string; body: string; suggestion: string | null
+  hunk: string | null /* unified-diff hunk around the anchor at the reviewed head */
   status: FindingStatus; roundRaised: number; posted: boolean; syncState: SyncState
   externalThreadUrl: string | null; events: FindingEventDto[]
 }
@@ -93,16 +102,22 @@ interface FindingResponseRequest {
 
 interface ReviewGateDto {
   id: string; runId: string; kind: GateKind; status: QueueItemStatus
-  teamKey: string | null; assigneeLogin: string | null; openedAt: string; decidedAt: string | null
+  teamKey: string | null; assigneeLogin: string | null; assigneeDisplayName: string | null
+  openedAt: string; decidedAt: string | null; decidedBy: string | null
   decision: GateDecision | null; steerPrompt: string | null; reasons: string[] /* why a human is needed */
-  passedBy: string[]
+  allowedDecisions: GateDecision[]
+  viewerCanDecide: boolean; viewerCannotDecideReason: string | null /* e.g. 'You are the author' */
+  passes: { login: string; reason: string; at: string }[]
 }
 
 interface GateDecisionRequest { decision: GateDecision; steerPrompt?: string }
 
 interface QueueItemDto {
-  gate: ReviewGateDto; run: ReviewRunSummaryDto; ageWorkingMinutes: number; slaState: 'Ok' | 'Warn' | 'Breached'
+  gate: ReviewGateDto; run: ReviewRunSummaryDto
+  ageWorkingMinutes: number; slaWorkingMinutes: number; slaState: 'Ok' | 'Warn' | 'Breached'
 }
+
+interface ReviewViewerDto { login: string; displayName: string | null; teams: string[] }
 
 interface ReviewKpisDto {
   inReview: number; waitingOnHumans: number; averageRounds: number; costTodayUsd: number
@@ -112,12 +127,12 @@ interface ReviewKpisDto {
 
 interface WorkflowGraphDto {
   name: string; revisionId: string | null; hash: string
-  sections: { id: string; title: string; nodeIds: string[] }[]
+  sections: { id: string; title: string; nodeIds: string[]; collapsed: boolean /* default display state */ }[]
   nodes: { id: string; kind: NodeKind; run: string | null; description: string | null; params: Record<string, unknown> }[]
   edges: { from: string; to: string; label: string | null; maxIterations: number | null; isBackEdge: boolean }[]
 }
 
-interface WorkflowValidationDto { valid: boolean; diagnostics: { code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
+interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
 ```
 
 ## Routes
@@ -137,12 +152,21 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { code: string; m
 | POST | `/api/review-gates/{id}/pass` | `{ reason }` ("not me") | `ReviewGateDto` |
 | POST | `/api/review-gates/{id}/decision` | `GateDecisionRequest` | `ReviewRunDetailDto` |
 | GET | `/api/review-workflows/default` | | `WorkflowGraphDto` |
+| GET | `/api/review-workflows/revisions/{id}` | | `WorkflowGraphDto` (the snapshot a run used) |
 | POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` |
+| GET | `/api/review-me` | | `ReviewViewerDto`. Until identity lands, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
 
 ## SignalR
 
 `ReviewRunChanged { runId }` → invalidates `['reviewRuns']`, `['reviewRun', runId]`,
 `['reviewRun', runId, 'findings']`, `['reviewQueue']`, `['reviewKpis']`.
+
+## Changelog
+
+| Version | Change |
+|---|---|
+| v0 | First contract |
+| v0.1 | Client-track proposals accepted:<br>- `itemKey` and `outcome` on node executions<br>- `iterations[]`<br>- gate: `allowedDecisions`, `viewerCanDecide` and reason, `decidedBy`, `passes[]` (replaces `passedBy`), `assigneeDisplayName`<br>- section `collapsed`, and a GET by revision<br>- blast radius and the actual/estimated cost split on the summary<br>- `slaWorkingMinutes`<br>- owners as `{kind, name}`, and `openedByLogin`<br>- finding `hunk`<br>- diagnostic `severity`<br>- `GET /api/review-me` |
 
 ## Not in this slice
 
