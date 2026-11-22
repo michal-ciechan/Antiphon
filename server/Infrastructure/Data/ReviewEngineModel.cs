@@ -136,6 +136,8 @@ public partial class AppDbContext
             e.ToTable("ReviewIterations");
             e.HasKey(i => i.Id);
             e.Property(i => i.Trigger).HasMaxLength(64);
+            e.Property(i => i.BaseSha).HasMaxLength(64);
+            e.Property(i => i.HeadSha).HasMaxLength(64);
             e.HasIndex(i => new { i.RunId, i.Iteration }).IsUnique();
         });
 

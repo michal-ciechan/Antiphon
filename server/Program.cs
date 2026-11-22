@@ -1001,6 +1001,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddTransient<ICodeHost>(sp => sp.GetRequiredService<GitHubCodeHost>());
     builder.Services.AddSingleton<ICodeHost, LocalGitCodeHost>();
     builder.Services.AddScoped<CodeHostRouter>();
+    builder.Services.AddScoped<ReviewIntake>();
+    builder.Services.AddSingleton<ReviewExecutorSignal>();
     builder.Services.AddHttpClient<GitHubIssuesTracker>();
     builder.Services.AddHttpClient<LinearTracker>();
     builder.Services.AddHttpClient<JiraTracker>();

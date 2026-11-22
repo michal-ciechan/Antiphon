@@ -22,7 +22,9 @@ public sealed class ReviewService(
     ReviewViewer viewer,
     IOptions<ReviewSettings> settings,
     TimeProvider time,
-    ReviewWorkflowService workflows)
+    ReviewWorkflowService workflows,
+    ReviewIntake intake,
+    ReviewExecutorSignal executor)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
 
@@ -95,7 +97,12 @@ public sealed class ReviewService(
         return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id));
     }
 
-    /// <summary>Manual intake: a subject and a queued run at round 1 (design 4.1). Nothing executes yet.</summary>
+    /// <summary>
+    /// Manual intake (design 4.1): resolves the subject through its code host, pins the base and head
+    /// SHAs, records the intake node with the changed files and size bucket, and queues the run for
+    /// the workflow executor. A local review takes <c>baseSha</c> and <c>headSha</c> as
+    /// refs or commits (head defaults to <c>HEAD</c>).
+    /// </summary>
     public async Task<ReviewRunDetailDto> CreateRunAsync(CreateReviewRunRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Repo))
@@ -104,23 +111,27 @@ public sealed class ReviewService(
             throw new ValidationException("prNumber", "A GitHub review needs a PR number.");
         if (request.PrNumber is <= 0)
             throw new ValidationException("prNumber", "A PR number is positive.");
+        if (request.Host == ReviewHost.Local && string.IsNullOrWhiteSpace(request.BaseSha))
+            throw new ValidationException("baseSha", "A local review needs a base commit or ref.");
 
-        var now = Now();
         var repo = request.Repo.Trim();
+        var snapshot = await ReadIntakeAsync(
+            () => intake.ReadAsync(request.Host, repo, request.PrNumber, request.BaseSha?.Trim(), request.HeadSha?.Trim(), ct));
+        var pr = snapshot.PullRequest;
+        var now = Now();
+        var local = request.Host == ReviewHost.Local;
         var subject = new ReviewSubject
         {
             Id = Guid.NewGuid(),
             Host = request.Host,
             Repo = repo,
             PrNumber = request.PrNumber,
-            Title = string.IsNullOrWhiteSpace(request.Title)
-                ? request.PrNumber is { } pr ? $"{repo} #{pr}" : $"{repo} local review"
-                : request.Title.Trim(),
-            Url = request.Host == ReviewHost.GitHub && request.PrNumber is { } number ? $"https://github.com/{repo}/pull/{number}" : null,
-            AuthorLogin = request.Host == ReviewHost.Local ? viewer.Login : "",
-            OpenedByLogin = request.Host == ReviewHost.Local ? viewer.Login : "",
-            BaseSha = request.BaseSha?.Trim() ?? "",
-            HeadSha = request.HeadSha?.Trim() ?? "",
+            Title = !string.IsNullOrWhiteSpace(request.Title) ? request.Title.Trim()
+                : pr.Title.Length > 0 ? pr.Title
+                : request.PrNumber is { } number ? $"{repo} #{number}" : $"{repo} local review",
+            AuthorLogin = local ? viewer.Login : pr.AuthorLogin,
+            AuthorDisplayName = local ? viewer.DisplayName : pr.AuthorDisplayName,
+            OpenedByLogin = local ? viewer.Login : pr.AuthorLogin,
             CreatedAt = now,
         };
         var run = new ReviewRun
@@ -138,22 +149,88 @@ public sealed class ReviewService(
             StartedAt = now,
             UpdatedAt = now,
         };
-        run.Iterations.Add(new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, Round = 1, Trigger = "manual", StartedAt = now });
-        run.Nodes.Add(PendingIntake(run.Id, 1));
+        var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, Round = 1, Trigger = "manual", StartedAt = now };
+        var intakeNode = PendingIntake(run.Id, 1);
+        ReviewIntake.Apply(subject, iteration, intakeNode, snapshot, now);
+        run.Iterations.Add(iteration);
+        run.Nodes.Add(intakeNode);
         db.ReviewSubjects.Add(subject);
         db.ReviewRuns.Add(run);
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
+        executor.Wake();
         return await GetRunAsync(run.Id, ct);
     }
 
-    /// <summary>The manual Refresh (design 8.5). No code host is wired yet, so it only re-announces the run.</summary>
+    /// <summary>
+    /// The manual Refresh (design 8.5) for one run: re-reads the PR through its code host. A moved
+    /// head starts a new iteration (trigger <c>push</c>, the next round); a failed run whose head has
+    /// not moved is retried (trigger <c>recheck</c>, same round). An another-round iteration still
+    /// waiting for intake is handed to the executor. A run never resolved through a code host (the
+    /// demo data) or already finished is only re-announced.
+    /// </summary>
     public async Task RefreshAsync(Guid id, CancellationToken ct)
     {
-        if (!await db.ReviewRuns.AnyAsync(r => r.Id == id, ct))
-            throw new NotFoundException("Review run", id);
-        // TODO(review-engine P1): ask ICodeHost for new events (design 8.5) once the code host exists.
+        var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).Include(r => r.Nodes)
+            .AsSplitQuery().SingleOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new NotFoundException("Review run", id);
+        var current = run.Iterations.MaxBy(i => i.Iteration);
+        if (current is null || run.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged || run.Iterations.All(i => i.HeadSha is null))
+        {
+            await PublishAsync(id, ct);
+            return;
+        }
+
+        if (run.Nodes.Any(n => n.NodeId == ReviewIntake.NodeId && n.Iteration == current.Iteration && n.Status == ReviewNodeStatus.Pending))
+        {
+            executor.Wake();
+            await PublishAsync(id, ct);
+            return;
+        }
+
+        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run.Subject, ct));
+        var pr = snapshot.PullRequest;
+        var now = Now();
+        if (run.Subject.Host == ReviewHost.GitHub && pr.Title.Length > 0)
+            run.Subject.Title = pr.Title;
+        var previousHead = current.HeadSha ?? run.Subject.HeadSha;
+        var moved = !string.Equals(pr.HeadSha, previousHead, StringComparison.OrdinalIgnoreCase);
+        var trigger = moved ? "push" : run.Status == ReviewRunStatus.Failed ? "recheck" : null;
+        run.UpdatedAt = now;
+        if (trigger is not null)
+        {
+            if (moved)
+                run.Round += 1;
+            var number = Math.Max(run.Nodes.Select(n => n.Iteration).DefaultIfEmpty(0).Max(), current.Iteration) + 1;
+            var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = number, Round = run.Round, Trigger = trigger, StartedAt = now };
+            var intakeNode = PendingIntake(run.Id, number);
+            ReviewIntake.Apply(run.Subject, iteration, intakeNode, snapshot, now,
+                moved ? $"head moved {ReviewIntake.Short(previousHead)} -> {ReviewIntake.Short(pr.HeadSha)}" : "recheck after a failure");
+            // Added through the context: see Apply() on client-set Guid keys.
+            db.ReviewIterations.Add(iteration);
+            db.ReviewNodeExecutions.Add(intakeNode);
+            run.Status = ReviewRunStatus.Queued;
+            run.Stage = ReviewStage.Intake;
+            run.WaitingOn = ReviewWaitingOn.Bot;
+        }
+
+        await db.SaveChangesAsync(ct);
         await PublishAsync(id, ct);
+        if (trigger is not null)
+            executor.Wake();
+    }
+
+    /// <summary>A code host failure during a request becomes the API's error (404, 422 or 503).</summary>
+    private static async Task<IntakeSnapshot> ReadIntakeAsync(Func<Task<IntakeSnapshot>> read)
+    {
+        try
+        {
+            return await read();
+        }
+        catch (CodeHostException ex)
+        {
+            throw CodeHostRouter.ToHttp(ex);
+        }
     }
 
     // ---- Workflow revisions ----
@@ -488,6 +565,8 @@ public sealed class ReviewService(
         run.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
+        if (request.Decision == ReviewGateDecision.AnotherRound)
+            executor.Wake();
         return await GetRunAsync(run.Id, ct);
     }
 

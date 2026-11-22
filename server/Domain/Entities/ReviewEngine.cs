@@ -95,6 +95,15 @@ public sealed class ReviewIteration
     /// <summary><c>opened</c>, <c>push</c>, <c>recheck</c>, <c>another-round</c>, <c>base-moved</c>, <c>manual</c>.</summary>
     public string Trigger { get; set; } = "";
 
+    /// <summary>The base SHA intake pinned for this iteration (design 4.1); null until intake ran through a code host.</summary>
+    public string? BaseSha { get; set; }
+
+    /// <summary>
+    /// The head SHA intake pinned for this iteration. The next iteration's delta reviews the change
+    /// since this head (design 4.2). Null until intake ran through a code host.
+    /// </summary>
+    public string? HeadSha { get; set; }
+
     public DateTime StartedAt { get; set; }
 }
 
