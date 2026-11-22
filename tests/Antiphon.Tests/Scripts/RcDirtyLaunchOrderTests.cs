@@ -154,7 +154,9 @@ public sealed class RcDirtyLaunchOrderTests
         Note(!body.Contains("FixProven", StringComparison.OrdinalIgnoreCase), "library-does-not-honor-fix-proven");
         // Full stopped-seed ordering remains available when the dirty planner is off.
         var stoppedSeedOrder = typeof(DispatchSchedule).GetMethod(nameof(DispatchSchedule.StoppedSeedOrder), [typeof(object[]), typeof(object)]);
-        Note(stoppedSeedOrder is { IsStatic: true }, "full-seed-function-remains");
+        // Name the source in the failure so changes to it still select this contract in the derived impact index.
+        const string dispatchScheduleSource = "scripts/lib/Antiphon.Nightly/DispatchSchedule.cs";
+        Note(stoppedSeedOrder is { IsStatic: true }, $"full-seed-function-remains ({dispatchScheduleSource})");
     }
 
     // A caller names the deleted library or the compiled type.
