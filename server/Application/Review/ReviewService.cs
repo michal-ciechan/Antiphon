@@ -743,7 +743,7 @@ public sealed class ReviewService(
             Categories = run.Categories,
             WorkflowRevisionId = run.WorkflowRevisionId,
             Iterations = run.Iterations.OrderBy(i => i.Iteration)
-                .Select(i => new ReviewIterationDto(i.Iteration, i.Round, i.Trigger, i.StartedAt)).ToList(),
+                .Select(i => new ReviewIterationDto(i.Iteration, i.Round, i.Trigger, i.StartedAt, i.BaseSha, i.HeadSha)).ToList(),
             Nodes = run.Nodes.OrderBy(n => n.Iteration).ThenBy(n => n.StartedAt ?? DateTime.MaxValue).ThenBy(n => n.NodeId, StringComparer.Ordinal)
                 .ThenBy(n => n.ItemKey, StringComparer.Ordinal)
                 .Select(ToDto).ToList(),

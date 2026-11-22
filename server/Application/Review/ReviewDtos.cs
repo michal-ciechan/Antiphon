@@ -68,7 +68,7 @@ public sealed class ReviewRunDetailDto : ReviewRunSummaryDto
     public required IReadOnlyList<ReviewGateDto> Gates { get; init; }
 }
 
-public sealed record ReviewIterationDto(int Iteration, int Round, string Trigger, DateTime StartedAt);
+public sealed record ReviewIterationDto(int Iteration, int Round, string Trigger, DateTime StartedAt, string? BaseSha, string? HeadSha);
 
 public sealed record NodeExecutionDto(
     Guid Id,

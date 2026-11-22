@@ -120,7 +120,8 @@ async function handleResponse<T>(response: Response): Promise<T> {
     throw new ApiError(response.status, response.statusText, body)
   }
 
-  if (response.status === 204) {
+  // 204, and a 202 Accepted with an empty body (e.g. review Refresh), carry nothing to parse.
+  if (response.status === 204 || (response.status === 202 && response.headers.get('content-length') === '0')) {
     return undefined as T
   }
 

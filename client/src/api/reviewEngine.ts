@@ -310,6 +310,9 @@ export interface WorkflowEdgeDto {
   label: string | null
   maxIterations: number | null
   isBackEdge: boolean
+  /** The gate that opens when maxIterations is exceeded (design D-2); required on limited back edges. */
+  overflow?: string | null
+  description?: string | null
 }
 
 export interface WorkflowGraphDto {

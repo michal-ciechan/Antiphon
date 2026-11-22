@@ -136,7 +136,8 @@ interface WorkflowGraphDto {
   name: string; revisionId: string | null; hash: string
   sections: { id: string; title: string; nodeIds: string[]; collapsed: boolean /* default display state */ }[]
   nodes: { id: string; kind: NodeKind; run: string | null; description: string | null; params: Record<string, unknown> }[]
-  edges: { from: string; to: string; label: string | null; maxIterations: number | null; isBackEdge: boolean }[]
+  edges: { from: string; to: string; label: string | null; maxIterations: number | null; isBackEdge: boolean
+           overflow: string | null /* gate opened past maxIterations; required on limited back edges */; description: string | null }[]
 }
 
 interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
