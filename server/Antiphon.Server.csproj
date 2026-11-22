@@ -39,6 +39,11 @@
     <EmbeddedResource Include="Application\Services\LandVerificationBuildGraph.manifest.txt">
       <LogicalName>Antiphon.Server.LandVerificationBuildGraph.manifest.txt</LogicalName>
     </EmbeddedResource>
+    <!-- Review engine (docs/features/012-review-engine/design.md 3.3): the default pr-review workflow. -->
+    <None Remove="Application\Review\Workflows\pr-review.yaml" />
+    <EmbeddedResource Include="Application\Review\Workflows\pr-review.yaml">
+      <LogicalName>Antiphon.Server.Review.pr-review.yaml</LogicalName>
+    </EmbeddedResource>
     <!-- CARD-1987: one pg_stat_statements snapshot, shared with scripts/pg-qps.ps1. -->
     <EmbeddedResource Include="Infrastructure\Data\PgStatStatementsSnapshot.sql">
       <LogicalName>Antiphon.Server.PgStatStatementsSnapshot.sql</LogicalName>
