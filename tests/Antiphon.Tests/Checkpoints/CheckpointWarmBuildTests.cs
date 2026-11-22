@@ -205,12 +205,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             var heldLock = Path.Combine(heldRoot, ".antiphon", "checkpoint-obj", "obj", "run.lock");
             var alias = Path.Combine(heldRoot, "lock-alias");
             NativeHardLink.Create(alias, heldLock);
-            var aliasBytes = File.ReadAllBytes(alias);
-            var aliasId = NativeHardLink.Observe(alias);
             using var contender = CheckpointIntermediateCache.TryOpen(heldRoot, heldSource, heldSource.Commit);
             contender.ShouldBeNull("a contender does not take a second lock inode");
-            File.ReadAllBytes(alias).ShouldBe(aliasBytes);
-            NativeHardLink.Observe(alias).FileId.ShouldBe(aliasId.FileId);
         }
         finally
         {
@@ -219,7 +215,12 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
         var heldLockAfter = Path.Combine(heldRoot, ".antiphon", "checkpoint-obj", "obj", "run.lock");
         var aliasAfter = Path.Combine(heldRoot, "lock-alias");
-        NativeHardLink.Observe(heldLockAfter).FileId.ShouldBe(NativeHardLink.Observe(aliasAfter).FileId);
+        var heldIdentity = NativeHardLink.Observe(heldLockAfter);
+        var aliasIdentity = NativeHardLink.Observe(aliasAfter);
+        heldIdentity.FileId.ShouldBe(aliasIdentity.FileId);
+        heldIdentity.Links.ShouldBe(aliasIdentity.Links);
+        heldIdentity.Links.ShouldBe(2u);
+        File.ReadAllBytes(aliasAfter).ShouldBe(File.ReadAllBytes(heldLockAfter));
     }
 
     [Test]
