@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 352,
+      "classes": 353,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 129,
+      "classes": 130,
       "reason": "cap",
-      "owed": 104,
+      "owed": 105,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -291,9 +291,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.Ceiling.cs",
-      "classes": 85,
+      "classes": 87,
       "reason": "cap",
-      "owed": 60,
+      "owed": 62,
       "first": [
         "CapacityRecoveryRefusalTests",
         "CodexDelegateDispatchTests",
@@ -307,9 +307,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.Model.cs",
-      "classes": 82,
+      "classes": 84,
       "reason": "cap",
-      "owed": 57,
+      "owed": 59,
       "first": [
         "ModelAvailabilityManualTests",
         "RolePolicyInvalidValuesCreateTests",
@@ -323,9 +323,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentTaskDtos.cs",
-      "classes": 100,
+      "classes": 102,
       "reason": "cap",
-      "owed": 75,
+      "owed": 77,
       "first": [
         "RolePolicyInvalidValuesCreateTests",
         "WorktreeDefaultContinuationTests",
@@ -1586,9 +1586,9 @@
     },
     {
       "path": "server/Domain/Entities/Project.cs",
-      "classes": 186,
+      "classes": 187,
       "reason": "cap",
-      "owed": 161,
+      "owed": 162,
       "first": [
         "ApiKeyStoreTests",
         "BoardProjectArchiveApiTests",
@@ -1662,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 615,
+      "classes": 618,
       "reason": "cap",
-      "owed": 590,
+      "owed": 593,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,9 +1678,25 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 615,
+      "classes": 618,
       "reason": "cap",
-      "owed": 590,
+      "owed": 593,
+      "first": [
+        "ChannelOutboundDispatchIntegrationTests",
+        "PostLandMutationDeliveryTests",
+        "RolePolicyToolBundleDispatchTests",
+        "CapacityLockOrderTests",
+        "PhoneHomeQueuedTurnTests",
+        "SessionQueueReceiptPlumbingTests",
+        "AgentTaskLandQueueAgingTests",
+        "PostLandMutationWorktreeTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/ReviewEngineModel.cs",
+      "classes": 618,
+      "reason": "cap",
+      "owed": 593,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2201,9 +2217,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 63,
+      "classes": 67,
       "reason": "cap",
-      "owed": 38,
+      "owed": 42,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -2308,9 +2324,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 577,
+      "classes": 582,
       "reason": "cap",
-      "owed": 552,
+      "owed": 557,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2356,18 +2372,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
-      "classes": 37,
+      "classes": 39,
       "reason": "cap",
-      "owed": 12,
+      "owed": 14,
       "first": [
+        "CardWorktreeMirrorBindingTests",
+        "ChannelOutboundMigrationTests",
         "DispatchConcurrencyMigrationTests",
         "HerdrPlacementSettingsTests",
         "HostCleanupOrchestrationTests",
         "LandRequestWriteDiagnosticTests",
         "OutputDistillationMigrationTests",
-        "RequestedModelAliasDatabaseMigrationTests",
-        "RequestedModelAliasSchemaTests",
-        "SessionRuntimeActionRoutingTests"
+        "RequestedModelAliasDatabaseMigrationTests"
       ]
     },
     {
@@ -5362,6 +5378,7 @@
       "path": "server/Application/Dtos/LocalCommandPoll.cs",
       "classes": [
         "ChannelReplyLateConfirmDispatchTests",
+        "CompletionModelTests",
         "ExpectationDirectDeliveryTests",
         "ExpectationEscalationTests",
         "ExpectationWatchdogJobTests",
@@ -6203,6 +6220,30 @@
       ]
     },
     {
+      "path": "server/Application/Interfaces/ICodeHost.cs",
+      "classes": [
+        "GitHubCodeHostTests",
+        "GitHubThreadResolutionTests",
+        "ReviewDelegationRunnerApiTests",
+        "ReviewEndToEndApiTests",
+        "ReviewExecutorApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Interfaces/ICompletionModel.cs",
+      "classes": [
+        "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Application/Interfaces/IDecisionModel.cs",
+      "classes": [
+        "CompletionModelTests",
+        "DecisionChainTests",
+        "ReviewExecutorApiTests"
+      ]
+    },
+    {
       "path": "server/Application/Interfaces/IExpectationPromptSender.cs",
       "classes": [
         "ExpectationDirectDeliveryTests",
@@ -6426,6 +6467,115 @@
       "path": "server/Application/Interfaces/RunnerCapabilitiesProbe.cs",
       "classes": [
         "DesktopCapabilitiesSnapshotTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Abf/AbfCanonicalJson.cs",
+      "classes": [
+        "AbfConformanceTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Abf/AbfLegacy.cs",
+      "classes": [
+        "AbfConformanceTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Abf/AbfModel.cs",
+      "classes": [
+        "AbfConformanceTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Abf/AbfParser.cs",
+      "classes": [
+        "AbfConformanceTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Checks/ReviewCheck.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Checks/ReviewCheckCatalogue.cs",
+      "classes": [
+        "ReviewCheckParserTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Checks/ReviewCheckParser.cs",
+      "classes": [
+        "ReviewCheckParserTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Decisions/CompletionChain.cs",
+      "classes": [
+        "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Decisions/DecisionChain.cs",
+      "classes": [
+        "DecisionChainTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Decisions/DelegationCompletionModel.cs",
+      "classes": [
+        "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/DelegationReviewAgentRunner.cs",
+      "classes": [
+        "ReviewDelegationRunnerApiTests",
+        "ReviewExecutorApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewDiffAnchors.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewGrouping.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewRoundsPolicy.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewTaskGateway.cs",
+      "classes": [
+        "ReviewDelegationRunnerApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewViewer.cs",
+      "classes": [
+        "ReviewEndToEndApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Workflows/ReviewWorkflowValidator.cs",
+      "classes": [
+        "ReviewWorkflowValidatorTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Workflows/ReviewWorkflowYaml.cs",
+      "classes": [
+        "ReviewWorkflowValidatorTests"
       ]
     },
     {
@@ -10299,6 +10449,7 @@
     {
       "path": "server/Application/Services/PipelineHandoff.cs",
       "classes": [
+        "AbfConformanceTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReviewEvidenceTests",
         "PipelineHandoffParseTests",
@@ -10679,6 +10830,7 @@
     {
       "path": "server/Application/Services/ReviewEvidence.cs",
       "classes": [
+        "AbfConformanceTests",
         "AgentTaskReviewEvidenceTests",
         "InstructionBundleTests",
         "ReviewEvidenceConsistencyTests",
@@ -12823,6 +12975,31 @@
       ]
     },
     {
+      "path": "server/Application/Settings/ReviewCodeHostSettings.cs",
+      "classes": [
+        "GitHubCodeHostTests",
+        "GitHubThreadResolutionTests",
+        "ReviewDelegationRunnerApiTests",
+        "ReviewEndToEndApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ReviewDecisionSettings.cs",
+      "classes": [
+        "CompletionModelTests",
+        "DecisionChainTests",
+        "ReviewCheckParserTests",
+        "ReviewDelegationRunnerApiTests",
+        "ReviewEndToEndApiTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ReviewPolicySettings.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
       "path": "server/Application/Settings/RunnerBoundDelivery.cs",
       "classes": [
         "UnixDeliveryCeilingTests"
@@ -14493,6 +14670,12 @@
       ]
     },
     {
+      "path": "server/Domain/Entities/ReviewEngine.cs",
+      "classes": [
+        "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
       "path": "server/Domain/Entities/ReviewEvidenceCorrection.cs",
       "classes": [
         "PipelineSpeedIntegrationTests",
@@ -15693,6 +15876,36 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Data/ReviewEngineModel.cs",
+      "classes": [
+        "AbandonedLandingReconcilerTests",
+        "AgentBundleAttachmentTests",
+        "AgentSessionCancelledTurnTests",
+        "AgentSessionRuntimeTests",
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskLandMonitoringTests",
+        "AgentTaskLandNotificationRecoveryTests",
+        "CapacityAdmissionLifecycleTests",
+        "ChannelBridgeTests",
+        "ChannelOutboundDeliveryTests",
+        "ChannelOutboundRecoveryTests",
+        "DataRetentionServiceTests",
+        "DelegationDispatchRecoveryBoundaryTests",
+        "DurableRunnerSpillReceiptTests",
+        "ExpectationSnapshotTests",
+        "LegacyCheckNotePublicationTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "ProjectCascadeForeignKeyTests",
+        "RunnerSlotEndpointTests",
+        "SeatOccupancySamplerTests",
+        "SessionMessageQueueGrokPtyIntegrationTests",
+        "SessionMessageQueuePtyIntegrationTests",
+        "SpecialistExecutionIdentityTests",
+        "TaskPlatformDispatchTests",
+        "WorktreeDefaultCallerTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Data/RunnerBindingWriteInterceptor.cs",
       "classes": [
         "RoutingBindingCacheTests"
@@ -16401,6 +16614,25 @@
         "C1729LayeringGuardTests",
         "RcBoundaryChunkIdTests",
         "ResiliencePredicateTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/ChatCompletionModels.cs",
+      "classes": [
+        "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/GitHubCodeHost.cs",
+      "classes": [
+        "GitHubCodeHostTests",
+        "GitHubThreadResolutionTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/JevSystemOneClient.cs",
+      "classes": [
+        "DecisionChainTests"
       ]
     },
     {
@@ -21020,6 +21252,7 @@
         "ProjectDeleteE2ETests",
         "ReleaseGateIsolationTests",
         "ReleaseGateReportDeliveryTests",
+        "ReviewEngineE2ETests",
         "ScheduleCliE2ETests",
         "SmokeE2ETests",
         "WorkflowDeleteTests",
@@ -21134,15 +21367,28 @@
         "OrchestratorE2ETests",
         "PipelineGlanceE2ETests",
         "ProjectDeleteE2ETests",
+        "ReviewEngineE2ETests",
         "SmokeE2ETests",
         "WorkflowDeleteTests",
         "WorkflowOutputTests"
       ]
     },
     {
+      "path": "tests/Antiphon.E2E/Fixtures/ReviewEngineScenario.cs",
+      "classes": [
+        "ReviewEngineE2ETests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.E2E/Fixtures/SharedApp.cs",
       "classes": [
         "ContractSnapshotTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.E2E/Fixtures/TestDiagnostics.cs",
+      "classes": [
+        "ReviewEngineE2ETests"
       ]
     },
     {
@@ -24800,6 +25046,19 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Review/ReviewDelegationRunnerApiTests.cs",
+      "classes": [
+        "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Review/ReviewEndToEndFakes.cs",
+      "classes": [
+        "ReviewDelegationRunnerApiTests",
+        "ReviewEndToEndApiTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -26739,12 +26998,12 @@
         "CardCleanupSchedulingSchemaTests",
         "CardFilePrivacyMigrationTests",
         "CardVerificationPolicyTests",
-        "CardWorktreeMirrorBindingTests",
         "ChannelOutboundDurabilitySchemaTests",
-        "ChannelOutboundMigrationTests",
         "DispatchBaseNotificationTests",
         "PipelineDefinitionMigrationTests",
         "PoolClaudeEffortMigrationTests",
+        "ReviewEngineDatabaseMigrationTests",
+        "ReviewEngineMigrationTests",
         "RunnerDefaultMigrationTests",
         "TaskPlatformPersistenceTests",
         "WorkerWorkspaceDefaultMigrationTests",
@@ -28143,6 +28402,7 @@
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
         "RequestedModelAliasDatabaseMigrationTests",
+        "ReviewEngineDatabaseMigrationTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",
