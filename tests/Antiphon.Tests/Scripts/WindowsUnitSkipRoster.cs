@@ -327,6 +327,8 @@ internal static class WindowsUnitSkipRoster
     internal const string WindowsJunctionReason = "NTFS junction fixtures require Windows reparse points; Linux has no junction type.";
     internal static readonly Entry[] WindowsOnly =
     [
+        new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Cwd_census_skips_exited_process_with_retained_handle", 1, "An exited Windows process can retain an open kernel handle after losing its cwd memory"),
+        new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Rm_lock_defers_release", 1, "CARD-0824 Windows Restart Manager file lock; the real probe runs on the desktop at S4"),
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
