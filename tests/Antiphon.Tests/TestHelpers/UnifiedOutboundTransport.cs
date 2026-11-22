@@ -197,19 +197,11 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     {
         var marker = Path.Combine(H.TempRoot, "cut-" + Guid.NewGuid().ToString("N") + ".json");
         var config = marker + ".config";
-        var source = typeof(UnifiedOutboundTransport).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+').Last();
+        var source = ProbeSource;
         // The compiled model this probe build generated (ProbeGeneratedModel), or none: the probe then builds it.
         var model = await ProbeGeneratedModel.PathAsync();
-        await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new
-        {
-            ConnectionString = Schema.ConnectionString, StoreRoot, DeliveryId = deliveryId ?? H.SessionId,
-            EvidencePath = marker + ".unused", MarkerPath = marker, Barrier = barrier,
-            ClockOffsetSeconds = offset, Mode = mode, BootstrapServers = Bootstrap, Topic,
-            FailPublishCommit = refuseOutcome, ExpectedSourceSha = source,
-            ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot, StallPoint = stallPoint,
-            DeadlineSeconds = (int)ProbeDeadline.TotalSeconds, CompiledModelPath = model,
-        }));
+        await File.WriteAllTextAsync(config, JsonSerializer.Serialize(
+            ProbeConfigFor(marker, barrier, offset, refuseOutcome, mode, deliveryId, stallPoint, model)));
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe", "Antiphon.ChannelOutbound.Probe.dll"));
@@ -217,9 +209,39 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         return new OwnedProbe(Process.Start(start) ?? throw new InvalidOperationException("Probe did not start"), marker, source);
     }
 
+    private static string ProbeSource => typeof(UnifiedOutboundTransport).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+').Last();
+
+    private ProbeConfig ProbeConfigFor(string marker, string? barrier, int offset, bool refuseOutcome, string mode,
+        Guid? deliveryId, string? stallPoint, string? model) => new(
+        ConnectionString: Schema.ConnectionString, StoreRoot: StoreRoot, DeliveryId: deliveryId ?? H.SessionId,
+        EvidencePath: marker + ".unused", MarkerPath: marker, Barrier: barrier, ClockOffsetSeconds: offset,
+        Mode: mode, WorkspaceRoot: H.TempRoot, ProjectId: ProjectId, ConverterAgentId: ConverterId,
+        FailPublishCommit: refuseOutcome, BootstrapServers: Bootstrap, Topic: Topic, ExpectedSourceSha: ProbeSource,
+        StallPoint: stallPoint, DeadlineSeconds: (int)ProbeDeadline.TotalSeconds, CompiledModelPath: model);
+
+    // A recovery's clock: past every lease the parent or a dead child holds (300 s, or 60 s with a converter).
+    private int RecoveryOffset(int? offset) => offset ?? (ConverterId == Guid.Empty ? 600 : 120);
+
+    // A restart's recovery: the probe's own unified recovery graph (UnifiedRecoveryProbe: its own services, clock,
+    // producer and store over the durable rows and files only; no parent event or in-memory signal reaches it), run
+    // in this process. The same host and code as a recovery child, without a child's runtime start, JIT and EF
+    // warm-up (about 6 s of each 6-7 s recovery child on the HP laptop). Every death is still a real killed child
+    // (StartProbeAsync), and the first recovery after one is a fresh child too (ChildRecoverAsync).
     public async Task RecoverAsync(int? offset = null)
     {
-        await using var child = await StartProbeAsync(null, offset ?? (ConverterId == Guid.Empty ? 600 : 120));
+        var started = Stopwatch.StartNew();
+        var marker = Path.Combine(H.TempRoot, "recover-" + Guid.NewGuid().ToString("N") + ".json");
+        var code = await UnifiedRecoveryProbe.RunAsync(
+            ProbeConfigFor(marker, null, RecoveryOffset(offset), false, "unified", null, null, null));
+        code.ShouldBe(0);
+        Console.WriteLine($"c519-probe recover in-process {started.ElapsedMilliseconds} ms");
+    }
+
+    // A recovery in a fresh child process: the first one after a real child death.
+    public async Task ChildRecoverAsync(int? offset = null)
+    {
+        await using var child = await StartProbeAsync(null, RecoveryOffset(offset));
         await child.CompleteAsync();
     }
 

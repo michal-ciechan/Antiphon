@@ -20,7 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 // each probe (ProbeConfig.CompiledModelPath, ProbeModel), which then does not build the model itself.
 internal static class ProbeModelGenerator
 {
-    public const string Namespace = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
+    public const string Namespace = ProbeModel.GeneratedNamespace;
     public const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
 
     public static int Run(string outDir)

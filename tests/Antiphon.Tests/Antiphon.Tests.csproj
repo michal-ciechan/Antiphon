@@ -61,6 +61,11 @@
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestHelpers\ReadOnlyDirectory.cs" />
     <!-- The probe's model comparison, pinned by ProbeModelComparisonTests. -->
     <Compile Include="..\Antiphon.ChannelOutbound.Probe\ProbeModelComparison.cs" Link="TestHelpers\ProbeModelComparison.cs" />
+    <!-- A restart's recovery runs the probe's own unified recovery graph in process (UnifiedOutboundTransport). -->
+    <Compile Include="..\Antiphon.ChannelOutbound.Probe\UnifiedRecoveryProbe.cs" Link="TestHelpers\Probe\UnifiedRecoveryProbe.cs" />
+    <Compile Include="..\Antiphon.ChannelOutbound.Probe\ProbeShared.cs" Link="TestHelpers\Probe\ProbeShared.cs" />
+    <Compile Include="..\Antiphon.ChannelOutbound.Probe\ProbeLog.cs" Link="TestHelpers\Probe\ProbeLog.cs" />
+    <Compile Include="..\Antiphon.ChannelOutbound.Probe\ProbeModel.cs" Link="TestHelpers\Probe\ProbeModel.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\TestHelpers\PhoneHomeTestWebSocket.cs"
              Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
     <Compile Include="..\Shared\TestTiming.cs" Link="TestHelpers\TestTiming.cs" />

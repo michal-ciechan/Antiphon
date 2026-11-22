@@ -10,6 +10,9 @@ using Microsoft.EntityFrameworkCore.Metadata;
 // top-level handler prints the exception type), never a silent rebuild that only makes every probe slower.
 internal static class ProbeModel
 {
+    // The generated AppDbContextModel's namespace (ProbeModelGenerator writes it there).
+    public const string GeneratedNamespace = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
+
     private static IModel? _model;
 
     public static void Use(string? compiledModelPath)
@@ -17,7 +20,7 @@ internal static class ProbeModel
         if (compiledModelPath is null) return;
         try
         {
-            _model = Load(Assembly.LoadFrom(compiledModelPath));
+            _model = Load(System.Reflection.Assembly.LoadFrom(compiledModelPath));
         }
         catch (Exception ex)
         {
@@ -36,7 +39,7 @@ internal static class ProbeModel
     public static DbContextOptionsBuilder WithProbeModel(this DbContextOptionsBuilder builder) =>
         _model is null ? builder : builder.UseModel(_model);
 
-    public static IModel Load(Assembly generated) =>
-        (IModel)generated.GetType(ProbeModelGenerator.Namespace + ".AppDbContextModel", throwOnError: true)!
+    public static IModel Load(System.Reflection.Assembly generated) =>
+        (IModel)generated.GetType(GeneratedNamespace + ".AppDbContextModel", throwOnError: true)!
             .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
 }

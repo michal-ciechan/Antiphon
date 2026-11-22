@@ -619,7 +619,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 (await w.DeliveryAsync("main"))!.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
                 await child.KillAsync();
             }
-            await w.RecoverAsync();
+            // After the children's deaths, the first recovery is a fresh child; the repeat runs in process.
+            await w.ChildRecoverAsync();
             await w.AssertReceiptAsync(expectedText: convertedText);
             var published = (await w.DeliveryAsync("main"))!;
             published.ConversionTaskId.ShouldBe(taskId);

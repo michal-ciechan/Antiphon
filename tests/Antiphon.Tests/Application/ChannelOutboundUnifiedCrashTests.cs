@@ -68,7 +68,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
         }
         if (cut == "input-stage-complete")
             await File.WriteAllBytesAsync(w.SourcePath, "replacement must never escape"u8.ToArray());
-        await w.RecoverAsync();
+        // The first recovery after the death is a fresh child; the repeat restart runs in process.
+        await w.ChildRecoverAsync();
         await w.AssertReceiptAsync();
         var published = (await w.DeliveryAsync(kind))!;
         published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
@@ -131,7 +132,8 @@ public sealed class ChannelOutboundUnifiedCrashTests
             }
             for (var restart = 0; restart < 2; restart++)
             {
-                await w.RecoverAsync();
+                // The first restart after the death is a fresh child; the second runs in process.
+                await (restart == 0 ? w.ChildRecoverAsync() : w.RecoverAsync());
                 var row = (await w.DeliveryAsync(kind))!;
                 row.Id.ShouldBe(deliveryId);
                 row.State.ShouldBe(published ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.PublishUncertain);
