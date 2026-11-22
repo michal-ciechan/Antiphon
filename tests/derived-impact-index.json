@@ -27827,6 +27827,7 @@
         "C1818GcOwnerRobustnessTests",
         "CompletedCardWorkspaceRemovalTests",
         "LandGraphAuditCleanupTests",
+        "LandNonCodeSkipTests",
         "PostLandEarlyWarningTests",
         "QualificationCheckoutSourceTests",
         "RcHistoricalEvidenceTests",
