@@ -1,5 +1,4 @@
 using System.Text;
-using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Files;
@@ -246,27 +245,28 @@ public class AgentReportStoreTests
         };
 
         var firstWrite = first.StoreAsync(task, CancellationToken.None);
-        Task<AgentReportStorageResult>? secondWrite = null;
+        Task secondWrite = Task.CompletedTask;
         try
         {
             await firstAtMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
             File.Exists(path).ShouldBeFalse();
 
-            secondWrite = second.StoreAsync(task, CancellationToken.None);
+            var contender = second.StoreAsync(task, CancellationToken.None);
+            secondWrite = contender;
             var pending = await admissionPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
             pending.ShouldBeTrue("the second store must wait while the first owns publication");
             File.Exists(path).ShouldBeFalse();
+
+            release.TrySetResult();
+            foreach (var result in await Task.WhenAll(firstWrite, contender))
+                result.Path.ShouldBe(path, result.Reason);
         }
         finally
         {
             release.TrySetResult();
-            await Task.WhenAll(firstWrite, secondWrite ?? Task.CompletedTask);
+            await Task.WhenAll(firstWrite, secondWrite);
         }
 
-        var winner = await firstWrite;
-        var contender = await secondWrite!;
-        winner.Path.ShouldBe(path, winner.Reason);
-        contender.Path.ShouldBe(path, contender.Reason);
         moves.ShouldBe(1);
         (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(task.Result!));
         Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
