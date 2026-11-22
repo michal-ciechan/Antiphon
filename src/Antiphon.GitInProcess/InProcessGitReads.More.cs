@@ -92,7 +92,7 @@ internal static partial class InProcessGitReads
         // Two names that differ only in case (a loose Foo beside a packed foo): where the file system ignores case,
         // libgit2 reads one through the other's loose file while git's iterator keeps both values apart. Anywhere
         // in the repository, as a loose name outside the pattern still shadows a packed one inside it.
-        var seen = IgnoresCase(repo.Info.Path) ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
+        var seen = RefsIgnoreCase(repo.Info.Path) ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
         foreach (var reference in repo.Refs)
         {
             var name = reference.CanonicalName;
@@ -136,12 +136,13 @@ internal static partial class InProcessGitReads
 
     private enum RefFormat { NameSha, ShaName, Name, NameShaSymref }
 
-    // Whether the file system holding the git directory ignores case (its own path found in another case).
-    private static bool IgnoresCase(string gitDir)
+    // Whether the folder that holds the refs ignores case: the common dir's refs found as REFS. Probed there, not
+    // on the whole path, as a case-insensitive mount can sit under a case-sensitive root (WSL /mnt/c, a bind mount,
+    // a casefold folder). An unreadable common dir counts as ignoring case, which only sends more listings to git.
+    private static bool RefsIgnoreCase(string gitDir)
     {
-        var upper = gitDir.ToUpperInvariant();
-        var lower = gitDir.ToLowerInvariant();
-        return upper != lower && Directory.Exists(upper) && Directory.Exists(lower);
+        if (CommonDirectory(gitDir) is not { } common) return true;
+        return Directory.Exists(Path.Combine(common, "refs")) && Directory.Exists(Path.Combine(common, "REFS"));
     }
 
     private static LandingGitResult? DiffTree(Repository repo, IReadOnlyList<string> a)

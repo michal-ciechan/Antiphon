@@ -205,13 +205,13 @@ public sealed class LibGit2VsGitDifferentialTests
         // Last, as it packs every ref: a loose ref spelled otherwise beside a packed one where the file system ignores
         // case. git lists both values, libgit2 would read the loose file for both: git's. A by-name read is the
         // loose file's value in git too, so it stays answered (and equal).
-        var ignoresCase = fixture.Repository != fixture.Repository.ToUpperInvariant()
-            && Directory.Exists(fixture.Repository.ToUpperInvariant());
-        if (ignoresCase)
+        // Gated as the production check is: on the refs folder itself (a case-insensitive mount may sit under a
+        // case-sensitive root).
+        var common = (await fixture.RequiredAsync(fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
+        if (Directory.Exists(Path.Combine(common, "REFS")))
         {
             await fixture.RequiredAsync(fixture.Repository, "update-ref", "refs/antiphon/case/foo", fixture.SeedSha);
             await fixture.RequiredAsync(fixture.Repository, "pack-refs", "--all");
-            var common = (await fixture.RequiredAsync(fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
             Directory.CreateDirectory(Path.Combine(common, "refs", "antiphon", "case"));
             await File.WriteAllTextAsync(Path.Combine(common, "refs", "antiphon", "case", "Foo"),
                 (await fixture.RequiredAsync(fixture.Repository, "rev-parse", fixture.TargetRef)).Trim() + "\n");
