@@ -230,9 +230,10 @@ public class AgentReportStoreTests
         var task = w.Task("exact full report é🙂");
         var path = w.Expected(task);
         var timeout = TimeSpan.FromSeconds(5);
-        using var writes = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var writerDeadline = TimeSpan.FromSeconds(15);
+        using var writes = new CancellationTokenSource(writerDeadline);
         var firstAtMove = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var admissionPending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var moves = 0;
 
@@ -242,7 +243,15 @@ public class AgentReportStoreTests
             if (phase == "publication-move")
             {
                 firstAtMove.TrySetResult(true);
-                await WaitForStepAsync(release.Task, "first writer was not released", ct);
+                try
+                {
+                    await release.Task.WaitAsync(ct);
+                }
+                catch (OperationCanceledException ex) when (writes.IsCancellationRequested && !release.Task.IsCompleted)
+                {
+                    throw new OperationCanceledException(
+                        $"first writer was not released before the {writerDeadline.TotalSeconds}s writer deadline", ex, ct);
+                }
             }
             if (phase == "readback") Interlocked.Increment(ref moves);
         };
@@ -270,7 +279,7 @@ public class AgentReportStoreTests
             pending.ShouldBeTrue("the second store must wait while the first owns publication");
             File.Exists(path).ShouldBeFalse();
 
-            release.TrySetResult(true);
+            release.TrySetResult();
             foreach (var result in await WaitForStepAsync(joined, "writers did not complete"))
                 result.Path.ShouldBe(path, result.Reason);
         }
@@ -281,7 +290,7 @@ public class AgentReportStoreTests
         }
         finally
         {
-            release.TrySetResult(true);
+            release.TrySetResult();
             var cleanup = failure is null ? writers : Task.WhenAll(writers, writes.CancelAsync());
             try
             {
@@ -308,11 +317,11 @@ public class AgentReportStoreTests
         (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(task.Result!));
         Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
 
-        async Task<T> WaitForStepAsync<T>(Task<T> operation, string step, CancellationToken ct = default)
+        async Task<T> WaitForStepAsync<T>(Task<T> operation, string step)
         {
             try
             {
-                return await operation.WaitAsync(timeout, ct);
+                return await operation.WaitAsync(timeout);
             }
             catch (TimeoutException ex)
             {
