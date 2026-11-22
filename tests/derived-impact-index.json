@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 29,
+      "classes": 28,
       "reason": "allowlist"
     },
     {
@@ -2179,10 +2179,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 26,
+      "classes": 27,
       "reason": "cap",
-      "owed": 1,
+      "owed": 2,
       "first": [
+        "ExpectedPlatformSkipRosterTests",
         "NightlySummaryWitnessTests"
       ]
     },
@@ -2198,18 +2199,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 44,
+      "classes": 43,
       "reason": "cap",
-      "owed": 19,
+      "owed": 18,
       "first": [
-        "NightlyVerificationContractTests",
         "QualificationEtaTests",
         "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcProjectSelectionTests",
         "ReleaseGateAuthorityContractTests",
-        "ReleaseGateE2EEvidenceTests"
+        "ReleaseGateE2EEvidenceTests",
+        "ReleaseGateFollowupTests"
       ]
     },
     {
@@ -3006,7 +3007,9 @@
     {
       "path": "docker/git-minimum-version.sh",
       "classes": [
-        "DockerStackContractTests"
+        "DockerStackContractTests",
+        "ToolchainFloorTwinTests",
+        "ToolchainFloorWarningTests"
       ]
     },
     {
@@ -3542,7 +3545,8 @@
     {
       "path": "restart-server.ps1",
       "classes": [
-        "NightlyScriptsTests"
+        "NightlyScriptsTests",
+        "ToolchainFloorWarningTests"
       ]
     },
     {
@@ -4135,6 +4139,12 @@
       ]
     },
     {
+      "path": "scripts/lib/antiphon-cli.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
+      ]
+    },
+    {
       "path": "scripts/lib/build-slot.ps1",
       "classes": [
         "StableBuildOutputDocumentationTests"
@@ -4246,12 +4256,6 @@
         "ReleaseImpactScriptTests",
         "ReleaseSelectionHopSeedTests",
         "SelectorLineEndingAttributeTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/toolchain-floor.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -25299,7 +25303,8 @@
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "RcRunEvidenceTests",
-        "ReleaseGateRunTests"
+        "ReleaseGateRunTests",
+        "ToolchainFloorWarningTests"
       ]
     },
     {
@@ -25339,7 +25344,6 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "ClassCostMeasurementTests",
-        "ExpectedPlatformSkipRosterTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -25361,7 +25365,8 @@
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
         "TestTimingsTwinTests",
-        "ToolchainFloorTwinTests"
+        "ToolchainFloorTwinTests",
+        "ToolchainFloorWarningTests"
       ]
     },
     {
@@ -25480,12 +25485,6 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/StoppedSeedCases.cs",
       "classes": [
         "RcStoppedRunSeedTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/Nightly/ToolchainFloorTwinTests.cs",
-      "classes": [
-        "TestTimingsTwinTests"
       ]
     },
     {
@@ -25685,6 +25684,7 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
+        "NightlyVerificationContractTests",
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
         "ReleaseBranchModelGateTests",
@@ -25693,8 +25693,7 @@
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests",
-        "TestSelectionCatalogTests",
-        "ToolchainFloorWarningTests"
+        "TestSelectionCatalogTests"
       ]
     },
     {
