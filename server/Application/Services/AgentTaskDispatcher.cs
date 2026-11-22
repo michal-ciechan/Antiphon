@@ -2543,6 +2543,7 @@ public sealed partial class AgentTaskDispatcher
                 .Select(m => new
                 {
                     m.Id,
+                    m.CreatedAt,
                     m.Status,
                     m.DeliveryAttempts,
                     m.SentAt,
@@ -2633,7 +2634,8 @@ public sealed partial class AgentTaskDispatcher
                 else if (!withholdKill)
                 {
                     var history = briefRow is null ? null : await BootPromptDeliveryHistory.DescribeAsync(
-                        _db, briefRow.Id, briefRow.DeliveryAttempts, briefRow.LastDeliveryStartedAt, briefRow.DeliveryVerdict, ct);
+                        _db, briefRow.Id, briefRow.CreatedAt, briefRow.DeliveryAttempts,
+                        briefRow.LastDeliveryStartedAt, briefRow.DeliveryVerdict, ct);
                     var evidence = DescribeBriefQueueEvidence(
                         briefRow?.Status, briefRow?.DeliveryAttempts ?? 0, history);
                     reason = started && briefNeverTyped

@@ -1,7 +1,7 @@
 # CARD-1939 boot-prompt watchdog diagnostics
 
 Code task `582a015c-869f-40ad-b0e2-65b576039c29`. Base `2f544fb373d2f2fbca49515fdd3f2f0431e527e8`. Final.
-The invariant is that refunding the retry charge cannot erase operator-visible evidence that the task brief was attempted. Store the brief's history in a durable audit summary keyed to its queue row. Save it alongside the attempt stamp and the composer verdict. The watchdog's failure reason and Failed event detail carry the count, first attempt time and last composer-evidence reason. Older rows use their available stamps and verdict.
+The invariant is that refunding the retry charge cannot erase operator-visible evidence that the task brief was attempted. Store the brief's history as audit entries keyed to its queue row. Batch the writes with the queue stamp and the composer verdict. The watchdog's failure reason and Failed event detail carry the count, first attempt time and last composer-evidence reason. Older rows use their available stamps and verdict.
 
 ## Performance budget
 
@@ -23,7 +23,7 @@ S1 adds the red witness with production code at base. S2 qualifies the repair an
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1939-base/` | red-witness | `/*/*/AgentTaskDeliveryWatchdogTests/(Refunded_boot_prompt_attempts_are_reported_with_the_first_start_and_composer_failure*)\|(A_boot_prompt_with_no_attempt_still_reports_never_attempted*)` | V-1, V-2 | 1 expected assertion failure and 1 passed | 2 | 8 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1939-final/` | watchdog | `/*/*/AgentTaskDeliveryWatchdogTests/*` | V-1, V-2, V-3, V-4 | zero failed | 1 | 10 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1939-batched/` | watchdog | `/*/*/AgentTaskDeliveryWatchdogTests/*` | V-1, V-2, V-3, V-4 | zero failed | 1 | 10 | true |
 | CP-3 | S2 | CP-2 | queue | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | V-3 | zero failed | 1 | 4 | true |
 | CP-4 | S2 | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | every named class and zero failed | 1 | 2 | true |
 | CP-5 | S2 | CP-2 | composition | `/*/*/(PhoneHomeRollingRunnerTests*)\|(RefOnlyProductionCompositionTests*)\|(DelegationTestServicesTests*)\|(DelegationHarnessCensusTests*)/*` | R-2 | every named class and zero failed | 1 | 2 | true |
@@ -32,5 +32,6 @@ S1 adds the red witness with production code at base. S2 qualifies the repair an
 | CP-8 | S2 | CP-2 | codex-boot | `/*/*/CodexBootPointerCanaryTests/*` | R-2 | real CLI case executed and passed | 1 | 2 | true |
 | CP-9 | S2 | CP-2 | land-recovery | `/*/*/(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)/*` | R-2 | every named class and zero failed | 1 | 2 | true |
 | CP-10 | S2 | CP-2 | land-receipt | `/*/*/(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(PreDispatchFailureDeliveryTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | R-2 | every named class and zero failed | 1 | 2 | true |
+| CP-11 | S2 | CP-2 | statement-budgets | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | R-2 | all SQL budgets hold | 1 | 2 | true |
 
 R-3 commands use the committed generated index. Restart: none.
