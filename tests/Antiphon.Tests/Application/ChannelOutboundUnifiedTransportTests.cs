@@ -123,7 +123,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     (await w.DeliveryAsync(kind))!.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
                     await using var scope = w.H.Provider.CreateAsyncScope();
                     await scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().RetryUncertainAsync(row.Id, true, scenario.Token);
-                    await w.RecoverAsync();
+                    // The republish after the operator's retry is a fresh child's.
+                    await w.ChildRecoverAsync();
                 }
             }
             if (lateGateway) await w.StartGatewayAsync();

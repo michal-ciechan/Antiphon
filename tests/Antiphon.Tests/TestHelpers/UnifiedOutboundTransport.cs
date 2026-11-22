@@ -223,10 +223,12 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // A recovery's clock: past every lease the parent or a dead child holds (300 s, or 60 s with a converter).
     private int RecoveryOffset(int? offset) => offset ?? (ConverterId == Guid.Empty ? 600 : 120);
 
-    // An in-process recovery's own deadline: 2x the measured max, 2810 ms (p50 331, p95 1278, n=328; HP laptop on
-    // battery beside a landing run, 2026-11-22). The max is a first recovery in the process, which also pays the
-    // graph's JIT and EF warm-up; 2x the p95 would cut it.
-    private static readonly TimeSpan InProcessRecoveryDeadline = TimeSpan.FromSeconds(6);
+    // An in-process recovery's own deadline. Measured on one host only (HP laptop on battery beside a landing run,
+    // 2026-11-22: p50 331, p95 1278, max 2810 ms, n=328; the max is a first recovery in the process, which also pays
+    // the graph's JIT and EF warm-up). Not 2x p95: server2 and Windows Full are unmeasured and run other tests in
+    // the same process, so it keeps about 5x that max until they are measured; a stall still fails in half the
+    // child's 30 s.
+    private static readonly TimeSpan InProcessRecoveryDeadline = TimeSpan.FromSeconds(15);
 
     // A restart's recovery: the probe's own unified recovery graph (UnifiedRecoveryProbe: its own services, clock,
     // producer and store over the durable rows and files only; no parent event or in-memory signal reaches it), run
@@ -249,18 +251,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         {
             // As a child reports (its config holds the database password): exception types and frames, no messages.
             throw new InvalidOperationException($"In-process recovery failed after {started.ElapsedMilliseconds} ms: "
-                + ExceptionTypes(ex) + Environment.NewLine + ex.StackTrace);
+                + ProbeLog.Describe(ex));
         }
         code.ShouldBe(0);
         Console.WriteLine($"c519-probe recover in-process {started.ElapsedMilliseconds} ms");
-    }
-
-    private static string ExceptionTypes(Exception exception)
-    {
-        var types = new List<string>();
-        for (var ex = exception; ex is not null; ex = ex.InnerException)
-            types.Add(ex is System.Data.Common.DbException { SqlState: { } state } ? $"{ex.GetType().Name}({state})" : ex.GetType().Name);
-        return string.Join(" > ", types);
     }
 
     // A recovery in a fresh child process: the first one after a real child death or an operator retry.

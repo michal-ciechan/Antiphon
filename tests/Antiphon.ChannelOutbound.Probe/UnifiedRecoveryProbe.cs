@@ -126,9 +126,16 @@ internal static class UnifiedRecoveryProbe
         finally
         {
             // Its own bounded stop, never the deadline token (already cancelled after a stall), so the cycle in flight
-            // ends before the provider and producer are disposed: in the test process as in a child.
-            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            // ends before the provider and producer are disposed: in the test process as in a child. After a deadline
+            // the bound is short, so a stalled child still exits well inside the parent's startup-and-exit margin.
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(ct.IsCancellationRequested ? 2 : 10));
             await host.StopAsync(stop.Token);
+            // StopAsync gives up quietly at its bound; a cycle still running would outlive the graph.
+            if (host.ExecuteTask is { IsCompleted: false })
+            {
+                ProbeLog.Phase("stop-timeout");
+                throw new InvalidOperationException("The recovery host's cycle did not stop within its bound.");
+            }
         }
         return 0;
     }

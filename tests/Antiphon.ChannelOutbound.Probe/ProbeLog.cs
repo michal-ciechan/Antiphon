@@ -28,11 +28,35 @@ internal sealed class ProbeLog : ILoggerProvider, ILogger
         Func<TState, Exception?, string> formatter)
     {
         if (!IsEnabled(logLevel)) return;
+        Write($"{logLevel} {_category}: {formatter(state, null)}"
+            + (exception is null ? "" : $" [{Types(exception)}]{Environment.NewLine}{exception.StackTrace}"));
+    }
+
+    // An exception as the probe may report it: the chain's types (and SQL states), never a message.
+    internal static string Types(Exception exception)
+    {
         var types = new List<string>();
         for (var ex = exception; ex is not null; ex = ex.InnerException)
-            types.Add(ex is DbException { SqlState: { } state1 } ? $"{ex.GetType().Name}({state1})" : ex.GetType().Name);
-        Write($"{logLevel} {_category}: {formatter(state, null)}"
-            + (types.Count == 0 ? "" : $" [{string.Join(" > ", types)}]{Environment.NewLine}{exception!.StackTrace}"));
+            types.Add(ex is DbException { SqlState: { } state } ? $"{ex.GetType().Name}({state})" : ex.GetType().Name);
+        return string.Join(" > ", types);
+    }
+
+    // The types, then every exception's own frames (each inner one too, and each of an aggregate's), no messages.
+    internal static string Describe(Exception exception)
+    {
+        var text = new System.Text.StringBuilder(Types(exception));
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        while (pending.Count > 0)
+        {
+            var ex = pending.Pop();
+            text.Append(Environment.NewLine).Append("--- ").Append(ex.GetType().Name).Append(Environment.NewLine)
+                .Append(ex.StackTrace);
+            if (ex is AggregateException aggregate)
+                for (var i = aggregate.InnerExceptions.Count - 1; i >= 0; i--) pending.Push(aggregate.InnerExceptions[i]);
+            else if (ex.InnerException is { } inner) pending.Push(inner);
+        }
+        return text.ToString();
     }
 
     public void Dispose() { }
