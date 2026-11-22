@@ -124,20 +124,10 @@ public class WorkingDirectoryIdentityTests
     }
 
     [Test]
-    public void Candidate_filter_is_a_superset_that_the_exact_rule_refines()
-    {
-        var stored = new[]
-        {
-            new Row(@"/srv/alpha\repo"), new Row("/srv/alpha/repo"), new Row("/srv/Alpha/Repo/"),
-            new Row(null), new Row("/srv/alpha/repo-other"), new Row(@"\\x\alpha\repo"),
-        };
-
-        var filter = WorkingDirectoryIdentity.CandidateFilter<Row>(r => r.Path, "/srv/alpha/repo/").Compile();
-        var candidates = stored.Where(filter).Select(r => r.Path).ToList();
-        candidates.ShouldBe([@"/srv/alpha\repo", "/srv/alpha/repo", "/srv/Alpha/Repo/"]);
-        candidates.Where(p => WorkingDirectoryIdentity.Same(p, "/srv/alpha/repo/"))
-            .ShouldBe(["/srv/alpha/repo"]);
-    }
-
-    private sealed record Row(string? Path);
+    [Arguments("/srv/repo/", "/srv/repo")]
+    [Arguments(@"C:\Work\Repo\", "C:/Work/Repo")]
+    [Arguments("/srv/100%_done!/", "/srv/100!%!_done!!")]
+    [Arguments(@"\\host\a_b", "//host/a!_b")]
+    public void Candidate_pattern_is_the_escaped_loose_spelling(string path, string pattern) =>
+        WorkingDirectoryIdentity.CandidatePattern(path).ShouldBe(pattern);
 }

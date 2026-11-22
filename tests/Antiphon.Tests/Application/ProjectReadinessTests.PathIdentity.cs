@@ -155,8 +155,9 @@ public partial class ProjectReadinessTests
             .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe));
 
         var sql = query.ToQueryString();
-        sql.ShouldContain("rtrim(lower(replace(");
-        sql.ShouldContain("= lower(@");
+        sql.ShouldContain("rtrim(replace(");
+        sql.ShouldContain("ILIKE @");
+        sql.ShouldContain("ESCAPE '!'");
 
         await using var command = query.CreateDbCommand();
         command.CommandText = "EXPLAIN " + command.CommandText;
@@ -172,6 +173,26 @@ public partial class ProjectReadinessTests
         plan[0].ShouldContain("on \"Agents\"");
         plan.ShouldContain(line => line.Contains("Filter:") && line.Contains("rtrim"));
         plan.ShouldNotContain(line => line.Contains("Join") || line.Contains("SubPlan"));
+    }
+
+    [Test]
+    public async Task candidate_prefilter_is_case_insensitive_and_treats_like_wildcards_literally()
+    {
+        var u = Guid.NewGuid().ToString("N");
+        var board = await SeedBoardAsync((await SeedProjectAsync()).Id);
+        var exact = await SeedAgentAsync(board.Id, workingDirectory: $@"/SRV/c-{u}/a_b%!\");
+        var cased = await SeedAgentAsync(board.Id, workingDirectory: $"/srv/c-{u}/A_B%!");
+        await SeedAgentAsync(board.Id, workingDirectory: $"/srv/c-{u}/axbyz");
+        await SeedAgentAsync(board.Id, workingDirectory: $"/srv/c-{u}/a_b%");
+        await SeedAgentAsync(board.Id, workingDirectory: $"/srv/c-{u}/a_b%!x");
+
+        await using var db = CreateContext();
+        var ids = await db.Agents.AsNoTracking()
+            .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, $"/srv/c-{u}/a_b%!/"))
+            .Select(a => a.Id)
+            .ToListAsync();
+
+        ids.ShouldBe([exact.Id, cased.Id], ignoreOrder: true);
     }
 
     private static (string Project, string Other) Tokenise(string projectSpelling, string otherSpelling)
