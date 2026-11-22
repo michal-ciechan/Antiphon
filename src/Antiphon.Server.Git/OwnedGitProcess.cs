@@ -192,7 +192,9 @@ internal sealed class OwnedGitProcess : IDisposable, IAsyncDisposable
             if (_launch is null) throw new InvalidOperationException("owned_git_not_started");
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _termination = completion.Task;
-            _state = OwnedGitLifecycle.Terminating;
+            // Monotonic lifecycle: NoChild is already Joined and an ambiguous launch is already
+            // Unconfirmed; only a Started owner passes through Terminating (CARD-1876 A4).
+            if (_state == OwnedGitLifecycle.Started) _state = OwnedGitLifecycle.Terminating;
         }
         _ = CompleteTerminationAsync(completion, allowance);
         return completion.Task;
