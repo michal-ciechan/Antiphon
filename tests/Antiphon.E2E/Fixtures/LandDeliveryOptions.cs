@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
@@ -57,6 +59,25 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
     }
     public void ConfigureServices(IServiceCollection services)
     {
+        // The CLI probes the real version endpoint before sending a land request. Give this
+        // fixture's unstamped server a checkout identity while preserving its advertised capabilities.
+        services.ConfigureHttpJsonOptions(options =>
+        {
+            var json = options.SerializerOptions;
+            var resolver = json.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver();
+            json.TypeInfoResolver = resolver.WithAddedModifier(type =>
+            {
+                if (type.Type != typeof(AntiphonVersionDto) || AntiphonVersion.Sha != "unknown")
+                    return;
+
+                using var checkout = new LibGit2Sharp.Repository(AntiphonAppFixture.FindRepositoryRoot());
+                var sha = checkout.Head.Tip?.Sha ?? throw new InvalidOperationException("The land fixture checkout has no HEAD commit.");
+                var versionProperty = type.Properties.Single(property =>
+                    property.AttributeProvider is PropertyInfo { Name: nameof(AntiphonVersionDto.Version) });
+                versionProperty.Get = _ => sha;
+            });
+        });
+
         // Allowed roots are also scanned as repositories. The evidence parent is not a Git
         // root: Git would walk upward from it into the checkout running this fixture.
         services.PostConfigure<DelegationSettings>(settings => settings.AllowedRoots =
