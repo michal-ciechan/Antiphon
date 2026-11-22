@@ -215,7 +215,7 @@ public sealed partial class ImpactedClassesSelectorTests
         Names(selected, "kinds").ShouldBe(
             [
                 "contracts", "host-stats", "land-graph-audit-project", "linux-only-policy", "migrations",
-                "nightly-live-lane", "spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels",
+                "nightly-live-lane", "spawn-limit-rosters", "task-load-window", "test-fixture-cleanup", "test-lane-category", "timing-labels",
             ],
             ignoreOrder: false);
         var files = Names(selected, "files").ToHashSet(StringComparer.Ordinal);
@@ -261,14 +261,14 @@ public sealed partial class ImpactedClassesSelectorTests
         // g139: the remote-script range also edits the c346 Compose fixture, selecting the label witness.
         await AssertKinds(
             root, "dcb973d896f1d12776a796b71466977b22737b79",
-            ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
+            ["linux-only-policy", "nightly-live-lane", "test-fixture-cleanup", "test-lane-category", "timing-labels"],
             "TestTimingOperationLabelTests");
         await AssertKinds(
-            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels"], "TestTimingOperationLabelTests");
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "test-fixture-cleanup", "test-lane-category", "timing-labels"], "TestTimingOperationLabelTests");
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
-            ["remote-scripts", "test-lane-category", "timing-labels"],
+            ["remote-scripts", "test-fixture-cleanup", "test-lane-category", "timing-labels"],
             "TestTimingOperationLabelTests",
             "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
             "C0995_Deploy_temp_checks_host_absence_before_checkout",
@@ -278,12 +278,12 @@ public sealed partial class ImpactedClassesSelectorTests
         await AssertKinds(
             root,
             "43d819da7189349c548b07ebd2677e6be086d95b",
-            ["statement-budgets", "test-lane-category"],
+            ["statement-budgets", "test-fixture-cleanup", "test-lane-category"],
             "C1149_C1150_Statement_budgets");
         await AssertKinds(
             root,
             "ceda26b31ef344bc07efd590fa9bdb59bae0f23f",
-            ["checkpoint-tool", "spawn-limit-rosters", "test-lane-category"],
+            ["checkpoint-tool", "spawn-limit-rosters", "test-fixture-cleanup", "test-lane-category"],
             "CheckpointReceiptSafetyTests",
             "CheckpointTerminalReceiptTests",
             "HostCleanupCheckpointReceiptTests");
@@ -485,18 +485,18 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)"
         + "|(HostTopConsumerUpgradeReplayTests*)|(ImpactedClassesSelectorTests*)"
         + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
-        + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LinkedUnattemptedQueueWakeTests*)|(LiveLaneRunnerTests*)"
-        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreGoldenTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LinkedUnattemptedQueueWakeTests*)|(LiveLaneCensusTests*)|(LiveLaneRunnerTests*)"
+        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreGoldenTests*)|(NightlyRunParityTests*)|(PendingSettlementDeliveryTests*)"
         + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
-        + "|(RcRunEvidenceTests*)|(ReceiptScanDestinationIntegrationTests*)|(ReleaseImpactScriptTests*)"
+        + "|(RcFailedFirstExecutionTests*)|(RcRunEvidenceTests*)|(ReceiptScanDestinationIntegrationTests*)|(ReleaseImpactScriptTests*)"
         + "|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
         + "|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
         + "|(SessionRuntimeActionRoutingTests*)|(SessionTerminationSourcePersistenceTests*)"
         + "|(SourceRevisionStampContractTests*)"
-        + "|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)|(TestTimingOperationLabelTests*)"
+        + "|(TestFixtureCleanupGuardTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)|(TestTimingOperationLabelTests*)"
         + "|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)|(WindowsUnitPlatformAdmissionTests*)"
         + "|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
         + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)"
