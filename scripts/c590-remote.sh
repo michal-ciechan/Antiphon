@@ -7246,42 +7246,26 @@ selector_fixture() {
     [ "$remote_status" = 1 ] || return 1
     selector_parent="$parent"
 }
-# An explicit text/eol=crlf checkout may differ from its index only by the
-# exact LF-to-CRLF expansion of the blob. Read the committed attributes and
-# expand the blob ourselves so no other conversion or repository driver runs.
+# The Windows launcher may differ from its index only by the exact CRLF
+# expansion of the blob. The exception is scoped to its tracked path.
 consider_crlf() {
-    local where="$1" path="$2" oid="$3" actual="$4" attrs_file="$5"
-    local path_out admin attributes file_size blob_size converted
+    local where="$1" path="$2" oid="$3"
+    local file_size blob_size
     local -r max_crlf_bytes=16777216
-    shift 5
-    local -a attrs=()
-    # sed holds a line and hash-object --stdin holds the expanded blob.
+    shift 3
+    [ "$path" = scripts/antiphon.cmd ] || refuse_dirty index-content "$where"
+    # sed buffers one line. The size caps bound that buffer and the comparison.
     file_size="$(stat -c %s -- "$where/$path" 2>/dev/null)" || fail $?
     [ "$file_size" -le "$max_crlf_bytes" ] || refuse_dirty index-content "$where"
     blob_size="$("$@" cat-file -s "$oid")" || fail $?
     [ "$blob_size" -le "$max_crlf_bytes" ] || refuse_dirty index-content "$where"
-    # Git overlays info/attributes even when the tree is explicit. The audit
-    # already disables system and user attributes. Allow only committed rules.
-    path_of "$@" rev-parse --absolute-git-dir 2>/dev/null || fail $?
-    admin="$path_out"
-    path_of "$@" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || fail $?
-    for attributes in "$admin/info/attributes" "$path_out/info/attributes"; do
-        [ ! -L "$attributes" ] || refuse_dirty index-content "$where"
-        if [ -e "$attributes" ]; then
-            [ -f "$attributes" ] && [ ! -s "$attributes" ] || refuse_dirty index-content "$where"
-        fi
-    done
-    "$@" check-attr --source=HEAD -z text eol -- "$path" > "$attrs_file" || fail $?
-    mapfile -d '' -t attrs < "$attrs_file" || fail $?
-    [ "${#attrs[@]}" = 6 ] || fail 2
-    [[ "${attrs[2]}" == set && "${attrs[5]}" == crlf ]] || refuse_dirty index-content "$where"
     # The trailing dot makes every newline precede the final sed record.
     # Remove it after expanding bare LF, preserving any unterminated last line.
-    converted="$( { "$@" cat-file blob "$oid" && printf '.'; } |
-        sed -e '$!{ /\r$/! s/$/\r/; }' | head -c -1 | "$@" hash-object --no-filters --stdin)" || fail $?
-    [ "$actual" = "$converted" ] || refuse_dirty index-content "$where"
+    { "$@" cat-file blob "$oid" && printf '.'; } |
+        sed -e '$!{ /\r$/! s/$/\r/; }' | head -c -1 | cmp -s -- "$where/$path" - ||
+        refuse_dirty index-content "$where"
 }
-# Worktree content. Protected: tracked files (raw hash or exact CRLF checkout), staged
+# Worktree content. Protected: tracked files (raw hash or exact launcher CRLF checkout), staged
 # entries and untracked files that are not ignored. Ignored files (build output,
 # caches, local config) are not work: status omits them, under the ignore rules the
 # audited repository itself carries. An absent index is safe only with the deploy
@@ -7376,7 +7360,7 @@ consider_dirty() {
                         *$'\n'*|*$'\r'*)
                             # --stdin-paths reads lines; such a name is hashed alone.
                             actual="$("${g[@]}" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
-                            [ "$actual" = "$oid" ] || consider_crlf "$where" "$path" "$oid" "$actual" "$work.attrs" "${g[@]}"
+                            [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
                             ;;
                         *) printf '%s\n' "$where/$path" >&3; printf '%s\n' "$oid" >&4 ;;
                     esac
@@ -7397,7 +7381,7 @@ consider_dirty() {
         while IFS= read -r path; do
             IFS= read -r oid <&3 && IFS= read -r actual <&4 || fail 2
             [ "$actual" = "$oid" ] && continue
-            consider_crlf "$where" "${path#"$where/"}" "$oid" "$actual" "$work.attrs" "${g[@]}"
+            consider_crlf "$where" "${path#"$where/"}" "$oid" "${g[@]}"
         done < "$work.paths"
         if IFS= read -r actual <&4 || [ -n "$actual" ]; then fail 2; fi
     } 3< "$work.expected" 4< "$work.actual"
@@ -7424,7 +7408,7 @@ reap_dirty() {
     output="$(< "$scratch/dirty-$n.out")" || output=''
     rm -f -- "$scratch/dirty-$n.out" "$scratch/dirty-$n.flags" "$scratch/dirty-$n.index" \
         "$scratch/dirty-$n.paths" "$scratch/dirty-$n.expected" "$scratch/dirty-$n.actual" \
-        "$scratch/dirty-$n.attrs" "$scratch/dirty-$n.stash" "$scratch/dirty-$n.filters" \
+        "$scratch/dirty-$n.stash" "$scratch/dirty-$n.filters" \
         "$scratch/dirty-$n.status" "$scratch/dirty-$n.stderr"
     [ "$status" != 0 ] || return 0
     trap - ERR
