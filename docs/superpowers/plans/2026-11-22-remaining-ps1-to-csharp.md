@@ -107,6 +107,7 @@ used. The appendix marks them `unreferenced`.
 | 2026-11-22 | Inventory | this note | 356 |
 | 2026-11-22 | 1: `lib/toolchain-floor.ps1` and its driver `test-toolchain-floor.ps1` deleted; command `toolchain-floor`, run by `restart-server.ps1` and `session-runner-restart-health.ps1` through `Invoke-AntiphonCli` | `00f1009e1`, index `0bb5ad8e5` | 354 |
 | 2026-11-22 | 2: `lib/test-timings.ps1` and `test-timing-report.ps1` deleted; commands `test-timing-report` and `test-timing-event` (`run-checkpoint.ps1`); `select-test-rosters.ps1` calls `TestTimings.Report` and `AddEstimates` from the loaded core | `eb65393ab`, index `dceab1a2d` | 352 |
+| 2026-11-22 | 3: `lib/test-selection.ps1`, `select-test-rosters.ps1` and the driver `test-test-selection.ps1` deleted; command `select-test-rosters` (`TestSelection.Run`); the selector identity is the four `Antiphon.Nightly/TestSelection*.cs` sources (embedded, eol=lf); `release-selection.ps1`, `rc-project-selection.ps1` and the live-lane libraries call `TestSelection`, `TestSelectionJson` and `TestSelectionGit` from the core they load; `select-release` uses the same core (its own `TestSelection.cs`/`SelectionCatalog.cs` are gone) | `cd31f150a` (core `f3e00bcc1`, `99896d190`; land graph `ee0a618d2`; tests `756243d08`; index `6cbf2f9c6`; owners `c1e72ec90`) | 349 |
 
 ## Appendix: every remaining `.ps1`, by wave
 
