@@ -8,6 +8,8 @@ $ResultsDirectory = New-C487Root $ResultsDirectory
 $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
 $inventory = @(
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1614_Released_launch_failure_exits_within_ttl'; owner='CARD-1614' }
+    @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1931_Placement_write_failure_keeps_launch_tracked_and_unknown'; owner='CARD-1614' }
+    @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1931_Mixed_first_tree_records_no_placement'; owner='CARD-1614' }
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1614_Root_exit_with_live_descendants_does_not_terminate'; owner='CARD-1614' }
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1614_Missing_tree_ordinary_read_stays_unknown'; owner='CARD-1614' }
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1617_Explicit_seal_reads_terminate_once_after_success'; owner='CARD-1614' }

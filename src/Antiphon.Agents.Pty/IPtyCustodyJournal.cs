@@ -18,11 +18,22 @@ public interface IPtyCustodyJournal
     void RecordSeal();
 
     /// <summary>
-    /// CARD-1614. The live tracked root was observed inside its Linux tree. Windows and test
-    /// journals keep the empty default; a missing observation is not placement.
+    /// CARD-1931. The start time <see cref="RecordTracking"/> read for the tracked root, the
+    /// generation a placement observation must match. Null when nothing is tracked; Windows and
+    /// test journals keep the null default, so they never receive a placement.
     /// </summary>
-    void RecordLinuxPlacement(bool containedRoot) { }
+    DateTime? TrackedStartTimeUtc => null;
+
+    /// <summary>
+    /// CARD-1614 / CARD-1931. The live tracked root was observed as the sole member of its Linux
+    /// tree, with the observed start time. Windows and test journals keep the empty default; a
+    /// missing observation is not placement.
+    /// </summary>
+    void RecordLinuxPlacement(PtyRootPlacement observed) { }
 }
+
+/// <summary>CARD-1931. One observation of the tracked root inside its own tree: pid and start time.</summary>
+public readonly record struct PtyRootPlacement(int Pid, DateTime StartTimeUtc);
 
 /// <summary>An observation of the original job; the host must still persist its bound receipt.</summary>
 public sealed record PtyCustodyObservation(uint ActiveProcesses, bool OutputDrained);

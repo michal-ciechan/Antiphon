@@ -160,6 +160,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         if (_conn is not null) throw new InvalidOperationException("Already started");
         if (memoryLimitMb < 0) throw new ArgumentOutOfRangeException(nameof(memoryLimitMb));
         _startedAt = DateTime.UtcNow;
+        var launchStarted = TimeProvider.System.GetTimestamp();
 
         var options = new PtyOptions
         {
@@ -236,8 +237,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
             custody.RecordTracking(_conn.Pid);
             // Missing accounting is not placement. Natural finality then stays Unknown.
-            if (await ObserveRootPlacementAsync(_containment, _conn.Pid) is { } contained)
-                custody.RecordLinuxPlacement(contained);
+            if (await ObserveRootPlacementAsync(_containment, _conn.Pid, custody.TrackedStartTimeUtc,
+                    ReadProcessStartUtc, RootPidExited, TimeProvider.System, launchStarted,
+                    static _ => Task.Delay(TimeSpan.FromMilliseconds(10)), ct) is { } placement)
+                custody.RecordLinuxPlacement(placement);
         }
         else
         {
@@ -701,32 +704,49 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// CARD-1931: whether the tracked root is a member of its own tree. The Linux shim places
     /// itself after the spawn has returned, so an empty or not-yet-created tree is re-read until
     /// a first member appears, the root has exited, or the containment's settle bound passes.
-    /// The first member of a tree the shim found empty is the shim; any other member means the
-    /// root was not placed. Null means accounting stayed unreadable, which is not placement.
+    /// Null is no placement.
     /// </summary>
-    private static async Task<bool?> ObserveRootPlacementAsync(IPtyCustodyContainment containment, int rootPid)
+    internal static async Task<PtyRootPlacement?> ObserveRootPlacementAsync(
+        IPtyCustodyContainment containment, int rootPid, DateTime? trackedStartUtc,
+        Func<int, DateTime?> readStartUtc, Func<int, bool> rootExited, TimeProvider clock,
+        long launchStarted, Func<CancellationToken, Task> pause, CancellationToken ct)
     {
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        _ = readStartUtc; _ = launchStarted; _ = ct;
+        var started = clock.GetTimestamp();
         while (true)
         {
-            bool? contained;
             try
             {
                 var population = containment.ReadActive();
-                contained = population.Pids.Contains(rootPid);
-                if (contained.Value || population.Count != 0) return contained;
+                if (population.Pids.Contains(rootPid)) return new(rootPid, trackedStartUtc ?? default);
+                if (population.Count != 0) return null;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                contained = null;
             }
 
-            if (System.Diagnostics.Stopwatch.GetElapsedTime(started) >= containment.PlacementSettleBound
-                || RootExited(false, ProcStatReader("/proc/" + rootPid + "/stat")))
-                return contained;
-            await Task.Delay(TimeSpan.FromMilliseconds(10));
+            if (clock.GetElapsedTime(started) >= containment.PlacementSettleBound || rootExited(rootPid))
+                return null;
+            await pause(CancellationToken.None);
         }
     }
+
+    /// <summary>CARD-1931: the root's start time, from the same source RecordTracking reads.</summary>
+    internal static DateTime? ReadProcessStartUtc(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return process.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+            or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static bool RootPidExited(int pid) => RootExited(false, ProcStatReader("/proc/" + pid + "/stat"));
 
     /// <summary>CARD-1681: the <c>/proc/&lt;pid&gt;/stat</c> reader <see cref="RootExited"/> uses.</summary>
     internal static Func<string?> ProcStatReader(string path) => () => File.ReadAllText(path);

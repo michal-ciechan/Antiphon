@@ -85,9 +85,11 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         _root = tracking;
     }
 
-    public void RecordLinuxPlacement(bool containedRoot)
+    public DateTime? TrackedStartTimeUtc => _root?.StartTimeUtc;
+
+    public void RecordLinuxPlacement(PtyRootPlacement observed)
     {
-        if (!containedRoot || _root is null || Binding.Backend != VerificationCustodyBackends.LinuxCgroup)
+        if (_root is null || Binding.Backend != VerificationCustodyBackends.LinuxCgroup)
             return;
         var ns = _store.ReadRecord<LinuxNamespaceRecord>(Binding, "linux-namespace.json");
         if (ns is null || ns.NamespaceId == Guid.Empty || ns.ContainerId != Identity.ContainerId)

@@ -193,6 +193,126 @@ public sealed class LinuxCustodyReleaseHostTests
     }
 
     /// <summary>
+    /// CARD-1931 Review b72ac3e7 blocker 3. A placement write that fails after the spawn is not a
+    /// launch failure: the reply is Launched, the child stays tracked, and with no placement bytes
+    /// natural finality stays Unknown. Red if the write failure escapes into the launch.
+    /// </summary>
+    [Test]
+    public async Task C1931_Placement_write_failure_keeps_launch_tracked_and_unknown()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        var files = new RememberTracking(containment) { RefusePlacement = true };
+        HostCustodyJournal.LinuxNamespaceForTests.Value = Guid.Parse("19310000-0000-4000-8000-0000000000b1");
+        var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        }, files);
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files);
+        var release = Path.Combine(host.TempDir, "release");
+        var child = 0;
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            files.PlacementRefusals.ShouldBe(1, "the sole tracked root was observed and its write refused");
+            store.ReadRecord<CustodyRoot>(binding, "tracking.json")!.Pid.ShouldBe(child);
+            File.Exists(store.PathFor(binding.ExecutionId, "linux-placement.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "launch-failure.json")).ShouldBeFalse();
+            (await host.Session.GetCustodyAsync(binding, false, CancellationToken.None)).State
+                .ShouldBe(VerificationCustodyState.Tracking);
+
+            await ExitNaturallyAsync(host, containment, release);
+            await ShouldStayUnknownWithoutReceiptAsync(host, store, binding, containment);
+        }
+        finally
+        {
+            HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1931 Review b72ac3e7 blocker 1, at the host. A first tree sample that holds the root
+    /// beside another member does not say who entered first, so no placement bytes are written
+    /// and natural finality stays Unknown. Red if any sample containing the root is placement.
+    /// </summary>
+    [Test]
+    public async Task C1931_Mixed_first_tree_records_no_placement()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        containment.Pids.Add(424242);
+        var files = new RememberTracking(containment);
+        HostCustodyJournal.LinuxNamespaceForTests.Value = Guid.Parse("19310000-0000-4000-8000-0000000000b2");
+        var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        }, files);
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files);
+        var release = Path.Combine(host.TempDir, "release");
+        var child = 0;
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            containment.Pids.ShouldBe([424242, child], ignoreOrder: true);
+            File.Exists(store.PathFor(binding.ExecutionId, "linux-placement.json")).ShouldBeFalse();
+
+            containment.Pids.Remove(424242);
+            await ExitNaturallyAsync(host, containment, release);
+            await ShouldStayUnknownWithoutReceiptAsync(host, store, binding, containment);
+        }
+        finally
+        {
+            HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    private static async Task ExitNaturallyAsync(HostHarness host, FakeContainment containment, string release)
+    {
+        File.WriteAllText(release, "go");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+        containment.Pids.Clear();
+    }
+
+    /// <summary>The tree is empty and the root gone; without placement this is never a natural zero.</summary>
+    private static async Task ShouldStayUnknownWithoutReceiptAsync(HostHarness host,
+        VerificationCustodyStore store, VerificationExecutionBinding binding, FakeContainment containment)
+    {
+        var status = await host.Session.GetCustodyAsync(binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Reason.ShouldBe("observation_failed");
+        status.Receipt.ShouldBeNull();
+        containment.Terminations.ShouldBe(0);
+        File.Exists(store.PathFor(binding.ExecutionId, "linux-placement.json")).ShouldBeFalse();
+        File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        File.Exists(store.PathFor(binding.ExecutionId, "producer-seal.json")).ShouldBeFalse();
+    }
+
+    /// <summary>
     /// CARD-1617 W1. A successful kill that leaves survivors is not repeated, however much time
     /// passes. Red if every explicit-seal read terminates again.
     /// </summary>
@@ -771,9 +891,17 @@ public sealed class LinuxCustodyReleaseHostTests
         private readonly VerificationCustodyFiles _files = new();
         private readonly FakeContainment _containment;
         public RememberTracking(FakeContainment containment) => _containment = containment;
+        /// <summary>CARD-1931: refuse the linux-placement.json commit with an I/O error.</summary>
+        public bool RefusePlacement { get; init; }
+        public int PlacementRefusals { get; private set; }
         public byte[]? Read(string path) => _files.Read(path);
         public void CommitImmutable(string path, byte[] bytes)
         {
+            if (RefusePlacement && Path.GetFileName(path) == "linux-placement.json")
+            {
+                PlacementRefusals++;
+                throw new IOException("Injected placement persistence refusal");
+            }
             if (Path.GetFileName(path) == "tracking.json")
             {
                 var root = JsonSerializer.Deserialize<CustodyRoot>(bytes,

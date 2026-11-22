@@ -143,6 +143,52 @@ public class VerificationCustodyStoreTests
         fixture.Store.ReadReceipt(fixture.Binding, receipt.Host, accepted: true).ShouldBeNull();
     }
 
+    /// <summary>
+    /// CARD-1931 Review b72ac3e7. The journal records the observed generation only when it is the
+    /// tracked one; another pid or start time writes no placement bytes, and the record carries
+    /// the observed start rather than a copy.
+    /// </summary>
+    [Test]
+    [Arguments("pid")]
+    [Arguments("start")]
+    [Arguments("match")]
+    public void C1931_Placement_records_only_the_tracked_generation(string observed)
+    {
+        using var fixture = new StoreFixture(VerificationCustodyBackends.LinuxCgroup);
+        fixture.Store.WriteRecord(fixture.Binding, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
+        Antiphon.PtyHost.HostCustodyJournal.LinuxNamespaceForTests.Value = Guid.Parse("19310000-0000-4000-8000-0000000000a1");
+        try
+        {
+            var journal = new Antiphon.PtyHost.HostCustodyJournal(fixture.Store, fixture.Binding, Guid.NewGuid());
+            journal.TrackedStartTimeUtc.ShouldBeNull("nothing is tracked yet");
+            journal.RecordStartIntent();
+            journal.RecordTracking(Environment.ProcessId);
+            var tracked = journal.TrackedStartTimeUtc.ShouldNotBeNull();
+            var placement = observed switch
+            {
+                "pid" => new Antiphon.Agents.Pty.PtyRootPlacement(Environment.ProcessId + 1, tracked),
+                "start" => new Antiphon.Agents.Pty.PtyRootPlacement(Environment.ProcessId, tracked.AddTicks(1)),
+                _ => new Antiphon.Agents.Pty.PtyRootPlacement(Environment.ProcessId, tracked),
+            };
+            journal.RecordLinuxPlacement(placement);
+
+            var record = fixture.Store.ReadRecord<LinuxPlacementRecord>(fixture.Binding, "linux-placement.json");
+            if (observed != "match")
+            {
+                record.ShouldBeNull();
+                File.Exists(fixture.Store.PathFor(fixture.Binding.ExecutionId, "linux-placement.json")).ShouldBeFalse();
+                return;
+            }
+            record.ShouldNotBeNull();
+            record!.Pid.ShouldBe(placement.Pid);
+            record.StartTimeUtc.ShouldBe(placement.StartTimeUtc);
+        }
+        finally
+        {
+            Antiphon.PtyHost.HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+        }
+    }
+
     [Test]
     public void Only_sealed_no_native_intent_failure_can_produce_never_started()
     {
@@ -213,7 +259,7 @@ public class VerificationCustodyStoreTests
         public VerificationCustodyStore Store { get; }
         public VerificationExecutionBinding Binding { get; }
         public VerificationCustodyReceipt Receipt { get; }
-        public StoreFixture()
+        public StoreFixture(string backend = VerificationCustodyBackends.WindowsJob)
         {
             Store = new(Path.Combine(_root, "runtime"));
             var now = DateTime.UtcNow;
@@ -221,7 +267,7 @@ public class VerificationCustodyStoreTests
                 new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
                 new(_root, Path.Combine(_root, ".git"), Path.Combine(_root, "snapshot"),
                     Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()),
-                VerificationCustodyBackends.WindowsJob, RunnerStoreId: Store.StoreId);
+                backend, RunnerStoreId: Store.StoreId);
             Store.Reserve(Binding);
             Receipt = new(1, Binding, new(Store.StoreId, Guid.NewGuid(), Guid.NewGuid(), Environment.ProcessId, now),
                 4, now, now, "JobObjectBasicAccountingInformation", 0, true, VerificationCustodyState.Exited, 1234, now);
