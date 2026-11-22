@@ -126,13 +126,15 @@ public sealed class ProjectSetupService
 
         if (!string.IsNullOrWhiteSpace(project.LocalRepositoryPath))
         {
-            var normalized = DelegationWorkspaceResolver.NormalizeSeparators(project.LocalRepositoryPath)
-                .ToLowerInvariant();
+            // Agent paths may have been stored on a different OS. Compare one separator style on
+            // both sides instead of depending on this process's Path.DirectorySeparatorChar
+            // (same rule as AgentService.FindProjectForWorkingDirectoryAsync).
+            var normalized = project.LocalRepositoryPath.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
             var pathMatched = await _db.Agents
                 .AsNoTracking()
                 .Include(a => a.TuiProfile)
                 .Where(a => !a.IsPoolDelegate)
-                .Where(a => a.WorkingDirectory.Replace("/", "\\").ToLower() == normalized)
+                .Where(a => a.WorkingDirectory.Replace("\\", "/").ToLower() == normalized)
                 .ToListAsync(ct);
             foreach (var agent in pathMatched)
             {
