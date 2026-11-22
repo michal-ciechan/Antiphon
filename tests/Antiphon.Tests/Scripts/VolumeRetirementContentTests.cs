@@ -842,7 +842,6 @@ public sealed class VolumeRetirementContentTests
             set -euo pipefail
             cd {{q(outer)}}
             git config core.autocrlf false
-            git config core.trustctime false
             mkdir scripts
             printf 'scripts/antiphon.cmd text eol=crlf\n' > .gitattributes
             printf '@echo ok\nrem line\nrem eof' > scripts/antiphon.cmd
@@ -857,26 +856,19 @@ public sealed class VolumeRetirementContentTests
             cd {{q(linked)}}
             git ls-files --eol -- scripts/antiphon.cmd
             cmp scripts/antiphon.cmd <(printf '@echo ok\r\nrem line\r\nrem eof')
+            test -z "$(git status --porcelain)"
             case {{q(vector)}} in
                 edited-content)
-                    stamp={{q(Path.Combine(fixture.Root, "launcher.timestamp"))}}
-                    touch -m -t 200001010000 scripts/antiphon.cmd
-                    git update-index --refresh
-                    touch -r scripts/antiphon.cmd "$stamp"
                     printf '@echo no\r\nrem line\r\nrem eof' > scripts/antiphon.cmd
-                    touch -m -r "$stamp" scripts/antiphon.cmd
                     ;;
                 mixed-line-endings)
                     printf '@echo ok\r\nrem line\nrem eof' > scripts/antiphon.cmd
                     ;;
                 unattributed-crlf)
-                    git config core.autocrlf true
                     printf 'plain\r\n' > plain.cmd
                     git check-attr text eol -- plain.cmd
                     ;;
             esac
-            # All four cases must reach the audit's independent content check.
-            test -z "$(git status --porcelain)"
             """);
         setup.Exit.ShouldBe(0, setup.Output);
         setup.Output.ShouldContain("w/crlf");
@@ -885,6 +877,20 @@ public sealed class VolumeRetirementContentTests
         {
             setup.Output.ShouldContain("plain.cmd: text: unspecified");
             setup.Output.ShouldContain("plain.cmd: eol: unspecified");
+        }
+        if (vector != "checkout")
+        {
+            // Simulate a clean stat-cache decision so only the linked checkout's
+            // independent byte check can detect the edits. All other Git calls are real.
+            var bin = Directory.CreateDirectory(Path.Combine(fixture.Root, "preview-bin")).FullName;
+            await FixtureExecutable.WriteAsync(Path.Combine(bin, "git"), """
+                #!/bin/bash
+                case " $* " in
+                    *"/worktrees/ws-crlf status "*) exit 0 ;;
+                esac
+                export PATH="${PATH#*:}"
+                exec git "$@"
+                """ + "\n");
         }
 
         // The preview mounts the fixture at /work. Translate the linked pointers
