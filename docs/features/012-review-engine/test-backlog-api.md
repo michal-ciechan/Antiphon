@@ -56,3 +56,4 @@ or corpus questions found while implementing. Each row says what to test and why
 | R-9 | `costActualUsd` / `costEstimatedUsd` split by cost basis; `costUsd` is their sum. | Computed from node executions; not asserted. |
 | R-10 | `GET /api/review-workflows/revisions/{id}` for an unknown id (404) and the get-or-create race on the revision hash. | Only the happy path is covered. |
 | R-11 | Queue `Mine` includes unassigned gates of the viewer's teams; `slaWorkingMinutes` is the breach budget (480). | Implemented, untested. |
+| R-12 | Single `POST /api/review-findings/{id}/responses` and `POST /api/review-gates/{id}/pass` persist their new event/pass rows. Both once failed because a child with a client-set Guid added only through a navigation is treated as existing by EF (UPDATE of 0 rows, 500); fixed by adding through the context. | The batch route is covered by the workflow test; these two are not. |

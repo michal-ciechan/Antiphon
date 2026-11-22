@@ -294,7 +294,9 @@ public sealed class ReviewService(
         }
 
         var now = Now();
-        finding.Events.Add(new ReviewFindingEvent
+        // Added through the context, not only the navigation: a client-set Guid key on an entity
+        // discovered by DetectChanges is treated as existing (UPDATE of 0 rows), not as new.
+        var evt = new ReviewFindingEvent
         {
             Id = Guid.NewGuid(),
             FindingId = finding.Id,
@@ -306,7 +308,9 @@ public sealed class ReviewService(
             Text = string.IsNullOrWhiteSpace(request.Text) ? null : request.Text.Trim(),
             SyncState = ReviewSyncState.Pending,
             CreatedAt = now,
-        });
+        };
+        db.Add(evt);
+        finding.Events.Add(evt);
         finding.SyncState = ReviewSyncState.Pending;
         finding.UpdatedAt = now;
     }
@@ -404,6 +408,7 @@ public sealed class ReviewService(
         var gate = await OpenGateAsync(gateId, ct);
         var author = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => r.Subject.AuthorLogin).SingleAsync(ct);
         var pass = new ReviewGatePass { Id = Guid.NewGuid(), GateId = gate.Id, Login = viewer.Login, Reason = reason.Trim(), At = Now() };
+        db.Add(pass); // explicit Added: see Apply() on client-set Guid keys
         gate.Passes.Add(pass);
         gate.AssigneeLogin = null;
         gate.AssigneeDisplayName = null;
