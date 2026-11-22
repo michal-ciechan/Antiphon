@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -32,13 +33,15 @@ namespace Antiphon.Server.Application.Services;
 /// collapsing, no <c>.</c>/<c>..</c> resolution and no filesystem access.</description></item>
 /// </list>
 /// <para>
-/// SQL side: <see cref="CandidateFilter{T}"/> is a translatable superset predicate (lower-cased,
-/// backslashes as slashes, all trailing slashes trimmed) evaluated by PostgreSQL; callers then keep
+/// SQL side: <see cref="CandidateFilter{T}"/> is a translatable superset predicate evaluated by
+/// PostgreSQL: backslashes as slashes, all trailing slashes trimmed, compared case-insensitively
+/// with <c>ILIKE</c> against the probe's escaped <see cref="CandidateSpelling"/>. Callers then keep
 /// only the returned candidates for which <see cref="Same"/> holds. Every pair that is the same
-/// under this rule has the same candidate key, so the prefilter loses nothing (identical spellings
-/// always pass; non-ASCII case variants of a Windows path pass as far as the database's
-/// <c>lower()</c> agrees with invariant lower-casing), and only the rows
-/// that share a loose spelling with the probe are evaluated in process.
+/// under this rule has the same <see cref="CandidateKey"/>, so the prefilter loses nothing
+/// (identical spellings always pass because the database folds case on both sides; non-ASCII case
+/// variants of a Windows path pass as far as the database's case folding agrees with invariant
+/// lower-casing), and only the rows that share a loose spelling with the probe are evaluated in
+/// process. LIKE wildcards in a path are escaped, so they match only themselves.
 /// </para>
 /// </summary>
 public static class WorkingDirectoryIdentity
@@ -77,39 +80,54 @@ public static class WorkingDirectoryIdentity
     }
 
     /// <summary>
-    /// The loose key the SQL prefilter compares: lower-cased, backslashes as slashes and every
-    /// trailing slash trimmed. A function of <see cref="Key"/>, so equal keys give equal candidate
-    /// keys; distinct directories may share one, which is why candidates are refined with
-    /// <see cref="Same"/>.
+    /// The in-process model of the loose key the SQL prefilter compares: lower-cased, backslashes
+    /// as slashes and every trailing slash trimmed. A function of <see cref="Key"/>, so equal keys
+    /// give equal candidate keys; distinct directories may share one, which is why candidates are
+    /// refined with <see cref="Same"/>.
     /// </summary>
     public static string CandidateKey(string path) => LooseSpelling(path).ToLowerInvariant();
 
+    /// <summary>The escape character of <see cref="CandidatePattern"/>.</summary>
+    public const string CandidatePatternEscape = "!";
+
     /// <summary>
-    /// A PostgreSQL-translatable predicate selecting the rows whose stored path has the same
-    /// <see cref="CandidateKey"/> as <paramref name="path"/>
-    /// (<c>rtrim(lower(replace(col, '\', '/')), '/') = lower(@probe)</c>). Both sides are
-    /// lower-cased by the same database function, so an identical spelling always survives the
-    /// prefilter whatever the database's character classification. Refine the result with
-    /// <see cref="Same"/>; never treat a candidate as a match on its own.
+    /// The <c>ILIKE</c> pattern for <paramref name="path"/>: its loose spelling (backslashes as
+    /// slashes, trailing slashes trimmed) with <c>!</c>, <c>%</c> and <c>_</c> escaped by
+    /// <see cref="CandidatePatternEscape"/>, so the pattern matches exactly that spelling up to case.
+    /// </summary>
+    public static string CandidatePattern(string path) =>
+        LooseSpelling(path)
+            .Replace("!", "!!", StringComparison.Ordinal)
+            .Replace("%", "!%", StringComparison.Ordinal)
+            .Replace("_", "!_", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A PostgreSQL-translatable predicate selecting the rows whose stored path has the same loose
+    /// spelling as <paramref name="path"/> up to case
+    /// (<c>rtrim(replace(col, '\', '/'), '/') ILIKE @pattern ESCAPE '!'</c>, with the pattern
+    /// sent as a parameter). It is server-only: it cannot be evaluated in process. Refine the
+    /// result with <see cref="Same"/>; never treat a candidate as a match on its own.
     /// </summary>
     public static Expression<Func<T, bool>> CandidateFilter<T>(
         Expression<Func<T, string?>> storedPath, string path)
     {
         ArgumentNullException.ThrowIfNull(storedPath);
-        var probe = new CandidateProbe(LooseSpelling(path));
+        var probe = new CandidateProbe(CandidatePattern(path));
         var column = storedPath.Body;
         var loose = Expression.Call(
-            Expression.Call(
-                Expression.Call(column, StringReplace, Expression.Constant("\\"), Expression.Constant("/")),
-                StringToLower),
+            Expression.Call(column, StringReplace, Expression.Constant("\\"), Expression.Constant("/")),
             StringTrimEnd,
             Expression.Constant('/'));
-        var key = Expression.Call(
-            Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Spelling)),
-            StringToLower);
+        var pattern = Expression.Property(Expression.Constant(probe), nameof(CandidateProbe.Pattern));
+        var matches = Expression.Call(
+            ILike,
+            Expression.Constant(EF.Functions),
+            loose,
+            pattern,
+            Expression.Constant(CandidatePatternEscape));
         var body = Expression.AndAlso(
             Expression.NotEqual(column, Expression.Constant(null, typeof(string))),
-            Expression.Equal(loose, key));
+            matches);
         return Expression.Lambda<Func<T, bool>>(body, storedPath.Parameters);
     }
 
@@ -130,16 +148,18 @@ public static class WorkingDirectoryIdentity
     private static readonly MethodInfo StringReplace =
         typeof(string).GetMethod(nameof(string.Replace), [typeof(string), typeof(string)])!;
 
-    private static readonly MethodInfo StringToLower =
-        typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!;
+    private static readonly MethodInfo ILike =
+        typeof(NpgsqlDbFunctionsExtensions).GetMethod(
+            nameof(NpgsqlDbFunctionsExtensions.ILike),
+            [typeof(DbFunctions), typeof(string), typeof(string), typeof(string)])!;
 
     private static readonly MethodInfo StringTrimEnd =
         typeof(string).GetMethod(nameof(string.TrimEnd), [typeof(char)])!;
 
-    // A member access on a closure-like object, so EF Core sends the key as a SQL parameter
+    // A member access on a closure-like object, so EF Core sends the pattern as a SQL parameter
     // instead of inlining it as a literal.
-    private sealed class CandidateProbe(string spelling)
+    private sealed class CandidateProbe(string pattern)
     {
-        public string Spelling { get; } = spelling;
+        public string Pattern { get; } = pattern;
     }
 }
