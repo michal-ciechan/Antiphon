@@ -1714,7 +1714,7 @@ public sealed partial class SessionMessageQueueService
             if (await CancelExpiredBriefsAsync(db, [message], ct))
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             var startedAt = UtcNow();
-            await BootPromptDeliveryHistory.RecordAttemptAsync(db, message, startedAt, ct);
+            BootPromptDeliveryHistory.RecordAttempt(db, message, startedAt);
             message.Status = QueuedMessageStatus.Sent;
             message.SentAt = startedAt;
             message.DeliveryAttempts++;
@@ -2967,7 +2967,7 @@ public sealed partial class SessionMessageQueueService
                 m.RulesDeadlineAt = now.AddSeconds(m.RulesRefreshKey.StartsWith("launch:", StringComparison.Ordinal)
                     ? rulesSettings.InitializationTimeoutSeconds : rulesSettings.RefreshTimeoutSeconds);
             }
-            await BootPromptDeliveryHistory.RecordAttemptAsync(db, m, now, ct);
+            BootPromptDeliveryHistory.RecordAttempt(db, m, now);
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = now;
             m.DeliveryAttempts++;
@@ -3833,7 +3833,7 @@ public sealed partial class SessionMessageQueueService
         // for that ordering; production installs the no-op base class.
         foreach (var message in run)
         {
-            await BootPromptDeliveryHistory.RecordAttemptAsync(db, message, UtcNow(), ct);
+            BootPromptDeliveryHistory.RecordAttempt(db, message, UtcNow());
             message.DeliveryAttempts++;
         }
         await db.SaveChangesAsync(ct);
@@ -5478,7 +5478,7 @@ public sealed partial class SessionMessageQueueService
                 {
                     if (verdict == DeliveryVerdict.NoComposerEvidence)
                         foreach (var pointer in pointers)
-                            await BootPromptDeliveryHistory.RecordComposerFailureAsync(db, pointer, UtcNow(), refunded: false, ct);
+                            BootPromptDeliveryHistory.RecordComposerFailure(db, pointer, UtcNow(), refunded: false);
                     await DeferPointersAsync(db, sessionId, pointers, ct);
                     return;
                 }
@@ -5529,7 +5529,7 @@ public sealed partial class SessionMessageQueueService
                     {
                         var refund = message.LastDeliveryBaselineSequence is null
                             && message.DeliveryAttempts > 0 && now - message.CreatedAt < grace;
-                        await BootPromptDeliveryHistory.RecordComposerFailureAsync(db, message, now, refund, ct);
+                        BootPromptDeliveryHistory.RecordComposerFailure(db, message, now, refund);
                         if (!refund) continue;
 
                         message.DeliveryAttempts--;

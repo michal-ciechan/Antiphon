@@ -1,91 +1,75 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
-using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>Diagnostic history for one queue row. Retry admission continues to use the queue's charged count.</summary>
+/// <summary>Durable diagnostic history for a boot brief. Retry admission uses the queue's charged count.</summary>
 internal static class BootPromptDeliveryHistory
 {
     internal const string MissingComposerEvidence = "required composer evidence was not observed";
 
-    private sealed record Snapshot(
-        int Attempts,
-        bool Complete,
-        DateTime? FirstAttemptAt,
-        string? LastComposerEvidenceFailure,
-        int ComposerEvidenceRefunds);
+    private const string Attempt = "delivery attempt started";
+    private const string AttemptAfterEarlierEvidence = "delivery attempt started after earlier attempt evidence";
+    private const string ComposerFailureRefunded = MissingComposerEvidence + ", attempt refunded";
 
-    internal static async Task RecordAttemptAsync(AppDbContext db, SessionQueuedMessage row, DateTime at, CancellationToken ct)
+    internal static void RecordAttempt(AppDbContext db, SessionQueuedMessage row, DateTime at)
     {
         if (!IsDispatchBrief(row)) return;
 
-        var audit = await FindAsync(db, row.Id, ct);
-        var history = Read(audit, row.Id) ?? FromLegacy(row.DeliveryAttempts, row.LastDeliveryStartedAt, row.DeliveryVerdict);
-        Save(db, audit, row.Id, at, history with
-        {
-            Attempts = history.Attempts + 1,
-            FirstAttemptAt = history is { Complete: true, Attempts: 0 } ? SessionGeneration.Normalize(at) : history.FirstAttemptAt,
-        });
+        var earlier = row.LastDeliveryStartedAt is not null || row.DeliveryAttempts > 0 || row.DeliveryVerdict is not null;
+        Add(db, row.Id, at, earlier ? AttemptAfterEarlierEvidence : Attempt);
     }
 
-    // Called in the same context as RecordAttemptAsync when the queue can prove its
-    // provisional stamp never reached the terminal. Observed composer failures keep the stamp.
+    // Only the provisionally stamped attempt owned by this context can be discarded.
     internal static void DiscardUnwrittenAttempt(AppDbContext db, SessionQueuedMessage row)
     {
         if (!IsDispatchBrief(row)) return;
 
-        var id = AuditId(row.Id);
-        var audit = db.AuditRecords.Local.SingleOrDefault(a => a.Id == id);
-        if (Read(audit, row.Id) is not { Attempts: > 0 } history) return;
-
-        if (history.Attempts == 1)
-            db.AuditRecords.Remove(audit!);
-        else
-            audit!.Summary = Prefix(row.Id) + JsonSerializer.Serialize(history with { Attempts = history.Attempts - 1 });
+        var prefix = Prefix(row.Id) + Attempt;
+        var attempt = db.AuditRecords.Local.SingleOrDefault(a =>
+            a.EventType == AuditEventType.BootPromptDelivery && a.Summary.StartsWith(prefix, StringComparison.Ordinal));
+        if (attempt is not null)
+            db.AuditRecords.Remove(attempt);
     }
 
-    internal static async Task RecordComposerFailureAsync(
-        AppDbContext db, SessionQueuedMessage row, DateTime at, bool refunded, CancellationToken ct)
+    internal static void RecordComposerFailure(AppDbContext db, SessionQueuedMessage row, DateTime at, bool refunded)
     {
-        if (!IsDispatchBrief(row)) return;
-
-        var audit = await FindAsync(db, row.Id, ct);
-        var history = Read(audit, row.Id) ?? FromLegacy(row.DeliveryAttempts, row.LastDeliveryStartedAt, DeliveryVerdict.NoComposerEvidence);
-        Save(db, audit, row.Id, at, history with
-        {
-            LastComposerEvidenceFailure = MissingComposerEvidence,
-            ComposerEvidenceRefunds = history.ComposerEvidenceRefunds + (refunded ? 1 : 0),
-        });
+        if (IsDispatchBrief(row))
+            Add(db, row.Id, at, refunded ? ComposerFailureRefunded : MissingComposerEvidence);
     }
 
-    internal static async Task<string?> DescribeAsync(
-        AppDbContext db, Guid rowId, int chargedAttempts, DateTime? lastStartedAt, DeliveryVerdict? verdict, CancellationToken ct)
+    internal static async Task<string?> DescribeAsync(AppDbContext db, Guid rowId, DateTime queuedAt,
+        int chargedAttempts, DateTime? lastStartedAt, DeliveryVerdict? verdict, CancellationToken ct)
     {
-        var id = AuditId(rowId);
-        var audit = await db.AuditRecords.AsNoTracking().SingleOrDefaultAsync(a => a.Id == id, ct);
-        var history = Read(audit, rowId) ?? FromLegacy(chargedAttempts, lastStartedAt, verdict);
-        if (history.Attempts == 0)
+        var prefix = Prefix(rowId);
+        var history = await db.AuditRecords.AsNoTracking()
+            .Where(a => a.EventType == AuditEventType.BootPromptDelivery
+                && a.CreatedAt >= queuedAt && a.Summary.StartsWith(prefix))
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => new { a.CreatedAt, a.Summary })
+            .ToListAsync(ct);
+
+        var attempts = history.Where(a => a.Summary.StartsWith(prefix + Attempt, StringComparison.Ordinal)).ToList();
+        var first = attempts.FirstOrDefault();
+        var exact = first?.Summary == prefix + Attempt;
+        var count = exact ? attempts.Count : Math.Max(attempts.Count + 1, chargedAttempts);
+        var composerFailure = history.Any(a => a.Summary.StartsWith(prefix + MissingComposerEvidence, StringComparison.Ordinal))
+            || verdict == DeliveryVerdict.NoComposerEvidence;
+        if (first is null && chargedAttempts <= 0 && lastStartedAt is null && !composerFailure)
             return null;
 
-        var count = history.Complete ? "attempted" : "attempted at least";
-        var times = history.Attempts == 1 ? "time" : "times";
-        var detail = $"{count} {history.Attempts} {times}";
-        if (history.FirstAttemptAt is { } first)
-            detail += $", first attempt at {first:O}";
+        var detail = $"{(exact ? "attempted" : "attempted at least")} {count} {(count == 1 ? "time" : "times")}";
+        if (exact && first is not null)
+            detail += $", first attempt at {first.CreatedAt:O}";
         else if (lastStartedAt is { } last)
             detail += $", last recorded attempt at {last:O}";
-        if (history.LastComposerEvidenceFailure is { } reason)
-            detail += $", and the last composer-evidence failure reported that {reason}";
-        if (history.ComposerEvidenceRefunds > 0)
-            detail += history.ComposerEvidenceRefunds == 1
-                ? ", with 1 attempt refunded"
-                : $", with {history.ComposerEvidenceRefunds} attempts refunded";
+        if (composerFailure)
+            detail += $", and the last composer-evidence failure reported that {MissingComposerEvidence}";
+        var refunds = history.Count(a => a.Summary == prefix + ComposerFailureRefunded);
+        if (refunds > 0)
+            detail += refunds == 1 ? ", with 1 attempt refunded" : $", with {refunds} attempts refunded";
         return detail;
     }
 
@@ -95,51 +79,15 @@ internal static class BootPromptDeliveryHistory
         && DispatchBriefEvidence.IsRecognized(
             SessionMessageQueueService.ToBriefEvidence(row), taskId, DelegationReportFormatter.TaskMarker(taskId));
 
-    private static Snapshot FromLegacy(int chargedAttempts, DateTime? lastStartedAt, DeliveryVerdict? verdict)
-    {
-        var failedComposer = verdict == DeliveryVerdict.NoComposerEvidence;
-        var attempted = chargedAttempts > 0 || lastStartedAt is not null || failedComposer;
-        return new Snapshot(attempted ? Math.Max(1, chargedAttempts) : 0, Complete: !attempted,
-            FirstAttemptAt: null, failedComposer ? MissingComposerEvidence : null, ComposerEvidenceRefunds: 0);
-    }
+    private static string Prefix(Guid rowId) => $"boot-prompt queue={rowId:D} ";
 
-    private static ValueTask<AuditRecord?> FindAsync(AppDbContext db, Guid rowId, CancellationToken ct) =>
-        db.AuditRecords.FindAsync([AuditId(rowId)], ct);
-
-    // This queue uses AuditRecords for durable diagnostics. A namespaced key keeps this
-    // record independent of the operator abandonment audit, which uses the queue ID itself.
-    private static Guid AuditId(Guid rowId) => new(SHA256.HashData(Encoding.UTF8.GetBytes(Prefix(rowId))).AsSpan(0, 16));
-
-    private static string Prefix(Guid rowId) => $"Boot prompt delivery history for queue {rowId:D}: ";
-
-    private static Snapshot? Read(AuditRecord? audit, Guid rowId)
-    {
-        var prefix = Prefix(rowId);
-        if (audit?.EventType != AuditEventType.BootPromptDelivery || !audit.Summary.StartsWith(prefix, StringComparison.Ordinal))
-            return null;
-        try
+    private static void Add(AppDbContext db, Guid rowId, DateTime at, string detail) =>
+        // The caller commits this entry and the queue stamp or refund in one SaveChanges.
+        db.AuditRecords.Add(new AuditRecord
         {
-            return JsonSerializer.Deserialize<Snapshot>(audit.Summary[prefix.Length..]);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static void Save(AppDbContext db, AuditRecord? audit, Guid rowId, DateTime at, Snapshot history)
-    {
-        var prefix = Prefix(rowId);
-        if (audit is null)
-        {
-            audit = new AuditRecord { Id = AuditId(rowId), EventType = AuditEventType.BootPromptDelivery, CreatedAt = at };
-            db.AuditRecords.Add(audit);
-        }
-        else if (audit.EventType != AuditEventType.BootPromptDelivery || !audit.Summary.StartsWith(prefix, StringComparison.Ordinal))
-        {
-            return;
-        }
-        // Summary is retained when old audit payloads are archived.
-        audit.Summary = prefix + JsonSerializer.Serialize(history);
-    }
+            Id = Guid.NewGuid(),
+            EventType = AuditEventType.BootPromptDelivery,
+            CreatedAt = at,
+            Summary = Prefix(rowId) + detail,
+        });
 }
