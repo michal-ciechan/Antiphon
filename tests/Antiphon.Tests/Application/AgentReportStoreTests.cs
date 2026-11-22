@@ -160,7 +160,8 @@ public class AgentReportStoreTests
         (await File.ReadAllTextAsync(path)).ShouldBe(task.Result);
         File.Delete(path);
         var simultaneous = await Task.WhenAll(store.StoreAsync(task, CancellationToken.None), store.StoreAsync(task, CancellationToken.None));
-        simultaneous.All(r => r.Path == path).ShouldBeTrue();
+        foreach (var result in simultaneous)
+            result.Path.ShouldBe(path, result.Reason);
         (await File.ReadAllTextAsync(legacy)).ShouldBe("author detail");
     }
 
