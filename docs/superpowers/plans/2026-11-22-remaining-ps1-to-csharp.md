@@ -105,6 +105,8 @@ used. The appendix marks them `unreferenced`.
 | Date | Unit | Commit | Files left |
 |---|---|---|---:|
 | 2026-11-22 | Inventory | this note | 356 |
+| 2026-11-22 | 1: `lib/toolchain-floor.ps1` and its driver `test-toolchain-floor.ps1` deleted; command `toolchain-floor`, run by `restart-server.ps1` and `session-runner-restart-health.ps1` through `Invoke-AntiphonCli` | `00f1009e1`, index `0bb5ad8e5` | 354 |
+| 2026-11-22 | 2: `lib/test-timings.ps1` and `test-timing-report.ps1` deleted; commands `test-timing-report` and `test-timing-event` (`run-checkpoint.ps1`); `select-test-rosters.ps1` calls `TestTimings.Report` and `AddEstimates` from the loaded core | `eb65393ab`, index `dceab1a2d` | 352 |
 
 ## Appendix: every remaining `.ps1`, by wave
 
