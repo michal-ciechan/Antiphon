@@ -31,6 +31,9 @@ function New-RunnerRestartPlatform($Root, $CommandClock) {
             $status = if ($state.ms -ge [double]$cfg.healthyAt) { [int]$cfg.status } else { 0 }
             @{ status = $status; result = "fixture-$status" }
         }.GetNewClosure()
+        ProbeBuild = {
+            if ($cfg.capabilitiesJson) { $cfg.capabilitiesJson | ConvertFrom-Json -ErrorAction Stop }
+        }.GetNewClosure()
         Identity = {
             if ($cfg.foreign) { return @{ pid = 900003; startTimeUtc = $identity.startTimeUtc; path = 'C:\fixture\other-build\Antiphon.SessionRunner.exe' } }
             if ($cfg.reused) { return @{ pid = $identity.pid; startTimeUtc = '2026-09-07T09:57:00.0000000Z'; path = $identity.path } }

@@ -10,6 +10,49 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration"), ParallelLimiter<ProcessSpawnLimit>]
 public class RunnerRestartScriptCompatibilityTests
 {
+    [Test]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"unknown"}}""", "soft", 0, 1)]
+    [Arguments("powershell.exe", """{"build":{"commitSha":"unknown"}}""", "soft", 0, 1)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":null}}""", "soft", 0, 1)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"abcdef1"}}""", "soft", 0, 1)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"1111111111111111111111111111111111111111"}}""", "soft", 0, 0)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"2222222222222222222222222222222222222222"}}""", "soft", 0, 0)]
+    [Arguments("pwsh.exe", "{}", "soft", 0, 0)]
+    [Arguments("pwsh.exe", "invalid JSON", "soft", 0, 0)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"unknown"}}""", "hard", 0, 0)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"unknown"}}""", "wait-only", 0, 1)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"unknown"}}""", "expiry", 2, 0)]
+    [Arguments("pwsh.exe", """{"build":{"commitSha":"unknown"}}""", "action-failed", 1, 0)]
+    public async Task Sha_stamp_hint_is_advisory(string shell, string capabilities, string mode, int exit, int hints)
+    {
+        using var f = new RestartFixture();
+        f.Config["capabilitiesJson"] = capabilities;
+        if (mode == "expiry") f.Config["status"] = 503;
+        if (mode == "action-failed") f.Config["failOperation"] = "stop-service";
+        string[] args = mode switch
+        {
+            "hard" => ["-Hard"],
+            "wait-only" => ["-WaitOnly"],
+            "expiry" => ["-TimeoutSec", "1"],
+            _ => []
+        };
+
+        var r = await f.Run(shell, args);
+
+        r.Exit.ShouldBe(exit);
+        var operations = mode switch
+        {
+            "hard" => new[] { "write-state", "stop-service", "stop-supervisor", "delete-pids", "start-task" },
+            "wait-only" => Array.Empty<string>(),
+            _ => new[] { "write-state", "stop-service" }
+        };
+        r.Mutations.ShouldBe(operations);
+        r.Wait.ShouldBe(mode == "expiry" ? 1000 : 0);
+        r.Output.Split('\n', StringSplitOptions.TrimEntries)
+            .Count(line => line == "WARNING: first restart after the SHA stamp activation: re-run with -Hard")
+            .ShouldBe(hints, r.Output);
+    }
+
     [Test, Arguments("pwsh.exe"), Arguments("powershell.exe")]
     public async Task Touched_scripts_parse_as_ascii_on_both_shells(string shell)
     {

@@ -9,6 +9,19 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DockerStackDocumentationTests
 {
     [Test]
+    [Arguments("docs/apphost-runbook.md", "## Restart only the runner", "## Verify health")]
+    [Arguments("docs/bootstrap.md", "## Runner restart observation", "## ")]
+    public void First_desktop_runner_restart_after_sha_activation_requires_hard(string path, string heading, string nextHeading)
+    {
+        var restart = Section(Read(path), heading, nextHeading);
+        restart.ShouldContain("The first desktop runner restart after SHA stamp activation must use", Case.Sensitive);
+        restart.ShouldContain("pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard", Case.Sensitive);
+        restart.ShouldContain("scripts/check-daemon-build.ps1", Case.Sensitive);
+        restart.ShouldContain("build.commitSha", Case.Sensitive);
+        restart.ShouldContain("checkout HEAD", Case.Sensitive);
+    }
+
+    [Test]
     public void Recycle_census_preflight_is_documented()
     {
         var text = Read("docs/docker-stack.md");
