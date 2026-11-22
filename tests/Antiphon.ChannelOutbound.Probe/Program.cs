@@ -184,21 +184,38 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     string? LaunchSpecPath = null, string? ExpectedSourceSha = null, string? StallPoint = null,
     int DeadlineSeconds = 30, string? CompiledModelPath = null);
 
-// Wall time moved by the parent's offset. With a timer scale below 1 its timers (the recovery host's scan cycles)
-// fire that much sooner; the time it reads is unchanged.
-internal sealed class ProbeClock(int offsetSeconds, double timerScale = 1) : TimeProvider
+// Wall time moved by the parent's offset. A copy made WithTimerScale below 1 fires its timers (the recovery host's
+// scan cycles) that much sooner; the time it reads is the same.
+internal sealed class ProbeClock : TimeProvider
 {
-    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow().AddSeconds(offsetSeconds);
+    private readonly int _offsetSeconds;
+    private readonly double _timerScale;
+
+    public ProbeClock(int offsetSeconds) : this(offsetSeconds, 1) { }
+
+    private ProbeClock(int offsetSeconds, double timerScale)
+    {
+        if (!double.IsFinite(timerScale) || timerScale <= 0 || timerScale > 1)
+            throw new ArgumentOutOfRangeException(nameof(timerScale), timerScale, "A timer scale is in (0, 1].");
+        _offsetSeconds = offsetSeconds;
+        _timerScale = timerScale;
+    }
+
+    public ProbeClock WithTimerScale(double timerScale) => new(_offsetSeconds, timerScale);
+
+    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow().AddSeconds(_offsetSeconds);
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
-        timerScale == 1
+        _timerScale == 1
             ? base.CreateTimer(callback, state, dueTime, period)
             : new ScaledTimer(base.CreateTimer(callback, state, Scale(dueTime), Scale(period)), this);
 
-    // Zero and infinite (negative) spans keep their meaning.
-    private TimeSpan Scale(TimeSpan span) => span <= TimeSpan.Zero ? span : span * timerScale;
+    // Zero and infinite (negative) spans keep their meaning; a positive one stays at least 1 ms (a 0 period would
+    // mean "do not repeat").
+    private TimeSpan Scale(TimeSpan span) =>
+        span <= TimeSpan.Zero ? span : TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, (long)(span.Ticks * _timerScale)));
 
-    // PeriodicTimer creates its timer stopped and starts it with Change.
+    // Both the spans a timer is created with and any later Change (PeriodicTimer's Period setter) are scaled.
     private sealed class ScaledTimer(ITimer inner, ProbeClock clock) : ITimer
     {
         public bool Change(TimeSpan dueTime, TimeSpan period) => inner.Change(clock.Scale(dueTime), clock.Scale(period));

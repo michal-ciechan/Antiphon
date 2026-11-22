@@ -110,7 +110,7 @@ internal static class UnifiedRecoveryProbe
         // so 100 ms apart they do what they do 1 s apart, about 1.8 s sooner per probe.
         using var host = new ChannelOutboundHostedService(provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ILogger<ChannelOutboundHostedService>>(),
-            new ProbeClock(config.ClockOffsetSeconds, timerScale: 0.1), settings);
+            clock.WithTimerScale(0.1), settings);
         var cycles = 0;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.CycleCompletedAsync = async token =>
