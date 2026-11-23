@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 157,
+      "classes": 158,
       "reason": "cap",
-      "owed": 132,
+      "owed": 133,
       "first": [
         "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
@@ -90,7 +90,7 @@
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "NightlyCoreGoldenTests",
-        "ReportBudgetWorkspacePortabilityTests"
+        "NightlyVerificationContractTests"
       ]
     },
     {
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 358,
+      "classes": 359,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -2097,18 +2097,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 145,
+      "classes": 146,
       "reason": "cap",
-      "owed": 120,
+      "owed": 121,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
+        "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "VerifyDindRunnerScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "AppHostWatchdogStateObserverScriptTests"
+        "VolumeRetirementApplyGateTests"
       ]
     },
     {
@@ -2188,9 +2188,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
         "QualificationTimingTests",
         "RcFailedFirstPlannerTests",
@@ -2204,27 +2204,26 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 34,
+      "classes": 36,
       "reason": "cap",
-      "owed": 9,
+      "owed": 11,
       "first": [
+        "NightlyScriptsTests",
+        "RcQualificationStatusTests",
         "ReleaseGatePlatformTests",
         "ReleaseSelectionAttemptTests",
         "ReleaseSelectionHopSeedTests",
         "NightlyRunParityTests",
         "NightlyTestsPlanTests",
-        "ReleaseGateFollowupTests",
-        "RcFullWatchdogTests",
-        "AwayDigestSendTests"
+        "ReleaseGateFollowupTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 32,
+      "classes": 31,
       "reason": "cap",
-      "owed": 7,
+      "owed": 6,
       "first": [
-        "ReleaseGateFollowupTests",
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGatePublicationTests",
@@ -25452,6 +25451,7 @@
       "classes": [
         "NightlyRunTests",
         "NightlyTestHelpersTests",
+        "NightlyVerificationContractTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests"
       ]
@@ -25465,6 +25465,7 @@
         "NightlyScriptsTests",
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
+        "NightlyVerificationContractTests",
         "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGateRunTests",
@@ -25557,9 +25558,10 @@
         "NightlyExecutionDiagnosticTests",
         "NightlyPrerequisiteTests",
         "NightlyRunTests",
-        "NightlyScriptsTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
+        "NightlyVerificationContractTests",
+        "QualificationGraphTests",
         "QualificationStopTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
@@ -25567,7 +25569,6 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcProjectSelectionTests",
-        "RcQualificationStatusTests",
         "RcRosterRepairTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateE2EEvidenceTests",
@@ -25643,6 +25644,7 @@
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
+        "NightlyVerificationContractTests",
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
@@ -25881,13 +25883,13 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
-        "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcQualificationWatcherScriptTests",
         "ReleaseBranchModelGateTests",
         "ReleaseGateAuthorityContractTests",
         "ReleaseGateE2EEvidenceTests",
+        "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
@@ -25916,7 +25918,6 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "ProcessSpawnLimitTests",
-        "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
