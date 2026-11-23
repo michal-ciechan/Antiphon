@@ -19,7 +19,11 @@ internal static class TestDbFixtureAssemblyHook
             return;
         }
 
-        await TestDbFixture.InitializeAsync(context);
+        await TestDbFixture.InitializeAsync(context, () =>
+        {
+            using var timing = TestTiming.BeginFixturePhase("harness-runtime", TestPhaseKind.FixtureSetup, "harness-model");
+            BridgeQueueHarness.WarmModel();
+        });
     }
 
     // Run ae84478d g80: an After(Class) clone drop overtaken by this teardown. A class teardown
