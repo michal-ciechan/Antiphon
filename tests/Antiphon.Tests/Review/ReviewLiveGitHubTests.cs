@@ -85,10 +85,10 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
         Console.WriteLine($"Run {id}: posted {finding.GetProperty("externalThreadUrl").GetString()}");
         NodeSummary(run, "delta").ShouldNotContain("not posted", Case.Insensitive, "the app may post statuses");
 
-        // 2. A Won't fix answer is replied in the GitHub thread, which is then resolved (G-12).
+        // 2. A dismissal is replied in the GitHub thread, which is then resolved (G-12).
         using (var answer = new HttpRequestMessage(HttpMethod.Post, $"/api/review-findings/{finding.GetProperty("id").GetString()}/responses")
                {
-                   Content = JsonContent.Create(new { action = "WontFix", text = "Live check: answered from Antiphon." }),
+                   Content = JsonContent.Create(new { action = "Dismiss", reasonCategory = "OutOfScope", text = "Live check: dismissed from Antiphon." }),
                })
         {
             answer.Headers.Add(ReviewViewer.HeaderName, "live-check");
@@ -149,7 +149,9 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
             ".[] | select(.user.login == \"antiphon-review[bot]\") | .body");
         replies.ShouldContain("queued", Case.Insensitive, "the bot answers the command on the PR");
         replies.ShouldContain(commentId, Case.Sensitive, "the reply carries the command's answer tag");
-        await WaitForAsync(client, id, "AwaitingFixes");
+        // The only finding was dismissed above, so the new round is clean and the bot approves; with
+        // keepUpToDate the branch is then rebased onto a moved base before the run waits for the merge.
+        await WaitForAsync(client, id, "AwaitingMerge");
     }
 
     private static async Task<JsonElement> PollAsync(HttpClient client)
@@ -216,7 +218,7 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
     {
         var list = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}/findings");
         var items = list.ValueKind == JsonValueKind.Array ? list : list.GetProperty("items");
-        return items.EnumerateArray().ToDictionary(f => f.GetProperty("cid").GetString()!, f => f);
+        return items.EnumerateArray().ToDictionary(f => f.GetProperty("key").GetString()!, f => f);
     }
 
     private static async Task<JsonElement> WaitForFindingAsync(HttpClient client, string id, Func<JsonElement, bool> done)

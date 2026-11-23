@@ -24,7 +24,8 @@ public class GitHubThreadResolutionTests
         {
             ("POST", "/api/v3/repos/acme/widgets/pulls/42/reviews") => Json("""{ "id": 900, "html_url": "https://ghe.example/acme/widgets/pull/42#review-900" }"""),
             ("GET", "/api/v3/repos/acme/widgets/pulls/42/reviews/900/comments?per_page=100") =>
-                Json("""[ { "id": 5001, "path": "src/Lease.cs", "line": 13, "html_url": "https://ghe.example/acme/widgets/pull/42#discussion_r5001" } ]"""),
+                // GitHub's per-review listing: line null (position only) and the body stored with CRLF.
+                Json("""[ { "id": 5001, "path": "src/Lease.cs", "line": null, "original_line": null, "position": 1, "body": "F1\r\nThe release runs early.", "html_url": "https://ghe.example/acme/widgets/pull/42#discussion_r5001" } ]"""),
             var other => throw new InvalidOperationException($"Unexpected request {other}"),
         }, graphQl => graphQl.Query.Contains("reviewThreads")
             ? Threads(("PRRT_other", 4000), ("PRRT_lease", 5001))
@@ -33,7 +34,7 @@ public class GitHubThreadResolutionTests
         host.Capabilities.CanResolveThreads.ShouldBeTrue();
 
         var posted = await host.PostReviewAsync(Target, new CodeHostReview(new string('b', 40), "summary",
-            [new CodeHostReviewComment("src/Lease.cs", 13, "F1")]), CancellationToken.None);
+            [new CodeHostReviewComment("src/Lease.cs", 13, "F1\nThe release runs early.")]), CancellationToken.None);
         var comment = posted.Comments.ShouldHaveSingleItem();
         (comment.CommentId, comment.ThreadId).ShouldBe(("5001", "PRRT_lease"));
 
@@ -92,6 +93,27 @@ public class GitHubThreadResolutionTests
     {
         GitHubCodeHost.GraphQlEndpoint(new ReviewCodeHost { BaseUrl = baseUrl }).ToString().ShouldBe(expected);
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Update_branch_rebases_over_graphql_so_no_merge_commit_lands_on_the_branch()
+    {
+        var head = new string('b', 40);
+        var rebased = new string('e', 40);
+        var handler = new GraphQlHandler(request => (request.Method.Method, request.RequestUri!.PathAndQuery) switch
+        {
+            ("GET", "/api/v3/repos/acme/widgets/pulls/42") => Json("""{ "number": 42, "node_id": "PR_kwDO42" }"""),
+            var other => throw new InvalidOperationException($"Unexpected request {other}: REST update-branch can only merge"),
+        }, _ => Json($$"""{ "data": { "updatePullRequestBranch": { "pullRequest": { "headRefOid": "{{rebased}}" } } } }"""));
+
+        var update = await Host(handler).UpdateBranchAsync(Target, head, CancellationToken.None);
+
+        (update.Updated, update.NewHeadSha).ShouldBe((true, rebased));
+        var call = handler.GraphQl.ShouldHaveSingleItem();
+        call.Query.ShouldContain("updatePullRequestBranch");
+        call.Variables.GetProperty("id").GetString().ShouldBe("PR_kwDO42");
+        call.Variables.GetProperty("head").GetString().ShouldBe(head);
+        call.Variables.GetProperty("method").GetString().ShouldBe("REBASE");
     }
 
     private static GitHubCodeHost Host(HttpMessageHandler handler)

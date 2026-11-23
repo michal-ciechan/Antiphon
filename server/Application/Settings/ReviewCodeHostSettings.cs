@@ -63,6 +63,12 @@ public sealed class ReviewCodeHost
     /// </summary>
     public ReviewGitHubApp? App { get; set; }
 
+    /// <summary>
+    /// How update-branch brings a PR up to date: <c>rebase</c> (the default; no merge commit on the
+    /// author's branch) or <c>merge</c> (GitHub's REST update-branch, which adds a merge commit).
+    /// </summary>
+    public string UpdateMethod { get; set; } = "rebase";
+
     public int TimeoutSeconds { get; set; } = 30;
 
     public override string ToString() => $"{Kind} {BaseUrl}";

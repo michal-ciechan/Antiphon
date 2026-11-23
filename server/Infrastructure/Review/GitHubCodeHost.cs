@@ -211,6 +211,10 @@ public sealed class GitHubCodeHost(
         {
             var match = remaining.FirstOrDefault(c => Text(c, "path") == wanted.Path
                 && (Int(c, "line") == wanted.Line || Int(c, "original_line") == wanted.Line));
+            // GitHub's per-review listing sends position but line null, and stores the body with CRLF:
+            // match the body that was posted instead.
+            if (match.ValueKind != JsonValueKind.Object)
+                match = remaining.FirstOrDefault(c => Text(c, "path") == wanted.Path && SameBody(Text(c, "body"), wanted.Body));
             if (match.ValueKind != JsonValueKind.Object)
                 continue;
             remaining.Remove(match);
@@ -233,6 +237,9 @@ public sealed class GitHubCodeHost(
 
         return new CodeHostPostedReview(reviewId, url, posted);
     }
+
+    private static bool SameBody(string? posted, string wanted) =>
+        posted is not null && string.Equals(posted.ReplaceLineEndings("\n").Trim(), wanted.ReplaceLineEndings("\n").Trim(), StringComparison.Ordinal);
 
     /// <summary>
     /// GraphQL <c>resolveReviewThread</c>. <paramref name="threadId"/> is the thread's node id, or the
@@ -396,9 +403,39 @@ public sealed class GitHubCodeHost(
         await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/pulls/{RequirePr(target)}/reviews",
             new { commit_id = headSha, body, @event = "APPROVE" }, ct);
 
-    /// <summary><c>PUT pulls/{n}/update-branch</c>: asynchronous (202), so the new head is not known yet.</summary>
+    public const string UpdateBranchMutation = """
+        mutation($id: ID!, $head: GitObjectID!, $method: PullRequestBranchUpdateMethod!) {
+          updatePullRequestBranch(input: { pullRequestId: $id, expectedHeadOid: $head, updateMethod: $method }) {
+            pullRequest { headRefOid }
+          }
+        }
+        """;
+
+    /// <summary>
+    /// Brings the PR branch up to date with its base. By default a rebase, over GraphQL
+    /// (<c>updatePullRequestBranch</c>, <c>REBASE</c>): REST <c>update-branch</c> can only merge, which
+    /// puts a merge commit on the author's branch. <see cref="ReviewCodeHost.UpdateMethod"/> <c>merge</c>
+    /// keeps the REST merge (asynchronous, 202, so the new head is not known yet).
+    /// </summary>
     public async Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct)
     {
+        if (!string.Equals(Host(target).UpdateMethod, "merge", StringComparison.OrdinalIgnoreCase))
+        {
+            var pr = await GetAsync(target, $"{RepoPath(target)}/pulls/{RequirePr(target)}", JsonMediaType, ct);
+            using var prDoc = Parse(pr, "pull request");
+            var nodeId = Text(prDoc.RootElement, "node_id")
+                ?? throw new CodeHostException(CodeHostFailureKind.Unavailable, "GitHub sent the pull request without a node_id.");
+            using var updated = await GraphQlAsync(target, UpdateBranchMutation,
+                new Dictionary<string, object?> { ["id"] = nodeId, ["head"] = expectedHeadSha, ["method"] = "REBASE" }, ct);
+            var head = updated.RootElement.TryGetProperty("data", out var data)
+                && data.TryGetProperty("updatePullRequestBranch", out var result) && result.ValueKind == JsonValueKind.Object
+                && result.TryGetProperty("pullRequest", out var updatedPr)
+                    ? Text(updatedPr, "headRefOid")
+                    : null;
+            return new CodeHostBranchUpdate(true, string.Equals(head, expectedHeadSha, StringComparison.OrdinalIgnoreCase) ? null : head,
+                "Rebased onto the base branch.");
+        }
+
         var body = await SendAsync(target, HttpMethod.Put, $"{RepoPath(target)}/pulls/{RequirePr(target)}/update-branch",
             new { expected_head_sha = expectedHeadSha }, ct);
         string? message = null;

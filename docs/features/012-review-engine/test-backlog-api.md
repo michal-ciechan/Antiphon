@@ -3,6 +3,33 @@
 Owner: the server track of the first slice. Tests deferred under the slice's testing budget, and spec
 or corpus questions found while implementing. Each row says what to test and why it is not done yet.
 
+## Verified live against GitHub (2026-11-23)
+
+`ReviewLiveGitHubTests` (opt-in, `scripts/review-live-github.ps1`) ran on the scratch PR #52 with the
+real GitHub adapter signed in as the `antiphon-review` app, with the decision model, reviewer and
+verifier scripted. These now work on real GitHub:
+
+- **Sign-in:** installation tokens.
+- **Intake:** reads the PR, its files and its diff.
+- **Statuses:** `antiphon/review` walks pending through each stage to failure or success.
+- **Review:** an inline review comment and its thread URL.
+- **Replies:** a dismissal replied in the thread, and the thread resolved (G-12).
+- **Refresh.**
+- **Polling:** a poll pass, and an `/antiphon review <steer>` comment from the owner. It queues a
+  round, and the bot answers on the PR.
+- **Approval:** the bot approves a PR its owner opened.
+
+The run found two bugs that the fakes hid:
+
+- **Per-review comment listing:** GitHub's listing sends `line: null` and stores the body with CRLF,
+  so posted comments never mapped to their findings. The adapter now also matches by body.
+- **Branch update:** REST `update-branch` merges, so keeping the PR up to date put a merge commit on
+  the author's branch. The adapter now rebases over GraphQL (`Review:CodeHosts:Hosts:<id>:UpdateMethod`,
+  default `rebase`).
+
+Still not live: real reviewer agents (G-1, G-2, G-6, G-7) and real decision and verifier models
+(G-10, G-11). Those need the desktop instance.
+
 ## ABF parser (`server/Application/Review/Abf/`)
 
 | # | Test later | Why |
