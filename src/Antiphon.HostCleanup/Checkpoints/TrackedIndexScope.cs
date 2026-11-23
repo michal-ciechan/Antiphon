@@ -24,8 +24,10 @@ namespace Antiphon.Checkpoints;
 // - D-3. The stamp holds the text of every config file the fresh read or git consults for the mapping (the git
 //   directory's and the common directory's config and config.worktree, libgit2's global, XDG, system and ProgramData
 //   files, GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM) and the variables that move them. Any include, per-worktree
-//   config (a config.worktree file or extensions.worktreeConfig) in the repository's own files declines reuse: an
-//   included file is not stamped. A change anywhere reads the index again through every IndexListing check.
+//   config (a config.worktree file or extensions.worktreeConfig) in any of those files declines reuse: an included
+//   file is not stamped. A change anywhere reads the index again through every IndexListing check.
+// - Review 2b79e113 (round 3) blocker 1: a stamp that declines reuse binds no decision either, so an include, a
+//   per-worktree config or a racy index sends the entry to a fresh lookup (no reuse) after content validation.
 internal sealed class TrackedIndexScope
 {
     private string? _owner;
@@ -53,20 +55,27 @@ internal sealed class TrackedIndexScope
         _decided = null;
     }
 
+    // Review 2b79e113 (round 3) blocker 1: only a complete, settled stamp (Reusable: every effective config input
+    // observed, no include, no per-worktree config, index outside the racy window) binds a decision. Any other
+    // decision stays unbound, so the caller asks again with no reuse after content validation.
     internal void Decide(string owner, TrackedIndexStamp stamp)
     {
+        if (!stamp.Reusable)
+            return;
         _decidedOwner = owner;
         _decided = stamp;
     }
 
-    // Whether the current entry's decision was read in process from an index version it recorded.
-    internal bool DecisionBound => _decided is not null && _decidedOwner is not null;
+    // Whether the current entry's decision was read in process from a complete index version it recorded.
+    internal bool DecisionBound => _decided is { Reusable: true } && _decidedOwner is not null;
 
-    // Whether the index the current entry's decision was read from is still the current version. An unbound
-    // decision, or a stamp that cannot be read now, does not hold.
+    // Whether the index and every config input the current entry's decision was read from are still the current
+    // version, re-read now (after content validation). An unbound decision, a stamp that cannot be read now, or one
+    // that is no longer complete (an include or per-worktree config appeared) does not hold.
     internal bool DecisionStillHolds(CheckpointCleanupContext context) =>
-        _decided is not null && _decidedOwner is not null
-        && _decided.SameVersion(TrackedIndexStamp.Read(context, _decidedOwner));
+        _decided is { Reusable: true } && _decidedOwner is not null
+        && TrackedIndexStamp.Read(context, _decidedOwner) is { Reusable: true } fresh
+        && _decided.SameVersion(fresh);
 
     // Keeps the listing only for a stamp that may be reused (settled, no include or per-worktree config).
     internal void Store(string owner, TrackedIndexStamp stamp, string listing)
@@ -178,7 +187,10 @@ internal sealed record TrackedIndexStamp(
                 repositoryFiles.Add(Path.Combine(common, "config"));
                 repositoryFiles.Add(Path.Combine(common, "config.worktree"));
             }
-            foreach (var file in repositoryFiles)
+            // Review 2b79e113 (round 3) blocker 1: an include (include.path or includeIf) in ANY consulted file,
+            // repository or user/system, brings in a file the stamp never observes, so the stamp is incomplete: it is
+            // neither reused nor bound, and the entry's unlink waits for a fresh lookup after content validation.
+            foreach (var file in repositoryFiles.Concat(UserAndSystemConfigs()))
             {
                 if (Config(file, Stat, configs) is not { } text)
                     return null;
@@ -187,9 +199,6 @@ internal sealed record TrackedIndexStamp(
                     || text.Content.Contains("worktreeconfig", StringComparison.OrdinalIgnoreCase))
                     declines = true;
             }
-            foreach (var file in UserAndSystemConfigs())
-                if (Config(file, Stat, configs) is null)
-                    return null;
 
             var environment = string.Join("\0", StampedVariables.Select(name => name + "=" + System.Environment.GetEnvironmentVariable(name)));
             // Review 2ff6a0bc: the index is observed last, so a final check's trailer read is the stamp's latest one.

@@ -268,7 +268,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
         result.Refusals.ShouldBeEmpty();
         result.Deleted.ShouldBe([output]);
-        readsBetween.ShouldBe(1, "an include declines reuse: the second deep entry read the index again");
+        // Review 2b79e113 (round 3) blocker 1: an include also binds nothing, so the second deep entry reads the index
+        // for its decision and again, with no reuse, after its content validation.
+        readsBetween.ShouldBe(2, "an include declines reuse and binding: the second deep entry read the index for its decision and again before its unlink");
     }
 
     // CARD-2052 Review r1 D-3: a linked worktree whose common directory gains config.worktree (per-worktree config

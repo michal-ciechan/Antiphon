@@ -96,7 +96,9 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         }
         else
         {
-            var custody = toolAuthority is null ? OwnedOutputLedger.Remove(full!) : toolAuthority.Remove(full!);
+            var custody = toolAuthority is null
+                ? OwnedOutputLedger.Remove(full!, dryRun: false, requireRepository: !ownership.AllowOutsideRepository)
+                : toolAuthority.Remove(full!);
             if (custody is not null) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = custody };
         }
         return new DeleteResult { Disposition = DeleteDisposition.Deleted, Path = full!, Reason = null };
@@ -495,6 +497,72 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         return null;
     }
 
+    // CARD-2052 Review 2b79e113 (round 3) blocker 2: the repository that owns a path, as discovered now: the checkout
+    // root, its .git (directory, or "gitdir:" file and its pointer), the git directory and the common directory, each
+    // with its kind and filesystem identity. Null when no repository is found or any part cannot be read; an owned
+    // removal that started under a repository refuses an entry whose final check does not see the same identity.
+    internal RepositoryIdentity? OwnerIdentity(string path)
+    {
+        try
+        {
+            var full = Canonical(path);
+            if (full is null)
+                return null;
+            var start = Io.DirectoryExists(full) && !IsReparse(full) ? full : Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(start) || FindOwner(start) is not { } owner)
+                return null;
+            var dotGitPath = Path.Combine(owner, ".git");
+            var dotGit = Io.CustodyStat(dotGitPath);
+            var pointer = "";
+            string gitDirectory;
+            if (dotGit.Kind == "directory")
+                gitDirectory = dotGitPath;
+            else if (dotGit.Kind == "file" && IdentityPointer(dotGitPath, dotGit, "gitdir: ") is { } target)
+            {
+                pointer = target;
+                gitDirectory = Path.GetFullPath(target, owner);
+            }
+            else
+                return null;
+            var gitDir = Io.CustodyStat(gitDirectory);
+            if (gitDir.Kind != "directory" || Io.CustodyStat(Path.Combine(gitDirectory, "HEAD")).Kind != "file")
+                return null;
+            var commonPath = Path.Combine(gitDirectory, "commondir");
+            var commonFile = Io.CustodyStat(commonPath);
+            var common = gitDirectory;
+            if (commonFile.Kind == "file")
+            {
+                if (IdentityPointer(commonPath, commonFile, "") is not { } relative)
+                    return null;
+                common = Path.GetFullPath(relative, gitDirectory);
+            }
+            else if (commonFile.Kind != "absent")
+                return null;
+            var commonDir = Io.CustodyStat(common);
+            if (commonDir.Kind != "directory")
+                return null;
+            return new RepositoryIdentity(owner, dotGit.Kind, dotGit.Device, dotGit.Inode, pointer,
+                Path.GetFullPath(gitDirectory), gitDir.Device, gitDir.Inode, Path.GetFullPath(common), commonDir.Device, commonDir.Inode);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                   or NotSupportedException or System.Text.DecoderFallbackException)
+        {
+            return null;
+        }
+    }
+
+    // A small pointer file's single line after the prefix, as TrackedIndexStamp reads it.
+    private static string? IdentityPointer(string path, CheckpointStat stat, string prefix)
+    {
+        if (stat.Size <= 0 || stat.Size > 4096)
+            return null;
+        var text = File.ReadAllText(path, new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true));
+        if (!text.StartsWith(prefix, StringComparison.Ordinal))
+            return null;
+        var target = text[prefix.Length..].TrimEnd('\n', '\r');
+        return target.Length == 0 || target.Any(char.IsControl) || target != target.Trim() ? null : target;
+    }
+
     private readonly record struct GitRun(int ExitCode, string Stdout, string Stderr, string? Failure);
 
     // The shared CheckpointProcessRunner owns one deadline for Git config inspection, process
@@ -660,3 +728,17 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         }
     }
 }
+
+// CARD-2052 Review 2b79e113 (round 3) blocker 2: see CheckpointDelete.OwnerIdentity.
+internal sealed record RepositoryIdentity(
+    string Owner,
+    string DotGitKind,
+    ulong DotGitDevice,
+    ulong DotGitInode,
+    string DotGitPointer,
+    string GitDirectory,
+    ulong GitDirectoryDevice,
+    ulong GitDirectoryInode,
+    string CommonDirectory,
+    ulong CommonDirectoryDevice,
+    ulong CommonDirectoryInode);

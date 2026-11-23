@@ -82,10 +82,20 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         { return "output-inventory-failed"; }
     }
 
-    public string? Remove(string root, bool dryRun = false)
+    public string? Remove(string root, bool dryRun = false) => Remove(root, dryRun, requireRepository: false);
+
+    // CARD-2052 Review 2b79e113 (round 3) blocker 2: the repository that owns the output when the removal starts is
+    // the one every entry's tracked check must be answered in. requireRepository (a caller that admitted the output
+    // only inside a repository) refuses the whole removal when none is found now; with or without it, a removal that
+    // started under a repository refuses any entry whose checks no longer see that same repository. An output
+    // deliberately outside every repository keeps its separate policy (no repository, nothing tracked).
+    internal string? Remove(string root, bool dryRun, bool requireRepository)
     {
         var refusal = Check(root);
         if (refusal is not null || dryRun) return refusal;
+        var repository = new CheckpointDelete(context).OwnerIdentity(root);
+        if (repository is null && requireRepository)
+            return PerEntryRefusal(root, "directory", "preflight=repository-unavailable");
         // No recursive deletion: an unrecorded late addition keeps its directory alive.
         var entries = Inventory(root).Keys.Append(Ledger).OrderByDescending(path => path.Count(c => c == '/')).ToList();
         // CARD-2052: every entry is still checked against the index before its unlink; the scope reads the index
@@ -93,24 +103,27 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         var index = new TrackedIndexScope();
         foreach (var relative in entries.Where(path => !Io.DirectoryExists(Path.Combine(root, path))))
         {
-            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: false, index);
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: false, index, repository);
             if (stopped is not null) return stopped;
         }
         foreach (var relative in entries.Where(path => Io.DirectoryExists(Path.Combine(root, path))))
         {
-            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: true, index);
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: true, index, repository);
             if (stopped is not null) return stopped;
         }
-        return DeleteRecorded(root, root, directory: true, index);
+        return DeleteRecorded(root, root, directory: true, index, repository);
     }
 
-    private string? DeleteRecorded(string root, string full, bool directory, TrackedIndexScope index)
+    private string? DeleteRecorded(string root, string full, bool directory, TrackedIndexScope index,
+        RepositoryIdentity? repository)
     {
         // CARD-1520: the persisted refusal must keep which gate stopped the
         // unlink. Preflight already names tracked, link, and git outcomes.
         // A content or creation-record mismatch is a different fact.
         var stage = directory ? "directory" : "file";
         index.BeginDecision();
+        if (RepositoryRefusal(full, repository) is { } before)
+            return PerEntryRefusal(full, stage, "preflight=" + before);
         if (SafeWrite.Preflight(root, [full], index) is { } preflight)
             return PerEntryRefusal(full, stage, "preflight=" + preflight);
         if (!SafeWrite.MatchesCreation(full))
@@ -130,6 +143,11 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         }
         else if (SafeWrite.Preflight(root, [full]) is { } recheck)
             return PerEntryRefusal(full, stage, "preflight-after-validation=" + recheck);
+        // Review 2b79e113 (round 3) blocker 2: the last observation before the unlink. A fallback check that found no
+        // repository (moved, removed or unreadable) answered "nothing tracked" from the absence of evidence; the entry
+        // is kept unless the repository the removal started under is still the one that owns it.
+        if (RepositoryRefusal(full, repository) is { } after)
+            return PerEntryRefusal(full, stage, "preflight-after-validation=" + after);
         try
         {
             Io.DeleteAnchored(full, expected, directory);
@@ -140,6 +158,14 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         }
         context.AfterOwnedUnlink?.Invoke(full);
         return null;
+    }
+
+    private string? RepositoryRefusal(string full, RepositoryIdentity? required)
+    {
+        if (required is null)
+            return null;
+        var now = new CheckpointDelete(context).OwnerIdentity(full);
+        return now is null ? "repository-unavailable" : now == required ? null : "repository-changed";
     }
 
     private static string PerEntryRefusal(string full, string stage, string detail) =>
