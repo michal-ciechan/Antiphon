@@ -147,6 +147,9 @@ internal static partial class InProcessGitReads
 
     private static LandingGitResult? DiffTree(Repository repo, IReadOnlyList<string> a)
     {
+        if (a is ["diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", var single]
+            && GitText.IsOid(single))
+            return CommitPaths(repo, single);
         if (a is not ["diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv",
                 "--find-renames", var from, var to, "--"]
             || !GitText.IsOid(from) || !GitText.IsOid(to))
@@ -160,6 +163,25 @@ internal static partial class InProcessGitReads
         var output = new StringBuilder();
         foreach (var (path, line) in changes.OrderBy(c => c.Path, StringComparer.Ordinal))
             output.Append(line).Append('\0').Append(path).Append('\0');
+        return Ok(output.ToString());
+    }
+
+    /// <summary>
+    /// <c>diff-tree --root --no-commit-id --name-only --no-renames -r -z &lt;full oid&gt;</c>: the paths a commit changes
+    /// against its one parent, or every path of a root commit, NUL-terminated in git's order. A merge (git shows it
+    /// only as its diff-merges setting says) and anything but a commit (git's error) are git's, and so is every shape
+    /// <see cref="Diff"/> refuses.
+    /// </summary>
+    private static LandingGitResult? CommitPaths(Repository repo, string sha)
+    {
+        if (repo.Lookup(sha) is not Commit commit) return null;
+        var parents = commit.Parents.Take(2).ToList();
+        if (parents.Count > 1) return null;
+        var changes = new List<(string Path, string Line)>();
+        if (!Diff(parents.Count == 1 ? parents[0].Tree : null, commit.Tree, "", changes)) return null;
+        var output = new StringBuilder();
+        foreach (var path in changes.Select(c => c.Path).OrderBy(p => p, StringComparer.Ordinal))
+            output.Append(path).Append('\0');
         return Ok(output.ToString());
     }
 

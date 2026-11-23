@@ -100,7 +100,25 @@ public sealed class InProcessGitCommandsTests
         // An addition and a deletion together could be a rename: git decides.
         var renamed = await CommitAsync(f, modified, ("keep.txt", null, false), ("kept.txt", "changed\n", false));
         await AssertSpawnsAsync(inProcess, f.Repository, DiffTree(modified, renamed));
+
+        // One commit's paths (GitWorkspaceService's gated-commit check): against its parent, or all of a root
+        // commit's; --no-renames lists both sides of a would-be rename. Merges, trees and a file that becomes a
+        // directory are git's.
+        var rootCommit = (await f.RequiredAsync(f.Repository, "rev-list", "--max-parents=0", seed)).Trim();
+        var empty = (await f.RequiredAsync(f.Repository, "commit-tree", (await f.RequiredAsync(f.Repository, "rev-parse", seed + "^{tree}")).Trim(),
+            "-p", seed, "-m", "no change")).Trim();
+        foreach (var rev in new[] { rootCommit, seed, modified, deleted, renamed, empty })
+            await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(rev));
+        var merge = (await f.RequiredAsync(f.Repository, "commit-tree", (await f.RequiredAsync(f.Repository, "rev-parse", renamed + "^{tree}")).Trim(),
+            "-p", modified, "-p", deleted, "-m", "merge")).Trim();
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(merge));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths((await f.RequiredAsync(f.Repository, "rev-parse", seed + "^{tree}")).Trim()));
+        var nested = await CommitAsync(f, modified, ("keep.txt", null, false), ("keep.txt/inner.txt", "inner\n", false));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(nested));
     }
+
+    private static string[] CommitPaths(string commit) =>
+        ["diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", commit];
 
     [Test]
     public async Task Recovery_pin_and_worktree_lock_match_git()
