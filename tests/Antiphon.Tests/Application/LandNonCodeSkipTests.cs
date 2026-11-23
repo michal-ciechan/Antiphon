@@ -117,6 +117,7 @@ public sealed class LandNonCodeSkipTests
 
     [Test]
     [Arguments("server/Bundles/new.md")]
+    [Arguments("server/Application/Review/Checks/Seed/concurrency/SEED-0004.md")]
     [Arguments("docs/data.json")]
     [Arguments("tests/Antiphon.Tests/fixture.md")]
     [Arguments("tools/Example/fixture.md")]
@@ -1612,6 +1613,73 @@ public sealed class LandNonCodeSkipTests
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=1");
         });
+    }
+
+    // Debug 02f9ccec (master 34b0f5c16): server/Antiphon.Server.csproj embeds the review check catalogue's seed
+    // checks, product data compiled into the assembly. The audit admits that one resolved pattern, exactly as
+    // the server project writes it (with its None Remove and LogicalName), and nothing wider.
+    private const string SeedCheckItems = """
+        <Project Sdk="Microsoft.NET.Sdk">
+          <ItemGroup>
+            <None Remove="Application\Review\Checks\Seed\**\*.md" />
+            <EmbeddedResource Include="Application\Review\Checks\Seed\**\*.md">
+              <LogicalName>Antiphon.Server.Review.Checks.Seed/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+            </EmbeddedResource>
+          </ItemGroup>
+        </Project>
+        """;
+
+    [Test]
+    public async Task ReviewSeedCheckMarkdownEmbeddedResourceIsApproved()
+    {
+        await AssertUpdateApprovesAsync(new Dictionary<string, string>
+        {
+            ["server/Application/Review/Checks/Seed/concurrency/SEED-0004.md"] = "# seed",
+            ["server/Application/Review/Checks/Seed/security/SEED-0001.md"] = "# seed",
+            ["server/App.csproj"] = SeedCheckItems,
+        }, 1);
+    }
+
+    [Test]
+    [Arguments("other-directory")]
+    [Arguments("wider-glob")]
+    [Arguments("sibling-of-seed")]
+    [Arguments("text-extension")]
+    [Arguments("every-extension")]
+    [Arguments("other-project-directory")]
+    public async Task ReviewSeedCheckAllowanceDoesNotWidenToOtherDocuments(string variant)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["server/Application/Review/Checks/Seed/concurrency/SEED-0004.md"] = "# seed",
+            ["server/Application/Review/Checks/Seed/concurrency/notes.txt"] = "notes",
+            ["server/Application/Review/Notes/note.md"] = "# note",
+            ["server/Application/Review/Checks/Draft/draft.md"] = "# draft",
+            ["tools/Other/Application/Review/Checks/Seed/x/SEED-0009.md"] = "# not the server's seed",
+        };
+        var (project, include, match) = variant switch
+        {
+            // An arbitrary markdown outside the allow-list still refuses by its match.
+            "other-directory" => ("server/App.csproj", @"Application\Review\Notes\*.md", "server/Application/Review/Notes/note.md"),
+            // A glob reaching beyond Seed/ refuses even though it also matches the seed files.
+            "wider-glob" => ("server/App.csproj", @"Application\Review\Checks\**\*.md", "server/Application/Review/Checks/Draft/draft.md"),
+            "sibling-of-seed" => ("server/App.csproj", @"Application\Review\Checks\Seed\..\Draft\*.md", "server/Application/Review/Checks/Draft/draft.md"),
+            // Same directory, other document types or every file: only *.md under Seed/ is admitted.
+            "text-extension" => ("server/App.csproj", @"Application\Review\Checks\Seed\**\*.txt", "server/Application/Review/Checks/Seed/concurrency/notes.txt"),
+            "every-extension" => ("server/App.csproj", @"Application\Review\Checks\Seed\**\*", "server/Application/Review/Checks/Seed/concurrency/SEED-0004.md"),
+            // The same text in another project resolves to another directory and refuses.
+            "other-project-directory" => ("tools/Other/Other.csproj", @"Application\Review\Checks\Seed\**\*.md", "tools/Other/Application/Review/Checks/Seed/x/SEED-0009.md"),
+            _ => throw new ArgumentOutOfRangeException(nameof(variant)),
+        };
+        files[project] = $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <EmbeddedResource Include="{include}" />
+              </ItemGroup>
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(files, "markdown or text document",
+            project + " EmbeddedResource Include=" + include + " -> " + match);
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9 F1, real repository): widening the card-0449 captures include of
