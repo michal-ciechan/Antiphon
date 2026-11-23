@@ -2234,9 +2234,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 67,
+      "classes": 69,
       "reason": "cap",
-      "owed": 42,
+      "owed": 44,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -2332,9 +2332,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 583,
+      "classes": 585,
       "reason": "cap",
-      "owed": 558,
+      "owed": 560,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -6394,13 +6394,21 @@
       ]
     },
     {
+      "path": "server/Application/Interfaces/IClaudeCli.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Interfaces/ICodeHost.cs",
       "classes": [
         "GitHubCodeHostTests",
         "GitHubThreadResolutionTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
-        "ReviewExecutorApiTests"
+        "ReviewExecutorApiTests",
+        "ReviewLiveGitHubTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -6412,6 +6420,8 @@
     {
       "path": "server/Application/Interfaces/IDecisionModel.cs",
       "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests",
         "CompletionModelTests",
         "DecisionChainTests",
         "ReviewExecutorApiTests"
@@ -6538,6 +6548,12 @@
         "RunnerSyncLeaseFairnessTests",
         "StartRefAvailabilityTests",
         "TerminalTaskResidueTests"
+      ]
+    },
+    {
+      "path": "server/Application/Interfaces/IReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
       ]
     },
     {
@@ -6686,6 +6702,12 @@
       ]
     },
     {
+      "path": "server/Application/Review/CliReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/Decisions/CompletionChain.cs",
       "classes": [
         "CompletionModelTests"
@@ -6694,6 +6716,7 @@
     {
       "path": "server/Application/Review/Decisions/DecisionChain.cs",
       "classes": [
+        "ClaudeCliTransportTests",
         "DecisionChainTests"
       ]
     },
@@ -6717,9 +6740,21 @@
       ]
     },
     {
+      "path": "server/Application/Review/ReviewDtos.cs",
+      "classes": [
+        "ReviewPollingApiTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/ReviewGrouping.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewPoller.cs",
+      "classes": [
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -6737,7 +6772,14 @@
     {
       "path": "server/Application/Review/ReviewViewer.cs",
       "classes": [
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/SelectedReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
       ]
     },
     {
@@ -13149,28 +13191,48 @@
       ]
     },
     {
+      "path": "server/Application/Settings/ReviewAgentSettings.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Settings/ReviewCodeHostSettings.cs",
       "classes": [
         "GitHubCodeHostTests",
         "GitHubThreadResolutionTests",
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
       "path": "server/Application/Settings/ReviewDecisionSettings.cs",
       "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests",
         "CompletionModelTests",
         "DecisionChainTests",
         "ReviewCheckParserTests",
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
       "path": "server/Application/Settings/ReviewPolicySettings.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ReviewPollingSettings.cs",
+      "classes": [
+        "ReviewLiveGitHubTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -16794,6 +16856,26 @@
       "path": "server/Infrastructure/Review/ChatCompletionModels.cs",
       "classes": [
         "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/ClaudeCliModels.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/ClaudeCliProcess.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/GitHubAppTokens.cs",
+      "classes": [
+        "GitHubCodeHostTests"
       ]
     },
     {
@@ -25259,7 +25341,9 @@
       "path": "tests/Antiphon.Tests/Review/ReviewEndToEndFakes.cs",
       "classes": [
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
