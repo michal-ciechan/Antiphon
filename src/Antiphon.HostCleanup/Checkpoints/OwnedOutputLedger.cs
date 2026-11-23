@@ -120,8 +120,16 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         context.BeforeOwnedUnlink?.Invoke(full);
         // CARD-2052 Review d1e0f4ca D-1: the unlink happens only while the index is still the version the tracked
         // decision above was read from; a stage, reset or rewrite since then refuses this entry.
-        if (!index.DecisionStillHolds(context))
-            return PerEntryRefusal(full, stage, "preflight=index-changed-before-unlink");
+        // Review 2ff6a0bc (round 2) D-1: a decision that bound no version (git answered it, or the layout has no
+        // stamp) is asked again here, after content validation and creation identity: only a fresh untracked answer
+        // permits the unlink, and a tracked answer or any check that cannot answer keeps the entry.
+        if (index.DecisionBound)
+        {
+            if (!index.DecisionStillHolds(context))
+                return PerEntryRefusal(full, stage, "preflight=index-changed-before-unlink");
+        }
+        else if (SafeWrite.Preflight(root, [full]) is { } recheck)
+            return PerEntryRefusal(full, stage, "preflight-after-validation=" + recheck);
         try
         {
             Io.DeleteAnchored(full, expected, directory);
