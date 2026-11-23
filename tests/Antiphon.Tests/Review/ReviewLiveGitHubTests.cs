@@ -24,6 +24,7 @@ namespace Antiphon.Tests.Review;
 /// Use a scratch PR labelled <c>antiphon:live-check</c> (and <c>antiphon:skip</c>, so a live
 /// instance's poller leaves it alone); the findings it posts are scripted, not a real review.
 /// </summary>
+[Category("Integration")]
 [Category("LiveGitHub")]
 [NotInParallel("ReviewLiveGitHub")]
 [ClassDataSource<ReviewLiveGitHubTests.Factory>(Shared = SharedType.PerClass)]
