@@ -1200,7 +1200,7 @@
     {
       "paths": [
         "tests/test-execution-policy.json",
-        "scripts/test-rc-platform.ps1",
+        "tests/Antiphon.Tests/Scripts/LinuxOnlyCensus.cs",
         "tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs",
         "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs"
       ],
@@ -3610,7 +3610,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "126d5297c170f9ec909d150cb629edea244c14154547d3ef66cfc9d716d62556",
+  "catalogHash": "68b0020aba340eda3200cbfbe3e81711126f9ba85530b0589b02b536d05551b6",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

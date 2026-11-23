@@ -64,10 +64,9 @@ through the checkpoint tool; the production readiness deadlines/retries are unch
 
 CARD-1613: the rc Linux-only Windows exclusions are pinned `[NativeLinuxOnly]` markers
 witnessed by reflection in each of the four suites (`NativeLinuxPolicyWitnessTests`).
-`scripts/lib/linux-only-gate-witness.cs` is retired. `test-rc-platform.ps1 -Case
-LinuxOnlyWindowsExclusionPolicy` derives its census from the shipped rows and the
-source markers (CARD-1686) and checks the census gaps; the old
-`-Case LinuxOnlyWindowsExclusions` refuses. The native child is
+`scripts/lib/linux-only-gate-witness.cs` is retired. `ReleaseGatePlatformTests.LinuxOnlyWindowsExclusionPolicy`
+derives its census (`LinuxOnlyCensus`) from the shipped rows and the source markers
+(CARD-1686) and checks the census gaps. The native child is
 `tests/Antiphon.NativeLinuxPolicy.Probe`, staged for `NativeLinuxPolicyExecutionTests`.
 
 CARD-0849: the C1192 driver's deadline/go witness projects generated `/fixture` paths

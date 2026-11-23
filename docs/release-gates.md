@@ -264,7 +264,7 @@ The three Linux-native SessionRunner classes `UnixPtyArgvAdmissionTests` (15 cas
 CARD-0863), `AgentPinPublicationTests` (6) and `AgentPinWorkspaceStoreTests` (3,
 both CARD-0262) have Windows-only RC exclusions. All 24 cases remain required on
 Linux; their Linux checkpoint manifests and separate Windows native obligations
-are unchanged. `test-rc-platform.ps1 -Case LinuxSessionRunnerAdmission` checks the
+are unchanged. `ReleaseGatePlatformTests.LinuxSessionRunnerAdmission` checks the
 source roster, both platform censuses and launch plans, and frozen Windows authority.
 A runtime skip alone leaves required coverage incomplete, so this admission belongs
 in the profile policy. These exclusions are dispositions, not execution receipts.
@@ -278,7 +278,7 @@ CARD-1425 the nine CARD-1281 producer-pack cases (five `AdvisoryChangePolicyTest
 and `C1281_B1Authorization`, `C1281_B1ReceiptImport`, `C1281_B1CorrectionTransaction`,
 `C1281_WiredRoundtrip` in `PipelineSpeedIntegrationTests`) run from the deterministic in-test
 `C1281ProducerPackFixture`, whose inventory digest is pinned, and are required on every platform.
-`test-rc-platform.ps1 -Case C1415_SkipExclusions` checks the shipped rows and that the pack cases
+`ReleaseGatePlatformTests.C1415_SkipExclusions` checks the shipped rows and that the pack cases
 are launched on both platforms.
 
 CARD-1811 adds one Linux-only, method-scoped `antiphon` row for
@@ -305,7 +305,7 @@ The original CARD-1199 census had 35 checkpoint identities and zero runtime skip
 after S-A, S-B1, S-B2, S-C1 and S-C2 removed their runtime gates. CARD-2006 added
 two portable tests that inspect generated project definitions to count SDK fixtures.
 All 37 checkpoint identities are required on both platforms with no policy exclusions.
-`test-rc-platform.ps1 -Case C1199_WindowsRequiredRoster` compares the compiled S/T/O
+`ReleaseGatePlatformTests.C1199_WindowsRequiredRoster` compares the compiled S/T/O
 roster, minus the existing Windows confinement sibling, with that required set and
 pins the six unrelated Windows and seven Linux runtime-skip patterns. It also
 checks that a NotExecuted result for any of the 37 prevents completeness.
@@ -316,7 +316,7 @@ log line and evaluator SHA-256.
 S-F-cost requires S3 admission on its target base and complete successful native
 Windows S/T/O class-cost samples before Windows Full credit.
 R-2 junction and custody qualification stays pending/required.
-`test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` checks the shipped
+`ReleaseGatePlatformTests.LinuxOnlyWindowsExclusionPolicy` checks the shipped
 rows and that those obligation gaps still leave coverage incomplete. Since CARD-1686
 it keeps no list of its own: it derives the census from the prefixed policy rows and
 the `[NativeLinuxOnly]` markers under each suite's project directory, and fails on a
@@ -325,14 +325,13 @@ lexes C# strings or comments. A line whose trimmed text starts with `[NativeLinu
 is a marker and is parsed. Any other use of the whole word `NativeLinuxOnly` or
 `NativeLinuxOnlyAttribute` fails closed as `marker-noncanonical`, unless its line
 starts with `//`, `/*` or `*` or its file is one of the exact-path exemptions listed
-in the script (the attribute definition and the witnesses that reflect over it). So a
+in `tests/Antiphon.Tests/Scripts/LinuxOnlyCensus.cs` (the attribute definition and the witnesses that reflect over it). So a
 stacked, qualified, spaced or split-line marker, a `using` alias, a string literal and
 a trailing comment all fail, and a marker inside `#if false` or a block comment still
-counts (`-Case C1686_LinuxOnlyCensus` proves these on fixtures). The selection set `release-gate.platform` runs
-`ReleaseGatePlatformTests` when the policy, this harness or a narrowly routed marker
+counts (`C1686_LinuxOnlyCensus` proves these on fixtures). The selection set `release-gate.platform` runs
+`ReleaseGatePlatformTests` when the policy, the census (`LinuxOnlyCensus.cs`) or a narrowly routed marker
 file changes; any other marker file has no rule and selects Full. The compiled
 marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
-The retired `-Case LinuxOnlyWindowsExclusions` refuses and names that witness.
 
 #### CARD-1613 marker migration and maintenance
 

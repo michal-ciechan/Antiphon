@@ -26,8 +26,8 @@ public sealed partial class ImpactedClassesSelectorTests
 
     private const string RepairFilesCommit = "517b705036e1496388a562835c03d3e15b522370";
 
-    // The marker literal the linux-only-policy row matches. The A5 census (test-rc-platform.ps1
-    // C1686_LinuxOnlyCensus) fails a code line that names the attribute outside a canonical marker,
+    // The marker literal the linux-only-policy row matches. The A5 census (LinuxOnlyCensus, run by
+    // ReleaseGatePlatformTests) fails a code line that names the attribute outside a canonical marker,
     // so the literal is joined from two halves and never appears whole in this file.
     private const string MarkerLiteral = "[Native" + "LinuxOnly(";
 
