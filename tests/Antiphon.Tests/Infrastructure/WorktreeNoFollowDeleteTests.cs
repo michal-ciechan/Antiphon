@@ -449,7 +449,7 @@ public sealed class WorktreeNoFollowDeleteTests
     {
         if (!OperatingSystem.IsWindows())
         {
-            Skip.Test("Share modes are the Windows no-follow delete; Linux is C1717_B3_WriteThroughAnOpenHandleDuringTheHashIsKept.");
+            Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(WorktreeNoFollowDeleteTests), nameof(C1717_B3_WindowsOpenWriterRefusesTheDelete));
             return;
         }
 

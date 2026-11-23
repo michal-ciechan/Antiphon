@@ -83,7 +83,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     public async Task windows_confined_build_leaves_use_app_host_unset(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
-            Skip.Test("CARD-1310 confined Windows build leaves UseAppHost unset");
+            Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(CheckpointOutputConfinementTests), nameof(windows_confined_build_leaves_use_app_host_unset));
 
         // Prepare and the script stat with system git config disabled. A host autocrlf commit
         // then looks dirty. InitGitRepo stores the fixture bytes as written (core.autocrlf=false).

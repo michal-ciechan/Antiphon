@@ -571,10 +571,20 @@ public class Card1653SocketDirTests
         world.LogLines(MismatchToken).ShouldBe([$"{MismatchToken}: {verb} refused for session {world.SessionId}"]);
     }
 
-    private static string NewRoot()
+    private readonly List<string> _roots = [];
+
+    [After(Test)]
+    public void DeleteRoots()
     {
-        Path.GetTempPath().ShouldBe("/tmp/", "precondition: the owned socket paths are sized for a /tmp temp root");
-        return TestSessionLogRoot.Create("c1653-sock");
+        foreach (var root in _roots) ShortSocketRoot.Delete(root);
+    }
+
+    /// <summary>A short fixture-owned root, so the default socket path fits the bound under any test temp directory.</summary>
+    private string NewRoot()
+    {
+        var root = ShortSocketRoot.Create("c1653s");
+        _roots.Add(root);
+        return root;
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]
