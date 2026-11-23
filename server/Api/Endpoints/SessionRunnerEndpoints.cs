@@ -528,7 +528,7 @@ public static class SessionRunnerEndpoints
     /// </summary>
     private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings) =>
         OperatorCredential.Require(
-            http, settings, "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).");
+            http, settings, "Force-release requires the operator token (scripts/antiphon runner-slots sends it).");
 
     /// <summary>
     /// A save that fails after the runner has released leaves a pending intent. Finish that

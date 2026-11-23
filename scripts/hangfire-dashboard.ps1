@@ -25,7 +25,8 @@ if (-not $onWindows) {
     exit 2
 }
 
-# Twin of Add-OperatorToken in scripts/runner-slots.ps1; keep the two in step.
+# Twin of the operator commands' token read (OperatorApi.ReadToken in scripts/lib/Antiphon.Nightly, the path from
+# OperatorCommands.OperatorTokenFile in scripts/lib/Antiphon.Scripts); keep them in step.
 $headers = @{}
 function Add-OperatorToken {
     $path = $env:ANTIPHON_OPERATOR_TOKEN_FILE

@@ -830,16 +830,16 @@ public sealed class LandingGitTests
             // so the journal must still fence admission until both redirected pipes reach EOF.
             JournalFiles(children).ShouldNotBeEmpty(
                 "a live pipe holder keeps the repository child journal until the abandoned streams close");
-            var preview = await RunRecoveryAsync(repo.Path);
+            var preview = RunRecovery(repo.Path);
             preview.Exit.ShouldBe(3, preview.Output);
             preview.Output.ShouldContain("retained (");
             preview.Output.ShouldNotContain("recovered (");
             JournalFiles(children).ShouldNotBeEmpty("preview recovery leaves a live descendant's journal");
-            var execute = await RunRecoveryAsync(repo.Path, "-Execute");
+            var execute = RunRecovery(repo.Path, "--execute");
             execute.Exit.ShouldBe(3, execute.Output);
             execute.Output.ShouldNotContain("recovered (");
             JournalFiles(children).ShouldNotBeEmpty(
-                "-Execute without -ConfirmDescendantsExited still treats the descendant as owned");
+                "--execute without --confirm-descendants-exited still treats the descendant as owned");
             KillHolder(pidFile);
             var cleared = Stopwatch.StartNew();
             while (JournalFiles(children).Length > 0)
@@ -943,29 +943,13 @@ public sealed class LandingGitTests
     private static string[] JournalFiles(string children) =>
         Directory.Exists(children) ? Directory.EnumerateFiles(children).ToArray() : [];
 
-    private static async Task<(int Exit, string Output)> RunRecoveryAsync(string repository, params string[] options)
+    // The recover-repository-children command (unit 23 of the 2026-11-22 plan) in this process: stdout then stderr.
+    private static (int Exit, string Output) RunRecovery(string repository, params string[] options)
     {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        root.ShouldNotBeNull();
-        var start = new ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"));
-        start.ArgumentList.Add("-Repository");
-        start.ArgumentList.Add(repository);
-        foreach (var option in options) start.ArgumentList.Add(option);
-        using var process = Process.Start(start)!;
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var output = stdout + stderr;
-        Console.WriteLine($"C1076_RECOVERY exit={process.ExitCode} output={output}");
-        return (process.ExitCode, output);
+        var run = RepositoryRecoveryCommand.Run(repository, options);
+        var output = run.Output + run.Error;
+        Console.WriteLine($"C1076_RECOVERY exit={run.Exit} output={output}");
+        return (run.Exit, output);
     }
 
     // CARD-1076 V-2. The live push journal names the task and purpose, then the owner deletes it on exit.

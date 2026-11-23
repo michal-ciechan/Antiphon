@@ -71,7 +71,7 @@ docs/orchestration-loop.md#standing-pipeline-policy; never exceed the lower effe
 Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree.
 Land confirmed work promptly. Keep Code at its depth cap, counting in-flight, queued and ready.
 Below cap, pull the lowest-rank unstarted Backlog card; at cap, start no new Plan toward Code.
-A keep-six reminder names the server setting's shortfall. Dispatch up to that shortfall under the same pipeline rules. Declare a hold with scripts/keep-six.ps1. The server does not dispatch.
+A keep-six reminder names the server setting's shortfall. Dispatch up to that shortfall under the same pipeline rules. Declare a hold with scripts/antiphon keep-six. The server does not dispatch.
 Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.
 File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land

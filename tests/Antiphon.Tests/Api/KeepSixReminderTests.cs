@@ -28,7 +28,7 @@ public class KeepSixReminderTests
 {
     private const string Header = "[keep-six]";
     private const string NotDispatched = "Antiphon has not dispatched";
-    private const string HoldScript = "scripts/keep-six.ps1";
+    private const string HoldScript = "scripts/antiphon keep-six";
 
     private readonly AntiphonWebAppFactory _factory;
 

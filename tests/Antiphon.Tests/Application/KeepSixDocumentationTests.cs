@@ -12,23 +12,26 @@ public sealed class KeepSixDocumentationTests
     private static string Read(params string[] relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, Path.Combine(relative)));
 
+    // The hold command is keep-six (Antiphon.Nightly.KeepSix, which replaced scripts/keep-six.ps1 in unit 23 of the 2026-11-22
+    // plan); KeepSixCommandTests runs its routes, headers and refusals.
     [Test]
     public void bundle_says_the_server_does_not_dispatch_and_names_the_hold_script()
     {
         var bundle = Read("server", "Bundles", "orchestrator.md");
-        bundle.ShouldContain("scripts/keep-six.ps1", Case.Sensitive);
+        bundle.ShouldContain("scripts/antiphon keep-six", Case.Sensitive);
         bundle.ShouldContain("The server does not dispatch", Case.Sensitive);
 
-        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "keep-six.ps1");
-        File.Exists(scriptPath).ShouldBeTrue(scriptPath);
-        var script = File.ReadAllText(scriptPath);
-        script.All(static c => c <= 127).ShouldBeTrue("keep-six.ps1 must stay ASCII");
-        script.ShouldContain("X-Antiphon-Task-Token", Case.Sensitive);
-        script.ShouldContain("/keep-six/hold", Case.Sensitive);
-        script.ShouldContain("/keep-six/ack", Case.Sensitive);
-        script.ShouldContain("-Hold", Case.Sensitive);
-        script.ShouldContain("-Ack", Case.Sensitive);
-        script.IndexOf("/api/agent-tasks", StringComparison.Ordinal).ShouldBe(-1);
+        var sourcePath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "KeepSix.cs");
+        File.Exists(sourcePath).ShouldBeTrue(sourcePath);
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "keep-six.ps1")).ShouldBeFalse("the script is gone");
+        var source = File.ReadAllText(sourcePath);
+        source.All(static c => c <= 127).ShouldBeTrue("KeepSix.cs must stay ASCII");
+        source.ShouldContain("OperatorApi.TaskTokenHeader", Case.Sensitive);
+        source.ShouldContain("\"/hold\"", Case.Sensitive);
+        source.ShouldContain("\"/ack\"", Case.Sensitive);
+        source.ShouldContain("\"--hold\"", Case.Sensitive);
+        source.ShouldContain("\"--ack\"", Case.Sensitive);
+        source.IndexOf("/api/agent-tasks", StringComparison.Ordinal).ShouldBe(-1);
     }
 
     [Test]
@@ -42,7 +45,7 @@ public sealed class KeepSixDocumentationTests
             && !line.StartsWith("- An orchestrator working a board", StringComparison.Ordinal))
             .ToArray();
         bullets.Length.ShouldBe(1);
-        bullets[0].ShouldContain("scripts/keep-six.ps1", Case.Sensitive);
+        bullets[0].ShouldContain("scripts/antiphon keep-six", Case.Sensitive);
 
         var loop = Read("docs", "orchestration-loop.md");
         var policy = loop.IndexOf("### Standing pipeline policy", StringComparison.Ordinal);
@@ -57,7 +60,7 @@ public sealed class KeepSixDocumentationTests
         var section = next < 0 ? window[sectionAt..] : window[sectionAt..next];
         section.ShouldContain("server setting", Case.Sensitive);
         section.ShouldContain("The server does not dispatch", Case.Sensitive);
-        section.ShouldContain("scripts/keep-six.ps1", Case.Sensitive);
+        section.ShouldContain("scripts/antiphon keep-six", Case.Sensitive);
     }
 
     [Test]

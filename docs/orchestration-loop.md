@@ -665,7 +665,7 @@ The in-flight target is a server setting, one row per standing orchestrator, def
 `GET /api/orchestrators/keep-six` lists it, and section 9 of the orchestrator instructions
 renders a row only when that row is enabled or held. A reminder names the shortfall. Dispatch
 up to that shortfall under the same pipeline rules, or declare a hold with
-`scripts/keep-six.ps1`. The server does not dispatch.
+`scripts/antiphon keep-six` (`scripts\antiphon.cmd keep-six` on Windows). The server does not dispatch.
 
 <a id="standing-operating-rules"></a>
 ### Standing operating rules (operator, 2026-10-22; CARD-1469)
@@ -1688,7 +1688,7 @@ their existing checks.
 
 A Queued runner-bound task whose mirror is not recorded yet stays Queued. Its deduplicated `Held` detail is one of three texts: remote workspace preparation is in flight (the branch push and mirror were requested); preparation failed N times in a row and the next attempt is not before an instant (exponential backoff, base 30 seconds, cap 900 seconds, reset when the mirror is recorded); or the runner is not dispatch-eligible. Those traces are not a warning on every tick. A warning is written once per failed preparation attempt.
 
-The preparer pushes that branch with `git push origin <branch>` and no `-u` (CARD-1076). The desktop task branch does not track origin, so the worktree does not show itself ahead of or behind `origin/<branch>`. The objects are still on origin for the runner to fetch. One push runs at a time per repository, inside the preparer and off the dispatcher tick; a task waiting for its turn stays in flight. `RemoteWorkspacePreparer.Progress().BehindTaskId` is the current push-gate holder while that task waits for its turn (CARD-1093), read under the gate lock on each call. A waiter names whoever holds the turn now. It is null when that task is pushing or mirroring, and null while the holder is empty. The push budget is `Delegation:RemotePrepPushBudgetMinutes` (default 20, floor 1). The child journal is tagged purpose `remote-prep-push` with the task id. A live record with that purpose does not fence the repository mutation lease. A dead, reused, or unknown record still fences, and the unavailable sentence still names `scripts/recover-repository-children.ps1` with `purpose=remote-prep-push` and the task id. When the pipeline shows `remotePrep` with a holder for many minutes, that holder's push is the upload to watch. Do not run `recover-repository-children.ps1` against that live record, and do not restart the server: the push starts again from scratch.
+The preparer pushes that branch with `git push origin <branch>` and no `-u` (CARD-1076). The desktop task branch does not track origin, so the worktree does not show itself ahead of or behind `origin/<branch>`. The objects are still on origin for the runner to fetch. One push runs at a time per repository, inside the preparer and off the dispatcher tick; a task waiting for its turn stays in flight. `RemoteWorkspacePreparer.Progress().BehindTaskId` is the current push-gate holder while that task waits for its turn (CARD-1093), read under the gate lock on each call. A waiter names whoever holds the turn now. It is null when that task is pushing or mirroring, and null while the holder is empty. The push budget is `Delegation:RemotePrepPushBudgetMinutes` (default 20, floor 1). The child journal is tagged purpose `remote-prep-push` with the task id. A live record with that purpose does not fence the repository mutation lease. A dead, reused, or unknown record still fences, and the unavailable sentence still names `scripts/antiphon recover-repository-children` with `purpose=remote-prep-push` and the task id. When the pipeline shows `remotePrep` with a holder for many minutes, that holder's push is the upload to watch. Do not run `recover-repository-children` against that live record, and do not restart the server: the push starts again from scratch.
 
 `GET /api/agent-tasks/pipeline` queue reason `repositoryLease` is a current stint whose dominant class is the repository lease, not the latest sentence. When the top totals are equal, the class whose latest interval ends latest is dominant (CARD-1835). `heldBy` is the owner named by the latest lease sentence, else the task holding a running land on the same repository, else empty when the journal is only a fence. `remotePrep` is a stint whose dominant class is remote preparation. Its `heldBy` is that current push-gate holder from the status read, or empty. `siblingInspection` is a stint whose dominant class is same-card base inspection, and its `heldBy` is empty. A prepared workspace stays `awaitingDispatch` even when earlier preparation time dominates. `hostBudget` remains the runner-host budget reason.
 
@@ -2913,9 +2913,9 @@ worker death keeps admission held, including a dead or reused root PID: that PID
 prove all descendants exited. Malformed/torn records also hold. Do not unlink `landing.lock`,
 Git locks or uncertain child records to force admission; inspect the recorded process identity
 and surviving work first. Recovery never kills an unrelated process by PID alone.
-Use `pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository <checkout>`
+Use `scripts/antiphon recover-repository-children --repository <checkout>` (`scripts\antiphon.cmd` on Windows)
 to preview the records. After confirming the recorded children's descendants have exited,
-repeat with `-Execute -ConfirmDescendantsExited`. The command holds the same repository lock,
+repeat with `--execute --confirm-descendants-exited`. The command holds the same repository lock,
 clears only valid records whose exact PID/start identity is gone or whose owner recorded its
 root as already exited (`Completed`, CARD-0661: the PID is never looked up), and retains live, unreadable,
 malformed or torn evidence. Exit 3 means busy or retained evidence; exit 0 means none remains.

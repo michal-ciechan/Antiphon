@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 361,
+      "classes": 362,
       "reason": "allowlist"
     },
     {
@@ -1385,9 +1385,9 @@
     },
     {
       "path": "server/Domain/Entities/Agent.cs",
-      "classes": 197,
+      "classes": 198,
       "reason": "cap",
-      "owed": 172,
+      "owed": 173,
       "first": [
         "AgentTaskCardBindingTests",
         "AgentTaskDeliveryWatchdogTests",
@@ -2174,9 +2174,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 42,
+      "classes": 45,
       "reason": "cap",
-      "owed": 17,
+      "owed": 20,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
@@ -2432,9 +2432,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/ScratchGitRepo.cs",
-      "classes": 84,
+      "classes": 85,
       "reason": "cap",
-      "owed": 59,
+      "owed": 60,
       "first": [
         "AgentTaskServiceIntegrationTests",
         "CardFileGitFailureAcceptanceTests",
@@ -4017,13 +4017,6 @@
       ]
     },
     {
-      "path": "scripts/keep-six.ps1",
-      "classes": [
-        "KeepSixDocumentationTests",
-        "KeepSixReminderTests"
-      ]
-    },
-    {
       "path": "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs",
       "classes": [
         "AwayDigestSendTests"
@@ -4517,12 +4510,6 @@
       "classes": [
         "CheckpointColdBuildTests",
         "CheckpointLargeStampScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/runner-slots.ps1",
-      "classes": [
-        "DockerStackContractTests"
       ]
     },
     {
@@ -25705,6 +25692,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
+        "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
@@ -25719,6 +25707,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
+        "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
@@ -25732,6 +25721,7 @@
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
+        "RepositoryChildRecoveryCommandTests",
         "ToolchainFloorWarningTests",
         "ZombieAgentReaperTests"
       ]
@@ -25898,6 +25888,7 @@
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ExpectedDurationSyncTests",
+        "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
@@ -25917,6 +25908,7 @@
         "ReleaseGateLibraryTests",
         "ReleaseGatePlatformTests",
         "ReleaseStatusTests",
+        "RepositoryChildRecoveryCommandTests",
         "ZombieAgentReaperTests"
       ]
     },
@@ -26077,7 +26069,9 @@
       "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
       "classes": [
         "C1960WorkspaceSlotsScriptTests",
+        "KeepSixCommandTests",
         "RunnerDrainScriptTests",
+        "RunnerSlotsCommandTests",
         "WorktreeResidueScriptTests"
       ]
     },
@@ -28079,6 +28073,14 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/RepositoryLeaseCrashWorker.cs",
       "classes": [
+        "RepositoryMutationLeaseTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/RepositoryRecoveryCommand.cs",
+      "classes": [
+        "LandingGitTests",
+        "RepositoryChildRecoveryTests",
         "RepositoryMutationLeaseTests"
       ]
     },

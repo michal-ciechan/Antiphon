@@ -1,5 +1,5 @@
 # CARD-0727 D-17. Run from the desktop after Review, never on server2.
-# The operator token is read from the same owner-only file as runner-slots.ps1.
+# The operator token is read from the same owner-only file as the runner-slots command.
 # This script requires PowerShell 7.
 # CARD-1777. ANTIPHON_API is required. There is no localhost:17202 default.
 # An unset or whitespace value exits 2 before any operator-token read or docker call.

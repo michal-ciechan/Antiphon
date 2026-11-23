@@ -31,7 +31,7 @@ public sealed class RepositoryMutationLeaseDescribeTests
         var described = await leases.DescribeUnavailableAsync(repo.Path, ct);
         described.ShouldNotBeNull();
         described.ShouldContain("children");
-        described.ShouldContain("recover-repository-children.ps1");
+        described.ShouldContain("scripts/antiphon recover-repository-children");
 
         File.Delete(Path.Combine(children, "not-a-journal.txt"));
         await using var after = await leases.TryAcquireAsync(repo.Path, ct);

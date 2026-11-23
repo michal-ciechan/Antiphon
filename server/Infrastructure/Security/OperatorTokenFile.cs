@@ -10,7 +10,7 @@ namespace Antiphon.Server.Infrastructure.Security;
 /// <summary>
 /// CARD-0653: the credential behind the operator-only force-release routes. A random value in a
 /// file only the operator's own account can read (Windows: owner-only ACL, set at creation; else
-/// mode 0600). The server creates it; <c>scripts/runner-slots.ps1</c> reads it and sends it as
+/// mode 0600). The server creates it; the <c>runner-slots</c> command reads it and sends it as
 /// <see cref="Header"/>. A loopback address is not a credential: the public vhost reaches Kestrel
 /// through Caddy and Vite as a loopback connection. The value is never logged or echoed.
 /// </summary>

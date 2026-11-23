@@ -77,10 +77,10 @@ public sealed class RunnerAlarmAttentionTests
         row.Severity.ShouldBe(AlertSeverity.Error);
         row.Title.ShouldBe("Repository fenced: " + repositoryA);
         row.Headline.ShouldBe("2 stale child-journal record(s) (Dead, Unknown) fence every land and dispatch here; oldest 11 min.");
-        var command = "pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository " + repositoryA;
+        var command = "scripts/antiphon recover-repository-children --repository " + repositoryA;
         row.Evidence.ShouldContain("Recovery: run " + command + " first (preview), then "
-            + command + " -Execute -ConfirmDescendantsExited after confirming the descendants exited.");
-        row.Evidence.ShouldContain("Unknown or malformed records are retained by the script and need inspection.");
+            + command + " --execute --confirm-descendants-exited after confirming the descendants exited.");
+        row.Evidence.ShouldContain("Unknown or malformed records are retained by the command and need inspection.");
         var recordLines = row.Evidence.Split('\n').Where(line => line.StartsWith("file=", StringComparison.Ordinal)).ToList();
         recordLines.Count.ShouldBe(3);
         recordLines.ShouldContain($"file=dead-old; state=Dead; ageSeconds=660; pid=42; writtenAt={old:O}");

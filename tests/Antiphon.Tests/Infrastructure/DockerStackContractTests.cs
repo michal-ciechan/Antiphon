@@ -221,7 +221,7 @@ public sealed class DockerStackContractTests
         var stack = DockerStackDocuments.Read("docs/docker-stack.md");
         stack.ShouldContain("PhoneHome__Capacity");
         stack.ShouldContain("\"10\"");
-        stack.ShouldContain("scripts/runner-slots.ps1");
+        stack.ShouldContain("scripts\\antiphon.cmd runner-slots");
     }
 
     [Test]

@@ -81,7 +81,7 @@ public sealed partial class DispatchHoldVisibilityTests
         var lease = new FakeLease
         {
             Held = true,
-            UnavailableReason = "unfinished repository child journal under C:\\tmp\\antiphon\\children; run scripts/recover-repository-children.ps1",
+            UnavailableReason = "unfinished repository child journal under C:\\tmp\\antiphon\\children; run scripts/antiphon recover-repository-children",
         };
         await using var world = CreateWorld(schema.ConnectionString, clock, lease);
         var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
@@ -94,7 +94,7 @@ public sealed partial class DispatchHoldVisibilityTests
         await using var verify = CreateContext(schema);
         var held = await HeldAsync(verify, queued.Id);
         held.Count.ShouldBe(1);
-        held[0].Detail.ShouldContain("recover-repository-children.ps1");
+        held[0].Detail.ShouldContain("scripts/antiphon recover-repository-children");
         held[0].Detail.ShouldBe(DispatchHoldDetails.LeaseFenced(lease.UnavailableReason!));
     }
 

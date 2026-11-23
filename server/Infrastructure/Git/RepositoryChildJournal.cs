@@ -96,7 +96,7 @@ internal sealed class RepositoryChildJournal
 
     /// <summary>Removes this journal without a Process handle. The caller has already observed the
     /// root exit and is invoking this only once both redirected streams have closed. A server crash
-    /// before that leaves the file for recover-repository-children.ps1.</summary>
+    /// before that leaves the file for the recover-repository-children command.</summary>
     internal void StreamsClosed() => Remove();
 
     /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
@@ -133,7 +133,7 @@ internal sealed class RepositoryChildJournal
                 // Do not clear or reinterpret an undeletable record. It remains the standing
                 // admission fence even if the caller unwinds and closes landing.lock.
                 _record = _record with { CleanupFailure = "delete_failed" };
-                Console.Error.WriteLine($"repository_child_journal_cleanup_failed path={_path}; run scripts/recover-repository-children.ps1");
+                Console.Error.WriteLine($"repository_child_journal_cleanup_failed path={_path}; run scripts/antiphon recover-repository-children");
                 try { SaveAsync(CancellationToken.None).GetAwaiter().GetResult(); }
                 catch (Exception saveError) when (saveError is IOException or UnauthorizedAccessException)
                 {
@@ -141,7 +141,7 @@ internal sealed class RepositoryChildJournal
                     // diagnostic even when its durable annotation cannot be written.
                     Console.Error.WriteLine($"repository_child_journal_cleanup_reason_unwritten path={_path}");
                 }
-                throw new IOException("repository_child_journal_cleanup_failed; run scripts/recover-repository-children.ps1", ex);
+                throw new IOException("repository_child_journal_cleanup_failed; run scripts/antiphon recover-repository-children", ex);
             }
         }
     }
@@ -264,7 +264,7 @@ internal sealed class RepositoryChildJournal
                 }
                 // A dead/reused root PID is not an acknowledged exit of its process tree.
                 // Only the owning invocation removes its journal after awaiting its child.
-                // recover-repository-children.ps1 provides explicit recovery after descendant inspection.
+                // The recover-repository-children command provides explicit recovery after descendant inspection.
                 return new FencingRecord(record?.Purpose, record?.TaskId);
             }
             return null;

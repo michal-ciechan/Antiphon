@@ -1388,7 +1388,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
             HangfireConfiguration.AddOrUpdateKeepSixJob(recurringJobManager);
         }
 
-        // CARD-0653: create the operator token now so scripts/runner-slots.ps1 can read it before
+        // CARD-0653: create the operator token now so the runner-slots command can read it before
         // the first force-release. Never logs the value.
         try
         {

@@ -132,12 +132,18 @@ namespace Antiphon.Scripts
             // stderr line). runner-drain: 0 done, 1 not eligible, failed or no token file. workspace-slots: 0 every runner
             // answered (release: removed), 1 a call failed (release: refused or removal_failed), 2 an unreadable token file.
             // herdr-pane: 0 answered or dry run, 1 the request failed. worktree-residue: 0 done, 1 a request or batch item failed.
-            // Usage is 2 for each.
+            // runner-slots (unit 23): 0 answered, 1 failed or no token file. keep-six (unit 23): 0 answered, 1 a refused value, no
+            // task token or a failed request. Usage is 2 for each.
             [OperatorCommands.HostLoad] = OperatorCommands.RunHostLoad,
             [OperatorCommands.RunnerDrain] = OperatorCommands.RunRunnerDrain,
             [OperatorCommands.WorkspaceSlots] = OperatorCommands.RunWorkspaceSlots,
             [OperatorCommands.HerdrPane] = OperatorCommands.RunHerdrPane,
             [OperatorCommands.WorktreeResidue] = OperatorCommands.RunWorktreeResidue,
+            [OperatorCommands.RunnerSlots] = OperatorCommands.RunRunnerSlots,
+            [OperatorCommands.KeepSix] = OperatorCommands.RunKeepSix,
+            // The repository child journal recovery answers every input itself (unit 23): exit 0 no record retained, 3 busy,
+            // retained, unconfirmed or refused, 2 usage.
+            [RecoverRepositoryChildrenCommand.Name] = RecoverRepositoryChildrenCommand.Run,
             // The cleanups answer every input themselves (unit 21). cleanup-build-junk: exit 0. cleanup-codex-test-residue: 0 done,
             // 1 the threads could not be read, 4 over --max-per-run, 5 a delete failed. Usage is 2 for each.
             [CleanupCommands.BuildJunk] = CleanupCommands.RunBuildJunk,
@@ -183,7 +189,8 @@ namespace Antiphon.Scripts
                 + " | " + ReleaseCandidateCommand.Usage + " | " + ReleaseCutCommand.Usage
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
-                + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage);
+                + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
+                + " | " + RecoverRepositoryChildrenCommand.Usage);
             return Usage;
         }
 

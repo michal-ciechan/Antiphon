@@ -205,7 +205,7 @@ command-by-command example is the post-cut activation runbook
 `35ed9b229ed2ab9f44d0542f3156a26097118f39` on `origin/feat/card-task-33896114`).
 
 1. Status: `scripts\antiphon.cmd runner-drain status --runner-id server2` (and
-   `server2-temp`), `pwsh -NoProfile -File scripts/runner-slots.ps1 list -RunnerId server2`.
+   `server2-temp`), `scripts\antiphon.cmd runner-slots list --runner-id server2`.
 2. `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census`
 3. `… -Phase check-host-jq` (on `HostJqMissing` only: `-Phase provision-host-jq`, as the runbook says).
 4. Cache prep: `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>`,
@@ -221,7 +221,7 @@ command-by-command example is the post-cut activation runbook
    Require `codex-cli <new>`. Then a sanctioned Plan canary `-Runner server2-temp -NoCommit`.
 7. `… -Phase drain-old -WaitIdleMinutes 240`. `OldRunnerStillBusy` at 240 minutes is a report, not
    permission; the four-hour cap allows releasing the remaining **server2** seats only
-   (`scripts/runner-slots.ps1 release`, see the gate table).
+   (`scripts\antiphon.cmd runner-slots release`, see the gate table).
 8. `… -Phase redeploy-old` only when server2 `sessions`, `runnerSessions`, `queuedTasks` are zero.
 9. Smoke server2 the same way (project `antiphon-runner`), a Plan canary `-Runner server2 -NoCommit`,
    then `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`.

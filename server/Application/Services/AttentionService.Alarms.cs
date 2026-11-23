@@ -44,11 +44,11 @@ public sealed partial class AttentionService
                 : "unknown";
             var states = string.Join(", ", stale.Select(record => record.State).Distinct());
             var commonKey = Path.TrimEndingDirectorySeparator(Path.GetFullPath(finding.CommonDirectory));
-            var command = $"pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository {finding.Repository}";
+            var command = $"scripts/antiphon recover-repository-children --repository {finding.Repository}";
             var evidence = new List<string>
             {
                 $"common={commonKey}; records:",
-                $"Recovery: run {command} first (preview), then {command} -Execute -ConfirmDescendantsExited after confirming the descendants exited. Unknown or malformed records are retained by the script and need inspection.",
+                $"Recovery: run {command} first (preview), then {command} --execute --confirm-descendants-exited after confirming the descendants exited. Unknown or malformed records are retained by the command and need inspection.",
             };
             evidence.AddRange(finding.Records.OrderBy(record => record.WrittenAt).Select(record =>
                 $"file={record.File}; state={record.State}; "

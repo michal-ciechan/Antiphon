@@ -191,7 +191,7 @@ public sealed class RepositoryMutationLeaseTests
         await lease.DisposeAsync();
         await using var fenced = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
         fenced.ShouldBeNull("releasing the OS handle must not admit a writer across failed cleanup");
-        (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None)).ShouldContain("recover-repository-children.ps1");
+        (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None)).ShouldContain("scripts/antiphon recover-repository-children");
     }
 
     // Group 111 (run aa64a906): a reader holding the journal on Windows denied StartedAsync's replace.
@@ -561,26 +561,33 @@ public sealed class RepositoryMutationLeaseTests
             process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
             await process.WaitForExitAsync();
             child.HasExited.ShouldBeFalse();
-            var recoveryWorker = Path.Combine(fixture.Root, "recovery-worker.ps1");
-            var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
             var liveSnapshot = Path.Combine(fixture.Root, "live-child-before-recovery.json");
             var recordPath = Directory.EnumerateFiles(directory, "*.json").Single();
-            await File.WriteAllTextAsync(recoveryWorker, RepositoryLeaseCrashWorker.RecoveryScript);
-            await RunChildAsync("pwsh", ["-NoProfile", "-File", recoveryWorker,
-                typeof(LandingGit).Assembly.Location, fixture.Source, fixture.Repository, recoveryEvidence,
-                recordPath, Path.Combine(FindRepositoryRoot(), "scripts", "recover-repository-children.ps1"),
-                child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), liveSnapshot], expectedExit: 0);
+            // Linux's Process.StartTime wall-clock conversion can shift across processes (CARD-0668): the killed worker read
+            // the child's identity in its own process. Re-seed it with this process's reading, the reader the in-process
+            // recovery command uses, as in the D1 live-recovery case, and keep those bytes.
+            var recorded = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllBytesAsync(recordPath))
+                .ShouldNotBeNull();
+            recorded.ProcessId.ShouldBe(child.Id, "the worker recorded the live child");
+            recorded.StartTicks.ShouldNotBeNull().ShouldBeGreaterThan(0);
+            var reseeded = recorded with { StartTicks = RepositoryRecoveryCommand.StartTicks(child.Id) };
+            await File.WriteAllTextAsync(recordPath, System.Text.Json.JsonSerializer.Serialize(reseeded));
+            File.Copy(recordPath, liveSnapshot);
+            // A fresh lease provider on a plain LandingGit (as after the worker's death) is fenced for both checkouts, before
+            // and after a confirmed recovery, which retains the live record.
+            var fresh = new RepositoryMutationLease(new LandingGit());
+            var heldBefore = await FencedAsync(fresh, fixture.Source, fixture.Repository);
+            heldBefore.ShouldBeTrue("the live recorded child fences the source and the main checkout");
+            var recovery = RepositoryRecoveryCommand.Run(fixture.Source, "--execute", "--confirm-descendants-exited");
+            recovery.Exit.ShouldBe(3, recovery.Error + recovery.Output);
+            recovery.Output.ShouldContain("retained (alive): ");
+            recovery.Output.ShouldNotContain("recovered (");
+            (await FencedAsync(fresh, fixture.Source, fixture.Repository)).ShouldBeTrue("recovery retains the live child's fence");
             (await File.ReadAllBytesAsync(recordPath)).ShouldBe(await File.ReadAllBytesAsync(liveSnapshot));
-            using (var recovery = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(recoveryEvidence)))
+            LandingEvidence.Write(fixture.TaskId, "C24_recovery_worker", new
             {
-                recovery.RootElement.GetProperty("Worker").GetInt32().ShouldNotBe(Environment.ProcessId);
-                recovery.RootElement.GetProperty("HeldSource").GetBoolean().ShouldBeTrue();
-                recovery.RootElement.GetProperty("HeldMain").GetBoolean().ShouldBeTrue();
-                recovery.RootElement.GetProperty("Child").GetInt32().ShouldBe(child.Id);
-                recovery.RootElement.GetProperty("StartTicks").GetInt64().ShouldBeGreaterThan(0);
-                recovery.RootElement.GetProperty("RecoveryExit").GetInt32().ShouldBe(3);
-                LandingEvidence.Write(fixture.TaskId, "C24_recovery_worker", recovery.RootElement);
-            }
+                Child = child.Id, StartTicks = reseeded.StartTicks, HeldSource = true, HeldMain = true, RecoveryExit = recovery.Exit,
+            });
             var provider = new RepositoryMutationLease(fixture.Git);
             child.HasExited.ShouldBeFalse();
             unrelated.HasExited.ShouldBeFalse("worker recovery must not terminate an unrelated fixture process");
@@ -589,9 +596,9 @@ public sealed class RepositoryMutationLeaseTests
             await child.WaitForExitAsync();
             await using (var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None))
                 after.ShouldBeNull("worker death alone cannot acknowledge descendant completion");
-            await RecoverChildrenAsync(fixture.Source, 3); // Preview retains even confirmed-dead records.
-            await RecoverChildrenAsync(fixture.Source, 3, "-Execute"); // Descendant confirmation is required.
-            await RecoverChildrenAsync(fixture.Source, 0, "-Execute", "-ConfirmDescendantsExited");
+            RecoverChildren(fixture.Source, 3); // Preview retains even confirmed-dead records.
+            RecoverChildren(fixture.Source, 3, "--execute"); // Descendant confirmation is required.
+            RecoverChildren(fixture.Source, 0, "--execute", "--confirm-descendants-exited");
             await using var recovered = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
             recovered.ShouldNotBeNull("explicit recovery after the owned tree exits must restore repository admission");
             File.Exists(Path.Combine(common, "antiphon", "landing.lock")).ShouldBeTrue();
@@ -614,39 +621,24 @@ public sealed class RepositoryMutationLeaseTests
             "the hook's sleep must not outlive the test (run ae84478d antiphon all-group-118 completed-but-hung)");
     }
 
-    private static string FindRepositoryRoot()
+    // The recover-repository-children command (unit 23 of the 2026-11-22 plan) in this process.
+    private static void RecoverChildren(string repository, int expectedExit, params string[] options)
     {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        return root.ShouldNotBeNull().FullName;
+        var run = RepositoryRecoveryCommand.Run(repository, options);
+        run.Exit.ShouldBe(expectedExit, run.Error + run.Output);
     }
 
-    private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
+    // True when no lease can be taken for any of the checkouts (each one tried is released at once).
+    private static async Task<bool> FencedAsync(RepositoryMutationLease leases, params string[] repositories)
     {
-        await RunChildAsync("pwsh", ["-NoProfile", "-File",
-            Path.Combine(FindRepositoryRoot(), "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options], expectedExit);
-    }
-
-    private static async Task RunChildAsync(string executable, string[] arguments, int expectedExit)
-    {
-        var start = new ProcessStartInfo(executable)
+        foreach (var repository in repositories)
         {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var child = Process.Start(start)!;
-        var output = child.StandardOutput.ReadToEndAsync();
-        var error = child.StandardError.ReadToEndAsync();
-        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await child.WaitForExitAsync(budget.Token); }
-        catch (OperationCanceledException)
-        {
-            if (!child.HasExited) child.Kill(entireProcessTree: true);
-            await child.WaitForExitAsync();
-            throw;
+            var lease = await leases.TryAcquireAsync(repository, CancellationToken.None);
+            if (lease is null) continue;
+            await lease.DisposeAsync();
+            return false;
         }
-        await Task.WhenAll(output, error);
-        child.ExitCode.ShouldBe(expectedExit, await error);
+        return true;
     }
 
     [Test]
@@ -793,7 +785,7 @@ public sealed class RepositoryMutationLeaseTests
             {
                 admitted.ShouldBeNull();
                 described.ShouldNotBeNull();
-                described.ShouldContain("recover-repository-children.ps1");
+                described.ShouldContain("scripts/antiphon recover-repository-children");
                 described.ShouldContain("purpose=remote-prep-push");
                 described.ShouldContain(taskId.ToString("N"));
             }

@@ -268,7 +268,7 @@ qualification artifact record the destination only as `sha256(chatId)[..16]`. Na
 `X-Antiphon-Operator-Token`. The value is 32 random bytes (hex) in an owner-only file the server creates
 at startup or on first use: `%LOCALAPPDATA%\Antiphon\operator-token` on Windows (protected ACL, one allow
 rule for the server's own account, same pattern as the key ring), else `$XDG_DATA_HOME/antiphon/operator-token`
-(mode 0600). Override with `Operator:TokenPath` (absolute; the CARD-0653 key `PhoneHomeRunner:OperatorTokenPath` is still honoured as an alias when it is unset, CARD-0676). First-use creation publishes the value only under a free name (a no-overwrite move on Windows, a hard link on Unix), so concurrent first callers all get the one token. `scripts/runner-slots.ps1` reads it
+(mode 0600). Override with `Operator:TokenPath` (absolute; the CARD-0653 key `PhoneHomeRunner:OperatorTokenPath` is still honoured as an alias when it is unset, CARD-0676). First-use creation publishes the value only under a free name (a no-overwrite move on Windows, a hard link on Unix), so concurrent first callers all get the one token. The `runner-slots` command (`scripts\antiphon.cmd runner-slots`) reads it
 (`ANTIPHON_OPERATOR_TOKEN_FILE` overrides the path) and never prints it; the server compares it in constant
 time and never logs it. Rotate by deleting the file and restarting the server. A loopback client address is not
 a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback, and `X-Forwarded-*` is

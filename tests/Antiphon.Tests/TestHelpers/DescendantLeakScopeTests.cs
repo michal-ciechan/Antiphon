@@ -119,7 +119,7 @@ public sealed class DescendantLeakScopeTests
             "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs"))
             .ReplaceLineEndings("\n");
         var start = source.IndexOf("Task C448_C24_KilledWorkerLeavesLiveGitChildFenced", StringComparison.Ordinal);
-        var end = source.IndexOf("private static string FindRepositoryRoot", start, StringComparison.Ordinal);
+        var end = source.IndexOf("private static void RecoverChildren", start, StringComparison.Ordinal);
         var body = source[start..end];
         var tryAt = body.IndexOf("\n        try\n", StringComparison.Ordinal);
         var adopt = body.IndexOf("leaks.AdoptOrKill(process)", StringComparison.Ordinal);

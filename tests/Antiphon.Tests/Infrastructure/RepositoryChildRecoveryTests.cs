@@ -9,11 +9,19 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
+/// <summary>
+/// CARD-0448, CARD-0452, CARD-0661, CARD-1092. The server's child journal and lease fence against the recover-repository-children
+/// command (Antiphon.Nightly.RepositoryChildRecovery, which replaced scripts/recover-repository-children.ps1 in unit 23 of the
+/// 2026-11-22 plan), run in this process on real repositories, records and processes.
+/// </summary>
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RepositoryChildRecoveryTests
 {
+    private const string Execute = "--execute";
+    private const string Confirm = "--confirm-descendants-exited";
+
     [Test]
     public async Task C452_R3_FirstSaveCrashLeavesNoAdmissionFence()
     {
@@ -29,8 +37,8 @@ public sealed class RepositoryChildRecoveryTests
         var provider = new RepositoryMutationLease(git);
         await using (var admission = await provider.TryAcquireAsync(repo.Path, CancellationToken.None))
             admission.ShouldNotBeNull();
-        (await RecoverAsync(repo.Path)).Exit.ShouldBe(0);
-        (await RecoverAsync(repo.Path, "-Execute", "-ConfirmDescendantsExited")).Exit.ShouldBe(0);
+        Recover(repo.Path).Exit.ShouldBe(0);
+        Recover(repo.Path, Execute, Confirm).Exit.ShouldBe(0);
         (await File.ReadAllBytesAsync(staged)).ShouldBe(stagedBytes);
     }
 
@@ -52,9 +60,9 @@ public sealed class RepositoryChildRecoveryTests
             await using (var fenced = await new RepositoryMutationLease(git).TryAcquireAsync(repo.Path, CancellationToken.None))
                 fenced.ShouldBeNull();
             (await File.ReadAllBytesAsync(record)).ShouldBe(oldBytes);
-            (await RecoverAsync(repo.Path)).Exit.ShouldBe(3);
-            (await RecoverAsync(repo.Path, "-Execute")).Exit.ShouldBe(3);
-            var confirmed = await RecoverAsync(repo.Path, "-Execute", "-ConfirmDescendantsExited");
+            Recover(repo.Path).Exit.ShouldBe(3);
+            Recover(repo.Path, Execute).Exit.ShouldBe(3);
+            var confirmed = Recover(repo.Path, Execute, Confirm);
             confirmed.Exit.ShouldBe(cut == "started" ? 3 : 0);
             if (cut == "started") (await File.ReadAllBytesAsync(record)).ShouldBe(oldBytes);
             else
@@ -86,9 +94,11 @@ public sealed class RepositoryChildRecoveryTests
             await File.WriteAllTextAsync(sibling, "owned staging bytes");
             await using (var fenced = await new RepositoryMutationLease(git).TryAcquireAsync(repo.Path, CancellationToken.None))
                 fenced.ShouldBeNull();
-            foreach (var options in new[] { Array.Empty<string>(), ["-Execute"], ["-Execute", "-ConfirmDescendantsExited"] })
+            foreach (var options in new[] { Array.Empty<string>(), [Execute], [Execute, Confirm] })
             {
-                (await RecoverAsync(repo.Path, options)).Exit.ShouldBe(3);
+                var run = Recover(repo.Path, options);
+                run.Exit.ShouldBe(3);
+                run.Output.ShouldContain("retained (unknown): " + sentinel);
                 (await File.ReadAllBytesAsync(sentinel)).ShouldBe(bytes);
                 (await File.ReadAllTextAsync(sibling)).ShouldBe("owned staging bytes");
             }
@@ -114,8 +124,10 @@ public sealed class RepositoryChildRecoveryTests
         using var child = StartSleeper();
         try
         {
+            // Linux Process.StartTime is derived from wall-clock boot time and shifts across separate readers (CARD-0668).
+            // The recovery runs in this process, so the identity is seeded with this process's own reading.
             if (state != "unknown")
-                await journal.StartedAsync(child.Id, await ReadScriptStartTicksAsync(child.Id)
+                await journal.StartedAsync(child.Id, RepositoryRecoveryCommand.StartTicks(child.Id)
                     + (state == "reused" ? TimeSpan.TicksPerSecond : 0), CancellationToken.None);
             var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
             if (state == "malformed") await File.WriteAllTextAsync(path, "invalid json");
@@ -125,16 +137,14 @@ public sealed class RepositoryChildRecoveryTests
                     new RepositoryChildJournal.ChildRecord(1, repo.WorktreeRoot, child.Id, child.StartTime.ToUniversalTime().Ticks)));
             var retainedHash = SHA256.HashData(await File.ReadAllBytesAsync(path));
             var recoverable = state == "reused";
-            if (state == "alive")
+            var run = Recover(repo.Path, Execute, Confirm);
+            run.Exit.ShouldBe(recoverable ? 0 : 3, run.Error + run.Output);
+            if (state == "alive") run.Output.ShouldContain("retained (alive): " + path);
+            if (state == "busy")
             {
-                // Linux Process.StartTime is derived from wall-clock boot time and shifts across
-                // separate readers (CARD-0668). Seed the live identity in the same PowerShell
-                // process that immediately runs the recovery script, then retain its pre-run bytes.
-                var snapshot = Path.Combine(repo.WorktreeRoot, "alive-before.json");
-                await RecoverLiveRecordAsync(repo.Path, path, snapshot);
-                retainedHash = SHA256.HashData(await File.ReadAllBytesAsync(snapshot));
+                run.Output.ShouldBeEmpty("a held lease refuses before any record is read");
+                run.Error.ShouldStartWith("WARNING: Repository recovery refused: ");
             }
-            else await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
             Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).Count().ShouldBe(recoverable ? 0 : 1);
             if (!recoverable) SHA256.HashData(await File.ReadAllBytesAsync(path)).ShouldBe(retainedHash);
             File.Exists(Path.Combine(common, "antiphon", "landing.lock")).ShouldBeTrue();
@@ -150,11 +160,11 @@ public sealed class RepositoryChildRecoveryTests
                 await File.WriteAllTextAsync(completedPath, JsonSerializer.Serialize(
                     new RepositoryChildJournal.ChildRecord(1, common, 999999, null, Completed: true)));
                 var completedBytes = await File.ReadAllBytesAsync(completedPath);
-                await RecoverChildrenAsync(repo.Path, 3, "-Execute", "-ConfirmDescendantsExited");
+                RecoverChildren(repo.Path, 3, Execute, Confirm);
                 (await File.ReadAllBytesAsync(completedPath)).ShouldBe(completedBytes);
                 child.HasExited.ShouldBeFalse();
                 await busy!.DisposeAsync();
-                await RecoverChildrenAsync(repo.Path, 0, "-Execute", "-ConfirmDescendantsExited");
+                RecoverChildren(repo.Path, 0, Execute, Confirm);
             }
         }
         finally
@@ -167,7 +177,7 @@ public sealed class RepositoryChildRecoveryTests
     // CARD-0661. A fast child's owner saw its exact handle exit before reading a start identity and
     // saved Completed=true with no StartTicks; the owner then crashed before draining its output.
     // The server keeps the record fencing admission (a restart cannot prove descendant exit), and
-    // the explicit script recovers it only after -Execute -ConfirmDescendantsExited. It must never
+    // the explicit command recovers it only after --execute --confirm-descendants-exited. It must never
     // look up the recorded PID's start time: that PID may be reused and Linux start times are
     // unstable across readers (CARD-0668). Incomplete or foreign completed records stay retained.
     [Test]
@@ -204,20 +214,22 @@ public sealed class RepositoryChildRecoveryTests
             await using (var fenced = await provider.TryAcquireAsync(repo.Path, CancellationToken.None))
                 fenced.ShouldBeNull("a completed root cannot prove its descendants exited");
             (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None))
-                .ShouldNotBeNull().ShouldContain("recover-repository-children.ps1");
+                .ShouldNotBeNull().ShouldContain("scripts/antiphon recover-repository-children");
         }
         File.Exists(path).ShouldBeTrue("the server never clears a child record on its own");
 
-        // Script path: preview and unconfirmed execution retain it.
-        await RecoverChildrenAsync(repo.Path, 3);
+        // Command path: preview and unconfirmed execution retain it.
+        RecoverChildren(repo.Path, 3);
         (await File.ReadAllBytesAsync(path)).ShouldBe(retainedBytes);
-        await RecoverChildrenAsync(repo.Path, 3, "-Execute");
+        RecoverChildren(repo.Path, 3, Execute);
         (await File.ReadAllBytesAsync(path)).ShouldBe(retainedBytes);
         File.Exists(path).ShouldBeTrue("recovery requires explicit descendant confirmation");
         unrelated.HasExited.ShouldBeFalse();
 
         var recoverable = state == "completed";
-        await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
+        var confirmed = Recover(repo.Path, Execute, Confirm);
+        confirmed.Exit.ShouldBe(recoverable ? 0 : 3, confirmed.Error + confirmed.Output);
+        confirmed.Output.ShouldContain(recoverable ? "recovered (completed): " + path : "retained (unknown): " + path);
         File.Exists(path).ShouldBe(!recoverable);
         await using var admission = await new RepositoryMutationLease(git).TryAcquireAsync(repo.Path, CancellationToken.None);
         if (recoverable) admission.ShouldNotBeNull("a confirmed completed record no longer fences the repository");
@@ -283,36 +295,35 @@ public sealed class RepositoryChildRecoveryTests
             Console.WriteLine($"C452_ALIAS raw={JsonSerializer.Serialize(raw)} canonical={JsonSerializer.Serialize(canonical)} expected={JsonSerializer.Serialize(Path.GetFullPath(admin))}");
             canonical.ShouldBe(Path.GetFullPath(admin));
             // Git may resolve the alias and still print '/' (--path-format=absolute on
-            // Windows). LandingGit and the recovery script already canonicalize that
-            // spelling. On Linux, git realpaths before rev-parse, so the script is shown
-            // the alias through a shim and must canonicalize it the same way.
-            IReadOnlyDictionary<string, string>? recoveryEnvironment = null;
+            // Windows). LandingGit and the recovery command already canonicalize that
+            // spelling. On Linux, git realpaths before rev-parse, so the command is shown
+            // the alias through its git seam and must canonicalize it the same way.
+            Antiphon.Nightly.NightlyGit recoveryGit = Antiphon.Nightly.NightlyNativeGit.Run;
             if (!raw.Contains("alias parent", StringComparison.Ordinal))
             {
                 SameGitCommonPath(raw, canonical).ShouldBeTrue();
                 if (OperatingSystem.IsLinux())
                 {
-                    var shimDirectory = Path.Combine(repo.WorktreeRoot, "git-shim");
-                    Directory.CreateDirectory(shimDirectory);
-                    var shim = Path.Combine(shimDirectory, "git");
-                    await File.WriteAllTextAsync(shim, "#!/bin/sh\nif [ \"$#\" -eq 5 ] && [ \"$1\" = '-C' ] && [ \"$3\" = 'rev-parse' ] && [ \"$4\" = '--path-format=absolute' ] && [ \"$5\" = '--git-common-dir' ]; then\n  printf '%s\\n' '" + Path.Combine(aliasParent, "admin") + "'\nelse\n  exec /usr/bin/git \"$@\"\nfi\n");
-                    File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                    recoveryEnvironment = new Dictionary<string, string> { ["PATH"] = shimDirectory + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") };
+                    var alias = Path.Combine(aliasParent, "admin");
+                    recoveryGit = (directory, arguments) =>
+                        arguments.SequenceEqual(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+                            ? new Antiphon.Nightly.NightlyGitResult(0, alias + Environment.NewLine)
+                            : Antiphon.Nightly.NightlyNativeGit.Run(directory, arguments);
                 }
             }
             else raw.ShouldContain("alias parent");
-            Task<(int Exit, string Output, string Error)> RecoverAliasedAsync(params string[] options) =>
-                RecoverAsync(repo.Path, recoveryEnvironment, options);
+            (int Exit, string Output, string Error) RecoverAliased(params string[] options) =>
+                RepositoryRecoveryCommand.RunWithGit(repo.Path, recoveryGit, options);
             await RepositoryChildJournal.BeginAsync(repo.Path, CancellationToken.None);
             var record = Directory.EnumerateFiles(Path.Combine(canonical, "antiphon", "children"), "*.json").Single();
             var complete = new RepositoryChildJournal.ChildRecord(1, canonical, 999999, null, Completed: true);
             await File.WriteAllTextAsync(record, JsonSerializer.Serialize(complete));
             var bytes = await File.ReadAllBytesAsync(record);
-            (await RecoverAliasedAsync()).Exit.ShouldBe(3);
+            RecoverAliased().Exit.ShouldBe(3);
             (await File.ReadAllBytesAsync(record)).ShouldBe(bytes);
-            (await RecoverAliasedAsync("-Execute")).Exit.ShouldBe(3);
+            RecoverAliased(Execute).Exit.ShouldBe(3);
             (await File.ReadAllBytesAsync(record)).ShouldBe(bytes);
-            var confirmed = await RecoverAliasedAsync("-Execute", "-ConfirmDescendantsExited");
+            var confirmed = RecoverAliased(Execute, Confirm);
             confirmed.Exit.ShouldBe(0, confirmed.Error + confirmed.Output);
             File.Exists(record).ShouldBeFalse();
             File.Exists(Path.Combine(canonical, "antiphon", "landing.lock")).ShouldBeTrue();
@@ -327,7 +338,7 @@ public sealed class RepositoryChildRecoveryTests
             var foreignRecord = new RepositoryChildJournal.ChildRecord(1, foreignCommon, 999999, null, Completed: true);
             await File.WriteAllTextAsync(record, JsonSerializer.Serialize(foreignRecord));
             var foreignBytes = await File.ReadAllBytesAsync(record);
-            (await RecoverAliasedAsync("-Execute", "-ConfirmDescendantsExited")).Exit.ShouldBe(3);
+            RecoverAliased(Execute, Confirm).Exit.ShouldBe(3);
             (await File.ReadAllBytesAsync(record)).ShouldBe(foreignBytes);
             Directory.Exists(foreign.Path).ShouldBeTrue();
             File.Delete(record);
@@ -361,20 +372,22 @@ public sealed class RepositoryChildRecoveryTests
         var fenceSuffix = "(purpose=" + RepositoryChildPurposes.RemotePrepPush + " task=" + taskId.ToString("N") + ")";
         described.ShouldNotBeNull().ShouldContain(fenceSuffix);
         described.ShouldNotContain(taskId.ToString("D"));
+        described.ShouldEndWith("; run scripts/antiphon recover-repository-children");
 
-        var preview = await RecoverAsync(repo.Path);
+        var preview = Recover(repo.Path);
         preview.Exit.ShouldBe(3, preview.Error + preview.Output);
-        var scriptSuffix = " purpose=" + RepositoryChildPurposes.RemotePrepPush + " task=" + taskId.ToString("N");
-        preview.Output.ShouldContain("retained (unknown): " + recordPath + scriptSuffix);
+        var commandSuffix = " purpose=" + RepositoryChildPurposes.RemotePrepPush + " task=" + taskId.ToString("N");
+        preview.Output.ShouldContain("retained (unknown): " + recordPath + commandSuffix);
         preview.Output.ShouldNotContain(taskId.ToString("D"));
+        preview.Output.ShouldContain(Antiphon.Nightly.RepositoryChildRecovery.Hint);
     }
 
-    private static Task<(int Exit, string Output, string Error)> RecoverAsync(string repository, params string[] options) =>
-        RecoverAsync(repository, null, options);
+    private static (int Exit, string Output, string Error) Recover(string repository, params string[] options) =>
+        RepositoryRecoveryCommand.Run(repository, options);
 
-    private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
+    private static void RecoverChildren(string repository, int expectedExit, params string[] options)
     {
-        var result = await RecoverAsync(repository, options);
+        var result = Recover(repository, options);
         result.Exit.ShouldBe(expectedExit, result.Error + result.Output);
     }
 
@@ -383,59 +396,6 @@ public sealed class RepositoryChildRecoveryTests
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true };
         foreach (var arg in new[] { "-NoProfile", "-Command", "Start-Sleep -Seconds 90" }) start.ArgumentList.Add(arg);
         return Process.Start(start)!;
-    }
-
-    private static async Task<long> ReadScriptStartTicksAsync(int processId)
-    {
-        var read = await RunProcessAsync("pwsh", ["-NoProfile", "-Command",
-            "[Diagnostics.Process]::GetProcessById([int]$env:ANTIPHON_C452_READ_PID).StartTime.ToUniversalTime().Ticks"],
-            new Dictionary<string, string> { ["ANTIPHON_C452_READ_PID"] = processId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
-        read.Exit.ShouldBe(0, read.Error);
-        return long.Parse(read.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static async Task RecoverLiveRecordAsync(string repository, string record, string snapshot)
-    {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        root.ShouldNotBeNull();
-        var script = Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1");
-        var command = """
-            $record = Get-Content -LiteralPath $env:ANTIPHON_C452_RECORD -Raw | ConvertFrom-Json
-            $record.StartTicks = [Diagnostics.Process]::GetProcessById([int]$record.ProcessId).StartTime.ToUniversalTime().Ticks
-            [IO.File]::WriteAllText($env:ANTIPHON_C452_RECORD, ($record | ConvertTo-Json -Compress))
-            [IO.File]::Copy($env:ANTIPHON_C452_RECORD, $env:ANTIPHON_C452_SNAPSHOT)
-            & $env:ANTIPHON_C452_SCRIPT -Repository $env:ANTIPHON_C452_REPOSITORY -Execute -ConfirmDescendantsExited
-            exit $LASTEXITCODE
-            """;
-        var wrapper = Path.Combine(Path.GetDirectoryName(snapshot)!, "alive-recover.ps1");
-        await File.WriteAllTextAsync(wrapper, command);
-        var result = await RunProcessAsync("pwsh", ["-NoProfile", "-File", wrapper],
-            new Dictionary<string, string> {
-                ["ANTIPHON_C452_RECORD"] = record, ["ANTIPHON_C452_SNAPSHOT"] = snapshot,
-                ["ANTIPHON_C452_SCRIPT"] = script, ["ANTIPHON_C452_REPOSITORY"] = repository,
-            });
-        result.Exit.ShouldBe(3, result.Error + result.Output);
-        File.Exists(snapshot).ShouldBeTrue();
-    }
-
-    private static async Task<(int Exit, string Output, string Error)> RecoverAsync(string repository,
-        IReadOnlyDictionary<string, string>? environment, params string[] options)
-    {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        root.ShouldNotBeNull();
-        string[] arguments = ["-NoProfile", "-File",
-            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options];
-        var result = await RunProcessAsync("pwsh", arguments, environment);
-        Console.WriteLine($"C452_RECOVERY shell=pwsh exit={result.Exit} stdout={result.Output} stderr={result.Error}");
-        if (OperatingSystem.IsWindows())
-        {
-            var legacy = await RunProcessAsync("powershell.exe", arguments, environment);
-            Console.WriteLine($"C452_RECOVERY shell=powershell.exe exit={legacy.Exit} stdout={legacy.Output} stderr={legacy.Error}");
-            legacy.Exit.ShouldBe(result.Exit, "Windows PowerShell 5.1 must make the same recovery decision");
-        }
-        return result;
     }
 
     private static async Task<string> CrashBeforeReplaceAsync(string repository, string cut, string readyRoot)

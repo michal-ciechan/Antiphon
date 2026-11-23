@@ -339,7 +339,7 @@ public class LandingGit : ILandingGit
             throw;
         }
         // Any other start failure is ambiguous (Windows builds the redirected streams after
-        // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
+        // CreateProcess), so its record stands as a fence for the recover-repository-children command.
         var process = child ?? throw new IOException("git_start_failed");
         owned?.Attach(process, WriteChildLog);
         var disposeProcess = true;
@@ -372,7 +372,7 @@ public class LandingGit : ILandingGit
                 // KillDrainGrace bounds the drain: a grandchild the tree kill cannot see must not
                 // extend this past the budget by its own lifetime (CARD-1076, Windows 30.5s on a 2s budget).
                 // The journal is removed only once the abandoned streams close, so a crash while the
-                // holder lives still leaves a record for recover-repository-children.ps1.
+                // holder lives still leaves a record for the recover-repository-children command.
                 var handedOff = false;
                 var drained = false;
                 try
@@ -1296,7 +1296,7 @@ public class LandingGit : ILandingGit
         // CARD-1432 D2 (Review 9e126982): the update-ref --stdin deletion batch is a mutating child like
         // every other update-ref, so it carries the same standing journal record (begin, started,
         // exited, not-started) as ExecuteProcessAsync. A server death mid-batch then stays visible
-        // to the lease fence and recover-repository-children.ps1.
+        // to the lease fence and the recover-repository-children command.
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(path, tag: null, ct) : null;
         using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);

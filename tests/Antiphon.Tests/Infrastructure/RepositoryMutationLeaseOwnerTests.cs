@@ -126,7 +126,7 @@ public sealed class RepositoryMutationLeaseOwnerTests
         ownerOnly.TaskId.ShouldBeNull();
         described.ShouldNotBeNull();
         described.ShouldContain("children");
-        described.ShouldContain("recover-repository-children.ps1");
+        described.ShouldContain("scripts/antiphon recover-repository-children");
         File.Exists(lockPath).ShouldBeFalse("journal lookup must not acquire landing.lock");
         (await File.ReadAllTextAsync(journal, ct)).ShouldBe(before);
     }

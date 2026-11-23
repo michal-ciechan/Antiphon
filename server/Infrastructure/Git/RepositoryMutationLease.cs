@@ -115,7 +115,7 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
             + Path.Combine(common, "antiphon", "children");
         if (fence.Purpose is not null || fence.TaskId is not null)
             sentence += " (purpose=" + (fence.Purpose ?? "") + " task=" + (fence.TaskId?.ToString("N") ?? "") + ")";
-        return sentence + "; run scripts/recover-repository-children.ps1";
+        return sentence + "; run scripts/antiphon recover-repository-children";
     }
 
     private void ReleaseOwner(string common, Guid acquisitionId)

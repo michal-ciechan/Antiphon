@@ -62,7 +62,8 @@ switch ($Source) {
     'hangfire' {
         $api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:17202' }
         # CARD-0658: the dashboard needs the operator token, whatever the address. Same file
-        # lookup as Add-OperatorToken in scripts/runner-slots.ps1; the value is never printed.
+        # lookup as the operator commands (OperatorCommands.OperatorTokenFile in scripts/lib/Antiphon.Scripts); the value
+        # is never printed.
         $tokenPath = $env:ANTIPHON_OPERATOR_TOKEN_FILE
         if ([string]::IsNullOrWhiteSpace($tokenPath)) {
             $tokenPath = Join-Path (Join-Path $env:LOCALAPPDATA 'Antiphon') 'operator-token'

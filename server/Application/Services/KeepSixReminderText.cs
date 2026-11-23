@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1320 S3. One body for the WhenIdle reminder. It names the shortfall and the hold script.
+/// CARD-1320 S3. One body for the WhenIdle reminder. It names the shortfall and the hold command.
 /// It does not tell the orchestrator to reply, and it does not dispatch.
 /// </summary>
 public static class KeepSixReminderText
@@ -37,7 +37,7 @@ public static class KeepSixReminderText
             "Antiphon has not dispatched.",
             $"Host remaining: {hosts}.",
             $"Stage parallel remaining: {stages}.",
-            "Declare a hold with scripts/keep-six.ps1.");
+            "Declare a hold with scripts/antiphon keep-six.");
     }
 
     private static string Count(int? value) => value?.ToString() ?? "n/a";
