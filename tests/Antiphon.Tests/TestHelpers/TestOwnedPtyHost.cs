@@ -364,10 +364,21 @@ internal sealed class TestOwnedPtyHost
 
     private static (long Generation, char State, int Parent) Proc(int pid, Func<int, string>? readStat = null)
     {
-        var stat = (readStat ?? ReadStatFile)(pid);
+        string stat;
+        try { stat = (readStat ?? ReadStatFile)(pid); }
+        catch (IOException ex) when (ex is not FileNotFoundException && ex.HResult == Esrch)
+        {
+            // The task behind the open stat file was reaped before the read (Review 8f467d8d CP-7).
+            // The open came after this pid's identity was captured, so the opened task was that
+            // generation or a later reuse: either way the captured generation is gone. Same fact as
+            // ENOENT at open, so every caller's existing vanished-process handling applies.
+            throw new FileNotFoundException($"/proc/{pid}/stat vanished between open and read", ex);
+        }
         var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return (long.Parse(fields[19], CultureInfo.InvariantCulture), fields[0][0], int.Parse(fields[1], CultureInfo.InvariantCulture));
     }
+
+    private const int Esrch = 3; // Linux errno carried as IOException.HResult by the runtime.
 
     private static string ReadStatFile(int pid) => File.ReadAllText($"/proc/{pid}/stat");
 

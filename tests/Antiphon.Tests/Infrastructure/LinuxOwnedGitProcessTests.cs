@@ -112,7 +112,10 @@ public sealed class LinuxOwnedGitProcessTests
         OwnedGitCleanup result;
         using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "cleanup"))
             result = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(6));
-        result.Joined.ShouldBeTrue();
+        // Review 8f467d8d CP-9: keep the whole verdict so a Deadline/Unknown result names its cause.
+        result.Joined.ShouldBeTrue($"rootExited={result.RootExited} members={result.Members.State}/{result.Members.Survivors} " +
+            $"reason={result.Reason} signals={result.SignalsAttempted} duration={result.Duration} probe={result.ProbeDuration} " +
+            $"survivorAlive={OwnedProcessContainmentFixture.IsAlive(fixture.SurvivorPid)}");
         result.Members.State.ShouldBe(OwnedGitMembershipState.Empty);
         OwnedProcessContainmentFixture.IsAlive(fixture.SurvivorPid).ShouldBeFalse("before independent rescue/release");
         foreach (var stranger in fixture.Strangers) stranger.HasExited.ShouldBeFalse();
