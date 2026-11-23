@@ -2189,9 +2189,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 37,
+      "classes": 40,
       "reason": "cap",
-      "owed": 12,
+      "owed": 15,
       "first": [
         "NightlyLockFormatTests",
         "NightlyReportTests",
@@ -2199,36 +2199,35 @@
         "RcFailedFirstPlannerTests",
         "RcProjectSelectionTests",
         "ReleaseGateE2EEvidenceTests",
-        "ReleaseSelectionHopSeedTests",
-        "ToolchainFloorTwinTests"
+        "ReleaseGateLibraryTests",
+        "ReleaseGateRegistrationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 36,
+      "classes": 39,
       "reason": "cap",
-      "owed": 11,
+      "owed": 14,
       "first": [
+        "LongPathsCheckoutScriptTests",
+        "NightlyPrerequisiteTests",
         "NightlyScriptsTests",
         "RcQualificationStatusTests",
         "ReleaseGatePlatformTests",
         "ReleaseSelectionAttemptTests",
         "ReleaseSelectionHopSeedTests",
-        "NightlyRunParityTests",
-        "NightlyTestsPlanTests",
-        "ReleaseGateFollowupTests"
+        "NightlyRunParityTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 31,
+      "classes": 30,
       "reason": "cap",
-      "owed": 6,
+      "owed": 5,
       "first": [
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGatePublicationTests",
-        "ReleaseGateRegistrationTests",
         "ReleaseGateRunTests",
         "ReleaseGateStatusTests"
       ]
@@ -4358,7 +4357,8 @@
       "classes": [
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -4402,12 +4402,6 @@
       "classes": [
         "IncrementalSelectionSoundnessTests",
         "RcInputOwnersMapTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/release-gate.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -5559,6 +5553,7 @@
         "ExpectationWatchdogScenarioTests",
         "InboundUnconsumedMonitorTests",
         "PtyConditionalReadClientTests",
+        "ReleaseGateRegistrationTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "SessionRuntimeActionRecoveryTests",
         "SessionRuntimeActionRoutingTests",
@@ -25583,7 +25578,9 @@
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
         "QualificationEtaTests",
-        "RcStoppedRunSeedTests"
+        "RcStoppedRunSeedTests",
+        "ReleaseGateLibraryTests",
+        "ReleaseStatusTests"
       ]
     },
     {
@@ -25684,11 +25681,9 @@
         "C1514LandingSplitBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
-        "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
-        "NightlyPrerequisiteTests",
         "NightlyRunTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
@@ -25704,6 +25699,8 @@
         "RcRosterRepairTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateE2EEvidenceTests",
+        "ReleaseGateLibraryTests",
+        "ReleaseGateRegistrationTests",
         "ReleaseGateRunTests",
         "ToolchainFloorWarningTests"
       ]
@@ -25782,7 +25779,9 @@
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
-        "RcRunEvidenceTests"
+        "RcRunEvidenceTests",
+        "ReleaseGateLibraryTests",
+        "ReleaseStatusTests"
       ]
     },
     {
