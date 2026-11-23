@@ -97,6 +97,14 @@ public sealed class ScratchGitRepo : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // A fixture's commit is setup, not the code under test: no auto-maintenance child after it (a git process of
+        // its own, about 0.18 s on the HP laptop; 165 a run of AgentTaskReplyIntegrationTests). Set on this process's
+        // command line only, so no config a test reads (config --list, the environment) changes.
+        if (args.Length > 0 && args[0] is "commit" or "merge" or "cherry-pick" or "am" or "rebase")
+        {
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("maintenance.auto=false");
+        }
         foreach (var a in args) psi.ArgumentList.Add(a);
         if (env is not null)
         {
