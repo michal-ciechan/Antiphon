@@ -10,6 +10,7 @@ import { useReviewLiveUpdates } from './reviewApi'
 import { RUN_STATUS_META, modelShort } from './reviewMeta'
 import { IN_REVIEW_STATUSES, STATUS_ORDER, anyClientFilter, applyRunFilters, hasAllStatuses, toggleStatuses } from './runs/runFilters'
 import { NewReviewModal } from './runs/NewReviewModal'
+import { PollingStrip } from './runs/PollingStrip'
 import { RunsBoard } from './runs/RunsBoard'
 import { RunsKpiStrip } from './runs/RunsKpiStrip'
 import { RunsTable } from './runs/RunsTable'
@@ -195,6 +196,8 @@ export function ReviewRunsPage() {
           />
         </Group>
       </Group>
+
+      <PollingStrip now={now} />
 
       {error && <QueryErrorAlert title="Could not load review runs" error={error} onRetry={retry} retrying={all.isFetching || searched.isFetching} />}
 

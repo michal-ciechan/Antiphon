@@ -124,8 +124,9 @@ const TRIGGER_LABEL: Record<string, string> = {
   'base-moved': 'base moved',
 }
 
-/** What started an iteration, for people; unknown triggers show as sent. */
+/** What started an iteration, for people; `comment:<id>` is a PR comment command; unknown triggers show as sent. */
 export function triggerLabel(trigger: ReviewIterationTrigger): string {
+  if (trigger.startsWith('comment:')) return 'PR comment'
   return TRIGGER_LABEL[trigger] ?? trigger
 }
 

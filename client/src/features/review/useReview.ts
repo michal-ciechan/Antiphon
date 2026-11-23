@@ -9,6 +9,7 @@ import {
   type GateDecisionRequest,
   type QueueScope,
   type ReviewGateDto,
+  type ReviewRoundRequest,
   type ReviewRunDetailDto,
   type ReviewRunFilter,
   type RunFindingResponse,
@@ -192,6 +193,40 @@ export function useRefreshReviewRun(runId: string) {
     mutationFn: () => reviewApi().refreshRun(runId),
     onError: (error) => notifyReviewError('Refresh failed', error),
     onSettled: () => invalidateRun(queryClient, runId),
+  })
+}
+
+/**
+ * A manual review round (`POST /api/review-runs/{id}/rounds`). No notification on failure: the
+ * round modal shows the refusal (a 409 at a gate, finished or busy) where it was asked.
+ */
+export function useRequestReviewRound(runId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: ReviewRoundRequest) => reviewApi().requestRound(runId, request),
+    onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(runId), run),
+    onSettled: () => invalidateRun(queryClient, runId),
+  })
+}
+
+/** Code host polling: the settings and the last pass (`GET /api/review-polling`), refetched every minute. */
+export function useReviewPolling() {
+  return useQuery({
+    queryKey: reviewEngineKeys.polling,
+    queryFn: () => reviewApi().getPolling(),
+    refetchInterval: isHttp() ? 60_000 : false,
+    refetchOnWindowFocus: true,
+  })
+}
+
+/** "Check GitHub now" (`POST /api/review-polling/poll`): one pass, then the runs list is refetched. */
+export function usePollNow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => reviewApi().pollNow(),
+    onSuccess: (polling) => queryClient.setQueryData(reviewEngineKeys.polling, polling),
+    onError: (error) => notifyReviewError('Could not check GitHub', error),
+    onSettled: () => invalidateRun(queryClient, undefined),
   })
 }
 

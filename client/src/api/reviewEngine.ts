@@ -1,7 +1,7 @@
 import { apiGet, apiPost } from './client'
 
 /**
- * Review engine API (docs/features/012-review-engine/api.md, contract v0.2). Types mirror the
+ * Review engine API (docs/features/012-review-engine/api.md, contract v0.4). Types mirror the
  * contract exactly; enums are the server's PascalCase strings. The client builds against the
  * `ReviewApi` seam so the in-memory fake (features/review/fake) and the HTTP implementation below
  * are interchangeable. HTTP is the default; `reviewApiMode()` picks the fake only on request. The
@@ -360,6 +360,52 @@ export interface CreateReviewRunRequest {
   title?: string
 }
 
+/** `POST /api/review-runs/{id}/rounds` (contract v0.4): a manual round, same round, with an optional steer. */
+export interface ReviewRoundRequest {
+  steerPrompt?: string
+}
+
+export interface ReviewPollingRepoDto {
+  repo: string
+  host: ReviewHost
+  /** empty means every base branch */
+  baseBranches: string[]
+  includeDrafts: boolean
+  skipLabels: string[]
+  requireLabel: string | null
+}
+
+export interface ReviewPollingRepoPassDto {
+  repo: string
+  openPullRequests: number
+  runsStarted: number
+  runsRefreshed: number
+  commandsHandled: number
+  /** the last error this pass hit for the repo (rate limit, 403, network), or null */
+  error: string | null
+}
+
+export interface ReviewPollingPassDto {
+  trigger: 'timer' | 'manual' | (string & {})
+  startedAt: string
+  finishedAt: string
+  /** true when no repo reported an error */
+  ok: boolean
+  repos: ReviewPollingRepoPassDto[]
+}
+
+/** `GET /api/review-polling` (contract v0.4): the polling settings and the last pass, kept in memory. */
+export interface ReviewPollingDto {
+  enabled: boolean
+  intervalSeconds: number
+  commandPrefix: string
+  repos: ReviewPollingRepoDto[]
+  /** a pass is running now */
+  running: boolean
+  /** null until the first pass since the server started */
+  lastPass: ReviewPollingPassDto | null
+}
+
 // ---------------------------------------------------------------- the seam
 
 /** One method per contract route. Both implementations reject with `ApiError` on 404/409/422. */
@@ -370,6 +416,15 @@ export interface ReviewApi {
   getRun(runId: string): Promise<ReviewRunDetailDto>
   listFindings(runId: string, status?: FindingStatus): Promise<ListResult<ReviewFindingDto>>
   refreshRun(runId: string): Promise<void>
+  /**
+   * A manual review round with an optional steer. 409 when the run waits at a gate (decide it with
+   * another round instead), is finished, or is already reviewing.
+   */
+  requestRound(runId: string, request: ReviewRoundRequest): Promise<ReviewRunDetailDto>
+  /** Code host polling: the settings and the last pass. */
+  getPolling(): Promise<ReviewPollingDto>
+  /** Runs one polling pass now (even with the timer off) and returns the same DTO. */
+  pollNow(): Promise<ReviewPollingDto>
   respondToFinding(findingId: string, request: FindingResponseRequest): Promise<ReviewFindingDto>
   respondToRun(runId: string, responses: RunFindingResponse[]): Promise<{ items: ReviewFindingDto[] }>
   getQueue(scope: QueueScope, login?: string): Promise<ListResult<QueueItemDto>>
@@ -409,6 +464,9 @@ export const httpReviewApi: ReviewApi = {
   getRun: (runId) => apiGet(`/review-runs/${enc(runId)}`),
   listFindings: (runId, status) => apiGet(`/review-runs/${enc(runId)}/findings${query({ status })}`),
   refreshRun: (runId) => apiPost(`/review-runs/${enc(runId)}/refresh`, {}),
+  requestRound: (runId, request) => apiPost(`/review-runs/${enc(runId)}/rounds`, request),
+  getPolling: () => apiGet('/review-polling'),
+  pollNow: () => apiPost('/review-polling/poll', {}),
   respondToFinding: (findingId, request) => apiPost(`/review-findings/${enc(findingId)}/responses`, request),
   respondToRun: (runId, responses) => apiPost(`/review-runs/${enc(runId)}/responses`, { responses }),
   getQueue: (scope, login) => apiGet(`/review-queue${query({ scope, login })}`),
@@ -476,6 +534,8 @@ export const reviewEngineKeys = {
   workflowRevision: (revisionId: string) => ['reviewWorkflows', 'revisions', revisionId] as const,
   /** not in the SignalR list: the viewer changes only with identity (or the fake's viewer switch) */
   me: ['reviewMe'] as const,
+  /** not in the SignalR list: polled, and replaced by the poll-now result */
+  polling: ['reviewPolling'] as const,
 }
 
 /** `ReviewRunChanged { runId }` → the keys it invalidates (contract, SignalR section). */

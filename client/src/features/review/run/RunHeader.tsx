@@ -1,5 +1,5 @@
 import { Alert, Anchor, Badge, Box, Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
-import { TbAlertTriangle, TbArrowLeft, TbExternalLink, TbGitBranch, TbRefresh } from 'react-icons/tb'
+import { TbAlertTriangle, TbArrowLeft, TbExternalLink, TbGitBranch, TbMessagePlus, TbRefresh } from 'react-icons/tb'
 import { Link } from 'react-router'
 import type { ReviewRunDetailDto } from '../../../api/reviewEngine'
 import { BlastMini } from '../components/Blast'
@@ -12,8 +12,23 @@ import { fmtAgo, runCostSplit, shortSha } from '../reviewFormat'
 import { WAITING_ON_META } from '../reviewMeta'
 import { failedExecution } from './workflow/overlay'
 
-/** Subject, status, round, blast radius, owners and cost; Refresh asks the code host for new events. */
-export function RunHeader({ run, now, onRefresh, refreshing }: { run: ReviewRunDetailDto; now: number; onRefresh: () => void; refreshing: boolean }) {
+/**
+ * Subject, status, round, blast radius, owners and cost; Refresh asks the code host for new events,
+ * and "Request review round" (when given) opens the round modal.
+ */
+export function RunHeader({
+  run,
+  now,
+  onRefresh,
+  refreshing,
+  onRequestRound,
+}: {
+  run: ReviewRunDetailDto
+  now: number
+  onRefresh: () => void
+  refreshing: boolean
+  onRequestRound?: () => void
+}) {
   const s = run.subject
   const openedByOther = s.openedByLogin !== s.authorLogin
   const failed = run.status === 'Failed' ? failedExecution(run) : undefined
@@ -105,6 +120,11 @@ export function RunHeader({ run, now, onRefresh, refreshing }: { run: ReviewRunD
             <Button size="xs" variant="default" leftSection={<TbRefresh size={14} />} loading={refreshing} onClick={onRefresh} data-testid="review-run-refresh">
               Refresh
             </Button>
+            {onRequestRound && run.status !== 'Closed' && run.status !== 'Merged' && (
+              <Button size="xs" variant="default" leftSection={<TbMessagePlus size={14} />} onClick={onRequestRound} data-testid="review-run-request-round">
+                Request review round
+              </Button>
+            )}
           </Group>
         </Paper>
       </Group>

@@ -15,6 +15,8 @@ import type {
   ReviewFindingDto,
   ReviewGateDto,
   ReviewKpisDto,
+  ReviewPollingDto,
+  ReviewRoundRequest,
   ReviewRunDetailDto,
   ReviewRunFilter,
   ReviewIterationTrigger,
@@ -127,6 +129,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
   let runs = new Map<string, ReviewRunDetailDto>()
   let findings: ReviewFindingDto[] = []
   let meta: Record<string, RunMeta> = {}
+  let polling: ReviewPollingDto = emptyPolling()
   let counter = 1
   const timers = new Set<ReturnType<typeof setTimeout>>()
   const listeners = new Set<(event: ReviewRunChangedEvent) => void>()
@@ -142,6 +145,30 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     meta = s.meta
     counter = s.nextN
     for (const r of runs.values()) recompute(r)
+    polling = seedPolling()
+  }
+
+  function emptyPolling(): ReviewPollingDto {
+    return { enabled: false, intervalSeconds: 120, commandPrefix: '/antiphon', repos: [], running: false, lastPass: null }
+  }
+
+  /** Polling on, every seeded GitHub repo configured, and one clean pass a minute and a half ago. */
+  function seedPolling(): ReviewPollingDto {
+    const repos = [...new Set([...runs.values()].filter((r) => r.subject.host === 'GitHub').map((r) => r.subject.repo))].sort()
+    const at = new Date(now() - 90_000).toISOString()
+    return {
+      enabled: true,
+      intervalSeconds: 120,
+      commandPrefix: '/antiphon',
+      repos: repos.map((repo) => ({ repo, host: 'GitHub', baseBranches: [], includeDrafts: false, skipLabels: ['antiphon:skip'], requireLabel: null })),
+      running: false,
+      lastPass: { trigger: 'timer', startedAt: at, finishedAt: at, ok: true, repos: repos.map((repo) => passOf(repo)) },
+    }
+  }
+
+  function passOf(repo: string) {
+    const open = [...runs.values()].filter((r) => r.subject.repo === repo && r.status !== 'Merged' && r.status !== 'Closed').length
+    return { repo, openPullRequests: open, runsStarted: 0, runsRefreshed: 0, commandsHandled: 0, error: null }
   }
 
   function schedule(fn: () => void, ms: number) {
@@ -472,6 +499,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
       runs = new Map()
       findings = []
       meta = {}
+      polling = emptyPolling()
     },
     dispose() {
       clearTimers()
@@ -613,6 +641,42 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         touch(run)
         emit(runId)
         return undefined
+      }),
+
+    requestRound: (runId, request: ReviewRoundRequest) =>
+      respond(() => {
+        const run = requireRun(runId)
+        if (run.status === 'Closed' || run.status === 'Merged') throw problem(409, `Review run ${runId} is ${run.status}; it takes no more rounds.`)
+        if (run.status === 'AtGate' || gateNodeOf(run))
+          throw problem(409, `Review run ${runId} is waiting at its gate. Ask for another round with a steer prompt from the gate instead.`)
+        if (run.status === 'Queued' || run.status === 'Running')
+          throw problem(409, `Review run ${runId} is already reviewing round ${run.round}; ask again once it waits for fixes or a merge.`)
+        const who = actor()
+        const steer = request.steerPrompt?.trim() || null
+        const it = currentIteration(run)
+        const parked = run.nodes.find((n) => n.iteration === it && n.kind === 'Wait' && n.status === 'Waiting')
+        if (parked) {
+          complete(parked, `recheck: requested by ${who}${steer ? ` · steer: ${steer}` : ''}`)
+          parked.outcome = 'recheck'
+        }
+        run.botOnlyRounds = 0
+        run.status = 'Running'
+        run.stage = 'Intake'
+        run.waitingOn = 'Bot'
+        startIteration(run, 'recheck')
+        touch(run)
+        emit(runId)
+        return viewRun(run)
+      }),
+
+    getPolling: () => respond((): ReviewPollingDto => polling),
+
+    pollNow: () =>
+      respond((): ReviewPollingDto => {
+        // the fake has no code host: a pass finds nothing new
+        const at = isoNow()
+        polling = { ...polling, running: false, lastPass: { trigger: 'manual', startedAt: at, finishedAt: at, ok: true, repos: polling.repos.map((r) => passOf(r.repo)) } }
+        return polling
       }),
 
     respondToFinding: (findingId, request) =>
