@@ -48,6 +48,8 @@ internal sealed class C544World : IAsyncDisposable
     public IInterceptor? Interceptor { get; private set; }
     /// <summary>Extra registrations applied on every (re)build, e.g. a LandDeliveryBoundary.</summary>
     public Action<IServiceCollection>? ConfigureServices { get; set; }
+    /// <summary>Delivery-verification overrides applied on every (re)build, after the world's defaults.</summary>
+    public Action<DeliveryVerificationSettings>? ConfigureVerification { get; set; }
     public string CallerDirectory { get; private set; } = "";
     public Project Project { get; private set; } = null!;
     public Board Board { get; private set; } = null!;
@@ -69,9 +71,12 @@ internal sealed class C544World : IAsyncDisposable
 
     public static async Task<C544World> CreateAsync(IInterceptor? interceptor = null, bool cardAllowsInterim = true,
         Action<IServiceCollection>? configure = null, Action<DelegationSettings>? delegation = null,
-        bool reversibleTip = false)
+        bool reversibleTip = false, Action<DeliveryVerificationSettings>? verification = null)
     {
-        var world = new C544World { Interceptor = interceptor, ConfigureServices = configure };
+        var world = new C544World
+        {
+            Interceptor = interceptor, ConfigureServices = configure, ConfigureVerification = verification,
+        };
         delegation?.Invoke(world.Delegation);
         world.Repo = new ScratchGitRepo("c544-world");
         world.RepositoryPath = world.Repo.Path;
@@ -253,16 +258,15 @@ internal sealed class C544World : IAsyncDisposable
         });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton<TimeProvider>(Clock);
-        services.AddSingleton(Options.Create(new SupervisionSettings
+        var verification = new DeliveryVerificationSettings
         {
-            DeliveryVerification = new DeliveryVerificationSettings
-            {
-                Enabled = true, EvidenceTimeoutSeconds = 1, PollIntervalMs = 50, PostSubmitAdvanceTimeoutSeconds = 1,
-                StrandedAgeSeconds = 0, TranscriptConfirmTimeoutSeconds = 3, ReEnterIntervalSeconds = 1,
-                PostFailureConfirmGraceSeconds = 3, UnobservableBaselineConfirmClockToleranceSeconds = 30,
-                BootPromptRetryDelaySeconds = 0,
-            },
-        }));
+            Enabled = true, EvidenceTimeoutSeconds = 1, PollIntervalMs = 50, PostSubmitAdvanceTimeoutSeconds = 1,
+            StrandedAgeSeconds = 0, TranscriptConfirmTimeoutSeconds = 3, ReEnterIntervalSeconds = 1,
+            PostFailureConfirmGraceSeconds = 3, UnobservableBaselineConfirmClockToleranceSeconds = 30,
+            BootPromptRetryDelaySeconds = 0,
+        };
+        ConfigureVerification?.Invoke(verification);
+        services.AddSingleton(Options.Create(new SupervisionSettings { DeliveryVerification = verification }));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(Delegation));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));

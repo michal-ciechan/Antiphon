@@ -24,7 +24,7 @@ public sealed class CompletionWarningDeliveryTests
         {
             var row = $"busy={busy} distilledSpill={distilledSpill}";
             await using var rig = await C544DeliveryRig.CreateAsync(busy, spill: distilledSpill,
-                distill: distilledSpill);
+                distill: distilledSpill, postEvidenceSettleMs: 0);
             var taskId = await SettlePlanAsync(rig);
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader
@@ -62,7 +62,7 @@ public sealed class CompletionWarningDeliveryTests
         {
             var row = $"{cut} busy={busy} distilledSpill={distilledSpill}";
             await using var rig = await C544DeliveryRig.CreateAsync(busy, spill: distilledSpill,
-                distill: distilledSpill);
+                distill: distilledSpill, postEvidenceSettleMs: 0);
             if (cut == "wakeup-dropped") rig.Boundary.DropCompletionWakeup = true;
             else if (cut is not ("render-committed" or "spill-written" or "attempt-committed" or "prompt-accepted"))
                 rig.Fault.Cut = cut;

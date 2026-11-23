@@ -38,8 +38,13 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     public Func<string, string>? SubmitTransform { get; set; }
     public const string Summary = "C544 distilled summary: the review found nothing; land after Final.";
 
+    /// <param name="postEvidenceSettleMs">
+    /// Overrides the queue's pre-Enter settle (default 500 ms of real time per verified delivery). 0 is safe where
+    /// the caller's <see cref="Caller"/> records every submitted prompt, so the transcript confirms each delivery.
+    /// </param>
     public static async Task<C544DeliveryRig> CreateAsync(bool busy, bool spill = false, bool distill = false,
-        int replyInlineMaxChars = 20_000, bool reportStore = false, bool privateReportGate = false)
+        int replyInlineMaxChars = 20_000, bool reportStore = false, bool privateReportGate = false,
+        int? postEvidenceSettleMs = null)
     {
         var rig = new C544DeliveryRig { Busy = busy, _reportStore = reportStore || privateReportGate };
         if (rig._reportStore)
@@ -61,7 +66,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
             d.OutputDistillerMode = OutputDistillerMode.Apply;
             d.OutputDistillerWaitSeconds = 120;
             d.ShrinkPolledCompletionNotes = true;
-        });
+        }, verification: postEvidenceSettleMs is int settle ? v => v.PostEvidenceSettleMs = settle : null);
         await rig.AttachCallerAsync();
         await rig.SeedCallerHistoryAsync();
         return rig;
