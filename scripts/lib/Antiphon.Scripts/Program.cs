@@ -74,6 +74,8 @@ namespace Antiphon.Scripts
             [SummarizeTestTraceCommand.Name] = SummarizeTestTraceCommand.Run,
             // The class-cost refresh answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             [RefreshNightlyClassCostsCommand.Name] = RefreshNightlyClassCostsCommand.Run,
+            // The away digest send answers every input itself: exit 0 sent, 1 refused or send_failed (one stderr line), 2 usage.
+            [DigestCommand.Name] = DigestCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -118,7 +120,7 @@ namespace Antiphon.Scripts
                 + " | " + ExportExpectedDurationRosterCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
-                + " | " + RefreshNightlyClassCostsCommand.Usage);
+                + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage);
             return Usage;
         }
 

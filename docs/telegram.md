@@ -451,6 +451,11 @@ decision pings and the app-root footer to digests. Do not use a
 family/group channel as the digest channel unless it is deliberately the recipient for every
 blocked-task and decision prompt.
 
+To send the digest now, run `scripts/antiphon digest [--channel <guid|title>] [--since <time>]`
+(`scripts\antiphon.cmd digest ...` on Windows; `--base-url` defaults to `http://localhost:17202`). It posts
+`POST /api/digest/send` and prints the server's answer, one result per channel, and exits 1 when a channel's result
+is `send_failed`.
+
 ## Tests
 
 - `tests/Antiphon.Messaging.Tests/TelegramMarkdownRendererTests.cs` — pins the full mapping
