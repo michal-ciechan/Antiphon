@@ -26024,6 +26024,7 @@
         "ProcessSpawnLimitTests",
         "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
+        "TestSelectionExecutionTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
     },
