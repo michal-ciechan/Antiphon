@@ -1754,6 +1754,10 @@ The class-cost row is `scripts/lib/nightly-class-costs.json` and the roster is
 `tests/Shared/expected-duration-roster.json`; re-run
 `scripts/antiphon export-expected-duration-roster` (`scripts\antiphon.cmd export-expected-duration-roster` on Windows) after a class-cost refresh,
 or `ExpectedDurationSyncTests` stays red (CARD-1842).
+A class-cost refresh is `scripts/antiphon refresh-nightly-class-costs --trx-path <a.trx,b.trx> --host-id <host>
+--os <windows|linux> --measured-run-id <run>` (`--set-platform`, `--source <text>` and `--output-path <json>` are
+optional): each class in the TRX files becomes the sum of its result durations on that host, a TRX from the other OS
+is kept as the row's `otherSample`, and classes the TRX files do not name keep their rows.
 
 ### Windows rc watchdogs and gate lanes (2026-10-18/19)
 

@@ -72,6 +72,8 @@ namespace Antiphon.Scripts
             [ExportExpectedDurationRosterCommand.Name] = ExportExpectedDurationRosterCommand.Run,
             // The test trace summary answers every input itself: exit 0 printed, 1 unreadable or no span (one stderr line), 2 usage.
             [SummarizeTestTraceCommand.Name] = SummarizeTestTraceCommand.Run,
+            // The class-cost refresh answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
+            [RefreshNightlyClassCostsCommand.Name] = RefreshNightlyClassCostsCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -114,7 +116,9 @@ namespace Antiphon.Scripts
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
                 + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage
-                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage);
+                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
+                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
+                + " | " + RefreshNightlyClassCostsCommand.Usage);
             return Usage;
         }
 

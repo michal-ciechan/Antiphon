@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Nightly;
@@ -11,8 +10,9 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1842 S1 witnesses (the cases of the retired scripts/test-class-cost-measurement.ps1), in-process since W2-nightly
-/// S11. The three refresh cases still run the production scripts/refresh-nightly-class-costs.ps1 (PowerShell) on fixture
-/// files; the packer case reads the fixture through NightlyTestsPlan. No network, no git, no qualification launch.
+/// S11. The refresh cases run the refresh-nightly-class-costs command line in this process (ClassCostRefresh.Run; until
+/// 2026-11-23 they ran scripts/refresh-nightly-class-costs.ps1 under pwsh) on fixture files; the packer case reads the
+/// fixture through NightlyTestsPlan. No network, no git, no process, no qualification launch.
 /// </summary>
 [Category("Integration")]
 public sealed class ClassCostMeasurementTests
@@ -77,33 +77,27 @@ public sealed class ClassCostMeasurementTests
         WriteFixture(path, "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><TestDefinitions>" + defs + "</TestDefinitions><Results>" + results + "</Results></TestRun>");
     }
 
-    // pwsh -NoProfile -File refresh-nightly-class-costs.ps1 <args> 2>&1: the exit code and the combined output.
-    private static async Task<(int Code, string Text)> Refresh(IDictionary<string, string>? environment, CancellationToken token, params string[] args)
+    // The refresh-nightly-class-costs command line in this process, as the CLI runs it (a usage error is exit 2 and its
+    // reason), on a host whose stdout and stderr are captured and whose environment answers every name with decoy.
+    private static (int Code, string Text) Refresh(string? decoy, params string[] args)
     {
-        var start = new ProcessStartInfo("pwsh")
+        var output = new StringWriter();
+        var error = new StringWriter();
+        try
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            WorkingDirectory = NightlyPlanCases.Repo,
-        };
-        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(NightlyPlanCases.Repo, "scripts", "refresh-nightly-class-costs.ps1") }.Concat(args))
-            start.ArgumentList.Add(a);
-        if (environment != null) foreach (var (key, value) in environment) start.Environment[key] = value;
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        process.StandardInput.Close();
-        var stdout = process.StandardOutput.ReadToEndAsync(token);
-        var stderr = process.StandardError.ReadToEndAsync(token);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(90));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            throw;
+            var options = RefreshNightlyClassCostsOptions.Parse(args, NightlyPlanCases.Repo, NightlyPlanCases.Repo);
+            var host = NightlyHost.Create(null, new RecordingLauncher(), output, error, null, null, null, null);
+            var code = ClassCostRefresh.Run(options, decoy == null ? host : new NightlyHost
+            {
+                Clock = host.Clock, Git = host.Git, Launcher = host.Launcher, Processes = host.Processes, Probe = host.Probe,
+                Out = host.Out, Error = host.Error, Trace = host.Trace, Variables = _ => decoy,
+            });
+            return (code, output + "\n" + error);
         }
-        return (process.ExitCode, await stdout + "\n" + await stderr);
+        catch (NightlyUsageException e)
+        {
+            return (2, "usage: antiphon-scripts refresh-nightly-class-costs: " + e.Message);
+        }
     }
 
     private static JsonElement? Row(JsonElement doc, string name) =>
@@ -127,8 +121,7 @@ public sealed class ClassCostMeasurementTests
     }
 
     [Test, Timeout(120_000)]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task RefreshKeepsRowSource(CancellationToken token)
+    public void RefreshKeepsRowSource(CancellationToken token)
     {
         using var fixture = NightlyFixture.Create("cm-keeps-source");
         var cost = fixture.PathOf("costs.json");
@@ -138,12 +131,15 @@ public sealed class ClassCostMeasurementTests
         WriteTrx(trx, ("Antiphon.Tests.KeptTests", "One", "00:00:02"), ("Antiphon.Tests.KeptTests", "Two", "00:00:03"), ("Antiphon.Tests.FreshTests", "Only", "00:00:09"));
         File.Copy(cost, output);
         var c = new Contract();
-        var run = await Refresh(null, token, "-TrxPath", trx, "-OutputPath", output, "-HostId", "fixture-host-c1842", "-Os", "windows", "-MeasuredRunId", "run-9");
+        var run = Refresh(null, "--trx-path", trx, "--output-path", output, "--host-id", "fixture-host-c1842", "--os", "windows", "--measured-run-id", "run-9");
         c.Note(run.Code == 0, "refresh exit " + run.Code + " " + run.Text);
+        c.Note(run.Text.StartsWith("refreshed 2 classes from 1 TRX files -> " + output, StringComparison.Ordinal), "summary line " + run.Text);
         if (run.Code == 0 && File.Exists(output))
         {
             var doc = ReadCost(output);
             c.Note(Text(doc, "format") == "antiphon-nightly-class-costs-v1", "format " + Text(doc, "format"));
+            c.Note(Text(doc, "source") == "TRX durations: sample.trx", "document source " + Text(doc, "source"));
+            c.Note(Text(doc, "refresh") == ClassCostRefresh.RefreshCommand, "refresh " + Text(doc, "refresh"));
             c.Note(Text(doc, "platform") == "windows", "platform " + Text(doc, "platform"));
             var kept = Row(doc, "Antiphon.Tests.KeptTests");
             var absent = Row(doc, "Antiphon.Tests.AbsentTests");
@@ -186,34 +182,41 @@ public sealed class ClassCostMeasurementTests
     }
 
     [Test, Timeout(120_000)]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task RefreshRequiresHostOsAndRun(CancellationToken token)
+    public void RefreshRequiresHostOsAndRun(CancellationToken token)
     {
         using var fixture = NightlyFixture.Create("cm-requires-identity");
         var cost = fixture.PathOf("costs.json");
         var trx = fixture.PathOf("sample.trx");
         WriteFixture(cost, CostFixture);
         WriteTrx(trx, ("Antiphon.Tests.KeptTests", "One", "00:00:05"));
-        // The child's machine name variables are decoys: the host id must come from -HostId alone.
-        var decoy = new Dictionary<string, string> { ["COMPUTERNAME"] = "decoy-machine-c1842", ["HOSTNAME"] = "decoy-machine-c1842" };
+        // The host's environment answers every name (COMPUTERNAME, HOSTNAME) with a decoy: the host id must come from
+        // --host-id alone.
+        const string decoy = "decoy-machine-c1842";
         var c = new Contract();
-        async Task<(int Code, string Text)> RunOn(string name, params string[] args)
+        (int Code, string Text) RunOn(string name, params string[] args)
         {
             var output = fixture.PathOf(name + ".json");
             File.Copy(cost, output);
-            return await Refresh(decoy, token, new[] { "-TrxPath", trx, "-OutputPath", output }.Concat(args).ToArray());
+            var run = Refresh(decoy, new[] { "--trx-path", trx, "--output-path", output }.Concat(args).ToArray());
+            // A refusal writes nothing.
+            if (run.Code != 0) c.Note(File.ReadAllText(output) == File.ReadAllText(cost), name + " changed the file");
+            return run;
         }
-        var omitHost = await RunOn("omit-host", "-Os", "windows", "-MeasuredRunId", "run-9");
-        c.Note(omitHost.Code != 0 && omitHost.Text.Contains("HostId"), "omitted HostId " + omitHost.Code + " " + omitHost.Text);
-        var omitOs = await RunOn("omit-os", "-HostId", "fixture-host-c1842", "-MeasuredRunId", "run-9");
-        c.Note(omitOs.Code != 0 && omitOs.Text.Contains("Os"), "omitted Os " + omitOs.Code + " " + omitOs.Text);
-        var omitRun = await RunOn("omit-run", "-HostId", "fixture-host-c1842", "-Os", "windows");
-        c.Note(omitRun.Code != 0 && omitRun.Text.Contains("MeasuredRunId"), "omitted MeasuredRunId " + omitRun.Code + " " + omitRun.Text);
-        var badOs = await RunOn("bad-os", "-HostId", "fixture-host-c1842", "-Os", "unix", "-MeasuredRunId", "run-9");
-        c.Note(badOs.Code != 0 && badOs.Text.Contains("class-cost-os"), "unix os " + badOs.Code + " " + badOs.Text);
-        var blank = await RunOn("blank-host", "-HostId", " ", "-Os", "windows", "-MeasuredRunId", "run-9");
-        c.Note(blank.Code != 0 && blank.Text.Contains("class-cost-host"), "blank host " + blank.Code + " " + blank.Text);
-        var run = await RunOn("out", "-HostId", "fixture-host-c1842", "-Os", "windows", "-MeasuredRunId", "run-9");
+        var omitHost = RunOn("omit-host", "--os", "windows", "--measured-run-id", "run-9");
+        c.Note(omitHost.Code == 2 && omitHost.Text.Contains("missing --host-id"), "omitted --host-id " + omitHost.Code + " " + omitHost.Text);
+        var omitOs = RunOn("omit-os", "--host-id", "fixture-host-c1842", "--measured-run-id", "run-9");
+        c.Note(omitOs.Code == 2 && omitOs.Text.Contains("missing --os"), "omitted --os " + omitOs.Code + " " + omitOs.Text);
+        var omitRun = RunOn("omit-run", "--host-id", "fixture-host-c1842", "--os", "windows");
+        c.Note(omitRun.Code == 2 && omitRun.Text.Contains("missing --measured-run-id"), "omitted --measured-run-id " + omitRun.Code + " " + omitRun.Text);
+        var badOs = RunOn("bad-os", "--host-id", "fixture-host-c1842", "--os", "unix", "--measured-run-id", "run-9");
+        c.Note(badOs.Code == 1 && badOs.Text.Contains("class-cost-os"), "unix os " + badOs.Code + " " + badOs.Text);
+        var caseOs = RunOn("case-os", "--host-id", "fixture-host-c1842", "--os", "Windows", "--measured-run-id", "run-9");
+        c.Note(caseOs.Code == 1 && caseOs.Text.Contains("class-cost-os"), "Windows os " + caseOs.Code + " " + caseOs.Text);
+        var blank = RunOn("blank-host", "--host-id", " ", "--os", "windows", "--measured-run-id", "run-9");
+        c.Note(blank.Code == 1 && blank.Text.Contains("class-cost-host"), "blank host " + blank.Code + " " + blank.Text);
+        var blankRun = RunOn("blank-run", "--host-id", "fixture-host-c1842", "--os", "windows", "--measured-run-id", " ");
+        c.Note(blankRun.Code == 1 && blankRun.Text.Contains("class-cost-run"), "blank run " + blankRun.Code + " " + blankRun.Text);
+        var run = RunOn("out", "--host-id", "fixture-host-c1842", "--os", "windows", "--measured-run-id", "run-9");
         c.Note(run.Code == 0, "refresh exit " + run.Code + " " + run.Text);
         var outPath = fixture.PathOf("out.json");
         if (run.Code == 0 && File.Exists(outPath))
@@ -236,8 +239,7 @@ public sealed class ClassCostMeasurementTests
     }
 
     [Test, Timeout(120_000)]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task ForeignOsDoesNotReplaceSeconds(CancellationToken token)
+    public void ForeignOsDoesNotReplaceSeconds(CancellationToken token)
     {
         using var fixture = NightlyFixture.Create("cm-foreign-os");
         var trx = fixture.PathOf("sample.trx");
@@ -246,7 +248,7 @@ public sealed class ClassCostMeasurementTests
         File.Copy(fixture.PathOf("costs.json"), output);
         WriteTrx(trx, ("Antiphon.Tests.KeptTests", "One", "00:00:08"), ("Antiphon.Tests.FreshTests", "Only", "00:00:09"));
         var c = new Contract();
-        var run = await Refresh(null, token, "-TrxPath", trx, "-OutputPath", output, "-HostId", "linux-host-c1842", "-Os", "linux", "-MeasuredRunId", "linux-run");
+        var run = Refresh(null, "--trx-path", trx, "--output-path", output, "--host-id", "linux-host-c1842", "--os", "linux", "--measured-run-id", "linux-run");
         c.Note(run.Code == 0, "refresh exit " + run.Code + " " + run.Text);
         if (run.Code == 0 && File.Exists(output))
         {
@@ -287,6 +289,142 @@ public sealed class ClassCostMeasurementTests
             }
         }
         c.Assert(nameof(ForeignOsDoesNotReplaceSeconds));
+    }
+
+    [Test, Timeout(120_000)]
+    public void RefreshMergesTrxFilesIntoTheCanonicalFile(CancellationToken token)
+    {
+        using var fixture = NightlyFixture.Create("cm-merge");
+        var output = fixture.PathOf("out.json");
+        // Untouched rows keep their members byte for byte (30.0 stays 30.0); Agents and API sort ordinally.
+        WriteFixture(output, """
+            {
+              "format": "antiphon-nightly-class-costs-v1",
+              "platform": "windows",
+              "source": "document-source",
+              "refresh": "old-refresh",
+              "dropped": "a member the file does not keep",
+              "classes": {
+                "Antiphon.Tests.Agents": { "nodes": 3, "seconds": 30.0, "basis": "pace", "note": "kept <as> it was" },
+                "Antiphon.Tests.API": { "nodes": 1, "seconds": 4, "basis": "measured", "os": "windows", "otherSample": { "seconds": 1 }, "extra": [1, 2] }
+              }
+            }
+            """);
+        var first = fixture.PathOf("first.trx");
+        var second = fixture.PathOf("second.trx");
+        // A parameterised class is cut at '('; a class name matches the row ignoring case and the row keeps its spelling;
+        // a result with no duration, or for an id with no definition, counts nothing; ids match ignoring case.
+        WriteFixture(first, "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun xmlns=\"http://microsoft.com/schemas/VisualStudio/TeamTest/2010\"><TestDefinitions>"
+            + "<UnitTest id=\"T1\"><TestMethod className=\"antiphon.tests.api\" name=\"One\" /></UnitTest>"
+            + "<UnitTest id=\"t2\"><TestMethod className=\"Antiphon.Tests.ParamTests(1, &quot;x&quot;)\" name=\"Two\" /></UnitTest>"
+            + "<UnitTest id=\"t3\"><TestMethod className=\"Antiphon.Tests.Tiny\" name=\"Three\" /></UnitTest>"
+            + "</TestDefinitions><Results>"
+            + "<UnitTestResult testId=\"t1\" duration=\"00:00:01.2500000\" outcome=\"Passed\" />"
+            + "<UnitTestResult testId=\"t2\" duration=\"00:00:02\" outcome=\"Passed\" />"
+            + "<UnitTestResult testId=\"t2\" outcome=\"NotExecuted\" />"
+            + "<UnitTestResult testId=\"t9\" duration=\"00:00:09\" outcome=\"Passed\" />"
+            + "<UnitTestResult testId=\"t3\" duration=\"00:00:00.0100000\" outcome=\"Passed\" />"
+            + "</Results></TestRun>");
+        WriteTrx(second, ("Antiphon.Tests.ParamTests(2)", "Two", "00:00:03"), ("Antiphon.Tests.API", "Four", "00:00:00.0500000"));
+        File.Copy(output, fixture.PathOf("before.json"));
+        var c = new Contract();
+        var run = Refresh(null, "--trx-path", first + ", " + second, "--output-path", output, "--host-id", "h", "--os", "windows",
+            "--measured-run-id", "r", "--source", "merge <fixture>");
+        c.Note(run.Code == 0, "refresh exit " + run.Code + " " + run.Text);
+        c.Note(run.Text.StartsWith("refreshed 3 classes from 2 TRX files -> " + output, StringComparison.Ordinal), "summary line " + run.Text);
+        var text = File.ReadAllText(output);
+        c.Note(text == Lf("""
+            {
+              "format": "antiphon-nightly-class-costs-v1",
+              "platform": "windows",
+              "source": "merge <fixture>",
+              "refresh": "scripts/antiphon refresh-nightly-class-costs --trx-path <a.trx,b.trx> --host-id <host> --os <windows|linux> --measured-run-id <run>",
+              "classes": {
+                "Antiphon.Tests.API": {
+                  "nodes": 2,
+                  "seconds": 1.3,
+                  "basis": "trx",
+                  "hostId": "h",
+                  "os": "windows",
+                  "measuredRunId": "r",
+                  "otherSample": {
+                    "seconds": 1
+                  },
+                  "extra": [
+                    1,
+                    2
+                  ]
+                },
+                "Antiphon.Tests.Agents": {
+                  "nodes": 3,
+                  "seconds": 30.0,
+                  "basis": "pace",
+                  "note": "kept <as> it was"
+                },
+                "Antiphon.Tests.ParamTests": {
+                  "nodes": 2,
+                  "seconds": 5,
+                  "basis": "trx",
+                  "hostId": "h",
+                  "os": "windows",
+                  "measuredRunId": "r"
+                },
+                "Antiphon.Tests.Tiny": {
+                  "nodes": 1,
+                  "seconds": 0.1,
+                  "basis": "trx",
+                  "hostId": "h",
+                  "os": "windows",
+                  "measuredRunId": "r"
+                }
+              }
+            }
+
+            """), "written file:\n" + text);
+        c.Note(!File.ReadAllBytes(output).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "byte-order mark");
+
+        // --set-platform moves the platform only when every row's os is --os.
+        var foreign = fixture.PathOf("foreign.json");
+        File.Copy(fixture.PathOf("before.json"), foreign);
+        var linux = Refresh(null, "--trx-path", second, "--output-path", foreign, "--host-id", "l", "--os", "linux", "--measured-run-id", "lr", "--set-platform");
+        c.Note(linux.Code == 0 && Text(ReadCost(foreign), "platform") == "windows", "set-platform with rows of other os " + linux.Text);
+        var api = Row(ReadCost(foreign), "Antiphon.Tests.API");
+        c.Note(Near(api, "seconds", 4) && api is { } a && Near(a.GetProperty("otherSample"), "seconds", 0.1)
+            && Text(a.GetProperty("otherSample"), "os") == "linux", "foreign sample replaced in place " + api);
+        var fresh = fixture.PathOf("fresh.json");
+        var created = Refresh(null, "--trx-path", second, "--output-path", fresh, "--host-id", "l", "--os", "linux", "--measured-run-id", "lr", "--set-platform");
+        var createdDoc = ReadCost(fresh);
+        c.Note(created.Code == 0 && Text(createdDoc, "platform") == "linux" && Text(createdDoc, "source") == "TRX durations: second.trx",
+            "a missing file starts empty on --os " + created.Text);
+
+        // A file that is not a class-cost file and a TRX that is not XML are refused, and nothing is written.
+        var other = fixture.PathOf("other.json");
+        WriteFixture(other, "{\"format\":\"antiphon-something-else\",\"classes\":{}}");
+        var refused = Refresh(null, "--trx-path", second, "--output-path", other, "--host-id", "h", "--os", "windows", "--measured-run-id", "r");
+        c.Note(refused.Code == 1 && refused.Text.Contains("refresh-nightly-class-costs: class-cost-format") && File.ReadAllText(other).Contains("something-else"),
+            "foreign format " + refused.Code + " " + refused.Text);
+        var broken = fixture.PathOf("broken.trx");
+        WriteFixture(broken, "<TestRun><Results>");
+        var unchanged = File.ReadAllText(output);
+        var malformed = Refresh(null, "--trx-path", broken, "--output-path", output, "--host-id", "h", "--os", "windows", "--measured-run-id", "r");
+        c.Note(malformed.Code == 1 && File.ReadAllText(output) == unchanged, "malformed TRX " + malformed.Code + " " + malformed.Text);
+        c.Note(Refresh(null, "--output-path", output, "--host-id", "h", "--os", "windows", "--measured-run-id", "r").Text.Contains("missing --trx-path"), "missing --trx-path");
+        c.Assert(nameof(RefreshMergesTrxFilesIntoTheCanonicalFile));
+    }
+
+    private static string Lf(string text) => text.ReplaceLineEndings("\n");
+
+    [Test]
+    public void CommittedFileNamesItsRefresh()
+    {
+        // The committed class-cost file names the command that writes it, and is a file that command accepts.
+        var path = Path.Combine(NightlyPlanCases.Repo, "scripts/lib/nightly-class-costs.json");
+        var doc = ReadCost(path);
+        var c = new Contract();
+        c.Note(Text(doc, "refresh") == ClassCostRefresh.RefreshCommand, "refresh " + Text(doc, "refresh"));
+        c.Note(Text(doc, "format") == NightlyTestsPlan.ClassCostFormat && Text(doc, "platform") is "windows" or "linux", "format or platform");
+        c.Note(File.Exists(Path.Combine(NightlyPlanCases.Repo, "scripts/lib/Antiphon.Nightly/ClassCostRefresh.cs")), "the refresh source moved");
+        c.Assert(nameof(CommittedFileNamesItsRefresh));
     }
 
     [Test]

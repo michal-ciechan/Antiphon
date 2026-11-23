@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Xml;
 
 namespace Antiphon.Nightly
@@ -142,6 +143,38 @@ namespace Antiphon.Nightly
                 Passed = Read("passed", out _), Failed = Read("failed", out _), NotExecuted = notExecuted,
             };
         }
+
+        /// <summary>
+        /// The class-cost refresh's read of a loaded TRX (ClassCostRefresh): one (class, seconds) pair per
+        /// TestRun/Results/UnitTestResult whose testId names a TestRun/TestDefinitions/UnitTest with a TestMethod className,
+        /// in result order. The class name is cut at its first '(' (a parameterised class); a result with no duration, or
+        /// whose definition names no class, is left out. Elements are matched by local name, test ids ignoring case (a
+        /// repeated definition id: the last wins). FormatException for a duration that is not a TimeSpan.
+        /// </summary>
+        public static IReadOnlyList<KeyValuePair<string, double>> ClassDurations(XmlDocument doc)
+        {
+            var classById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var rows = new List<KeyValuePair<string, double>>();
+            var run = doc?.DocumentElement;
+            if (run == null || run.LocalName != "TestRun") return rows;
+            foreach (var test in Children(run, "TestDefinitions").SelectMany(definitions => Children(definitions, "UnitTest")))
+            {
+                var name = Children(test, "TestMethod").Select(method => method.GetAttribute("className")).FirstOrDefault() ?? "";
+                var paren = name.IndexOf('(');
+                classById[test.GetAttribute("id")] = paren >= 0 ? name.Substring(0, paren) : name;
+            }
+            foreach (var result in Children(run, "Results").SelectMany(results => Children(results, "UnitTestResult")))
+            {
+                var duration = result.GetAttribute("duration");
+                if (!classById.TryGetValue(result.GetAttribute("testId"), out var className)
+                    || string.IsNullOrWhiteSpace(className) || string.IsNullOrWhiteSpace(duration)) continue;
+                rows.Add(new KeyValuePair<string, double>(className, TimeSpan.Parse(duration, CultureInfo.InvariantCulture).TotalSeconds));
+            }
+            return rows;
+        }
+
+        private static IEnumerable<XmlElement> Children(XmlElement parent, string localName) =>
+            parent.ChildNodes.OfType<XmlElement>().Where(child => child.LocalName == localName);
 
         /// <summary>Error is the refusal Read-NightlyTrxIdentities would throw (empty when none); Rows its rows.</summary>
         public static object IdentityRows(XmlDocument doc)
