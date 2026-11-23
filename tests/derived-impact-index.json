@@ -2205,18 +2205,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
+        "ChangeAwareReleaseTests",
         "LongPathsCheckoutScriptTests",
         "RcRosterRepairTests",
         "ReleaseGateLibraryTests",
         "ToolchainFloorWarningTests",
         "NightlyPrerequisiteTests",
         "NightlyScriptsTests",
-        "RcQualificationStatusTests",
-        "ReleaseCandidateTests"
+        "RcQualificationStatusTests"
       ]
     },
     {
@@ -25668,7 +25668,6 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
       "classes": [
         "C1514LandingSplitBudgetTests",
-        "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
@@ -25681,6 +25680,7 @@
         "QualificationStopTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
+        "RcBoundaryPackTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
@@ -25783,7 +25783,8 @@
       "path": "tests/Antiphon.Tests/Scripts/NightlyCoreGoldenTests.Support.cs",
       "classes": [
         "NightlyCoreGoldenTests",
-        "QualificationHeartbeatTests"
+        "QualificationHeartbeatTests",
+        "RcBoundaryPackTests"
       ]
     },
     {
@@ -26042,7 +26043,6 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
-        "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcQualificationWatcherScriptTests",
         "ReleaseGateE2EEvidenceTests",
@@ -26077,7 +26077,6 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "ProcessSpawnLimitTests",
-        "RcBoundaryPackTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ScriptHarnessCancellationTests",
