@@ -27,8 +27,37 @@ The run found two bugs that the fakes hid:
   the author's branch. The adapter now rebases over GraphQL (`Review:CodeHosts:Hosts:<id>:UpdateMethod`,
   default `rebase`).
 
-Still not live: real reviewer agents (G-1, G-2, G-6, G-7) and real decision and verifier models
-(G-10, G-11). Those need the desktop instance.
+### Real reviews from the standalone instance (2026-11-23)
+
+`scripts/review-standalone.ps1` ran a review-only server on the laptop. It had no session runner,
+used the app, polled the repo, and ran reviewers, verifier and decisions through one-shot `claude -p`
+(section 7.7). Polling picked up three real PRs, #53, #54 and #55; #52 was skipped by its label.
+Each was reviewed end to end:
+
+- **Decisions:** Haiku classified each PR (category `test`, blast radius 1-2) and selected 3-4 seed
+  checks, for about $0.002 per call.
+- **Reviewers:** Opus reviewed each group in a worktree of a repo mirror, about $0.06 to $0.38
+  api-equivalent per group.
+- **Verify:** Haiku disproved a finding on #54, which was dropped.
+- **Routing:** #53 and #55 were bot-approved. #54 opened a human gate because SEED-0003 requires a
+  human.
+- **Branch updates:** with keepUpToDate, approved PRs were rebased onto a moved master over GraphQL,
+  with no merge commit, and the approval was carried forward.
+
+The run found four bugs that the scripted tests could not:
+
+- **Reviewer killed after each pass:** the scoped `IReviewAgentRunner` factory let every executor
+  scope dispose the singleton claude -p runner, cancelling its reviewer when the pass ended.
+  `SelectedReviewAgentRunner` now selects the runner instead.
+- **Rebase widened the delta:** after a rebase, delta reviewed `since...head`, which included
+  master's commits: 58 files for a 5-file PR. A moved base now reviews the whole change.
+- **Rebase head not reported:** GitHub answers `updatePullRequestBranch` before the rebase lands. The
+  adapter now waits up to 20 s for the new head, so the rebase is base-only.
+- **Poller raced the walk:** a poll pass during that wait refreshed the running run as a push. The
+  poller now skips running runs.
+
+Still not live: delegation reviewers on session runners (G-1, G-2, G-6, G-7) and verifier seats (G-11).
+Those need the desktop instance; the claude -p transport covers the standalone case.
 
 ## ABF parser (`server/Application/Review/Abf/`)
 
