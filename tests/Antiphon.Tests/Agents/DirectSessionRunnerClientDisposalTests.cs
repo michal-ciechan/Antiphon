@@ -332,6 +332,7 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
             var stat = File.ReadAllText($"/proc/{process.Id}/stat");
             return stat[(stat.LastIndexOf(')') + 2)] is 'Z' or 'X';
         }
+        catch (IOException ex) when (ex is not FileNotFoundException && ex.HResult == 3) { return true; } // ESRCH: reaped after open.
         catch (FileNotFoundException) { return true; }
         catch (DirectoryNotFoundException) { return true; }
     }
