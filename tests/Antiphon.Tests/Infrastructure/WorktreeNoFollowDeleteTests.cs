@@ -558,6 +558,45 @@ public sealed class WorktreeNoFollowDeleteTests
         while (now.Seconds == start.Seconds && now.Nanoseconds == start.Nanoseconds);
     }
 
+    // Debug 847c35c6 (run 557cdb63, group 141): on Windows the delete handle was open, and setting its
+    // disposition still failed with ERROR_SHARING_VIOLATION while another holder (a scanner or indexer on a
+    // freshly written file) had the entry. The open already waits such a holder out; the disposition must too.
+    [Test]
+    [Arguments(32)]
+    [Arguments(33)]
+    [Arguments(5)]
+    public void C847_TransientDispositionRefusalIsRetried(int transient)
+    {
+        var codes = new Queue<int>([transient, transient, 0]);
+        var pauses = new List<TimeSpan>();
+        WorktreeNoFollowDelete.SettleDisposition(codes.Dequeue, pauses.Add).ShouldBe(0);
+        codes.ShouldBeEmpty();
+        pauses.ShouldBe([WorktreeRenames.SharingPause, WorktreeRenames.SharingPause]);
+    }
+
+    [Test]
+    public void C847_LastingSharingViolationStillRefusesAfterTheBound()
+    {
+        var calls = 0;
+        var pauses = new List<TimeSpan>();
+        WorktreeNoFollowDelete.SettleDisposition(() => { calls++; return 32; }, pauses.Add).ShouldBe(32);
+        calls.ShouldBe(WorktreeRenames.SharingAttempts, "the retry is bounded");
+        pauses.Count.ShouldBe(WorktreeRenames.SharingAttempts - 1);
+    }
+
+    [Test]
+    [Arguments(145)]
+    [Arguments(2)]
+    [Arguments(87)]
+    public void C847_OtherDispositionRefusalIsNotRetried(int code)
+    {
+        var calls = 0;
+        var pauses = new List<TimeSpan>();
+        WorktreeNoFollowDelete.SettleDisposition(() => { calls++; return code; }, pauses.Add).ShouldBe(code);
+        calls.ShouldBe(1);
+        pauses.ShouldBeEmpty();
+    }
+
     private const int ClockRealtimeCoarse = 5;
 
     [StructLayout(LayoutKind.Sequential)]

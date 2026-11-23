@@ -135,16 +135,27 @@ internal static class WorktreeNoFollowDelete
 
     private static void MarkDeleted(SafeFileHandle handle, string path)
     {
+        var error = SettleDisposition(() => TrySetDisposition(handle), WorktreeRenames.System.Pause);
+        if (error != 0) throw Failure("delete", path, error);
+    }
+
+    /// <summary>
+    /// Runs one disposition attempt (0 on success, else its Win32 code) and returns the final code.
+    /// </summary>
+    internal static int SettleDisposition(Func<int> attempt, Action<TimeSpan> pause) => attempt();
+
+    private static int TrySetDisposition(SafeFileHandle handle)
+    {
         // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE: the name goes at once
         // so the parent can follow, and a read-only file goes as Git would remove it.
         var ex = new FileDispositionInfoEx { Flags = 0x1 | 0x2 | 0x10 };
-        if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return;
+        if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return 0;
         var error = Marshal.GetLastPInvokeError();
         // Volumes without the extended disposition (FAT, some network shares) take the classic one.
-        if (error is not (87 or 1 or 50)) throw Failure("delete", path, error);
+        if (error is not (87 or 1 or 50)) return error;
         var classic = new FileDispositionInfo { DeleteFile = 1 };
-        if (!SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>()))
-            throw Failure("delete", path);
+        return SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>())
+            ? 0 : Marshal.GetLastPInvokeError();
     }
 
     // CARD-1717 D-5: a path walk can lstat a directory and then enumerate the symlink that replaced it.
