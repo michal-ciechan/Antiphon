@@ -2189,34 +2189,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 50,
+      "classes": 51,
       "reason": "cap",
-      "owed": 25,
+      "owed": 26,
       "first": [
+        "AwayDigestSendTests",
         "C599SnapshotTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
         "TestSelectionExecutionTests",
         "TestTimingReportTests",
         "LongPathsCheckoutScriptTests",
-        "NightlyLockFormatTests",
-        "NightlyReportTests"
+        "NightlyLockFormatTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 51,
+      "classes": 52,
       "reason": "cap",
-      "owed": 26,
+      "owed": 27,
       "first": [
+        "RcProjectSelectionTests",
         "ReleaseGateRegistrationTests",
         "ChangeAwareReleaseTests",
         "LongPathsCheckoutScriptTests",
         "RcRosterRepairTests",
         "ReleaseGateLibraryTests",
         "ToolchainFloorWarningTests",
-        "NightlyPrerequisiteTests",
-        "NightlyScriptsTests"
+        "NightlyPrerequisiteTests"
       ]
     },
     {
@@ -20944,6 +20944,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Agents.Pty.Tests/Card1685LinuxCustodyRunnerTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Agents.Pty.Tests/ClSession.cs",
       "classes": [
         "ClaudeAppendSystemPromptCanaryTests",
@@ -21253,6 +21259,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Agents.Pty.Tests/LinuxCgroupContainmentTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Agents.Pty.Tests/LiveClaudeDeliverySession.cs",
       "classes": [
         "ClaudeRemoteControlMenuCanaryTests"
@@ -21521,6 +21533,7 @@
         "NightlyPolicyTests",
         "RcInputOwnersMapTests",
         "ReleaseGateE2EEvidenceTests",
+        "ReleaseGatePlatformTests",
         "ReleaseGatePolicyTests"
       ]
     },
@@ -21762,6 +21775,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.NativeLinuxPolicy.Probe/ProbeTests.cs",
+      "classes": [
+        "ReleaseGatePlatformTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
       "classes": [
         "IncrementalSelectionSoundnessTests",
@@ -21786,6 +21805,12 @@
         "HostSessionPipeTests",
         "LinuxCgroupCustodyTests",
         "LinuxCustodyReleaseHostTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.PtyHost.Tests/LinuxCustodyReleaseHostTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
       ]
     },
     {
@@ -22941,6 +22966,18 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/AgentReportStoreLoadTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/AgentSessionRuntimeTests.Persist.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -23553,6 +23590,12 @@
         "BootStallDocumentationTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "SessionRunnerAbsenceEvidenceDocumentationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/C0824DesktopLegacyReleasePolicyTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
       ]
     },
     {
@@ -24977,6 +25020,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointReceiptStallBudgetTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointRecoveryWindowsTests.cs",
       "classes": [
         "CheckpointRecoveryLinuxTests"
@@ -25229,6 +25278,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Checkpoints/TempRootSweepAnchoredDeleteTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
       "classes": [
         "C1744G1DesktopWinComposeTests",
@@ -25318,6 +25373,7 @@
       "path": "tests/Antiphon.Tests/Infrastructure/LandingGitTests.cs",
       "classes": [
         "ProcessSpawnLimitTests",
+        "RcCoverageAdmissionTests",
         "RepositoryMutationLeaseTests"
       ]
     },
@@ -25331,6 +25387,12 @@
       "path": "tests/Antiphon.Tests/Infrastructure/LandingRemovalControlTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Infrastructure/OwnedProcessTreeTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
       ]
     },
     {
@@ -25473,6 +25535,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/CardRelationshipScriptTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ComposeFixtureRoot.cs",
       "classes": [
         "RunnerLinuxCompilerPolicyTests"
@@ -25521,6 +25589,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/LinuxOnlyCensus.cs",
+      "classes": [
+        "ReleaseGatePlatformTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/LinuxScriptHarnessProcess.cs",
       "classes": [
         "ScriptHarnessCancellationTests",
@@ -25563,9 +25637,21 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/LiveLaneIsolationTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyExecutionTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs",
+      "classes": [
+        "ReleaseGatePlatformTests"
       ]
     },
     {
@@ -25622,6 +25708,7 @@
         "NightlyVerificationContractTests",
         "QualificationEtaTests",
         "RcRunEvidenceTests",
+        "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "ToolchainFloorWarningTests"
       ]
@@ -25666,7 +25753,6 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
-        "AwayDigestSendTests",
         "ClassCostMeasurementTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
@@ -25684,6 +25770,7 @@
         "RcFailureHistoryTests",
         "ReleaseCandidateGitTests",
         "ReleaseCandidateTests",
+        "ReleaseGatePlatformTests",
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
@@ -25720,9 +25807,9 @@
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
-        "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateE2EEvidenceTests",
+        "ReleaseGatePlatformTests",
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
@@ -25781,6 +25868,7 @@
         "NightlyPrerequisiteTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
+        "ReleaseGatePlatformTests",
         "ToolchainFloorWarningTests"
       ]
     },
@@ -25806,6 +25894,7 @@
         "QualificationTimingTests",
         "RcRunEvidenceTests",
         "ReleaseGateLibraryTests",
+        "ReleaseGatePlatformTests",
         "ReleaseStatusTests"
       ]
     },
@@ -25842,6 +25931,12 @@
         "C1008PlatformContractTests",
         "OuterRowBuildStampTests",
         "WindowsUnitPlatformAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/PosixHarnessToolTests.cs",
+      "classes": [
+        "RcCoverageAdmissionTests"
       ]
     },
     {
@@ -26096,9 +26191,7 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
-        "RcCoverageAdmissionTests",
         "RcQualificationWatcherScriptTests",
-        "ReleaseGatePlatformTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
       ]
@@ -26125,7 +26218,6 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "ProcessSpawnLimitTests",
-        "ReleaseGatePlatformTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
@@ -26227,6 +26319,12 @@
         "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessWindowsOwnershipTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs",
+      "classes": [
+        "ReleaseGatePlatformTests"
       ]
     },
     {
@@ -28762,7 +28860,14 @@
       "classes": [
         "NativeLinuxPolicyMatcherParityTests",
         "NativeLinuxPolicyWitnessMutationTests",
-        "NativeLinuxPolicyWitnessTests"
+        "NativeLinuxPolicyWitnessTests",
+        "ReleaseGatePlatformTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/NativeLinuxPolicyWitnessTests.cs",
+      "classes": [
+        "ReleaseGatePlatformTests"
       ]
     },
     {
