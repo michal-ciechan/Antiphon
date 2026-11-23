@@ -6718,6 +6718,13 @@
       ]
     },
     {
+      "path": "server/Application/Review/Checks/Seed/concurrency/SEED-0004.md",
+      "classes": [
+        "ImpactedClassesSelectorTests",
+        "LandNonCodeSkipTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/CliReviewAgentRunner.cs",
       "classes": [
         "ClaudeCliTransportTests"
