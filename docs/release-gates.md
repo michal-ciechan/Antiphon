@@ -25,8 +25,8 @@ Features and refactors, including CARD-1311, are master-only. Every rc-line land
 is merged to master with a merge commit. That merge commit is an explicit
 exception to rebase-only landing, and `-Land` does not create it.
 
-Releases are cut from the rc line. `publish-release.ps1` writes
-`vYYYY.MM.DD.N-rc.K` and a GitHub pre-release. `scripts/promote-release.ps1`
+Releases are cut from the rc line. `scripts\antiphon.cmd publish-release` writes
+`vYYYY.MM.DD.N-rc.K` and a GitHub pre-release. `scripts\antiphon.cmd promote-release`
 writes the final `vYYYY.MM.DD.N` at that same peeled SHA. Tags are immutable:
 they are never deleted or moved. Legacy `release/rc-YYYYMMDDTHHMMSSZ` refs remain
 valid until a later card removes them. New cuts do not allocate a stamp.
@@ -454,7 +454,7 @@ the serial `AgentTaskLandDeliveryE2ETests` class alone fills the e2e window
 ([hangs](investigations/2026-10-19-rc-windows-hangs.md) on `feat/card-task-5b8ad483`). The
 watchdog values and their reasons are in [testing and build](testing-and-build.md#nightly).
 Acceptance on this standard is the operator's CARD-1350 decision: it earns no `rc-release` credit
-and authorises no `publish-release.ps1`; publication still needs the full automated Windows
+and authorises no `publish-release`; publication still needs the full automated Windows
 profile.
 
 ## Startup-path rc picks
@@ -531,20 +531,25 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 | Script | Job |
 |---|---|
 | `scripts\antiphon.cmd release-candidate --ref <ref>` | Journal an existing `rc/YYYY-MM-DD` tip, or keep today's create-only push for a legacy stamp ref. An omitted `--ref` refuses. |
-| `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green. |
-| `scripts/publish-release.ps1` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
-| `scripts/promote-release.ps1` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
+| `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green (it runs the candidate's and the publisher's C# in process). |
+| `scripts\antiphon.cmd publish-release --candidate-id <id> [--what-if]` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
+| `scripts\antiphon.cmd promote-release --tag <vYYYY.MM.DD.N-rc.K> --candidate-id <id> [--what-if]` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
 | `scripts\antiphon.cmd release-status` | Is the running build a published release? Read-only. |
 | `scripts\antiphon.cmd register-release-gates` | Idempotent Windmill registration front door. |
 
-The remote reads, the tag push, GitHub, the publisher's clock and the publication journal the
-PowerShell scripts above use are C# (`scripts/lib/Antiphon.Nightly/ReleaseGateRemote.cs`,
-`ReleaseGateJournal.cs`, `ReleaseGateTags.cs`); `release-candidate`, `release-status` and
-`register-release-gates` are commands of `antiphon-scripts` (`scripts/antiphon` from sh).
-`release-cut.ps1` runs the candidate in process (`ReleaseCandidate.cs`) from the core it loads.
-The command prints its `[release-candidate]` lines, then one JSON line (`candidateId`, `ref`,
-`sha`, `pushed`, `resumed`, `refusal`, `exitCode`); it exits 0 when journalled (or with
-`--what-if`), 1 on a clone, fetch, push or SHA failure, 3 on a refusal.
+`release-candidate`, `publish-release`, `promote-release`, `release-status` and `register-release-gates` are commands of
+`antiphon-scripts` (`scripts/antiphon` from sh); the release gate is C# in `scripts/lib/Antiphon.Nightly`
+(`ReleaseCandidate.cs`, `ReleasePublish.cs`, `ReleasePromote.cs` and their host `ReleaseGateHost.cs`, over
+`ReleaseGateRemote.cs`, `ReleaseGateJournal.cs` and `ReleaseGateTags.cs`). `release-cut.ps1` runs the candidate and the
+publisher in process from the core it loads.
+
+The candidate prints its `[release-candidate]` lines, then one JSON line (`candidateId`, `ref`, `sha`, `pushed`, `resumed`,
+`refusal`, `exitCode`); it exits 0 when journalled (or with `--what-if`), 1 on a clone, fetch, push or SHA failure, 3 on a
+refusal. The publisher and promoter flags are the old scripts' parameters in kebab case (`--release-root`,
+`--checkout-root`, `--repository`, `--expected-policy-hash`, `--required-suites a,b`, `--antiphon-api-url`); the commands
+read `ANTIPHON_API` when `--antiphon-api-url` is not given, and `ANTIPHON_RELEASE_GATE_TEST_MODE`. Exit 0 published,
+promoted, resumed or `--what-if`; 1 a remote write (or the promotion's journal record) failed; 2 usage; 3 refused. Both
+print their `[publish-release]` or `[promote-release]` lines, then one JSON line.
 
 **Cut.** The release ref is `rc/YYYY-MM-DD`, with an optional `refs/heads/` prefix.
 A legacy stamp `release/rc-YYYYMMDDTHHMMSSZ` remains valid. `release/current` and any
@@ -616,12 +621,14 @@ The pre-release sequence, each transition journalled **before** the next begins:
 7. read tag and asset digests back
 8. publish the draft, then persist the release id and URL
 
-`scripts/promote-release.ps1` then writes `vYYYY.MM.DD.N` at that same peeled SHA. It
-revalidates the pinned authority, Full ledger, script hashes and release-card
+`scripts\antiphon.cmd promote-release` then writes `vYYYY.MM.DD.N` at that same peeled SHA. It
+revalidates the pinned authority, Full ledger, script and source-tree hashes and release-card
 readback on every attempt, including an already-matching final. Its explicit
-`Repository` and `AntiphonApiUrl` inputs follow the publisher's defaults.
-The authority now binds seven scripts, including `promote-release.ps1`; existing
-six-script authorities must be recut and requalified through the normal process.
+`--repository` and `--antiphon-api-url` inputs follow the publisher's defaults.
+The authority binds two scripts (`lib/nightly-common.ps1`, `lib/nightly-core.ps1`) and two
+source trees (`lib/Antiphon.Nightly`, `../src/Antiphon.IO.WriteBehind`); the publisher and the
+promoter are C# in the first tree, so its digest pins them. A record frozen earlier that also binds
+the deleted `publish-release.ps1` and `promote-release.ps1` is checked on these four keys only.
 Do not insert a new digest into old evidence. Promotion
 refuses when the final tag already exists at another SHA, when the pre-release tag is
 missing, or when the peel is not a full 40-hex SHA. It does not delete the pre-release

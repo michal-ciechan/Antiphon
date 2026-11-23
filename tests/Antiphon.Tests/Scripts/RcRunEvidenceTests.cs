@@ -50,6 +50,11 @@ public sealed class RcRunEvidenceTests
 
     private static string ReadSource(string path) => RcInputFixtureRepository.ReadSource(path);
 
+    // The run wiring adds no publication: it names neither the publish-release command (publish-release.ps1 until unit 14 of
+    // 2026-11-22-remaining-ps1-to-csharp.md) nor its compiled publisher.
+    private static bool PublishesRelease(string source) =>
+        source.Contains("publish-release", StringComparison.OrdinalIgnoreCase) || source.Contains("ReleasePublish", StringComparison.Ordinal);
+
     private static int CountFiles(string directory) =>
         Directory.Exists(directory) ? Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Length : 0;
 
@@ -196,7 +201,7 @@ public sealed class RcRunEvidenceTests
         Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && suiteRunner.Contains(DiscoveryCall, StringComparison.Ordinal)
             && chunkRunner.Contains(LaunchCall, StringComparison.Ordinal) && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
         Note(runImpl.Contains("rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
-        Note(!testsImpl.Contains("publish-release.ps1", StringComparison.OrdinalIgnoreCase) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");
+        Note(!PublishesRelease(testsImpl) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");
         Contract(nameof(OneBuildAndDiscoveryPerSuite));
     }
 
@@ -370,7 +375,7 @@ public sealed class RcRunEvidenceTests
         Note(warnings == 1, "fault-one-warning");
         var runText = ReadSource(RunImpl);
         var testsText = ReadSource(TestsImpl);
-        Note(!runText.Contains("Incremental", StringComparison.OrdinalIgnoreCase) && !testsText.Contains("publish-release.ps1", StringComparison.OrdinalIgnoreCase), "run-path-adds-no-mode-or-publish");
+        Note(!runText.Contains("Incremental", StringComparison.OrdinalIgnoreCase) && !PublishesRelease(testsText), "run-path-adds-no-mode-or-publish");
         Contract(nameof(OneEvidenceRootPerRun));
     }
 

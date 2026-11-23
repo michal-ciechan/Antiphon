@@ -9,7 +9,8 @@ namespace Antiphon.Tests.Scripts;
 
 // The release authority's pure rules (Antiphon.Nightly.ReleaseAuthority), called in-process: the pinned policy reader,
 // required UIDs, evidence containment, the card correlation line, instants and the canonical digest text. The
-// git-backed freeze, pinned reload and ledger run through test-release-gate.ps1 until the publisher is compiled.
+// git-backed freeze, pinned reload and ledger run in process through the compiled publisher (unit 14 of
+// 2026-11-22-remaining-ps1-to-csharp.md): ReleaseGateAuthorityContractTests and ReleaseGatePublicationAuthorityTests.
 [Category("Unit")]
 public sealed class ReleaseAuthorityTests
 {

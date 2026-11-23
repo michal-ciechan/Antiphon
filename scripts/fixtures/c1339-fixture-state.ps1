@@ -54,61 +54,6 @@ function New-C1339Fixture {
     return $fx
 }
 
-function Save-C1339Snapshot {
-    param($Fx)
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $snap = Save-C599ASnapshot $Fx
-    Initialize-C1339Snapshot $snap
-    $global:C1733Timing.saves++
-    $global:C1733Timing.saveSeconds += $watch.Elapsed.TotalSeconds
-    return $snap
-}
-
-function Initialize-C1339Snapshot {
-    param($Snap)
-    if ($null -ne $Snap.Entries) { return }
-    # Cache immutable expected bytes/parents, never a previous acceptance decision.
-    $parents = @{}
-    $entries = @(foreach ($path in $Snap.Files.Keys) {
-        $parents[[IO.Path]::GetDirectoryName($path)] = $true
-        [pscustomobject]@{ Path = $path; Bytes = $Snap.Files[$path]; Encoded = [Convert]::ToBase64String($Snap.Files[$path]) }
-    })
-    $Snap | Add-Member Entries $entries
-    $Snap | Add-Member Parents @($parents.Keys)
-}
-
-function Restore-C1339Snapshot {
-    param($Snap)
-    $ErrorActionPreference = 'Stop'
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $global:C1733Timing.restores++
-    try {
-        Initialize-C1339Snapshot $Snap
-        foreach ($file in [IO.Directory]::EnumerateFiles($Snap.Root, '*', [IO.SearchOption]::AllDirectories)) {
-            if (-not $Snap.Files.ContainsKey($file)) { [IO.File]::Delete($file) }
-        }
-        foreach ($path in $Snap.Absent) {
-            try { $attributes = [IO.File]::GetAttributes($path) }
-            catch [IO.FileNotFoundException] { continue }
-            catch [IO.DirectoryNotFoundException] { continue }
-            if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
-                # Nonrecursive: unknown contents or access failures terminate restoration.
-                [IO.Directory]::Delete($path)
-            } else { [IO.File]::Delete($path) }
-        }
-        foreach ($parent in $Snap.Parents) { [void][IO.Directory]::CreateDirectory($parent) }
-        foreach ($entry in $Snap.Entries) {
-            if ([IO.File]::Exists($entry.Path) -and
-                [Convert]::ToBase64String([IO.File]::ReadAllBytes($entry.Path)) -ceq $entry.Encoded) {
-                $global:C1733Timing.unchanged++
-                continue
-            }
-            [IO.File]::WriteAllBytes($entry.Path, $entry.Bytes)
-            $global:C1733Timing.writes++
-        }
-    } finally { $global:C1733Timing.restoreSeconds += $watch.Elapsed.TotalSeconds }
-}
-
 function Complete-C1733FixtureRun {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try { Stop-C599CardStub; Clear-C599FixtureReadOnly }

@@ -11,8 +11,8 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0599 D-3 and CARD-1311 S2: the release candidate (Antiphon.Nightly.ReleaseCandidate, the release-candidate command)
 /// in process, over an in-memory fake remote. Unit 13 of 2026-11-22-remaining-ps1-to-csharp.md deleted
 /// scripts/release-candidate.ps1; these cases replaced the rows of scripts/test-release-gate.ps1 that ran it:
-/// C599_CandidateIdentity and C599_CutRecovery (ReleaseGatePublicationTests) and C1311_LongLivedRcRef
-/// (ReleaseBranchModelGateTests), with their row names. The coordinator rows of C599_CloneOwnership are
+/// C599_CandidateIdentity and C599_CutRecovery (formerly run by ReleaseGatePublicationTests) and C1311_LongLivedRcRef
+/// (formerly run by ReleaseBranchModelGateTests; both classes went once unit 14 moved their other cases), with their row names. The coordinator rows of C599_CloneOwnership are
 /// ReleaseGateRunTests.C599_CloneOwnership, LP_CloneFlag is LongPathsCheckoutScriptTests.LP_CloneFlag and the real-git
 /// candidate reads (C1339 G-7..G-9) and the command line are ReleaseCandidateGitTests. A separate observer read of the fake
 /// remote - never the candidate's own answer - is what proves recipient state.

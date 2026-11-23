@@ -9,7 +9,8 @@
     2. scripts/nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate>
        -ExpectedSha <sha> runs the rc profile against the candidate checkout
        and private state root.
-    3. scripts/publish-release.ps1 runs only on RC complete-green.
+    3. publication (Antiphon.Nightly.ReleasePublish, the publish-release command, run in
+       process from the loaded core) runs only on RC complete-green.
 
     A red or incomplete RC publishes nothing and keeps its evidence. This
     script never moves a tested ref or retries a failed run in place.
@@ -197,9 +198,15 @@ if ($SkipPublish -or $WhatIf) {
     exit 0
 }
 
-$pub = & (Join-Path $PSScriptRoot 'publish-release.ps1') -ReleaseRoot $ReleaseRoot `
-    -CandidateId $record.candidateId -CheckoutRoot $checkout -Repository $Repository `
-    -SeamsPath $SeamsPath -PassThru
+# The publisher is compiled (unit 14 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md replaced the
+# publisher script): one call on the production release-gate host, its [publish-release] lines on this console. The
+# pinned scripts are this checkout's. A -SeamsPath is admitted as the publisher admits it: outside test mode it refuses
+# seams-outside-test-mode, and no fake git or GitHub is bound here, so test mode refuses test-mode-real-remote.
+$pub = [Antiphon.Nightly.ReleasePublish]::Run([Antiphon.Nightly.ReleasePublishOptions]@{
+        ReleaseRoot = $ReleaseRoot; CandidateId = $record.candidateId; CheckoutRoot = $checkout; Repository = $Repository
+        AntiphonApiUrl = [string]$env:ANTIPHON_API; ScriptsRoot = $PSScriptRoot; SeamsPath = $SeamsPath
+        TestMode = [Antiphon.Nightly.ReleaseGateRemote]::TestMode([string]$env:ANTIPHON_RELEASE_GATE_TEST_MODE)
+    }, [Antiphon.Nightly.ReleaseGateHost]::Production([Console]::Out))
 $record.published = [bool]$pub.Published
 $record.tag = [string]$pub.Tag
 $record.refusal = [string]$pub.Refusal

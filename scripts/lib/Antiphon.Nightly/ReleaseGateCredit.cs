@@ -40,6 +40,9 @@ namespace Antiphon.Nightly
     /// <summary>W2-nightly S19: a credit kind's store (StatePaths' Root and GreenPath, plain).</summary>
     public sealed record ReleaseGateCreditStore(string CreditKind, string Root, string GreenPath);
 
+    /// <summary>An rc candidate's files (StatePaths' rc-release Root, GreenPath, JournalPath, ManifestPath and PublishJournalPath, plain).</summary>
+    public sealed record ReleaseGateCandidatePaths(string Root, string GreenPath, string JournalPath, string ManifestPath, string PublishJournalPath);
+
     public static class ReleaseGateCredit
     {
         public const string DefaultReleaseRoot = @"C:\Antiphon\releases";
@@ -361,6 +364,18 @@ namespace Antiphon.Nightly
             }
             if (!string.Equals(creditKind, "master-scheduled", StringComparison.OrdinalIgnoreCase)) throw new NightlyRefusal("unknown credit kind " + creditKind);
             return new ReleaseGateCreditStore(creditKind, stateRoot ?? "", Join(stateRoot, "last-complete-green.json"));
+        }
+
+        /// <summary>
+        /// Unit 14 of 2026-11-22-remaining-ps1-to-csharp.md: StatePaths' rc-release paths over plain values, for the
+        /// publish-release and promote-release commands (no PowerShell). Refuses a blank candidate id as StatePaths does.
+        /// </summary>
+        public static ReleaseGateCandidatePaths CandidatePaths(string releaseRoot, string candidateId)
+        {
+            if (string.IsNullOrWhiteSpace(candidateId)) throw new NightlyRefusal("rc credit requires a candidate id");
+            var root = CandidateRoot(releaseRoot, candidateId);
+            return new ReleaseGateCandidatePaths(root, Join(root, "complete-green.json"), Join(root, "candidate.json"), Join(root, "release-manifest.json"),
+                Join(root, "publish.json"));
         }
 
         /// <summary>

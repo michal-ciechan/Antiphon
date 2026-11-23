@@ -145,11 +145,10 @@ public sealed class RcDirtyLaunchOrderTests
         scoped["coverageScope"] = "Full";
         var full = ReleaseGateCredit.Verdict(scoped);
         Note(!shadow.Ok && shadow.Reasons.Contains("full-credit-scope-required") && full.Ok, "gate-credit-refuses-non-full-scope");
-        foreach (var name in new[] { "publish-release.ps1", "promote-release.ps1" })
-        {
-            var path = Path.Combine(RcInputFixtureRepository.SourceRoot, "scripts", name);
-            if (File.Exists(path)) Note(!HasDirtyOrderCaller(File.ReadAllText(path)), name + "-has-no-dirty-order-caller");
-        }
+        // Unit 14 of 2026-11-22-remaining-ps1-to-csharp.md: the publisher and the promoter are C# (publish-release.ps1 and
+        // promote-release.ps1 are deleted); neither calls the dirty order.
+        foreach (var name in new[] { "ReleasePublish.cs", "ReleasePromote.cs", "ReleaseGateHost.cs" })
+            Note(!HasDirtyOrderCaller(RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/" + name)), name + "-has-no-dirty-order-caller");
         // The implementation (the PowerShell wrapper is gone) neither publishes, packs, replaces the full seed order,
         // nor honors a caller's fixProven flag.
         var body = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/RcDirtyOrder.cs");

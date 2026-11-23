@@ -252,15 +252,16 @@ namespace Antiphon.Nightly
         private static readonly Regex BuildOutput = new Regex("^(bin|obj)/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// The scripts pinned by digest, relative to the scripts directory. W2-nightly S27 deleted lib/nightly-coverage.ps1
-        /// and unit 12 of 2026-11-22-remaining-ps1-to-csharp.md lib/release-gate.ps1, whose behaviour is now
-        /// ReleaseGateRemote.cs, ReleaseGateJournal.cs and ReleaseGateTags.cs in lib/Antiphon.Nightly, pinned by that tree's
-        /// SourceTrees digest; an older record that still binds a deleted script verifies, because Pinned checks only the
-        /// keys listed here and SourceTrees.
+        /// The scripts pinned by digest, relative to the scripts directory. W2-nightly S27 deleted lib/nightly-coverage.ps1,
+        /// unit 12 of 2026-11-22-remaining-ps1-to-csharp.md lib/release-gate.ps1 (now ReleaseGateRemote.cs,
+        /// ReleaseGateJournal.cs and ReleaseGateTags.cs) and unit 14 publish-release.ps1 and promote-release.ps1 (now
+        /// ReleasePublish.cs, ReleasePromote.cs and ReleaseGateHost.cs, run as antiphon-scripts publish-release and
+        /// promote-release). Their C# is in lib/Antiphon.Nightly, pinned by that tree's SourceTrees digest. An older record
+        /// that still binds a deleted script verifies, because Pinned checks only the keys listed here and SourceTrees.
         /// </summary>
         public static readonly string[] Scripts =
         {
-            "publish-release.ps1", "promote-release.ps1", "lib/nightly-common.ps1", "lib/nightly-core.ps1",
+            "lib/nightly-common.ps1", "lib/nightly-core.ps1",
         };
 
         /// <summary>
@@ -825,9 +826,11 @@ namespace Antiphon.Nightly
         /// than nowUtc (the publisher's injectable clock) plus a small skew, and the D-14 prepublication receipt must be
         /// typed, addressed to the release card bound to the authority, and correlated to this run - and the card itself,
         /// read back through the Antiphon API at cardApiBaseUrl, must be at exactly the receipt's revision with this run's
-        /// correlation in its body. green: the run's complete-green document (its runId).
+        /// correlation in its body. green: the run's complete-green document (its runId). cardReader reads the card (base URL,
+        /// card id); null is the CardReader test seam when set, else ReadReleaseCard over HTTP.
         /// </summary>
-        public static LedgerCheck Ledger(string candidateRoot, PinnedAuthority pinned, object green, DateTime nowUtc, string cardApiBaseUrl)
+        public static LedgerCheck Ledger(string candidateRoot, PinnedAuthority pinned, object green, DateTime nowUtc, string cardApiBaseUrl,
+            Func<string, string, CardReadback> cardReader = null)
         {
             var reasons = new List<string>();
             var dir = Dir(candidateRoot);
@@ -927,7 +930,8 @@ namespace Antiphon.Nightly
                 // naming any other positive revision, refuses - with this run's correlation in its body. An unavailable
                 // readback refuses: publication fails closed.
                 var boundCard = AuthorityValue.Text(A("releaseCardId"));
-                var readback = CardReader != null ? CardReader(cardApiBaseUrl, boundCard) : ReadReleaseCard(cardApiBaseUrl, boundCard);
+                var reader = cardReader ?? CardReader ?? ReadReleaseCard;
+                var readback = reader(cardApiBaseUrl, boundCard) ?? new CardReadback { Ok = false };
                 if (!readback.Ok) reasons.Add("release-card-readback-unavailable");
                 else
                 {
@@ -1133,10 +1137,11 @@ namespace Antiphon.Nightly
         /// <summary>
         /// The publisher's single entry point (Test-ReleaseGateAuthority): pinned policy + ledger. repository is the
         /// publication destination; nowUtc the publisher's clock; cardApiBaseUrl the Antiphon API the bound release card is
-        /// read back from. green and candidate: the run's complete-green document and the candidate journal.
+        /// read back from (through cardReader, see Ledger). green and candidate: the run's complete-green document and the
+        /// candidate journal.
         /// </summary>
         public static AuthorityCheck Check(string candidateRoot, string repositoryRoot, object green, object candidate, string repository, DateTime nowUtc,
-            string cardApiBaseUrl, string scriptsRoot)
+            string cardApiBaseUrl, string scriptsRoot, Func<string, string, CardReadback> cardReader = null)
         {
             var pinned = Pinned(candidateRoot, repositoryRoot, AuthorityValue.Str(AuthorityValue.Get(candidate, "sha")),
                 AuthorityValue.Str(AuthorityValue.Get(candidate, "candidateId")), AuthorityValue.Str(AuthorityValue.Get(candidate, "ref")), repository, scriptsRoot);
@@ -1145,7 +1150,7 @@ namespace Antiphon.Nightly
             if (!AuthorityValue.IsText(AuthorityValue.Get(green, "policyHash"), AuthorityValue.Text(AuthorityValue.Get(pinned.Authority.Document, "policyHash"))))
                 reasons.Add("green-policy-hash-mismatch");
             if (pinned.Policy == null) return new AuthorityCheck { Ok = false, Reasons = reasons.ToArray(), Pinned = pinned };
-            var ledger = Ledger(candidateRoot, pinned, green, nowUtc, cardApiBaseUrl);
+            var ledger = Ledger(candidateRoot, pinned, green, nowUtc, cardApiBaseUrl, cardReader);
             reasons.AddRange(ledger.Reasons);
             return new AuthorityCheck { Ok = reasons.Count == 0, Reasons = reasons.ToArray(), Pinned = pinned, Suites = ledger.Suites };
         }

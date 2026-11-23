@@ -114,6 +114,10 @@ namespace Antiphon.Scripts
             // The release candidate answers every input itself: exit 0 journalled or WhatIf, 1 a clone, fetch, push, SHA or
             // journal-write failure, 2 usage, 3 refused (its JSON line last on stdout).
             [ReleaseCandidateCommand.Name] = ReleaseCandidateCommand.Run,
+            // The publisher and the promoter answer every input themselves: exit 0 published, promoted, resumed or --what-if,
+            // 1 a remote write (or the promoter's journal record) failed, 2 usage, 3 refused.
+            [PublishReleaseCommand.Name] = PublishReleaseCommand.Run,
+            [PromoteReleaseCommand.Name] = PromoteReleaseCommand.Run,
             // The land graph audit answers every input itself: exit 0 approved, 1 refused, 2 usage. The pre-check: exit 0 matched
             // or written, 1 mismatch, refusal or a failed tool, 2 a git failure or usage. The land refresh: exit 0 current,
             // refreshed or an inherited mismatch warned, 1 refused (one LAND-GRAPH-NOTICE line) or failed, 2 usage.
@@ -153,6 +157,7 @@ namespace Antiphon.Scripts
                 + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
                 + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage
                 + " | " + ReleaseCandidateCommand.Usage
+                + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage);
             return Usage;
         }
