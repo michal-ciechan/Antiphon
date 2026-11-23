@@ -25,6 +25,19 @@ function Get-FxTreeDigest($Root) {
     return Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($files))
 }
 
+# The same tree Copy-Item -Recurse makes, through .NET: on Linux the provider copy costs ~85 ms an entry
+# (25 s for scripts/lib on server2, against 0.05 s for cp -r), and every New-Fx paid it (2026-11-23 note).
+function Copy-FxTree([string]$Source, [string]$Target) {
+    $base = [IO.Path]::GetFullPath($Source)
+    [void][IO.Directory]::CreateDirectory($Target)
+    foreach ($directory in [IO.Directory]::GetDirectories($base, "*", [IO.SearchOption]::AllDirectories)) {
+        [void][IO.Directory]::CreateDirectory((Join-Path $Target ([IO.Path]::GetRelativePath($base, $directory))))
+    }
+    foreach ($file in [IO.Directory]::GetFiles($base, "*", [IO.SearchOption]::AllDirectories)) {
+        [IO.File]::Copy($file, (Join-Path $Target ([IO.Path]::GetRelativePath($base, $file))))
+    }
+}
+
 function New-Fx {
     $root = Join-Path $ResultsDirectory ('space ' + [guid]::NewGuid().ToString('N'))
     $seed = Join-Path $root 'seed'; [void][IO.Directory]::CreateDirectory($seed)
@@ -34,7 +47,7 @@ function New-Fx {
     [void](Git-Fx $seed @('config','user.email','fixture@example.invalid'))
     [void](Git-Fx $seed @('config','core.autocrlf','false'))
     [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
-    Copy-Item "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib') -Recurse
+    Copy-FxTree "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib')
     Copy-C487NightlyCoreDependency -Root $seed
     # W2-nightly S17: the tests hop is the nightly-tests command; its sources are the scripts/lib copy above.
     foreach ($file in @('nightly-run.ps1','release-cut.ps1','release-candidate.ps1')) {
