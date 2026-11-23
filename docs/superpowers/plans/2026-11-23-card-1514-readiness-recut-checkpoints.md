@@ -4,6 +4,7 @@ Code task 84561585 re-cuts the reviewed readiness chain (Code c20eeb6a tip `0ad6
 
 - The readiness why-missed section now lives in [its own investigation note](../../investigations/2026-11-23-readiness-path-identity.md). The shared run `79d9e6f9` note stays as it is on master.
 - R-4 (Review 56e21b88 blocker 1): `AgentControlServiceIntegrationTests` wrote a fable hold to the shared fixture database in two tests, and a parallel `AgentSystemPromptLaunchTests.Interactive_launch_maps_frontier_level_to_fable` launch could read it. Both hold writers now run in an isolated database (`TestDbFixture.CreateIsolatedSchemaAsync`). `AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync` pins the isolation; it was red 2/2 at `79904873b`.
+- R-5: `tests/derived-impact-index.json` regenerated with `scripts/regenerate-derived-impact-index.ps1` on the re-cut tree (master `e298e6fbb` regenerates unchanged), checked by `DerivedImpactIndexTests`.
 
 ### Checkpoints
 
@@ -15,5 +16,6 @@ Code task 84561585 re-cuts the reviewed readiness chain (Code c20eeb6a tip `0ad6
 | CP-4 | recut | CP-1 | impacted | `/*/*/(AgentAttachHerdrTests*)\|(AgentControlServiceIntegrationTests*)\|(AgentCreateRaceTests*)\|(AgentCreateSupervisionTests*)\|(AgentRemoteControlGateTests*)\|(AgentServiceIntegrationTests*)\|(AgentSessionBackendTests*)\|(AgentSessionLaunchFailureTests*)\|(AgentSessionServiceIntegrationTests*)\|(AgentStartRecoveryTests*)\|(AgentSupervisionTests*)\|(AgentSystemPromptLaunchTests*)\|(AgentTaskPoolTests*)\|(BoardServiceIntegrationTests*)\|(ContextCompactionAgentTests*)\|(DiagnosticsBundleServiceTests*)\|(HerdrAlwaysOnChannelParityTests*)\|(HerdrLabelFollowConcurrencyTests*)\|(HerdrPlacementSettingsTests*)\|(HerdrSupervisionBackoffTests*)\|(PhoneHomeStandingLaunchTests*)\|(ProjectCascadeForeignKeyTests*)\|(RemoteExecutableLaunchTests*)\|(SessionHealthTests*)/*` | R-2 | 0 failed; the 10 Linux skips are roster-listed | 514 | 12 | true |
 | CP-5 | recut | CP-1 | roster | `/*/*/WindowsUnitPlatformAdmissionTests/*` | R-3 | 0 failed; any skip is roster-listed | 5 | 4 | true |
 | CP-6 | recut | CP-1 | fable-hold | `/*/*/(AgentControlServiceIntegrationTests*)\|(AgentSystemPromptLaunchTests*)/(Start_returns_409_model_disabled_when_the_agent_alias_is_held)\|(Start_of_a_haiku_agent_succeeds_while_fable_is_held)\|(Interactive_launch_maps_frontier_level_to_fable)` | R-4 | 3 passed, 0 failed/skipped | 3 | 4 | true |
+| CP-7 | recut | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-5 | 0 failed/skipped | 1 | 4 | true |
 
 CP-4 and CP-5 may record roster-listed skips. Qualify them with `pwsh -NoProfile -File scripts/validate-checkpoint-receipt.ps1 -Evidence <report.json> -ExpectedSourceSha <tip>`. The checkpoint tool's `validate` verb refuses every skip, so rows with skips do not count for that verb.
