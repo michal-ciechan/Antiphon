@@ -275,9 +275,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentLaunchSpec.cs",
-      "classes": 140,
+      "classes": 141,
       "reason": "cap",
-      "owed": 115,
+      "owed": 116,
       "first": [
         "LiveLaneIsolationTests",
         "OpenCodeAdapterTests",
@@ -2233,9 +2233,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "CompactionRecoveryTests",
         "ContextCompactionSweepTests",
