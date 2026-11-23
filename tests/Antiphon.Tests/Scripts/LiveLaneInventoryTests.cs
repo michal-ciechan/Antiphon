@@ -32,6 +32,24 @@ public sealed class LiveLaneInventoryTests
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
 
+    /// <summary>
+    /// Windows Full 557cdb63: an [Explicit] gate left "diagnostic" stays required in the rc census, but a class filter
+    /// never runs an [Explicit] test, so Full reports it missing (RcManifestScaleTests). Every Explicit gate is core or
+    /// policy-excluded.
+    /// </summary>
+    [Test]
+    public void ExplicitGatesAreNeverFullRequired()
+    {
+        var repo = LiveLaneProcess.FindRepo();
+        var exclusions = Antiphon.Nightly.LiveLaneGateScan.RcExclusions(repo);
+        var required = Antiphon.Nightly.LiveLaneGateScan.Scan(repo).Gates
+            .Where(gate => gate.Shapes.Contains("Explicit", StringComparer.Ordinal))
+            .Where(gate => Antiphon.Nightly.LiveLaneGateScan.Disposition(gate, exclusions).Disposition == "diagnostic")
+            .Select(gate => gate.Key)
+            .ToArray();
+        required.ShouldBeEmpty(string.Join('\n', required));
+    }
+
     /// <summary>CARD-1645 item 2: a declared additive identity is project, namespace, class and method together.</summary>
     [Test]
     public void CensusAdditiveIdentity()
