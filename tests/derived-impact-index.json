@@ -26751,6 +26751,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/FixtureExecutable.cs",
       "classes": [
         "HostJqPrerequisiteScriptTests",
+        "JqRunnerImageContractTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
         "ScriptModelSpawnLaneTests",
