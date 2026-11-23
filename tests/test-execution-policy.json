@@ -648,6 +648,16 @@
         },
         {
           "suite": "antiphon",
+          "class": "WorktreeNoFollowDeleteTests",
+          "methods": [
+            "C847_WindowsHeldEntryIsDeletedOnlyByARevalidatingWalk"
+          ],
+          "platform": "linux",
+          "reason": "Windows share modes: a second handle without delete sharing refuses the production no-follow delete walk, which only Windows enforces. The method remains required on Windows; C847_RefusedWalkIsWalkedAgainUnderTheReceipt stays required on both platforms.",
+          "owner": "CARD-1717"
+        },
+        {
+          "suite": "antiphon",
           "class": "DelegateScriptCapabilityTests",
           "methods": [
             "delegate_Capability_sends_header_and_does_not_assign_env_token",

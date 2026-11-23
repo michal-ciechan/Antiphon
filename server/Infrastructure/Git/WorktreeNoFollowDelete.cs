@@ -137,6 +137,10 @@ internal static class WorktreeNoFollowDelete
     {
         // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE: the name goes at once
         // so the parent can follow, and a read-only file goes as Git would remove it.
+        // Debug 847c35c6 / Review c67d7aff B-1: a refusal is never retried on this handle. It admits writers once
+        // the receipt hash's deny-write handle has closed, so a later success could delete bytes the receipt never
+        // approved. The refusal (5, 32 or 33 from a scanner) goes back to DeleteSettled, whose next walk re-checks
+        // drift and every hash before anything goes.
         var ex = new FileDispositionInfoEx { Flags = 0x1 | 0x2 | 0x10 };
         if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return;
         var error = Marshal.GetLastPInvokeError();
