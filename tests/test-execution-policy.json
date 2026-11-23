@@ -653,7 +653,7 @@
             "C847_WindowsHeldEntryIsDeletedOnlyByARevalidatingWalk"
           ],
           "platform": "linux",
-          "reason": "Windows share modes: a second handle without delete sharing refuses the production no-follow delete walk, which only Windows enforces. The method remains required on Windows; C847_RefusedWalkIsWalkedAgainUnderTheReceipt stays required on both platforms.",
+          "reason": "Windows no-follow walk: the disposition seam is reached only through the Windows delete-by-handle walk (CreateFileW, SetFileInformationByHandle), which Linux does not run. The method remains required on Windows; C847_DispositionRefusalIsNotRetriedOnTheHandle and C847_RefusedWalkIsWalkedAgainUnderTheReceipt stay required on both platforms.",
           "owner": "CARD-1717"
         },
         {

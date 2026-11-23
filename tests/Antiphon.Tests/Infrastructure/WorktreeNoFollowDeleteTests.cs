@@ -610,13 +610,54 @@ public sealed class WorktreeNoFollowDeleteTests
         }
     }
 
-    // Review c67d7aff B-2, native Windows witness (pending native execution): the production deleter, its real
-    // handles and share modes; only the pause between walks is the test's. A second handle without delete sharing
-    // refuses the first walk and is released (unchanged, or after rewriting the approved bytes) in that pause.
-    // Windows checks sharing when a handle opens, and the walk's own handle holds DELETE access, so a user-mode
-    // holder can only refuse the walk's no-follow open (after its own bounded wait); a kernel filter such as a
-    // scanner can also refuse the disposition, as in group 141. Both throw the same IOException with the raw
-    // Win32 code, so DeleteSettled walks again and re-checks the receipt.
+    // Review a5ebf1e9 item 1, portable part: the disposition decision over an injected result. A refusal (the
+    // sharing violation group 141's scanner gave, or 5/33) is thrown at once with its raw code, which DeleteSettled
+    // takes as transient, and the same handle is never asked again: a second ask could succeed after a writer the
+    // handle admits has changed the bytes the receipt hashed.
+    [Test]
+    [Arguments(32)]
+    [Arguments(5)]
+    [Arguments(33)]
+    public void C847_DispositionRefusalIsNotRetriedOnTheHandle(int refusal)
+    {
+        var calls = new List<bool>();
+        var error = Should.Throw<IOException>(() => WorktreeNoFollowDelete.SettleDisposition("held.txt", extended =>
+        {
+            calls.Add(extended);
+            return calls.Count == 1 ? refusal : null;
+        }));
+        calls.ShouldBe([true], "one disposition on the held handle; the next attempt is a fresh walk");
+        error.HResult.ShouldBe(refusal);
+        error.Message.ShouldStartWith("no_follow_delete_failed: held.txt: ");
+        (WorktreeRenames.System with { Windows = true }).IsTransientDelete(error)
+            .ShouldBeTrue("the refusal reaches DeleteSettled's revalidating walk");
+    }
+
+    // Review a5ebf1e9 item 1, portable part: only a volume without the extended class (87, 1, 50) takes the classic
+    // disposition, once; its refusal is thrown with its own code.
+    [Test]
+    [Arguments(87, null)]
+    [Arguments(50, 32)]
+    public void C847_ClassicDispositionIsTheOneFallback(int extendedError, int? classicError)
+    {
+        var calls = new List<bool>();
+        int? Attempt(bool extended)
+        {
+            calls.Add(extended);
+            return extended ? extendedError : classicError;
+        }
+        if (classicError is null) WorktreeNoFollowDelete.SettleDisposition("old.txt", Attempt);
+        else Should.Throw<IOException>(() => WorktreeNoFollowDelete.SettleDisposition("old.txt", Attempt)).HResult.ShouldBe(classicError.Value);
+        calls.ShouldBe([true, false]);
+    }
+
+    // Review a5ebf1e9 item 1, native Windows witness (pending native execution): the production walk, its real
+    // no-follow handles, share modes and receipt hash. The disposition seam refuses only the first disposition of the
+    // held file with Win32 32 (group 141's scanner), after that walk hashed it; with rewrite the refusal first rewrites
+    // the bytes through a writer the still-open delete handle admits. The refusal must leave the walk without a second
+    // disposition on that handle, and DeleteSettled's fresh walk must re-check drift and hash the entry again:
+    // unchanged bytes then go, rewritten bytes are kept. A same-handle retry deletes in the first walk (rewritten bytes
+    // included) and never pauses.
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -624,7 +665,7 @@ public sealed class WorktreeNoFollowDeleteTests
     {
         if (!OperatingSystem.IsWindows())
         {
-            Skip.Test("Share modes are the Windows no-follow delete; Linux is C847_RefusedWalkIsWalkedAgainUnderTheReceipt.");
+            Skip.Test("The disposition seam is the Windows no-follow walk; Linux is C847_DispositionRefusalIsNotRetriedOnTheHandle.");
             return;
         }
 
@@ -632,41 +673,59 @@ public sealed class WorktreeNoFollowDeleteTests
         var tree = Path.Combine(root, "tree");
         var file = Path.Combine(tree, "held.txt");
         Directory.CreateDirectory(tree);
-        FileStream? holder = null;
         try
         {
             File.WriteAllText(file, "approved-bytes");
             var listing = WalkWorld.Approve(tree);
-            holder = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            var events = new List<string>();
             var pauses = new List<TimeSpan>();
-            var renames = WorktreeRenames.System with
+            bool Held(string path) => string.Equals(path, file, StringComparison.OrdinalIgnoreCase);
+            var probe = new WorktreeNoFollowDelete.DispositionProbe
             {
-                Pause = pause =>
+                Hashed = path => { if (Held(path)) events.Add("hash"); },
+                Disposition = (path, extended) =>
                 {
-                    pauses.Add(pause);
-                    if (holder is null) return;
-                    if (rewrite) RewriteOpenWriter(holder);
-                    holder.Dispose();
-                    holder = null;
+                    if (!Held(path)) return null;
+                    events.Add(extended ? "disposition" : "classic");
+                    if (events.Count(e => e == "disposition") != 1) return null;
+                    if (rewrite)
+                    {
+                        // The delete handle holds DELETE and shares read and write, so this writer is admitted.
+                        using var writer = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                        RewriteOpenWriter(writer);
+                    }
+                    return 32;
                 },
             };
+            var renames = WorktreeRenames.System with
+            {
+                Pause = pause => { pauses.Add(pause); events.Add("pause"); },
+                DeleteTree = (path, preserve) => { events.Add("walk"); WorktreeNoFollowDelete.Delete(path, preserve); },
+            };
             renames.Windows.ShouldBeTrue();
-            var error = DeleteSettledUnder(listing, tree, renames);
-            pauses.ShouldBe([WorktreeRenames.SharingPause], "the held entry refused exactly the first walk");
+            var previous = WorktreeNoFollowDelete.Probe.Value;
+            WorktreeNoFollowDelete.Probe.Value = probe;
+            Exception? error;
+            try { error = DeleteSettledUnder(listing, tree, renames); }
+            finally { WorktreeNoFollowDelete.Probe.Value = previous; }
+            pauses.ShouldBe([WorktreeRenames.SharingPause], "exactly one refused walk");
             if (rewrite)
             {
+                events.ShouldBe(["walk", "hash", "disposition", "pause", "walk", "hash"],
+                    "the refusal leaves the handle; the fresh walk re-hashes and refuses the changed bytes");
                 error.ShouldBeOfType<ApprovedTreeRejectedException>(error?.ToString()).Reason.ShouldBe("set_aside_content_changed");
                 File.ReadAllText(file).ShouldBe("later-bytes", "bytes written after the first walk's hash are kept");
             }
             else
             {
+                events.ShouldBe(["walk", "hash", "disposition", "pause", "walk", "hash", "disposition"],
+                    "one disposition per walk; the second walk re-hashes before it deletes");
                 error.ShouldBeNull(error?.ToString());
-                Directory.Exists(tree).ShouldBeFalse("the entry goes once its holder has released it");
+                Directory.Exists(tree).ShouldBeFalse("the entry goes once a revalidating walk has approved it");
             }
         }
         finally
         {
-            holder?.Dispose();
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }

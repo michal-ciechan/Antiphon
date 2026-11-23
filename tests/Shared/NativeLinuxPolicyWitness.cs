@@ -52,6 +52,7 @@ public static class NativeLinuxPolicyWitness
     // Full 557cdb63 exact one-record addition: the [Explicit] RcManifestScaleTests manual benchmarks (CARD-1514 M3)
     // are excluded on both platforms; a class filter never runs them.
     // Debug 847c35c6 / Review c67d7aff one-record addition: the native Windows held-entry witness of WorktreeNoFollowDeleteTests is excluded on Linux only.
+    // Review a5ebf1e9: that record's reason now names the disposition seam; the record is otherwise unchanged.
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
     public const string LegacyExclusionDigest = "45fcb682060d06282af27b15dcae86936b83ef8472b8e83dd2ffdef8378b36b8";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
