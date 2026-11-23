@@ -375,7 +375,10 @@ finally {
     $retained=Join-Path $repoRoot ('.antiphon/test-output/c1313-s6a/'+[guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($retained)
     foreach($item in Get-ChildItem $ResultsDirectory -Directory | Where-Object {$_.Name -match '^(native-|hop-native|hop-bindings|discovery)'}){Copy-Item $item.FullName $retained -Recurse}
-    foreach($root in $script:FixtureRoots){Get-ChildItem $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}
+    # A gone root is skipped and the rest are named literally. Given a missing path, Get-ChildItem -Recurse
+    # takes the leaf as a filter and walks the whole results directory: 292 s for 3201 entries on
+    # server2, the C1590 gone-root cases' 5-minute timeouts (2026-11-23 inherited-Linux-reds note).
+    foreach($root in $script:FixtureRoots){if(Test-Path -LiteralPath $root){Get-ChildItem -LiteralPath $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}}
     # Each fixture root holds nested Git repositories; delete it by its exact path so a
     # direct run leaves none behind in the caller's results directory (CARD-1590).
     foreach($root in $script:FixtureRoots){if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}}

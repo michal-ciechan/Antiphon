@@ -26,6 +26,9 @@ public sealed class TestSelectionExecutionTests
     [Test]
     public void C1313_ExactExpandedExecution()
     {
+        // NightlyHost.Production owns the launch through the Windows Job Object owner, which throws
+        // "Nightly native custody requires Windows." elsewhere (docs/testing-and-build.md).
+        if (!OperatingSystem.IsWindows()) { WindowsUnitSkipRoster.SkipOnLinux(nameof(TestSelectionExecutionTests), nameof(C1313_ExactExpandedExecution)); return; }
         using var fixture = NightlyFixture.Create("c1313-exact");
         var discovery = Discovery(fixture);
         var expected = Nodes(discovery).Where(n => S(n, "type") == "C1313Offline" && S(n, "method") is "One" or "Rows").Select(n => S(n, "uid")).ToList();

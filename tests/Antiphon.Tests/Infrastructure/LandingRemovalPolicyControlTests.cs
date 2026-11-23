@@ -523,7 +523,7 @@ public sealed class LandingRemovalPolicyControlTests
     [Test]
     public async Task C665_LockedFileMidDeleteResumesOnLaterPass()
     {
-        if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
+        if (!OperatingSystem.IsWindows()) { Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(LandingRemovalPolicyControlTests), nameof(C665_LockedFileMidDeleteResumesOnLaterPass)); return; }
         using var f = new RemovalFixture();
         // The fixture's inspection is already clean. The held file is part of that tree, so the
         // post-proof census must see it as tracked rather than as a file written after the proof.
@@ -624,7 +624,7 @@ public sealed class LandingRemovalPolicyControlTests
     [Test]
     public async Task C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded()
     {
-        if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
+        if (!OperatingSystem.IsWindows()) { Antiphon.Tests.Scripts.WindowsUnitSkipRoster.SkipOnLinux(nameof(LandingRemovalPolicyControlTests), nameof(C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded)); return; }
         using var f = new RemovalFixture();
         await using var held = new FileStream(Path.Combine(f.Source, "keep.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
         var result = await f.RemoveAsync(gate: true);

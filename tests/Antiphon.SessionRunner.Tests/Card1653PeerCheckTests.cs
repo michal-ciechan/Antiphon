@@ -142,7 +142,9 @@ public class Card1653PeerCheckTests
     [Test]
     public async Task Owned_enforce_real_host_is_launched_and_adopted()
     {
-        var root = TestSessionLogRoot.Create("c1653-peer");
+        // Linux: a short fixture-owned root keeps the default socket path inside the 107-byte bound under a
+        // checkpoint lease temp directory. Windows keeps the registered root its leak sweep recognises.
+        var root = OperatingSystem.IsWindows() ? TestSessionLogRoot.Create("c1653-peer") : ShortSocketRoot.Create("c1653p");
         var settings = new SessionRunnerSettings
         {
             SessionLogPath = root, PtyHostLingerHours = 0.02, PtyHostConnectTimeoutSec = 5,
@@ -197,6 +199,7 @@ public class Card1653PeerCheckTests
                 KillBestEffort(dto?.HostPid);
             }
             KillBestEffort(dto?.Pid);
+            if (!OperatingSystem.IsWindows()) ShortSocketRoot.Delete(root);
         }
     }
 
