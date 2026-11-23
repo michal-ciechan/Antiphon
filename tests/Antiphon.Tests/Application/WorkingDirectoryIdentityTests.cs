@@ -288,12 +288,15 @@ internal static class CLocalePrefilterModel
         var text = stored.Replace('\\', '/').TrimEnd('/').EnumerateRunes()
             .Select(rune => rune.Value is >= 'A' and <= 'Z' ? rune.Value + 32 : rune.Value)
             .ToArray();
+        // Review 5de0f5a5 round 4: walk the pattern by Unicode scalar value, as PostgreSQL does in a
+        // UTF-8 database, so a supplementary-plane literal (two UTF-16 units) is one token.
+        var tokens = pattern.EnumerateRunes().Select(rune => rune.Value).ToArray();
         var position = 0;
-        for (var index = 0; index < pattern.Length; index++)
+        for (var index = 0; index < tokens.Length; index++)
         {
             if (position >= text.Length)
                 return false;
-            var token = pattern[index];
+            var token = tokens[index];
             if (token == '%')
                 throw new InvalidOperationException("the model covers no % wildcard");
             if (token == '_')
@@ -303,7 +306,7 @@ internal static class CLocalePrefilterModel
             }
 
             if (token == WorkingDirectoryIdentity.CandidatePatternEscape[0])
-                token = pattern[++index];
+                token = tokens[++index];
             if (text[position] != token)
                 return false;
             position++;
