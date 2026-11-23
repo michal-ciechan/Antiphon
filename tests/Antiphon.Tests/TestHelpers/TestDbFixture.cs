@@ -25,35 +25,26 @@ public class TestDbFixture
 
 	internal static string MaintenanceConnectionString => Lifecycle.MaintenanceConnectionString;
 
-	public static async Task InitializeAsync(AssemblyHookContext context)
+	public static async Task InitializeAsync(AssemblyHookContext context, Action? warmAdditionalModel = null)
 	{
 		// CARD-0646: one awaited startup before tests, only when this selection reaches the store.
 		if (SharedStoreWarmup.ProbeDefersWarmup(Environment.GetEnvironmentVariable(ProbeMarker)))
 			return;
 		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
 			return;
-		// Image/cache hits can prepare PostgreSQL without constructing an EF context. Pay the
-		// process-wide provider/model costs once here, before concurrent timed bodies start: this
-		// fixture's options and BridgeQueueHarness's (no interceptors, so a second model). A model
-		// needs no database, so both are built while PostgreSQL starts; the connection string is
-		// part of neither EF's internal service provider key nor its model cache key.
-		var models = Task.WhenAll(
-			Task.Run(() =>
-			{
-				using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "runtime-model"))
-				using (var db = new AppDbContext(TestDbFixtureLifecycle.BuildOptions("Host=runtime-model-warmup")))
-				{
-					_ = db.Model;
-					_ = db.Database.ProviderName;
-				}
-			}),
-			// Its own fixture id: "db-runtime" is this fixture's one warmed context (TestDbRuntimeWarmupTests).
-			// The two builds and PostgreSQL's start overlap, so their FixtureSetup spans sum past wall time.
-			Task.Run(() =>
-			{
-				using (TestTiming.BeginFixturePhase("harness-runtime", TestPhaseKind.FixtureSetup, "harness-model"))
-					BridgeQueueHarness.WarmModel();
-			}));
+		// Image/cache hits can prepare PostgreSQL without constructing an EF context. Build
+		// the fixture model and any assembly-specific model while PostgreSQL starts, before
+		// timed test bodies. These setup spans overlap and can sum past wall time.
+		var fixtureModel = Task.Run(() =>
+		{
+			using var timing = TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "runtime-model");
+			using var db = new AppDbContext(TestDbFixtureLifecycle.BuildOptions("Host=runtime-model-warmup"));
+			_ = db.Model;
+			_ = db.Database.ProviderName;
+		});
+		var models = warmAdditionalModel is null
+			? fixtureModel
+			: Task.WhenAll(fixtureModel, Task.Run(warmAdditionalModel));
 		Exception? startFailure = null;
 		try { await Lifecycle.EnsureReadyAsync().ConfigureAwait(false); }
 		catch (Exception ex) { startFailure = ex; }

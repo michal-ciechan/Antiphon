@@ -86,8 +86,11 @@ public sealed class ScratchGitRepo : IDisposable
 
     public static async Task<GitResult> GitInAsync(string dir, IReadOnlyDictionary<string, string>? env, params string[] args)
     {
+        // The verb may follow -c/-C pairs.
+        var verb = 0;
+        while (verb + 1 < args.Length && args[verb] is "-c" or "-C") verb += 2;
         // The git verb only: arguments can carry paths and messages.
-        using var span = TestTrace.Span("git " + (args.Length > 0 ? args[0] : ""), "antiphon.phase", "process");
+        using var span = TestTrace.Span("git " + (verb < args.Length ? args[verb] : ""), "antiphon.phase", "process");
         var psi = new ProcessStartInfo
         {
             FileName = "git",
@@ -97,6 +100,16 @@ public sealed class ScratchGitRepo : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // A fixture's commit, merge or fetch is setup, not the code under test: no auto-maintenance child after it (a
+        // git process of its own, about 0.18 s on the HP laptop; 165 a run of AgentTaskReplyIntegrationTests). It is
+        // set on this command line, after which git hands it to the hooks and child gits this command starts
+        // (GIT_CONFIG_PARAMETERS); no fixture hook reads it, and no other command or test sees it. A push's gc runs in
+        // the receiving repository, which inherits none of this: AddBareOriginAsync turns it off there.
+        if (verb < args.Length && args[verb] is "commit" or "merge" or "cherry-pick" or "revert" or "am" or "rebase" or "fetch" or "pull")
+        {
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("maintenance.auto=false");
+        }
         foreach (var a in args) psi.ArgumentList.Add(a);
         if (env is not null)
         {
@@ -125,6 +138,8 @@ public sealed class ScratchGitRepo : IDisposable
     {
         _bareOrigin = Directory.CreateTempSubdirectory("c527-origin").FullName;
         (await GitInAsync(_bareOrigin, "init", "--bare")).Ok.ShouldBeTrue();
+        // A push into the fixture's origin starts no gc there (receive-pack's own, as LandingGitFixture's remote).
+        (await GitInAsync(_bareOrigin, "config", "receive.autogc", "false")).Ok.ShouldBeTrue();
         await GitAsync("remote", "add", "origin", _bareOrigin);
         await GitAsync("push", "-u", "origin", "master");
     }

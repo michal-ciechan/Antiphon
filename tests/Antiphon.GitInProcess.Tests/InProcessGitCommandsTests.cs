@@ -100,7 +100,44 @@ public sealed class InProcessGitCommandsTests
         // An addition and a deletion together could be a rename: git decides.
         var renamed = await CommitAsync(f, modified, ("keep.txt", null, false), ("kept.txt", "changed\n", false));
         await AssertSpawnsAsync(inProcess, f.Repository, DiffTree(modified, renamed));
+
+        // One commit's paths (GitWorkspaceService's gated-commit check): against its parent, or all of a root
+        // commit's; --no-renames lists both sides of a would-be rename. Merges, trees and a file that becomes a
+        // directory are git's.
+        var rootCommit = (await f.RequiredAsync(f.Repository, "rev-list", "--max-parents=0", seed)).Trim();
+        var empty = (await f.RequiredAsync(f.Repository, "commit-tree", (await f.RequiredAsync(f.Repository, "rev-parse", seed + "^{tree}")).Trim(),
+            "-p", seed, "-m", "no change")).Trim();
+        foreach (var rev in new[] { rootCommit, seed, modified, deleted, renamed, empty })
+            await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(rev));
+        var merge = (await f.RequiredAsync(f.Repository, "commit-tree", (await f.RequiredAsync(f.Repository, "rev-parse", renamed + "^{tree}")).Trim(),
+            "-p", modified, "-p", deleted, "-m", "merge")).Trim();
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(merge));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths((await f.RequiredAsync(f.Repository, "rev-parse", seed + "^{tree}")).Trim()));
+        var nested = await CommitAsync(f, modified, ("keep.txt", null, false), ("keep.txt/inner.txt", "inner\n", false));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(nested));
+        // A mode change alone is a changed path; a non-ASCII name (git orders by UTF-8 bytes) and a short id are git's.
+        var chmod = await CommitAsync(f, modified, ("run.sh", "#!/bin/sh\n", false));
+        await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(chmod));
+        var unicode = await CommitAsync(f, modified, ("caf\u00e9.txt", "e\n", false), ("\uFF01.txt", "x\n", false));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(unicode));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified[..12]));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified + modified[..24])); // 64 hex, not SHA-1
+        // A ref named after a present object's id: git reads the hex as the id but warns of ambiguity on stderr.
+        // The bare name is git's first rule, the file $GIT_DIR/<hex>.
+        var bare = Path.Combine(f.Repository, ".git", deleted);
+        await File.WriteAllTextAsync(bare, modified + "\n");
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(deleted));
+        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", deleted]);
+        File.Delete(bare);
+        await f.RequiredAsync(f.Repository, "update-ref", "refs/tags/" + deleted, modified);
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(deleted));
+        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", deleted]);
+        await f.RequiredAsync(f.Repository, "update-ref", "-d", "refs/tags/" + deleted);
+        await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(deleted));
     }
+
+    private static string[] CommitPaths(string commit) =>
+        ["diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", commit];
 
     [Test]
     public async Task Recovery_pin_and_worktree_lock_match_git()

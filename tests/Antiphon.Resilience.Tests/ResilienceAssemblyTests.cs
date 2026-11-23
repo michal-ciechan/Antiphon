@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Antiphon.Resilience;
 using Shouldly;
@@ -132,26 +133,10 @@ public sealed class ResilienceAssemblyTests
 
     private static int CountClass(IEnumerable<string> files, string name)
     {
-        var needle = "class " + name;
-        var count = 0;
-        foreach (var file in files)
-        {
-            foreach (var line in File.ReadLines(file))
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("//", StringComparison.Ordinal))
-                    continue;
-                var index = trimmed.IndexOf(needle, StringComparison.Ordinal);
-                if (index < 0)
-                    continue;
-                var after = index + needle.Length;
-                if (after < trimmed.Length && (char.IsLetterOrDigit(trimmed[after]) || trimmed[after] == '_'))
-                    continue;
-                count++;
-            }
-        }
-
-        return count;
+        // The owner-map fixture embeds sample declarations in string arguments.
+        var declaration = new Regex(
+            $@"^\s*(?:(?:public|internal|protected|private|file|abstract|sealed|static|partial|unsafe|new|record)\s+)*class\s+{Regex.Escape(name)}\b");
+        return files.Sum(file => File.ReadLines(file).Count(line => declaration.IsMatch(line)));
     }
 
     private static string RepositoryRoot()

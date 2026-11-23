@@ -15,6 +15,8 @@ namespace Antiphon.GitInProcess;
 /// and symref) with literal prefix patterns or none, sorted by name as git sorts them.</item>
 /// <item><c>diff-tree --no-commit-id --raw -r -z --no-abbrev --no-ext-diff --no-textconv --find-renames A B --</c>
 /// when no rename can be found (no path is both added and deleted), from a walk of the two trees.</item>
+/// <item><c>diff-tree --root --no-commit-id --name-only --no-renames -r -z &lt;commit oid&gt;</c> for a root or
+/// one-parent commit, from the same walk.</item>
 /// <item><c>ls-tree -r -z [--full-tree] &lt;commit or tree oid&gt;</c>, from a walk of the tree.</item>
 /// </list>
 /// </summary>
@@ -147,6 +149,9 @@ internal static partial class InProcessGitReads
 
     private static LandingGitResult? DiffTree(Repository repo, IReadOnlyList<string> a)
     {
+        if (a is ["diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", var single]
+            && GitText.IsOid(single))
+            return CommitPaths(repo, single);
         if (a is not ["diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv",
                 "--find-renames", var from, var to, "--"]
             || !GitText.IsOid(from) || !GitText.IsOid(to))
@@ -163,17 +168,38 @@ internal static partial class InProcessGitReads
         return Ok(output.ToString());
     }
 
+    /// <summary>
+    /// <c>diff-tree --root --no-commit-id --name-only --no-renames -r -z &lt;full oid&gt;</c>: the paths a commit changes
+    /// against its one parent, or every path of a root commit, NUL-terminated in git's order. A merge (plumbing
+    /// diff-tree shows none without -m, -c or --cc; left to git all the same), anything but a commit (git's error),
+    /// an id that is not a full SHA-1 one, and every shape <see cref="Diff"/> refuses are git's.
+    /// </summary>
+    private static LandingGitResult? CommitPaths(Repository repo, string sha)
+    {
+        if (sha.Length != 40 || ById(repo, sha) is not Commit commit) return null;
+        var parents = commit.Parents.Take(2).ToList();
+        if (parents.Count > 1) return null;
+        var changes = new List<(string Path, string Line)>();
+        if (!Diff(parents.Count == 1 ? parents[0].Tree : null, commit.Tree, "", changes)) return null;
+        var output = new StringBuilder();
+        foreach (var path in changes.Select(c => c.Path).OrderBy(p => p, StringComparer.Ordinal))
+            output.Append(path).Append('\0');
+        return Ok(output.ToString());
+    }
+
     /// <summary>A recursive two-tree walk in git's raw form. False for anything git reports differently from a plain
-    /// add/delete/modify of files: a file replaced by a directory (or back), a type change, a submodule, a name that
-    /// is not valid UTF-8.</summary>
+    /// add/delete/modify of files (a file replaced by a directory or back, a type change, a submodule) and for any
+    /// tree that is not <see cref="Plain"/> (not canonical, out of tree order, a name twice, a non-ASCII name).</summary>
     private static bool Diff(Tree? left, Tree? right, string prefix, List<(string, string)> changes)
     {
+        // Both sides as git stores them (canonical bytes, tree order, no repeated name) with ASCII names, so a name
+        // lookup finds git's entry and ordinal order is git's byte order.
+        if (left is not null && !Plain(left) || right is not null && !Plain(right)) return false;
         var names = new SortedSet<string>(StringComparer.Ordinal);
         if (left is not null) foreach (var e in left) names.Add(e.Name);
         if (right is not null) foreach (var e in right) names.Add(e.Name);
         foreach (var name in names)
         {
-            if (name.Contains('�')) return false;
             var l = left?[name];
             var r = right?[name];
             if (l?.Mode == Mode.GitLink || r?.Mode == Mode.GitLink) return false;
@@ -198,6 +224,26 @@ internal static partial class InProcessGitReads
                 if (rTree) { if (!Diff(null, (Tree)r!.Target, path + "/", changes)) return false; continue; }
                 changes.Add((path, Raw(null, r, 'A')));
             }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// A tree whose stored bytes are what libgit2's entries serialise to (<see cref="Canonical"/>), whose entries are
+    /// strictly in git's tree order (a tree's name compared as if it ended in '/') with no name twice, and whose
+    /// names are ASCII.
+    /// </summary>
+    private static bool Plain(Tree tree)
+    {
+        if (!Canonical(tree)) return false;
+        string? previous = null;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in tree)
+        {
+            if (entry.Name.Any(c => c > 0x7F) || !seen.Add(entry.Name)) return false;
+            var key = entry.TargetType == TreeEntryTargetType.Tree ? entry.Name + "/" : entry.Name;
+            if (previous is not null && string.CompareOrdinal(previous, key) >= 0) return false;
+            previous = key;
         }
         return true;
     }
@@ -285,7 +331,22 @@ internal static partial class InProcessGitReads
         return Convert.ToHexString(sha1.GetHashAndReset()).Equals(tree.Sha, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static Tree? TreeOf(Repository repo, string sha) => repo.Lookup(sha) switch
+    /// <summary>
+    /// The object a full SHA-1 id names, read as an id, never as revision syntax: null for any other length, and
+    /// when a ref reads as that hex name (git still reads the hex as the id, but warns "refname ... is ambiguous"
+    /// on stderr first).
+    /// </summary>
+    private static GitObject? ById(Repository repo, string sha)
+    {
+        if (sha.Length != 40) return null;
+        // git's first rule is the file $GIT_DIR/<name> (libgit2's Refs[hex] reads the hex as an object id instead).
+        if (HasLooseRef(repo, sha)) return null;
+        foreach (var name in new[] { "refs/" + sha, "refs/tags/" + sha, "refs/heads/" + sha, "refs/remotes/" + sha, "refs/remotes/" + sha + "/HEAD" })
+            if (repo.Refs[name] is not null || HasLooseRef(repo, name)) return null;
+        return repo.Lookup(new ObjectId(sha));
+    }
+
+    private static Tree? TreeOf(Repository repo, string sha) => ById(repo, sha) switch
     {
         Commit commit => commit.Tree,
         Tree tree => tree,

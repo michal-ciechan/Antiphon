@@ -50,3 +50,28 @@ In a test, a product deadline should be shorter than a test-controlled gate only
 `DelegationScopeHoldTests.a_worktree_task_dispatches_over_a_shared_holder_with_one_warning` asserted that the recording launch sink held exactly one session. The dispatcher tick dispatches every Queued row in the shared fixture database, so the sink also recorded launches for Queued tasks left or written by other suites. In the seeded Windows Full order that was three launches. On Linux, with the method alone, the result was green 3/3. One foreign Queued row seeded on purpose reproduces the failure deterministically (2 launches, `e71acf78e`).
 No product change in `39ac64c90..ecc9bfaa5` touches the dispatcher. The failure depends on which suites share the database at the time of the tick, so a new seed exposed it and short Merge could not.
 The repair (`e0512e864`) records each launch's `Cwd` and asserts one launch under the test's own workspace. This applies to this test and `two_worktree_tasks_in_one_area_both_run`. A dispatcher test that counts launches, events or rows against the shared database has to scope that count to rows it created.
+
+## Master build · Resilience linked fixture
+
+`1beb89e8c9fcb1048e425dbce6bf4df7b2c0c62a` added `BridgeQueueHarness.WarmModel()` to `TestDbFixture.cs`, which Resilience compiles without the bridge harness.
+The commit records verification of `ChannelOutboundUnifiedPathTests` in `Antiphon.Tests`, where the call resolves. The original land's build selection is unverified.
+The existing CARD-1996 Merge rule covers this gap. For changes under `tests/Antiphon.Tests/TestHelpers`, build `Antiphon.sln` or each linking project and run `LinkedTestHelperClosureTests` before publishing.
+
+## Group 139 · C487 forced-Windows read-only witness (run `557cdb63`)
+
+`C487ReadOnlyCleanupWitnessTests.C487_WindowsReadOnlyWitness` failed with exit 1: `Join-Path` could not bind an empty `Path` at line 7 of `scripts/lib/c487-harness.ps1`. W2-nightly S17 (`1c04c5878`, after the previous seed `39ac64c90`) added `. (Join-Path $PSScriptRoot 'c487-nightly-tests.ps1')` to the harness. `scripts/fixtures/c487-readonly-windows-witness.ps1` loads that harness as text through `[scriptblock]::Create`, and in that case `$PSScriptRoot` is empty.
+This failure is deterministic on every platform, not specific to Windows. It was red on Linux at master `50d47f9b6` (1/1 failed, same message). S17's short verification did not select this `Integration` witness, and the witness has no direct-execution check of the harness file, so the first run that covered it was Windows Full.
+The repair (`fdef148a6`) replaces `$PSScriptRoot` in the text-loaded source with the harness's own `scripts/lib` directory. The test is green 3/3 and its class 1/1 on Linux, and the witness passes with `-SourceRef` at master and at `1c04c5878~1`.
+A change that makes a library dot-source a file through `$PSScriptRoot` should run every caller that loads the library as text (`git grep 'scriptblock]::Create'` next to the library name) in its short verification.
+
+## Group 140 · C487_G109 sha-mismatch row (run `557cdb63`)
+
+`NightlyHealthTests.C487_G109` failed with `["G109 sha mismatch :: "]`. G109 is not a file-hash pin: it checks that `NightlyHealth.Evaluate` reports a Windmill job SHA that differs from the native state SHA. That check runs only for today's scheduled job, and the row's job had no `LocalDueDate`, so `sha-mismatch` never fired. The row asserted bare `!Healthy` at `DateTime.UtcNow`, so it passed only on an unrelated reason: `overdue-start` after 01:00 London, or `missing-expected-run` after 08:00.
+Between 00:00 and 01:00 London the verdict is healthy and the row fails. Group 140 of the long Windows run reached that window. Base `50d47f9b6` was red 3/3 on Linux at 00:27Z, so the failure is not specific to Windows or to line endings. Daytime runs could never hit it.
+Repair (test only, red witness `af8f35dd5`): the job is the due day's (`LocalDueDate`). The row asserts the `sha-mismatch` reason at five fixed London times with a matching-SHA control, and every evaluator row now puts its verdict (`healthy`, `pending`, `reasons`) in the failure detail. A health-verdict test should assert the reason it is about, at a pinned clock, never `!Healthy` at the wall clock.
+
+## Group 5 · SessionRunner interpreter guard audit (run `557cdb63`)
+
+`WindowsShellGuardAuditTests.Every_command_interpreter_literal_is_behind_a_windows_guard` flagged `C0824WindowsSlotHolderTests.cs:63`. The `cmd.exe` literal comes from `35a880de5` (the 2026-11-22 exited-process census witness). That commit landed after the previous seed, and the audit is a static source scan, so it was red on Linux at master `9d2f1cc6d` too (3/3). It is not a Windows-only problem.
+The method calls `NativeWindowsGate.Require` on its first line. The scanner only recognises `OperatingSystem.IsWindows()`, so it does not see this gate. The repair (test-only) adds the site to `Reviewed` with that reason, which matches the `C1022BackendLaunchTests` precedent.
+Short verification ran only the subject's `C0824WindowsSlotHolderTests` rows. No `tests/impacted-classes.json` trigger connects `cmd.exe` edits in `tests/Antiphon.SessionRunner.Tests/**/*.cs` to the audit. Any change that adds an interpreter literal there must run `/*/*/WindowsShellGuardAuditTests/*` (3 tests, under 1 s) before landing. A follow-up could add that trigger.
