@@ -123,6 +123,13 @@ public class ProjectReadinessCollationTests
         await ProjectReadinessTests.AssertPrefilterAdmitsEverySamePairAsync(CreateContext, board.Id, SeedAgentAsync);
     }
 
+    [Test]
+    public async Task prefilter_candidate_count_stays_bounded_in_c_locale()
+    {
+        var board = await SeedBoardAsync((await SeedProjectAsync(null)).Id);
+        await ProjectReadinessTests.AssertCandidateCountIsBoundedAsync(CreateContext, board.Id);
+    }
+
     private static (string Stored, string Probe) Tokenise(string stored, string probe)
     {
         var u = Guid.NewGuid().ToString("N");

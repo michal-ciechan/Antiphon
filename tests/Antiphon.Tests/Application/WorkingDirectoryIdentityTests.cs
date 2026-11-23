@@ -216,6 +216,10 @@ public class WorkingDirectoryIdentityTests
     [Arguments("/srv/Über", "/srv/_ber")]
     [Arguments("C:/\U00010400x", "c:/_x")]
     [Arguments("C:/\u212Aelp/kelp", "c:/_elp/_elp")]
+    [Arguments("C:/Repos/\u652F\u4ED8\u670D\u52A1\u7EC4/", "c:/repos/\u652F\u4ED8\u670D\u52A1\u7EC4")]
+    [Arguments("/srv/\u65E5\u672C_%!", "/srv/\u65E5\u672C!_!%!!")]
+    [Arguments("C:/\U00020000x/\u00E9\u7EC4", "c:/\U00020000x/_\u7EC4")]
+    [Arguments("C:/stra\u00DFe", "c:/stra_e")]
     public void Candidate_pattern_lowers_ascii_and_wildcards_unfoldable_code_points(string path, string pattern) =>
         WorkingDirectoryIdentity.CandidatePattern(path).ShouldBe(pattern);
 
@@ -229,6 +233,10 @@ public class WorkingDirectoryIdentityTests
     [Arguments("C:/caf\u00E9", "c:/cafe-other", false)]
     [Arguments("C:/\U00010400", "c:/\u00E9", true)]
     [Arguments("C:/\U00010400", "c:/ab", false)]
+    [Arguments("C:/repos/\u652F\u4ED8\u670D\u52A1\u7EC4", "c:/repos/00000", false)]
+    [Arguments("C:/repos/\u652F\u4ED8\u670D\u52A1\u7EC4", "c:/REPOS/\u652F\u4ED8\u670D\u52A1\u7EC4/", true)]
+    [Arguments("C:/repos/\u00C9\u652F", "c:/repos/00", false)]
+    [Arguments("C:/repos/\u00C9\u652F", "c:/repos/\u00E9\u652F", true)]
     public void Prefilter_stays_bounded_to_spellings_of_equal_length_and_ascii_text(string probe, string stored, bool admitted) =>
         CLocalePrefilterModel.Admits(stored, WorkingDirectoryIdentity.CandidatePattern(probe)).ShouldBe(admitted);
 
