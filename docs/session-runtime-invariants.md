@@ -1382,9 +1382,9 @@ isolates each item and reports errors after processing the remaining batch.
   DB-Running/runner-Running, and `claude.exe 17088` burned a core for seven days while the runner
   listed it Running the whole time. Any new release path must leave the session in exactly one of
   three states — killed, pooled warm (`Idle` + `PoolIdleSince`), or owned by a standing agent —
-  never "alive with no owner". `pwsh -File scripts/reap-zombie-agents.ps1` is the census
-  (dry-run; `-Execute -Class PoolExpired` acts on the pool's own contract); the Failed/Stopped
-  runner-claimed shapes belong to `SessionReconciliationService`, not the script.
+  never "alive with no owner". `scripts\antiphon.cmd reap-zombie-agents` is the census
+  (dry-run; `--execute --class PoolExpired` acts on the pool's own contract); the Failed/Stopped
+  runner-claimed shapes belong to `SessionReconciliationService`, not the command.
 
 - **Pool release needs confirmed exit (CARD-0691 R1 repair).** A failed kill keeps the session
   Stopping, its adapter and attempt owned, and no SessionExited event is emitted. Pool release,

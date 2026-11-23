@@ -734,4 +734,84 @@ public sealed class AntiphonCliLauncherTests
         AssertThinLauncher("cleanup-codex-test-residue.ps1", "    [int]$OlderThanHours = 24,", "    [switch]$Execute,", "    [int]$MaxPerRun = 10,",
             "    [string]$CodexExe = 'codex',", "    [string]$Now = ''");
     }
+
+    // ---- unit 22: scripts/cleanup-claude-sessions.ps1, the launcher Windmill's u/lndcobra/claude_session_cleanup starts by path
+    // (Windows PowerShell 5.1 -File) ----
+
+    [Test]
+    public async Task Claude_sessions_launcher_passes_every_parameter_as_its_flag_and_keeps_the_defaults()
+    {
+        using var fixture = CleanupCheckout("cleanup-claude-sessions.ps1");
+        var entry = fixture.PathOf("scripts", "cleanup-claude-sessions.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "cleanup-claude-sessions" };
+
+        // Windmill's report-only command line: the parameter block's defaults; blank values leave with their flags.
+        var windmill = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        windmill.ExitCode.ShouldBe(0, windmill.Stderr);
+        windmill.Arguments.ShouldBe(["--older-than-days", "7", "--action", "Archive", "--max-per-run", "10", "--require-disconnected", "true"]);
+
+        // The promoted command line (-Execute -Action Archive), then every parameter; ValidateSet binds -Action ignoring case.
+        var promoted = await NightlyRunHops.LauncherEcho(entry, ["-Execute", "-Action", "Archive"], fixture.Root, environment: echo);
+        promoted.ExitCode.ShouldBe(0, promoted.Stderr);
+        promoted.Arguments.ShouldBe(["--older-than-days", "7", "--action", "Archive", "--max-per-run", "10", "--require-disconnected", "true", "--execute"]);
+        string[] every = ["-OlderThanDays", "14", "-Action", "delete", "-Execute", "-MaxPerRun", "3", "-SkipUnread", "-ReportPath", @"C:\fixture root\reports",
+            "-InputJson", @"C:\fixture root\list.json", "-LiveBridgesJson", @"C:\fixture root\bridges.json", "-SessionsDir", @"C:\fixture root\sessions",
+            "-CredentialsPath", @"C:\fixture root\credentials.json", "-Now", "2026-08-22T14:14:00Z"];
+        var all = await NightlyRunHops.LauncherEcho(entry, every, fixture.Root, environment: echo);
+        all.ExitCode.ShouldBe(0, all.Stderr);
+        var received = ClaudeSessionCleanupOptions.Parse(all.Arguments.ShouldNotBeNull(all.Stdout + all.Stderr), "unused", "unused");
+        var expected = ClaudeSessionCleanupOptions.Parse(["--older-than-days", "14", "--action", "Delete", "--execute", "--max-per-run", "3", "--skip-unread",
+            "--report-path", @"C:\fixture root\reports", "--input-json", @"C:\fixture root\list.json", "--live-bridges-json", @"C:\fixture root\bridges.json",
+            "--sessions-dir", @"C:\fixture root\sessions", "--credentials-path", @"C:\fixture root\credentials.json", "--now", "2026-08-22T14:14:00Z"], "unused", "unused");
+        JsonSerializer.Serialize(received).ShouldBe(JsonSerializer.Serialize(expected));
+        (expected.Execute, expected.Action, expected.SkipUnread, expected.OlderThanDays, expected.MaxPerRun).ShouldBe((true, "Delete", true, 14, 3));
+
+        // -RequireDisconnected:$false: a [bool] binds only from a script call (-Command), never from -File.
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+                     "& '" + entry.Replace("'", "''") + "' -RequireDisconnected:$false; exit $LASTEXITCODE" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedEcho;
+        start.Environment["CLI_ECHO_COMMAND"] = "cleanup-claude-sessions";
+        var connected = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+        connected.Exit.ShouldBe(0, connected.Stderr);
+        connected.Echo().GetProperty("arguments").EnumerateArray().Select(argument => argument.GetString()).ToArray()
+            .ShouldBe(["--older-than-days", "7", "--action", "Archive", "--max-per-run", "10", "--require-disconnected", "false"]);
+
+        AssertThinLauncher("cleanup-claude-sessions.ps1", "    [int]$OlderThanDays = 7,", "    [string]$Action = 'Archive',", "    [switch]$Execute,",
+            "    [int]$MaxPerRun = 10,", "    [switch]$SkipUnread,", "    [bool]$RequireDisconnected = $true,", "    [string]$Now = ''");
+        var launcher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "cleanup-claude-sessions.ps1"));
+        launcher.ShouldNotContain("[scriptblock]$HttpShim", Case.Sensitive, "the fixture seam is gone");
+        launcher.ShouldNotContain("[switch]$PassThru", Case.Sensitive, "the fixture seam is gone");
+    }
+
+    [Test]
+    public async Task Claude_sessions_launcher_runs_the_command_on_a_saved_list_without_credentials_or_network()
+    {
+        using var fixture = CleanupCheckout("cleanup-claude-sessions.ps1");
+        var reports = fixture.PathOf("reports");
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+        };
+        // A saved list and named live bridges: no credentials file, session file, process or network is read.
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.PathOf("scripts", "cleanup-claude-sessions.ps1"),
+                     "-InputJson", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures", "claude-sessions-2026-08-22.json"),
+                     "-LiveBridgesJson", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures", "claude-sessions-live-bridges.json"),
+                     "-Now", "2026-08-22T14:14:00Z", "-ReportPath", reports, "-Execute" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        start.Environment["USERPROFILE"] = fixture.PathOf("profile");
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+        run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+        run.Stdout.ShouldContain("--input-json is set; --execute is ignored (dry run only).");
+        run.Stdout.ShouldContain("=== CANDIDATES (9) ===");
+        run.Stdout.ShouldContain("candidates=9 skipped=9 liveBridges=7 execute=False action=Archive requireDisconnected=True");
+        var report = Directory.GetFiles(reports, "*.json").ShouldHaveSingleItem();
+        using var document = JsonDocument.Parse(File.ReadAllText(report));
+        (document.RootElement.GetProperty("candidateCount").GetInt32(), document.RootElement.GetProperty("exitCode").GetInt32()).ShouldBe((9, 0));
+    }
 }

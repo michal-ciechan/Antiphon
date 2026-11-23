@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 359,
+      "classes": 361,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 146,
+      "classes": 148,
       "reason": "cap",
-      "owed": 121,
+      "owed": 123,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
@@ -25712,7 +25712,8 @@
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
-        "ReleaseStatusTests"
+        "ReleaseStatusTests",
+        "ZombieAgentReaperTests"
       ]
     },
     {
@@ -25731,7 +25732,8 @@
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
-        "ToolchainFloorWarningTests"
+        "ToolchainFloorWarningTests",
+        "ZombieAgentReaperTests"
       ]
     },
     {
@@ -25894,6 +25896,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
         "ClassCostMeasurementTests",
+        "ClaudeSessionCleanupTests",
         "ExpectedDurationSyncTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
@@ -25913,7 +25916,8 @@
         "RcRunEvidenceTests",
         "ReleaseGateLibraryTests",
         "ReleaseGatePlatformTests",
-        "ReleaseStatusTests"
+        "ReleaseStatusTests",
+        "ZombieAgentReaperTests"
       ]
     },
     {

@@ -142,6 +142,12 @@ namespace Antiphon.Scripts
             // 1 the threads could not be read, 4 over --max-per-run, 5 a delete failed. Usage is 2 for each.
             [CleanupCommands.BuildJunk] = CleanupCommands.RunBuildJunk,
             [CleanupCommands.CodexResidue] = CleanupCommands.RunCodexResidue,
+            // The session reapers answer every input themselves (unit 22). cleanup-claude-sessions: exit 0 done, 1 the list could not
+            // be read, 2 no or stale credentials, 3 a truncated list, 4 over --max-per-run, 5 a mutation failed. reap-zombie-agents: 0
+            // no positives or every kill verified, 1 a leaf still alive, 2 a prerequisite did not answer, 3 a dry run found
+            // positives. Usage is 2 for each.
+            [SessionReaperCommands.ClaudeSessions] = SessionReaperCommands.RunClaudeSessions,
+            [SessionReaperCommands.ZombieAgents] = SessionReaperCommands.RunZombieAgents,
         };
 
         public static int Main(string[] args)
@@ -177,7 +183,7 @@ namespace Antiphon.Scripts
                 + " | " + ReleaseCandidateCommand.Usage + " | " + ReleaseCutCommand.Usage
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
-                + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage);
+                + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage);
             return Usage;
         }
 

@@ -3047,9 +3047,6 @@
           "script": "scripts/test-apphost-probe-class.ps1"
         },
         {
-          "script": "scripts/test-cleanup-claude-sessions.ps1"
-        },
-        {
           "script": "scripts/test-client.ps1"
         },
         {
@@ -3063,9 +3060,6 @@
         },
         {
           "script": "scripts/test-hooks.ps1"
-        },
-        {
-          "script": "scripts/test-reap-zombie-agents.ps1"
         },
         {
           "script": "scripts/test-stage-value-report.ps1"
@@ -3607,7 +3601,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "dffa5bfd197532725a6b4d95fdf769690dd59d5df1c02a47b6fd31689551e5a6",
+  "catalogHash": "12f25bc35cd2e17e515f18fd366a415685aab8f30601816cff32ec5549989a3e",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

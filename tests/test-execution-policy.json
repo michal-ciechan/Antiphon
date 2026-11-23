@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "f9eb94fb8086b7f3408416f2a8e6ab7c110b1838da4f41c9f3efd9c185e51447",
+  "policyHash": "8d70614c77ab5074db7db23b254e9d29fe963f9b79b216580fbda76f8892e0ef",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1991,12 +1991,6 @@
       "wildcard": false
     },
     {
-      "id": "test-cleanup-claude-sessions",
-      "path": "scripts/test-cleanup-claude-sessions.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
       "id": "test-client",
       "path": "scripts/test-client.ps1",
       "disposition": "wrapper",
@@ -2023,12 +2017,6 @@
     {
       "id": "test-hooks",
       "path": "scripts/test-hooks.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
-      "id": "test-reap-zombie-agents",
-      "path": "scripts/test-reap-zombie-agents.ps1",
       "disposition": "unattended",
       "wildcard": false
     },
@@ -2196,7 +2184,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "dffa5bfd197532725a6b4d95fdf769690dd59d5df1c02a47b6fd31689551e5a6",
+    "hash": "12f25bc35cd2e17e515f18fd366a415685aab8f30601816cff32ec5549989a3e",
     "path": "tests/test-selection-policy.json"
   }
 }

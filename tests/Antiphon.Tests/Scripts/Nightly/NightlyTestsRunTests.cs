@@ -515,13 +515,11 @@ public sealed class NightlyTestsRunTests
         "test-apphost-lock-age scripts/test-apphost-lock-age.ps1",
         "test-apphost-main-worktree-guard scripts/test-apphost-main-worktree-guard.ps1",
         "test-apphost-probe-class scripts/test-apphost-probe-class.ps1",
-        "test-cleanup-claude-sessions scripts/test-cleanup-claude-sessions.ps1",
         "test-client scripts/test-client.ps1",
         "test-client-mode scripts/test-client-mode.ps1",
         "test-deploy-am-service scripts/test-deploy-am-service.ps1",
         "test-duration-tripwire scripts/test-duration-tripwire.ps1",
         "test-hooks scripts/test-hooks.ps1",
-        "test-reap-zombie-agents scripts/test-reap-zombie-agents.ps1",
         "test-stage-value-report scripts/test-stage-value-report.ps1",
     ];
 

@@ -5,7 +5,7 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Infrastructure.Agents;
 
 /// <summary>
-/// Pure I1–I5 / Z1–Z7 port of <c>scripts/reap-zombie-agents.ps1</c>. Fixture-shaped records in,
+/// Pure I1–I5 / Z1–Z7 port of the <c>reap-zombie-agents</c> rules (<c>scripts/lib/Antiphon.Nightly/ZombieAgentReaper.cs</c>). Fixture-shaped records in,
 /// verdict rows out; no WMI, EF, or runner calls.
 /// </summary>
 public sealed class ZombieCensusClassifier
