@@ -105,6 +105,31 @@
     },
     {
       "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.Fifo_sidecar_does_not_delay_launch",
+      "reasonPrefix": "FIFOs are POSIX properties"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.Unsafe_journals_are_refused_by_the_bounded_reader",
+      "reasonPrefix": "FIFOs and unix mode 000 are POSIX properties"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.Launch_path_opens_no_timing_file",
+      "reasonPrefix": "FIFOs and unix mode 000 are POSIX properties"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.QualificationTimingTests.Linux_owned_launch_is_a_known_custody_gap",
+      "reasonPrefix": "the native Job Object owner is the Windows custody"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Application.ReviewEvidenceResettlementTests.C2053_GitHelperDeadlineNamesTestAndHelper",
+      "reasonPrefix": "Linux shell witness for a Git child that exits while a descendant holds stdout."
+    },
+    {
+      "platform": "windows",
       "test": "Antiphon.Tests.Application.LandGraphEvaluationTests.EvaluationBudgetRefusesSlowDotnet",
       "reasonPrefix": "The slow evaluator is a PATH shim named dotnet; Windows process start resolves dotnet.exe."
     },

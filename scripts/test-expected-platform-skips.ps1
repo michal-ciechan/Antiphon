@@ -145,7 +145,7 @@ function Test-EpsVerdict {
     $windows = @($committed | Where-Object { [string]$_.platform -ceq 'windows' })
     $unique = @($windows | ForEach-Object { [string]$_.test } | Select-Object -Unique)
     $gaps = @([Antiphon.Nightly.NightlyExpectedSkips]::SourceGaps($repo, 'windows', $committed, $null))
-    Assert-C487 -Cond ($windows.Count -eq 28 -and $unique.Count -eq $windows.Count -and $gaps.Count -eq 0) `
+    Assert-C487 -Cond ($windows.Count -eq 33 -and $unique.Count -eq $windows.Count -and $gaps.Count -eq 0) `
         -Name 'EPS census-matches-source' -Detail ('windows=' + $windows.Count + ' unique=' + $unique.Count + ' gaps=' + ($gaps -join ','))
 
     $planted = @($committed) + @([pscustomobject]@{ platform = 'windows'; test = $missing; reasonPrefix = 'gone' })
