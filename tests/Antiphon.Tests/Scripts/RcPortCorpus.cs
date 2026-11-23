@@ -1,6 +1,6 @@
 // CARD-1836 S6c. Replays the pre-port PowerShell golden against the compiled RcShadowSample and RcDirtyOrder.
 // Do not regenerate the fixture from the ports: it records what the PowerShell libraries returned.
-// scripts/generate-rc-port-golden.ps1 reads those libraries at c6565bc95776.
+// scripts/generate-rc-port-golden.ps1 (deleted 2026-11-23, in git history) read those libraries at c6565bc95776.
 // Inputs are plain .NET values; PowerShell is not loaded. A recorded PowerShell hashtable ("map") or object ("ps")
 // becomes an ordinal Dictionary<string, object> (neither can hold two keys that differ only in case). The other
 // recorded shapes are already plain and stay the advisory witnesses: List, ArrayList and HashSet for the one
