@@ -120,6 +120,56 @@ public class GitHubCodeHostTests
             .Kind.ShouldBe(CodeHostFailureKind.RateLimited);
     }
 
+    [Test]
+    public async Task An_app_host_signs_a_jwt_finds_the_installation_and_reuses_the_installation_token()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var tokenPosts = 0;
+        string? jwt = null;
+        var handler = new FakeHandler(r => r.RequestUri!.PathAndQuery switch
+        {
+            "/api/v3/repos/acme/widgets/installation" => Json(HttpStatusCode.OK, """{ "id": 7 }"""),
+            "/api/v3/app/installations/7/access_tokens" when r.Method == HttpMethod.Post => Token(r),
+            "/api/v3/repos/acme/widgets/pulls/42" => Json(HttpStatusCode.OK, PullRequest),
+            var other => throw new InvalidOperationException($"Unexpected request {other}"),
+        });
+        HttpResponseMessage Token(HttpRequestMessage r)
+        {
+            tokenPosts++;
+            jwt = r.Headers.Authorization!.Parameter;
+            return Json(HttpStatusCode.Created, $$"""{ "token": "ghs_inst", "expires_at": "{{DateTimeOffset.UtcNow.AddHours(1):O}}" }""");
+        }
+
+        var settings = new ReviewCodeHostSettings();
+        settings.Hosts["ghe"] = new ReviewCodeHost
+        {
+            Kind = ReviewHost.GitHub,
+            BaseUrl = "https://ghe.example/api/v3/",
+            Token = "pat-unused",
+            App = new ReviewGitHubApp { AppId = "Iv23app", PrivateKey = rsa.ExportRSAPrivateKeyPem() },
+        };
+        var host = new GitHubCodeHost(new HttpClient(handler), Options.Create(settings), new CodeHostResponseCache(), new GitHubAppTokens());
+
+        await host.GetPullRequestAsync(Target, CancellationToken.None);
+        await host.GetPullRequestAsync(Target, CancellationToken.None);
+
+        tokenPosts.ShouldBe(1, "the installation token is cached until near its expiry");
+        handler.Requests.Where(q => q.Uri.EndsWith("/pulls/42")).ShouldAllBe(q => q.Authorization == "Bearer ghs_inst");
+        var parts = jwt!.Split('.');
+        parts.Length.ShouldBe(3);
+        var payload = System.Text.Json.JsonDocument.Parse(Convert.FromBase64String(Pad(parts[1]))).RootElement;
+        payload.GetProperty("iss").GetString().ShouldBe("Iv23app");
+        (payload.GetProperty("exp").GetInt64() - payload.GetProperty("iat").GetInt64()).ShouldBeLessThanOrEqualTo(600, "GitHub refuses an app JWT valid for more than ten minutes");
+        rsa.VerifyData(Encoding.ASCII.GetBytes($"{parts[0]}.{parts[1]}"), Convert.FromBase64String(Pad(parts[2])),
+            System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1).ShouldBeTrue();
+
+        static string Pad(string s)
+        {
+            s = s.Replace('-', '+').Replace('_', '/');
+            return s + new string('=', (4 - s.Length % 4) % 4);
+        }
+    }
+
     private static GitHubCodeHost Host(FakeHandler handler)
     {
         var settings = new ReviewCodeHostSettings();

@@ -10,14 +10,21 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Infrastructure.Review;
 
 /// <summary>
-/// GitHub over REST with a personal access token (review engine design 8.3). The host comes from
-/// <c>Review:CodeHosts:Hosts</c> by the target's host id: its base URL (GitHub Enterprise Server or a
-/// proxy) and its token, sent as a bearer token and never logged. Every GET is conditional through
+/// GitHub over REST with a personal access token or a GitHub App sign-in (review engine design 8.3).
+/// The host comes from <c>Review:CodeHosts:Hosts</c> by the target's host id: its base URL (GitHub
+/// Enterprise Server or a proxy) and its token, or its app's installation token
+/// (<see cref="GitHubAppTokens"/>), sent as a bearer token and never logged. Every GET is conditional through
 /// <see cref="CodeHostResponseCache"/>, so an unchanged resource costs a 304, which GitHub does not
 /// count against the rate limit.
 /// </summary>
-public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSettings> settings, CodeHostResponseCache cache) : ICodeHost
+public sealed class GitHubCodeHost(
+    HttpClient http,
+    IOptions<ReviewCodeHostSettings> settings,
+    CodeHostResponseCache cache,
+    GitHubAppTokens? appTokens = null) : ICodeHost
 {
+    private readonly GitHubAppTokens _appTokens = appTokens ?? new GitHubAppTokens();
+
     public const string DefaultApiRoot = "https://api.github.com";
     public const string JsonMediaType = "application/vnd.github+json";
     public const string DiffMediaType = "application/vnd.github.diff";
@@ -311,8 +318,7 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         using var request = new HttpRequestMessage(HttpMethod.Post, GraphQlEndpoint(host));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
-        if (!string.IsNullOrEmpty(host.Token))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        await AuthorizeAsync(request, target, host, ct);
         request.Content = new StringContent(JsonSerializer.Serialize(new { query, variables }), System.Text.Encoding.UTF8, "application/json");
 
         var seconds = Math.Max(1, host.TimeoutSeconds);
@@ -456,8 +462,7 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
         request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", ApiVersion);
-        if (!string.IsNullOrEmpty(host.Token))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        await AuthorizeAsync(request, target, host, ct);
         if (cached is not null)
             request.Headers.TryAddWithoutValidation("If-None-Match", cached.ETag);
 
@@ -495,8 +500,7 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonMediaType));
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
         request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", ApiVersion);
-        if (!string.IsNullOrEmpty(host.Token))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
+        await AuthorizeAsync(request, target, host, ct);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
 
         var seconds = Math.Max(1, host.TimeoutSeconds);
@@ -552,6 +556,19 @@ public sealed class GitHubCodeHost(HttpClient http, IOptions<ReviewCodeHostSetti
 
         return body.Length <= 300 ? body : body[..300];
     }
+
+    /// <summary>The bearer: an installation token when the host signs in as a GitHub App, else its PAT.</summary>
+    private async Task AuthorizeAsync(HttpRequestMessage request, CodeHostTarget target, ReviewCodeHost host, CancellationToken ct)
+    {
+        var token = host.App is { IsConfigured: true }
+            ? await _appTokens.GetTokenAsync(http, target.HostId, host, ApiRoot(host), target.Repo, ct)
+            : host.Token;
+        if (!string.IsNullOrEmpty(token))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    private static Uri ApiRoot(ReviewCodeHost host) =>
+        new((string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl).TrimEnd('/') + "/");
 
     private ReviewCodeHost Host(CodeHostTarget target) =>
         settings.Value.Hosts.TryGetValue(target.HostId, out var host) && host.Kind == ReviewHost.GitHub

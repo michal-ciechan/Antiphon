@@ -57,9 +57,40 @@ public sealed class ReviewCodeHost
     [JsonIgnore]
     public string? Token { get; set; }
 
+    /// <summary>
+    /// Sign in as a GitHub App instead of with <see cref="Token"/>: the review then posts as the app's
+    /// bot (<c>&lt;slug&gt;[bot]</c>), which may approve PRs the token owner opened. Used when configured.
+    /// </summary>
+    public ReviewGitHubApp? App { get; set; }
+
     public int TimeoutSeconds { get; set; } = 30;
 
     public override string ToString() => $"{Kind} {BaseUrl}";
+}
+
+/// <summary>
+/// A GitHub App sign-in (<c>Review:CodeHosts:Hosts:&lt;id&gt;:App</c>). The adapter signs a short JWT with
+/// the private key and exchanges it for an installation token (one hour), cached until near expiry.
+/// </summary>
+public sealed class ReviewGitHubApp
+{
+    public const string DefaultPrivateKeyConfigKey = "Review:Secrets:GitHubAppPrivateKey";
+
+    /// <summary>The app's client id (<c>Iv23…</c>) or numeric app id: the JWT issuer.</summary>
+    public string? AppId { get; set; }
+
+    /// <summary>The installation to use. Absent, it is looked up per repo (<c>GET /repos/{repo}/installation</c>).</summary>
+    public long? InstallationId { get; set; }
+
+    /// <summary>The configuration key that holds the PEM private key. Never the key itself.</summary>
+    public string? PrivateKeyConfigKey { get; set; }
+
+    /// <summary>Resolved from <see cref="PrivateKeyConfigKey"/> at startup by Program.cs. Never serialised or logged.</summary>
+    [JsonIgnore]
+    public string? PrivateKey { get; set; }
+
+    [JsonIgnore]
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(AppId) && !string.IsNullOrWhiteSpace(PrivateKey);
 }
 
 /// <summary>One repo's host: <see cref="Host"/> is a <see cref="ReviewCodeHostSettings.Hosts"/> id.</summary>

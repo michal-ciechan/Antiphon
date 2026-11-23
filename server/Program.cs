@@ -190,6 +190,8 @@ try
             {
                 if (string.IsNullOrEmpty(host.Token) && !string.IsNullOrWhiteSpace(host.TokenConfigKey))
                     host.Token = builder.Configuration[host.TokenConfigKey];
+                if (host.App is { } app && string.IsNullOrEmpty(app.PrivateKey))
+                    app.PrivateKey = builder.Configuration[string.IsNullOrWhiteSpace(app.PrivateKeyConfigKey) ? ReviewGitHubApp.DefaultPrivateKeyConfigKey : app.PrivateKeyConfigKey];
             }
         });
     builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
@@ -1025,6 +1027,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
     builder.Services.AddSingleton<CodeHostResponseCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());
+    builder.Services.AddSingleton<GitHubAppTokens>();
     builder.Services.AddHttpClient<GitHubCodeHost>();
     builder.Services.AddTransient<ICodeHost>(sp => sp.GetRequiredService<GitHubCodeHost>());
     builder.Services.AddSingleton<ICodeHost, LocalGitCodeHost>();
