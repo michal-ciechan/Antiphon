@@ -2237,9 +2237,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 68,
+      "classes": 69,
       "reason": "cap",
-      "owed": 43,
+      "owed": 44,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -6330,6 +6330,7 @@
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
         "ReviewExecutorApiTests",
+        "ReviewLiveGitHubTests",
         "ReviewPollingApiTests"
       ]
     },
@@ -6679,7 +6680,8 @@
     {
       "path": "server/Application/Review/ReviewViewer.cs",
       "classes": [
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests"
       ]
     },
     {
@@ -13097,6 +13099,7 @@
         "GitHubThreadResolutionTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
         "ReviewPollingApiTests"
       ]
     },
@@ -13108,6 +13111,7 @@
         "ReviewCheckParserTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
         "ReviewPollingApiTests"
       ]
     },
@@ -13120,6 +13124,7 @@
     {
       "path": "server/Application/Settings/ReviewPollingSettings.cs",
       "classes": [
+        "ReviewLiveGitHubTests",
         "ReviewPollingApiTests"
       ]
     },
@@ -25226,6 +25231,7 @@
       "classes": [
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
         "ReviewPollingApiTests"
       ]
     },
