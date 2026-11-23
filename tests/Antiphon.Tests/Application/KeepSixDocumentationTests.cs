@@ -12,8 +12,8 @@ public sealed class KeepSixDocumentationTests
     private static string Read(params string[] relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, Path.Combine(relative)));
 
-    // The hold command is keep-six (Antiphon.Nightly.KeepSix, which replaced scripts/keep-six.ps1 in unit 23 of the 2026-11-22
-    // plan); KeepSixCommandTests runs its routes, headers and refusals.
+    // The hold command is keep-six (Antiphon.Nightly.KeepSix, which replaced scripts/keep-six.ps1's body in unit 23 of the
+    // 2026-11-22 plan; the .ps1 is the cutover's thin launcher until W8); KeepSixCommandTests runs its routes, headers and refusals.
     [Test]
     public void bundle_says_the_server_does_not_dispatch_and_names_the_hold_script()
     {
@@ -23,7 +23,11 @@ public sealed class KeepSixDocumentationTests
 
         var sourcePath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "KeepSix.cs");
         File.Exists(sourcePath).ShouldBeTrue(sourcePath);
-        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "keep-six.ps1")).ShouldBeFalse("the script is gone");
+        // scripts/keep-six.ps1 stays only as the cutover's thin launcher into the command (no API code of its own).
+        var launcher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "keep-six.ps1"));
+        launcher.ShouldContain("Invoke-AntiphonCli -Command 'keep-six'", Case.Sensitive);
+        launcher.ShouldNotContain("Invoke-RestMethod", Case.Sensitive);
+        launcher.ShouldNotContain("Invoke-WebRequest", Case.Sensitive);
         var source = File.ReadAllText(sourcePath);
         source.All(static c => c <= 127).ShouldBeTrue("KeepSix.cs must stay ASCII");
         source.ShouldContain("OperatorApi.TaskTokenHeader", Case.Sensitive);

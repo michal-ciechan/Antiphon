@@ -1,5 +1,5 @@
 // CARD-1320: read the keep-six status, declare or clear a hold, or acknowledge a reminder for a standing orchestrator. It
-// replaced scripts/keep-six.ps1 (deleted 2026-11-23, unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md);
+// replaced scripts/keep-six.ps1 (unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; the .ps1 is now the cutover's thin launcher);
 // the CLI runs it as `antiphon-scripts keep-six [...]` (scripts/antiphon keep-six on sh, scripts\antiphon.cmd on Windows).
 //
 //   keep-six

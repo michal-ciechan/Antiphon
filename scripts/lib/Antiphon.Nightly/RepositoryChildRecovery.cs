@@ -1,5 +1,5 @@
 // CARD-0448: inspect or recover crash-orphaned repository child journals. It replaced scripts/recover-repository-children.ps1
-// (deleted 2026-11-23, unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md); the CLI runs it as
+// (unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; the .ps1 is now the cutover's thin launcher); the CLI runs it as
 // `antiphon-scripts recover-repository-children --repository <checkout> [--execute] [--confirm-descendants-exited]`.
 //
 // Preview is the default. Executing needs an explicit confirmation that the surviving descendants of the recorded children
