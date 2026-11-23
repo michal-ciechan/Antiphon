@@ -286,6 +286,70 @@ public partial class ProjectReadinessTests
             CreateContext, board.Id, (boardId, path) => SeedAgentAsync(boardId, workingDirectory: path));
     }
 
+    /// <summary>
+    /// Review f14ac37a round 3 blocker: the prefilter's candidate count must stay bounded by the
+    /// directory's real case variants. A probe of five CJK characters once became five <c>_</c>
+    /// wildcards and admitted every five-character sibling (100,001 candidates for one match on a
+    /// 100,001-row table). Seeds 1,000 numeric siblings <c>00000</c>..<c>00999</c> beside one CJK
+    /// directory and the two case variants of a cased non-ASCII directory, then counts the rows the
+    /// database filter returns for each probe.
+    /// </summary>
+    internal static async Task AssertCandidateCountIsBoundedAsync(Func<AppDbContext> createContext, Guid boardId)
+    {
+        var u = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
+        Agent Row(string path)
+        {
+            var slug = Guid.NewGuid().ToString("N");
+            return new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Agent {slug}",
+                Slug = $"agent-{slug}",
+                WorkingDirectory = path,
+                BoardId = boardId,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+        }
+
+        var cjk = Row($@"C:\repos-{u}\支付服务组");
+        var lowerCased = Row($@"c:\repos-{u}\é支付服务");
+        var upperCased = Row($"C:/REPOS-{u}/É支付服务/");
+        await using (var seed = createContext())
+        {
+            for (var i = 0; i < 1_000; i++)
+                seed.Agents.Add(Row($@"C:\repos-{u}\{i:D5}"));
+            seed.Agents.AddRange(cjk, lowerCased, upperCased);
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = createContext();
+        async Task<List<Guid>> CandidatesAsync(string probe) =>
+            await db.Agents.AsNoTracking()
+                .Where(a => a.BoardId == boardId)
+                .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe))
+                .Select(a => a.Id)
+                .ToListAsync();
+
+        var cjkProbe = $"c:/REPOS-{u}/支付服务组/";
+        var cjkCandidates = await CandidatesAsync(cjkProbe);
+        cjkCandidates.Count.ShouldBe(1, $"probe '{cjkProbe}' pattern '{WorkingDirectoryIdentity.CandidatePattern(cjkProbe)}'");
+        cjkCandidates.ShouldBe([cjk.Id]);
+
+        var casedProbe = $@"C:\Repos-{u}\É支付服务";
+        var casedCandidates = await CandidatesAsync(casedProbe);
+        casedCandidates.Count.ShouldBeLessThanOrEqualTo(2, $"probe '{casedProbe}' pattern '{WorkingDirectoryIdentity.CandidatePattern(casedProbe)}'");
+        casedCandidates.ShouldBe([lowerCased.Id, upperCased.Id], ignoreOrder: true);
+    }
+
+    [Test]
+    public async Task candidate_prefilter_count_stays_bounded_by_the_real_case_variants()
+    {
+        var board = await SeedBoardAsync((await SeedProjectAsync()).Id);
+        await AssertCandidateCountIsBoundedAsync(CreateContext, board.Id);
+    }
+
     private static (string Project, string Other) Tokenise(string projectSpelling, string otherSpelling)
     {
         var u = Guid.NewGuid().ToString("N");
