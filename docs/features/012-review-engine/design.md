@@ -1032,6 +1032,51 @@ Polling produces the same common events as webhooks, so the engine only sees a d
 goes through the cache layer like any poll. It works on webhook installs too, to recover from a
 missed delivery.
 
+#### Polling (first implementation)
+
+There is no public webhook at home, so polling is the integration. `ReviewPoller` is a hosted
+service with settings under `Review:Polling`: `Enabled` (default false), `IntervalSeconds` (default
+120, at least 30), `CommandPrefix` (default `/antiphon`) and `Repos`, each with `Repo`, `Host`
+(default GitHub; the host id and credential come from `Review:CodeHosts:Repos`), `BaseBranches`
+(empty means all), `IncludeDrafts` (false), `SkipLabels` (default `antiphon:skip`) and an optional
+`RequireLabel`. A host that cannot list PRs says so through `CanListPullRequests`; local git cannot.
+
+Each pass, per repo, reads the open PRs (`GET pulls?state=open`) and the PR conversation comments
+since the repo's cursor (`GET issues/comments?since=`, PR comments only). Both are conditional
+GETs, and the cursor moves only when a comment arrives, so a quiet repo costs 304s. Then, in order:
+
+1. **Comment commands** from `OWNER`, `MEMBER` or `COLLABORATOR` (any other `author_association` is
+   ignored): `/antiphon review [steer]` starts a run when the PR has none (or only a finished one,
+   ignoring the filters), and otherwise asks for a round with that steer. `/antiphon recheck` is the
+   same with no steer. The command must start the comment. Each gets an `eyes` reaction and a short
+   reply ("Round 2 queued, steer: …", or the refusal), both best effort, with the App's Pull requests
+   permission (`issues/{n}/comments` and comment reactions on a PR).
+2. **New PRs**: every open PR that passes the filters and has no run gets one (trigger `opened`).
+3. **Moved or closed PRs**: a run whose PR head differs from the run's head, or whose PR is no longer
+   open, is refreshed (as the Refresh button does). An unchanged run is left alone, so a quiet pass
+   publishes nothing. A queued run is skipped too, because its next intake pins the current head.
+
+A round request (the comment, or `POST /api/review-runs/{id}/rounds` from the run page) completes
+`await-fixes` with `recheck` and stores the steer. At a gate it is refused, because the gate's
+another-round decision is the way there. On an approved, awaiting-merge or failed run it starts a
+`recheck` iteration at the current head. That supersedes the parked wait and sets `antiphon/approval`
+back to pending, as a push revokes an approval. A posted approving review is not dismissed yet.
+
+**Dedupe without a migration.** A command's comment id is recorded as `comment:<id>`: as the trigger
+of the iteration it started, or in the summary of the wait it completed. A refusal's reply carries
+the id in a hidden tag. The poller checks all three before acting, so a command is never acted on
+twice, including across a restart. On start it looks back only two intervals. A transient failure
+(503) holds the cursor at that comment, and the next pass retries it.
+
+**Failures and state.** One repo's failure (rate limit, 403, network) is logged and recorded as that
+repo's `error`, and never stops the other repos or the loop. The last pass (started, finished, and
+per repo the open PRs, runs started, refreshed, commands handled and the last error) is kept in
+memory, and is read by `GET /api/review-polling`. `POST /api/review-polling/poll` runs a pass now,
+even with the timer off. The runs page shows this as a strip with **Check GitHub now**.
+
+Enabling polling on a busy repo starts a run for every matching open PR on the first pass. Use
+`RequireLabel` to opt PRs in gradually.
+
 ## 9. Check catalogue
 
 One file per check: `.antiphon/review/checks/<category>/<id>.md`.

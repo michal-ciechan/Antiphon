@@ -143,3 +143,27 @@ comment id mapped across pages, GraphQL error kinds, the endpoint).
 | G-11 | The delegate seat under the executor: verify blocks the walk for up to the entry's `TimeoutSeconds` (240, under the 300 s lease); a slower seat times out and the chain moves on. Making verify park like the reviewer node is the follow-up if seats become the default. | Bounded synchronous wait by design for now. |
 | G-12 | Finding sync with a finding posted before thread ids were recorded: the resolve passes the comment id and GitHub maps it; a GraphQL `FORBIDDEN` (token without pull-request write) marks the response Failed after the reply posted. | The mapping is unit tested on the adapter; the sync path with GitHub is not. |
 | G-13 | GraphQL thread listing on a PR with more than 1,000 threads stops at 10 pages and the thread is reported not found. | Limit not modelled. |
+
+## Polling and manual rounds (`ReviewPoller`, `ReviewService.RequestRoundAsync`)
+
+Covered: `ReviewPollingApiTests` (passes driven directly over the scripted code host with the real
+executor: an open PR gets an `opened` run while a skip-labelled PR and a draft do not; an unchanged
+pass refreshes nothing; a push is refreshed into a `push` iteration; a COLLABORATOR's
+`/antiphon review focus on X` completes `await-fixes` with `recheck`, the steer reaches the packs, the
+comment gets `eyes` and one reply; a NONE user's `/antiphon recheck` is ignored; the same comments on
+the next pass and on a new poller (a restart) are not acted on again; a closed PR finishes the run;
+`GET /api/review-polling` reports the last pass) and `GitHubCodeHostTests` (the open-PR listing over
+two pages with labels and drafts, the comment listing keeping PR comments only, the conversation
+reply and the `eyes` reaction).
+
+| # | Test later | Why |
+|---|---|---|
+| P-1 | `POST /api/review-runs/{id}/rounds` refusals: 409 `review_run_at_gate` at a gate, `review_run_finished` on a merged or closed run, `review_run_busy` while queued or running, `review_run_not_walked` on demo data, 422 for a steer over 4,000 characters. | Implemented; the workflow test only drives the wait path. |
+| P-2 | A round on an approved run (`await-merge`): the wait is skipped as superseded, a `recheck` iteration starts at the same head in the same round, `antiphon/approval` goes back to pending, and the next round approves again. Also a failed run (same as Refresh's recheck) and a head that moved meanwhile (round + 1). | Implemented; needs a bot-approved run first, which roughly doubles the test's walk time. |
+| P-3 | `/antiphon review` on a PR with no run (trigger `comment:<id>`, steer on round 1), on a PR whose only run is closed (a new run), and on a closed PR (reply only). `/antiphon recheck` with text after it (no steer). | The starting path shares `CreateRunAsync` with the poller's own start; only the round path runs. |
+| P-4 | A refused command is answered once: the reply's hidden `<!-- antiphon:comment:<id> -->` tag stops a new poller from replying again after a restart. A transient failure (503) is retried on the next pass and the cursor holds at that comment. | The scripted host does not list its own replies. |
+| P-5 | One repo failing (a 403 or a rate limit from the listing) records its error in the pass and the next repo still runs; a local repo is reported as unsupported. | One configured repo in the test. |
+| P-6 | Filters: `BaseBranches`, `RequireLabel`, `IncludeDrafts: true`, explicit `SkipLabels` replacing the default. `IntervalSeconds` below 30 is raised to 30. | `Matches` is a pure function; only the defaults run. |
+| P-7 | The timer: with `Enabled: true` a pass runs at start and every interval, a failing pass is logged and the loop goes on, and `POST /api/review-polling/poll` waits for a running pass instead of overlapping it (90 s budget). | Needs a fake `TimeProvider` driving `Task.Delay`; the test calls the pass directly by request. |
+| P-8 | A queued run is not refreshed by a pass (its intake will pin the current head), so a slow executor cannot get two `push` iterations for one push. | The race needs a stalled executor. |
+| P-9 | Client: the polling strip (off, every N minutes, last pass ok or failed with the repos in the tooltip, "Check GitHub now" disabled with no repos) and the round modal (the 409 detail shown in place, the form reset on reopen). | Vitest skipped by request; tsc and eslint only. |

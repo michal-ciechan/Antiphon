@@ -1,6 +1,7 @@
-# Review engine API contract (v0)
+# Review engine API contract (v0.4)
 
-Status: working contract for the first implementation slice, 2026-11-22. The client builds against
+Status: working contract for the first implementation slice, 2026-11-22; v0.4 (polling and manual
+rounds) 2026-11-23. The client builds against
 it with a fake implementation first. The server then implements the same routes. Change this file
 first when the contract changes. Owner design: [design.md](design.md).
 
@@ -76,7 +77,7 @@ interface NodeExecutionDto {
 
 interface ReviewIterationDto {
   iteration: number; round: number; startedAt: string
-  trigger: string /* 'opened' | 'manual' | 'push' (Refresh saw a new head) | 'recheck' (Refresh of a failed run, same head) | 'another-round' | 'base-moved' … */
+  trigger: string /* 'opened' (polling found the PR) | 'manual' | 'push' (Refresh saw a new head) | 'recheck' (Refresh of a failed run, or a requested round) | 'comment:<id>' (a PR comment command) | 'another-round' | 'base-moved' … */
   baseSha: string | null; headSha: string | null /* what this iteration reviewed; the next delta starts from headSha */
 }
 
@@ -141,6 +142,25 @@ interface WorkflowGraphDto {
            overflow: string | null /* gate opened past maxIterations; required on limited back edges */; description: string | null }[]
 }
 
+interface ReviewRoundRequest { steerPrompt?: string /* at most 4,000 characters */ }
+
+interface ReviewPollingDto {
+  enabled: boolean /* the timer; a manual poll works either way */
+  intervalSeconds: number /* at least 30 */
+  commandPrefix: string /* '/antiphon' */
+  repos: { repo: string; host: ReviewHost; baseBranches: string[] /* empty = all */; includeDrafts: boolean
+           skipLabels: string[] /* default ['antiphon:skip'] */; requireLabel: string | null }[]
+  running: boolean /* a pass is running now */
+  lastPass: ReviewPollingPassDto | null /* in memory: null until the first pass since the server started */
+}
+
+interface ReviewPollingPassDto {
+  trigger: 'timer' | 'manual'; startedAt: string; finishedAt: string
+  ok: boolean /* no repo reported an error */
+  repos: { repo: string; openPullRequests: number; runsStarted: number; runsRefreshed: number; commandsHandled: number
+           error: string | null /* the last error the pass hit for this repo: rate limit, 403, network */ }[]
+}
+
 interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
 ```
 
@@ -155,6 +175,7 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
 | POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
+| POST | `/api/review-runs/{id}/rounds` | `ReviewRoundRequest` (body optional) | `ReviewRunDetailDto`. A manual review round, same round, the steer stored on the run for the packs. A run waiting at `await-fixes` completes it with `recheck`; an approved, awaiting-merge or failed run starts a `recheck` iteration at the current head (the parked wait is superseded and `antiphon/approval` goes back to pending, as a push revokes it). 409 `review_run_at_gate` at a gate (decide it with `AnotherRound` and a steer instead), `review_run_finished` (merged or closed), `review_run_busy` (queued or running), `review_run_not_walked` (demo data); 422 for a steer over 4,000 characters; 503 when the code host fails. |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` | `ReviewFindingDto` |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` (one submitted review) | `{ items: ReviewFindingDto[] }` |
 | GET | `/api/review-queue` | `?scope=Mine\|Teams\|All&login=` | `{ items: QueueItemDto[], total }` |
@@ -164,12 +185,18 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | GET | `/api/review-workflows/default` | | `WorkflowGraphDto` |
 | GET | `/api/review-workflows/revisions/{id}` | | `WorkflowGraphDto` (the snapshot a run used) |
 | POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` |
+| GET | `/api/review-polling` | | `ReviewPollingDto` (design 8.5 Polling). |
+| POST | `/api/review-polling/poll` | | `ReviewPollingDto` after one pass over every configured repo, run now even when the timer is off. Waits for a pass already running instead of overlapping it; a pass cut short at 90 s records the repos it reached. A repo's failure is in its `error`, not the status code. |
 | GET | `/api/review-me` | | `ReviewViewerDto`. Until identity lands, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
 
 ## SignalR
 
 `ReviewRunChanged { runId }` → invalidates `['reviewRuns']`, `['reviewRun', runId]`,
 `['reviewRun', runId, 'findings']`, `['reviewQueue']`, `['reviewKpis']`.
+
+Polling has no SignalR event of its own: each run a pass starts or moves publishes
+`ReviewRunChanged`, and a pass that finds nothing new publishes nothing. The client refetches
+`['reviewPolling']` every minute and takes the poll route's result.
 
 ## Changelog
 
@@ -183,6 +210,8 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | v0.3 | The executor now walks the whole workflow to merge:<br>- a gate decision returns the run while the executor resumes it, so Approve on a walked run reads `Queued` until the next node runs<br>- Refresh is asynchronous: its 202 can return before the new `push` iteration exists, and the client follows `ReviewRunChanged`<br>- a response's `syncState` moves from `Pending` to `Synced` once the executor posts it, to `NotApplicable` on hosts without threads, or to `Failed`<br><br>Planned, not served yet:<br>- node-execution `outputs` (JSON)<br>- a finding `placement` (`Inline`, `SummaryOnly` or `BelowBar`)<br>- update-branch opt-in and recheck routes<br>- a run-level `failureReason` |
 
 | v0.4 | Failure policy (design 3.4.1):<br>- node status `FailedContinued`<br>- node params `onFailure` (`continue` or `stop`) and `fallback`<br>- a refused commit status is a line in the step's `summary`, not a failure<br>- a failed run sets `antiphon/review` to `error`<br>- `Review:Policy:AuthorMayDecideRepos` lets a listed repo's PR author decide its own gates (`viewerCanDecide`) |
+
+| v0.5 | Polling and manual rounds:<br>- `POST /api/review-runs/{id}/rounds` and `ReviewRoundRequest`<br>- `GET /api/review-polling`, `POST /api/review-polling/poll` and `ReviewPollingDto`<br>- the `opened` trigger for a run polling started, and `comment:<id>` for one a PR comment command started or re-rounded |
 
 ## Not in this slice
 
