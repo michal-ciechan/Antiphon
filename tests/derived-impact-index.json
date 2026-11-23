@@ -24557,6 +24557,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/ReviewEvidenceResettlementTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/RoutingPinServiceTests.cs",
       "classes": [
         "AgentTaskReplyIntegrationTests",
@@ -25795,6 +25801,18 @@
         "QualificationStopTests",
         "QualificationSupervisorTests",
         "RcQualificationStatusTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/QualificationTimingTests.Runs.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/QualificationTimingTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
       ]
     },
     {
