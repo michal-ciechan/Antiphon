@@ -121,6 +121,18 @@ public sealed class InProcessGitCommandsTests
         var unicode = await CommitAsync(f, modified, ("caf\u00e9.txt", "e\n", false), ("\uFF01.txt", "x\n", false));
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(unicode));
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified[..12]));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified + modified[..24])); // 64 hex, not SHA-1
+        // A ref named after an id: git warns of ambiguity for a present object, reads the ref for a missing one.
+        var missing = new string('e', 40);
+        await f.RequiredAsync(f.Repository, "update-ref", "refs/heads/" + missing, modified);
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(missing));
+        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", missing]);
+        await f.RequiredAsync(f.Repository, "update-ref", "-d", "refs/heads/" + missing);
+        await f.RequiredAsync(f.Repository, "update-ref", "refs/tags/" + deleted, modified);
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(deleted));
+        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", deleted]);
+        await f.RequiredAsync(f.Repository, "update-ref", "-d", "refs/tags/" + deleted);
+        await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(deleted));
     }
 
     private static string[] CommitPaths(string commit) =>

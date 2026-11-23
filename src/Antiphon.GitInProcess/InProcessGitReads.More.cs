@@ -188,8 +188,8 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>A recursive two-tree walk in git's raw form. False for anything git reports differently from a plain
-    /// add/delete/modify of files: a file replaced by a directory (or back), a type change, a submodule, a name that
-    /// is not valid UTF-8.</summary>
+    /// add/delete/modify of files (a file replaced by a directory or back, a type change, a submodule) and for any
+    /// tree that is not <see cref="Plain"/> (not canonical, out of tree order, a name twice, a non-ASCII name).</summary>
     private static bool Diff(Tree? left, Tree? right, string prefix, List<(string, string)> changes)
     {
         // Both sides as git stores them (canonical bytes, tree order, no repeated name) with ASCII names, so a name
@@ -200,7 +200,6 @@ internal static partial class InProcessGitReads
         if (right is not null) foreach (var e in right) names.Add(e.Name);
         foreach (var name in names)
         {
-            if (name.Contains('�')) return false;
             var l = left?[name];
             var r = right?[name];
             if (l?.Mode == Mode.GitLink || r?.Mode == Mode.GitLink) return false;
@@ -332,8 +331,20 @@ internal static partial class InProcessGitReads
         return Convert.ToHexString(sha1.GetHashAndReset()).Equals(tree.Sha, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>The object a full id names, read as an id: never revision syntax (a ref of that hex name).</summary>
-    private static GitObject? ById(Repository repo, string sha) => repo.Lookup(new ObjectId(sha));
+    /// <summary>
+    /// The object a full SHA-1 id names, read as an id, never as revision syntax: null for any other length, and
+    /// when a ref reads as that hex name (git then warns "refname ... is ambiguous", or with the object missing
+    /// reads the ref).
+    /// </summary>
+    private static GitObject? ById(Repository repo, string sha)
+    {
+        if (sha.Length != 40) return null;
+        // git's first rule is the file $GIT_DIR/<name> (libgit2's Refs[hex] reads the hex as an object id instead).
+        if (HasLooseRef(repo, sha)) return null;
+        foreach (var name in new[] { "refs/" + sha, "refs/tags/" + sha, "refs/heads/" + sha, "refs/remotes/" + sha, "refs/remotes/" + sha + "/HEAD" })
+            if (repo.Refs[name] is not null || HasLooseRef(repo, name)) return null;
+        return repo.Lookup(new ObjectId(sha));
+    }
 
     private static Tree? TreeOf(Repository repo, string sha) => ById(repo, sha) switch
     {
