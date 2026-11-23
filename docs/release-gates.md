@@ -157,7 +157,8 @@ same-account writers are outside a diagnostic reader's authority.
 boolean coverage/test/report flags. An early blank `sha` can use `expectedSha`.
 `lastActivityAt` is a recorded transition, **not a continuous heartbeat**; its age
 does not prove a hang or supply an ETA. The batch ETA is the one line from
-scripts/orchestration/watch-qual.ps1 when -TimingRoot is passed. This status reader
+`scripts/antiphon watch-qual` when `--timing-root` is passed (`scripts/antiphon
+qualification-eta --timing-root <dir>` prints it once). This status reader
 does not walk a timing root, and lastActivityAt does not supply an ETA.
 `ownerObservation` distinguishes `alive`
 (matching PID and start), `absent` (definitive PID not found), `reused` (different

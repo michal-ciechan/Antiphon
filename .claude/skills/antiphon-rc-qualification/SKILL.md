@@ -56,12 +56,13 @@ These directions override the cited standing rules in
    directory outside the candidate, qualification state, and supervisor directories.
    Reuse that state when re-arming; never write into the observed live run.
    The repository watchers below REPLACE any private watcher copies; re-arm
-   these checked-in scripts instead of retaining a divergent private version.
+   these checked-in scripts and commands instead of retaining a divergent private version.
 
    ```powershell
    pwsh -NoProfile -File scripts/orchestration/watch-tasks.ps1 -ProjectId '<project-guid>' -StateFile '<owned-scratch>\tasks.json'
    # Or use -BoardId <board-guid>; never enumerate the whole fleet implicitly.
-   pwsh -NoProfile -File scripts/orchestration/watch-qual.ps1 -LogDir '<candidate>\logs\<run>' -StateFile '<owned-scratch>\qual.seen.txt' -Heartbeat '<task-dir>\supervisor-heartbeat.json'
+   scripts\antiphon.cmd watch-qual --log-dir '<candidate>\logs\<run>' --state-file '<owned-scratch>\qual.seen.txt' --heartbeat '<task-dir>\supervisor-heartbeat.json'
+   # Add --timing-root '<timing-root>' for one batch ETA line per poll; scripts/antiphon watch-qual ... on sh.
    pwsh -NoProfile -File scripts/orchestration/watch-master.ps1 -From '<observed-master-full-sha>' -Repository '<repo-root>'
    ```
 
@@ -70,14 +71,17 @@ These directions override the cited standing rules in
    re-Failed after Working. Legacy seen-pair state gets one explicit fresh baseline.
    `watch-qual` reports
    `FAILURES` per completed TRX, parse errors, suspected hangs, stale/missing heartbeats
-   and run completion. Read each task's full report after an event; a watcher line
+   and run completion; with `--timing-root` each poll also prints the read-only `ETA`
+   line (`scripts\antiphon.cmd qualification-eta --timing-root '<timing-root>'` prints it
+   once). Read each task's full report after an event; a watcher line
    is a prompt to investigate, not a verdict. Heartbeat stalls are a detection and
    decision state, never automatic stop authority. `watch-master` observes the
    remote master ref with `git ls-remote`, without fetching or changing a checkout.
-   All four helpers are ASCII-only and run unchanged under Windows PowerShell 5.1
-   (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...`) as a fallback. The
-   offline smoke is `scripts/test-orchestration-watchers.ps1` (C487, synthetic files and
-   stubs only); run it under both `pwsh` and `powershell.exe` after editing a helper.
+   `watch-qual` is an `antiphon-scripts` command (`WatchQual.cs`, tested in-process by
+   `WatchQualTests`). The three PowerShell helpers are ASCII-only and run unchanged under
+   Windows PowerShell 5.1 (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...`)
+   as a fallback. Their offline smoke is `scripts/test-orchestration-watchers.ps1` (C487,
+   synthetic files and stubs only); run it under both `pwsh` and `powershell.exe` after editing a helper.
    Under 5.1 `-File`, `$PSScriptRoot` is empty in an advanced script's param
    defaults, so resolve it in the script body (C487 rejects it in param defaults).
 

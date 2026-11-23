@@ -7,14 +7,15 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcQualificationWatcherScriptTests
 {
+    // The PowerShell helpers (watch-tasks, watch-master, trx-failures). watch-qual is the antiphon-scripts command since
+    // 2026-11-23; its eleven rows are in-process in WatchQualTests.
     [Test]
     public Task Offline_watchers_and_trx_extraction() => ScriptHarness.RunHarnessCaseAsync(
-        "test-orchestration-watchers.ps1", "RCQUAL", "Smoke", 39,
+        "test-orchestration-watchers.ps1", "RCQUAL", "Smoke", 28,
         "RCQUAL bounds the same message string and stdout",
-        "RCQUAL rearm deduplicates completed TRX and retries partial",
         "RCQUAL task rearm emits new failed transition",
-        "RCQUAL qualification reports Timeout as a failure",
-        "RCQUAL qualification reports Aborted as a failure",
+        "RCQUAL extractor reports Timeout as a failure",
+        "RCQUAL extractor reports Aborted as a failure",
         "RCQUAL task rearm emits re-Blocked and suppresses unchanged repeat",
         "RCQUAL task rearm emits re-Failed and suppresses unchanged repeat",
         "RCQUAL master watcher reports transport failure",

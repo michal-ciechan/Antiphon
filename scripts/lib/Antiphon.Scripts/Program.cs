@@ -63,6 +63,11 @@ namespace Antiphon.Scripts
             // The impacted-classes selector answers every input itself: exit 0 selected, 1 the table, catalog or index refused
             // or the audit failed, 2 usage, git failed or a release-evidence refusal.
             [ImpactedClassesCommand.Name] = ImpactedClassesCommand.Run,
+            // The qualification ETA answers every input itself: exit 0 printed, 1 refused or unreadable (one stderr line), 2 usage.
+            [QualificationEtaCommand.Name] = QualificationEtaCommand.Run,
+            // The qualification watcher answers every input itself: exit 0 the window or the run ended, 1 the state file cannot be
+            // read (one stderr line), 2 usage.
+            [WatchQualCommand.Name] = WatchQualCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -102,7 +107,8 @@ namespace Antiphon.Scripts
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
-                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage);
+                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
+                + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage);
             return Usage;
         }
 

@@ -1,7 +1,7 @@
 // W2-nightly S01: the per-run host of the nightly C# (plan 2026-11-21-w2-nightly-port-slices.md, section 2). One
-// NightlyHost carries every observation of the operating system a run makes: the clock, git, the launcher, the process
-// table, the host probe and the three writers. It replaces $script:NightlySeams (nightly-common.ps1 Import-NightlySeams):
-// the CLI builds NightlyHost.Production(...), a test builds one from fakes (NightlyFixture in
+// NightlyHost carries every observation of the operating system a run makes: the clock (and the sleep that waits on it),
+// git, the launcher, the process table, the host probe and the three writers. It replaces $script:NightlySeams
+// (nightly-common.ps1 Import-NightlySeams): the CLI builds NightlyHost.Production(...), a test builds one from fakes (NightlyFixture in
 // tests/Antiphon.Tests/Scripts/Nightly). Nothing here is static state, so tests run side by side. Seams replace OS
 // observation only, never decisions, and never cross a process. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
@@ -112,6 +112,12 @@ namespace Antiphon.Nightly
         /// required: the default reads this process's environment; a test answers its own instead of changing it.
         /// </summary>
         public Func<string, string> Variables { get; init; } = Environment.GetEnvironmentVariable;
+
+        /// <summary>
+        /// Waits between the polls of a watcher (the watch-qual command, 2026-11-23): blocks this thread for the time. Not
+        /// required: a test advances its fake clock instead of waiting.
+        /// </summary>
+        public Action<TimeSpan> Sleep { get; init; } = System.Threading.Thread.Sleep;
 
         /// <summary>
         /// The production host: the system clock, NightlyNativeGit.Run, a launcher for both custodies (CustodyLauncher: a
