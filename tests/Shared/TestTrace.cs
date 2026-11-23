@@ -13,7 +13,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// "external spans", capped per run by <c>TUNIT_OTEL_MAX_EXTERNAL_SPANS</c>, default 100).</item>
 /// <item>With <see cref="FileVariable"/> set, every completed span from every source (this one,
 /// TUnit, Npgsql, HttpClient, ASP.NET Core) is appended to that file as one JSON object per line,
-/// with no cap. <c>scripts/summarize-test-trace.ps1</c> turns it into per-test and per-span totals.</item>
+/// with no cap. <c>scripts/antiphon summarize-test-trace --path &lt;file&gt;</c> (Antiphon.Nightly.TestTraceSummary) turns it
+/// into per-test and per-span totals.</item>
 /// <item>In assemblies that compile <c>TestTraceOtlp.cs</c>, with <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
 /// set, every span is also exported over OTLP (a collector, Jaeger or the Aspire dashboard).</item>
 /// </list>

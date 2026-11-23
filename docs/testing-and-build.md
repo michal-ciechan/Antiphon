@@ -2048,8 +2048,9 @@ no-op without `ANTIPHON_TEST_PHASE_ROOT`.
   external spans per run (default 100).
 - For a whole run, set `ANTIPHON_TEST_TRACE_FILE` to a file path: every completed span from every
   source is appended as one JSON object per line, uncapped. Then
-  `pwsh -NoProfile -File scripts/summarize-test-trace.ps1 -Path <file> [-Test <name>] [-MinMs 25]`
-  prints tests by duration, span names by self and total time, and with `-Test` the span tree.
+  `scripts/antiphon summarize-test-trace --path <file> [--test <name>] [--min-ms 25] [--top 25]`
+  (`scripts\antiphon.cmd summarize-test-trace ...` on Windows; `TestTraceSummary` in the compiled core)
+  prints tests by duration, span names by self and total time, and with `--test` the span tree.
 
 Span names and tags are code-supplied labels. Never put prompts, bodies, credentials or
 argument lists in them (the git span names the verb only). Npgsql spans carry the SQL text and the
