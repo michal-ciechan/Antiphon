@@ -313,6 +313,9 @@ internal sealed class PrecheckAudit : IDisposable
         "tests/Antiphon.Agents.Pty.Tests/probes/**/*", "tests/Antiphon.Tests/Agents/Fixtures/**",
         "tests/Antiphon.Messaging.Tests/Fixtures/*",
         "tests/Antiphon.Tests/Fixtures/NativeLinuxPolicy/*.cs.txt",
+        // Debug 02f9ccec (34b0f5c16): the review check catalogue's seed checks, product data embedded in
+        // Antiphon.Server. Outside docs/, so a change to one is a land build input like any server file.
+        "server/Application/Review/Checks/Seed/**/*.md",
     ];
 
     private static readonly string[] AllowedDocumentNames = ["PublicAPI.Shipped.txt", "PublicAPI.Unshipped.txt", "slow-tests-allowlist.txt"];
