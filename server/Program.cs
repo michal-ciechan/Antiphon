@@ -1036,10 +1036,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddSingleton<IReviewCheckout, GitReviewCheckout>();
     builder.Services.AddSingleton<CliReviewAgentRunner>();
     builder.Services.AddScoped<DelegationReviewAgentRunner>();
-    builder.Services.AddScoped<IReviewAgentRunner>(sp =>
-        ReviewAgentTransports.IsCli(sp.GetRequiredService<IOptions<ReviewAgentSettings>>().Value.Transport)
-            ? sp.GetRequiredService<CliReviewAgentRunner>()
-            : sp.GetRequiredService<DelegationReviewAgentRunner>());
+    // Not a factory returning the singleton: a scope disposes what its factory returns, which cancelled
+    // every running claude -p reviewer at the end of each executor pass (SelectedReviewAgentRunner).
+    builder.Services.AddScoped<IReviewAgentRunner, SelectedReviewAgentRunner>();
     // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
     builder.Services.AddSingleton<CodeHostResponseCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());

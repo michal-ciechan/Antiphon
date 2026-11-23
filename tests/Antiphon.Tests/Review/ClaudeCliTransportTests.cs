@@ -4,6 +4,8 @@ using Antiphon.Server.Application.Review.Decisions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Review;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -179,6 +181,51 @@ public class ClaudeCliTransportTests
         Directory.Exists(sent.WorkingDirectory).ShouldBeFalse();
         checkout.Calls.ShouldBeEmpty();
         Directory.Delete(root, recursive: true);
+    }
+
+    /// <summary>
+    /// Regression (found live, 2026-11-23): the runner was the scoped IReviewAgentRunner through a
+    /// factory, so each executor scope disposed the singleton when it ended and cancelled the reviewer
+    /// it had just started ("stopped because the server is shutting down").
+    /// </summary>
+    [Test]
+    public async Task A_reviewer_outlives_the_scope_that_started_it()
+    {
+        var root = NewRoot();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = new FakeClaudeCli(async _ =>
+        {
+            await release.Task;
+            return new ClaudeCliResult(Findings, "claude-sonnet-5-5", 1000, 50, 0.05m);
+        });
+        var settings = new ReviewAgentSettings { Transport = ReviewAgentTransports.Cli };
+        var services = new ServiceCollection();
+        services.AddSingleton<IClaudeCli>(cli);
+        services.AddSingleton<IReviewCheckout>(new FakeCheckout());
+        services.AddSingleton(Options.Create(settings));
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<ILogger<CliReviewAgentRunner>>(NullLogger<CliReviewAgentRunner>.Instance);
+        services.AddSingleton(sp => new CliReviewAgentRunner(sp.GetRequiredService<IClaudeCli>(), sp.GetRequiredService<IReviewCheckout>(),
+            sp.GetRequiredService<IOptions<ReviewAgentSettings>>(), TimeProvider.System, NullLogger<CliReviewAgentRunner>.Instance, root));
+        services.AddScoped<IReviewAgentRunner, SelectedReviewAgentRunner>();
+        await using var provider = services.BuildServiceProvider();
+        var request = Request("## Diff\n+ x");
+
+        string handle;
+        await using (var scope = provider.CreateAsyncScope())
+            handle = (await scope.ServiceProvider.GetRequiredService<IReviewAgentRunner>().RunAsync(request, CancellationToken.None)).Handle!;
+
+        release.SetResult();
+        await provider.GetRequiredService<CliReviewAgentRunner>().Completion(handle)!.WaitAsync(TimeSpan.FromSeconds(30));
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var done = await scope.ServiceProvider.GetRequiredService<IReviewAgentRunner>().RunAsync(request with { Handle = handle }, CancellationToken.None);
+            done.Status.ShouldBe(ReviewAgentStatus.Completed, "ending the starting scope must not stop the reviewer");
+            done.Text.ShouldBe(Findings);
+        }
+
+        if (Directory.Exists(root))
+            Directory.Delete(root, recursive: true);
     }
 
     [Test]
