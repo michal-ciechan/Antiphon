@@ -2125,9 +2125,9 @@
       "shapes": [
         "Explicit"
       ],
-      "disposition": "diagnostic",
-      "owner": "CARD-1545",
-      "reason": "live-claude diagnostic gate"
+      "disposition": "policy-excluded",
+      "owner": "CARD-1514",
+      "reason": "manual scale benchmark run by hand (CARD-1514 M3, W2-nightly S08): class-level [Explicit] with a one-hour timeout per method, so a Full class filter never runs it"
     },
     {
       "project": "Antiphon.Tests",
@@ -2138,9 +2138,9 @@
       "shapes": [
         "Explicit"
       ],
-      "disposition": "diagnostic",
-      "owner": "CARD-1545",
-      "reason": "live-claude diagnostic gate"
+      "disposition": "policy-excluded",
+      "owner": "CARD-1514",
+      "reason": "manual scale benchmark run by hand (CARD-1514 M3, W2-nightly S08): class-level [Explicit] with a one-hour timeout per method, so a Full class filter never runs it"
     }
   ],
   "additiveContract": [

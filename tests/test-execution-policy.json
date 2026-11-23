@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "3434a75826c8ddd945c68078ae9cfe28d457d376d3256e54137efad9b95d753e",
+  "policyHash": "ee3cb64ca698be3a6a41db40c8a17be3b994150b4262f5c0677289ab7511cfc9",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -181,6 +181,12 @@
           "class": "SlashCommandMenuReconciliationTests",
           "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
           "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RcManifestScaleTests",
+          "reason": "manual scale benchmark run by hand (CARD-1514 M3, W2-nightly S08): class-level [Explicit] with a one-hour timeout per method, so a Full class filter never runs it",
+          "owner": "CARD-1514"
         },
         {
           "suite": "antiphon",
