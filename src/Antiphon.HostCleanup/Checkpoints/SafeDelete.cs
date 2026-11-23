@@ -501,10 +501,12 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         return null;
     }
 
-    // CARD-2052 Review 2b79e113 (round 3) blocker 2: the repository that owns a path, as discovered now: the checkout
-    // root, its .git (directory, or "gitdir:" file and its pointer), the git directory and the common directory, each
-    // with its kind and filesystem identity. Null when no repository is found or any part cannot be read; an owned
-    // removal that started under a repository refuses an entry whose final check does not see the same identity.
+    // CARD-2052 Review 2b79e113 (round 3) blocker 2: the repository that owns a path, as discovered now, observed
+    // through the cleanup IO: the checkout root, its .git (kind, filesystem ids and, for a file, its exact text), and
+    // for a "gitdir: <path>" file or a .git directory the git directory and the common directory (path, ids). Null
+    // when no repository is found or any part cannot be read. An owned removal that started under a repository
+    // refuses an entry whose checks do not see the same identity. Whether the layout is a valid repository stays
+    // git's answer: a malformed one fails that answer, which refuses too.
     internal RepositoryIdentity? OwnerIdentity(string path)
     {
         try
@@ -517,36 +519,44 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 return null;
             var dotGitPath = Path.Combine(owner, ".git");
             var dotGit = Io.CustodyStat(dotGitPath);
-            var pointer = "";
-            string gitDirectory;
+            var text = "";
+            var gitDirectory = "";
             if (dotGit.Kind == "directory")
                 gitDirectory = dotGitPath;
-            else if (dotGit.Kind == "file" && IdentityPointer(dotGitPath, dotGit, "gitdir: ") is { } target)
+            else if (dotGit.Kind == "file")
             {
-                pointer = target;
-                gitDirectory = Path.GetFullPath(target, owner);
+                if (SmallText(dotGitPath, dotGit) is not { } read)
+                    return null;
+                text = read;
+                if (Pointer(read, "gitdir: ") is { } target)
+                    gitDirectory = Path.GetFullPath(target, owner);
             }
             else
                 return null;
-            var gitDir = Io.CustodyStat(gitDirectory);
-            if (gitDir.Kind != "directory" || Io.CustodyStat(Path.Combine(gitDirectory, "HEAD")).Kind != "file")
-                return null;
-            var commonPath = Path.Combine(gitDirectory, "commondir");
-            var commonFile = Io.CustodyStat(commonPath);
-            var common = gitDirectory;
-            if (commonFile.Kind == "file")
+            CheckpointStat gitDir = default, commonDir = default;
+            var common = "";
+            if (gitDirectory.Length != 0)
             {
-                if (IdentityPointer(commonPath, commonFile, "") is not { } relative)
+                gitDir = Io.CustodyStat(gitDirectory);
+                if (gitDir.Kind != "directory")
                     return null;
-                common = Path.GetFullPath(relative, gitDirectory);
+                var commonPath = Path.Combine(gitDirectory, "commondir");
+                var commonFile = Io.CustodyStat(commonPath);
+                common = gitDirectory;
+                if (commonFile.Kind == "file")
+                {
+                    if (SmallText(commonPath, commonFile) is not { } pointer || Pointer(pointer, "") is not { } relative)
+                        return null;
+                    common = Path.GetFullPath(relative, gitDirectory);
+                }
+                else if (commonFile.Kind != "absent")
+                    return null;
+                commonDir = Io.CustodyStat(common);
+                if (commonDir.Kind != "directory")
+                    return null;
             }
-            else if (commonFile.Kind != "absent")
-                return null;
-            var commonDir = Io.CustodyStat(common);
-            if (commonDir.Kind != "directory")
-                return null;
-            return new RepositoryIdentity(owner, dotGit.Kind, dotGit.Device, dotGit.Inode, pointer,
-                Path.GetFullPath(gitDirectory), gitDir.Device, gitDir.Inode, Path.GetFullPath(common), commonDir.Device, commonDir.Inode);
+            return new RepositoryIdentity(owner, dotGit.Kind, dotGit.Device, dotGit.Inode, text,
+                gitDirectory, gitDir.Device, gitDir.Inode, common, commonDir.Device, commonDir.Inode);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
                                    or NotSupportedException or System.Text.DecoderFallbackException)
@@ -555,12 +565,23 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         }
     }
 
-    // A small pointer file's single line after the prefix, as TrackedIndexStamp reads it.
-    private static string? IdentityPointer(string path, CheckpointStat stat, string prefix)
+    // A small file's exact text, read through the cleanup IO. Null over 4 KiB or when its size moved.
+    private string? SmallText(string path, CheckpointStat stat)
     {
-        if (stat.Size <= 0 || stat.Size > 4096)
+        if (stat.Size < 0 || stat.Size > 4096)
             return null;
-        var text = File.ReadAllText(path, new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true));
+        using var stream = Io.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var buffer = new byte[4097];
+        var total = 0;
+        int read;
+        while (total < buffer.Length && (read = stream.Read(buffer, total, buffer.Length - total)) > 0)
+            total += read;
+        return total > 4096 ? null : new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(buffer, 0, total);
+    }
+
+    // A pointer file's single line after the prefix (git strips only the trailing line end), or null.
+    private static string? Pointer(string text, string prefix)
+    {
         if (!text.StartsWith(prefix, StringComparison.Ordinal))
             return null;
         var target = text[prefix.Length..].TrimEnd('\n', '\r');
@@ -739,7 +760,7 @@ internal sealed record RepositoryIdentity(
     string DotGitKind,
     ulong DotGitDevice,
     ulong DotGitInode,
-    string DotGitPointer,
+    string DotGitText,
     string GitDirectory,
     ulong GitDirectoryDevice,
     ulong GitDirectoryInode,
