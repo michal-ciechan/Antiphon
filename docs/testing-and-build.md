@@ -263,7 +263,7 @@ production retains restart/re-adoption with the default `PtyHostExitWithOwner=fa
 
 Ordinary Code/Review builds in the worktree's native default output, runs the named
 classes in `docs/superpowers/plans/2026-09-19-card-0459-worktree-cleanup-plan.md`.
-`scripts/test-worktree-residue.ps1` covers the operator script. `WorktreeResidue:Execute` stays
+`WorktreeResidueScriptTests` covers the operator command (`scripts\antiphon.cmd worktree-residue`). `WorktreeResidue:Execute` stays
 false in shipped config. Do not treat `PruneStaleAsync` or a shorter TTL as cleanup authority.
 CARD-0452 ignored-content policy is unchanged; residue tests must not add a production override.
 
@@ -485,12 +485,14 @@ failure; this gate does not change that assertion or its timeout.
 
 ### Alternate-output cleanup safety (CARD-0448)
 
-`scripts/cleanup-build-junk.ps1` removes old `bin-*` outputs only when its caller supplies
-the producing process's `CheckpointCleanupContext` through `-CleanupContext`. The shared
-`CheckpointOutputLedger.Remove` requires that context's creation records and sealed content,
+`scripts\antiphon.cmd cleanup-build-junk` (`BuildJunkCleanup`; `scripts/cleanup-build-junk.ps1` is the
+thin launcher the weekly Windmill job starts) removes old `bin-*` outputs only when the producing
+process calls `BuildJunkCleanup.Run` in process with its `CheckpointCleanupContext`'s ledger removal.
+The shared `CheckpointOutputLedger.Remove` requires that context's creation records and sealed content,
 checks tracked/link/changed entries, and removes individual recorded entries. Directory names,
-age and disk owner markers alone grant no authority. Without the context, including the weekly
-Windmill invocation, it logs a skip and preserves legacy outputs for explicit inspection.
+age and disk owner markers alone grant no authority. A context never crosses a process (the
+launcher refuses `-CleanupContext`, exit 3), so every CLI run, including the weekly Windmill
+invocation, logs a skip and preserves legacy outputs for explicit inspection.
 `bin/`, `obj/` and `workspace/` remain outside its candidate pattern. The earlier CARD-0448
 inventory-only rewrite was reverted as out of scope; the confirmed opaque-file deletion and
 its separately authorized repair are recorded in

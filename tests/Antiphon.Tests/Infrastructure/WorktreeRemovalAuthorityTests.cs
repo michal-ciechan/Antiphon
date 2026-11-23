@@ -21,22 +21,15 @@ public sealed class WorktreeRemovalAuthorityTests
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(path, "irreplaceable");
         Directory.SetLastWriteTime(Path.Combine(fixture.Source, "bin-private"), DateTime.Now.AddDays(-10));
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "scripts", "cleanup-build-junk.ps1"))) root = root.Parent;
-        root.ShouldNotBeNull();
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(root.FullName, "scripts", "cleanup-build-junk.ps1"),
-                     "-RepoRoot", fixture.Source, "-SkipIfModifiedWithinMinutes", "0" }) start.ArgumentList.Add(arg);
-        using var process = System.Diagnostics.Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch { if (!process.HasExited) process.Kill(true); await process.WaitForExitAsync(); throw; }
-        process.ExitCode.ShouldBe(0, await error);
+        // The cleanup-build-junk command in process (Antiphon.Nightly.BuildJunkCleanup, unit 21 of the 2026-11-22 plan), as the
+        // CLI and so the scheduled launcher run it: no producer creation records.
+        var output = new StringWriter();
+        var removed = Antiphon.Nightly.BuildJunkCleanup.Run(
+            Antiphon.Nightly.BuildJunkCleanupOptions.Parse(["--repo-root", fixture.Source, "--skip-if-modified-within-minutes", "0"], null),
+            Antiphon.Nightly.NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(), removeOwned: null);
+        removed.ShouldBe(0);
         File.Exists(path).ShouldBeTrue("build cleanup must preserve opaque wildcard-matched bytes");
-        (await output).ShouldContain("0 dir(s) removed");
+        output.ToString().ShouldContain("0 dir(s) removed");
         (await File.ReadAllTextAsync(path)).ShouldBe("irreplaceable");
         await fixture.AssertRemoteSourceAsync();
     }

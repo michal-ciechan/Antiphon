@@ -835,7 +835,7 @@ acceptance run.
 ### Workspace slots before an rc run (CARD-0824 S1)
 
 The orchestrator that starts a whole rc qualification run first cold-resets every runner's workspace
-slots (`scripts/workspace-slots.ps1 cold-reset -AllRunners -Reason "rc qualification <rc branch> <sha12>"`)
+slots (`scripts\antiphon.cmd workspace-slots cold-reset --all-runners --reason "rc qualification <rc branch> <sha12>"`)
 so the Linux repair tasks of that run start from fresh native build output, and records the request ids
 with the run. The Windows Full run itself uses its own candidate directory, not a slot.
 

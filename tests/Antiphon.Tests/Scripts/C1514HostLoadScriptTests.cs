@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Antiphon.Nightly;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -8,7 +9,12 @@ using Microsoft.AspNetCore.Http;
 using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
-[Category("Integration"), C1514ProgressBudget(60_000), NotInParallel("C1514HostLoadServer"), ParallelLimiter<ProcessSpawnLimit>]
+/// <summary>
+/// CARD-1514 S1: the host-load command (Antiphon.Nightly.HostLoad, which replaced scripts/host-load.ps1 and its process adapter
+/// scripts/test-host-load.ps1 in unit 21 of the 2026-11-22 plan) in process, on its production transport, against the owned
+/// loopback server. The rows are the script's.
+/// </summary>
+[Category("Integration"), C1514ProgressBudget(60_000), NotInParallel("C1514HostLoadServer")]
 [TUnit.Core.Executors.TestExecutor<C1514HostLoadProgressExecutor>]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
@@ -20,8 +26,9 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
     public async Task JsonIsOneValueWithArithmetic()
     {
         await using var world = await fixture.WorldAsync(); Recorder(world);
-        var scoped = await RunAsync(world, json: true, project: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", role: "Code", diagnostic: true);
-        scoped.ExitCode.ShouldBe(0, scoped.Stderr); scoped.Stderr.ShouldContain("c1514-owned-diagnostic");
+        var scoped = await RunAsync(world, json: true, project: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", role: "Code");
+        scoped.ExitCode.ShouldBe(0, scoped.Stderr); scoped.Stderr.ShouldBeEmpty();
+        scoped.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(1, "--json prints exactly one value");
         using var json = JsonDocument.Parse(scoped.Stdout); var root = json.RootElement;
         root.GetProperty("current").GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
         root.GetProperty("lastHour").GetProperty("cpuPercent").GetProperty("p95").GetDouble().ShouldBe(20);
@@ -81,22 +88,38 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
         {
             var result = await RunAsync(world, json: json, token: OwnedToken); result.ExitCode.ShouldBe(0, result.Stderr);
             result.Stdout.ShouldNotContain(OwnedToken); result.Stderr.ShouldNotContain(OwnedToken);
+            if (!json)
+            {
+                var lines = result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                lines.Length.ShouldBe(4, result.Stdout);
+                lines[0].ShouldBe("Host grok-linux; age=0s; mode=Lease; shadow=True");
+                lines[2].ShouldStartWith("MORE tasks=2; scope=hostOnly; pressure=44; startup debt=10; CPU headroom=2;");
+            }
         }
         world.Hits.ShouldAllBe(h => h.Token == OwnedToken);
         world.Override = async c => { c.Response.StatusCode = 503; await c.Response.WriteAsync("owned error echo " + c.Request.Headers["X-Antiphon-Task-Token"].ToString()); };
         var failed = await RunAsync(world, json: true, token: OwnedToken); failed.ExitCode.ShouldNotBe(0); failed.Stdout.ShouldBeEmpty(); failed.Stderr.ShouldNotContain(OwnedToken);
     }
+    /// <summary>
+    /// The host-load command in process (its production transport: 3 s per read, 1 MiB cap) with ANTIPHON_API as the world's
+    /// server and the token as ANTIPHON_TASK_TOKEN would pass it; stdout and stderr apart. The read is synchronous, so it runs on
+    /// the pool while the owned server answers.
+    /// </summary>
     internal static async Task<ScriptHarnessResult> RunAsync(C1514HostLoadWorld world, bool json, string? hostId = null,
-        string? project = null, string? role = null, string? token = null, bool diagnostic = false)
+        string? project = null, string? role = null, string? token = null)
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1");
-        var args = new List<string> { "-ApiUrl", world.Api.ToString() };
-        if (json) args.Add("-JsonMode"); if (diagnostic) args.Add("-Diagnostic");
-        if (hostId is not null) args.AddRange(["-HostId", hostId]); if (project is not null) args.AddRange(["-Project", project]); if (role is not null) args.AddRange(["-Role", role]);
-        if (token is not null) { var path = Path.Combine(world.Root, "owned-token-" + Guid.NewGuid().ToString("N")); File.WriteAllText(path, token); args.AddRange(["-TokenFile", path]); }
-        var result = await world.Own(ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514", "Run", script,
-            new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, AdditionalArguments: args), world.Token));
-        world.Progress("script completed"); return result;
+        var args = new List<string>();
+        if (json) args.Add("--json");
+        if (hostId is not null) args.AddRange(["--host-id", hostId]); if (project is not null) args.AddRange(["--project", project]); if (role is not null) args.AddRange(["--role", role]);
+        var options = HostLoadOptions.Parse(args, world.Api.ToString(), token);
+        var result = await world.Own(Task.Run(() =>
+        {
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            var exit = HostLoad.Run(options, NightlyHost.Production(stdout, stderr), HostLoad.Transport());
+            return new ScriptHarnessResult(exit, stdout.ToString(), stderr.ToString());
+        }, world.Token));
+        world.Progress("host-load completed"); return result;
     }
     private static void Recorder(C1514HostLoadWorld world, bool incomplete = false)
     {

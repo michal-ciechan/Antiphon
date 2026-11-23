@@ -16,7 +16,10 @@ using RunnerSettings = Antiphon.SessionRunner.HostStatsSettings;
 
 try
 {
-    var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(args.Single()), PhoneHomeFraming.Json) ?? throw new InvalidDataException();
+    // The config path is the last argument: the Linux launcher passes it alone; on Windows the ScriptHarness starts this
+    // apphost directly with its pwsh-shaped argv (-NoProfile ... -Case Probe -ResultsDirectory <dir>) and then -ProbeConfig <path>.
+    if (args.Length == 0) throw new InvalidDataException();
+    var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(args[^1]), PhoneHomeFraming.Json) ?? throw new InvalidDataException();
     if (!Path.IsPathFullyQualified(config.Root) || !Uri.TryCreate(config.SourceUrl, UriKind.Absolute, out var url)
         || url.Host != "127.0.0.1" || url.Port is 17204 or 8080) throw new InvalidDataException();
     var clock = new Clock(config.Now); var boundary = new Boundary(config);

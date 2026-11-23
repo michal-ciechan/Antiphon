@@ -516,7 +516,6 @@ public sealed class NightlyTestsRunTests
         "test-apphost-main-worktree-guard scripts/test-apphost-main-worktree-guard.ps1",
         "test-apphost-probe-class scripts/test-apphost-probe-class.ps1",
         "test-cleanup-claude-sessions scripts/test-cleanup-claude-sessions.ps1",
-        "test-cleanup-codex-test-residue scripts/test-cleanup-codex-test-residue.ps1",
         "test-client scripts/test-client.ps1",
         "test-client-mode scripts/test-client-mode.ps1",
         "test-deploy-am-service scripts/test-deploy-am-service.ps1",

@@ -1778,10 +1778,11 @@
     },
     {
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
+        "C1307ToolRemovalTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointShadowCustodyTests",
         "HostCleanupCheckpointCustodyTests"
@@ -17864,6 +17865,7 @@
         "HostCleanupCheckpointCustodyTests",
         "HostCleanupCheckpointExtractionTests",
         "OutputCleanupTests",
+        "ScriptsLaneRepairTests",
         "TempRootSweepAnchoredDeleteTests",
         "TestPhaseCustodyTests",
         "UnsafeDeleteRecoveryTests"
@@ -17976,6 +17978,7 @@
         "HostCleanupCheckpointAuthorityTests",
         "HostCleanupCheckpointCustodyTests",
         "OutputCleanupTests",
+        "ScriptsLaneRepairTests",
         "UnsafeDeleteRecoveryTests",
         "WaitCommandTests"
       ]
@@ -18056,7 +18059,6 @@
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
       "classes": [
         "AnchoredPathDeleteWitnessTests",
-        "C1307ToolRemovalTests",
         "CheckpointAdmissionContractTests",
         "CheckpointBuildBindingPathTests",
         "CheckpointImportTests",
@@ -18078,6 +18080,7 @@
         "OutputCleanupTests",
         "PhaseJournalKillDiagnosticTests",
         "RowRunnerTests",
+        "ScriptsLaneRepairTests",
         "UnsafeDeleteRecoveryTests",
         "WaitCommandTests"
       ]
@@ -23750,6 +23753,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/ChannelOutboundCaptureTests.cs",
+      "classes": [
+        "CodexTestResidueTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/ChannelOutboundDeliveryTests.Identity.cs",
       "classes": [
         "ChannelOutboundUnifiedPathTests"
@@ -25832,10 +25841,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyReportTests.cs",
       "classes": [
-        "CardListSearchScriptTests",
-        "DelegationScratchCallerTests",
-        "ExpectedPlatformSkipRosterTests",
-        "RegisteredCallerScriptTests"
+        "ExpectedPlatformSkipRosterTests"
       ]
     },
     {
@@ -26061,6 +26067,14 @@
         "RcDirtyOrderCSharpTests",
         "RcShadowDirtyDifferentialTests",
         "RcShadowSampleCSharpTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
+      "classes": [
+        "C1960WorkspaceSlotsScriptTests",
+        "RunnerDrainScriptTests",
+        "WorktreeResidueScriptTests"
       ]
     },
     {

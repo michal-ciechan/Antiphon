@@ -36,9 +36,11 @@ internal static class C1514HostLoadCrashCases
             }
             var nonce = Guid.NewGuid().ToString("N"); var ready = Path.Combine(world.Root, "ready"); var initialized = Path.Combine(world.Root, "initialized"); var config = Path.Combine(world.Root, "probe-config.json");
             File.WriteAllText(config, JsonSerializer.Serialize(new { world.Root, SourceUrl = world.ProxyUrl, ConnectionString = world.Schema.ConnectionString, Now = world.Clock.GetUtcNow(), Cut = cut, Nonce = nonce, ReadyPath = ready, InitializedPath = initialized, Sample = sample }, PhoneHomeFraming.Json));
-            // Keep the ScriptHarness supervisor/group custody and bounded drain.
-            // Linux can exec the staged .NET worker without another interpreter.
-            string? executable = null;
+            // Keep the ScriptHarness supervisor/group custody (the Windows job, the Linux owned group) and bounded drain. The
+            // harness's root is the staged .NET worker itself, no PowerShell (scripts/test-host-load.ps1 went with host-load.ps1,
+            // unit 21): Linux execs it from a two-line launcher; Windows starts its apphost, which reads the config path from its
+            // last argument.
+            string executable;
             if (OperatingSystem.IsLinux())
             {
                 executable = Path.Combine(world.Root, "launch-probe.sh");
@@ -46,10 +48,15 @@ internal static class C1514HostLoadCrashCases
                 File.WriteAllText(executable, "#!/bin/sh\nexec dotnet " + Quote(probe) + " " + Quote(config) + "\n");
                 File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1"); using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var owned = world.Own(ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514-crash", "Probe", script,
-                new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, ExecutablePath: executable,
-                    AdditionalArguments: ["-ProbePath", probe, "-ProbeConfig", config]), cancel.Token));
+            else
+            {
+                executable = Path.ChangeExtension(probe, ".exe");
+                File.Exists(executable).ShouldBeTrue("the probe's apphost is staged with it");
+            }
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var owned = world.Own(ScriptHarnessProcess.RunAsync("host-load-probe", "c1514-crash", "Probe", probe,
+                new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: probe, ExecutablePath: executable,
+                    AdditionalArguments: ["-ProbeConfig", config]), cancel.Token));
             try
             {
                 // Cold EF/model startup is fixture setup under the unchanged 60s

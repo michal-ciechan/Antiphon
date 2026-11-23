@@ -233,8 +233,8 @@ A pane picker (`GET /herdr/panes` list) is a follow-up card.
 
 ### Explicit leftover-pane disposal (CARD-0461)
 
-`scripts/herdr-pane.ps1 inspect -PaneId <workspace:pane> -ExpectedSessionId <full-uuid>`
-or `-ExpectedNativeSessionId <full-uuid>` uses the independent
+`scripts\antiphon.cmd herdr-pane inspect --pane-id <workspace:pane> --expected-session-id <full-uuid>`
+or `--expected-native-session-id <full-uuid>` uses the independent
 `POST /api/herdr/pane-disposals/preview` surface. Both expected IDs may be supplied.
 It never requires a database session row, attaches a pane, or invokes Stop.
 The runner equivalent is `POST /herdr/pane-disposals/preview`.

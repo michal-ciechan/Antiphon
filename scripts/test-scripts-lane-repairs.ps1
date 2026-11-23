@@ -1,6 +1,8 @@
+# The scripts-lane witnesses that still run as PowerShell: the native state move (state) and the nightly origin reader
+# (origin). The bin-* cleanup rows (opaque, owned, replaced) run in process since unit 21 of
+# docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md (ScriptsLaneRepairTests, BuildJunkCleanup).
 param(
-    [ValidateSet('opaque', 'owned', 'origin', 'state', 'replaced')][string]$Case,
-    [string]$HostCleanupDll
+    [ValidateSet('origin', 'state')][string]$Case
 )
 $ErrorActionPreference = 'Stop'
 $env:TEMP = [IO.Path]::GetTempPath()
@@ -66,45 +68,6 @@ public static class File {
         'PASS state: forced sharing violation, old state intact, atomic replacement retried, initial move'
         return
     }
-    if ($Case -eq 'replaced') {
-        [void][Reflection.Assembly]::LoadFrom($HostCleanupDll)
-        $context = [Antiphon.Checkpoints.CheckpointCleanupDefaults]::Context
-        $owned = Join-Path $root 'bin-owned'
-        $ownership = [Antiphon.Checkpoints.SafeWrite]::Under($root)
-        $reason = [Antiphon.Checkpoints.SafeWrite]::CreateFreshDirectory($owned, $ownership)
-        if ($null -ne $reason) { throw "create: $reason" }
-        [IO.File]::WriteAllText((Join-Path $owned 'payload.txt'), 'regenerable')
-        $reason = [Antiphon.Checkpoints.OwnedOutputLedger]::Seal($owned, [datetimeoffset]::UtcNow)
-        if ($null -ne $reason) { throw "seal: $reason" }
-        $copy = Join-Path $root 'bin-foreign'
-        Copy-Item -LiteralPath $owned -Destination $copy -Recurse
-        $ledger = Join-Path $copy '.checkpoint-output-ledger.json'
-        if (-not [IO.File]::Exists($ledger)) { throw 'copy dropped the ledger' }
-        # Directory identity is the Linux inode or the NTFS file index. CustodyStat
-        # reads it in-process, so this witness does not call coreutils stat.
-        function Get-ScriptsLaneDirectoryIdentity([string]$Path) {
-            $io = [Antiphon.HostCleanup.Checkpoints.CheckpointNativeIo]::new()
-            $observed = $io.CustodyStat($Path)
-            if ($observed.Kind -ne 'directory' -or $observed.Inode -eq 0) {
-                throw "directory identity unavailable for $Path (kind=$($observed.Kind) inode=$($observed.Inode))"
-            }
-            return ('{0}:{1}' -f $observed.Device, $observed.Inode)
-        }
-        $foreignIdentity = Get-ScriptsLaneDirectoryIdentity $copy
-        $aside = Join-Path $root 'bin-owned-real'
-        Move-Item -LiteralPath $owned -Destination $aside
-        Move-Item -LiteralPath $copy -Destination $owned
-        [IO.Directory]::SetLastWriteTime($owned, [datetime]::Now.AddDays(-10))
-        [IO.Directory]::SetLastWriteTime($aside, [datetime]::Now.AddDays(-10))
-        & "$PSScriptRoot/cleanup-build-junk.ps1" -RepoRoot $root -SkipIfModifiedWithinMinutes 0 -CleanupContext $context
-        if (-not [IO.Directory]::Exists($owned)) { throw 'replacement directory was deleted' }
-        if (-not [IO.Directory]::Exists($aside)) { throw 'original owned directory was deleted' }
-        if ((Get-ScriptsLaneDirectoryIdentity $owned) -ne $foreignIdentity) { throw 'replacement identity was not preserved' }
-        if ([IO.File]::ReadAllText((Join-Path $owned 'payload.txt')) -cne 'regenerable') { throw 'replacement payload changed' }
-        if ([IO.File]::ReadAllText((Join-Path $aside 'payload.txt')) -cne 'regenerable') { throw 'original payload changed' }
-        'PASS replaced: foreign directory survived a stale custody record'
-        return
-    }
     if ($Case -eq 'origin') {
         . "$PSScriptRoot/lib/nightly-common.ps1"
         & git init --quiet $root
@@ -121,34 +84,7 @@ public static class File {
         'PASS origin: 4 exact strings and missing origin'
         return
     }
-    $opaque = Join-Path $root 'bin-private/nested/bin-archive/report.md'
-    [IO.Directory]::CreateDirectory((Split-Path $opaque -Parent)) | Out-Null
-    [IO.File]::WriteAllText($opaque, 'irreplaceable')
-    [IO.Directory]::SetLastWriteTime((Join-Path $root 'bin-private'), [datetime]::Now.AddDays(-10))
-    $context = $null
-    if ($Case -eq 'owned') {
-        [void][Reflection.Assembly]::LoadFrom($HostCleanupDll)
-        $context = [Antiphon.Checkpoints.CheckpointCleanupDefaults]::Context
-        $owned = Join-Path $root 'bin-owned'
-        $ownership = [Antiphon.Checkpoints.SafeWrite]::Under($root)
-        $reason = [Antiphon.Checkpoints.SafeWrite]::CreateFreshDirectory($owned, $ownership)
-        if ($null -ne $reason) { throw "create: $reason" }
-        [IO.File]::WriteAllText((Join-Path $owned 'payload.txt'), 'regenerable')
-        $reason = [Antiphon.Checkpoints.OwnedOutputLedger]::Seal($owned, [datetimeoffset]::UtcNow)
-        if ($null -ne $reason) { throw "seal: $reason" }
-    }
-    # The old implementation also calls robocopy. Supply a harmless fixture-only stand-in
-    # on Linux; Remove-Item still exercises the destructive old path.
-    function robocopy { }
-    if ($Case -eq 'owned') {
-        & "$PSScriptRoot/cleanup-build-junk.ps1" -RepoRoot $root -SkipIfModifiedWithinMinutes 0 -CleanupContext $context
-        if ([IO.Directory]::Exists($owned)) { throw 'owned output was retained' }
-    } else {
-        & "$PSScriptRoot/cleanup-build-junk.ps1" -RepoRoot $root -SkipIfModifiedWithinMinutes 0
-    }
-    if (-not [IO.File]::Exists($opaque)) { throw 'unowned bin-* bytes were deleted' }
-    if ([IO.File]::ReadAllText($opaque) -cne 'irreplaceable') { throw 'unowned bytes changed' }
-    "PASS $Case`: unowned preserved" + $(if ($Case -eq 'owned') { ', owned removed' })
+    throw ('unknown case: ' + $Case)
 } finally {
     [IO.Directory]::Delete($root, $true)
 }

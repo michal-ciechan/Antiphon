@@ -3050,9 +3050,6 @@
           "script": "scripts/test-cleanup-claude-sessions.ps1"
         },
         {
-          "script": "scripts/test-cleanup-codex-test-residue.ps1"
-        },
-        {
           "script": "scripts/test-client.ps1"
         },
         {
@@ -3610,7 +3607,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "68b0020aba340eda3200cbfbe3e81711126f9ba85530b0589b02b536d05551b6",
+  "catalogHash": "dffa5bfd197532725a6b4d95fdf769690dd59d5df1c02a47b6fd31689551e5a6",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

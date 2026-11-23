@@ -350,7 +350,7 @@ stay pending. A Linux green does not discharge them.
 ### Pre-run workspace slot cold reset (CARD-0824 S1)
 
 Before starting a whole rc qualification run, run
-`pwsh -NoProfile -File scripts/workspace-slots.ps1 cold-reset -AllRunners -Reason "rc qualification <rc branch> <sha12>"`
+`scripts\antiphon.cmd workspace-slots cold-reset --all-runners --reason "rc qualification <rc branch> <sha12>"`
 and record the printed request ids with the run identity. It does not wait for leased slots (they
 cold-reset at their release) and is a no-op until a runner enables workspace slots.
 

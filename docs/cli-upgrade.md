@@ -204,7 +204,7 @@ command-by-command example is the post-cut activation runbook
 (`docs/investigations/2026-11-20-post-cut-activation-runbook.md`, commit
 `35ed9b229ed2ab9f44d0542f3156a26097118f39` on `origin/feat/card-task-33896114`).
 
-1. Status: `pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId server2` (and
+1. Status: `scripts\antiphon.cmd runner-drain status --runner-id server2` (and
    `server2-temp`), `pwsh -NoProfile -File scripts/runner-slots.ps1 list -RunnerId server2`.
 2. `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census`
 3. `… -Phase check-host-jq` (on `HostJqMissing` only: `-Phase provision-host-jq`, as the runbook says).
@@ -356,8 +356,8 @@ Only after step 6 passes on the new CLI everywhere:
 
 - Image: the previous image is `antiphon-server2/session-testing:<previous sha12>` (no separately
   named rollback tag). While temp still accepts, accepting temp is the live rollback; after a
-  failed old smoke, `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2
-  -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`. Returning to an older SHA runs that
+  failed old smoke, `scripts\antiphon.cmd runner-drain drain --runner-id server2
+  --redirect-to server2-temp --reason 'post-upgrade smoke failed'`. Returning to an older SHA runs that
   SHA's own script ([docker-stack.md](docker-stack.md)).
 - CLI pin: revert the `CODEX_VERSION`/`CODEX_SHA512` pair (and `CodexRunnerImageContractTests`) in a
   reviewed change; desktop `npm install -g @openai/codex@<previous>`.

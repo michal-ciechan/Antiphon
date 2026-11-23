@@ -1,14 +1,25 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
     Remove old alternate build outputs only with the producing process's creation records.
     A bin-* name, age, or disk owner marker alone grants no deletion authority. Scheduled
     invocations have no in-memory custody and leave legacy outputs for explicit inspection.
-    Producers may invoke this script in-process with their CheckpointCleanupContext after
-    sealing completed outputs. The shared ledger refuses tracked, linked, changed or
-    unrecorded entries and deletes recorded entries without recursive wildcard removal.
 
     Recurring cleanup runs via Windmill on server2 (u/lndcobra/antiphon_build_junk_cleanup,
     Mon 09:00 Europe/London), not a local Windows Scheduled Task.
+
+    Unit 21 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: a Windows
+    PowerShell 5.1 launcher kept because Windmill starts this file by path. The cleanup is C#
+    (scripts/lib/Antiphon.Nightly/BuildJunkCleanup.cs) run as `antiphon-scripts cleanup-build-junk`
+    through scripts/lib/antiphon-cli.ps1: a warm build of this checkout (a no-op when nothing
+    changed), run from a copy. The parameters, the Windmill command line, the output lines and
+    exit 0 are unchanged; 9 when the CLI cannot be built or started (one stderr line). A
+    separate process holds no creation records, so it always prints "skip: producer creation
+    records unavailable; outputs left in place". A producer that holds its records calls
+    BuildJunkCleanup.Run in process with its ledger's removal; -CleanupContext stays for
+    binding only, and a non-null value refuses with exit 3 (cleanup-context-unsupported).
+
+    ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
@@ -16,31 +27,15 @@ param(
     [object]$CleanupContext = $null
 )
 
-$ErrorActionPreference = 'Stop'
-$cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
-$removed = 0
-if ($null -eq $CleanupContext) {
-    Write-Host 'skip: producer creation records unavailable; outputs left in place'
-} else {
-    $ledger = [Antiphon.Checkpoints.CheckpointOutputLedger]::new($CleanupContext)
-    $dirs = Get-ChildItem -LiteralPath $RepoRoot -Directory -Recurse -Filter 'bin-*' -Depth 3
-    foreach ($d in $dirs) {
-        try {
-            if (-not (Test-Path -LiteralPath $d.FullName)) { continue }
-            if ($d.LastWriteTime -gt $cutoff) {
-                Write-Host "skip (recently modified): $($d.FullName)"
-                continue
-            }
-            $reason = $ledger.Remove($d.FullName, $false)
-            if ($null -ne $reason) {
-                Write-Host "skip: $($d.FullName) - $reason"
-                continue
-            }
-            Write-Host "removed: $($d.FullName)"
-            $removed++
-        } catch {
-            Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
-        }
-    }
+$ErrorActionPreference = 'Continue'
+if ($null -ne $CleanupContext) {
+    [Console]::Error.WriteLine('cleanup-build-junk: cleanup-context-unsupported')
+    exit 3
 }
-Write-Host "cleanup-build-junk: $removed dir(s) removed."
+
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
+$arguments = @(
+    '--repo-root', $RepoRoot,
+    '--skip-if-modified-within-minutes', [string]$SkipIfModifiedWithinMinutes
+)
+exit (Invoke-AntiphonCli -Command 'cleanup-build-junk' -Arguments $arguments)

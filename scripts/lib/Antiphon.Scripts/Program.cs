@@ -128,6 +128,20 @@ namespace Antiphon.Scripts
             [LandGraphAuditCommand.Name] = LandGraphAuditCommand.Run,
             [LandGraphAuditCommand.PrecheckName] = LandGraphAuditCommand.RunPrecheck,
             [LandGraphLandRefreshCommand.Name] = LandGraphLandRefreshCommand.Run,
+            // The operator API commands answer every input themselves (unit 21). host-load: exit 0 read, 1 failed (one fixed
+            // stderr line). runner-drain: 0 done, 1 not eligible, failed or no token file. workspace-slots: 0 every runner
+            // answered (release: removed), 1 a call failed (release: refused or removal_failed), 2 an unreadable token file.
+            // herdr-pane: 0 answered or dry run, 1 the request failed. worktree-residue: 0 done, 1 a request or batch item failed.
+            // Usage is 2 for each.
+            [OperatorCommands.HostLoad] = OperatorCommands.RunHostLoad,
+            [OperatorCommands.RunnerDrain] = OperatorCommands.RunRunnerDrain,
+            [OperatorCommands.WorkspaceSlots] = OperatorCommands.RunWorkspaceSlots,
+            [OperatorCommands.HerdrPane] = OperatorCommands.RunHerdrPane,
+            [OperatorCommands.WorktreeResidue] = OperatorCommands.RunWorktreeResidue,
+            // The cleanups answer every input themselves (unit 21). cleanup-build-junk: exit 0. cleanup-codex-test-residue: 0 done,
+            // 1 the threads could not be read, 4 over --max-per-run, 5 a delete failed. Usage is 2 for each.
+            [CleanupCommands.BuildJunk] = CleanupCommands.RunBuildJunk,
+            [CleanupCommands.CodexResidue] = CleanupCommands.RunCodexResidue,
         };
 
         public static int Main(string[] args)
@@ -162,7 +176,8 @@ namespace Antiphon.Scripts
                 + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage
                 + " | " + ReleaseCandidateCommand.Usage + " | " + ReleaseCutCommand.Usage
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
-                + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage);
+                + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
+                + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage);
             return Usage;
         }
 

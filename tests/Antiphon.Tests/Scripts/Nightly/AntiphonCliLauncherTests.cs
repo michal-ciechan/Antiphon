@@ -633,4 +633,105 @@ public sealed class AntiphonCliLauncherTests
         run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
         run.Stdout.Trim().ShouldBe(new ReleaseCutResult { WindmillJobId = "job-1", Refusal = "release-cut-cli-unavailable", ExitCode = 9 }.ToJson());
     }
+
+    // ---- unit 21: scripts/cleanup-build-junk.ps1 and scripts/cleanup-codex-test-residue.ps1, the launchers Windmill's
+    // antiphon_build_junk_cleanup and antiphon_codex_residue_cleanup start by path (Windows PowerShell 5.1 -File) ----
+
+    /// <summary>A temporary checkout root holding scripts/&lt;entry&gt; beside scripts/lib/antiphon-cli.ps1.</summary>
+    private static NightlyFixture CleanupCheckout(string entry)
+    {
+        var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", entry), fixture.PathOf("scripts", entry));
+        return fixture;
+    }
+
+    private static void AssertThinLauncher(string entry, params string[] parameterLines)
+    {
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", entry)).Replace("\r\n", "\n");
+        text.ShouldStartWith("#requires -Version 5.1");
+        foreach (var line in parameterLines) text.ShouldContain(line + "\n");
+        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray()
+            .ShouldBe([". (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')"]);
+        text.ShouldNotContain("[Antiphon.");
+        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", entry)).All(b => b < 128).ShouldBeTrue("ASCII only");
+    }
+
+    [Test]
+    public async Task Build_junk_launcher_passes_its_parameters_keeps_the_defaults_and_refuses_a_cleanup_context()
+    {
+        using var fixture = CleanupCheckout("cleanup-build-junk.ps1");
+        var entry = fixture.PathOf("scripts", "cleanup-build-junk.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "cleanup-build-junk" };
+
+        // Windmill's command line (no parameters): the checkout above scripts/ and 60 minutes.
+        var windmill = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        windmill.ExitCode.ShouldBe(0, windmill.Stderr);
+        var defaults = BuildJunkCleanupOptions.Parse(windmill.Arguments.ShouldNotBeNull(windmill.Stdout + windmill.Stderr), "unused");
+        defaults.RepoRoot.TrimEnd('\\', '/').ShouldBe(fixture.Root.TrimEnd('\\', '/'), StringCompareShould.IgnoreCase);
+        defaults.SkipIfModifiedWithinMinutes.ShouldBe(60);
+
+        var every = await NightlyRunHops.LauncherEcho(entry, ["-RepoRoot", @"C:\fixture root\repo", "-SkipIfModifiedWithinMinutes", "5"], fixture.Root, environment: echo);
+        every.ExitCode.ShouldBe(0, every.Stderr);
+        every.Arguments.ShouldBe(["--repo-root", @"C:\fixture root\repo", "--skip-if-modified-within-minutes", "5"]);
+
+        // A cleanup context is in-memory custody: it never crosses a process.
+        var refused = await NightlyRunHops.LauncherEcho(entry, ["-CleanupContext", "context"], fixture.Root, environment: echo);
+        refused.ExitCode.ShouldBe(3, refused.Stderr);
+        refused.Arguments.ShouldBeNull("the CLI never ran");
+        refused.Stderr.Trim().ShouldBe("cleanup-build-junk: cleanup-context-unsupported");
+
+        AssertThinLauncher("cleanup-build-junk.ps1", "    [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),", "    [int]$SkipIfModifiedWithinMinutes = 60,",
+            "    [object]$CleanupContext = $null");
+    }
+
+    [Test]
+    public async Task Build_junk_launcher_runs_the_command_and_leaves_every_output_without_creation_records()
+    {
+        using var fixture = CleanupCheckout("cleanup-build-junk.ps1");
+        var old = Directory.CreateDirectory(fixture.PathOf("repo", "bin-old", "nested"));
+        File.WriteAllText(Path.Combine(old.FullName, "keep.txt"), "kept");
+        Directory.SetLastWriteTime(fixture.PathOf("repo", "bin-old"), DateTime.Now.AddDays(-10));
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.PathOf("scripts", "cleanup-build-junk.ps1"),
+                     "-RepoRoot", fixture.PathOf("repo"), "-SkipIfModifiedWithinMinutes", "0" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+        run.Exit.ShouldBe(0, run.Stderr);
+        run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ShouldBe(["skip: producer creation records unavailable; outputs left in place", "cleanup-build-junk: 0 dir(s) removed."]);
+        File.ReadAllText(Path.Combine(old.FullName, "keep.txt")).ShouldBe("kept");
+    }
+
+    [Test]
+    public async Task Codex_residue_launcher_passes_every_parameter_as_its_flag_and_keeps_the_defaults()
+    {
+        using var fixture = CleanupCheckout("cleanup-codex-test-residue.ps1");
+        var entry = fixture.PathOf("scripts", "cleanup-codex-test-residue.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "cleanup-codex-test-residue" };
+
+        // Windmill's report-only command line: the parameter block's defaults; blank values leave with their flags.
+        var windmill = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        windmill.ExitCode.ShouldBe(0, windmill.Stderr);
+        windmill.Arguments.ShouldBe(["--older-than-hours", "24", "--max-per-run", "10", "--codex-exe", "codex"]);
+
+        string[] every = ["-OlderThanHours", "48", "-Execute", "-MaxPerRun", "3", "-ReportPath", @"C:\fixture root\reports", "-InputJson", @"C:\fixture root\threads.json",
+            "-CodexHome", @"C:\fixture root\codex", "-StateDbPath", @"C:\fixture root\state_5.sqlite", "-CodexExe", "codex-fixture", "-LiveCwdsJson", @"C:\fixture root\live.json",
+            "-LockIdsJson", @"C:\fixture root\locks.json", "-Now", "2026-08-26T14:00:00Z"];
+        var all = await NightlyRunHops.LauncherEcho(entry, every, fixture.Root, environment: echo);
+        all.ExitCode.ShouldBe(0, all.Stderr);
+        var received = CodexTestResidueOptions.Parse(all.Arguments.ShouldNotBeNull(all.Stdout + all.Stderr), null, "unused", "unused", "unused");
+        var expected = CodexTestResidueOptions.Parse(["--older-than-hours", "48", "--execute", "--max-per-run", "3", "--report-path", @"C:\fixture root\reports",
+            "--input-json", @"C:\fixture root\threads.json", "--codex-home", @"C:\fixture root\codex", "--state-db-path", @"C:\fixture root\state_5.sqlite",
+            "--codex-exe", "codex-fixture", "--live-cwds-json", @"C:\fixture root\live.json", "--lock-ids-json", @"C:\fixture root\locks.json",
+            "--now", "2026-08-26T14:00:00Z"], null, "unused", "unused", "unused");
+        JsonSerializer.Serialize(received).ShouldBe(JsonSerializer.Serialize(expected));
+        (expected.Execute, expected.OlderThanHours, expected.MaxPerRun).ShouldBe((true, 48, 3));
+
+        AssertThinLauncher("cleanup-codex-test-residue.ps1", "    [int]$OlderThanHours = 24,", "    [switch]$Execute,", "    [int]$MaxPerRun = 10,",
+            "    [string]$CodexExe = 'codex',", "    [string]$Now = ''");
+    }
 }

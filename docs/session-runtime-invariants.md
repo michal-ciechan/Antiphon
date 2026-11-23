@@ -422,7 +422,7 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   path. A Claude `--continue` is refused in a slot cwd (`continue_in_shared_workspace`): it would resume
   the previous lessee's conversation; `--resume <id>` is unaffected.
 - A cold reset (native output too) runs only on `delegate.ps1 -ColdWorkspace`, an operator or pre-rc
-  request (`scripts/workspace-slots.ps1 cold-reset`), or the weekly schedule (Sunday 02:00 UTC), and never
+  request (`scripts\antiphon.cmd workspace-slots cold-reset`), or the weekly schedule (Sunday 02:00 UTC), and never
   on a leased slot: there it is recorded as pending and runs inside that slot's release.
 - At the bound (`MaxOverflowSlots` above capacity plus headroom, or the disk budget) the lease refuses
   `workspace_slot_unavailable:<bound>`; the task stays Queued with a Held event and never gets a per-task

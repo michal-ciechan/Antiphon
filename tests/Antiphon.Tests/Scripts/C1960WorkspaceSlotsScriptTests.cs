@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -10,15 +10,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1960 W-A4, W-A5. The <c>release</c> verb of <c>scripts/workspace-slots.ps1</c>, run as the REAL script
-/// under pwsh against a stub API: it posts the disposition, reason and requester to the quarantine release route
-/// with the operator token (never printed), maps the runner's outcome to the exit code, and refuses usage errors
-/// with exit 2 before any request.
+/// CARD-1960 W-A4, W-A5. The <c>release</c> verb of the workspace-slots command (Antiphon.Nightly.WorkspaceSlots, which replaced
+/// scripts/workspace-slots.ps1 in unit 21 of the 2026-11-22 plan), run in process on its production HTTP transport against a
+/// stub API: it posts the disposition, reason and requester to the quarantine release route with the operator token (never
+/// printed), maps the runner's outcome to the exit code, and refuses usage errors with exit 2 before any request. The cold-reset
+/// loop runs on a recording transport.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
-// CARD-1960 plan, performance budget (provisional): about one pwsh start per case (2-5 s, unmeasured). Re-derive from n>=5.
-[Timeout(60_000)]
 public sealed class C1960WorkspaceSlotsScriptTests
 {
     private const string DirId = "0123456789ab";
@@ -43,8 +41,8 @@ public sealed class C1960WorkspaceSlotsScriptTests
             File.ReadAllText(token.Path).ShouldBe(shape == "empty" ? "" : " \r\n\t ");
 
         string[] args = verb == "release"
-            ? [verb, "-Runner", "fixture-runner", "-DirId", DirId, "-Disposition", "Pushed", "-Reason", "published"]
-            : [verb, "-Runner", "fixture-runner", "-Reason", "qualification"];
+            ? [verb, "--runner", "fixture-runner", "--dir-id", DirId, "--disposition", "Pushed", "--reason", "published"]
+            : [verb, "--runner", "fixture-runner", "--reason", "qualification"];
         var run = await RunAsync(server, token, args);
 
         run.ExitCode.ShouldBe(2, run.Output);
@@ -72,8 +70,8 @@ public sealed class C1960WorkspaceSlotsScriptTests
                 detail = answer == "removed" ? null : "dirty: ?? work.txt",
             })));
         using var token = new TokenFile();
-        var run = await RunAsync(server, token, "release", "-Runner", "server2", "-DirId", DirId,
-            "-Disposition", "AcceptLoss", "-Reason", "diff kept", "-Requester", "orchestrator");
+        var run = await RunAsync(server, token, "release", "--runner", "server2", "--dir-id", DirId,
+            "--disposition", "acceptloss", "--reason", "diff kept", "--requester", "orchestrator");
 
         run.ExitCode.ShouldBe(exitCode, run.Output);
         server.Requests.ShouldBe(1, run.Output);
@@ -81,7 +79,7 @@ public sealed class C1960WorkspaceSlotsScriptTests
         server.LastPath.ShouldBe("/api/session-runners/server2/workspace-slots/quarantine/" + DirId + "/release");
         server.LastOperatorToken.ShouldBe(token.Value);
         var body = server.LastBody.ShouldNotBeNull().RootElement;
-        body.GetProperty("disposition").GetString().ShouldBe("AcceptLoss");
+        body.GetProperty("disposition").GetString().ShouldBe("AcceptLoss", "the canonical spelling is sent");
         body.GetProperty("reason").GetString().ShouldBe("diff kept");
         body.GetProperty("requester").GetString().ShouldBe("orchestrator");
         if (answer == "http-409")
@@ -99,59 +97,85 @@ public sealed class C1960WorkspaceSlotsScriptTests
     [Arguments("missing-dirid")]
     public async Task Release_usage_errors_exit_2_and_file_is_ascii(string shape)
     {
-        // W-A5. A usage error exits 2 and sends nothing. The file stays ASCII for Windows PowerShell 5.1.
+        // W-A5. A usage error exits 2 and sends nothing. The source stays ASCII (scripts/lib is ASCII-only).
         using var server = new StubApi((200, """{"dirId":"0123456789ab","outcome":"removed"}"""));
         using var token = new TokenFile();
         string[] args = shape switch
         {
-            "all-runners" => ["release", "-AllRunners", "-DirId", DirId, "-Disposition", "Pushed", "-Reason", "published"],
-            "slot" => ["release", "-Runner", "server2", "-Slot", "ws-01", "-DirId", DirId, "-Disposition", "Pushed", "-Reason", "published"],
-            _ => ["release", "-Runner", "server2", "-Disposition", "Pushed", "-Reason", "published"],
+            "all-runners" => ["release", "--all-runners", "--dir-id", DirId, "--disposition", "Pushed", "--reason", "published"],
+            "slot" => ["release", "--runner", "server2", "--slot", "ws-01", "--dir-id", DirId, "--disposition", "Pushed", "--reason", "published"],
+            _ => ["release", "--runner", "server2", "--disposition", "Pushed", "--reason", "published"],
         };
         var run = await RunAsync(server, token, args);
 
         run.ExitCode.ShouldBe(2, run.Output);
+        run.Output.ShouldContain("workspace_slots_target:");
         server.Requests.ShouldBe(0, "a usage error sends nothing");
         run.Output.ShouldNotContain(token.Value, Case.Insensitive);
-        var bytes = File.ReadAllBytes(ScriptPath);
+        var bytes = File.ReadAllBytes(SourcePath);
         var firstNonAscii = Array.FindIndex(bytes, static b => b > 127);
-        firstNonAscii.ShouldBe(-1, $"workspace-slots.ps1 has a non-ASCII byte at offset {firstNonAscii}");
+        firstNonAscii.ShouldBe(-1, $"WorkspaceSlots.cs has a non-ASCII byte at offset {firstNonAscii}");
     }
 
-    private static string ScriptPath => Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "workspace-slots.ps1");
+    [Test]
+    public async Task Cold_reset_all_runners_targets_the_workspace_slot_runners_and_prints_each_outcome()
+    {
+        using var token = new TokenFile();
+        var http = new RecordingOperatorHttp(call => call.Method == "GET"
+            ? new(200, """[{"runnerId":"server2","features":["workspaceSlotV1"]},{"runnerId":"desktop","features":[]},{"runnerId":"grok","features":["WORKSPACESLOTV1"]}]""")
+            : call.Uri.Contains("/grok/", StringComparison.Ordinal)
+                ? new(503, "busy")
+                : new(200, """{"requestId":"r-1","slots":[{"slotId":"ws-01","outcome":"reset"},{"slotId":"ws-02","outcome":"pending"}]}"""));
+        var output = new StringWriter();
+        var options = WorkspaceSlotsOptions.Parse(["cold-reset", "--all-runners", "--reason", "rc qualification rc/2026-11-30 493bee0ee3af"], "http://127.0.0.1:17202",
+            "", token.Path, "4242");
+        var exit = WorkspaceSlots.Run(options, NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(), http.Transport);
 
+        exit.ShouldBe(1, output.ToString());
+        output.ToString().Replace("\r\n", "\n").ShouldBe("""
+            runner=server2 request=r-1
+              ws-01 reset
+              ws-02 pending
+            runner=grok failed: HTTP 503 busy
+
+            """.Replace("\r\n", "\n"));
+        http.Calls.Select(call => call.Method + " " + call.Path).ShouldBe([
+            "GET /api/session-runners",
+            "POST /api/session-runners/server2/workspace-slots/cold-reset",
+            "POST /api/session-runners/grok/workspace-slots/cold-reset"]);
+        using var body = JsonDocument.Parse(http.Calls[1].Body!);
+        body.RootElement.GetProperty("all").GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("requester").GetString().ShouldBe("task 4242");
+        http.Calls.ShouldAllBe(call => call.Headers["X-Antiphon-Operator-Token"] == token.Value);
+
+        // One runner and named slots: all is false and the slots are listed; the default requester is the script's label.
+        var named = WorkspaceSlotsOptions.Parse(["cold-reset", "--runner", "server2", "--slot", "ws-03,ws-01", "--reason", "why"], null, null, token.Path, null);
+        named.Requester.ShouldBe("workspace-slots.ps1");
+        http.Calls.Clear();
+        WorkspaceSlots.Run(named, NightlyHost.Production(TextWriter.Null, TextWriter.Null), new System.IO.Abstractions.FileSystem(), http.Transport).ShouldBe(0);
+        using var slots = JsonDocument.Parse(http.Calls.Single().Body!);
+        slots.RootElement.GetProperty("all").GetBoolean().ShouldBeFalse();
+        slots.RootElement.GetProperty("slots").EnumerateArray().Select(slot => slot.GetString()).ShouldBe(["ws-03", "ws-01"]);
+        await Task.CompletedTask;
+    }
+
+    private static string SourcePath => Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "WorkspaceSlots.cs");
+
+    // The command as the CLI runs it: ANTIPHON_API the stub, the token file, no task token or task id; a usage error is exit 2.
     private static async Task<(int ExitCode, string Output)> RunAsync(StubApi server, TokenFile token, params string[] args)
     {
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(ScriptPath);
-        foreach (var arg in args)
-            startInfo.ArgumentList.Add(arg);
-        startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = token.Path;
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-        startInfo.Environment["ANTIPHON_TASK_ID"] = string.Empty;
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(50));
+        var output = new StringWriter();
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            var options = WorkspaceSlotsOptions.Parse(args, server.BaseUrl.TrimEnd('/'), "", token.Path, "");
+            var exit = await Task.Run(() => WorkspaceSlots.Run(options, NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(),
+                NightlyReport.HttpTransport(timeout: TimeSpan.FromSeconds(50))));
+            return (exit, output.ToString());
         }
-        catch (OperationCanceledException)
+        catch (NightlyUsageException e)
         {
-            process.Kill(entireProcessTree: true);
-            throw;
+            return (2, output + e.Message);
         }
-
-        return (process.ExitCode, await stdout + await stderr);
     }
 
     private sealed class TokenFile : IDisposable
