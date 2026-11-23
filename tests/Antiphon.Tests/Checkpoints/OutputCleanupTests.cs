@@ -331,6 +331,76 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
     }
 
+    // CARD-2052 Review r3 (2b79e113) blocker 1: the repository config includes another file, so the stamp does not
+    // observe every effective config input. The target's tracked check read the index in process (git would call it
+    // untracked then); between that decision and the unlink the INCLUDED file gains core.worktree, which maps the
+    // index entry target.dll onto the owned output's target. The including file and the index are unchanged, so only
+    // a fresh tracked-file lookup after validation sees it: the target survives, the untracked siblings are removed.
+    [Test]
+    public void included_config_core_worktree_edited_before_unlink_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "target.dll"), "TRACKED AT THE ROOT");
+        CommitAll(root);
+        var included = Path.Combine(root, ".git", "extra.config");
+        File.WriteAllText(included, "[user]\n\tname = card-2052\n");
+        CheckpointFixtureProcess.Git(root, "config", "include.path", "extra.config");
+        var (context, output, target) = TrackedIndexFixture(root);
+        SettleIndex(Path.Combine(root, ".git"));
+        var readsAtDecision = -1;
+        var edited = false;
+        context.BeforeOwnedUnlink = full =>
+        {
+            if (Path.GetFileName(full) != "target.dll") return;
+            readsAtDecision = context.InProcessIndexReads;
+            edited = true;
+            File.AppendAllText(included, "[core]\n\tworktree = " + Path.Combine(output, "d").Replace('\\', '/') + "\n");
+        };
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        AssertTargetKept(root, output, target, result);
+        edited.ShouldBeTrue("the included config changed after the target's content validation");
+        readsAtDecision.ShouldBeGreaterThan(0, "the target's tracked decision was read from the index in process");
+        CheckpointFixtureProcess.Git(root, "ls-files", "--", "target.dll").ShouldContain("target.dll");
+    }
+
+    // CARD-2052 Review r3 (2b79e113) blocker 2: every tracked check goes to git (the filesystem layer is not the
+    // native one). The owning repository discovered at the decision is moved away after the target's content
+    // validation; the final check then finds no repository at all. Absence of a repository is not evidence that the
+    // file is untracked in the one the removal required: the target survives, the untracked siblings are removed.
+    [Test]
+    public void discovered_repository_gone_before_final_check_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var gitDirectory = Path.Combine(root, ".git");
+        var moved = Path.Combine(root, ".git-moved");
+        var (context, output, target) = TrackedIndexFixture(root,
+            new CheckpointCleanupContext(new ForwardingNativeIo(), new CheckpointNativeGitRunner()));
+        var reads = context.InProcessIndexReads;
+        context.BeforeOwnedUnlink = full =>
+        {
+            if (Path.GetFileName(full) != "target.dll") return;
+            CheckpointFixtureProcess.Git(root, "add", "-f", "--", "bin-c2052/d/target.dll");
+            Directory.Move(gitDirectory, moved);
+        };
+
+        CleanResult result;
+        try { result = CleanTrackedIndexFixture(context, root, output); }
+        finally { if (Directory.Exists(moved) && !Directory.Exists(gitDirectory)) Directory.Move(moved, gitDirectory); }
+
+        AssertTargetKept(root, output, target, result);
+        string.Join("\n", result.Refusals).ShouldContain("repository");
+        context.InProcessIndexReads.ShouldBe(reads, "every tracked check went to git");
+        CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
+    }
+
     // Real git, recording when an ls-files naming the file returned nothing (an untracked answer).
     private sealed class UntrackedAnswerGit(string fileName) : ICheckpointGitRunner
     {
