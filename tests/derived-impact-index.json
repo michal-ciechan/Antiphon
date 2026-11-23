@@ -6706,6 +6706,12 @@
       ]
     },
     {
+      "path": "server/Application/Review/SelectedReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/Workflows/ReviewWorkflowValidator.cs",
       "classes": [
         "ReviewWorkflowValidatorTests"
