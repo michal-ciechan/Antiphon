@@ -323,12 +323,41 @@ internal static class WindowsUnitSkipRoster
     // NTFS junctions are not a Linux reparse point. C1210 closure scans NativeLinuxGate
     // and C1008HostFixture only; these rows stay out of that frozen inventory.
     internal const string WindowsJunctionReason = "NTFS junction fixtures require Windows reparse points; Linux has no junction type.";
+    // CARD-2052 Review 2ff6a0bc: the native Windows custody and handle classes skip at runtime off Windows; their
+    // execution is the plan's native Windows rows.
+    internal const string CheckpointNativeWindowsReason = "native Windows custody proof requires Windows";
+    internal const string CheckpointNativeHandleReason = "requires native Windows filesystem handles";
     internal static readonly Entry[] WindowsOnly =
     [
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Cwd_census_skips_exited_process_with_retained_handle", 1, "An exited Windows process can retain an open kernel handle after losing its cwd memory"),
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Rm_lock_defers_release", 1, "CARD-0824 Windows Restart Manager file lock; the real probe runs on the desktop at S4"),
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "allocation_sample_does_not_follow_junction_root", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "allocation_sample_fails_on_access_denied_subfolder", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "concurrent_sweepers_cannot_delete_new_registration", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "dead_test_host_live_nested_executor_retains_root", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "detached_staged_copy_survives_starter_exit", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "done_live_executor_retains_image", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "drifted_boot_reading_is_still_the_local_boot", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "executor_death_after_ack_before_progress_recovers", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "launch_unknown_survives_until_late_ack", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "locked_tool_delete_is_reported_then_retried", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "native_identity_keeps_live_then_removes_dead", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "native_links_keep_targets_unchanged", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "other_worktree_live_owner_survives_sweep", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "starter_death_before_launch_reclaims_partial_copy", 1, CheckpointNativeWindowsReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredDeleteTests", "native_cleanup_loop_removes_owned_output_without_throwing", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredDeleteTests", "native_junction_parent_is_refused_without_touching_its_target", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredDeleteTests", "native_mismatched_identity_is_refused", 2, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredDeleteTests", "native_owned_entry_is_removed", 2, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredDeleteTests", "native_owned_ledger_is_removed", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredPathDeleteWitnessTests", "windows_colon_name_is_refused_before_any_delete", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredPathDeleteWitnessTests", "windows_hard_link_sibling_survives_anchored_delete", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredPathDeleteWitnessTests", "windows_junction_cannot_redirect_created_file_delete", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredPathDeleteWitnessTests", "windows_junction_cannot_redirect_tool_copy_delete", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "CheckpointWindowsAnchoredPathDeleteWitnessTests", "windows_nonempty_owned_directory_is_left_in_place", 1, CheckpointNativeHandleReason),
+        new("Antiphon.Tests.Checkpoints", "EvidenceFolderTests", "tool_copy_removal_retries_while_a_file_is_still_held_open", 1, "Native file-sharing retry proof requires Windows."),
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_copied_old_change_time_is_adopted", 1, "CARD-1318 Windows copy change time"),
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write", 1, "CARD-1310 Windows output custody"),
         new("Antiphon.Tests.Checkpoints", "OutputCleanupTests", "windows_set_clock_and_foreign_dacl_are_not_adopted", 1, "CARD-1318 Windows custody hardening"),
