@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Management;
+using Antiphon.PtyHost.Client;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -37,6 +38,37 @@ public static class TestSessionLogRoot
     }
 
     internal static IEnumerable<string> RegisteredRoots => Roots.Keys;
+}
+
+/// <summary>
+/// CARD-1653 Linux socket tests (inherited reds, 2026-11-23): an <c>antiphon-&lt;prefix&gt;-&lt;32 hex&gt;</c> root
+/// under the checkpoint tool's private <c>/tmp/aslot-&lt;8 hex&gt;/</c> temp directory pushes the default socket
+/// path, <c>root/pty-hosts/sock/&lt;32-hex id&gt;</c>, past the 107-byte bound. This root is short enough for any
+/// temp directory up to 41 bytes. It is not a sweep-family root, so the test that creates it deletes it.
+/// </summary>
+public static class ShortSocketRoot
+{
+    private const int DefaultSocketSuffixBytes = 16 + 32; // "/pty-hosts/sock/" and the 32-hex session id.
+    public const int MaxRootBytes = PtyHostSocketDirectory.MaxSocketPathBytes - DefaultSocketSuffixBytes;
+
+    public static string Create(string tag)
+    {
+        var temp = Path.GetTempPath();
+        string root;
+        do root = Path.Combine(temp, tag + "-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant());
+        while (Directory.Exists(root));
+        System.Text.Encoding.UTF8.GetByteCount(root).ShouldBeLessThanOrEqualTo(MaxRootBytes,
+            $"precondition: the temp directory {temp} leaves room for a {PtyHostSocketDirectory.MaxSocketPathBytes}-byte default socket path");
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    public static void Delete(string root)
+    {
+        try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+        catch (IOException) { /* Best effort: a held file must not mask the test outcome. */ }
+        catch (UnauthorizedAccessException) { /* Best effort. */ }
+    }
 }
 
 public static class TestSessionTeardown

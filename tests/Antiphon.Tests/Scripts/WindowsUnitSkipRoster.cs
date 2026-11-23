@@ -327,8 +327,14 @@ internal static class WindowsUnitSkipRoster
     // execution is the plan's native Windows rows.
     internal const string CheckpointNativeWindowsReason = "native Windows custody proof requires Windows";
     internal const string CheckpointNativeHandleReason = "requires native Windows filesystem handles";
+    internal const string WindowsSharingModeReason = "Sharing-mode locks are a Windows file-system behaviour.";
     internal static readonly Entry[] WindowsOnly =
     [
+        new("Antiphon.Tests.Checkpoints", "CheckpointOutputConfinementTests", "windows_confined_build_leaves_use_app_host_unset", 1, "CARD-1310: the confined build resolves dotnet.exe through the Windows CreateProcess PATH and leaves UseAppHost unset."),
+        new("Antiphon.Tests.Infrastructure", "LandingRemovalPolicyControlTests", "C665_LockedFileMidDeleteResumesOnLaterPass", 1, WindowsSharingModeReason),
+        new("Antiphon.Tests.Infrastructure", "LandingRemovalPolicyControlTests", "C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded", 1, WindowsSharingModeReason),
+        new("Antiphon.Tests.Infrastructure", "WorktreeNoFollowDeleteTests", "C1717_B3_WindowsOpenWriterRefusesTheDelete", 1, "CARD-1717: share modes are the Windows no-follow delete; Linux is C1717_B3_WriteThroughAnOpenHandleDuringTheHashIsKept."),
+        new("Antiphon.Tests.Scripts", "TestSelectionExecutionTests", "C1313_ExactExpandedExecution", 1, "CARD-1313: the exact roster launches through the nightly native owner, a Windows Job Object; Linux supervisor-death custody is a documented gap."),
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Cwd_census_skips_exited_process_with_retained_handle", 1, "An exited Windows process can retain an open kernel handle after losing its cwd memory"),
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Rm_lock_defers_release", 1, "CARD-0824 Windows Restart Manager file lock; the real probe runs on the desktop at S4"),
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
