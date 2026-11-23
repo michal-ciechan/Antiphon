@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "72ecf6c0b38edfd995a6f5a536f52bbef14932fbc28a60b5f220421061b25f86",
+  "policyHash": "6865ede95fcaad827176a5d6bb4dde3a6921f85f0c81b91c9fda47a811e6f471",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -647,7 +647,7 @@
             "C847_WindowsHeldEntryIsDeletedOnlyByARevalidatingWalk"
           ],
           "platform": "linux",
-          "reason": "Windows share modes: a second handle without delete sharing refuses the production no-follow delete walk, which only Windows enforces. The method remains required on Windows; C847_RefusedWalkIsWalkedAgainUnderTheReceipt stays required on both platforms.",
+          "reason": "Windows no-follow walk: the disposition seam is reached only through the Windows delete-by-handle walk (CreateFileW, SetFileInformationByHandle), which Linux does not run. The method remains required on Windows; C847_DispositionRefusalIsNotRetriedOnTheHandle and C847_RefusedWalkIsWalkedAgainUnderTheReceipt stay required on both platforms.",
           "owner": "CARD-1717"
         },
         {
