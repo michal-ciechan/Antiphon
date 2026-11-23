@@ -33,6 +33,11 @@ param(
     [string]$VaultItem = 'GitHub App - antiphon-review',
     [string]$ViewerLogin = 'michal-ciechan',
     [int]$PollSeconds = 120,
+    # Where links in GitHub statuses and comments point. For a phone on the tailnet, pass the
+    # machine's Caddy name, e.g. https://review.laptop.codeperf.net (see the proxy skill).
+    # Vite still listens on 127.0.0.1 only: Docker Desktop's host.docker.internal reaches it, and
+    # Vite's allowedHosts already accepts *.laptop/*.desktop.codeperf.net.
+    [string]$PublicBaseUrl,
     [switch]$NoClient,
     # Leave GitHub polling off (a manual POST /api/review-polling/poll still runs a pass).
     [switch]$NoPolling,
@@ -139,7 +144,7 @@ $settings = [ordered]@{
     'Review__CodeHosts__Hosts__github__App__AppId'           = (Get-Field 'Client ID')
     'Review__CodeHosts__Hosts__github__App__InstallationId'  = (Get-Field 'Installation ID')
     'Review__Secrets__GitHubAppPrivateKey'                   = [string]$item.notes
-    'Review__PublicBaseUrl'                                  = "http://localhost:$ClientPort"
+    'Review__PublicBaseUrl'                                  = $(if ($PublicBaseUrl) { $PublicBaseUrl.TrimEnd('/') } else { "http://localhost:$ClientPort" })
     'Review__DefaultViewerLogin'                             = $ViewerLogin
     'Review__Policy__AuthorMayDecideRepos__0'                = $Repo
     'Review__Agents__Transport'                              = 'cli'
