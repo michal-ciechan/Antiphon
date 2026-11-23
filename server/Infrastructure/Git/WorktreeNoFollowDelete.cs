@@ -135,41 +135,20 @@ internal static class WorktreeNoFollowDelete
 
     private static void MarkDeleted(SafeFileHandle handle, string path)
     {
-        var error = SettleDisposition(() => TrySetDisposition(handle), WorktreeRenames.System.Pause);
-        if (error != 0) throw Failure("delete", path, error);
-    }
-
-    /// <summary>
-    /// Debug 847c35c6: the held handle shares no delete, yet a scanner or indexer that had the freshly
-    /// written entry open still makes the disposition fail with a sharing violation (seen on Windows Full
-    /// run 557cdb63). As the no-follow open does, a sharing or lock violation or access denied (the codes
-    /// <see cref="WorktreeRenames.IsSharingConflict"/> treats as transient) is retried at most
-    /// <see cref="WorktreeRenames.SharingAttempts"/> times, <see cref="WorktreeRenames.SharingPause"/> apart,
-    /// through the same handle, so nothing is re-opened or followed. Any other code, or the conflict at the
-    /// last attempt, is returned as the refusal. Returns 0 on success, else the final Win32 code.
-    /// </summary>
-    internal static int SettleDisposition(Func<int> attempt, Action<TimeSpan> pause)
-    {
-        for (var n = 1; ; n++)
-        {
-            var error = attempt();
-            if (error is not (5 or 32 or 33) || n == WorktreeRenames.SharingAttempts) return error;
-            pause(WorktreeRenames.SharingPause);
-        }
-    }
-
-    private static int TrySetDisposition(SafeFileHandle handle)
-    {
         // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE: the name goes at once
         // so the parent can follow, and a read-only file goes as Git would remove it.
+        // Debug 847c35c6 / Review c67d7aff B-1: a refusal is never retried on this handle. It admits writers once
+        // the receipt hash's deny-write handle has closed, so a later success could delete bytes the receipt never
+        // approved. The refusal (5, 32 or 33 from a scanner) goes back to DeleteSettled, whose next walk re-checks
+        // drift and every hash before anything goes.
         var ex = new FileDispositionInfoEx { Flags = 0x1 | 0x2 | 0x10 };
-        if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return 0;
+        if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return;
         var error = Marshal.GetLastPInvokeError();
         // Volumes without the extended disposition (FAT, some network shares) take the classic one.
-        if (error is not (87 or 1 or 50)) return error;
+        if (error is not (87 or 1 or 50)) throw Failure("delete", path, error);
         var classic = new FileDispositionInfo { DeleteFile = 1 };
-        return SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>())
-            ? 0 : Marshal.GetLastPInvokeError();
+        if (!SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>()))
+            throw Failure("delete", path);
     }
 
     // CARD-1717 D-5: a path walk can lstat a directory and then enumerate the symlink that replaced it.

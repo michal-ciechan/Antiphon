@@ -558,45 +558,6 @@ public sealed class WorktreeNoFollowDeleteTests
         while (now.Seconds == start.Seconds && now.Nanoseconds == start.Nanoseconds);
     }
 
-    // Debug 847c35c6 (run 557cdb63, group 141): on Windows the delete handle was open, and setting its
-    // disposition still failed with ERROR_SHARING_VIOLATION while another holder (a scanner or indexer on a
-    // freshly written file) had the entry. The open already waits such a holder out; the disposition must too.
-    [Test]
-    [Arguments(32)]
-    [Arguments(33)]
-    [Arguments(5)]
-    public void C847_TransientDispositionRefusalIsRetried(int transient)
-    {
-        var codes = new Queue<int>([transient, transient, 0]);
-        var pauses = new List<TimeSpan>();
-        WorktreeNoFollowDelete.SettleDisposition(codes.Dequeue, pauses.Add).ShouldBe(0);
-        codes.ShouldBeEmpty();
-        pauses.ShouldBe([WorktreeRenames.SharingPause, WorktreeRenames.SharingPause]);
-    }
-
-    [Test]
-    public void C847_LastingSharingViolationStillRefusesAfterTheBound()
-    {
-        var calls = 0;
-        var pauses = new List<TimeSpan>();
-        WorktreeNoFollowDelete.SettleDisposition(() => { calls++; return 32; }, pauses.Add).ShouldBe(32);
-        calls.ShouldBe(WorktreeRenames.SharingAttempts, "the retry is bounded");
-        pauses.Count.ShouldBe(WorktreeRenames.SharingAttempts - 1);
-    }
-
-    [Test]
-    [Arguments(145)]
-    [Arguments(2)]
-    [Arguments(87)]
-    public void C847_OtherDispositionRefusalIsNotRetried(int code)
-    {
-        var calls = 0;
-        var pauses = new List<TimeSpan>();
-        WorktreeNoFollowDelete.SettleDisposition(() => { calls++; return code; }, pauses.Add).ShouldBe(code);
-        calls.ShouldBe(1);
-        pauses.ShouldBeEmpty();
-    }
-
     // Review c67d7aff B-1: a refused delete is not retried on the walk's open handle, which admits writers once the
     // receipt hash's deny-write handle has closed. The refusal (the IOException the no-follow walk throws, with the
     // raw Win32 code) goes back to DeleteSettled, whose next walk re-checks the receipt before anything goes.

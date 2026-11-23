@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "f5f58b1fec885eb468fd178af528a2c9906b8044a71967ef67cfcbd7407fa313",
+  "policyHash": "72ecf6c0b38edfd995a6f5a536f52bbef14932fbc28a60b5f220421061b25f86",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -639,6 +639,16 @@
           "platform": "linux",
           "reason": "Windows DPAPI round trip: capability.ps1 writes and the test reads a ProtectedData CurrentUser blob, which only Windows supports. The method remains required on Windows; error_paths_never_contain_the_token stays required on both platforms.",
           "owner": "CARD-1811"
+        },
+        {
+          "suite": "antiphon",
+          "class": "WorktreeNoFollowDeleteTests",
+          "methods": [
+            "C847_WindowsHeldEntryIsDeletedOnlyByARevalidatingWalk"
+          ],
+          "platform": "linux",
+          "reason": "Windows share modes: a second handle without delete sharing refuses the production no-follow delete walk, which only Windows enforces. The method remains required on Windows; C847_RefusedWalkIsWalkedAgainUnderTheReceipt stays required on both platforms.",
+          "owner": "CARD-1717"
         },
         {
           "suite": "antiphon",

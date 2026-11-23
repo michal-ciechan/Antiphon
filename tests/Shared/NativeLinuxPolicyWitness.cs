@@ -49,8 +49,9 @@ public static class NativeLinuxPolicyWitness
     // CARD-0824 exact one-record addition: the three producer Windows witnesses are excluded on Linux only.
     // CARD-1938 exact one-record addition: two PtyDeliveryCeilingsTests inbox-conhost methods are excluded on Linux only.
     // CARD-0824 S3 and slot-release follow-up: only the two native Windows holder witnesses are excluded on Linux.
+    // Debug 847c35c6 / Review c67d7aff one-record addition: the native Windows held-entry witness of WorktreeNoFollowDeleteTests is excluded on Linux only.
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
-    public const string LegacyExclusionDigest = "c4c6d363bad3e18893c8b1b021fb1f62f5d99ac4429303d383c866c842b64d7a";
+    public const string LegacyExclusionDigest = "5483e2952eeb9d2a0285692261c6792125107b6e5ef89478bbbd6ceace0669be";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
