@@ -424,9 +424,9 @@ public static class OrchestratorInvestigationDetector
                 continue;
             if (NeverReadBins.Contains(bin))
                 sawNever = true;
-            else if (IsReadVerb(bin, head) || ContainsScript(head, "delegate.ps1") || ContainsScript(head, "card.ps1"))
+            else if (IsReadVerb(bin, head) || ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
             {
-                if (ContainsScript(head, "delegate.ps1") || ContainsScript(head, "card.ps1"))
+                if (ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
                     sawNever = true;
                 else
                     sawRead = true;
@@ -442,7 +442,7 @@ public static class OrchestratorInvestigationDetector
     {
         if (string.IsNullOrEmpty(command))
             return false;
-        if ((ContainsScript(command, "delegate.ps1") || ContainsScript(command, "card.ps1"))
+        if ((ContainsScript(command, "delegate.ps1") || ContainsScript(command, "card.ps1") || SplitShell(command).Any(seg => IsCardCli(PipelineHead(seg))))
             && !IsReadVerbCommand(command))
             return false;
         foreach (var seg in SplitShell(command))
@@ -453,7 +453,7 @@ public static class OrchestratorInvestigationDetector
                 continue;
             if (NeverReadBins.Contains(bin))
                 continue;
-            if (ContainsScript(head, "delegate.ps1") || ContainsScript(head, "card.ps1"))
+            if (ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
                 continue;
             if (!IsReadVerb(bin, head))
                 continue;
@@ -721,6 +721,28 @@ public static class OrchestratorInvestigationDetector
 
     private static bool ContainsScript(string text, string name) =>
         text.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    // The board card CLI: scripts/card.ps1 (kept for transcripts written before it was deleted, unit 27 of the 2026-11-22
+    // plan) or the card command that replaced it, scripts/antiphon card, scripts\antiphon.cmd card or antiphon-scripts card.
+    private static bool IsCardCommand(string segment) => ContainsScript(segment, "card.ps1") || IsCardCli(segment);
+
+    // A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
+    // assignments ahead of it) and whose first argument is the card command.
+    private static readonly HashSet<string> CardCliPrefixes = new(StringComparer.OrdinalIgnoreCase) { "&", "call", "sh", "bash" };
+
+    private static bool IsCardCli(string segment)
+    {
+        var tokens = Tokenize(segment).Select(StripQuotes)
+            .SkipWhile(token => CardCliPrefixes.Contains(token) || (token.Contains('=') && !token.StartsWith('-')))
+            .Take(2).ToList();
+        if (tokens.Count < 2 || !tokens[1].Equals("card", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var bin = tokens[0].Replace('\\', '/');
+        bin = bin[(bin.LastIndexOf('/') + 1)..].ToLowerInvariant();
+        if (bin.EndsWith(".exe", StringComparison.Ordinal))
+            bin = bin[..^4];
+        return bin is "antiphon" or "antiphon.cmd" or "antiphon-scripts";
+    }
 
     private static void CollectFiles(HashSet<string> files, IReadOnlyList<string> identifiers)
     {

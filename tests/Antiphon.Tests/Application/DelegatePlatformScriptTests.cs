@@ -1,5 +1,3 @@
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -7,7 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0710 V-10. The real delegate and card scripts against a loopback capture.</summary>
+/// <summary>CARD-0710 V-10. The real delegate script against a loopback capture (the card half is CardPlatformScriptTests, in process).</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegatePlatformScriptTests
@@ -74,115 +72,69 @@ public sealed class DelegatePlatformScriptTests
         $$"""{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode","requiredPlatform":"{{platform}}","runnerId":"{{runner}}"}""";
 }
 
+/// <summary>
+/// CARD-0710 V-10: the card command (Antiphon.Nightly.CardCli, which replaced scripts/card.ps1 in unit 27 of the 2026-11-22
+/// plan) forwards --platform on new and edit, Any included, in process against a stub transport. Nothing leaves the process.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardPlatformScriptTests
 {
     [Test]
-    public async Task New_edit_and_reset_forward_platform()
+    public void New_edit_and_reset_forward_platform()
     {
-        using var created = new CardPlatformStub();
+        var created = new CardPlatformStub();
         var board = "c7100000-aaaa-bbbb-cccc-0000000000bb";
-        var fresh = await Run(created.BaseUrl, ["new", "-Board", board, "-Title", "platform card", "-Platform", "Windows"]);
+        var fresh = Run(created, ["new", "--board", board, "--title", "platform card", "--platform", "Windows"]);
         fresh.ExitCode.ShouldBe(0, fresh.Output);
         created.LastCreate!.RootElement.GetProperty("requiredPlatform").GetString().ShouldBe("Windows");
-        fresh.Output.ShouldContain("platform");
+        fresh.Output.ShouldContain("platform    Windows");
 
-        using var edited = new CardPlatformStub();
-        var edit = await Run(edited.BaseUrl, ["edit", "CARD-0710", "-Platform", "Linux", "-Reason", "need linux"]);
+        var edited = new CardPlatformStub();
+        var edit = Run(edited, ["edit", "CARD-0710", "--platform", "Linux", "--reason", "need linux"]);
         edit.ExitCode.ShouldBe(0, edit.Output);
         edited.LastPatch!.RootElement.GetProperty("requiredPlatform").GetString().ShouldBe("Linux");
 
-        using var reset = new CardPlatformStub();
-        var any = await Run(reset.BaseUrl, ["edit", "CARD-0710", "-Platform", "Any", "-Reason", "reset"]);
+        var reset = new CardPlatformStub();
+        var any = Run(reset, ["edit", "CARD-0710", "--platform", "any", "--reason", "reset"]);
         any.ExitCode.ShouldBe(0, any.Output);
         reset.LastPatch!.RootElement.GetProperty("requiredPlatform").GetString().ShouldBe("Any");
     }
 
-    private static async Task<(int ExitCode, string Output)> Run(string api, string[] args)
+    private static (int ExitCode, string Output) Run(CardPlatformStub api, string[] args)
     {
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1"));
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = api.TrimEnd('/');
-        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var run = Antiphon.Tests.Scripts.CardCommandRun.Run(api.Transport, args);
+        return (run.Exit, run.Output + run.Error);
     }
 
-    private sealed class CardPlatformStub : IDisposable
+    private sealed class CardPlatformStub
     {
         private const string CardId = "c7100000-aaaa-bbbb-cccc-0000000000cc";
         private const string Token = "c7100000-aaaa-bbbb-cccc-000000000001";
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
 
-        public CardPlatformStub()
-        {
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
         public JsonDocument? LastCreate { get; private set; }
         public JsonDocument? LastPatch { get; private set; }
 
-        private async Task PumpAsync()
+        public Antiphon.Nightly.NightlyReportHttp Transport => (method, uri, _, body) =>
         {
-            while (!_cts.IsCancellationRequested)
+            var path = new Uri(uri).AbsolutePath;
+            var response = Card();
+            if (method == "GET" && path == "/api/cards/limits")
+                response = """{"maxTitleLength":300,"maxDescriptionLength":20000,"maxPrivateNotesLength":20000,"maxReasonLength":4000,"maxActorLength":200,"maxAliasLength":64,"maxAliasWords":6}""";
+            else if (method == "POST" && path.Contains("/cards", StringComparison.Ordinal))
             {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-                var path = context.Request.Url!.AbsolutePath;
-                var response = Card();
-                if (context.Request.HttpMethod == "GET" && path == "/api/cards/limits")
-                    response = """{"maxTitleLength":300,"maxDescriptionLength":20000,"maxPrivateNotesLength":20000,"maxReasonLength":4000,"maxActorLength":200,"maxAliasLength":64,"maxAliasWords":6}""";
-                else if (context.Request.HttpMethod == "POST" && path.Contains("/cards", StringComparison.Ordinal))
-                {
-                    using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                    LastCreate = JsonDocument.Parse(await reader.ReadToEndAsync());
-                    response = Card("Windows");
-                }
-                else if (context.Request.HttpMethod == "PATCH")
-                {
-                    using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                    LastPatch = JsonDocument.Parse(await reader.ReadToEndAsync());
-                    var platform = LastPatch.RootElement.TryGetProperty("requiredPlatform", out var value) ? value.GetString() : "Any";
-                    response = Card(platform);
-                }
-
-                var bytes = Encoding.UTF8.GetBytes(response);
-                context.Response.StatusCode = 200;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.Close();
+                LastCreate = JsonDocument.Parse(body!);
+                response = Card("Windows");
             }
-        }
+            else if (method == "PATCH")
+            {
+                LastPatch = JsonDocument.Parse(body!);
+                var platform = LastPatch.RootElement.TryGetProperty("requiredPlatform", out var value) ? value.GetString() : "Any";
+                response = Card(platform);
+            }
+            return new Antiphon.Nightly.NightlyReportHttpResponse(200, response);
+        };
 
-        private static string Card(string platform = "Any") =>
+        private static string Card(string? platform = "Any") =>
             $$"""{"id":"{{CardId}}","boardId":"c7100000-aaaa-bbbb-cccc-0000000000bb","identifier":"CARD-0710","title":"platform card","status":"Backlog","importance":"Normal","urgency":"Normal","rank":1,"importanceProvenance":"Auto","labels":[],"concurrencyToken":"{{Token}}","revisionCount":2,"requiredPlatform":"{{platform}}"}""";
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            LastCreate?.Dispose();
-            LastPatch?.Dispose();
-            _cts.Dispose();
-        }
     }
 }

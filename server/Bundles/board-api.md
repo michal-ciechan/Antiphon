@@ -1,11 +1,11 @@
-Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the reference (verbs
-`list`, `search`, `get`, `history`, `block`, `unblock`, `new`, `edit`, `move`, `close`, `reopen`, `archive`,
-`unarchive`, `diagnose`, `reorder`, `order`, `-Limits`); AGENTS.md
+Working the Antiphon board. Use `scripts/antiphon card` — the header of `scripts/lib/Antiphon.Nightly/CardCli.cs`
+is the reference (verbs `list`, `search`, `get`, `history`, `block`, `unblock`, `new`, `edit`, `move`, `close`,
+`reopen`, `archive`, `unarchive`, `diagnose`, `reorder`, `order`, `limits`); AGENTS.md
 "Working cards from a shell" has the human-facing synopsis. Do not hand-compose the HTTP yourself
-unless the script genuinely can't do it. These are the shapes that bite either way:
+unless the command genuinely can't do it. These are the shapes that bite either way:
 
-- Before filing a possible duplicate, run `card.ps1 search '<distinctive phrase>' -Board <name> -All`,
-  then `card.ps1 get <hit> -Board <name>` to read the full description and verdict. Search checks
+- Before filing a possible duplicate, run `card search '<distinctive phrase>' --board <name> --all`,
+  then `card get <hit> --board <name>` to read the full description and verdict. Search checks
   stored full text and follows every page. A capped list or summary preview cannot prove absence;
   a failed or changed enumeration cannot establish "no duplicate".
 
@@ -13,23 +13,23 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit
   `Delegation:AllowedRoots`. Operator issue is `scripts\antiphon.cmd capability issue` (Windows).
 
-- Address cards as `CARD-0051`, `card-51`, `#51`, `51`, or a guid; use `-Board` to scope identifiers.
+- Address cards as `CARD-0051`, `card-51`, `#51`, `51`, or a guid; use `--board` to scope identifiers.
 
 - `GET /api/cards/limits` returns the current title/description/reason/actor length ceilings
-  plus `importanceValues` / `urgencyValues` (`-Limits` on the script). Today: title 300,
+  plus `importanceValues` / `urgencyValues` (`card limits`). Today: title 300,
   description 20 000, reason 4 000, actor 200. There is no `priority` field; a write that still
   sends one is 400.
 
-- Re-read the card's `concurrencyToken` between writes. `card.ps1` fetches it by default;
-  `-Token` selects strict compare-and-swap. Inspect a conflict before retrying.
+- Re-read the card's `concurrencyToken` between writes. `card` fetches it by default;
+  `--token` selects strict compare-and-swap. Inspect a conflict before retrying.
 
 - VALIDATION FAILURES ARE 422, NOT 400, with a problem-details `errors` dictionary using existing
   PascalCase field names (`"Description"`, `"Reason"`, `"ConcurrencyToken"`) alongside new
   camelCase privacy fields (`"privateNotes"`, `"cardFileVisibility"`) whose messages name the limit and the actual
   length. Read the message rather than guessing from the status code.
 
-- SEND WRITE BODIES FROM A FILE, never inline on a shell command line: `-DescriptionFile` /
-  `-ReasonFile` (or, hand-composing HTTP, a `--data @body.json` you wrote with your file tools).
+- SEND WRITE BODIES FROM A FILE, never inline on a shell command line: `--description-file` /
+  `--reason-file` (or, hand-composing HTTP, a `--data @body.json` you wrote with your file tools).
   Card text is long and full of quotes, newlines, backticks and dollar signs, and both shells here
   mangle it silently — the corruption lands in the record, not in an error.
 
@@ -38,9 +38,9 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   optional `title`, `description`, `importance`, `urgency`, `dueAt`, `clearDueAt`, `labels`,
   `editedBy`). Read revisions at `GET /api/cards/{id}/revisions`.
 
-- Relationships: `block CARD-0051 -BlockedBy CARD-0049`; remove with `unblock`.
-  Optional: `-ReasonFile`, `-By`; `block -RelatedBoard` scopes the blocker.
-  HTTP-stub coverage (`CardRelationshipScriptTests`; details in `docs/ops-http.md`):
+- Relationships: `block CARD-0051 --blocked-by CARD-0049`; remove with `unblock`.
+  Optional: `--reason-file`, `--by`; `block --related-board` scopes the blocker.
+  Stub coverage (`CardRelationshipScriptTests`; details in `docs/ops-http.md`):
 
 | Behaviour | Named test | What it asserts |
 |---|---|---|
@@ -49,7 +49,7 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 | Read | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | Status, inverse, history, JSON |
 | No match | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Failure, identifiers, no POST |
 
-- Moving into an active column requires `spawn`/`-Spawn` to start an agent. Inspect
+- Moving into an active column requires `spawn`/`--spawn` to start an agent. Inspect
   `spawnedSessionId` / `spawnSuppressed` in the response.
 
 - Terminal moves persist `reason` as `terminalReason`: include shipped changes, remaining work
@@ -67,8 +67,8 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 - CARD FILES ARE OPT-IN PUBLICATIONS: boards default off; locally configured Unknown
   repository visibility blocks sync. Private card overrides suppress the whole card;
   private notes never export. Title, description, outcome and archive reasons are public
-  on eligible cards. New/edit accept `-PrivateNotesFile` and `-CardFileVisibility`;
-  edit accepts `-ClearPrivateNotes`. Never echo notes. A saved card is not proof of publication.
+  on eligible cards. New/edit accept `--private-notes-file` and `--card-file-visibility`;
+  edit accepts `--clear-private-notes`. Never echo notes. A saved card is not proof of publication.
   Status is at `/api/boards/{id}/card-files/status`; settings require both syncCardFiles
   and expectedSyncCardFiles. See docs/card-file-privacy.md for refusal/cleanup semantics.
 

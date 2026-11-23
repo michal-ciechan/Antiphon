@@ -137,7 +137,7 @@ board's `tracker.operator_logins` is unset and the author was never judged), and
    the boards that *do* hold it. Never falls through to a different board.
 2. else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`)
 3. else the boards of every project whose `LocalRepositoryPath` contains `?cwd=`
-   (`card.ps1` sends `git rev-parse --show-toplevel`)
+   (the card command sends `git rev-parse --show-toplevel`)
 4. else everywhere
 
 Uniqueness is demanded inside the scope that answers. A collision that survives all of that is
@@ -248,7 +248,7 @@ with a restart instruction. Final pages have `truncated: false` and
 `includeArchived=true` includes archived cards regardless of parent board/project
 archival state. Reads scan matching metadata per page, and leading-wildcard text
 search may scan the scoped cards; no text index is claimed. Use
-`scripts/card.ps1 list|search` for complete buffered enumeration.
+`scripts/antiphon card list|search` for complete buffered enumeration.
 
 > A move into an active column **does not start an agent** unless `spawn: true` (CARD-0051), and
 > the orchestrator tick will not pick that card up either (CARD-0087).
@@ -1370,14 +1370,14 @@ concurrency tokens and PowerShell's quoting hazards.
 
 | Script | For |
 |---|---|
-| `scripts/card.ps1` | `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, `-Limits`. Long text via `-DescriptionFile` / `-ReasonFile`, never inline. |
+| `scripts/antiphon card` | `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, `limits`. Long text via `--description-file` / `--reason-file`, never inline. |
 | `scripts/antiphon schedule` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `--prompt-file`. Prints preview before create. |
 | `scripts/delegate.ps1` | create / `-Status` / `-Reply` / `-Refine` a delegated task |
 | `scripts/antiphon github-sync` | a bidirectional tracker push (`--board-id`, `--notify`) |
 | `scripts/checkpoint-task.ps1` | WIP-commit a stalled task's work without killing it |
 | `verify-dev-stack.ps1` | health check across the whole stack |
 
-Both `card.ps1` and `delegate.ps1` read `$env:ANTIPHON_API`, defaulting to
+Both the card command and `delegate.ps1` read `ANTIPHON_API`, defaulting to
 `http://localhost:17202`. Inside a running agent session, `ANTIPHON_API` is already set.
 
 ## 6. Why there is no OpenAPI document (yet)

@@ -517,7 +517,7 @@ public sealed class OrchestratorWorkspaceFactGatherer : IOrchestratorWorkspacePr
     /// <summary>
     /// CARD-0251 S4: when <paramref name="directory"/> is a dedicated sibling workspace,
     /// return the marker's checkout; otherwise return the directory itself. Used by
-    /// <c>card.ps1</c> / <c>delegate.ps1</c> and <see cref="AgentTaskService.Caller"/>.
+    /// the card command / <c>delegate.ps1</c> and <see cref="AgentTaskService.Caller"/>.
     /// </summary>
     public static string FollowMarkerOrSelf(string directory)
     {

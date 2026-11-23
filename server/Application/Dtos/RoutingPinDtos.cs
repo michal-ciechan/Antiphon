@@ -12,7 +12,7 @@ namespace Antiphon.Server.Application.Dtos;
 /// </summary>
 public sealed record PutRoutingPinRequest(
     AgentTaskRole Role,
-    /// <summary>Any identifier <c>card.ps1</c> accepts, or a guid. Omitted = stage-wide.</summary>
+    /// <summary>Any identifier the card command (<c>scripts/antiphon card</c>) accepts, or a guid. Omitted = stage-wide.</summary>
     string? Card = null,
     RoutingPinProvenance Provenance = RoutingPinProvenance.Auto,
     RoutingPinStrength Strength = RoutingPinStrength.Preferred,

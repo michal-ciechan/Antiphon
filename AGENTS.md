@@ -39,16 +39,16 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 - Verify the standard local stack with pwsh -File verify-dev-stack.ps1 -SkipBrowser. Aspire uses server 17202, built client 17203, runner 17204, and dashboard 17205. Port 17204 is the production runner; E2E owns an isolated random runner instead.
 - Under Aspire, 17203 serves the built bundle. Wait for its watcher to rebuild (client-mode.ps1 -Status) before treating a browser observation as current; use client-mode.ps1 -Mode dev only when HMR is required.
 - For a new local stack, follow [docs/bootstrap.md](docs/bootstrap.md). Use only docker compose -f docker-compose.dev.yml up -d; do not delete antiphon_pgdata unless the database is deliberately being recreated.
-- Use scripts/card.ps1 for board work; see [Working cards from a shell](#working-cards-from-a-shell). A move starts no agent unless -Spawn is supplied.
+- Use scripts/antiphon card for board work (scripts\antiphon.cmd card on Windows); see [Working cards from a shell](#working-cards-from-a-shell). A move starts no agent unless --spawn is supplied.
 - To list or inspect agents, boards and live sessions, read [docs/ops-http.md](docs/ops-http.md) instead of grepping MapGet. The server is 17202 /api/...; the runner is 17204 /sessions/... with no /api. There is no GET /api/sessions and no /api/board, and GET /api/cards needs one of boardId, status, or updatedSince.
 
 ### Working cards from a shell
 
-Use `pwsh -NoProfile -File scripts/card.ps1 search '<distinctive phrase>' -Board <name> -All`
-before filing a possible duplicate, then `card.ps1 get <hit> -Board <name>` to inspect full text.
+Use `scripts/antiphon card search '<distinctive phrase>' --board <name> --all`
+before filing a possible duplicate, then `scripts/antiphon card get <hit> --board <name>` to inspect full text.
 `list` and `search` follow every page or fail; a capped list, preview, or failed enumeration cannot
-establish absence. See [the HTTP guide](docs/ops-http.md) and the script header for details.
-Give long write text through `-DescriptionFile` or `-ReasonFile`; the script reads a fresh
+establish absence. See [the HTTP guide](docs/ops-http.md) and the header of `scripts/lib/Antiphon.Nightly/CardCli.cs`.
+Give long write text through `--description-file` or `--reason-file`; the command reads a fresh
 concurrency token by default.
 
 ## Immediate safety triggers

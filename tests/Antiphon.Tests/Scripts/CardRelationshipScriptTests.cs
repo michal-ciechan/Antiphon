@@ -1,16 +1,19 @@
-using Antiphon.TestSupport;
-using System.Diagnostics;
 using System.Text.Json;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.CardListSearchScriptTests;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0100 S4: the card command's block, unblock, get and history (Antiphon.Nightly.CardCli, which replaced scripts/card.ps1
+/// in unit 27 of the 2026-11-22 plan) against the list/search stub transport, in process. Not ported:
+/// Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns (pwsh's ConciseView rendering in a 120-column Linux
+/// pty; the command writes the detail as plain text, which Block_fails_loudly_when_relationships_returns_404 pins line by
+/// line). The two in-process 404 rows keep their names with the C# caller's meaning: exit 1, and no exception.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardRelationshipScriptTests
 {
     private const string CardJson = """
@@ -51,8 +54,8 @@ public sealed class CardRelationshipScriptTests
     public async Task Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token()
     {
         using var stub = CreateStub();
-        var run = await RunAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049",
-            "-Reason", "schema first", "-By", "operator");
+        var run = await RunAsync(stub, "block", "CARD-0051", "--blocked-by", "CARD-0049",
+            "--reason", "schema first", "--by", "operator");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.Where(c => c.Path != "/api/cards/limits").Select(c => $"{c.Method} {c.Path}")
             .ShouldBe(new[] { "GET /api/cards/CARD-0051", "POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships" });
@@ -72,8 +75,8 @@ public sealed class CardRelationshipScriptTests
         {
             await File.WriteAllTextAsync(reasonFile, "schema first\nsecond line 雪");
             stub.Calls.Clear();
-            var fenced = await RunAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049",
-                "-ReasonFile", reasonFile, "-Token", "77777777-7777-7777-7777-777777777777", "-RelatedBoard", "Antiphon", "-Json");
+            var fenced = await RunAsync(stub, "block", "CARD-0051", "--blocked-by", "CARD-0049",
+                "--reason-file", reasonFile, "--token", "77777777-7777-7777-7777-777777777777", "--related-board", "Antiphon", "--json");
             fenced.ExitCode.ShouldBe(0, fenced.Stderr);
             using var fencedBody = JsonDocument.Parse(stub.Calls.Single(c => c.Method == "POST").Body);
             fencedBody.RootElement.GetProperty("reason").GetString().ShouldBe("schema first\nsecond line 雪");
@@ -89,7 +92,7 @@ public sealed class CardRelationshipScriptTests
     public async Task Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove()
     {
         using var stub = CreateStub();
-        var run = await RunAsync(stub, "unblock", "CARD-0051", "-BlockedBy", "CARD-0049");
+        var run = await RunAsync(stub, "unblock", "CARD-0051", "--blocked-by", "CARD-0049");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
         {
@@ -117,7 +120,7 @@ public sealed class CardRelationshipScriptTests
         history.ExitCode.ShouldBe(0, history.Stderr);
         history.Stdout.Split('\n').ShouldContain(line => line.Contains("RelationshipAdded") && line.Contains("-> CARD-0049"));
         stub.Calls.Clear();
-        var json = await RunAsync(stub, "get", "CARD-0051", "-Json");
+        var json = await RunAsync(stub, "get", "CARD-0051", "--json");
         json.ExitCode.ShouldBe(0, json.Stderr);
         JsonElement.DeepEquals(JsonDocument.Parse(json.Stdout).RootElement, JsonDocument.Parse(CardJson).RootElement).ShouldBeTrue();
         stub.Calls.Select(c => c.Path).ShouldBe(new[] { "/api/cards/CARD-0051" });
@@ -167,12 +170,18 @@ public sealed class CardRelationshipScriptTests
             ? new(404, """{"detail":"Relationship route unavailable","code":"relationship_route_missing"}""")
             : respond(call, index);
 
-        var run = await RunAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049");
+        var run = await RunAsync(stub, "block", "CARD-0051", "--blocked-by", "CARD-0049");
 
         run.ExitCode.ShouldNotBe(0);
         var error = System.Text.RegularExpressions.Regex.Replace(run.Stderr, @"\s+", " ");
         error.ShouldContain("Relationship route unavailable");
         error.ShouldContain("code relationship_route_missing");
+        // The detail stays intact on its own line, the code on the next: plain text, no console view in between.
+        run.Stderr.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).ShouldBe(new[]
+        {
+            "Antiphon POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships failed: Relationship route unavailable",
+            "code relationship_route_missing",
+        });
         run.Stdout.ShouldBeEmpty();
         stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
         {
@@ -181,141 +190,33 @@ public sealed class CardRelationshipScriptTests
         });
     }
 
-    // Windows qualification renders this failure through ConciseView on a ~120-column
-    // console. The view breaks the detail with a " | " marker and ANSI colors, so a
-    // whitespace collapse no longer contains the server phrase. Linux pipes report
-    // width 80 and stay green without this pty.
-    [Test]
-    [NativeLinuxOnly("The 120-column concise-view witness needs a Linux pty.")]
-    public async Task Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns()
-    {
-        if (!OperatingSystem.IsLinux())
-            throw new TUnit.Core.Exceptions.SkipTestException("The 120-column concise-view witness needs a Linux pty.");
-
-        using var stub = CreateStub();
-        var respond = stub.Respond!;
-        stub.Respond = (call, index) => call.Path.EndsWith("/relationships")
-            ? new(404, """{"detail":"Relationship route unavailable","code":"relationship_route_missing"}""")
-            : respond(call, index);
-
-        var run = await RunInWidePtyAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049");
-
-        run.ExitCode.ShouldNotBe(0, run.Output);
-        var error = System.Text.RegularExpressions.Regex.Replace(run.Output, @"\s+", " ");
-        error.ShouldContain("Relationship route unavailable");
-        error.ShouldContain("code relationship_route_missing");
-        stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
-        {
-            "GET /api/cards/CARD-0051",
-            "POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"
-        });
-    }
-
-    // A 404 must stay a terminating error for an in-process caller. pwsh -File already
-    // exits 1; these two launch the script with -Command against the same stub.
+    // A 404 stops the command: exit 1, nothing on stdout, the server's detail on stderr (the script's pwsh -Command chain
+    // stopped at the throw; the command answers the exit code).
     [Test]
     public async Task Get_404_stops_an_in_process_command_chain()
     {
         using var stub = CreateStub();
-        var run = await RunInProcessAsync(stub, "& $env:CARD_PS1 get CARD-9999; 'NEXT_RAN'");
+        var run = await RunAsync(stub, "get", "CARD-9999");
         run.ExitCode.ShouldBe(1, run.Stdout + "\n" + run.Stderr);
-        run.Stdout.ShouldNotContain("NEXT_RAN");
+        run.Stdout.ShouldBeEmpty();
         run.Stderr.ShouldContain("Unexpected request");
+        stub.Calls.Select(c => c.Path).ShouldBe(new[] { "/api/cards/CARD-9999" });
     }
 
+    // An in-process caller (SessionRunner, a remote host) gets the exit code back from CardCli.Run, never an exception (the
+    // script's 404 was a terminating error a try could catch).
     [Test]
-    public async Task Get_404_is_caught_by_an_in_process_try()
+    public void Get_404_is_caught_by_an_in_process_try()
     {
         using var stub = CreateStub();
-        var run = await RunInProcessAsync(stub, "try { & $env:CARD_PS1 get CARD-9999 } catch { 'CAUGHT' }");
-        run.Stdout.ShouldContain("CAUGHT");
-        run.ExitCode.ShouldBe(0, run.Stdout + "\n" + run.Stderr);
-        run.Stderr.ShouldContain("Unexpected request");
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var options = CardCliOptions.Parse(["get", "CARD-9999"], stub.BaseUrl, "synthetic-task-token", CardCommandRun.WorkingDirectory);
+        var exit = Should.NotThrow(() => CardCli.Run(options, CardCommandRun.Host(output, error), new System.IO.Abstractions.FileSystem(), stub.Transport));
+        exit.ShouldBe(1);
+        output.ToString().ShouldBeEmpty();
+        error.ToString().ShouldContain("Unexpected request");
     }
-
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunInProcessAsync(Stub stub, string command)
-    {
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(command);
-        start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
-        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-        start.Environment["CARD_PS1"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1");
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch
-        {
-            process.Kill(entireProcessTree: true);
-            throw;
-        }
-        return (process.ExitCode, await stdout, await stderr);
-    }
-
-    private static async Task<(int ExitCode, string Output)> RunInWidePtyAsync(Stub stub, params string[] args)
-    {
-        var work = Directory.CreateTempSubdirectory("card404pty").FullName;
-        try
-        {
-            var perl = Path.Combine(work, "winsize.pl");
-            var driver = Path.Combine(work, "drive.ps1");
-            var typescript = Path.Combine(work, "out.txt");
-            await File.WriteAllTextAsync(perl, """
-                use strict;
-                use warnings;
-                my $ws = pack('S4', 40, 120, 0, 0);
-                ioctl(STDIN, 0x5414, $ws) or die "ioctl: $!";
-                exec @ARGV or die "exec: $!";
-                """);
-            await File.WriteAllTextAsync(driver, """
-                $ProgressPreference = 'SilentlyContinue'
-                $ErrorView = 'ConciseView'
-                if ($null -ne $PSStyle) { $PSStyle.OutputRendering = 'Ansi' }
-                & $env:CARD_PS1 @args
-                exit $LASTEXITCODE
-                """);
-            var command = "perl " + perl + " pwsh -NoProfile -NonInteractive -File " + driver;
-            foreach (var arg in args) command += " " + arg;
-            var start = new ProcessStartInfo("script")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            start.ArgumentList.Add("-q");
-            start.ArgumentList.Add("-e");
-            start.ArgumentList.Add("-f");
-            start.ArgumentList.Add("-c");
-            start.ArgumentList.Add(command);
-            start.ArgumentList.Add(typescript);
-            start.Environment["TERM"] = "xterm-256color";
-            start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
-            start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-            start.Environment["CARD_PS1"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1");
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("script did not start");
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            try { await process.WaitForExitAsync(timeout.Token); }
-            catch
-            {
-                process.Kill(entireProcessTree: true);
-                throw;
-            }
-            var output = File.Exists(typescript) ? await File.ReadAllTextAsync(typescript) : "";
-            if (output.Length == 0) output = (await stdout) + (await stderr);
-            return (process.ExitCode, output);
-        }
-        finally
-        {
-            try { Directory.Delete(work, true); } catch { }
-        }
-    }
-
     private static void AssertCardWithoutRelationships(string stdout)
     {
         stdout.ShouldContain("CARD-0051");
@@ -336,7 +237,7 @@ public sealed class CardRelationshipScriptTests
     public async Task Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers()
     {
         using var stub = CreateStub();
-        var run = await RunAsync(stub, "unblock", "CARD-0051", "-BlockedBy", "CARD-0047");
+        var run = await RunAsync(stub, "unblock", "CARD-0051", "--blocked-by", "CARD-0047");
         run.ExitCode.ShouldNotBe(0);
         run.Stderr.ShouldContain("CARD-0049");
         run.Stderr.ShouldContain("CARD-0048");

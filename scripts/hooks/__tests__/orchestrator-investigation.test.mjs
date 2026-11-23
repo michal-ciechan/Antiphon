@@ -96,6 +96,35 @@ describe('classifyCall / isSourcePath', () => {
     }).isSourceRead, false);
   });
 
+  it('never treats the card command as a source read, but reads its source', () => {
+    // The card command that replaced scripts/card.ps1 (unit 27 of the 2026-11-22 plan), in each form it is run.
+    for (const [tool, command] of [
+      ['Bash', 'scripts/antiphon card get CARD-0001 --board Antiphon'],
+      ['Bash', "ANTIPHON_API=http://localhost:17202 ./scripts/antiphon card search 'server/Foo.cs' --all"],
+      ['Bash', 'sh scripts/antiphon card history CARD-0001'],
+      ['PowerShell', 'scripts\\antiphon.cmd card edit CARD-0001 --reason-file C:\\tmp\\reason.md --title x'],
+      ['PowerShell', "& 'C:\\src\\Antiphon\\scripts\\antiphon.cmd' card list --status Review --json"],
+      ['PowerShell', 'antiphon-scripts card get CARD-0001 | Select-String server/Application'],
+    ]) {
+      const call = classifyCall({ tool_name: tool, tool_input: { command } });
+      assert.equal(call.isSourceRead, false, command);
+      assert.equal(call.kind, 'other-tool', command);
+    }
+    // A read in another segment still counts, and the pattern is the program, not a phrase a read names.
+    assert.equal(classifyCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'scripts/antiphon card get CARD-0001 && cat server/Application/Services/CardService.cs' },
+    }).isSourceRead, true);
+    assert.equal(classifyCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'rg -n "antiphon card" server/' },
+    }).isSourceRead, true);
+    assert.equal(classifyCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'cat scripts/lib/Antiphon.Nightly/CardCli.cs' },
+    }).isSourceRead, true);
+  });
+
   it('counts Read of a source file, including unparsed JSON that still names one', () => {
     assert.equal(classifyCall({
       tool_name: 'Read',

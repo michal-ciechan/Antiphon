@@ -8,7 +8,7 @@
 // GET /api/stage-outcomes with since, until, stage, cardId and (with --include-superseded) latestOnly=false. --card takes a
 // card in any written form (CARD-0272, card-272, #272, 272 or its GUID) and resolves it first with GET
 // /api/cards/{ref}?cwd=<checkout>, the checkout being git's top level of the working directory (else the working
-// directory), as card.ps1 resolves it. --stage matches ignoring case and is sent in its listed spelling. The task token
+// directory), as the card command resolves it. --stage matches ignoring case and is sent in its listed spelling. The task token
 // (ANTIPHON_TASK_TOKEN) is sent as X-Antiphon-Task-Token when set; the CLI passes it and ANTIPHON_API in, and --api
 // overrides the API. Without --json the answer's summary prints as a table (Stage, Runs, Found, Clean, Skipped, Failed,
 // Unreported, Hit%, UsdSpent, Usd/Finding, ServerSecs; a hit percentage as the server wrote it, USD as $N2 in the invariant

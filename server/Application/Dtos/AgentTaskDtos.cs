@@ -86,7 +86,7 @@ public sealed partial record CreateAgentTaskRequest(
     IReadOnlyDictionary<string, string>? InheritedLlmEnv = null,
     /// <summary>
     /// The card this work is against (CARD-0040), as a guid or any identifier shape
-    /// <c>card.ps1</c> accepts (<c>CARD-0040</c>, <c>card-40</c>, <c>#40</c>, <c>40</c>). Omitted,
+    /// the card command accepts (<c>CARD-0040</c>, <c>card-40</c>, <c>#40</c>, <c>40</c>). Omitted,
     /// the binding is derived: the parent / followed-up task's card, else the FIRST
     /// <c>CARD-nnnn</c> in the title. An EXPLICIT value that resolves to no card is a 422 — a
     /// binding the caller asked for and silently did not get is worse than none.

@@ -191,7 +191,7 @@ Permission bypass is **not implied by the kind** — `AgentTuiRunnerCatalog` rep
 launches a TUI that will sit on approval prompts nobody is there to answer.
 
 Antiphon also exports its own orchestration identity into the agent process — this is how
-`delegate.ps1` and `card.ps1` know who they are without being told:
+`delegate.ps1` and the card command (`scripts/antiphon card`) know who they are without being told:
 
 | Launched as | Gets |
 |---|---|

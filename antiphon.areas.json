@@ -94,7 +94,7 @@
         "server/Application/Services/Card*.cs",
         "server/Application/Services/Board*.cs",
         "server/Api/Endpoints/CardEndpoints.cs",
-        "scripts/card.ps1"
+        "scripts/lib/Antiphon.Nightly/CardCli.cs"
       ]
     },
     "tracker": {

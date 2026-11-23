@@ -272,8 +272,8 @@ function isNeverReadCommand(command) {
     const bin = firstBin(head);
     if (!bin || bin === 'cd') continue;
     if (NEVER_READ_BINS.has(bin)) sawNever = true;
-    else if (isReadVerb(bin, head) || /delegate\.ps1|card\.ps1/i.test(head)) {
-      if (/delegate\.ps1|card\.ps1/i.test(head)) sawNever = true;
+    else if (isReadVerb(bin, head) || /delegate\.ps1/i.test(head) || isCardCommand(head)) {
+      if (/delegate\.ps1/i.test(head) || isCardCommand(head)) sawNever = true;
       else sawRead = true;
     }
   }
@@ -283,18 +283,39 @@ function isNeverReadCommand(command) {
 
 function isShellSourceRead(command) {
   if (!command) return false;
-  if (/delegate\.ps1|card\.ps1/i.test(command) && !isReadVerbCommand(command)) return false;
+  if ((/delegate\.ps1|card\.ps1/i.test(command) || splitShell(command).some((seg) => isCardCli(pipelineHead(seg))))
+    && !isReadVerbCommand(command)) return false;
   const segments = splitShell(command);
   for (const seg of segments) {
     const head = pipelineHead(seg);
     const bin = firstBin(head);
     if (!bin || bin === 'cd') continue;
     if (NEVER_READ_BINS.has(bin)) continue;
-    if (/delegate\.ps1|card\.ps1/i.test(head)) continue;
+    if (/delegate\.ps1/i.test(head) || isCardCommand(head)) continue;
     if (!isReadVerb(bin, head)) continue;
     if (commandNamesSource(head) || isRecursiveGrepOnSourceRoot(head)) return true;
   }
   return false;
+}
+
+// The board card CLI: scripts/card.ps1 (kept for transcripts written before it was deleted, unit 27 of the 2026-11-22
+// plan) or the card command that replaced it, scripts/antiphon card, scripts\antiphon.cmd card or antiphon-scripts card.
+// The twin of OrchestratorInvestigationDetector.IsCardCommand.
+function isCardCommand(segment) {
+  return /card\.ps1/i.test(segment) || isCardCli(segment);
+}
+
+const CARD_CLI_PREFIXES = new Set(['&', 'call', 'sh', 'bash']);
+
+// A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
+// assignments ahead of it) and whose first argument is the card command.
+function isCardCli(segment) {
+  const tokens = tokenize(segment).map(stripQuotes);
+  let i = 0;
+  while (i < tokens.length && (CARD_CLI_PREFIXES.has(tokens[i].toLowerCase()) || (tokens[i].includes('=') && !tokens[i].startsWith('-')))) i++;
+  if (i + 1 >= tokens.length || tokens[i + 1].toLowerCase() !== 'card') return false;
+  const bin = tokens[i].replace(/\\/g, '/').replace(/^.*\//, '').toLowerCase().replace(/\.exe$/, '');
+  return bin === 'antiphon' || bin === 'antiphon.cmd' || bin === 'antiphon-scripts';
 }
 
 function isReadVerbCommand(command) {

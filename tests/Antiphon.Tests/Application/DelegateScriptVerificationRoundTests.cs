@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -9,10 +6,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0544 V-2 / G-10. The real <c>scripts/delegate.ps1</c> and <c>scripts/card.ps1</c> under pwsh
-/// against loopback stubs: the exact camelCase wire body, full GUIDs, the selection file's JSON
-/// object (never its path), local refusal before any POST, and server refusals surviving to a
-/// nonzero exit. The stubs prove the CLI contract, not server admission.
+/// CARD-0544 V-2 / G-10. The real <c>scripts/delegate.ps1</c> under pwsh against loopback stubs, and
+/// the card command (<c>Antiphon.Nightly.CardCli</c>, which replaced <c>scripts/card.ps1</c> in unit 27
+/// of the 2026-11-22 plan) in process against a stub transport: the exact camelCase wire body, full
+/// GUIDs, the selection file's JSON object (never its path), local refusal before any POST, and server
+/// refusals surviving to a nonzero exit. The stubs prove the CLI contract, not server admission.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -144,17 +142,17 @@ public sealed class DelegateScriptVerificationRoundTests
     }
 
     [Test]
-    public async Task C544_CardPolicyPatch()
+    public void C544_CardPolicyPatch()
     {
         foreach (var (row, args, expectCode, expectReview) in new (string, string[], string?, string?)[]
                  {
-                     ("code-only", ["-CodeVerificationPolicy", "AllowInterim"], "AllowInterim", null),
-                     ("review-only", ["-ReviewVerificationPolicy", "FullOnly"], null, "FullOnly"),
-                     ("both", ["-CodeVerificationPolicy", "FullOnly", "-ReviewVerificationPolicy", "AllowInterim"], "FullOnly", "AllowInterim"),
+                     ("code-only", ["--code-verification-policy", "AllowInterim"], "AllowInterim", null),
+                     ("review-only", ["--review-verification-policy", "FullOnly"], null, "FullOnly"),
+                     ("both", ["--code-verification-policy", "FullOnly", "--review-verification-policy", "AllowInterim"], "FullOnly", "AllowInterim"),
                  })
         {
-            using var stub = new CardStubApi();
-            var run = await RunCardAsync(stub.BaseUrl, ["edit", "CARD-0544", .. args, "-Reason", $"C544 {row}"]);
+            var stub = new CardStubApi();
+            var run = RunCard(stub, ["edit", "CARD-0544", .. args, "--reason", $"C544 {row}"]);
             run.ExitCode.ShouldBe(0, $"{row}: {run.Output}");
             var patch = stub.LastPatch.ShouldNotBeNull(row).RootElement;
             patch.GetProperty("concurrencyToken").GetString().ShouldBe(CardStubApi.Token, row + ": fresh token");
@@ -163,8 +161,8 @@ public sealed class DelegateScriptVerificationRoundTests
             AssertOptional(patch, "reviewVerificationPolicy", expectReview, row);
         }
 
-        using var refused = new CardStubApi();
-        var bad = await RunCardAsync(refused.BaseUrl, ["edit", "CARD-0544", "-CodeVerificationPolicy", "Sometimes", "-Reason", "bad"]);
+        var refused = new CardStubApi();
+        var bad = RunCard(refused, ["edit", "CARD-0544", "--code-verification-policy", "Sometimes", "--reason", "bad"]);
         bad.ExitCode.ShouldNotBe(0, "bad-enum");
         refused.LastPatch.ShouldBeNull("bad-enum: no PATCH");
     }
@@ -177,40 +175,18 @@ public sealed class DelegateScriptVerificationRoundTests
             body.GetProperty(name).GetString().ShouldBe(expected, $"{row}: {name}");
     }
 
-    private static async Task<(int ExitCode, string Output)> RunCardAsync(string apiBaseUrl, string[] args)
+    private static (int ExitCode, string Output) RunCard(CardStubApi api, string[] args)
     {
-        var startInfo = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1"));
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-        startInfo.Environment["ANTIPHON_API"] = apiBaseUrl.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var run = Antiphon.Tests.Scripts.CardCommandRun.Run(api.Transport, args, taskToken: "");
+        return (run.Exit, run.Output + run.Error);
     }
 
-    /// <summary>Loopback card API: GET limits, GET card (token), PATCH content. Never the production board.</summary>
-    private sealed class CardStubApi : IDisposable
+    /// <summary>The card API stand-in: GET limits, GET card (token), PATCH content. Never the production board.</summary>
+    private sealed class CardStubApi
     {
         public const string Token = "c5440000-aaaa-bbbb-cccc-000000000001";
         private const string CardId = "c5440000-aaaa-bbbb-cccc-0000000000cc";
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
 
-        public CardStubApi()
-        {
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
         public JsonDocument? LastPatch { get; private set; }
 
         private static string CardJson => $$"""
@@ -219,50 +195,21 @@ public sealed class DelegateScriptVerificationRoundTests
              "concurrencyToken":"{{Token}}","revisionCount":3,"codeVerificationPolicy":"FullOnly","reviewVerificationPolicy":"FullOnly"}
             """;
 
-        private async Task PumpAsync()
+        public Antiphon.Nightly.NightlyReportHttp Transport => (method, uri, _, body) =>
         {
-            while (!_cts.IsCancellationRequested)
+            var path = new Uri(uri).AbsolutePath;
+            if (method == "GET" && path == "/api/cards/limits")
+                return new(200, """{"maxTitleLength":300,"maxDescriptionLength":20000,"maxPrivateNotesLength":20000,"maxReasonLength":4000,"maxActorLength":200,"maxAliasLength":64,"maxAliasWords":6,"importanceValues":[],"urgencyValues":[]}""");
+            if (method == "GET" && path.StartsWith("/api/cards/", StringComparison.Ordinal))
+                return new(200, CardJson);
+            if (method == "PATCH" && path == $"/api/cards/{CardId}/content")
             {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-                var path = context.Request.Url!.AbsolutePath;
-                string response;
-                var status = 200;
-                if (context.Request.HttpMethod == "GET" && path == "/api/cards/limits")
-                    response = """{"maxTitleLength":300,"maxDescriptionLength":20000,"maxPrivateNotesLength":20000,"maxReasonLength":4000,"maxActorLength":200,"maxAliasLength":64,"maxAliasWords":6,"importanceValues":[],"urgencyValues":[]}""";
-                else if (context.Request.HttpMethod == "GET" && path.StartsWith("/api/cards/", StringComparison.Ordinal))
-                    response = CardJson;
-                else if (context.Request.HttpMethod == "PATCH" && path == $"/api/cards/{CardId}/content")
-                {
-                    using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                    LastPatch = JsonDocument.Parse(await reader.ReadToEndAsync());
-                    response = CardJson;
-                }
-                else
-                {
-                    status = 404;
-                    response = """{"detail":"not stubbed"}""";
-                }
-                var bytes = Encoding.UTF8.GetBytes(response);
-                context.Response.StatusCode = status;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.Close();
+                LastPatch = JsonDocument.Parse(body!);
+                return new(200, CardJson);
             }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            LastPatch?.Dispose();
-            _cts.Dispose();
-        }
+            return new(404, """{"detail":"not stubbed"}""");
+        };
     }
-
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-c544-cli").FullName;

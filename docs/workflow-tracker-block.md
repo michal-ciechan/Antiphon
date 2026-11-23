@@ -96,20 +96,20 @@ default or an automatic writer produced the value — today that is only the tra
 `CardRanking.FromTrackedIssue`: an explicit `priority:*` label always wins; absent one, an
 operator-authored import-origin issue defaults `High`, everything else defaults `Normal`. `Human`
 means an explicit content edit (`PATCH /api/cards/{id}/content` with `importance` set, or
-`card.ps1 edit -Importance`) set it. The guard is one rule: the sync skips the importance branch
+`scripts/antiphon card edit --importance`) set it. The guard is one rule: the sync skips the importance branch
 entirely whenever `ImportanceProvenance == Human`, so a hand-rated card is never reverted by the
 next tick, and no 409 is raised — a background tick has no caller to receive one. Any other content
 field the sync overwrites (title, description, labels) is preceded by one `ContentEdit` revision
 authored `external-tracker` so the overwrite is visible in history, even while importance itself is
 left alone. `ImportanceProvenance` can be handed back to `Auto` explicitly (an optional
-`importanceProvenance` field on the content PATCH, or `card.ps1 edit -ImportanceProvenance Auto`) —
+`importanceProvenance` field on the content PATCH, or `scripts/antiphon card edit --importance-provenance Auto`) —
 "let the tracker own it again" is an explicit act, never an accident.
 
 An import-origin card with `AuthorIsOperator == false` (a non-operator raised it) that is still
 `Auto`, still in `Backlog`, and not archived is `needsHumanReview` — derived at read time, nothing
 stored. It clears the moment a human rates the card (an explicit `Normal` counts — the review *is*
 the rating), moves it out of Backlog, or archives it. It shows as a `review` chip beside the GitHub
-key on the board and in `card.ps1 get`, as `needs_human_review:` in `docs/cards/` front matter, and
+key on the board and in `scripts/antiphon card get`, as `needs_human_review:` in `docs/cards/` front matter, and
 as an `ImportedIssueNeedsReview` row on `GET /api/attention` (see
 [antiphon-api.md](antiphon-api.md)).
 
@@ -169,7 +169,7 @@ only a human rating (or an explicit `importanceProvenance: Human` edit) clears t
 
 ### Preserved Gotcha #71
 
-- **`CARD-nnnn` is unique per BOARD, and every card route resolves it through the same scope walk `delegate.ps1 -Card` uses** (CARD-0218): explicit `?boardId=` (`card.ps1 -Board <name|guid>`, now on every verb), else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`), else the boards of every project whose `LocalRepositoryPath` contains `?cwd=` (`card.ps1` sends `git rev-parse --show-toplevel`), else everywhere — uniqueness demanded inside the scope that answers, never a silent first row. A collision that survives all of that is `409 card_identifier_ambiguous` listing every candidate (board, guid, status, title) in `detail` and in a `candidates` extension; `-Board` on a card the board does not hold is a 404 naming where it does live. Two boards hold cards today (Antiphon, Gym Stat — `CARD-0001…0021` collide) and every project setup adds a board that will collide from its first card, so never resolve an identifier with a bare global query; go through `CardIdentifierScope`.
+- **`CARD-nnnn` is unique per BOARD, and every card route resolves it through the same scope walk `delegate.ps1 -Card` uses** (CARD-0218): explicit `?boardId=` (`scripts/antiphon card ... --board <name|guid>`, on every verb), else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`), else the boards of every project whose `LocalRepositoryPath` contains `?cwd=` (the card command sends `git rev-parse --show-toplevel`), else everywhere — uniqueness demanded inside the scope that answers, never a silent first row. A collision that survives all of that is `409 card_identifier_ambiguous` listing every candidate (board, guid, status, title) in `detail` and in a `candidates` extension; `-Board` on a card the board does not hold is a 404 naming where it does live. Two boards hold cards today (Antiphon, Gym Stat — `CARD-0001…0021` collide) and every project setup adds a board that will collide from its first card, so never resolve an identifier with a bare global query; go through `CardIdentifierScope`.
 
 ### Preserved Gotcha #72
 

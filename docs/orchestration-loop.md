@@ -415,7 +415,7 @@ and a direct capability/feature probe. A master-only land is not that restart. D
 a succeeded delegate as activation evidence. Use the landing receipt's post-rebase
 identity, not an assumption that the Code worktree SHA survived landing unchanged.
 On every terminal card move or close, including UI/API moves and tracker closes that
-bypass `card.ps1`, perform this activation check as an operator step. A successful
+bypass the card command, perform this activation check as an operator step. A successful
 card move and task settlement do not verify deployment. AppHost and server2 run the current `rc/YYYY-MM-DD` rc tip, never master. A
 master-only land is not a restart. When a restart is due, compare the running
 `GET /api/version` SHA with that rc tip, and probe the changed feature. See
@@ -633,7 +633,7 @@ is the `orchestrator` bundle; this section carries the reasons.
    sequenced its first slice behind CARD-0535's Code task for exactly this reason; the deferral
    costs an hour, the conflict costs a Merge task and a second Review.
 6. **File a card the moment a structural defect is found.** Investigate and Review turn up bugs
-   outside their card's scope; each one gets its own Backlog card now (`card.ps1 new`, with the
+   outside their card's scope; each one gets its own Backlog card now (`scripts/antiphon card new`, with the
    evidence), never a note to batch later. A finding that lives only in a chat reply or a report
    body is gone at the next compaction.
 7. **`-IgnoreConcurrencyLimit` answers the absolute cap, never a same-stage collision.** A 409
@@ -1034,7 +1034,7 @@ orchestrator tick. Tracker writes stay explicit.
    `GET /api/cards/{id}/thread` for the plan/task context.
 2. Leave `importanceProvenance: Human` ratings alone unless the reason says why
    (`overrideHumanRatings` stays false; the response lists what was skipped).
-3. Prefer one `card.ps1 order` with an ordered file and one reason over N `reorder` calls; put
+3. Prefer one `scripts/antiphon card order` with an ordered file and one reason over N `reorder` calls; put
    the argument for the order in the reason.
 4. Never move a card between columns; reprioritising is not dispatching. A card in an active
    column is the tick's business.
@@ -2227,8 +2227,8 @@ Split by what each part actually is:
   — what shipped, what was corrected, what was disproved, what is still open, which other cards it
   touches. A haiku agent cannot see that from the repo.
 - **The move and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict text
-  and the card identifier; it runs `pwsh -File scripts/card.ps1 close CARD-nnnn -ReasonFile <path>`
-  (or `-Reason` for something short) and reports the result. Closing cancels the card's unstarted
+  and the card identifier; it runs `scripts/antiphon card close CARD-nnnn --reason-file <path>`
+  (or `--reason` for something short) and reports the result. Closing cancels the card's unstarted
   delegates and leaves started ones with an attention row (CARD-0738), so close after the last
   delegate settles, or expect a Canceled note for anything that had not started.
 
@@ -2243,16 +2243,16 @@ Split by what each part actually is:
   NEWER than your last move, so dragging a card back with a reason is respected until the next
   dispatch. Nothing automates Review → Done.
 - **A move into an active column used to spawn an agent silently — CARD-0051 made that opt-in.**
-  Two dead sessions and a stray worktree came from one such PATCH before the fix. `card.ps1 move`
-  (and the API underneath it) now only starts a session when `-Spawn` / `spawn: true` is passed, and
+  Two dead sessions and a stray worktree came from one such PATCH before the fix. `scripts/antiphon card move`
+  (and the API underneath it) now only starts a session when `--spawn` / `spawn: true` is passed, and
   says so when it suppressed one. Muscle memory from before the fix should assume nothing starts
   unless asked.
-- Corrections to a card's text go through `card.ps1 edit` (`PATCH /api/cards/{id}/content`,
+- Corrections to a card's text go through `scripts/antiphon card edit` (`PATCH /api/cards/{id}/content`,
   CARD-0019), which records a revision with a reason. Before that shipped, a wrong card could only
   be corrected by filing another card.
-- **`scripts/card.ps1` is the preferred way to touch a card from a shell now** — identifier
-  addressing, the limits endpoint, and file-backed text are documented in its own header comment,
-  which is canonical; see also the AGENTS.md synopsis. `server/Bundles/board-api.md` (attached to an
+- **`scripts/antiphon card` is the preferred way to touch a card from a shell now** — identifier
+  addressing, the limits endpoint, and file-backed text are documented in the header comment of
+  `scripts/lib/Antiphon.Nightly/CardCli.cs`, which is canonical; see also the AGENTS.md synopsis. `server/Bundles/board-api.md` (attached to an
   agent that works the board directly) still documents the raw API for callers that can't shell out
   to the CLI — fix a wrong rule there, not here. Everything *around* the card — which agents exist,
   what they are running, a board's columns, a live session's transcript — is
@@ -2291,7 +2291,7 @@ cannot open it.
 
 **Scheduled prompts have shipped** (CARD-0057 phase 1, `scripts/antiphon schedule`) — a `Daily` schedule
 to the orchestrator is how the unmerged-branch sweep from §1 runs. The check-in timer (CARD-0047)
-and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of payback for what's left:
+and the card CLI (CARD-0051, `scripts/antiphon card`) have shipped. In rough order of payback for what's left:
 
 1. **The unmerged-branch sweep** from §1 — a `Daily` schedule to the orchestrator that reports genuinely unapplied work.
 2. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
@@ -2449,7 +2449,7 @@ that file and OutputDistillation.ContractVersion together. INVARIANTS sentences 
 The file must stay at most 3000 characters and keep opening with "You are the Antiphon OUTPUT
 DISTILLER (contract v". Do not change OutputDistillationGate or any other gate. Run
 InstructionBundleTests and OutputDistillationGateTests. Commit and push a branch. Open a card
-in Review with card.ps1 new carrying: the window numbers, the flagged samples you acted on,
+in Review with scripts/antiphon card new carrying: the window numbers, the flagged samples you acted on,
 the diff, the stamps before/after, and one line of reason per changed sentence.
 
 If the bar is not met: report the numbers and the sentence "no change warranted". Do not open

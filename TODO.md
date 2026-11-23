@@ -3,7 +3,7 @@
 A hand-maintained leftover of known-but-unfixed things, so they survive outside anyone's chat
 history. The generated board list is
 [docs/cards/antiphon/INDEX.md](docs/cards/antiphon/INDEX.md) (CARD-0004). Edit the card
-(`scripts/card.ps1`), not those files. Items below stay here until they are themselves cards and
+(`scripts/antiphon card`), not those files. Items below stay here until they are themselves cards and
 this file is retired.
 
 Each entry says what is wrong, how it shows up, and what a fix has to decide. Delete an entry when

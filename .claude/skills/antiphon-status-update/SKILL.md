@@ -16,7 +16,7 @@ Run from the repository root. General operating rules and dispatch mechanics liv
    Run `scripts/antiphon status-snapshot --project-id <id>` (`scripts\antiphon.cmd` on
    Windows; add `--json` for machine output). Omit `--project-id` only when the pipeline
    identifies one project; ambiguity requires an explicit id. API URL and authentication use
-   `ANTIPHON_API` and the task-token header, as card.ps1/delegate.ps1 do.
+   `ANTIPHON_API` and the task-token header, as the card command and delegate.ps1 do.
    The command is read-only, reads remote refs without fetching, and marks cached
    history. Exit 2 means partial facts: preserve every `UNVERIFIED`/`errors` entry.
 2. Check `GET /api/agent-tasks/pipeline?projectId=<id>` for stages in flight,
@@ -27,7 +27,7 @@ Run from the repository root. General operating rules and dispatch mechanics liv
    relevant task, including finished/failed tasks known from the previous update.
    Read state, session activity, and parsed `next=`/`next:` and `handoff:` lines.
    Pull transcript progress before declaring healthy or stalled. Use
-   `scripts/card.ps1 get <CARD-id> -Board <board>` for actual card decisions;
+   `scripts/antiphon card get <CARD-id> --board <board>` for actual card decisions;
    read history when a decision or earlier statement needs correction.
 4. Run `git fetch origin master`, `git log <previous-update-sha>..origin/master
    --oneline`, `git rev-parse origin/master`, and

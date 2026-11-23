@@ -1020,7 +1020,7 @@ public sealed class ScheduleService
         else if (TargetGoneReason(card) is { } gone)
             warnings.Add($"A fire will skip: {gone}.");
         else if (schedule.Start == ScheduleStart.Spawn)
-            warnings.Add("Spawn bypasses board and column caps, the same as card.ps1 move -Spawn.");
+            warnings.Add("Spawn bypasses board and column caps, the same as scripts/antiphon card move --spawn.");
         else if (schedule.Start == ScheduleStart.Release)
             warnings.Add("Release lets the orchestrator start a session under the board and column caps.");
 

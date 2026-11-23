@@ -158,7 +158,7 @@ Operator rule (2026-11-07, reaffirmed 2026-11-08): "Migrations should be additiv
 
 ## The record
 
-Outstanding work belongs on the Antiphon board as a card (`scripts/card.ps1 new -Board <name> ...`),
+Outstanding work belongs on the Antiphon board as a card (`scripts/antiphon card new --board <name> ...`),
 not in a `TODO.md` file. Board and column identifiers are this deployment's data, not a portable
 fact — name the board, do not hard-code its id.
 

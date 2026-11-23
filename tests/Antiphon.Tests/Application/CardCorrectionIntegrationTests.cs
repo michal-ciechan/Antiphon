@@ -939,7 +939,7 @@ public class CardCorrectionIntegrationTests
     // CARD-0040: a move the transition sweep made reads back as history like any other, with an
     // actor that names the automation. `card-transitions` rather than `system` on purpose - that
     // name already means the RunAttempt / card-spawn path, and 234 of 262 live Move rows have a
-    // blank EditedBy (the human via card.ps1), which is what makes a named actor legible at all.
+    // blank EditedBy (the human via the card command), which is what makes a named actor legible at all.
     [Test]
     public async Task An_automated_transition_reads_back_as_a_move_revision_by_card_transitions()
     {

@@ -129,7 +129,7 @@ public sealed partial class ReleaseGatePlatformTests
         var linuxShipRows = shipRows.Where(r => r.Platform == "linux").ToArray();
         rows.Check(shipped.SchemaVersion == 4 && SameSet(shipRows.Select(r => r.Suite + "|" + r.Class + "|" + r.Platform),
                 ["e2e|AgentTaskLandDeliveryE2ETests|linux", "e2e|DispatchBaseWarningDeliveryE2ETests|linux", "e2e|WorktreeRetirementDeliveryE2ETests|linux",
-                    "antiphon|PosixHarnessToolTests|windows", "antiphon|CardRelationshipScriptTests|windows"])
+                    "antiphon|PosixHarnessToolTests|windows"])
             && linuxShipRows.Length == 3 && linuxShipRows.All(r => r.Suite == "e2e") && SameSet(linuxShipRows.Select(r => r.Class), scopedRows.Select(r => r.Class)),
             "C1323 shipped-three-linux-rows");
         var c1614 = shippedRows.Where(r => string.Equals(r.Owner, "CARD-1614", StringComparison.OrdinalIgnoreCase)).ToArray();

@@ -1,15 +1,15 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// The card command's close and move (Antiphon.Nightly.CardCli, which replaced scripts/card.ps1 in unit 27 of the 2026-11-22
+/// plan) print the deployment prompt after a terminal move, after the card, tracker and task settlement lines, and make no
+/// extra request for it. In process against a stub transport; nothing leaves the process.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardCloseDeploymentPromptScriptTests
 {
     private const string CardId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -18,8 +18,8 @@ public sealed class CardCloseDeploymentPromptScriptTests
     [Test]
     public async Task close_prints_deployment_prompt_after_card_tracker_and_task_settlement()
     {
-        using var api = new StubApi();
-        var run = await RunAsync(api, "close", "CARD-0001", "-Reason", "finished");
+        var api = new StubApi();
+        var run = await RunAsync(api, "close", "CARD-0001", "--reason", "finished");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var card = run.Output.IndexOf("CARD-0001", StringComparison.Ordinal);
@@ -32,20 +32,21 @@ public sealed class CardCloseDeploymentPromptScriptTests
         prompt.ShouldBeGreaterThan(task);
         run.Output.ShouldContain("/api/version");
         run.Output.ShouldContain("check-daemon-build.ps1");
+        run.Output.ShouldContain("GitHub      closed #1 (https://example.test/1)");
         api.PatchCount.ShouldBe(1);
     }
 
     [Test]
     public async Task terminal_move_prints_prompt_but_nonterminal_move_does_not()
     {
-        using var terminalApi = new StubApi();
-        var terminal = await RunAsync(terminalApi, "move", "CARD-0001", "-To", "Done");
+        var terminalApi = new StubApi();
+        var terminal = await RunAsync(terminalApi, "move", "CARD-0001", "--to", "Done");
         terminal.ExitCode.ShouldBe(0, terminal.Output);
         terminal.Output.ShouldContain("deployment not verified", Case.Insensitive);
         terminalApi.PatchCount.ShouldBe(1);
 
-        using var activeApi = new StubApi();
-        var active = await RunAsync(activeApi, "move", "CARD-0001", "-To", "Working");
+        var activeApi = new StubApi();
+        var active = await RunAsync(activeApi, "move", "CARD-0001", "--to", "Working");
         active.ExitCode.ShouldBe(0, active.Output);
         active.Output.ShouldNotContain("deployment not verified", Case.Insensitive);
         activeApi.PatchCount.ShouldBe(1);
@@ -54,8 +55,8 @@ public sealed class CardCloseDeploymentPromptScriptTests
     [Test]
     public async Task close_without_task_settlement_still_prints_prompt()
     {
-        using var api = new StubApi(includeSettlement: false);
-        var run = await RunAsync(api, "close", "CARD-0001", "-Reason", "finished");
+        var api = new StubApi(includeSettlement: false);
+        var run = await RunAsync(api, "close", "CARD-0001", "--reason", "finished");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("deployment not verified", Case.Insensitive);
@@ -66,20 +67,21 @@ public sealed class CardCloseDeploymentPromptScriptTests
     [Test]
     public async Task failed_patch_exits_nonzero_without_success_or_deployment_prompt()
     {
-        using var api = new StubApi(failPatch: true);
-        var run = await RunAsync(api, "close", "CARD-0001", "-Reason", "finished");
+        var api = new StubApi(failPatch: true);
+        var run = await RunAsync(api, "close", "CARD-0001", "--reason", "finished");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldNotContain("moved to");
         run.Output.ShouldNotContain("deployment not verified", Case.Insensitive);
+        run.Output.ShouldContain("stale token");
         api.PatchCount.ShouldBe(1);
     }
 
     [Test]
     public async Task prompt_is_advisory_and_makes_no_extra_api_request()
     {
-        using var api = new StubApi();
-        var run = await RunAsync(api, "close", "CARD-0001", "-Reason", "finished");
+        var api = new StubApi();
+        var run = await RunAsync(api, "close", "CARD-0001", "--reason", "finished");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("canonical checkout", Case.Insensitive);
@@ -87,89 +89,35 @@ public sealed class CardCloseDeploymentPromptScriptTests
         api.Requests.ShouldBe(4); // card, columns, limits, PATCH; no version or runner probe
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(StubApi api, params string[] args)
+    private static Task<(int ExitCode, string Output)> RunAsync(StubApi api, params string[] args)
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1");
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = api.BaseUrl.TrimEnd('/');
-        start.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var run = CardCommandRun.Run(api.Transport, args, taskToken: "");
+        return Task.FromResult((run.Exit, run.Output + run.Error));
     }
 
-    private sealed class StubApi : IDisposable
+    private sealed class StubApi(bool includeSettlement = true, bool failPatch = false)
     {
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-        private readonly bool _includeSettlement;
-        private readonly bool _failPatch;
-
-        public StubApi(bool includeSettlement = true, bool failPatch = false)
-        {
-            _includeSettlement = includeSettlement;
-            _failPatch = failPatch;
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
         public int PatchCount { get; private set; }
         public int Requests { get; private set; }
 
-        private async Task PumpAsync()
+        public NightlyReportHttp Transport => (method, uri, _, _) =>
         {
-            while (!_cts.IsCancellationRequested)
+            Requests++;
+            var path = new Uri(uri).AbsolutePath;
+            if (method == "GET" && path == "/api/cards/CARD-0001")
+                return new(200, $$"""{"id":"{{CardId}}","identifier":"CARD-0001","status":"Working","title":"Example","importance":"Normal","urgency":"Normal","rank":0,"concurrencyToken":"11111111-1111-1111-1111-111111111111","boardId":"{{BoardId}}","labels":[]}""");
+            if (method == "GET" && path == $"/api/boards/{BoardId}/columns")
+                return new(200, """[{"id":"33333333-3333-3333-3333-333333333333","name":"Working","stateKey":"Working","cardStatus":"Working","isTerminal":false,"columnOrder":0},{"id":"44444444-4444-4444-4444-444444444444","name":"Done","stateKey":"Done","cardStatus":"Done","isTerminal":true,"columnOrder":1}]""");
+            if (method == "GET" && path == "/api/cards/limits")
+                return new(200, """{"maxReasonLength":4000}""");
+            if (method == "PATCH" && path == $"/api/cards/{CardId}")
             {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-                Requests++;
-                var path = context.Request.Url?.AbsolutePath ?? "";
-                var method = context.Request.HttpMethod;
-                var status = 200;
-                string body;
-                if (method == "GET" && path == "/api/cards/CARD-0001")
-                    body = $$"""{"id":"{{CardId}}","identifier":"CARD-0001","status":"Working","title":"Example","importance":"Normal","urgency":"Normal","rank":0,"concurrencyToken":"11111111-1111-1111-1111-111111111111","boardId":"{{BoardId}}","labels":[]}""";
-                else if (method == "GET" && path == $"/api/boards/{BoardId}/columns")
-                    body = """[{"id":"33333333-3333-3333-3333-333333333333","name":"Working","stateKey":"Working","cardStatus":"Working","isTerminal":false,"columnOrder":0},{"id":"44444444-4444-4444-4444-444444444444","name":"Done","stateKey":"Done","cardStatus":"Done","isTerminal":true,"columnOrder":1}]""";
-                else if (method == "GET" && path == "/api/cards/limits")
-                    body = """{"maxReasonLength":4000}""";
-                else if (method == "PATCH" && path == $"/api/cards/{CardId}")
-                {
-                    PatchCount++;
-                    if (_failPatch) { status = 409; body = """{"detail":"stale token"}"""; }
-                    else
-                    {
-                        var settlement = _includeSettlement ? ""","taskSettlement":{"leftOpen":["task-1"],"canceled":[]}""" : "";
-                        body = $$"""{"card":{"id":"{{CardId}}","identifier":"CARD-0001","status":"Done","title":"Example","importance":"Normal","urgency":"Normal","rank":0,"labels":[]},"trackerPush":{"trackerKind":"GitHubIssues","outcome":"Closed","externalKey":"#1","url":"https://example.test/1"}{{settlement}}}""";
-                    }
-                }
-                else { status = 404; body = """{"detail":"not stubbed"}"""; }
-                var bytes = Encoding.UTF8.GetBytes(body);
-                context.Response.StatusCode = status;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.Close();
+                PatchCount++;
+                if (failPatch) return new(409, """{"detail":"stale token"}""");
+                var settlement = includeSettlement ? ""","taskSettlement":{"leftOpen":["task-1"],"canceled":[]}""" : "";
+                return new(200, $$"""{"card":{"id":"{{CardId}}","identifier":"CARD-0001","status":"Done","title":"Example","importance":"Normal","urgency":"Normal","rank":0,"labels":[]},"trackerPush":{"trackerKind":"GitHubIssues","outcome":"Closed","externalKey":"#1","url":"https://example.test/1"}{{settlement}}}""");
             }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            _cts.Dispose();
-        }
+            return new(404, """{"detail":"not stubbed"}""");
+        };
     }
 }

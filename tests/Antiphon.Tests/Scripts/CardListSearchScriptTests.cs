@@ -1,16 +1,17 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0846: the card command's list and search (Antiphon.Nightly.CardCli, which replaced scripts/card.ps1 in unit 27 of the
+/// 2026-11-22 plan) follow every page and buffer the result, or fail without printing a partial one. In process against a
+/// stub transport that records each request (path, query, task token, method, body); nothing leaves the process.
+/// CardRelationshipScriptTests reuses the stub and the runner.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardListSearchScriptTests
 {
     private const string BoardId = "22222222-2222-2222-2222-222222222222";
@@ -29,55 +30,28 @@ public sealed class CardListSearchScriptTests
         }
     }
 
-    internal sealed class Stub : IDisposable
+    /// <summary>The card API stand-in: /api/boards names one board, Antiphon; every other request is Respond's (default: an empty page).</summary>
+    internal sealed class Stub(string prefix = "") : IDisposable
     {
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _stop = new();
-        private readonly Task _pump;
         public readonly List<Call> Calls = [];
         public Func<Call, int, Reply>? Respond;
-        public string BaseUrl { get; }
+        public string BaseUrl { get; } = CardCommandRun.Api + prefix;
 
-        public Stub(string prefix = "")
+        public NightlyReportHttp Transport => (method, uri, headers, body) =>
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener).TrimEnd('/') + prefix;
-            _pump = Task.Run(PumpAsync);
-        }
+            var question = uri.IndexOf('?');
+            var call = new Call(new Uri(uri).AbsolutePath, question < 0 ? "" : uri[question..],
+                headers.TryGetValue("X-Antiphon-Task-Token", out var token) ? token : null, method, body ?? "");
+            Calls.Add(call);
+            Reply reply;
+            if (call.Path.EndsWith("/api/boards", StringComparison.Ordinal))
+                reply = new(200, $"[{{\"id\":\"{BoardId}\",\"name\":\"Antiphon\"}}]");
+            else
+                reply = Respond?.Invoke(call, Calls.Count) ?? new(200, Page(0, 0));
+            return new NightlyReportHttpResponse(reply.Status, reply.Body);
+        };
 
-        private async Task PumpAsync()
-        {
-            while (!_stop.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch { return; }
-                var request = context.Request;
-                using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
-                var call = new Call(request.Url!.AbsolutePath, request.Url.Query,
-                    request.Headers["X-Antiphon-Task-Token"], request.HttpMethod, await reader.ReadToEndAsync());
-                Calls.Add(call);
-                Reply reply;
-                if (call.Path.EndsWith("/api/boards", StringComparison.Ordinal))
-                    reply = new(200, $"[{{\"id\":\"{BoardId}\",\"name\":\"Antiphon\"}}]");
-                else
-                    reply = Respond?.Invoke(call, Calls.Count) ?? new(200, Page(0, 0));
-                var bytes = Encoding.UTF8.GetBytes(reply.Body);
-                context.Response.StatusCode = reply.Status;
-                context.Response.ContentType = "application/json";
-                try { await context.Response.OutputStream.WriteAsync(bytes); }
-                catch (HttpListenerException) { }
-                finally { context.Response.Close(); }
-            }
-        }
-
-        public void Dispose()
-        {
-            _stop.Cancel();
-            try { _listener.Stop(); } catch { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch { }
-            _listener.Close();
-            _stop.Dispose();
-        }
+        public void Dispose() { }
     }
 
     private static string Page(int start, int count, bool more = false, string? token = null,
@@ -93,35 +67,18 @@ public sealed class CardListSearchScriptTests
         return JsonSerializer.Serialize(new { cards, total, truncated = more, nextPageToken = token });
     }
 
-    internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Stub stub, params string[] args)
+    /// <summary>The command line after "card" against the stub, with the task token the script tests set.</summary>
+    internal static Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Stub stub, params string[] args)
     {
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1"));
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
-        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch
-        {
-            process.Kill(entireProcessTree: true);
-            throw;
-        }
-        return (process.ExitCode, await stdout, await stderr);
+        var run = CardCommandRun.Run(stub.Transport, args, taskToken: "synthetic-task-token", api: stub.BaseUrl);
+        return Task.FromResult((run.Exit, run.Output, run.Error));
     }
-
     [Test] public async Task List_exhausts_pages_and_keeps_json_clean()
     {
         using var stub = new Stub();
         stub.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 500, true, "second")) : new(200, Page(500, 105));
-        var run = await RunAsync(stub, "list", "-Board", BoardId, "-Json");
+        var run = await RunAsync(stub, "list", "--board", BoardId, "--json");
         run.ExitCode.ShouldBe(0, run.Stderr);
         using var json = JsonDocument.Parse(run.Stdout);
         json.RootElement.GetProperty("cards").GetArrayLength().ShouldBe(605);
@@ -137,7 +94,7 @@ public sealed class CardListSearchScriptTests
         stub.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 1, true, opaque, 2)) : new(200, Page(1, 1, total: 2));
         var phrase = "雪 +&%#/_\\ quote\"";
-        var run = await RunAsync(stub, "search", phrase, "-Board", BoardId, "-Status", "Done", "-Json");
+        var run = await RunAsync(stub, "search", phrase, "--board", BoardId, "--status", "Done", "--json");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.All(c => c.Path == "/api/cards/search" && c.Value("q") == phrase &&
             c.Value("status") == "Done").ShouldBeTrue();
@@ -149,15 +106,15 @@ public sealed class CardListSearchScriptTests
     {
         using var stub = new Stub();
         stub.Respond = (call, _) => new(200, Page(0, 1, total: call.Path.EndsWith("search") ? 1 : null));
-        var run = await RunAsync(stub, "list", "-Board", "Antiphon", "-All", "-Json");
+        var run = await RunAsync(stub, "list", "--board", "Antiphon", "--all", "--json");
         run.ExitCode.ShouldBe(0, run.Stderr);
-        var search = await RunAsync(stub, "search", "needle", "-Board", "Antiphon", "-All", "-Json");
+        var search = await RunAsync(stub, "search", "needle", "--board", "Antiphon", "--all", "--json");
         search.ExitCode.ShouldBe(0, search.Stderr);
         stub.Calls.Count.ShouldBe(4);
         stub.Calls.All(c => c.Value("includeArchived") == "true").ShouldBeTrue();
         using var defaultStub = new Stub();
         defaultStub.Respond = (call, _) => new(200, Page(0, 1, total: call.Path.EndsWith("search") ? 1 : null));
-        (await RunAsync(defaultStub, "search", "needle", "-Board", "Antiphon", "-Json")).ExitCode.ShouldBe(0);
+        (await RunAsync(defaultStub, "search", "needle", "--board", "Antiphon", "--json")).ExitCode.ShouldBe(0);
         defaultStub.Calls.All(c => c.Value("includeArchived") is null).ShouldBeTrue();
     }
 
@@ -170,10 +127,10 @@ public sealed class CardListSearchScriptTests
             stub.Respond = (call, _) => call.Value("pageToken") is null
                 ? new(200, Page(0, 2, true, "next", search ? 3 : null))
                 : new(200, Page(2, 1, total: search ? 3 : null));
-            var args = search ? new List<string> { "search", "needle" } : new List<string> { "list", "-Status", "Backlog" };
-            args.AddRange(["-Limit", "2"]);
-            if (all) args.Add("-All");
-            args.Add("-Json");
+            var args = search ? new List<string> { "search", "needle" } : new List<string> { "list", "--status", "Backlog" };
+            args.AddRange(["--limit", "2"]);
+            if (all) args.Add("--all");
+            args.Add("--json");
             var run = await RunAsync(stub, args.ToArray());
             run.ExitCode.ShouldBe(0, run.Stderr);
             JsonDocument.Parse(run.Stdout).RootElement.GetProperty("cards").GetArrayLength().ShouldBe(3);
@@ -190,7 +147,7 @@ public sealed class CardListSearchScriptTests
         {
             using var stub = new Stub();
             stub.Respond = (_, _) => new(200, broken);
-            var run = await RunAsync(stub, "list", "-Status", "Backlog", "-Json");
+            var run = await RunAsync(stub, "list", "--status", "Backlog", "--json");
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
             run.Stderr.ShouldContain("enumeration");
@@ -211,8 +168,8 @@ public sealed class CardListSearchScriptTests
                 2 => new(200, Page(0, 1, total: search ? 1 : null)),
                 _ => new(200, Page(1, 1, total: total))
             };
-            var args = search ? new[] { "search", "needle", "-Json" } :
-                new[] { "list", "-Status", "Backlog", "-Json" };
+            var args = search ? new[] { "search", "needle", "--json" } :
+                new[] { "list", "--status", "Backlog", "--json" };
             var run = await RunAsync(stub, args);
             stub.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
                 .ShouldBe(emptyOnSecondPage
@@ -228,7 +185,7 @@ public sealed class CardListSearchScriptTests
             cycle.Respond = (_, request) => request <= tokens.Length
                 ? new(200, Page(request - 1, 1, true, tokens[request - 1]))
                 : new(200, Page(request - 1, 1));
-            var repeated = await RunAsync(cycle, "list", "-Status", "Backlog", "-Json");
+            var repeated = await RunAsync(cycle, "list", "--status", "Backlog", "--json");
             cycle.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
                 .ShouldBe(tokens.Length == 2
                     ? new[] { ("/api/cards", (string?)null), ("/api/cards", "A") }
@@ -245,7 +202,7 @@ public sealed class CardListSearchScriptTests
             2 => new(200, Page(1, 1, true, "a")),
             _ => new(200, Page(2, 1))
         };
-        (await RunAsync(caseSensitive, "list", "-Status", "Backlog", "-Json")).ExitCode.ShouldBe(0);
+        (await RunAsync(caseSensitive, "list", "--status", "Backlog", "--json")).ExitCode.ShouldBe(0);
         caseSensitive.Calls.Count.ShouldBe(3);
     }
 
@@ -256,7 +213,7 @@ public sealed class CardListSearchScriptTests
             listFailure.Respond = (call, _) => call.Value("pageToken") is null
                 ? new(200, Page(0, 1, true, "next"))
                 : new(500, "{\"detail\":\"server failed; restart enumeration\"}");
-            var listRun = await RunAsync(listFailure, "list", "-Status", "Backlog", "-Json");
+            var listRun = await RunAsync(listFailure, "list", "--status", "Backlog", "--json");
             listFailure.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
                 .ShouldBe(new[] { ("/api/cards", (string?)null), ("/api/cards", "next") });
             listRun.ExitCode.ShouldNotBe(0);
@@ -269,7 +226,7 @@ public sealed class CardListSearchScriptTests
             stub.Respond = (call, _) => call.Value("pageToken") is null
                 ? new(200, Page(0, 1, true, "next", 2))
                 : new(status, "{\"code\":\"card_page_changed\",\"detail\":\"restart without pageToken\"}");
-            var run = await RunAsync(stub, "search", "needle", "-Json");
+            var run = await RunAsync(stub, "search", "needle", "--json");
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
             run.Stderr.ShouldContain("restart");
@@ -277,7 +234,7 @@ public sealed class CardListSearchScriptTests
         }
         using var missingSearch = new Stub();
         missingSearch.Respond = (_, _) => new(404, "{\"detail\":\"no search route\"}");
-        var missing = await RunAsync(missingSearch, "search", "needle", "-Json");
+        var missing = await RunAsync(missingSearch, "search", "needle", "--json");
         missing.ExitCode.ShouldNotBe(0);
         missing.Stdout.ShouldBeNullOrWhiteSpace();
         missingSearch.Calls.Count.ShouldBe(1);
@@ -292,7 +249,7 @@ public sealed class CardListSearchScriptTests
             using var stub = new Stub();
             stub.Respond = (call, _) => call.Value("pageToken") is null
                 ? new(200, Page(0, 1, true, "next", 2)) : new(200, second);
-            var run = await RunAsync(stub, "search", "needle", "-Json");
+            var run = await RunAsync(stub, "search", "needle", "--json");
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
         }
@@ -302,7 +259,7 @@ public sealed class CardListSearchScriptTests
             changedTotal.Respond = (call, _) => call.Value("pageToken") is null
                 ? new(200, Page(0, 1, true, "next", firstTotal))
                 : new(200, Page(1, 1, total: secondTotal));
-            var changed = await RunAsync(changedTotal, "search", "needle", "-Json");
+            var changed = await RunAsync(changedTotal, "search", "needle", "--json");
             changedTotal.Calls.Select(c => c.Value("pageToken")).ToArray()
                 .ShouldBe(new string?[] { null, "next" });
             changed.ExitCode.ShouldNotBe(0);
@@ -311,27 +268,27 @@ public sealed class CardListSearchScriptTests
         }
         using var within = new Stub();
         within.Respond = (_, _) => new(200, Page(0, 2, total: 2, duplicate: 1));
-        var duplicate = await RunAsync(within, "search", "needle", "-Json");
+        var duplicate = await RunAsync(within, "search", "needle", "--json");
         duplicate.ExitCode.ShouldNotBe(0);
         duplicate.Stderr.ShouldContain("repeated a card id");
         using var greater = new Stub();
         greater.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 1, true, "next", 1)) : new(200, Page(1, 1, total: 1));
-        var tooMany = await RunAsync(greater, "search", "needle", "-Json");
+        var tooMany = await RunAsync(greater, "search", "needle", "--json");
         tooMany.ExitCode.ShouldNotBe(0);
         tooMany.Stderr.ShouldContain("final count differs");
     }
 
     [Test] public async Task Collection_argument_errors_are_local()
     {
-        foreach (var args in new[] { new[] { "list" }, new[] { "list", "-All" },
-            new[] { "search" }, new[] { "search", " ", "-Board", "Antiphon" },
-            new[] { "list", "CARD-1", "-Status", "Done", "-Board", "Antiphon" },
-            new[] { "list", "-Status", "Done", "-Limit", "0" },
-            new[] { "list", "-Board", "Antiphon", "-UpdatedSince", "nonsense" },
-            new[] { "list", "-Board", "Antiphon", "-Status", "NoSuchStatus" },
-            new[] { "search", "needle", "-UpdatedSince", "2026-09-30T00:00:00Z" },
-            new[] { "get", "CARD-1", "-All" } })
+        foreach (var args in new[] { new[] { "list" }, new[] { "list", "--all" },
+            new[] { "search" }, new[] { "search", " ", "--board", "Antiphon" },
+            new[] { "list", "CARD-1", "--status", "Done", "--board", "Antiphon" },
+            new[] { "list", "--status", "Done", "--limit", "0" },
+            new[] { "list", "--board", "Antiphon", "--updated-since", "nonsense" },
+            new[] { "list", "--board", "Antiphon", "--status", "NoSuchStatus" },
+            new[] { "search", "needle", "--updated-since", "2026-09-30T00:00:00Z" },
+            new[] { "get", "CARD-1", "--all" } })
         {
             using var stub = new Stub();
             var run = await RunAsync(stub, args);
@@ -346,8 +303,8 @@ public sealed class CardListSearchScriptTests
         {
             using var stub = new Stub();
             stub.Respond = (call, _) => new(200, Page(0, count, total: call.Path.EndsWith("search") ? count : null));
-            foreach (var args in new[] { new[] { "list", "-Status", "Done", "-Json" },
-                new[] { "search", "needle", "-Json" } })
+            foreach (var args in new[] { new[] { "list", "--status", "Done", "--json" },
+                new[] { "search", "needle", "--json" } })
             {
                 var run = await RunAsync(stub, args);
                 run.ExitCode.ShouldBe(0, run.Stderr);
@@ -356,11 +313,11 @@ public sealed class CardListSearchScriptTests
         }
         using var humanStub = new Stub();
         humanStub.Respond = (_, _) => new(200, Page(0, 1));
-        var human = await RunAsync(humanStub, "list", "-Status", "Done");
+        var human = await RunAsync(humanStub, "list", "--status", "Done");
         human.ExitCode.ShouldBe(0, human.Stderr);
         human.Stdout.ShouldContain("1 cards in all boards");
         human.Stdout.ShouldContain("previewed");
-        human.Stdout.ShouldContain("card.ps1 get");
+        human.Stdout.ShouldContain("scripts/antiphon card get <hit>");
         human.Stdout.ShouldContain(BoardId);
     }
 
@@ -369,7 +326,7 @@ public sealed class CardListSearchScriptTests
         using var stub = new Stub("/fixture");
         stub.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 1, true, "next")) : new(200, Page(1, 1));
-        var run = await RunAsync(stub, "list", "-Board", "Antiphon", "-Status", "Done", "-Json");
+        var run = await RunAsync(stub, "list", "--board", "Antiphon", "--status", "Done", "--json");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.Count.ShouldBe(3);
         stub.Calls.All(c => c.Path.StartsWith("/fixture/api/", StringComparison.Ordinal)).ShouldBeTrue();
@@ -382,7 +339,7 @@ public sealed class CardListSearchScriptTests
         stub.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 1, true, "next")) : new(200, Page(1, 1));
         const string since = "2026-09-30T00:00:00Z";
-        var run = await RunAsync(stub, "list", "-UpdatedSince", since, "-Json");
+        var run = await RunAsync(stub, "list", "--updated-since", since, "--json");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.Count.ShouldBe(2);
         stub.Calls.All(c => c.Value("updatedSince") == since).ShouldBeTrue();

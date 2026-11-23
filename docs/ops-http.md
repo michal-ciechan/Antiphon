@@ -22,7 +22,7 @@ The operator's map of the surface an orchestrator actually reaches for: which ag
 they are running, which boards and cards are open, and what a live session is doing. It is
 deliberately short and it is not the route map — [antiphon-api.md](antiphon-api.md) is that, and
 `server/Api/Endpoints/*.cs` plus `src/Antiphon.SessionRunner/Program.cs` are the authority over
-both. Cards are worked through `scripts/card.ps1` (`server/Bundles/board-api.md` for the raw card
+both. Cards are worked through `scripts/antiphon card` (`server/Bundles/board-api.md` for the raw card
 API); nothing here replaces that.
 
 For process logs, Hangfire history, server2 container output, deployment-evidence gaps and
@@ -146,7 +146,7 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | `board-watch` | `board-watch` |
 | `useAgentTask` | `useagenttask` |
 
-`scripts/delegate.ps1`, `scripts/checkpoint-task.ps1`, `scripts/card.ps1` and the `status-snapshot` command (`scripts/antiphon status-snapshot`, which kept the `status-snapshot.ps1` label of the script it replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
+`scripts/delegate.ps1`, `scripts/checkpoint-task.ps1` and the `card` and `status-snapshot` commands (`scripts/antiphon card` and `scripts/antiphon status-snapshot`, which kept the `card.ps1` and `status-snapshot.ps1` labels of the scripts they replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
 
 | Need | Method | Path |
 |---|---|---|
@@ -186,13 +186,13 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | Card-file policy and cleanup state | GET | `/api/boards/{id}/card-files/status` |
 | Explicit card-file policy update | PUT | `/api/boards/{id}/card-files/settings` (both policy and expected-policy booleans) |
 | Reconcile permitted card files and revoked exports | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`; HTTP 200 may describe a refusal) |
-| A board's cards | GET | `/api/cards?boardId={guid}&limit=&pageToken=&includeArchived=` — bounded, resumable summary pages; `card.ps1 list -Board <name> -Json` exhausts them |
-| Search cards | GET | `/api/cards/search?q={literal}&boardId=&status=&limit=&pageToken=&includeArchived=` — all-board search if unscoped; `card.ps1 search '<phrase>' -Board <name> -All` exhausts pages |
-| One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
+| A board's cards | GET | `/api/cards?boardId={guid}&limit=&pageToken=&includeArchived=` — bounded, resumable summary pages; `scripts/antiphon card list --board <name> --json` exhausts them |
+| Search cards | GET | `/api/cards/search?q={literal}&boardId=&status=&limit=&pageToken=&includeArchived=` — all-board search if unscoped; `scripts/antiphon card search '<phrase>' --board <name> --all` exhausts pages |
+| One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `scripts/antiphon card get` |
 | Card relationships (CARD-0100) | GET / POST | `/api/cards/{id}/relationships` reads `{ blockedBy, blocks }`; POST adds a blocker with `{ concurrencyToken, kind: "BlockedBy", relatedCard, relatedBoardId?, reason?, createdBy? }` and returns 201 with the relationship and rotated `cardConcurrencyToken`. |
 | Remove card relationship (CARD-0100) | POST | `/api/cards/{id}/relationships/{relationshipId}/remove` takes `{ concurrencyToken, reason?, removedBy? }` and returns the updated card. |
-| Move a card | PATCH | `/api/cards/{id}` `{ boardColumnId, concurrencyToken, reason?, spawn? }`. A move into a terminal column returns `taskSettlement` (`canceled` and `leftOpen` short ids) when it settled or left a bound task; the property is omitted when there was nothing to settle (CARD-0738). `card.ps1 move` / `close` print `tasks canceled` and `tasks still working` lines from it. |
-| Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `card.ps1 diagnose CARD-nnnn` (`-NoWait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
+| Move a card | PATCH | `/api/cards/{id}` `{ boardColumnId, concurrencyToken, reason?, spawn? }`. A move into a terminal column returns `taskSettlement` (`canceled` and `leftOpen` short ids) when it settled or left a bound task; the property is omitted when there was nothing to settle (CARD-0738). `scripts/antiphon card move` / `close` print `tasks canceled` and `tasks still working` lines from it. |
+| Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `scripts/antiphon card diagnose CARD-nnnn` (`--no-wait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
 | Diagnoses ledger / stats | GET | `/api/diagnoses?cardId=` (newest first), `/api/diagnoses/stats?since=` |
 | Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/distiller.ps1 -Stats` / `-List [-Flagged]` |
 | Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `delegate.ps1 -Flag <id> -Verdict Lost\|Noisy\|Good [-Note]` |
@@ -254,11 +254,11 @@ if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK
 (Invoke-RestMethod "$api/api/agents" -Headers $h) |
     Select-Object name, status, @{n='session';e={$_.liveSession.id}}
 
-# a board's complete card list (the script follows bounded pages)
-pwsh -NoProfile -File scripts/card.ps1 list -Board Antiphon -Json
+# a board's complete card list (the command follows bounded pages; scripts\antiphon.cmd on Windows)
+scripts/antiphon card list --board Antiphon --json
 # duplicate check: search stored full fields, then inspect a candidate's full detail
-pwsh -NoProfile -File scripts/card.ps1 search '<distinctive phrase>' -Board Antiphon -All
-pwsh -NoProfile -File scripts/card.ps1 get CARD-0846 -Board Antiphon
+scripts/antiphon card search '<distinctive phrase>' --board Antiphon --all
+scripts/antiphon card get CARD-0846 --board Antiphon
 
 # delegated work in flight (occupancy) -- always an envelope; read .items. Prefer ?projectId=
 # on an Antiphon-board question. Status names are case-insensitive, a comma list unions,
@@ -489,9 +489,9 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   full description, decoded labels and full terminal reason. Both endpoints default to live cards;
   `includeArchived=true` includes archived cards. `limit` is a page size capped at 500, never a
   total cap. A continuation with changed matching rows is 409 `card_page_changed`; restart from
-  page one. `card.ps1 list` and `search` buffer all pages or fail. A lack of matches in a capped
+  page one. `scripts/antiphon card list` and `search` buffer all pages or fail. A lack of matches in a capped
   list or text preview does not establish absence, and a failed enumeration cannot establish
-  "no duplicate". Inspect a search hit with `card.ps1 get` for full text.
+  "no duplicate". Inspect a search hit with `scripts/antiphon card get` for full text.
 
 - **SNAPSHOT IS RUNNER-ONLY.** `GET :17204/sessions/{id}/snapshot` renders the screen; the server
   has `buffer` and `transcript` and no snapshot at all. Grepping `SessionEndpoints.cs` for it finds
@@ -558,27 +558,27 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
 
 ## Card relationship commands (CARD-0100)
 
-Use `card.ps1 block CARD-0051 -BlockedBy CARD-0049` and
-`card.ps1 unblock CARD-0051 -BlockedBy CARD-0049`. Reason is optional;
-`-ReasonFile <path>` reads UTF-8 text, and `-By <name>` supplies the actor.
-`block -RelatedBoard <name|guid>` fences the blocker lookup. `-Board` scopes the
-blocked card. `-Token` supplies an explicit compare-and-swap token; otherwise the
-script fetches the card token. `unblock` matches `relatedIdentifier` and refuses
-zero or multiple matches. `-Json` emits the API response.
+Use `scripts/antiphon card block CARD-0051 --blocked-by CARD-0049` and
+`scripts/antiphon card unblock CARD-0051 --blocked-by CARD-0049`. Reason is optional;
+`--reason-file <path>` reads UTF-8 text, and `--by <name>` supplies the actor.
+`block --related-board <name|guid>` fences the blocker lookup. `--board` scopes the
+blocked card. `--token` supplies an explicit compare-and-swap token; otherwise the
+command fetches the card token. `unblock` matches `relatedIdentifier` (ignoring case) and refuses
+zero or multiple matches. `--json` emits the API response.
 
-The script coverage below uses `CardRelationshipScriptTests` against an HTTP stub.
+The coverage below runs the command (`Antiphon.Nightly.CardCli`) in process against a stub transport (`CardRelationshipScriptTests`).
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
 | Add a blocker | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | Request order, literal POST fields, fetched/explicit token, UTF-8 reason file, named related board and JSON response |
 | Remove a blocker | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier rather than title selects the remove route; fetched token and absent optional fields |
-| Display available relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | With a successful relationship read: `blocked by  CARD-0049 (InProgress)`, `blocked by  CARD-0048 (resolved: Done)`, `blocks      CARD-0052`, history `-> CARD-0049`; `get -Json` retains the card payload |
+| Display available relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | With a successful relationship read: `blocked by  CARD-0049 (InProgress)`, `blocked by  CARD-0048 (resolved: Done)`, `blocks      CARD-0052`, history `-> CARD-0049`; `get --json` retains the card payload |
 | Get with an absent relationship route | `Get_prints_the_card_when_relationships_returns_an_empty_404` | Empty-body 404 still prints the card and exactly `relationships: unavailable`, exits 0, and leaves stderr empty |
 | Get with a failed relationship read | `Get_prints_the_card_and_warns_when_relationships_returns_500` | HTTP 500 still prints the card and exactly `relationships: unavailable`, exits 0, and warns on stderr |
 | Block with an absent relationship route | `Block_fails_loudly_when_relationships_returns_404` | POST 404 remains a nonzero exit with the server's problem detail/code and no success output |
 | Missing blocker | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Nonzero exit, current blockers named and no POST |
-| Multiple matching identifiers; remove reason/actor | Not covered by a script test | The script refuses multiple matches and sends optional `reason`/`removedBy` on removal |
-| Cycle/duplicate refusal from the API | `CardRelationshipApiTests.Relationship_write_refusal_table`, `Duplicate_pair_is_409_card_relationship_exists` | API 409 codes `card_relationship_cycle` / `card_relationship_exists`; script propagation is not covered by these tests |
+| Multiple matching identifiers; remove reason/actor | Not covered by a command test | The command refuses multiple matches and sends optional `reason`/`removedBy` on removal |
+| Cycle/duplicate refusal from the API | `CardRelationshipApiTests.Relationship_write_refusal_table`, `Duplicate_pair_is_409_card_relationship_exists` | API 409 codes `card_relationship_cycle` / `card_relationship_exists`; command propagation is not covered by these tests |
 | Existing list/search | `CardListSearchScriptTests` | Paging, filtering, JSON shapes and request scope/header regression |
 
 ## Typed input goes through the queue
@@ -665,7 +665,7 @@ agent (CARD-0221). A stalled session is a detection and decision state, never an
 Review/files, tracker sync, workflows, gates, channels, settings and delegation routes are in
 [antiphon-api.md](antiphon-api.md), which also explains why there is no OpenAPI document.
 Delegation is `scripts/delegate.ps1` ([orchestration-loop.md](orchestration-loop.md)); card writes
-are `scripts/card.ps1`. There is deliberately **no `scripts/agents.ps1` wrapper** (CARD-0296): this
+are `scripts/antiphon card`. There is deliberately **no `scripts/agents.ps1` wrapper** (CARD-0296): this
 surface is almost all GET, and the one write that bites must go through the message queue rather
 than a script that could quietly reimplement it. If turning an agent name into a guid keeps
 hurting, that is a new card, not a helper smuggled in here.

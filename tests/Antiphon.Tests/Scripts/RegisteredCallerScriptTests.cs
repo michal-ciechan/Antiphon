@@ -13,8 +13,8 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-2004. The registered scripts send their own <c>X-Antiphon-Caller</c> label.
 /// <c>scripts/lib/antiphon-caller.ps1</c> (and its compiled reading, <c>Antiphon.Nightly.AntiphonCaller</c>, used by the
-/// status-snapshot command) refuses any other value and does not copy it into the header or the error. The server list is
-/// <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
+/// status-snapshot and card commands) refuses any other value and does not copy it into the header or the error. The server
+/// list is <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -85,14 +85,23 @@ public sealed class RegisteredCallerScriptTests
     }
 
     [Test]
-    public async Task Card_limits_sends_its_registered_caller_label()
+    public void Card_limits_sends_its_registered_caller_label()
     {
-        using var stub = new HeaderStub(_ => new(200,
-            """{"maxTitleLength":1,"maxDescriptionLength":1,"maxPrivateNotesLength":1,"maxReasonLength":1,"maxActorLength":1,"maxAliasLength":1,"maxAliasWords":1}"""));
-        var run = await RunAsync(stub, "card.ps1", "-Limits");
-        AssertRegisteredCaller(stub, "card.ps1");
-        stub.Calls.ShouldContain(c => c.Path == "/api/cards/limits");
-        run.ExitCode.ShouldBe(0, run.Stderr);
+        // The card command (in-process since unit 27) keeps the registered label of the script it replaced, on every request.
+        var http = new RecordingOperatorHttp(call => call.Path.StartsWith("/api/cards/limits", StringComparison.Ordinal)
+            ? new(200, """{"maxTitleLength":1,"maxDescriptionLength":1,"maxPrivateNotesLength":1,"maxReasonLength":1,"maxActorLength":1,"maxAliasLength":1,"maxAliasWords":1}""")
+            : call.Path.Contains("/relationships", StringComparison.Ordinal)
+                ? new(200, """{"blockedBy":[],"blocks":[]}""")
+                : new(200, """{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","identifier":"CARD-0001","status":"Backlog","title":"caller"}"""));
+        var run = CardCommandRun.Run(http.Transport, ["limits"], taskToken: "synthetic-task-token");
+        run.Exit.ShouldBe(0, run.All);
+        var get = CardCommandRun.Run(http.Transport, ["get", "CARD-0001"], taskToken: "synthetic-task-token");
+        get.Exit.ShouldBe(0, get.All);
+        Antiphon.Nightly.CardCli.CallerLabel.ShouldBe("card.ps1");
+        AgentTaskGetPollMetrics.RegisteredLabels.Contains(Antiphon.Nightly.CardCli.CallerLabel).ShouldBeTrue();
+        http.Calls.Select(c => c.Method + " " + new Uri(c.Uri).AbsolutePath).ShouldBe(
+            ["GET /api/cards/limits", "GET /api/cards/CARD-0001", "GET /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"]);
+        http.Calls.ShouldAllBe(call => call.Headers["X-Antiphon-Caller"] == "card.ps1");
     }
 
     [Test]

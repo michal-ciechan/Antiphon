@@ -58,7 +58,7 @@ process once a minute and served at `GET /api/diagnostics/db-rate`.
 Code that already calls that route, and the interval written next to it:
 
 - `scripts/delegate.ps1` sends `X-Antiphon-Caller: delegate.ps1` on its server calls. `-Status` reads one task. It also sends `X-Antiphon-Task-Token` when the environment has one.
-- The `status-snapshot` command (`scripts/antiphon status-snapshot`) sends `status-snapshot.ps1` and GETs one task per in-flight, queued, or blocked id. `scripts/checkpoint-task.ps1` sends `checkpoint-task.ps1` and GETs the named task. `scripts/card.ps1` sends `card.ps1`.
+- The `status-snapshot` command (`scripts/antiphon status-snapshot`) sends `status-snapshot.ps1` and GETs one task per in-flight, queued, or blocked id. `scripts/checkpoint-task.ps1` sends `checkpoint-task.ps1` and GETs the named task. The card command (`scripts/antiphon card`) sends `card.ps1`, the label of the script it replaced.
 - The client drawer (`useAgentTask`) fetches the detail when it opens and when a mutation invalidates it. It has no `refetchInterval` and does not send `X-Antiphon-Caller`. The board list, summary, and pipeline refetch every 15 seconds. Those are other routes, and this counter does not include them.
 
 `scripts/lib/antiphon-caller.ps1` attaches a label only when the trimmed, lowercased value is registered. Any other value is refused and is not copied into the header or the error. Intervals are unchanged. `board-watch` is registered and has no script.

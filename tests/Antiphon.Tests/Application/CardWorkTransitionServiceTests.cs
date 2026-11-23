@@ -546,7 +546,7 @@ public class CardWorkTransitionServiceTests
         }
 
         /// <summary>
-        /// Records what a human's <c>card.ps1 move</c> leaves behind: a Move revision at a chosen
+        /// Records what a human's <c>scripts/antiphon card move</c> leaves behind: a Move revision at a chosen
         /// time. <paramref name="apply"/> also lands the card in that column, for the cases where
         /// the sweep then has somewhere to move it from.
         /// </summary>

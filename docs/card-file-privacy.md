@@ -23,10 +23,10 @@ only note presence and visibility, never note bodies. Content edits preserve the
 superseded notes in a private snapshot. Null means unchanged; empty explicitly
 clears; whitespace is preserved. Notes have a 20000 UTF-16 character ceiling.
 
-`scripts/card.ps1 new/edit` accepts `-PrivateNotesFile` and
-`-CardFileVisibility Inherit|Private|Public`; edit also accepts
-`-ClearPrivateNotes` (mutually exclusive with the file). There is no inline notes
-argument. `-Json` returns one ordinary response without human output. Saving never
+`scripts/antiphon card new|edit` accepts `--private-notes-file` and
+`--card-file-visibility Inherit|Private|Public`; edit also accepts
+`--clear-private-notes` (mutually exclusive with the file). There is no inline notes
+argument. `--json` returns one ordinary response without human output. Saving never
 syncs: the returned status says eligible or not written, safe absolute target,
 configured visibility and cleanup state. An unavailable status confirms nothing.
 

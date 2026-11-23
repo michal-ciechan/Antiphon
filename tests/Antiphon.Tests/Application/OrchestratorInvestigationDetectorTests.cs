@@ -92,6 +92,41 @@ public class OrchestratorInvestigationDetectorTests
     }
 
     [Test]
+    public async Task Never_treats_the_card_command_as_a_source_read_but_reads_its_source()
+    {
+        await Task.CompletedTask;
+        // The card command that replaced scripts/card.ps1 (unit 27 of the 2026-11-22 plan), in each form it is run.
+        foreach (var (tool, command) in new[]
+                 {
+                     ("Bash", "scripts/antiphon card get CARD-0001 --board Antiphon"),
+                     ("Bash", "ANTIPHON_API=http://localhost:17202 ./scripts/antiphon card search 'server/Foo.cs' --all"),
+                     ("Bash", "sh scripts/antiphon card history CARD-0001"),
+                     ("PowerShell", @"scripts\antiphon.cmd card edit CARD-0001 --reason-file C:\\tmp\\reason.md --title x"),
+                     ("PowerShell", @"& 'C:\\src\\Antiphon\\scripts\\antiphon.cmd' card list --status Review --json"),
+                     ("PowerShell", "antiphon-scripts card get CARD-0001 | Select-String server/Application"),
+                 })
+        {
+            var call = OrchestratorInvestigationDetector.ClassifyCall(tool, System.Text.Json.JsonSerializer.Serialize(new { command }));
+            call.IsSourceRead.ShouldBeFalse(command);
+            call.Kind.ShouldBe(OrchestratorInvestigationDetector.EventKind.OtherTool, command);
+        }
+
+        // A read in another segment still counts, and the pattern is the program, not a phrase a read names.
+        OrchestratorInvestigationDetector.ClassifyCall(
+            "Bash",
+            """{"command":"scripts/antiphon card get CARD-0001 && cat server/Application/Services/CardService.cs"}""")
+            .IsSourceRead.ShouldBeTrue();
+        OrchestratorInvestigationDetector.ClassifyCall(
+            "Bash",
+            """{"command":"rg -n \"antiphon card\" server/"}""")
+            .IsSourceRead.ShouldBeTrue();
+        OrchestratorInvestigationDetector.ClassifyCall(
+            "Bash",
+            """{"command":"cat scripts/lib/Antiphon.Nightly/CardCli.cs"}""")
+            .IsSourceRead.ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Counts_Read_of_a_source_file_including_unparsed_JSON()
     {
         await Task.CompletedTask;

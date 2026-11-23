@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "9116b27236596e744eb2eb80f58611f813956f95742a4b0ea22e05c8488c8f4a",
+  "policyHash": "a483bc8b7293e9d353dfef1e12e6cef066fbbdd3fddf332dcb3c7742f16c33b2",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1593,16 +1593,6 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
           "owner": "CARD-1605"
-        },
-        {
-          "suite": "antiphon",
-          "class": "CardRelationshipScriptTests",
-          "methods": [
-            "Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
-          "owner": "CARD-1323"
         },
         {
           "suite": "antiphon",

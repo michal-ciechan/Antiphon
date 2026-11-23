@@ -63,7 +63,7 @@ public class AgentTaskCardBindingTests
 
         var service = CreateService(db, workspace);
         var created = await service.CreateAsync(
-            // "#7" is one of card.ps1's accepted spellings — the binder normalises through the
+            // "#7" is one of the card command's accepted spellings — the binder normalises through the
             // same CardService.TryCanonicalIdentifier the card API uses.
             Request(workspace.Path) with { Card = "#7" },
             await service.AuthenticateAsync(token, CancellationToken.None),

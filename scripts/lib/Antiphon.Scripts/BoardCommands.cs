@@ -1,12 +1,13 @@
 // The board API commands (unit 24 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): capability,
-// model-availability, specialist-routing, pipeline-definition, project, schedule, dispatch-concurrency and routing-pin. Each
-// replaced the scripts/<name>.ps1 of the same name (deleted 2026-11-23), with the same flags in kebab case and the verb (and
-// a schedule id or a project) first, as the scripts took them. The behaviour is Antiphon.Nightly's (CapabilityCli,
-// ModelAvailabilityCli, SpecialistRoutingCli, PipelineDefinitionCli, ProjectCli, ScheduleCli, DispatchConcurrencyCli,
-// RoutingPinCli) on the production host and an HTTP transport; this file reads the environment and passes it in:
-// ANTIPHON_API (default http://localhost:17202), ANTIPHON_TASK_TOKEN, ANTIPHON_AGENT_ID (the schedule's default agent) and
-// ANTIPHON_CAPABILITY_STORE (else %LOCALAPPDATA%\Antiphon\capabilities). The capability store is written with DPAPI on
-// Windows only. Tokens are sent as headers and never printed. ASCII only.
+// model-availability, specialist-routing, pipeline-definition, project, schedule, dispatch-concurrency and routing-pin, and
+// card (unit 27). Each replaced the scripts/<name>.ps1 of the same name (deleted 2026-11-23), with the same flags in kebab
+// case and the verb (and a schedule id, a project or a card) first, as the scripts took them. The behaviour is
+// Antiphon.Nightly's (CapabilityCli, ModelAvailabilityCli, SpecialistRoutingCli, PipelineDefinitionCli, ProjectCli,
+// ScheduleCli, DispatchConcurrencyCli, RoutingPinCli, CardCli) on the production host and an HTTP transport; this file reads
+// the environment and passes it in: ANTIPHON_API (default http://localhost:17202), ANTIPHON_TASK_TOKEN, ANTIPHON_AGENT_ID
+// (the schedule's default agent), ANTIPHON_CAPABILITY_STORE (else %LOCALAPPDATA%\Antiphon\capabilities) and, for card, the
+// working directory. The capability store is written with DPAPI on Windows only. Tokens are sent as headers and never
+// printed. ASCII only.
 using System;
 using System.IO;
 using System.IO.Abstractions;
@@ -25,10 +26,11 @@ namespace Antiphon.Scripts
         internal const string Schedule = "schedule";
         internal const string DispatchConcurrency = "dispatch-concurrency";
         internal const string RoutingPin = "routing-pin";
+        internal const string Card = "card";
 
         internal const string Usage = CapabilityCliOptions.Usage + " | " + ModelAvailabilityCliOptions.Usage + " | " + SpecialistRoutingCliOptions.Usage
             + " | " + PipelineDefinitionCliOptions.Usage + " | " + ProjectCliOptions.Usage + " | " + ScheduleCliOptions.Usage + " | " + DispatchConcurrencyCliOptions.Usage
-            + " | " + RoutingPinCliOptions.Usage;
+            + " | " + RoutingPinCliOptions.Usage + " | " + CardCliOptions.Usage;
 
         private static string Api => Environment.GetEnvironmentVariable("ANTIPHON_API");
 
@@ -71,6 +73,10 @@ namespace Antiphon.Scripts
         // CARD-0305: exit 0 done; 1 a refused value or a failed request.
         internal static int RunRoutingPin(string[] args) =>
             RoutingPinCli.Run(RoutingPinCliOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken), Host(), Http());
+
+        // CARD-0051: exit 0 done; 1 a refused value, a missing file or a failed request (the server's detail on stderr).
+        internal static int RunCard(string[] args) =>
+            CardCli.Run(CardCliOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken, Environment.CurrentDirectory), Host(), new FileSystem(), Http());
 
         // ANTIPHON_CAPABILITY_STORE, else where delegate.ps1 -Capability reads it: %LOCALAPPDATA%\Antiphon\capabilities.
         internal static string CapabilityStore()
