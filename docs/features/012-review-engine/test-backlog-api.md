@@ -171,6 +171,27 @@ comment id mapped across pages, GraphQL error kinds, the endpoint).
 | G-12 | Finding sync with a finding posted before thread ids were recorded: the resolve passes the comment id and GitHub maps it; a GraphQL `FORBIDDEN` (token without pull-request write) marks the response Failed after the reply posted. | The mapping is unit tested on the adapter; the sync path with GitHub is not. |
 | G-13 | GraphQL thread listing on a PR with more than 1,000 threads stops at 10 pages and the thread is reported not found. | Limit not modelled. |
 
+## One-shot `claude -p` transport (`CliReviewAgentRunner`, `ClaudeCliProcess`, `claude-cli` models, design 7.7)
+
+Covered: `ClaudeCliTransportTests` over a fake `IClaudeCli` (decision answers mapped as Jev's
+through a chain whose `claude-cli` provider has no key; a fenced answer; a missing answer and a
+value outside the list refused for that question only; no JSON as a schema failure; the CLI result
+parsed for text, model, tokens and cost; an `is_error` result and a non-zero exit carrying the
+CLI's text; the argument lists; the reviewer runner Pending then Completed with its usage, the pack
+inline past `InlinePackMaxChars`, the tier's model, the worktree added at the head and removed
+after a success and a failure, the failure surfacing on the poll, and an unknown handle reported
+lost) and `ClaudeCliLiveTests` (opt-in, `ANTIPHON_LIVE_CLAUDE_CLI=1`: one haiku decision call
+through the real CLI on the local sign-in).
+
+| # | Test later | Why |
+|---|---|---|
+| L-1 | `ClaudeCliProcess` against a fake `claude` executable: the prompt arrives on stdin as UTF-8, stdout and stderr are captured, a run past its timeout has its whole process tree killed (a grandchild too), and caller cancellation kills it and is not reported as a timeout. | Needs a fixture executable on the process-spawn lane; the wrapper is exercised live only through the opt-in decision call. |
+| L-2 | `GitReviewCheckout` over a fixture origin with `refs/pull/<n>/head`: a head already present (no fetch), a fetched head, a moved PR (the ref lacks the SHA), two groups of one PR fetching at once (the per-repo gate), and `worktree remove --force` plus `prune` leaving no `.git/worktrees` entry. | Needs the git spawn lane (see C-1, G-2). |
+| L-3 | The CLI reviewer under the real executor: Program.cs registers `CliReviewAgentRunner` when `Review:Agents:Transport` is `cli`, the node parks Waiting with a `cli:` handle and completes on a later pass, and an unknown `Transport` value stops startup. | The runner is unit tested over fakes; the registration switch runs only by reading. |
+| L-4 | `Review:Agents:Cli:MaxParallel`: with 2, a third reviewer waits for a slot; a server shutdown stops running reviewers, kills their processes and fails their polls with "Refresh". | Needs a blocking fake and a disposable runner per case. |
+| L-5 | `ClaudeCliCompletionModel` alone: the prompt (instructions, then each input fenced under its name, then the expectation), no tools, the provider's `TimeoutSeconds`, a timed-out CLI mapped to `timeout` and a failed one to `unavailable`, so the chain moves on. | The decision model shares the scratch-folder path; the completion model runs only by reading. |
+| L-6 | A real reviewer and verifier through the CLI on a scratch PR (opus or sonnet reviewer, haiku verifier), recording the answer shapes as sanitised fixtures. | Spends subscription quota on long calls; the opt-in test covers one haiku decision only. |
+
 ## Polling and manual rounds (`ReviewPoller`, `ReviewService.RequestRoundAsync`)
 
 Covered: `ReviewPollingApiTests` (passes driven directly over the scripted code host with the real

@@ -850,7 +850,7 @@ list of provider entries. Each entry is a provider plus a transport.
 |---|---|---|
 | HTTP | P1 | Jev (all dialects below), OpenAI-compatible chat, the Anthropic Messages API. Company gateways via `baseUrl`. |
 | Standing seat | P1 | One or more warm agent sessions per runner container. Each takes one ABF request (`decision-request/1` or a completion request) and returns ABF. `/clear` runs after each request, every N requests, or when context passes a threshold. A seat pool gives concurrency. Reuses specialist-seat stall detection, transcripts and quota. |
-| One-shot CLI | P4 | `claude -p --output-format json`, `codex exec`, Grok equivalent. |
+| One-shot CLI | P4 | `claude -p --output-format json`, `codex exec`, Grok equivalent. `claude -p` is implemented for reviewers, completions and decisions (7.7). |
 
 Decisions over a chat model (seat or HTTP) ask for `decision-response/1` with a probability per
 option. Those probabilities are **not calibrated**; see 7.5.
@@ -924,7 +924,8 @@ defaults.
 Keys are named by configuration key only (`ApiKeyConfigKey`, `TokenConfigKey`) and resolved at
 startup; a key's value is never stored in these sections or logged.
 
-- **Reviewers, `Review:Agents`.** Each reviewer group is one read-only delegate task: role `Role`
+- **Reviewers, `Review:Agents`.** With `Transport` `delegation` (the default; `cli` is 7.7), each
+  reviewer group is one read-only delegate task: role `Role`
   (default `Review`), a fresh worktree cut at the reviewed head SHA, never committed on settle,
   agent `Kind` (default `ClaudeCode`) at the level of the group's tier (`Levels`: `deep` High,
   `standard` Medium), on `Runner` when set (absent is the delegation default runner, `local` the
@@ -948,6 +949,73 @@ startup; a key's value is never stored in these sections or logged.
 - **Thread resolution.** GitHub threads are resolved over GraphQL at the host's
   `Review:CodeHosts:Hosts:<id>:GraphQlUrl`, which defaults from `BaseUrl` (`/api/graphql` for
   GitHub Enterprise Server). The token needs pull requests read/write.
+
+### 7.7 One-shot `claude -p` transport
+
+An instance with no session runner can run real reviewers, a real verifier and real decisions on
+the server machine's own Claude Code sign-in (the subscription, no API key). Every call is
+`claude -p --output-format json --setting-sources "" --no-session-persistence --strict-mcp-config
+--model <m> --tools <t>` with the prompt on stdin, never `--bare` (it disables the subscription
+sign-in). The Claude Code nesting variables (`CLAUDECODE` and the session markers) are removed from
+the child's environment. The process tree is killed on timeout or cancellation. A non-zero exit,
+`is_error: true` or output with no JSON result fails the call with the CLI's error text. The prompt
+is never logged. Usage comes from the result: tokens from `usage` (input counts cache reads and
+writes), the model from the main `modelUsage` key (for example `claude-haiku-5-5`), and cost from
+`total_cost_usd`, recorded as `api-equivalent` (D-20) with transport `OneShot`.
+
+- **Reviewers, `Review:Agents:Transport` = `cli`** (default `delegation`, read at startup; any other
+  value stops startup). Each reviewer group runs in the background under a `cli:<guid>` handle: the
+  node parks Waiting and completes on a later pass, as with a delegate task. The head is checked out
+  as a detached worktree of the `Review:Agents:Repos` row's `LocalPath` (a local-git subject's own
+  path when there is no row): `git -C <repo> fetch --no-tags origin
+  +refs/pull/<n>/head:refs/antiphon/review/pull/<n>` when the SHA is missing, then `worktree add
+  --detach`, and `worktree remove --force` plus `worktree prune` afterwards. With no path the
+  reviewer runs in an empty folder with the pack alone, and the brief says so. Point `LocalPath`
+  at a clone the server may fetch into; this transport takes no repository mutation lease.
+  `claude` gets `Read,Grep,Glob` only (`--tools` and `--allowedTools`), the brief with the pack
+  always inline, the model of the group's tier from `Review:Agents:Cli:Models` (`deep` `opus`,
+  `standard` `sonnet`, any other tier `DefaultModel`, `sonnet`), and `Review:Agents:TimeoutMinutes`
+  (90). `Review:Agents:Cli:MaxParallel` (2) bounds how many run at once. Runs live in memory, so a
+  handle from before a server restart fails the node ("the run was lost"); Refresh reruns it.
+- **Completions and decisions, dialect `claude-cli`.** A provider with this dialect needs only a
+  `Model` (an alias such as `haiku`, or a full id): no base URL and no key, so a chain uses it as
+  configured. It runs with no tools in an empty scratch folder, bounded by the provider's
+  `TimeoutSeconds`. A completion's prompt is the instructions followed by each input as a labelled
+  section. A decision's prompt gives the state and every question (its name, its kind, the allowed
+  values of a choice and the levels of a score) and asks for one JSON object
+  `{"answers":[{"name":...,"value":...,"p":0.0-1.0}]}`, where `p` is the probability that `value` is
+  right. The answer may be fenced or wrapped in prose. It maps as Jev's does: a noul is yes or no
+  with a yes/no distribution (`p` for a yes, `1 - p` for a no), a choice is one of its values, and a
+  score is one of its level labels, with `p` as the confidence. A missing or invalid answer is
+  refused for that question only, and an answer with no JSON at all is a schema failure, so the
+  chain moves on. Its probabilities are not calibrated (7.5).
+- **Command.** `Review:Agents:Cli:Command` (`claude`) names the program for all three; set a full
+  path when the server's `PATH` lacks it.
+
+```json
+{
+  "Review": {
+    "Agents": {
+      "Transport": "cli",
+      "TimeoutMinutes": 60,
+      "Cli": { "Command": "claude", "MaxParallel": 2, "Models": { "deep": "opus", "standard": "sonnet" } },
+      "Repos": [ { "Repo": "acme/widgets", "LocalPath": "C:\\repos\\widgets" } ]
+    },
+    "Completions": {
+      "Providers": { "haiku-cli": { "Dialect": "claude-cli", "Model": "haiku", "TimeoutSeconds": 240 } },
+      "Chains": { "completions-cheap": [ { "Provider": "haiku-cli", "Transport": "OneShot" } ] }
+    },
+    "Decisions": {
+      "Providers": { "haiku-cli": { "Dialect": "claude-cli", "Model": "haiku", "TimeoutSeconds": 120 } },
+      "Chains": { "decisions-default": [ { "Provider": "haiku-cli", "Transport": "OneShot" } ] }
+    }
+  }
+}
+```
+
+A configured `Review:Decisions:Providers` replaces the default provider set (Jev and the seats),
+and a configured chain replaces the default chains, so the block above runs on the CLI alone. The
+default decision `TimeoutSeconds` is 30, which is too short for a cold `claude -p` start; give it 120.
 
 ## 8. Code host
 
