@@ -98,7 +98,11 @@ internal static class WorktreeNoFollowDelete
         var approval = RemovalApproval.Current.Value;
         if (approval is not null && relative.Length != 0)
             approval.RejectChanged(relative, isLink ? "link" : isDirectory ? "dir" : "file",
-                () => WindowsRegularFileHash(path, denyWrite: true));
+                () =>
+                {
+                    Probe.Value?.Hashed(path);
+                    return WindowsRegularFileHash(path, denyWrite: true);
+                });
         if (isDirectory)
         {
             WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
@@ -141,14 +145,60 @@ internal static class WorktreeNoFollowDelete
         // the receipt hash's deny-write handle has closed, so a later success could delete bytes the receipt never
         // approved. The refusal (5, 32 or 33 from a scanner) goes back to DeleteSettled, whose next walk re-checks
         // drift and every hash before anything goes.
-        var ex = new FileDispositionInfoEx { Flags = 0x1 | 0x2 | 0x10 };
-        if (SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())) return;
-        var error = Marshal.GetLastPInvokeError();
-        // Volumes without the extended disposition (FAT, some network shares) take the classic one.
+        var probe = Probe.Value;
+        SettleDisposition(path, extended =>
+            probe?.Disposition(path, extended) is { } injected ? injected : SetDisposition(handle, extended));
+    }
+
+    /// <summary>
+    /// The disposition decision over one attempt function (null on success, else its Win32 code): the
+    /// extended disposition once; the classic one once, only where the volume lacks the extended class
+    /// (FAT, some network shares: 87, 1 or 50); any other refusal is thrown at once, with its raw code, and
+    /// never attempted again on the same handle (Review a5ebf1e9 item 1).
+    /// </summary>
+    internal static void SettleDisposition(string path, Func<bool, int?> attempt)
+    {
+        int? error;
+        for (var n = 1; ; n++)
+        {
+            error = attempt(true);
+            if (error is null) return;
+            if (error is not (5 or 32 or 33) || n == WorktreeRenames.SharingAttempts) break;
+            Thread.Sleep(WorktreeRenames.SharingPause);
+        }
         if (error is not (87 or 1 or 50)) throw Failure("delete", path, error);
+        if (attempt(false) is { } classic) throw Failure("delete", path, classic);
+    }
+
+    private static int? SetDisposition(SafeFileHandle handle, bool extended)
+    {
+        if (extended)
+        {
+            var ex = new FileDispositionInfoEx { Flags = 0x1 | 0x2 | 0x10 };
+            return SetFileInformationByHandle(handle, 21, ref ex, (uint)Marshal.SizeOf<FileDispositionInfoEx>())
+                ? null : Marshal.GetLastPInvokeError();
+        }
         var classic = new FileDispositionInfo { DeleteFile = 1 };
-        if (!SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>()))
-            throw Failure("delete", path);
+        return SetFileInformationByHandle(handle, 4, ref classic, (uint)Marshal.SizeOf<FileDispositionInfo>())
+            ? null : Marshal.GetLastPInvokeError();
+    }
+
+    /// <summary>
+    /// Review a5ebf1e9 item 1: the test seam on the Windows disposition and receipt hash. Null in
+    /// production; it is internal, read only by <see cref="MarkDeleted"/> and the walk's hash, and set by
+    /// no configuration or environment value. A test sets it for its own async flow to report a Win32
+    /// refusal at the disposition itself, after the walk's receipt hash, with the real walk, handles and
+    /// filesystem.
+    /// </summary>
+    internal static readonly AsyncLocal<DispositionProbe?> Probe = new();
+
+    internal sealed class DispositionProbe
+    {
+        /// <summary>Path and extended (false: classic) to a Win32 code reported instead of the call, or null for the real call.</summary>
+        public Func<string, bool, int?> Disposition { get; init; } = (_, _) => null;
+
+        /// <summary>Each path whose receipt hash runs, before it is hashed.</summary>
+        public Action<string> Hashed { get; init; } = _ => { };
     }
 
     // CARD-1717 D-5: a path walk can lstat a directory and then enumerate the symlink that replaced it.
