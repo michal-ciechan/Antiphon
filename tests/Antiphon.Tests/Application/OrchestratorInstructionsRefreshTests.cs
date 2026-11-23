@@ -29,32 +29,22 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class OrchestratorInstructionsRefreshTests
 {
+    // One row per faulted read. Each row checks both the file and the notice delta from one run:
+    // they were separate (part, notice) rows that repeated this scenario to check one string each.
     [Test]
-    [Arguments("chain-default", false)]
-    [Arguments("chain-default", true)]
-    [Arguments("chain-other", false)]
-    [Arguments("chain-other", true)]
-    [Arguments("stage pin", false)]
-    [Arguments("stage pin", true)]
-    [Arguments("availability", false)]
-    [Arguments("availability", true)]
-    [Arguments("policy", false)]
-    [Arguments("policy", true)]
-    [Arguments("chain metadata", false)]
-    [Arguments("chain metadata", true)]
-    [Arguments("standing agent", false)]
-    [Arguments("standing agent", true)]
-    [Arguments("holds", false)]
-    [Arguments("holds", true)]
-    [Arguments("pins", false)]
-    [Arguments("pins", true)]
-    [Arguments("defaults", false)]
-    [Arguments("defaults", true)]
-    [Arguments("budget", false)]
-    [Arguments("budget", true)]
-    [Arguments("runners", false)]
-    [Arguments("runners", true)]
-    public async Task Failed_reads_are_unknown_in_file_and_notice_then_recover(string part, bool notice)
+    [Arguments("chain-default")]
+    [Arguments("chain-other")]
+    [Arguments("stage pin")]
+    [Arguments("availability")]
+    [Arguments("policy")]
+    [Arguments("chain metadata")]
+    [Arguments("standing agent")]
+    [Arguments("holds")]
+    [Arguments("pins")]
+    [Arguments("defaults")]
+    [Arguments("budget")]
+    [Arguments("runners")]
+    public async Task Failed_reads_are_unknown_in_file_and_notice_then_recover(string part)
     {
         var fault = new SnapshotReadFault(part);
         await using var h = await CreateHarnessAsync(fault);
@@ -99,34 +89,36 @@ public class OrchestratorInstructionsRefreshTests
             part == "budget" ? "policy" : part;
         var unknown = $"unknown ({reason} read failed)";
         var file = await File.ReadAllTextAsync(failed.WrittenPath);
-        var subject = (notice ? delta : file).Replace("\r\n", "\n", StringComparison.Ordinal);
-        subject.ShouldContain(unknown);
-        subject.ShouldNotContain("→ rolePolicy");
-        subject.ShouldNotContain("→ unset");
-        subject.ShouldNotContain("InvalidOperationException");
+        foreach (var (view, notice) in new[] { (file, false), (delta, true) })
+        {
+            var subject = view.Replace("\r\n", "\n", StringComparison.Ordinal);
+            subject.ShouldContain(unknown);
+            subject.ShouldNotContain("→ rolePolicy");
+            subject.ShouldNotContain("→ unset");
+            subject.ShouldNotContain("InvalidOperationException");
+            if (part is "chain-default" or "stage pin")
+            {
+                var source = part == "stage pin" ? "stage pin" : "role";
+                subject.ShouldContain(notice
+                    ? $"matrix: Plan source {source} → {unknown}"
+                    : $"  Plan: effective {unknown} via {unknown}");
+            }
+            if (part == "chain-other")
+                subject.ShouldContain(notice
+                    ? "matrix: Plan Hard ClaudeCode/Low (haiku) → unknown (chain read failed)"
+                    : "- Plan: Hard unknown (chain read failed); Medium (default) unset;");
+            if (part == "policy")
+                subject.ShouldContain(notice ? "caps: read observed → unknown (policy read failed)"
+                    : "## 1. Pipeline caps\nunknown (policy read failed)");
+        }
         delta.ShouldNotContain(" removed");
+        if (part == "chain-other")
+            delta.ShouldNotContain("Plan source");
         file.ShouldContain("default Medium;");
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         h.Adapter.SubmittedBodies[0].ShouldContain(unknown);
         h.Adapter.SubmittedBodies[0].ShouldNotContain("→ rolePolicy");
         h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
-        if (part is "chain-default" or "stage pin")
-        {
-            var source = part == "stage pin" ? "stage pin" : "role";
-            subject.ShouldContain(notice
-                ? $"matrix: Plan source {source} → {unknown}"
-                : $"  Plan: effective {unknown} via {unknown}");
-        }
-        if (part == "chain-other")
-        {
-            subject.ShouldContain(notice
-                ? "matrix: Plan Hard ClaudeCode/Low (haiku) → unknown (chain read failed)"
-                : "- Plan: Hard unknown (chain read failed); Medium (default) unset;");
-            delta.ShouldNotContain("Plan source");
-        }
-        if (part == "policy")
-            subject.ShouldContain(notice ? "caps: read observed → unknown (policy read failed)"
-                : "## 1. Pipeline caps\nunknown (policy read failed)");
 
         // Exception type is diagnostic detail, not another settings transition.
         fault.AlternateException = true;
@@ -873,6 +865,9 @@ public class OrchestratorInstructionsRefreshTests
             {
                 if (interceptor is not null) options.AddInterceptors(interceptor);
             },
+            // The fake's UserPrompt row confirms each notice and no test here is about render-frame
+            // settling, so skip the 500 ms post-evidence wait every delivery would otherwise pay.
+            ConfigureDeliveryVerification = v => v.PostEvidenceSettleMs = 0,
             ConfigureServices = services =>
             {
                 services.AddSingleton<OrchestratorInstructionsService>();
