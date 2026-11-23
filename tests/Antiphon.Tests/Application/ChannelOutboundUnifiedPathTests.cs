@@ -191,9 +191,13 @@ public sealed class ChannelOutboundUnifiedPathTests
     // messaging fake and settings), none starts a process, and the harness keeps no mutable static state, so a case
     // sees exactly what it saw run alone; BridgeQueueHarness worlds already run concurrently across classes. Every
     // case runs to its end, and every failure is reported, labelled with its case; a case's world teardowns are its
-    // own (CaseName), so no case waits on, or is charged with, a sibling's.
+    // own (CaseName), so no case waits on, or is charged with, a sibling's. Case names are distinct and never empty
+    // (empty is a world made outside any case).
     private static async Task EachConcurrentlyAsync(IEnumerable<(string Case, Func<Task> Run)> cases)
     {
+        cases = cases.ToArray();
+        if (cases.Any(c => string.IsNullOrEmpty(c.Case)) || cases.DistinctBy(c => c.Case).Count() != cases.Count())
+            throw new ArgumentException("Every side-by-side case needs its own non-empty name.", nameof(cases));
         var started = cases.Select(c => (c.Case, Run: Task.Run(() => { CaseName.Value = c.Case; return c.Run(); }))).ToArray();
         try { await Task.WhenAll(started.Select(c => c.Run)); }
         catch
@@ -219,7 +223,8 @@ public sealed class ChannelOutboundUnifiedPathTests
     // runs in the background while the next world is built and used. A world starts no process and has its own schema
     // and harness, so a teardown still running touches nothing the next one uses. Each teardown belongs to the test
     // and case that made it (its TUnit test id, and CaseName when the test's cases run side by side). A new world first
-    // waits for every teardown of its test and case but the latest, so at most one of its case's teardowns overlaps it;
+    // waits for every teardown of its test and case but the latest, so at most one of its case's teardowns overlaps it
+    // (the bound is per case: a case's world does not wait for its test's teardowns from outside the cases);
     // after each test its teardowns, every case's, are awaited (After(Test); the class is NotInParallel), and every
     // failure (harness and schema both) fails the test that made it, naming the world and its case.
     // Only a teardown that hangs past TeardownHung outlives its test: its test reports it once and hands it to the class
@@ -230,7 +235,8 @@ public sealed class ChannelOutboundUnifiedPathTests
     {
         // A hang bound, not a budget, and only ever spent on a hang: a teardown here measured about 0.1 s (25 worlds,
         // 2.5 s in all, HP laptop on AC, 2026-11-22). It is UnifiedOutboundTransport's same 2 min, sized for a loaded
-        // qualification host's DROP DATABASE WITH (FORCE), and one deadline covers every teardown a wait takes.
+        // qualification host's DROP DATABASE WITH (FORCE), and one deadline covers every teardown a wait takes: in a test
+        // whose cases run side by side, its up to ten teardowns, which run concurrently rather than one after another.
         private static readonly TimeSpan TeardownHung = TimeSpan.FromMinutes(2);
         // The owner of a hung teardown handed to the class drain: never a TUnit test id, nor the "" of no test context.
         private const string HandedOff = "<hung>";
