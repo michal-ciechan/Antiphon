@@ -37,7 +37,8 @@ export type ReviewStage =
   | 'BranchMaintenance'
   | 'Done'
 export type NodeKind = 'Code' | 'Decision' | 'Completion' | 'Agent' | 'FanOut' | 'Join' | 'Gate' | 'Wait'
-export type NodeStatus = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Skipped' | 'Waiting' | 'NotReached'
+/** `FailedContinued`: the step failed and its onFailure: continue policy let the run go on. */
+export type NodeStatus = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Skipped' | 'Waiting' | 'NotReached' | 'FailedContinued'
 export type Severity = 'Nit' | 'Minor' | 'Major' | 'Blocker'
 export type FindingStatus = 'Open' | 'WillFix' | 'Fixed' | 'Disputed' | 'Dismissed' | 'Deferred' | 'Outdated' | 'Accepted'
 export type SyncState = 'NotApplicable' | 'Pending' | 'Synced' | 'Failed'

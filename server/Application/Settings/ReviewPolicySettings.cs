@@ -58,6 +58,28 @@ public sealed class ReviewPolicySettings
     /// <summary>The diff's share of the pack prefix, in estimated tokens (four characters each).</summary>
     public int PackDiffTokenBudget { get; set; } = 24_000;
 
+    /// <summary>
+    /// What a failed step does, by workflow node id, over the workflow's own <c>onFailure</c>:
+    /// <c>continue</c> (the run goes on, the step shows failed-continued) or <c>stop</c> (the run fails).
+    /// For example <c>Review:Policy:OnFailure:publish = continue</c>.
+    /// </summary>
+    public Dictionary<string, string> OnFailure { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// When true, a commit status GitHub refuses fails the step that posted it. Off by default: a
+    /// status is a courtesy to the PR, so a refused one is noted on the step and the run goes on.
+    /// </summary>
+    public bool StatusesRequired { get; set; }
+
+    /// <summary>
+    /// Repos (<c>owner/name</c>) where a PR's author may decide its own gates: a team of one, or a
+    /// repo whose owners review their own work (design 12). Elsewhere the author is refused.
+    /// </summary>
+    public List<string> AuthorMayDecideRepos { get; set; } = [];
+
+    public bool AuthorMayDecide(string repo) =>
+        AuthorMayDecideRepos.Any(r => string.Equals(r.Trim(), repo, StringComparison.OrdinalIgnoreCase));
+
     public IReadOnlyList<ReviewRoundBarSettings> EffectivePost => Post is { Count: > 0 } post
         ? post.OrderBy(p => p.Round).ToList()
         :

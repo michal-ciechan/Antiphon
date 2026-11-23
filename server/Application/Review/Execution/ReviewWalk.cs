@@ -35,6 +35,15 @@ public sealed record ParkState(ReviewRunStatus Status, ReviewStage Stage, Review
 public sealed record NodeResult(NodeResultKind Kind, string? Outcome, string Summary, object? Output = null, NodeUsage? Usage = null,
     ParkState? Park = null)
 {
+    /// <summary>
+    /// Set when the step failed but its failure policy let it fall back (select includes every
+    /// candidate, verify passes findings through): the execution shows failed-continued with this reason.
+    /// </summary>
+    public string? Degraded { get; init; }
+
+    /// <summary>This result as the fallback of a step that failed with <paramref name="reason"/> and may continue.</summary>
+    public NodeResult AsDegraded(string reason) => this with { Kind = NodeResultKind.Succeeded, Degraded = reason };
+
     public static NodeResult Ok(string? outcome, string summary, object? output = null, NodeUsage? usage = null) =>
         new(NodeResultKind.Succeeded, outcome, summary, output, usage);
 
@@ -116,6 +125,20 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
     public ReviewPolicySettings Policy => Services.GetRequiredService<IOptions<ReviewPolicySettings>>().Value;
 
     public DateTime Now() => time.GetUtcNow().UtcDateTime;
+
+    /// <summary>Problems this node noted without failing (a refused commit status); the executor adds them to its summary.</summary>
+    public List<string> Warnings { get; } = [];
+
+    /// <summary>
+    /// Whether a failure of <paramref name="node"/> lets the run go on: <c>Review:Policy:OnFailure:&lt;node&gt;</c>
+    /// when set, else the workflow's <c>onFailure</c> param; the default is stop.
+    /// </summary>
+    public bool ContinuesOnFailure(WorkflowNode node) => OnFailure(Policy, node) == "continue";
+
+    public static string OnFailure(ReviewPolicySettings policy, WorkflowNode node) =>
+        (policy.OnFailure.TryGetValue(node.Id, out var configured) && !string.IsNullOrWhiteSpace(configured)
+            ? configured
+            : node.StringParam("onFailure") ?? "stop").Trim().ToLowerInvariant();
 
     public string EntryNodeId => Workflow.Nodes.FirstOrDefault(n => n.Run == EntryRun)?.Id ?? Workflow.Nodes[0].Id;
 
@@ -226,8 +249,17 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
             return false;
         var root = Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl;
         var link = string.IsNullOrWhiteSpace(root) ? null : $"{root.TrimEnd('/')}/reviews/{Run.Id}";
-        await Host.SetCommitStatusAsync(Binding.Target, sha ?? HeadSha, new CodeHostCommitStatus(context, state, description, link), ct);
-        return true;
+        try
+        {
+            await Host.SetCommitStatusAsync(Binding.Target, sha ?? HeadSha, new CodeHostCommitStatus(context, state, description, link), ct);
+            return true;
+        }
+        catch (CodeHostException ex) when (!Policy.StatusesRequired)
+        {
+            // A status is a courtesy to the PR; Review:Policy:StatusesRequired makes a refused one fail the step.
+            Warnings.Add($"status {context} not posted: {ex.Message}");
+            return false;
+        }
     }
 
     public const string ReviewStatusContext = "antiphon/review";

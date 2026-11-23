@@ -60,6 +60,9 @@ public enum ReviewNodeStatus
     Skipped,
     Waiting,
     NotReached,
+
+    /// <summary>The step failed, and its <c>onFailure: continue</c> policy let the run go on (with a fallback where it has one).</summary>
+    FailedContinued,
 }
 
 public enum ReviewSeverity

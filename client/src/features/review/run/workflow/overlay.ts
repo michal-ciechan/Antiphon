@@ -21,7 +21,7 @@ export function execsIn(run: ReviewRunDetailDto, iteration: number): Map<string,
   return map
 }
 
-const PRECEDENCE: NodeStatus[] = ['Running', 'Failed', 'Waiting', 'Pending', 'Succeeded', 'Skipped']
+const PRECEDENCE: NodeStatus[] = ['Running', 'Failed', 'Waiting', 'Pending', 'FailedContinued', 'Succeeded', 'Skipped']
 
 /** One status for a node's executions in an iteration (a fan-out child has several). */
 export function rollupStatus(execs: NodeExecutionDto[] | undefined): NodeStatus {

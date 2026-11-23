@@ -38,7 +38,7 @@ function WorkflowLegend({ hint }: { hint: string }) {
   return (
     <Stack gap={6}>
       <SectionLabel>Legend</SectionLabel>
-      {(['Succeeded', 'Running', 'Waiting', 'Failed', 'Pending', 'NotReached'] as const).map((s) => (
+      {(['Succeeded', 'Running', 'Waiting', 'Failed', 'FailedContinued', 'Pending', 'NotReached'] as const).map((s) => (
         <Group key={s} gap={6}>
           <Box w={14} h={10} style={{ borderRadius: 2, border: `2px ${s === 'NotReached' || s === 'Pending' ? 'dashed' : 'solid'} ${NODE_STATUS_META[s].hex}` }} />
           <Text size="xs">{NODE_STATUS_META[s].label}</Text>

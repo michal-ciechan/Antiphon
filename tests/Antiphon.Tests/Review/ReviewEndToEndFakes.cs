@@ -111,8 +111,13 @@ public sealed class ScriptedCodeHost : ICodeHost
         return Task.CompletedTask;
     }
 
+    /// <summary>Refuses every commit status, as GitHub does for a token without statuses permission.</summary>
+    public bool RefuseStatuses { get; set; }
+
     public Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct)
     {
+        if (RefuseStatuses)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "GitHub POST statuses: HTTP 403: Resource not accessible by integration", 403);
         var pr = Of(target);
         lock (pr)
             pr.Statuses.Add((sha, status));
@@ -211,12 +216,16 @@ public sealed class ScriptedDecisions : IDecisionModel
 
     public ConcurrentQueue<DecisionRequest> Requests { get; } = new();
 
-    public bool Serves(string dialect) => true;
+    /// <summary>Serves no dialect, like an instance with no Jev key and no seats: every decision chain fails.</summary>
+    public bool Offline { get; set; }
+
+    public bool Serves(string dialect) => !Offline;
 
     public void Reset()
     {
         _answers.Clear();
         Requests.Clear();
+        Offline = false;
     }
 
     public ScriptedDecisions Yes(string name, double probability)

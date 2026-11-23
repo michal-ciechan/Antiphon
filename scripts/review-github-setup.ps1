@@ -61,6 +61,18 @@ $settings = [ordered]@{
     'Review:DefaultViewerLogin'                         = $ViewerLogin
     'Review:Agents:Repos:0:Repo'                        = $Repo
     'Review:Agents:Repos:0:Project'                     = $Project
+    # Reviewers run on this machine, where the project's checkout fetches refs/pull/N/head.
+    'Review:Agents:Runner'                              = 'local'
+    # Verify on a Haiku seat (a delegate task). If it cannot answer, verify continues unverified
+    # (onFailure: continue), so a large diff no longer fails the run.
+    'Review:Completions:Chains:completions-cheap:0:Provider'  = 'haiku-delegate'
+    'Review:Completions:Chains:completions-cheap:0:Transport' = 'Seat'
+    # No public webhook here: poll the repo for new PRs, pushes and /antiphon commands.
+    'Review:Polling:Enabled'                            = 'true'
+    'Review:Polling:IntervalSeconds'                    = '120'
+    'Review:Polling:Repos:0:Repo'                       = $Repo
+    # A one-person repo: the author may decide their own gates.
+    'Review:Policy:AuthorMayDecideRepos:0'              = $Repo
 }
 
 if ($DryRun) {

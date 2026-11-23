@@ -78,6 +78,36 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         await factory.ResetAsync();
         factory.Decisions.Reset();
         factory.Reviewer.Reset();
+        factory.Host.RefuseStatuses = false;
+    }
+
+    [Test]
+    public async Task With_no_decision_model_and_statuses_refused_the_run_continues_past_the_failed_steps()
+    {
+        const int number = 103;
+        var pr = factory.Host.Open(number, "Tidy the lease names", "dana", BaseSha, HeadSha, Files, Diff);
+        factory.Decisions.Offline = true;
+        factory.Host.RefuseStatuses = true;
+        using var client = factory.CreateClient();
+
+        using var created = await client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = "acme/widgets", prNumber = number });
+        created.StatusCode.ShouldBe(HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+
+        // Categorise and select fail (no decision model answers) but continue: select reviews every
+        // triggered check instead of none, and a refused status is a note on the step, not a failure.
+        var run = await WaitForAsync(client, id, "AwaitingMerge");
+        var categorise = Node(run, 1, "categorise");
+        categorise.GetProperty("status").GetString().ShouldBe("FailedContinued");
+        categorise.GetProperty("summary").GetString()!.ShouldStartWith("Failed, continued (onFailure: continue)");
+        var select = Node(run, 1, "select");
+        select.GetProperty("status").GetString().ShouldBe("FailedContinued");
+        select.GetProperty("summary").GetString()!.ShouldContain("every triggered candidate is included");
+        Reviewers(run, 1).ShouldNotBeEmpty("the fallback selection still reviews the triggered checks");
+        Node(run, 1, "delta").GetProperty("status").GetString().ShouldBe("Succeeded");
+        Node(run, 1, "delta").GetProperty("summary").GetString()!.ShouldContain("status antiphon/review not posted");
+        pr.Read(p => p.Statuses.Count).ShouldBe(0);
+        pr.Read(p => p.Approvals.ToList()).ShouldBe([HeadSha], "bot-approve still approves on the code host");
     }
 
     [Test]

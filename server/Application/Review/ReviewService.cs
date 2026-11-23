@@ -27,7 +27,8 @@ public sealed class ReviewService(
     ReviewWorkflowService workflows,
     ReviewIntake intake,
     ReviewExecutorSignal executor,
-    CodeHostRouter router)
+    CodeHostRouter router,
+    IOptions<ReviewPolicySettings> policy)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
 
@@ -583,7 +584,7 @@ public sealed class ReviewService(
         gate.AssigneeDisplayName = settings.Value.Viewers.TryGetValue(assignee, out var known) ? known.DisplayName : null;
         gate.Status = ReviewQueueItemStatus.Assigned;
         await TouchAndSaveAsync(gate.RunId, ct);
-        return ToDto(gate, subject.AuthorLogin);
+        return ToDto(gate, GateAuthor(subject.Repo, subject.AuthorLogin));
     }
 
     /// <summary>"Not me": the viewer returns the gate to the team queue with a reason and is skipped by the next pick.</summary>
@@ -592,7 +593,8 @@ public sealed class ReviewService(
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationException("reason", "Passing a review needs a reason.");
         var gate = await OpenGateAsync(gateId, ct);
-        var author = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => r.Subject.AuthorLogin).SingleAsync(ct);
+        var subjectOf = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => new { r.Subject.Repo, r.Subject.AuthorLogin }).SingleAsync(ct);
+        var author = GateAuthor(subjectOf.Repo, subjectOf.AuthorLogin);
         var pass = new ReviewGatePass { Id = Guid.NewGuid(), GateId = gate.Id, Login = viewer.Login, Reason = reason.Trim(), At = Now() };
         db.Add(pass); // explicit Added: see Apply() on client-set Guid keys
         gate.Passes.Add(pass);
@@ -614,7 +616,7 @@ public sealed class ReviewService(
             .AsSplitQuery().SingleAsync(r => r.Id == gate.RunId, ct);
         if (run.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged)
             throw new ConflictException($"Review run {run.Id} is {run.Status}.", "review_run_finished");
-        if (CannotDecideReason(gate, run.Subject.AuthorLogin) is { } reason)
+        if (CannotDecideReason(gate, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin)) is { } reason)
             throw new ForbiddenException(reason, "review_gate_not_decider");
         if (!AllowedDecisions(gate).Contains(request.Decision))
             throw new ConflictException($"Gate {gate.Id} does not allow {request.Decision}.", "review_gate_decision_not_allowed");
@@ -725,6 +727,9 @@ public sealed class ReviewService(
     }
 
     /// <summary>Why the viewer may not decide this gate, or null (design 11.10: not the author).</summary>
+    /// <summary>The author a gate refuses: none where the policy lets the author decide (<see cref="ReviewPolicySettings.AuthorMayDecideRepos"/>).</summary>
+    private string GateAuthor(string repo, string authorLogin) => policy.Value.AuthorMayDecide(repo) ? "" : authorLogin;
+
     private string? CannotDecideReason(ReviewGate gate, string authorLogin)
     {
         if (gate.Status == ReviewQueueItemStatus.Done)
@@ -866,7 +871,7 @@ public sealed class ReviewService(
             Nodes = run.Nodes.OrderBy(n => n.Iteration).ThenBy(n => n.StartedAt ?? DateTime.MaxValue).ThenBy(n => n.NodeId, StringComparer.Ordinal)
                 .ThenBy(n => n.ItemKey, StringComparer.Ordinal)
                 .Select(ToDto).ToList(),
-            Gates = run.Gates.OrderBy(g => g.OpenedAt).Select(g => ToDto(g, run.Subject.AuthorLogin)).ToList(),
+            Gates = run.Gates.OrderBy(g => g.OpenedAt).Select(g => ToDto(g, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin))).ToList(),
         };
     }
 

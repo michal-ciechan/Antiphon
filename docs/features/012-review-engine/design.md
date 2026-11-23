@@ -353,6 +353,30 @@ edges:
 - A node whose inputs hash matches a completed execution from an earlier iteration is reused.
   This is how a recheck skips unchanged work.
 
+#### 3.4.1 Failure policy: which failures stop a review
+
+Not every failed step should stop a review. A step that does work (code, decision, completion,
+agent, join) carries `onFailure: continue | stop`, and the default is `stop`. Gates, waits and
+fan-outs are never continued past.
+
+- On `continue`, a failed step is shown as `FailedContinued` (failed, continued), with the reason
+  first in its summary. The run then goes on along the step's `fallback` output, or else its
+  unlabelled edge.
+- Some steps fall back to something better than nothing:
+  - select reviews every check whose trigger matched when no decision model answers;
+  - verify passes every finding through, and the review says they were not verified.
+- `Review:Policy:OnFailure:<node>` overrides the workflow per instance, so the operator decides.
+  For example, `publish = continue` keeps a review going when GitHub refuses the review post.
+  The node window on the graph shows each step's policy.
+- The default `pr-review` continues past categorise, select, verify, base-drift (falling back to
+  `affected`, the safe answer) and bot-approve. It stops at intake, delta, the reviewers, collate,
+  publish and route.
+- Commit statuses are a courtesy to the PR. A status the code host refuses is noted on the step
+  that posted it (`status antiphon/review not posted: ...`), and the step still succeeds. Set
+  `Review:Policy:StatusesRequired = true` to make a refused status fail its step instead.
+- A run that fails sets `antiphon/review` to `error` with the failed step and reason, best effort,
+  so the PR does not stay pending.
+
 ### 3.5 Other workflows on the same engine
 
 | Workflow | Trigger | Shape |

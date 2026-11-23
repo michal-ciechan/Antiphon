@@ -235,6 +235,7 @@ public sealed class ReviewWorkflowExecutor(
                     return;
                 case ReviewNodeStatus.Succeeded:
                 case ReviewNodeStatus.Skipped:
+                case ReviewNodeStatus.FailedContinued:
                     if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == "approve")
                         await ReviewDecideSteps.ApplyGateApprovalAsync(walk, frontier, ct);
                     if (!await FollowAsync(walk, node, frontier, ct))
@@ -273,6 +274,7 @@ public sealed class ReviewWorkflowExecutor(
         await SaveAndPublishAsync(walk, ct);
 
         NodeResult result;
+        walk.Warnings.Clear();
         try
         {
             result = await RunNodeAsync(walk, node, execution, ct);
@@ -292,9 +294,21 @@ public sealed class ReviewWorkflowExecutor(
         if (await SupersededAsync(walk, ct))
             return false;
 
+        // onFailure: continue (Review:Policy:OnFailure or the workflow) turns a failure into a fallback:
+        // the run goes on along the node's fallback output, else its unlabelled edge.
+        if (result.Kind == NodeResultKind.Failed && walk.ContinuesOnFailure(node))
+            result = new NodeResult(NodeResultKind.Succeeded, node.StringParam("fallback"), "Continued without this step.", result.Output, result.Usage)
+            {
+                Degraded = result.Summary,
+            };
+
         now = Now();
         execution.Outcome = result.Outcome;
-        execution.Summary = result.Summary;
+        execution.Summary = result.Degraded is { } degraded
+            ? $"Failed, continued (onFailure: continue): {degraded}\n{result.Summary}"
+            : result.Summary;
+        if (walk.Warnings.Count > 0)
+            execution.Summary = $"{execution.Summary}\n{string.Join("\n", walk.Warnings)}";
         if (result.Output is not null)
             execution.OutputJson = ReviewWalk.ToJson(result.Output);
         if (result.Usage is { } usage)
@@ -315,7 +329,9 @@ public sealed class ReviewWorkflowExecutor(
         {
             case NodeResultKind.Succeeded:
             case NodeResultKind.Skipped:
-                execution.Status = result.Kind == NodeResultKind.Succeeded ? ReviewNodeStatus.Succeeded : ReviewNodeStatus.Skipped;
+                execution.Status = result.Degraded is not null ? ReviewNodeStatus.FailedContinued
+                    : result.Kind == NodeResultKind.Succeeded ? ReviewNodeStatus.Succeeded
+                    : ReviewNodeStatus.Skipped;
                 execution.CompletedAt = now;
                 if (walk.Run.Status is not (ReviewRunStatus.Running or ReviewRunStatus.Approved))
                     walk.Run.Status = ReviewRunStatus.Running;
@@ -336,11 +352,29 @@ public sealed class ReviewWorkflowExecutor(
                 walk.Run.Status = ReviewRunStatus.Failed;
                 walk.Run.WaitingOn = null;
                 logger.LogWarning("Review run {RunId} failed at {NodeId}: {Reason}", walk.Run.Id, node.Id, result.Summary);
+                await ReportFailureAsync(walk, node, result.Summary, ct);
                 break;
         }
 
         await SaveAndPublishAsync(walk, ct);
         return proceed;
+    }
+
+    /// <summary>
+    /// A failed run says so on the PR, so its review status does not stay pending. Best effort: the
+    /// run has already failed, so a refused status changes nothing.
+    /// </summary>
+    private async Task ReportFailureAsync(ReviewWalk walk, WorkflowNode node, string reason, CancellationToken ct)
+    {
+        try
+        {
+            var text = $"Failed at {node.Id}: {reason}".ReplaceLineEndings(" ");
+            await walk.SetStatusAsync(ReviewWalk.ReviewStatusContext, CodeHostStatusState.Error, text.Length <= 140 ? text : text[..137] + "...", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogInformation("Review run {RunId}: the failure status was not posted: {Reason}", walk.Run.Id, ex.Message);
+        }
     }
 
     private static Task<NodeResult> RunNodeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct) =>

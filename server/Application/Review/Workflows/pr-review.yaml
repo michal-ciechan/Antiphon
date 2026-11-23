@@ -2,6 +2,9 @@
 # A repo overrides it with .antiphon/review/workflow.yaml, layered like the prompts (design 10).
 # Edges: "a -> b", "a[output] -> b", or a mapping that adds maxIterations, the overflow gate that
 # opens over the limit (D-2), and a description.
+# onFailure: continue lets the run go on when the step fails (it shows failed-continued, and takes
+# its fallback output, else its unlabelled edge); the default is stop. Review:Policy:OnFailure:<node>
+# overrides it per instance, so the operator decides which failures block a review.
 workflow: pr-review
 version: 1
 sections:
@@ -12,21 +15,21 @@ sections:
 nodes:
   intake:        { kind: code, run: Intake, description: "Pins the base and head SHAs, fetches the mirror and reads policy, checks and workflow at the base." }
   delta:         { kind: code, run: Delta, description: "Full review on the first iteration; afterwards limits the work to the change since the last reviewed SHA." }
-  categorise:    { kind: decision, run: Categorise, chain: decisions-default, description: "Asks Jev for the change kind, risk areas and blast radius in one batched call." }
-  select:        { kind: decision, run: SelectChecks, chain: decisions-default, description: "Prefilters the check catalogue by triggers, then asks which candidate checks apply." }
+  categorise:    { kind: decision, run: Categorise, chain: decisions-default, onFailure: continue, description: "Asks Jev for the change kind, risk areas and blast radius in one batched call." }
+  select:        { kind: decision, run: SelectChecks, chain: decisions-default, onFailure: continue, description: "Prefilters the check catalogue by triggers, then asks which candidate checks apply." }
   group:         { kind: code, run: GroupChecks, description: "Bin-packs the selected checks into reviewer groups by category and token budget." }
   packs:         { kind: code, run: BuildPacks, description: "Writes one context pack per reviewer group: a shared prefix plus the group's checks." }
   review:        { kind: fan-out, over: groups, node: reviewer, policy: all, description: "Runs one reviewer per group and waits for all of them." }
   reviewer:      { kind: agent, role: Reviewer, output: review-findings/1, runner: { labels: [review] }, description: "A read-only agent session that reviews its pack and answers in review-findings/1." }
   collate:       { kind: join, from: review, run: CollateFindings, description: "Gathers every reviewer's findings, collapses duplicates and re-anchors them at the reviewed SHA." }
-  verify:        { kind: completion, run: VerifyFindings, chain: completions-cheap, description: "A cheaper model tries to disprove each finding; disproved findings are dropped and recorded." }
+  verify:        { kind: completion, run: VerifyFindings, chain: completions-cheap, onFailure: continue, description: "A cheaper model tries to disprove each finding; disproved findings are dropped and recorded." }
   publish:       { kind: code, run: Publish, description: "Posts the findings above the round's bar as one PR review and updates the summary and statuses." }
   route:         { kind: code, run: RouteAfterRound, outputs: [bot-round-limit, findings, clean], description: "Chooses what follows the round: wait for fixes, a human review, or the approval check." }
   await-fixes:   { kind: wait, on: [push, recheck, close, base-moved, update-requested], timeout: 14d, description: "Parks the run, with no seat held, until the author pushes fixes or someone asks for a recheck. Times out after 14 days." }
   record-drift:  { kind: code, run: RecordBaseDrift, description: "Notes that the base moved while fixes are awaited. No model call, no re-review and no branch update; the next push re-runs the drift check." }
-  base-drift:    { kind: decision, run: BaseDriftCheck, chain: decisions-default, outputs: [affected, unaffected], description: "Decides whether base commits the approved PR is missing could affect it." }
+  base-drift:    { kind: decision, run: BaseDriftCheck, chain: decisions-default, outputs: [affected, unaffected], onFailure: continue, fallback: affected, description: "Decides whether base commits the approved PR is missing could affect it." }
   needs-human-approval: { kind: code, run: NeedsHumanApproval, outputs: ["yes", "no"], description: "Answers one question: must a human approve this PR?" }
-  bot-approve:   { kind: code, run: BotApprove, description: "Approves when no blocker or finding is open, every check is accounted for and CI is green." }
+  bot-approve:   { kind: code, run: BotApprove, onFailure: continue, description: "Approves when no blocker or finding is open, every check is accounted for and CI is green." }
   human-approve: { kind: gate, queue: owning-team, decisions: [approve, another-round, close], description: "The owning team approves, asks for another round with a steer, or closes the review." }
   human-review:  { kind: gate, queue: owning-team, decisions: [approve, another-round, close], description: "Opens after the bot-only round limit, or when a loop's iteration limit is exceeded." }
   base-moved:    { kind: code, run: CheckBaseMoved, outputs: [unchanged, moved, behind], description: "Compares the reviewed base with the base tip after an approval. No model call (D-37)." }

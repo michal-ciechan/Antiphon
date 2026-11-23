@@ -120,6 +120,7 @@ export const NODE_STATUS_META: Record<NodeStatus, { label: string; hex: string }
   Skipped: { label: 'skipped', hex: '#5c5f66' },
   Waiting: { label: 'parked', hex: '#ffa92e' },
   NotReached: { label: 'not reached', hex: '#373a40' },
+  FailedContinued: { label: 'failed, continued', hex: '#e8590c' },
 }, (value) => ({ label: value, hex: '#5c5f66' }))
 
 export const NODE_KIND_META: Record<NodeKind, { label: string; color: string }> = tolerant({

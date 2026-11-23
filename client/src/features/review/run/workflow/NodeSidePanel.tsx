@@ -74,6 +74,12 @@ export function NodeSidePanel({
 }) {
   const kind = NODE_KIND_META[def.kind]
   const params = Object.entries(def.params)
+  // Only a step that does work has a failure policy; gates, waits and fan-outs never continue past one.
+  const failurePolicy = def.kind === 'Gate' || def.kind === 'Wait' || def.kind === 'FanOut'
+    ? null
+    : def.params.onFailure === 'continue'
+      ? `continues${typeof def.params.fallback === 'string' ? ` along ${def.params.fallback}` : ''}, marked failed, continued`
+      : 'stops the run'
   const showItem = execs.some((e) => e.itemKey)
   const showOutcome = execs.some((e) => e.outcome)
   const rows = [...execs].sort((a, b) => a.iteration - b.iteration || (a.itemKey ?? '').localeCompare(b.itemKey ?? ''))
@@ -98,6 +104,11 @@ export function NodeSidePanel({
         ) : (
           <Text size="xs" c="warning.4" mt={4}>
             No description.
+          </Text>
+        )}
+        {failurePolicy && (
+          <Text size="xs" c="dimmed" mt={4} data-testid="review-node-on-failure">
+            On failure: {failurePolicy}. Review:Policy:OnFailure:{def.id} overrides this per instance.
           </Text>
         )}
       </Box>

@@ -272,14 +272,28 @@ public static class ReviewReviewSteps
                 new CompletionInput("diff", Truncate(await walk.DiffAsync(walk.WholeRange, ct) ?? "(no diff)", ReviewCategorisation.MaxDiffChars)),
             ],
             "decision-response/1.0");
-        var answered = await completions.CompleteAsync(chain, request, ct);
+        // Verification only drops findings: when it cannot run and may continue, every finding goes through unverified.
+        NodeResult Unverified(string reason, NodeUsage? spent) => walk.ContinuesOnFailure(node)
+            ? NodeResult.Ok(null, $"{candidates.Count} findings passed through unverified", new VerifyOutput(all, [], false), spent).AsDegraded(reason)
+            : NodeResult.Fail(reason, spent);
+
+        CompletionChainResult answered;
+        try
+        {
+            answered = await completions.CompleteAsync(chain, request, ct);
+        }
+        catch (DecisionChainException ex)
+        {
+            return Unverified($"No verifier answered: {ex.Message}", null);
+        }
+
         var usage = NodeUsage.From(answered.Calls, answered.CostUsd);
         var requestDoc = new DecisionRequestDocument { RequestId = requestId, State = "", Questions = questions };
         var parsed = AbfParser.ParseDecisionResponse(answered.Text, requestDoc);
         if (parsed.Value is null)
         {
             var codes = string.Join(", ", parsed.Document.Diagnostics.Where(d => d.Severity == AbfSeverity.Error).Select(d => d.Code).Distinct());
-            return NodeResult.Fail($"The verifier's answer is not a decision-response/1.0 for {requestId}: {codes}", usage);
+            return Unverified($"The verifier's answer is not a decision-response/1.0 for {requestId}: {codes}", usage);
         }
 
         var policy = walk.Policy;
@@ -397,7 +411,7 @@ public static class ReviewReviewSteps
         if (canPost && (inline.Count > 0 || summaryOnly.Count > 0))
         {
             var body = SummaryBody(walk, inline.Select(i => i.Finding).ToList(), summaryOnly, belowBar.Count,
-                ReviewWalk.Output<VerifyOutput>(verify), verify?.Status == ReviewNodeStatus.Skipped);
+                ReviewWalk.Output<VerifyOutput>(verify), verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued);
             var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding))).ToList();
             var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, body, comments), ct);
             reviewId = posted.ReviewId;

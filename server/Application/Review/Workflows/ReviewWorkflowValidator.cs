@@ -46,6 +46,7 @@ public static class ReviewWorkflowValidator
         public const string SectionOverlap = "section-overlap";
         public const string FanOutPolicy = "fan-out-policy";
         public const string MissingDescription = "missing-description";
+        public const string OnFailure = "on-failure";
     }
 
     public static WorkflowValidation Validate(WorkflowDefinition workflow)
@@ -85,6 +86,15 @@ public static class ReviewWorkflowValidator
     {
         if (string.IsNullOrWhiteSpace(node.Description))
             diagnostics.Add(Warning(Codes.MissingDescription, $"Node '{node.Id}' has no description.", [node.Id]));
+
+        // onFailure: continue | stop, with an optional fallback output (the edge a failed-continued step takes).
+        var onFailure = node.StringParam("onFailure");
+        if (onFailure is not null && onFailure is not ("continue" or "stop"))
+            diagnostics.Add(Error(Codes.OnFailure, $"Node '{node.Id}' onFailure '{onFailure}' must be continue or stop.", [node.Id]));
+        else if (onFailure == "continue" && node.Kind is ReviewNodeKind.Gate or ReviewNodeKind.Wait or ReviewNodeKind.FanOut)
+            diagnostics.Add(Error(Codes.OnFailure, $"Node '{node.Id}' is a {node.Kind}: only a step that does work can continue past a failure.", [node.Id]));
+        if (node.StringParam("fallback") is { } fallback && node.ListParam("outputs") is { Count: > 0 } outputs && !outputs.Contains(fallback, StringComparer.Ordinal))
+            diagnostics.Add(Error(Codes.OnFailure, $"Node '{node.Id}' fallback '{fallback}' is not one of its outputs.", [node.Id]));
 
         switch (node.Kind)
         {

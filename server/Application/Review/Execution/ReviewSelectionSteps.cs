@@ -78,8 +78,11 @@ public static class ReviewSelectionSteps
         }
 
         NodeUsage? usage = null;
+        string? degraded = null;
         if (candidates.Count > 0)
         {
+            try
+            {
             var chain = node.StringParam("chain") is { Length: > 0 } named ? named : ReviewCategorisation.DefaultChain;
             var state = ReviewCategorisation.BuildState(walk.Run.Subject.Title, null, scope.Description, scope.Files, diff, null)
                 + $"\nCategories: {string.Join(", ", walk.Run.Categories)}\n";
@@ -104,6 +107,18 @@ public static class ReviewSelectionSteps
                     records[index] = Record(check, p, selected, $"{trigger}; applies p={p:0.00}");
                 }
             }
+            }
+            catch (DecisionChainException ex) when (walk.ContinuesOnFailure(node))
+            {
+                // Selection is a filter: without a decision model every check whose trigger matched is reviewed.
+                degraded = $"no decision model answered ({ex.Message}); every triggered candidate is included";
+                foreach (var check in candidates)
+                {
+                    var index = records.FindIndex(r => r.Id == check.Id);
+                    if (records[index].Probability is null)
+                        records[index] = Record(check, null, true, $"{records[index].Reason}; selection unavailable, included");
+                }
+            }
         }
 
         var output = new SelectOutput(set.Sources, set.Problems, records);
@@ -112,7 +127,8 @@ public static class ReviewSelectionSteps
         var summary = $"{set.Checks.Count} checks ({set.Sources}): {candidates.Count} candidates, {picked.Count} selected"
             + (picked.Count > 0 ? $": {string.Join(", ", picked)}" : "")
             + (set.Problems.Count > 0 ? $"\n{set.Problems.Count} check files skipped: {string.Join("; ", set.Problems.Take(5))}" : "");
-        return NodeResult.Ok(null, summary, output, usage);
+        var result = NodeResult.Ok(null, summary, output, usage);
+        return degraded is null ? result : result.AsDegraded(degraded);
     }
 
     /// <summary>Grouping (design 4.5) of the checks select picked in this iteration.</summary>
