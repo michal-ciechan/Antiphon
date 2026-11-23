@@ -13250,6 +13250,8 @@
     {
       "path": "server/Application/Settings/ReviewPolicySettings.cs",
       "classes": [
+        "ReviewEndToEndApiTests",
+        "ReviewLiveGitHubTests",
         "ReviewRoundsPolicyTests"
       ]
     },
@@ -27699,6 +27701,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/OwnedTempRoot.cs",
       "classes": [
+        "AgentTaskDeliveryWatchdogTests",
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
