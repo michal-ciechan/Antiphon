@@ -158,14 +158,8 @@ internal static class WorktreeNoFollowDelete
     /// </summary>
     internal static void SettleDisposition(string path, Func<bool, int?> attempt)
     {
-        int? error;
-        for (var n = 1; ; n++)
-        {
-            error = attempt(true);
-            if (error is null) return;
-            if (error is not (5 or 32 or 33) || n == WorktreeRenames.SharingAttempts) break;
-            Thread.Sleep(WorktreeRenames.SharingPause);
-        }
+        var error = attempt(true);
+        if (error is null) return;
         if (error is not (87 or 1 or 50)) throw Failure("delete", path, error);
         if (attempt(false) is { } classic) throw Failure("delete", path, classic);
     }
