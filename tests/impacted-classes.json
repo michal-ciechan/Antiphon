@@ -453,6 +453,15 @@
       ]
     },
     {
+      "id": "review-check-seeds",
+      "globs": [
+        "server/Application/Review/Checks/Seed/**"
+      ],
+      "classes": [
+        "ReviewCheckParserTests"
+      ]
+    },
+    {
       "id": "land-graph-audit-project",
       "globs": [
         "tests/Antiphon.Tests/Antiphon.Tests.csproj",
