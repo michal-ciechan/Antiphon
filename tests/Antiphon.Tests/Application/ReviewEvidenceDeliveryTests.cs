@@ -63,7 +63,7 @@ public sealed class ReviewEvidenceDeliveryTests
             var row = $"busy={busy} {presentation} {rendering}";
             var spill = rendering == "raw-spill";
             var distill = rendering == "distilled-inline";
-            await using var rig = await C544DeliveryRig.CreateAsync(busy, spill, distill);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy, spill, distill, postEvidenceSettleMs: 0);
             var (taskId, _) = await SettleWarningAsync(rig, presentation);
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
@@ -101,7 +101,7 @@ public sealed class ReviewEvidenceDeliveryTests
 
         // Settlement sees the real closing token. The caller body omits it and ends with
         // the earlier token-shaped line, so parsing that body would miss the fenced block.
-        await using (var rig = await C544DeliveryRig.CreateAsync(busy: false))
+        await using (var rig = await C544DeliveryRig.CreateAsync(busy: false, postEvidenceSettleMs: 0))
         {
             var (taskId, _) = await rig.SettleReviewAsync(transformReport: (id, report) =>
                 Presented(report, "fence").Replace("Reviewed the owner.",
@@ -130,7 +130,7 @@ public sealed class ReviewEvidenceDeliveryTests
         foreach (var distilledSpill in new[] { false, true })
         {
             var row = $"{cut} busy={busy} distilledSpill={distilledSpill}";
-            await using var rig = await C544DeliveryRig.CreateAsync(busy, spill: distilledSpill, distill: distilledSpill);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy, spill: distilledSpill, distill: distilledSpill, postEvidenceSettleMs: 0);
             if (cut == "wakeup-dropped") rig.Boundary.DropCompletionWakeup = true;
             else rig.Fault.Cut = cut is "render-committed" or "spill-written" or "attempt-committed" or "prompt-accepted"
                 ? null : cut;
@@ -218,7 +218,7 @@ public sealed class ReviewEvidenceDeliveryTests
     [Test]
     public async Task C807_SnapshotWarningSurvivesResultRewrite()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, postEvidenceSettleMs: 0);
         rig.Fault.Cut = "settled-committed";
         var (taskId, _) = await SettleWarningAsync(rig);
         rig.Fault.Throws.ShouldBe(1);
@@ -246,7 +246,7 @@ public sealed class ReviewEvidenceDeliveryTests
     [Test]
     public async Task C807_WarningReplayRejectsLateDistillation()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true, postEvidenceSettleMs: 0);
         var (taskId, _) = await SettleWarningAsync(rig);
         var note = (await rig.NotificationAsync(taskId))!;
         rig.DistillQueue.TryDequeue(out var request).ShouldBeTrue();
@@ -276,7 +276,7 @@ public sealed class ReviewEvidenceDeliveryTests
     {
         foreach (var cut in new[] { "settled-committed", "note-committed" })
         {
-            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true, postEvidenceSettleMs: 0);
             rig.Fault.Cut = cut;
             var (taskId, _) = await SettleWarningAsync(rig);
             rig.Fault.Throws.ShouldBe(1, cut);
@@ -304,7 +304,7 @@ public sealed class ReviewEvidenceDeliveryTests
     {
         foreach (var form in new[] { "header", "prefix", "id" })
         {
-            await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, postEvidenceSettleMs: 0);
             var (taskId, _) = await SettleWarningAsync(rig);
             var note = (await rig.NotificationAsync(taskId))!;
             rig.SubmitTransform = wire => form switch
@@ -350,7 +350,7 @@ public sealed class ReviewEvidenceDeliveryTests
     {
         foreach (var mode in new[] { "missing", "tampered" })
         {
-            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true, postEvidenceSettleMs: 0);
             var (taskId, _) = await SettleWarningAsync(rig);
             await rig.DeliverAsync(mode);
             var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
@@ -373,7 +373,7 @@ public sealed class ReviewEvidenceDeliveryTests
     [Test]
     public async Task C807_ReceiptQueryRequiresDestinationKindAndFloor()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false);
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, postEvidenceSettleMs: 0);
         var (taskId, _) = await SettleWarningAsync(rig);
         await rig.DeliverAsync("query");
         await rig.ScanAsync();
@@ -423,7 +423,7 @@ public sealed class ReviewEvidenceDeliveryTests
         foreach (var form in new[] { "fence", "quote" })
         {
             var row = $"busy={busy} {form}";
-            await using var rig = await C544DeliveryRig.CreateAsync(busy);
+            await using var rig = await C544DeliveryRig.CreateAsync(busy, postEvidenceSettleMs: 0);
             var created = await rig.World.CreateTaskAsync(rig.World.FinalReview());
             await using (var db = rig.World.CreateContext())
             {
