@@ -145,7 +145,7 @@ public sealed class NightlyHealthTests
         {
             var h = NightlyHealth.Evaluate(kind == "script" ? null : Registration(), kind == "schedule" ? null : Schedule(tag: "desktop"),
                 [], null, DateTime.UtcNow, expectedScriptHash: "abc");
-            rows.Check(!h.Healthy, $"G099 missing {kind}");
+            rows.Check(!h.Healthy, $"G099 missing {kind}", Verdict(h));
         }
         rows.ShouldPass(2);
     }
@@ -158,7 +158,7 @@ public sealed class NightlyHealthTests
         {
             var h = NightlyHealth.Evaluate(Registration(), Schedule(enabled: kind != "disabled", paused: kind == "paused", tag: "desktop"), [], null,
                 DateTime.UtcNow, expectedScriptHash: "abc");
-            rows.Check(!h.Healthy, $"G100 {kind}");
+            rows.Check(!h.Healthy, $"G100 {kind}", Verdict(h));
         }
         rows.ShouldPass(2);
     }
@@ -168,7 +168,7 @@ public sealed class NightlyHealthTests
     {
         var rows = new Rows();
         var h = NightlyHealth.Evaluate(Registration(hash: "wrong"), Schedule(), [], null, DateTime.UtcNow, expectedScriptHash: "abc");
-        rows.Check(!h.Healthy, "G101 hash mismatch");
+        rows.Check(!h.Healthy, "G101 hash mismatch", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -177,7 +177,7 @@ public sealed class NightlyHealthTests
     {
         var rows = new Rows();
         var h = NightlyHealth.Evaluate(Registration(tag: "server"), Schedule(), [], null, DateTime.UtcNow, expectedScriptHash: "abc");
-        rows.Check(!h.Healthy, "G102 non-desktop");
+        rows.Check(!h.Healthy, "G102 non-desktop", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -186,7 +186,7 @@ public sealed class NightlyHealthTests
     {
         var rows = new Rows();
         var h = NightlyHealth.Evaluate(Registration(), Schedule(args: new JsonObject { ["suites"] = "client" }), [], null, DateTime.UtcNow, expectedScriptHash: "abc");
-        rows.Check(!h.Healthy, "G103 suite override");
+        rows.Check(!h.Healthy, "G103 suite override", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -195,7 +195,7 @@ public sealed class NightlyHealthTests
     {
         var rows = new Rows();
         var h = NightlyHealth.Evaluate(Registration(), Schedule(worker: "1", server: "2"), [], null, DateTime.UtcNow, expectedScriptHash: "abc");
-        rows.Check(!h.Healthy, "G104 worker version");
+        rows.Check(!h.Healthy, "G104 worker version", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -206,8 +206,8 @@ public sealed class NightlyHealthTests
         var due = NightlyLondon.DueUtc(NightlyLondon.ToLocal(DateTime.UtcNow));
         var h1 = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [new NightlyWindmillJob { Status = "queued" }], null, due.AddMinutes(31), expectedScriptHash: "a");
         var h2 = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [], null, due.AddMinutes(-1), expectedScriptHash: "a");
-        rows.Check(!h1.Healthy, "G105 overdue at grace");
-        rows.Check(h2.Pending || h2.Healthy, "G105 pre-grace pending");
+        rows.Check(!h1.Healthy, "G105 overdue at grace", Verdict(h1));
+        rows.Check(h2.Pending || h2.Healthy, "G105 pre-grace pending", Verdict(h2));
         rows.ShouldPass(2);
     }
 
@@ -222,9 +222,9 @@ public sealed class NightlyHealthTests
         var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [],
             State(new { coverageComplete = true, testsPassed = true, reportDelivered = true, completedAt = morningUtc.AddDays(-1).ToString("o") }),
             morningUtc, expectedScriptHash: "a");
-        rows.Check(!h.Healthy, "G106 missing expected / yesterday insufficient");
+        rows.Check(!h.Healthy, "G106 missing expected / yesterday insufficient", Verdict(h));
         var pre = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [], null, morningUtc.AddHours(-10), expectedScriptHash: "a");
-        rows.Check(pre.Pending || !pre.ReadyForDeferral, "G106 pre-deadline pending");
+        rows.Check(pre.Pending || !pre.ReadyForDeferral, "G106 pre-deadline pending", Verdict(pre));
         rows.ShouldPass(2);
     }
 
@@ -248,7 +248,7 @@ public sealed class NightlyHealthTests
         var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(),
             [new NightlyWindmillJob { NativeRunId = "job1", LocalDueDate = LondonDate(DateTime.UtcNow) }],
             State(new { runId = "other", coverageComplete = true, testsPassed = true, reportDelivered = true }), DateTime.UtcNow, expectedScriptHash: "a");
-        rows.Check(!h.Healthy, "G108 run id mismatch");
+        rows.Check(!h.Healthy, "G108 run id mismatch", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -268,7 +268,7 @@ public sealed class NightlyHealthTests
         {
             var now = TimeZoneInfo.ConvertTimeToUtc(date.AddHours(hour).AddMinutes(minute), NightlyLondon.TimeZone);
             NightlyHealthVerdict At(string sha) => NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(),
-                [new NightlyWindmillJob { Sha = "aaa", NativeRunId = "r1" }],
+                [new NightlyWindmillJob { Sha = "aaa", NativeRunId = "r1", LocalDueDate = NightlyLondon.DateText(date) }],
                 State(new { runId = "r1", sha, coverageComplete = true, testsPassed = true, reportDelivered = true }), now, expectedScriptHash: "a");
             var mismatch = At("bbb");
             var match = At("aaa");
@@ -286,7 +286,7 @@ public sealed class NightlyHealthTests
         var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [],
             State(new { policyHash = "old", coverageComplete = true, testsPassed = true, reportDelivered = true }), DateTime.UtcNow,
             expectedScriptHash: "a", expectedPolicyHash: "new");
-        rows.Check(!h.Healthy, "G110 policy mismatch");
+        rows.Check(!h.Healthy, "G110 policy mismatch", Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -313,7 +313,7 @@ public sealed class NightlyHealthTests
         var rows = new Rows();
         var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [],
             State(new { coverageComplete = coverage, testsPassed = tests, reportDelivered = report }), DateTime.UtcNow, expectedScriptHash: "a");
-        rows.Check(!h.Healthy, name);
+        rows.Check(!h.Healthy, name, Verdict(h));
         rows.ShouldPass(1);
     }
 
@@ -325,7 +325,7 @@ public sealed class NightlyHealthTests
         {
             var native = State(new { phase = "Started", lastActivityAt = DateTime.UtcNow.AddHours(-3).ToString("o") });
             var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [], native, DateTime.UtcNow, expectedScriptHash: "a");
-            rows.Check(!h.Healthy && !h.TerminateRequested, $"G115 {kind} no kill");
+            rows.Check(!h.Healthy && !h.TerminateRequested, $"G115 {kind} no kill", Verdict(h));
         }
         rows.ShouldPass(2);
     }
@@ -354,7 +354,7 @@ public sealed class NightlyHealthTests
         {
             var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [], kind == "failed" ? State(new { coverageComplete = false }) : null,
                 DateTime.UtcNow, expectedScriptHash: "a");
-            rows.Check(!h.ReadyForDeferral, $"G117 {kind} no deferral");
+            rows.Check(!h.ReadyForDeferral, $"G117 {kind} no deferral", Verdict(h));
         }
         rows.ShouldPass(3);
     }
