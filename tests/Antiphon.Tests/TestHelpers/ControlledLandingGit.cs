@@ -967,7 +967,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             _sourcePresent = false;
             foreach (var key in _worktrees.Keys.Where(k => PathsEqual(k, path)).ToArray())
                 _worktrees.Remove(key);
-            Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(retired);
+            // Debug 847c35c6: a scanner holding the freshly written entry refuses one walk (group 141); the
+            // settled walk waits it out and re-checks every guard each time.
+            Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.DeleteSettled(retired,
+                preserveNestedRepositories: false, AdminDeleteRenames);
         }
         return new(0, "", "");
     }
