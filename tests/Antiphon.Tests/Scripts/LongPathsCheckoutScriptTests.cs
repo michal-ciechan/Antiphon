@@ -152,11 +152,25 @@ public sealed class LongPathsCheckoutScriptTests
         rows.ShouldAllPass(3, "LP preflight refuses longpaths-not-enabled", "LP preflight names the fix command", "LP preflight accepts core.longpaths true");
     }
 
+    // In process since unit 13 of 2026-11-22-remaining-ps1-to-csharp.md (was the test-longpaths-checkout.ps1 case on the deleted
+    // scripts/release-candidate.ps1): ReleaseCandidate.Run over the fake remote of ReleaseCandidateTests clones a missing
+    // release checkout with -c core.longpaths=true, and its WhatIf line names the override.
     [Test, Timeout(180_000)]
-    public Task LP_CloneFlag(CancellationToken token) =>
-        Run(nameof(LP_CloneFlag), 2,
-        [
-            "LP release clone argv passes core.longpaths",
-            "LP release whatif names core.longpaths"
-        ], token);
+    public void LP_CloneFlag(CancellationToken token)
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("lp-clone");
+        var git = new FakeCandidateRemote(new string('c', 40));
+        git.Refs["rc/2026-11-19"] = new string('a', 40);
+        var release = fixture.PathOf("releases");
+        var whatIf = ReleaseCandidateCases.Cut(fixture, git, release, fixture.PathOf("checkout"), "rc/2026-11-19",
+            o => { o.WhatIf = true; o.RemoteUrl = "https://example.invalid/antiphon.git"; });
+        var whatIfText = fixture.Out.ToString();
+        var live = ReleaseCandidateCases.Cut(fixture, git, release, fixture.PathOf("live-checkout"), "rc/2026-11-19", o => o.RemoteUrl = "https://example.invalid/antiphon.git");
+        var logged = string.Join("\n", git.Calls.Select(call => string.Join("|", call.Arguments)));
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        rows.Check(logged.Contains("clone|-c|core.longpaths=true|", StringComparison.Ordinal) && live.ExitCode == 0, "LP release clone argv passes core.longpaths",
+            "exit=" + live.ExitCode + " refusal=" + live.Refusal + " " + logged);
+        rows.Check(whatIfText.Contains("WhatIf: would clone -c core.longpaths=true", StringComparison.Ordinal) && whatIf.ExitCode == 0, "LP release whatif names core.longpaths", whatIfText);
+        rows.ShouldAllPass(2, "LP release clone argv passes core.longpaths", "LP release whatif names core.longpaths");
+    }
 }

@@ -62,18 +62,6 @@ function Invoke-LpChild {
     return [pscustomobject]@{ Code = $proc.ExitCode; Text = ($stdoutTask.Result + "`n" + $stderrTask.Result) }
 }
 
-function Get-LpCaptured {
-    param($Captured)
-    $lines = New-Object System.Collections.Generic.List[string]
-    $result = $null
-    foreach ($item in @($Captured)) {
-        if ($item -is [System.Management.Automation.InformationRecord]) { $lines.Add([string]$item.MessageData) }
-        elseif ($null -ne $item -and $null -ne $item.PSObject.Properties['Refusal']) { $result = $item }
-        elseif ($null -ne $item) { $lines.Add([string]$item) }
-    }
-    return [pscustomobject]@{ Result = $result; Text = ($lines -join "`n") }
-}
-
 function Write-LpGitShim {
     param([string]$Directory, [string]$Log, [string]$RealGit)
     New-Item -ItemType Directory -Path $Directory -Force | Out-Null
@@ -175,54 +163,7 @@ function Test-LP_PathArithmetic {
 
 # W2-nightly S20: LP_NoSyncRefuses runs NightlyRun.Run in-process (LongPathsCheckoutScriptTests); since unit 7 of
 # docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md LP_LaunchRefuses and LP_PreflightRefuses do too (qualification-launch,
-# qualification-preflight).
-
-function Write-LpReleaseSeams {
-    param([string]$Path, [string]$Log, [string]$Sha)
-    $text = @"
-`$ReleaseGateSeams = @{
-    Git = {
-        param(`$WorkingDirectory, `$Arguments)
-        Add-Content -LiteralPath '$Log' -Value (`$Arguments -join '|') -Encoding ASCII
-        if ([string]`$Arguments[0] -eq 'ls-remote') {
-            return @{ ExitCode = 0; Output = '$Sha refs/heads/rc/2026-11-19' }
-        }
-        return @{ ExitCode = 0; Output = '' }
-    }
-    GitHub = {
-        param(`$Verb, `$Arguments, `$WorkingDirectory)
-        return @{ ExitCode = 0; Output = '' }
-    }
-}
-"@
-    [IO.File]::WriteAllText($Path, $text)
-}
-
-function Test-LP_CloneFlag {
-    $root = New-LpDirectory ('lp-clone-' + [guid]::NewGuid().ToString('N'))
-    $log = Join-Path $root 'git.log'
-    $logged = ''
-    $whatIfText = ''
-    $detail = ''
-    try {
-        $seams = Join-Path $root 'seams.ps1'
-        Write-LpReleaseSeams -Path $seams -Log $log -Sha ('a' * 40)
-        $release = Join-Path $root 'releases'
-        $checkout = Join-Path $root 'checkout'
-        $script = Join-Path $here 'release-candidate.ps1'
-        $whatIf = Get-LpCaptured @(& $script -PassThru -WhatIf -ReleaseRoot $release -CheckoutRoot $checkout -RemoteUrl 'https://example.invalid/antiphon.git' -Ref 'rc/2026-11-19' -SeamsPath $seams 6>&1)
-        $whatIfText = [string]$whatIf.Text
-        $liveCheckout = Join-Path $root 'live-checkout'
-        [void](Get-LpCaptured @(& $script -PassThru -ReleaseRoot $release -CheckoutRoot $liveCheckout -RemoteUrl 'https://example.invalid/antiphon.git' -Ref 'rc/2026-11-19' -SeamsPath $seams 6>&1))
-        if (Test-Path -LiteralPath $log) { $logged = [IO.File]::ReadAllText($log) }
-    } catch {
-        $detail = $_.ToString()
-    } finally {
-        Remove-LpTree $root
-    }
-    Assert-C487 ($logged.Contains('clone|-c|core.longpaths=true|')) 'LP release clone argv passes core.longpaths' ($detail + ' ' + $logged)
-    Assert-C487 ($whatIfText.Contains('WhatIf: would clone -c core.longpaths=true')) 'LP release whatif names core.longpaths' ($detail + ' ' + $whatIfText)
-}
+# qualification-preflight), and since unit 13 LP_CloneFlag (ReleaseCandidate.Run: release-candidate.ps1 is deleted).
 
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
@@ -231,4 +172,4 @@ if ($Case) {
 } else {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'LP_')) { & $fn }
 }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 8 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 6 })

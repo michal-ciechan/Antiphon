@@ -2189,34 +2189,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 40,
+      "classes": 42,
       "reason": "cap",
-      "owed": 15,
+      "owed": 17,
       "first": [
+        "TestTimingReportTests",
+        "LongPathsCheckoutScriptTests",
         "NightlyLockFormatTests",
         "NightlyReportTests",
         "QualificationTimingTests",
         "RcFailedFirstPlannerTests",
         "RcProjectSelectionTests",
-        "ReleaseGateE2EEvidenceTests",
-        "ReleaseGateLibraryTests",
-        "ReleaseGateRegistrationTests"
+        "ReleaseGateE2EEvidenceTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 39,
+      "classes": 41,
       "reason": "cap",
-      "owed": 14,
+      "owed": 16,
       "first": [
-        "LongPathsCheckoutScriptTests",
+        "ToolchainFloorWarningTests",
         "NightlyPrerequisiteTests",
         "NightlyScriptsTests",
         "RcQualificationStatusTests",
+        "ReleaseCandidateTests",
         "ReleaseGatePlatformTests",
         "ReleaseSelectionAttemptTests",
-        "ReleaseSelectionHopSeedTests",
-        "NightlyRunParityTests"
+        "ReleaseSelectionHopSeedTests"
       ]
     },
     {
@@ -25645,7 +25645,6 @@
         "ClassCostMeasurementTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
-        "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -25659,9 +25658,10 @@
         "NightlyTestsRunTests",
         "RcFailedFirstExecutionTests",
         "RcFailureHistoryTests",
+        "ReleaseCandidateGitTests",
+        "ReleaseCandidateTests",
         "ReleaseGateRunTests",
         "TestSelectionExecutionTests",
-        "TestTimingReportTests",
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests"
@@ -25681,6 +25681,7 @@
         "C1514LandingSplitBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
+        "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -25701,8 +25702,7 @@
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateLibraryTests",
         "ReleaseGateRegistrationTests",
-        "ReleaseGateRunTests",
-        "ToolchainFloorWarningTests"
+        "ReleaseGateRunTests"
       ]
     },
     {
@@ -25921,6 +25921,14 @@
         "RcDirtyOrderCSharpTests",
         "RcShadowDirtyDifferentialTests",
         "RcShadowSampleCSharpTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseCandidateTests.cs",
+      "classes": [
+        "LongPathsCheckoutScriptTests",
+        "ReleaseCandidateGitTests",
+        "ReleaseGateRunTests"
       ]
     },
     {

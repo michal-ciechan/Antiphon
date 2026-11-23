@@ -243,10 +243,11 @@ public sealed class ReleaseGateRunTests
     /// <summary>
     /// An rc run refuses the shared tree and a card worktree as its checkout (in-process on NightlyRun.Run since W2-nightly
     /// S20; refused before any state is written), and the RC coordinator applies the same ownership rule to its own clone
-    /// (the still-PowerShell release-candidate.ps1 rows of test-release-gate.ps1).
+    /// (in process on ReleaseCandidate.Run since unit 13 of 2026-11-22-remaining-ps1-to-csharp.md, over the fake remote of
+    /// ReleaseCandidateTests: an unmarked clone and the shared tree refuse before any git call).
     /// </summary>
     [Test]
-    public async Task C599_CloneOwnership()
+    public void C599_CloneOwnership()
     {
         if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("CARD-1340: Windows canonical roots C:\\src\\Antiphon and C:\\Antiphon\\worktrees");
         var rows = new NightlyCaseRows();
@@ -259,10 +260,21 @@ public sealed class ReleaseGateRunTests
                 rows.Check(r.ExitCode == 3 && !Directory.Exists(state), "C599 CloneOwnership rc refuses " + path, r.Refusal);
             }
         }
-        rows.ShouldAllPass(2, @"C599 CloneOwnership rc refuses C:\src\Antiphon", @"C599 CloneOwnership rc refuses C:\Antiphon\worktrees\card-task-0233729c");
-        await RunCaseAsync("C599_CloneOwnership", 3,
-            "C599 CloneOwnership coordinator refuses an unmarked clone",
-            "C599 CloneOwnership coordinator refuses the shared tree",
+        using (var fx = NightlyFixture.Create("c599-ownership-candidate"))
+        {
+            var git = new FakeCandidateRemote(new string('b', 40));
+            var releaseRoot = fx.PathOf("releases");
+            var unmarked = fx.PathOf("unmarked");
+            Directory.CreateDirectory(Path.Combine(unmarked, ".git"));
+            var r1 = ReleaseCandidateCases.Cut(fx, git, releaseRoot, unmarked, CandidateRef);
+            rows.Check(r1.Refusal == "unmarked-clone", "C599 CloneOwnership coordinator refuses an unmarked clone", r1.Refusal);
+            var r2 = ReleaseCandidateCases.Cut(fx, git, releaseRoot, @"C:\src\Antiphon", CandidateRef);
+            rows.Check(r2.Refusal == "shared-tree" && git.Trace.Count == 0, "C599 CloneOwnership coordinator refuses the shared tree", r2.Refusal + " " + string.Join("|", git.Trace));
+            var r3 = ReleaseCandidateCases.Cut(fx, git, releaseRoot, ReleaseCandidateCases.OwnedClone(fx), CandidateRef);
+            rows.Check(r3.ExitCode == 0, "C599 CloneOwnership control owned clone is accepted", r3.Refusal);
+        }
+        rows.ShouldAllPass(5, @"C599 CloneOwnership rc refuses C:\src\Antiphon", @"C599 CloneOwnership rc refuses C:\Antiphon\worktrees\card-task-0233729c",
+            "C599 CloneOwnership coordinator refuses an unmarked clone", "C599 CloneOwnership coordinator refuses the shared tree",
             "C599 CloneOwnership control owned clone is accepted");
     }
 

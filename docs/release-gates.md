@@ -530,7 +530,7 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 
 | Script | Job |
 |---|---|
-| `scripts/release-candidate.ps1` | Journal an existing `rc/YYYY-MM-DD` tip, or keep today's create-only push for a legacy stamp ref. An omitted `-Ref` refuses. |
+| `scripts\antiphon.cmd release-candidate --ref <ref>` | Journal an existing `rc/YYYY-MM-DD` tip, or keep today's create-only push for a legacy stamp ref. An omitted `--ref` refuses. |
 | `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green. |
 | `scripts/publish-release.ps1` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
 | `scripts/promote-release.ps1` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
@@ -539,8 +539,12 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 
 The remote reads, the tag push, GitHub, the publisher's clock and the publication journal the
 PowerShell scripts above use are C# (`scripts/lib/Antiphon.Nightly/ReleaseGateRemote.cs`,
-`ReleaseGateJournal.cs`, `ReleaseGateTags.cs`); `release-status` and `register-release-gates`
-are commands of `antiphon-scripts` (`scripts/antiphon` from sh).
+`ReleaseGateJournal.cs`, `ReleaseGateTags.cs`); `release-candidate`, `release-status` and
+`register-release-gates` are commands of `antiphon-scripts` (`scripts/antiphon` from sh).
+`release-cut.ps1` runs the candidate in process (`ReleaseCandidate.cs`) from the core it loads.
+The command prints its `[release-candidate]` lines, then one JSON line (`candidateId`, `ref`,
+`sha`, `pushed`, `resumed`, `refusal`, `exitCode`); it exits 0 when journalled (or with
+`--what-if`), 1 on a clone, fetch, push or SHA failure, 3 on a refusal.
 
 **Cut.** The release ref is `rc/YYYY-MM-DD`, with an optional `refs/heads/` prefix.
 A legacy stamp `release/rc-YYYYMMDDTHHMMSSZ` remains valid. `release/current` and any
@@ -578,7 +582,7 @@ A `-NoSync` hop does not set `core.longpaths`. The `qualification-launch` comman
 branch of `nightly-run.ps1`, and `qualification-preflight` refuse reason
 `longpaths-not-enabled` unless `git config --local --get core.longpaths` is `true`.
 The fix command is `git -C <checkout> config --local core.longpaths true`.
-`release-candidate.ps1` passes `-c core.longpaths=true` on `git clone`. The worktree
+The `release-candidate` command passes `-c core.longpaths=true` on `git clone`. The worktree
 guard passes the same override on `worktree add` and `worktree remove` and keeps
 git's own text in the failure.
 

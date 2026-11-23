@@ -63,12 +63,10 @@ public sealed class ReleaseTagAllocatorTests
             "C1339 G-36 stamp-day",
             "C1339 G-37 candidate-date-preserved");
 
+    // G-7..G-9 (the candidate's reads) run in process since unit 13: ReleaseCandidateGitTests.C1339_CandidateRemoteReads.
     [Test]
     public Task C1339_ExactRemoteRefs() =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_ExactRemoteRefs", 13,
-            "C1339 G-7 candidate-long-read",
-            "C1339 G-8 candidate-stamp-read",
-            "C1339 G-9 candidate-recovery-read",
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_ExactRemoteRefs", 10,
             "C1339 G-10 publisher-head-read",
             "C1339 G-11 publisher-recovery-read",
             "C1339 G-12 publisher-verify-read",

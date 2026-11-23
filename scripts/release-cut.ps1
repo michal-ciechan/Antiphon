@@ -3,7 +3,8 @@
 .SYNOPSIS
     CARD-1311: the RC lane entrypoint. Requires -Ref rc/YYYY-MM-DD.
 
-    1. scripts/release-candidate.ps1 journals the existing remote tip. It does
+    1. The compiled release candidate (Antiphon.Nightly.ReleaseCandidate, the
+       release-candidate command) journals the existing remote tip. It does
        not cut origin/master and it does not allocate a stamp.
     2. scripts/nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate>
        -ExpectedSha <sha> runs the rc profile against the candidate checkout
@@ -49,9 +50,11 @@ $ErrorActionPreference = 'Continue'
 
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-# The candidate ref, the credit decision, the policy and the selection attempt (Antiphon.Nightly.ReleaseSelectionAttempt)
-# are compiled: this entry point runs under pwsh with the core. Its own git fetch is the production git
-# (NightlyNativeGit.Run); a -SeamsPath is release-candidate's and nightly-run's, never this fetch's.
+# The candidate ref, the candidate journal (Antiphon.Nightly.ReleaseCandidate: unit 13 of
+# docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md deleted release-candidate.ps1), the credit decision, the
+# policy and the selection attempt (Antiphon.Nightly.ReleaseSelectionAttempt) are compiled: this entry point runs under pwsh
+# with the core. Its own git fetch is the production git (NightlyNativeGit.Run); a -SeamsPath (test only) is the
+# candidate's remote git and nightly-run's and the publisher's seams, never this fetch's.
 Assert-NightlyCoreAvailable 'release-cut'
 
 function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
@@ -82,9 +85,21 @@ if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 
     exit 3
 }
 
-$cut = & (Join-Path $PSScriptRoot 'release-candidate.ps1') -ReleaseRoot $ReleaseRoot `
-    -CheckoutRoot $checkout -RemoteUrl $RemoteUrl -Ref $Ref -ScheduleSlot $ScheduleSlot `
-    -SeamsPath $SeamsPath -WhatIf:$WhatIf -PassThru
+# The candidate's remote git: a -SeamsPath file's $ReleaseGateSeams.Git, else production git (ReleaseGateRemote.Seamed).
+$ReleaseGateSeams = $null
+if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
+    if (-not (Test-Path -LiteralPath $SeamsPath)) { throw ('missing seams {0}' -f $SeamsPath) }
+    . $SeamsPath
+}
+$candidateOptions = [Antiphon.Nightly.ReleaseCandidateOptions]@{
+    ReleaseRoot = $ReleaseRoot; CheckoutRoot = $checkout; RemoteUrl = $RemoteUrl; Ref = $Ref; ScheduleSlot = $ScheduleSlot; WhatIf = [bool]$WhatIf
+}
+$candidateHost = [Antiphon.Nightly.NightlyHost]::Create($null, [Antiphon.Nightly.WatchedLauncher]::new($null), [Console]::Out, [Console]::Error, $null, $null, $null, $null)
+# A failure the candidate does not answer (a journal it cannot write) ends this run, as the script's terminating error did.
+try {
+    $cut = [Antiphon.Nightly.ReleaseCandidate]::Run($candidateOptions, $candidateHost, [System.IO.Abstractions.FileSystem]::new(),
+        [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $null, $null, $false))
+} catch { throw }
 $record.candidateId = [string]$cut.CandidateId
 $record.ref = [string]$cut.Ref
 $record.sha = [string]$cut.Sha

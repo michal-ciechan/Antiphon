@@ -5,8 +5,8 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-0599 V-6. Each method runs the matching <c>Test-C599_*</c> case of
-/// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION candidate coordinator and the
-/// production publisher, over a file-backed fake remote and a stateful GitHub fixture. A separate
+/// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION publisher, over a file-backed fake
+/// remote and a stateful GitHub fixture (the candidate coordinator's cases are ReleaseCandidateTests). A separate
 /// observer read of that remote - never the script's own return value - is what proves recipient
 /// state.
 ///
@@ -24,25 +24,8 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseGatePublicationTests
 {
-    [Test]
-    public Task C599_CandidateIdentity() => RunCaseAsync("C599_CandidateIdentity", 13,
-        "C599 CandidateIdentity control: a candidate is cut and pushed",
-        "C599 CandidateIdentity an observer read finds the candidate at the pinned sha",
-        "C599 CandidateIdentity a resume keeps the original pin even after master moved",
-        "C599 CandidateIdentity a resume performs no fetch",
-        "C599 CandidateIdentity a remote candidate at another sha refuses",
-        "C599 CandidateIdentity the conflicting remote ref was not moved",
-        "C599 CandidateIdentity refuses ref release/current",
-        "C599 CandidateIdentity no push used force or a plus refspec");
-
-    [Test]
-    public Task C599_CutRecovery() => RunCaseAsync("C599_CutRecovery", 12,
-        "C599 CutRecovery before-push reports a failed push",
-        "C599 CutRecovery before-push left the remote untouched",
-        "C599 CutRecovery a lost response is reconciled from the remote",
-        "C599 CutRecovery the remote holds exactly the pinned sha",
-        "C599 CutRecovery before-push restart resumes the same sha",
-        "C599 CutRecovery a fetch failure leaves the remote untouched");
+    // C599_CandidateIdentity and C599_CutRecovery (the candidate coordinator) run in process since unit 13 of
+    // 2026-11-22-remaining-ps1-to-csharp.md: ReleaseCandidateTests.
 
     [Test]
     public Task C599_PublicationGate() => RunCaseAsync("C599_PublicationGate", 17,

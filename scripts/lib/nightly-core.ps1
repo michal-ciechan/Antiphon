@@ -8,8 +8,8 @@
 # between source versions, so a changed source rebuilds warm (no restore, only the changed project). Windows
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
 # SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
-# (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (release-cut.ps1, release-candidate.ps1,
-# publish-release.ps1, promote-release.ps1) run under pwsh and require the core.
+# (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (release-cut.ps1, publish-release.ps1,
+# promote-release.ps1) run under pwsh and require the core.
 # W2-nightly S27: the loader, the scripts CLI build and the refusal text are what the remaining PowerShell calls; the
 # evidence file system facade and the JSON file helpers had no caller left and are gone (EvidenceFiles, NightlyJson).
 

@@ -252,9 +252,16 @@ function New-C599OwnedReleaseClone {
 }
 
 function Invoke-C599Candidate {
+    # Unit 13 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the candidate is the compiled
+    # Antiphon.Nightly.ReleaseCandidate (release-candidate.ps1 is deleted; its own cases run in process:
+    # ReleaseCandidateTests). The seams file's Git is its remote's git, loaded here as the script loaded it.
     param([string]$ReleaseRoot, [string]$Checkout, $Seams, [string]$Ref)
-    return (& (Join-Path $here 'release-candidate.ps1') -ReleaseRoot $ReleaseRoot -CheckoutRoot $Checkout `
-        -Ref $Ref -SeamsPath $Seams.Path -PassThru)
+    $ReleaseGateSeams = $null
+    . $Seams.Path
+    $options = [Antiphon.Nightly.ReleaseCandidateOptions]@{ ReleaseRoot = $ReleaseRoot; CheckoutRoot = $Checkout; Ref = $Ref }
+    $candidateHost = [Antiphon.Nightly.NightlyHost]::Create($null, [Antiphon.Nightly.WatchedLauncher]::new($null), [Console]::Out, [Console]::Error, $null, $null, $null, $null)
+    return [Antiphon.Nightly.ReleaseCandidate]::Run($options, $candidateHost, [System.IO.Abstractions.FileSystem]::new(),
+        [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $null, $null, $false))
 }
 
 function New-C599RcGreen {
@@ -977,23 +984,6 @@ function Test-C599_RunSummaryIdentity {
     } finally { $script:NightlySeams = $saved }
 }
 
-function Test-C599_CloneOwnership {
-    # W2-nightly S20: the rc run half (an rc run refuses the shared tree and a card worktree as its checkout) is in-process
-    # in ReleaseGateRunTests.C599_CloneOwnership on NightlyRun.Run. The RC coordinator applies the same ownership rule to its own clone.
-    $root = New-C599Root
-    $seams = New-C599GitSeams -Root $root -HeadSha $ShaB
-    $releaseRoot = Join-Path $root 'releases'
-    $unmarked = Join-Path $root 'unmarked'
-    New-Item -ItemType Directory -Path (Join-Path $unmarked '.git') -Force | Out-Null
-    $r1 = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $unmarked -Seams $seams -Ref $CandidateRef
-    Assert-C487 -Cond ([string]$r1.Refusal -eq 'unmarked-clone') -Name 'C599 CloneOwnership coordinator refuses an unmarked clone' -Detail ([string]$r1.Refusal)
-    $r2 = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout 'C:\src\Antiphon' -Seams $seams -Ref $CandidateRef
-    Assert-C487 -Cond ([string]$r2.Refusal -eq 'shared-tree') -Name 'C599 CloneOwnership coordinator refuses the shared tree' -Detail ([string]$r2.Refusal)
-    $owned = New-C599OwnedReleaseClone -Root $root
-    $r3 = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $owned -Seams $seams -Ref $CandidateRef
-    Assert-C487 -Cond ([int]$r3.ExitCode -eq 0) -Name 'C599 CloneOwnership control owned clone is accepted' -Detail ([string]$r3.Refusal)
-}
-
 function Test-C599_ReportLane {
     # R-4: an RC incident identity can never be the master nightly incident.
     # CARD-1340: private roots. The production Windows defaults stay in the producer scripts.
@@ -1105,84 +1095,6 @@ function Get-C599PublishCapture {
         if (-not [string]::IsNullOrEmpty($text)) { $lines.Add($text) }
     }
     return [pscustomobject]@{ Result = $result; Lines = @($lines) }
-}
-
-function Test-C599_CandidateIdentity {
-    $root = New-C599Root
-    $git = New-C599GitSeams -Root $root -HeadSha $ShaB
-    $releaseRoot = Join-Path $root 'releases'
-    $checkout = New-C599OwnedReleaseClone -Root $root
-
-    $cut = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $CandidateRef
-    Assert-C487 -Cond ([int]$cut.ExitCode -eq 0 -and [bool]$cut.Pushed) -Name 'C599 CandidateIdentity control: a candidate is cut and pushed' -Detail ([string]$cut.Refusal)
-    Assert-C487 -Cond ((Read-C599Remote -Seams $git -Ref $CandidateRef) -eq $ShaB) -Name 'C599 CandidateIdentity an observer read finds the candidate at the pinned sha' -Detail (Read-C599Remote -Seams $git -Ref $CandidateRef)
-    $journal = Get-Content -LiteralPath $cut.JournalPath -Raw | ConvertFrom-Json
-    Assert-C487 -Cond ([string]$journal.sha -eq $ShaB -and [string]$journal.ref -eq $CandidateRef) -Name 'C599 CandidateIdentity the journal pins one ref and one sha' -Detail ([string]$journal.sha)
-
-    # Master moved: a resume must NOT re-pin.
-    $git2 = New-C599GitSeams -Root (Join-Path $root 'moved') -HeadSha $ShaC -TracePath (Join-Path $root 'moved-trace.log')
-    Copy-Item -LiteralPath $git.RemotePath -Destination $git2.RemotePath -Force
-    $resume = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git2 -Ref $CandidateRef
-    Assert-C487 -Cond ([string]$resume.Sha -eq $ShaB) -Name 'C599 CandidateIdentity a resume keeps the original pin even after master moved' -Detail ([string]$resume.Sha)
-    Assert-C487 -Cond ([bool]$resume.Resumed) -Name 'C599 CandidateIdentity the resume is reported as a resume'
-    $trace2 = Get-Content -LiteralPath $git2.Trace -Raw -ErrorAction SilentlyContinue
-    Assert-C487 -Cond ([string]::IsNullOrEmpty($trace2) -or ($trace2 -notmatch 'GIT fetch')) -Name 'C599 CandidateIdentity a resume performs no fetch' -Detail ([string]$trace2)
-
-    # A remote candidate at a different sha is a hard refusal, and nothing moves.
-    $other = 'release/rc-20260923T160000Z'
-    $st = Get-Content -LiteralPath $git.RemotePath -Raw | ConvertFrom-Json
-    $st | Add-Member -NotePropertyName 'release_rc_20260923T160000Z' -NotePropertyValue $ShaA -Force
-    $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $git.RemotePath -Encoding UTF8
-    $conflict = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $other
-    Assert-C487 -Cond ([string]$conflict.Refusal -eq 'remote-candidate-conflict') -Name 'C599 CandidateIdentity a remote candidate at another sha refuses' -Detail ([string]$conflict.Refusal)
-    Assert-C487 -Cond ((Read-C599Remote -Seams $git -Ref $other) -eq $ShaA) -Name 'C599 CandidateIdentity the conflicting remote ref was not moved' -Detail (Read-C599Remote -Seams $git -Ref $other)
-
-    # Ref-shape negatives.
-    foreach ($bad in @('release/current', 'master', 'release/rc-2026', 'refs/tags/v1')) {
-        $r = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $bad
-        Assert-C487 -Cond ([int]$r.ExitCode -eq 3) -Name ('C599 CandidateIdentity refuses ref {0}' -f $bad) -Detail ([string]$r.Refusal)
-    }
-
-    # No push argument may carry a force flag.
-    $allTrace = Get-Content -LiteralPath $git.Trace -Raw
-    Assert-C487 -Cond ($allTrace -notmatch '--force' -and $allTrace -notmatch '\+refs/') -Name 'C599 CandidateIdentity no push used force or a plus refspec' -Detail $allTrace
-}
-
-function Test-C599_CutRecovery {
-    foreach ($cut in @('before-push', 'commit-then-lose-response')) {
-        $root = New-C599Root
-        $git = New-C599GitSeams -Root $root -HeadSha $ShaB
-        $releaseRoot = Join-Path $root 'releases'
-        $checkout = New-C599OwnedReleaseClone -Root $root
-        if ($cut -eq 'before-push') { Set-C599GitFailure -Seams $git -Subcommand 'push' }
-        else { Set-C599GitFailure -Seams $git -Subcommand 'push' -CommitsAnyway }
-
-        $r1 = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $CandidateRef
-        $observed = Read-C599Remote -Seams $git -Ref $CandidateRef
-        if ($cut -eq 'before-push') {
-            Assert-C487 -Cond ([string]$r1.Refusal -eq 'push-failed') -Name 'C599 CutRecovery before-push reports a failed push' -Detail ([string]$r1.Refusal)
-            Assert-C487 -Cond ([string]::IsNullOrWhiteSpace($observed)) -Name 'C599 CutRecovery before-push left the remote untouched' -Detail $observed
-        } else {
-            Assert-C487 -Cond ([int]$r1.ExitCode -eq 0 -and [bool]$r1.Pushed) -Name 'C599 CutRecovery a lost response is reconciled from the remote' -Detail ([string]$r1.Refusal)
-            Assert-C487 -Cond ($observed -eq $ShaB) -Name 'C599 CutRecovery the remote holds exactly the pinned sha' -Detail $observed
-        }
-        Assert-C487 -Cond (Test-Path -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($releaseRoot, $CandidateId)) 'candidate.json')) -Name ('C599 CutRecovery {0} wrote the journal before the remote write' -f $cut)
-
-        # Restart from disk: the same identity resumes, never a second candidate.
-        Set-C599GitFailure -Seams $git -Subcommand 'push' -Clear
-        $r2 = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $CandidateRef
-        Assert-C487 -Cond ([int]$r2.ExitCode -eq 0 -and [string]$r2.Sha -eq $ShaB) -Name ('C599 CutRecovery {0} restart resumes the same sha' -f $cut) -Detail ([string]$r2.Sha)
-        Assert-C487 -Cond ((Read-C599Remote -Seams $git -Ref $CandidateRef) -eq $ShaB) -Name ('C599 CutRecovery {0} ends with exactly one candidate at the pinned sha' -f $cut)
-    }
-    # A fetch failure before any pin writes nothing at all.
-    $root = New-C599Root
-    $git = New-C599GitSeams -Root $root -HeadSha $ShaB
-    Set-C599GitFailure -Seams $git -Subcommand 'fetch'
-    $releaseRoot = Join-Path $root 'releases'
-    $checkout = New-C599OwnedReleaseClone -Root $root
-    $r = Invoke-C599Candidate -ReleaseRoot $releaseRoot -Checkout $checkout -Seams $git -Ref $CandidateRef
-    Assert-C487 -Cond ([string]$r.Refusal -eq 'fetch-failed') -Name 'C599 CutRecovery a fetch failure refuses' -Detail ([string]$r.Refusal)
-    Assert-C487 -Cond ([string]::IsNullOrWhiteSpace((Read-C599Remote -Seams $git -Ref $CandidateRef))) -Name 'C599 CutRecovery a fetch failure leaves the remote untouched'
 }
 
 function Test-C599_PublicationGate {
@@ -3036,71 +2948,8 @@ function Test-C599A_PublisherTestMode {
 }
 
 # ====================================================== CARD-1311 S2 ref ===
-
-function Test-C1311_LongLivedRcRef {
-    # D-1/D-2: rc/YYYY-MM-DD is a candidate. Its id is one per tested SHA.
-    # A legacy stamp still parses and still earns rc-release.
-    $accepted = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-15', '')
-    Assert-C487 -Cond ([bool]$accepted.Ok -and [string]$accepted.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef rc/2026-10-15 is accepted' -Detail ([string]$accepted.Reason)
-
-    $prefixed = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('refs/heads/rc/2026-10-15', '')
-    Assert-C487 -Cond ([bool]$prefixed.Ok -and [string]$prefixed.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef refs/heads/rc/2026-10-15 normalizes to rc/2026-10-15' -Detail ([string]$prefixed.Ref)
-
-    $prefix = $ShaB.Substring(0, 12)
-    $withSha = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-15', $ShaB)
-    Assert-C487 -Cond ([string]$withSha.CandidateId -eq ('rc-2026-10-15-' + $prefix)) -Name ('C1311 LongLivedRcRef candidate id is rc-2026-10-15-' + $prefix) -Detail ([string]$withSha.CandidateId)
-
-    $badDate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-13-01', '')
-    Assert-C487 -Cond ((-not [bool]$badDate.Ok) -and [string]$badDate.Reason -eq 'ref-date') -Name 'C1311 LongLivedRcRef rc/2026-13-01 refuses ref-date' -Detail ([string]$badDate.Reason)
-
-    $badShape = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/20261015', '')
-    Assert-C487 -Cond ((-not [bool]$badShape.Ok) -and [string]$badShape.Reason -eq 'ref-shape') -Name 'C1311 LongLivedRcRef rc/20261015 refuses ref-shape' -Detail ([string]$badShape.Reason)
-
-    $stamp = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($CandidateRef, '')
-    Assert-C487 -Cond ([bool]$stamp.Ok -and [string]$stamp.CandidateId -eq $CandidateId -and [string]$stamp.Ref -eq $CandidateRef) -Name 'C1311 LongLivedRcRef legacy stamp release/rc-20260923T083000Z is accepted' -Detail ([string]$stamp.Reason)
-
-    $longCredit = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('rc', 'rc', 'rc/2026-10-15')
-    Assert-C487 -Cond ([string]$longCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/rc/2026-10-15 earns rc-release' -Detail ([string]$longCredit)
-
-    $stampCredit = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('rc', 'rc', $CandidateRef)
-    Assert-C487 -Cond ([string]$stampCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/release/rc-20260923T083000Z earns rc-release' -Detail ([string]$stampCredit)
-
-    $omitRoot = New-C599Root
-    $omitGit = New-C599GitSeams -Root $omitRoot -HeadSha $ShaB
-    $omitRelease = Join-Path $omitRoot 'releases'
-    $omitCheckout = New-C599OwnedReleaseClone -Root $omitRoot
-    $omitted = & (Join-Path $here 'release-candidate.ps1') -ReleaseRoot $omitRelease -CheckoutRoot $omitCheckout -SeamsPath $omitGit.Path -PassThru
-    $omitTrace = ''
-    if (Test-Path -LiteralPath $omitGit.Trace) { $omitTrace = [string](Get-Content -LiteralPath $omitGit.Trace -Raw -ErrorAction SilentlyContinue) }
-    Assert-C487 -Cond ([string]$omitted.Refusal -eq 'rc-ref-required' -and [int]$omitted.ExitCode -eq 3 -and -not [bool]$omitted.Pushed -and $omitTrace -notmatch 'GIT push') -Name 'C1311 LongLivedRcRef omitted Ref refuses rc-ref-required' -Detail ([string]$omitted.Refusal)
-
-    # The remote tip is ShaB. rev-parse would answer ShaC, so a master pin is visible.
-    $liveRoot = New-C599Root
-    $liveGit = New-C599GitSeams -Root $liveRoot -HeadSha $ShaC -Refs @{ rc_2026_10_15 = $ShaB }
-    $liveRelease = Join-Path $liveRoot 'releases'
-    $liveCheckout = New-C599OwnedReleaseClone -Root $liveRoot
-    $live = Invoke-C599Candidate -ReleaseRoot $liveRelease -Checkout $liveCheckout -Seams $liveGit -Ref 'rc/2026-10-15'
-    $liveTrace = ''
-    if (Test-Path -LiteralPath $liveGit.Trace) { $liveTrace = [string](Get-Content -LiteralPath $liveGit.Trace -Raw -ErrorAction SilentlyContinue) }
-    $journalSha = ''
-    $journalRef = ''
-    $journalId = ''
-    if (-not [string]::IsNullOrWhiteSpace([string]$live.JournalPath) -and (Test-Path -LiteralPath $live.JournalPath)) {
-        $journal = Get-Content -LiteralPath $live.JournalPath -Raw | ConvertFrom-Json
-        $journalSha = [string]$journal.sha
-        $journalRef = [string]$journal.ref
-        $journalId = [string]$journal.candidateId
-    }
-    $observed = Read-C599Remote -Seams $liveGit -Ref 'rc/2026-10-15'
-    Assert-C487 -Cond (
-        [int]$live.ExitCode -eq 0 -and
-        -not [bool]$live.Pushed -and
-        $journalSha -eq $ShaB -and
-        $journalRef -eq 'rc/2026-10-15' -and
-        $journalId -eq ('rc-2026-10-15-' + $prefix) -and
-        $observed -eq $ShaB -and
-        $liveTrace -notmatch 'GIT push') -Name 'C1311 LongLivedRcRef an existing rc/2026-10-15 tip is journalled and not pushed' -Detail ('exit=' + [string]$live.ExitCode + ' refusal=' + [string]$live.Refusal + ' sha=' + $journalSha + ' id=' + $journalId)
-}
+# C1311_LongLivedRcRef runs in process since unit 13 (ReleaseCandidateTests), as do C599_CandidateIdentity, C599_CutRecovery
+# and the coordinator rows of C599_CloneOwnership (ReleaseGateRunTests): release-candidate.ps1 is the compiled ReleaseCandidate.
 
 # ====================================================== CARD-1311 S3 tag ===
 
@@ -3612,36 +3461,8 @@ function Test-C1339_ExactRemoteRefs {
         $results += New-C1339Check ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head) ($order + ' refusal=' + $r.Refusal + ' peel=' + $peel)
     }
     Assert-C599AMatrix -Name 'C1339 G-13 promotion-pre-read' -Results $results
-    # G-1..G-6 (the exact remote-ref parser) run in process: ReleaseGateLibraryTests.C1339_ExactRemoteRefs_parser.
-
-    $fx = New-C1339Fixture
-    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.B + "`trefs/heads/archive/" + $fx.CandidateRef)
-    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
-    $journal = Get-Content -LiteralPath $r.JournalPath -Raw | ConvertFrom-Json
-    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $journal.sha -ceq $fx.Head -and $journal.candidateId -ceq $fx.CandidateId -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-7 candidate-long-read' -Detail $r.Refusal
-
-    $fx = New-C1339Fixture -Stamp
-    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
-    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
-    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
-    $tip = Invoke-C1339LocalGit $fx @('rev-parse', ('refs/heads/' + $fx.CandidateRef)) -Remote
-    $checks = @(New-C1339Check ($r.Refusal -eq 'remote-candidate-conflict' -and $tip -ceq $fx.B -and (Test-C1339NoWrites $fx)) $r.Refusal)
-    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/" + $fx.CandidateRef) -Mode replace -Exit 1
-    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
-    $checks += New-C1339Check ($r.Refusal -eq 'remote-candidate-unresolved' -and (Test-C1339NoWrites $fx)) $r.Refusal
-    Assert-C599AMatrix 'C1339 G-8 candidate-stamp-read' $checks
-
-    $checks = @()
-    foreach ($push in @('before', 'after')) {
-        $fx = New-C1339Fixture -Stamp -NoCandidateRemote
-        Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef) -Ordinal 2 -Push $push
-        $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
-        $tip = Invoke-C1339LocalGit $fx @('rev-parse', '--verify', ('refs/heads/' + $fx.CandidateRef)) -Remote -AllowAbsent
-        $ok = $r.Refusal -eq 'push-failed' -and $tip -eq ''
-        if ($push -eq 'after') { $ok = $r.ExitCode -eq 0 -and $r.Pushed -and $tip -ceq $fx.Head }
-        $checks += New-C1339Check $ok ($push + ':' + $r.Refusal)
-    }
-    Assert-C599AMatrix 'C1339 G-9 candidate-recovery-read' $checks
+    # G-1..G-6 (the exact remote-ref parser) run in process: ReleaseGateLibraryTests.C1339_ExactRemoteRefs_parser. G-7..G-9
+    # (the candidate's reads) too, since unit 13: ReleaseCandidateRemoteRefTests.
 
     $fx = New-C1339Fixture
     [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
