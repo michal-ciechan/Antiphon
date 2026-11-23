@@ -2211,28 +2211,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 39,
+      "classes": 37,
       "reason": "cap",
-      "owed": 14,
+      "owed": 12,
       "first": [
-        "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcProjectSelectionTests",
         "ReleaseGateAuthorityContractTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateFollowupTests",
-        "ReleaseGatePolicyTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 27,
-      "reason": "cap",
-      "owed": 2,
-      "first": [
-        "ReleaseGateFollowupTests",
-        "ReleaseGatePlatformTests"
+        "ReleaseGatePolicyTests",
+        "ReleaseGatePublicationAuthorityTests"
       ]
     },
     {
@@ -25501,6 +25491,7 @@
       "classes": [
         "NightlyRunTests",
         "NightlyTestHelpersTests",
+        "QualificationEtaTests",
         "RcStoppedRunSeedTests"
       ]
     },
@@ -25512,6 +25503,7 @@
         "NightlyScriptsTests",
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
+        "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGateRunTests",
         "ToolchainFloorWarningTests"
@@ -25691,6 +25683,7 @@
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
+        "QualificationEtaTests",
         "QualificationTimingTests",
         "RcRunEvidenceTests"
       ]
@@ -25899,7 +25892,7 @@
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
         "NightlyVerificationContractTests",
-        "QualificationEtaTests",
+        "QualificationGraphContractTests",
         "RcQualificationStatusTests",
         "RcQualificationWatcherScriptTests",
         "ReleaseBranchModelGateTests",
@@ -25934,16 +25927,16 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "ProcessSpawnLimitTests",
-        "QualificationEtaTests",
         "QualificationGraphContractTests",
         "RcBoundaryPackTests",
         "RcQualificationStatusTests",
+        "ReleaseGateFollowupTests",
+        "ReleaseGatePlatformTests",
         "ReleaseSelectionCliTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
-        "ScriptHarnessWindowsOwnershipTests",
-        "WatchQualEtaLineTests"
+        "ScriptHarnessWindowsOwnershipTests"
       ]
     },
     {
