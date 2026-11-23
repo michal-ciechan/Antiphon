@@ -86,6 +86,30 @@ public sealed class NightlyHostTests
         new NightlyProcessTable().IsAlive(run.Pid).ShouldBeFalse();
     }
 
+    // Unit 10 of 2026-11-22-remaining-ps1-to-csharp.md: the watchdog deploy reads ssh, scp and dotnet output without printing it.
+    [Test]
+    public void Watched_launch_with_capture_reads_stdout_and_stderr_into_the_log_text()
+    {
+        using var fixture = NightlyFixture.Create("nightly-host");
+        var repository = fixture.PathOf("repo");
+        Directory.CreateDirectory(repository);
+        NightlyNativeGit.Run(repository, ["init", "-q"]).ExitCode.ShouldBe(0);
+        var launcher = new WatchedLauncher();
+
+        var version = launcher.Run(new NightlyLaunch("git", ["--version"], repository, CaptureOutput: true));
+        version.ExitCode.ShouldBe(0);
+        version.LogText.ShouldStartWith("git version ");
+        version.LogText.ShouldEndWith("\n");
+        version.LogText.ShouldNotContain("\r");
+
+        var failed = launcher.Run(new NightlyLaunch("git", ["rev-parse", "--verify", "refs/heads/no-such-branch"], repository, CaptureOutput: true));
+        failed.ExitCode.ShouldNotBe(0);
+        failed.LogText.ShouldContain("fatal:");
+
+        // Without CaptureOutput the child shares this process's streams: nothing is read.
+        launcher.Run(new NightlyLaunch("git", ["--version"], repository)).LogText.ShouldBe("");
+    }
+
     [Test]
     public void Watched_launcher_refuses_what_it_cannot_honour()
     {

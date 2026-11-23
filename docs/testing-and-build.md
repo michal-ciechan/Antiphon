@@ -1734,7 +1734,9 @@ dropped. Use `nightly-run.ps1 -Profile rc`, which requires E2E and runs it with
 real Playwright/bundle prerequisites - a missing browser or stale bundle is red or
 incomplete, never a skip. See [release gates](release-gates.md). Per-project Slow registries are
 `tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
-a cost marker, never Skip. Offline harnesses: `scripts/test-deploy-nightly-watchdog.ps1` (`-Case C545_<Name>`). The run
+a cost marker, never Skip. The watchdog deploy's offline cases (`C545_Deploy*`, `C545_HostAgnosticAssets`) run
+in-process in `NightlyVerificationContractTests` (unit 10 of the remaining-ps1 plan deleted
+`scripts/test-deploy-nightly-watchdog.ps1`; the deploy is `antiphon-scripts deploy-nightly-watchdog`). The run
 and tests cases run in-process in `NightlyRunTests` and `NightlyTestsRunTests` (W2-nightly S17 and S20 deleted
 `scripts/test-nightly-tests.ps1` and `scripts/test-nightly-run.ps1`; the run is `antiphon-scripts nightly-run`, which
 `scripts/nightly-run.ps1` launches under Windows PowerShell 5.1). The run card's cases (T1-T10, C487_G077-G104) run

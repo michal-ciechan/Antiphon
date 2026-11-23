@@ -193,7 +193,10 @@ public sealed class NightlyScriptsTests
         foreach (var name in new[]
                  {
                      "nightly-run.ps1", "nightly-health.ps1",
-                     "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
+                     // Unit 10 of 2026-11-22-remaining-ps1-to-csharp.md: the watchdog deploy and its command
+                     // (deploy-nightly-watchdog.ps1 and test-deploy-nightly-watchdog.ps1 are deleted).
+                     Path.Combine("lib", "Antiphon.Nightly", "NightlyWatchdogDeploy.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "DeployNightlyWatchdogCommand.cs"),
                      Path.Combine("lib", "nightly-common.ps1"),
                      // W2-nightly S27: lib/nightly-coverage.ps1 is deleted.
                      // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).

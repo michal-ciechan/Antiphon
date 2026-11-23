@@ -33,7 +33,9 @@ namespace Antiphon.Nightly
     /// swap). TimeoutMilliseconds 0 or less: wait for the exit, as every hop does today (Owned custody needs a positive
     /// one). LogPath is Owned custody's output log; a Watched child writes to this process's own streams. Hooks are Owned
     /// custody's NativeProcessHooks (the TRX and diagnostic of the completion grace, the hang capture path, the test
-    /// barriers); null takes the defaults. A Watched launch ignores them.
+    /// barriers); null takes the defaults. A Watched launch ignores them. CaptureOutput (Watched custody, unit 10 of
+    /// 2026-11-22-remaining-ps1-to-csharp.md): the child's stdout and stderr are read into the result's LogText instead
+    /// of shared with this process (a PowerShell "&amp; tool 2&gt;&amp;1" capture), so the caller decides what is printed.
     /// </summary>
     public sealed record NightlyLaunch(
         string FileName,
@@ -43,7 +45,8 @@ namespace Antiphon.Nightly
         IReadOnlyDictionary<string, string> Environment = null,
         string LogPath = null,
         NightlyCustody Custody = NightlyCustody.Watched,
-        NativeProcessHooks Hooks = null)
+        NativeProcessHooks Hooks = null,
+        bool CaptureOutput = false)
     {
         /// <summary>FileName and the arguments, space separated: the text of the exec trace line (Invoke-NightlyWatchedCommand's Write-NightlyTrace).</summary>
         public string CommandText => FileName + " " + string.Join(" ", Arguments ?? Array.Empty<string>());
@@ -64,7 +67,10 @@ namespace Antiphon.Nightly
         /// <summary>Owned custody: every descendant was observed to exit.</summary>
         public bool ChildrenExited { get; set; }
 
-        /// <summary>Owned custody: the child's logged output (a fake launcher's stand-in for the log file).</summary>
+        /// <summary>
+        /// Owned custody: the child's logged output (a fake launcher's stand-in for the log file). A Watched launch with
+        /// CaptureOutput: its stdout and stderr lines in arrival order, each followed by "\n".
+        /// </summary>
         public string LogText { get; set; } = "";
 
         /// <summary>
@@ -140,7 +146,8 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Starts FileName (resolved on PATH when it has no directory) with the arguments as separate argv entries in
-        /// WorkingDirectory (empty: this process's), with no new window and no redirection, and waits for it. A positive
+        /// WorkingDirectory (empty: this process's), with no new window, and waits for it. Without CaptureOutput nothing is
+        /// redirected; with it stdout and stderr are read as UTF-8 into LogText (stdin stays this process's). A positive
         /// TimeoutMilliseconds kills the child's tree when it expires (TimedOut, exit 1). Refuses Owned custody and a
         /// LogPath, which this launcher cannot honour. A child that cannot start throws, as Start-Process does.
         /// </summary>
@@ -159,7 +166,31 @@ namespace Antiphon.Nightly
             };
             foreach (var argument in launch.Arguments ?? Array.Empty<string>()) start.ArgumentList.Add(argument ?? "");
             ApplyEnvironment(start, launch.Environment);
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("the child did not start: " + launch.FileName);
+            var lines = new List<string>();
+            if (launch.CaptureOutput)
+            {
+                start.RedirectStandardOutput = true;
+                start.RedirectStandardError = true;
+                start.StandardOutputEncoding = Utf8NoBom;
+                start.StandardErrorEncoding = Utf8NoBom;
+            }
+            using var process = new Process { StartInfo = start };
+            if (launch.CaptureOutput)
+            {
+                void Line(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data == null) return;
+                    lock (lines) lines.Add(e.Data);
+                }
+                process.OutputDataReceived += Line;
+                process.ErrorDataReceived += Line;
+            }
+            if (!process.Start()) throw new InvalidOperationException("the child did not start: " + launch.FileName);
+            if (launch.CaptureOutput)
+            {
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
             var result = new NightlyLaunchResult { Pid = process.Id };
             if (launch.TimeoutMilliseconds > 0 && !process.WaitForExit(launch.TimeoutMilliseconds))
             {
@@ -168,11 +199,21 @@ namespace Antiphon.Nightly
                 process.WaitForExit();
                 result.TimedOut = true;
                 result.ExitCode = 1;
+                result.LogText = Captured(lines);
                 return result;
             }
+            // Without a timeout WaitForExit also waits for redirected streams to reach their end.
             process.WaitForExit();
             result.ExitCode = process.ExitCode;
+            result.LogText = Captured(lines);
             return result;
+        }
+
+        private static readonly System.Text.UTF8Encoding Utf8NoBom = new System.Text.UTF8Encoding(false);
+
+        private static string Captured(List<string> lines)
+        {
+            lock (lines) return lines.Count == 0 ? "" : string.Join("\n", lines) + "\n";
         }
 
         /// <summary>A watched child has been waited for; its descendants are not tracked, so nothing is left to wait on.</summary>

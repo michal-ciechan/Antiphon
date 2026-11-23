@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0545. The 13 CARD-0544 notification/outage/recipient controls (G/PC-78..86, 95..98) keep their IDs, guard
 /// text and method names and now run in-process against the independent watchdog on <see cref="C545World"/>;
 /// positive receipt evidence is produced only by the fake transport delivering into the fake recipient chat.
-/// Plus the CARD-0545 delivery/readiness controls and the wrappers for its PowerShell harness cases.
+/// Plus the CARD-0545 delivery/readiness controls; the deploy cases are in NightlyVerificationContractTests.C545Deploy.cs.
 /// </summary>
 public sealed partial class NightlyVerificationContractTests
 {
@@ -592,28 +592,12 @@ public sealed partial class NightlyVerificationContractTests
             template.ShouldNotContain(forbidden, Case.Insensitive, $"unit template declares no {forbidden}");
     }
 
-    // ---- PowerShell harness cases (CARD-0545 S1, S4, S5) ----
+    // ---- Former PowerShell harness cases (CARD-0545 S1, S4, S5) ----
 
     // C545_ResultLine runs in-process in Nightly.NightlyRunTests (W2-nightly S19, on NightlyRun.Run).
     // C545_JobResultFetch, C545_WatchdogFresh, C545_WatchdogStale and C545_ReadinessRouting run in-process in
     // Nightly.NightlyHealthTests (W2-nightly S05 deleted scripts/test-nightly-health.ps1).
-
-    [Test]
-    public Task C545_DeployRefusesWithoutProfile() => RunHarnessCaseAsync("test-deploy-nightly-watchdog.ps1", "C545", "C545_DeployRefusesWithoutProfile", 7,
-        "C545 DeployRefusesWithoutProfile no-profile/no-arg exit 3 no runner call",
-        "C545 DeployRefusesWithoutProfile placeholder/sshTarget exit 3",
-        "C545 DeployRefusesWithoutProfile control valid profile preflight exit 0");
-
-    [Test]
-    public Task C545_DeployRendersFromProfile() => RunHarnessCaseAsync("test-deploy-nightly-watchdog.ps1", "C545", "C545_DeployRendersFromProfile", 9,
-        "C545 DeployRendersFromProfile preflight-no-upload",
-        "C545 DeployRendersFromProfile env fragment has exactly the absent non-secret keys",
-        "C545 DeployRendersFromProfile unit placeholders fully substituted",
-        "C545 DeployRendersFromProfile deploy-verifies-snapshot");
-
-    [Test]
-    public Task C545_HostAgnosticAssets() => RunHarnessCaseAsync("test-deploy-nightly-watchdog.ps1", "C545", "C545_HostAgnosticAssets", 3,
-        "C545 HostAgnosticAssets no ssh-target token",
-        "C545 HostAgnosticAssets no IPv4 literal",
-        "C545 HostAgnosticAssets no absolute home path");
+    // The deploy cases (C545_DeployRefusesWithoutProfile, C545_DeployRendersFromProfile, C545_HostAgnosticAssets,
+    // C545_DeployManifest and the rest) run in-process in NightlyVerificationContractTests.C545Deploy.cs (unit 10 of
+    // 2026-11-22-remaining-ps1-to-csharp.md deleted scripts/test-deploy-nightly-watchdog.ps1).
 }

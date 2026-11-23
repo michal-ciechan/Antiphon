@@ -63,10 +63,12 @@ heartbeat check (accepted residual; there is no dead-man's switch).
 
 ## Deploy profile (untracked)
 
-`scripts/deploy-nightly-watchdog.ps1` finds its target only through a JSON profile, in this order: `-Profile
-<path>`, `ANTIPHON_WATCHDOG_DEPLOY_PROFILE`, `C:\Antiphon\nightly\watchdog-deploy.json`, then exactly one
-gitignored `scripts/nightly-watchdog/*.local.json`. No profile, or any `<placeholder>` value, exits 3 and contacts
-nothing. Shape (`scripts/nightly-watchdog/deploy.example.json`):
+`scripts\antiphon.cmd deploy-nightly-watchdog` (`scripts/antiphon deploy-nightly-watchdog` from sh; the C# is
+`scripts/lib/Antiphon.Nightly/NightlyWatchdogDeploy.cs`, which replaced `scripts/deploy-nightly-watchdog.ps1`) finds its
+target only through a JSON profile, in this order: `--profile <path>`, `ANTIPHON_WATCHDOG_DEPLOY_PROFILE`,
+`C:\Antiphon\nightly\watchdog-deploy.json`, then exactly one gitignored `scripts/nightly-watchdog/*.local.json`. No
+profile, or any `<placeholder>` value, exits 3 and contacts nothing. Profile keys are matched exactly. Shape
+(`scripts/nightly-watchdog/deploy.example.json`):
 
 | Key | Meaning |
 |---|---|
@@ -84,13 +86,15 @@ nothing. Shape (`scripts/nightly-watchdog/deploy.example.json`):
 ## Deploy
 
 1. **Preflight** (default, read-only): publishes `dotnet publish -c Release -r <rid> --self-contained
-   -p:PublishSingleFile=true`, checksums the binary, renders `antiphon-nightly-watchdog.service.template`
-   (`@@SERVICE_USER@@`, `@@REMOTE_ROOT@@`) and `qual.example.json`, prints the non-secret profile values and runs
-   the remote `--self-check` when a binary is already installed.
-2. **`-Deploy`** (explicit opt-in): creates `state` and `state-qual`, uploads the binary, unit and `qual.json`,
+   -p:PublishSingleFile=true -p:SourceRevisionId=<HEAD>` (an unreadable HEAD refuses the publish), checksums the
+   binary, renders `antiphon-nightly-watchdog.service.template` (`@@SERVICE_USER@@`, `@@REMOTE_ROOT@@`) and
+   `qual.example.json`, prints the non-secret profile values and runs the remote `--self-check` when a binary is
+   already installed.
+2. **`--deploy`** (explicit opt-in): creates `state` and `state-qual`, uploads the binary, unit and `qual.json`,
    appends only the absent owned keys (`ANTIPHON_WATCHDOG_SNAPSHOT_BIND`, `_STATE_DIR`, `_NAMESPACE`) to
    `<remoteRoot>/env` (secret keys are never read, written or printed), installs and enables the unit, and
-   verifies `GET <snapshotUrl>`.
+   verifies `GET <snapshotUrl>`. Exit 0 done, 1 failed (`FAILED: <step> failed` on stderr), 3 no or invalid profile.
+   The offline cases run in-process in `NightlyVerificationContractTests` (`C545_Deploy*`, `C545_HostAgnosticAssets`).
 3. **Self-check gate** on the host: `./Antiphon.NightlyWatchdog --self-check` prints runtime, OS release, two DST
    due instants, opens a temp SQLite ledger, binds the snapshot address and, when the bot token is set, calls
    `getMe`. The binary is self-contained; an OS outside Microsoft's supported matrix must pass this gate.
@@ -159,7 +163,7 @@ in-process in `NightlyHealthTests`.
 | Bot token | `<remoteRoot>/env` (source: the operator's password manager) | operator |
 | Destination chat id | `<remoteRoot>/env`; ledger and artifact hold only `sha256(chatId)[..16]` | operator |
 | Reader api id/hash and session | `<remoteRoot>/env`, `<stateDir>/reader.session` | operator |
-| Snapshot bind, state dir, namespace | `<remoteRoot>/env`, written by the deploy script when absent | deploy script |
+| Snapshot bind, state dir, namespace | `<remoteRoot>/env`, written by the deploy command when absent | `deploy-nightly-watchdog --deploy` |
 | Desktop readiness token file | `WINDMILL_TOKEN_FILE` on the desktop | operator |
 | `readiness-config.json` | `C:\Antiphon\nightly\` (hashes, snapshot URL, instance id; no secrets) | written at qualification |
 

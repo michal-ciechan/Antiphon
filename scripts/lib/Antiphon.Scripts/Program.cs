@@ -104,6 +104,9 @@ namespace Antiphon.Scripts
             ["live-lane-group"] = LiveLaneGroup,
             // The rc project batches answer every input themselves: exit 0 proposed, 2 refused (one stderr line) or usage.
             [SelectRcProjectBatchesCommand.Name] = SelectRcProjectBatchesCommand.Run,
+            // The nightly watchdog preflight or deploy answers every input itself: exit 0 done, 1 failed (one stderr line),
+            // 2 usage, 3 no or invalid deploy profile (nothing contacted).
+            [DeployNightlyWatchdogCommand.Name] = DeployNightlyWatchdogCommand.Run,
         };
 
         public static int Main(string[] args)
@@ -134,7 +137,8 @@ namespace Antiphon.Scripts
                 + " | " + RcQualificationStatusCommand.Usage
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
-                + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage);
+                + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
+                + " | " + DeployNightlyWatchdogCommand.Usage);
             return Usage;
         }
 
