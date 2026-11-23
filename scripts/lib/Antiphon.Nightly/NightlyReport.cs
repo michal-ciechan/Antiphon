@@ -182,12 +182,12 @@ namespace Antiphon.Nightly
         /// <summary>
         /// The production transport (Invoke-RestMethod without a token): one HttpClient, the request's own method and URI, a
         /// non-empty body sent as UTF-8 'application/json; charset=utf-8', the answer's status and text. handler replaces
-        /// the network (tests).
+        /// the network (tests). timeout bounds each request (null: RequestTimeout; the status snapshot passes 20 s).
         /// </summary>
-        public static NightlyReportHttp HttpTransport(HttpMessageHandler handler = null)
+        public static NightlyReportHttp HttpTransport(HttpMessageHandler handler = null, TimeSpan? timeout = null)
         {
             var client = handler == null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
-            client.Timeout = RequestTimeout;
+            client.Timeout = timeout ?? RequestTimeout;
             return (method, uri, headers, body) =>
             {
                 using var request = new HttpRequestMessage(new HttpMethod(method), uri);

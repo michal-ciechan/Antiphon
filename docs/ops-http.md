@@ -146,7 +146,7 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | `board-watch` | `board-watch` |
 | `useAgentTask` | `useagenttask` |
 
-`scripts/delegate.ps1`, `scripts/status-snapshot.ps1`, `scripts/checkpoint-task.ps1`, and `scripts/card.ps1` send their row on every server call. `scripts/lib/antiphon-caller.ps1` refuses any other value and does not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
+`scripts/delegate.ps1`, `scripts/checkpoint-task.ps1`, `scripts/card.ps1` and the `status-snapshot` command (`scripts/antiphon status-snapshot`, which kept the `status-snapshot.ps1` label of the script it replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
 
 | Need | Method | Path |
 |---|---|---|

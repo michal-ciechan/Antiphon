@@ -349,7 +349,7 @@ public sealed class AntiphonCliLauncherTests
         Directory.Exists(refusedRoot).ShouldBeFalse("a refusal evaluates nothing and writes nothing");
     }
 
-    // ---- W2-nightly S20: scripts/nightly-run.ps1, the launcher Windmill's nightly job, release-cut and launch-rc run ----
+    // ---- W2-nightly S20: scripts/nightly-run.ps1, the launcher Windmill's nightly job, release-cut and qualification-launch run ----
 
     /// <summary>A temporary checkout root holding scripts/nightly-run.ps1 beside scripts/lib/antiphon-cli.ps1 (its bin-launcher stays there).</summary>
     private static NightlyFixture RunCheckout()

@@ -120,10 +120,19 @@ namespace Antiphon.Nightly
         public Action<TimeSpan> Sleep { get; init; } = System.Threading.Thread.Sleep;
 
         /// <summary>
+        /// The rc qualification supervisor set's seams (the detached start, the tree stop, a process's command line, this
+        /// console and session, the heartbeat's process table and the CLI a detached child runs; unit 7 of
+        /// 2026-11-22-remaining-ps1-to-csharp.md). Not required: null unless a host binds one; Production binds
+        /// QualificationOs, a test its fake, so a command that needs it refuses a host without one instead of reaching
+        /// the real machine.
+        /// </summary>
+        public IQualificationHost Qualification { get; init; }
+
+        /// <summary>
         /// The production host: the system clock, NightlyNativeGit.Run, a launcher for both custodies (CustodyLauncher: a
         /// WatchedLauncher for the hops, an OwnedLauncher for the builds and test hosts, W2-nightly S17) that first lands
-        /// queued evidence writes (their failures go to error as warnings), the real process table and host probe, and no
-        /// trace. prepareChild adjusts an owned child's start information (Set-AntiphonBuildDriverEnvironment; null: nothing).
+        /// queued evidence writes (their failures go to error as warnings), the real process table and host probe, no
+        /// trace, and this machine's qualification seams (QualificationOs). prepareChild adjusts an owned child's start information (Set-AntiphonBuildDriverEnvironment; null: nothing).
         /// </summary>
         public static NightlyHost Production(TextWriter output, TextWriter error, Action<ProcessStartInfo> prepareChild = null)
         {
@@ -143,6 +152,7 @@ namespace Antiphon.Nightly
                 Out = output,
                 Error = error,
                 Trace = TextWriter.Null,
+                Qualification = new QualificationOs(),
             };
         }
 

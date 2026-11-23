@@ -1,6 +1,6 @@
 // W2-nightly S20: antiphon-scripts nightly-run <flags>, the nightly run (Antiphon.Nightly.NightlyRun.Run). It replaces
 // scripts/lib/nightly-run-impl.ps1 (deleted): scripts/nightly-run.ps1 is its Windows PowerShell 5.1 launcher (Windmill
-// u/lndcobra/antiphon_nightly_tests, release-cut.ps1 and qualification/launch-rc.ps1 call that script). The flags are
+// u/lndcobra/antiphon_nightly_tests, release-cut.ps1 and the qualification-launch command call that script). The flags are
 // NightlyRunOptions' (section 4 of the plan 2026-11-21-w2-nightly-port-slices.md; there is no seams flag). The host is
 // the production one (the system clock, git, both launch custodies, the process table, the host probe); the bindings
 // are NightlyRunBindings.Production: this checkout as the product root (the self-update hop rule), this process's own

@@ -116,14 +116,14 @@ limiters are per test project and are **not** cross-process locks; this file is.
 The repository provides a read-only observer. Populate every variable from the
 specific launch record; do not select the newest directory or infer the state root
 from the candidate. Run on the **execution host**: PID observations on copied state
-describe the wrong host. The operator script
-`scripts/qualification/stop-supervisor.ps1` performs that kill order (the
+describe the wrong host. The operator command
+`scripts\antiphon.cmd qualification-stop` performs that kill order (the
 supervisor tree, then the recorded launch-child driver only when that driver
 outlived the tree) and step 4's stale-lock move in the same call. A driver
 already gone after the supervisor tree kill was ended as a descendant and is
-not a failed stop. It is Windows-only and requires `-Confirm`. Without
-`-Confirm` it prints the planned pids, identities and lock action and kills
-nothing. Manual steps 3 and 4 remain the proof when the script refuses.
+not a failed stop. It is Windows-only and requires `--confirm`. Without
+`--confirm` it prints the planned pids, identities and lock action and kills
+nothing. Manual steps 3 and 4 remain the proof when the command refuses.
 Agents do not point it at a live qualification.
 
 The owed native Windows stop, which Linux does not discharge, records four facts
@@ -131,20 +131,20 @@ the offline witnesses cannot: taskkill /T /F exit code when one descendant fails
 (the reason is taskkill-exit-N, the stop stays exit 3, and the lock is kept); a
 commandLine record checked against Win32_Process.CommandLine from the same source
 a future producer must use; a reused or unknown observation after a kill, which
-is an immediate incomplete stop rather than the census; and a PowerShell 5.1 run.
+is an immediate incomplete stop rather than the census; and a run of the compiled
+command itself (`qualification-stop`, which replaced the PowerShell stop scripts).
 No current producer writes commandLine. A record without one keeps the pid and
 start-time check.
 
 ```powershell
-pwsh -NoProfile -File scripts/rc-qualification-status.ps1 `
-    -CandidateId $candidateId -RunId $runId `
-    -StateRoot $stateRoot -CoordinationRoot $coordinationRoot `
-    -ReleaseRoot $releaseRoot
+scripts\antiphon.cmd rc-qualification-status --candidate-id $candidateId --run-id $runId `
+    --state-root $stateRoot --coordination-root $coordinationRoot --release-root $releaseRoot
 ```
 
-`ReleaseRoot` is optional; when supplied it reads only the selected
-`candidates/<candidateId>/candidate.json`. `-PassThru` returns the JSON-shaped object
-to an in-process caller. The other four inputs are required and nonblank. The
+`--release-root` is optional; when supplied it reads only the selected
+`candidates/<candidateId>/candidate.json`. An in-process host calls
+`Antiphon.Nightly.RcQualificationStatus.Observe` for the same object. The other four inputs
+are required and nonblank (`scripts/antiphon rc-qualification-status ...` on sh). The
 observer reads only `last-run.json`, `run.lock`, `native-run.lock` and that optional
 journal, with a 1 MiB limit per record. It rejects linked/reparse paths and ancestors.
 Each `inputs` entry reports its literal path and `ok`, `missing`, `malformed`,
@@ -569,8 +569,8 @@ marked checkout at the pinned SHA; recheck the remote and candidate journal befo
 commissioning it. A durable bootstrap repair also needs to reach the rc line before
 ordinary syncing runs use that line's script.
 
-A `-NoSync` hop does not set `core.longpaths`. `launch-rc.ps1`, the `-NoSync` branch of
-`nightly-run.ps1`, and `scripts/qualification/preflight.ps1` refuse reason
+A `-NoSync` hop does not set `core.longpaths`. The `qualification-launch` command, the `-NoSync`
+branch of `nightly-run.ps1`, and `qualification-preflight` refuse reason
 `longpaths-not-enabled` unless `git config --local --get core.longpaths` is `true`.
 The fix command is `git -C <checkout> config --local core.longpaths true`.
 `release-candidate.ps1` passes `-c core.longpaths=true` on `git clone`. The worktree

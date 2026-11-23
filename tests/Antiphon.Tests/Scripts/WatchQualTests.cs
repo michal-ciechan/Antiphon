@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Scripts;
 /// keeps the PowerShell helpers' rows. The log directory, state file, heartbeat and timing root are in a MockFileSystem;
 /// the clock is a FakeTimeProvider and the host's Sleep advances it, so no case waits.
 /// Not ported: the status object's property and parameter lists and the rc-qualification-status.ps1 wrapper's AST
-/// (PowerShell mechanics of a library that stays PowerShell; the source check below keeps the ETA out of it), and the
+/// (PowerShell mechanics; the status is C# since unit 7, and StatusReadersDoNotReadEta keeps the ETA out of it), and the
 /// helpers' 5.1 parse and $PSScriptRoot-in-param-defaults checks for watch-qual (PowerShell mechanics; the ASCII check
 /// stays).
 /// </summary>
@@ -178,18 +178,26 @@ public sealed class WatchQualTests
         lines.ShouldBe(new[] { "ETA-ERROR timing-root-missing " + world.Files.Path.Combine(world.Logs, "no-timing-root"), "watch-qual window ended; re-arm" });
     }
 
-    // StatusObjectHasNoEta, as source: the status readers neither name the ETA command nor carry an eta field. The
-    // status object's property list and parameters were PowerShell mechanics of rc-qualification-status.ps1 (dropped).
+    // StatusObjectHasNoEta: the status readers (RcQualificationStatus and its record reader, unit 7; they replaced
+    // rc-qualification-status.ps1) and the heartbeat neither name the ETA command nor carry an eta field.
     [Test]
     public void StatusReadersDoNotReadEta()
     {
-        foreach (var path in new[] { "scripts/lib/rc-qualification-status.ps1", "scripts/rc-qualification-status.ps1", "scripts/lib/Antiphon.Nightly/QualificationHeartbeat.cs" })
+        foreach (var path in new[] { "scripts/lib/Antiphon.Nightly/RcQualificationStatus.cs", "scripts/lib/Antiphon.Nightly/RcQualificationRecords.cs",
+                     "scripts/lib/Antiphon.Scripts/RcQualificationStatusCommand.cs", "scripts/lib/Antiphon.Nightly/QualificationHeartbeat.cs" })
         {
             var text = File.ReadAllText(Repo(path.Split('/')));
             text.Contains("qualification-eta", StringComparison.Ordinal).ShouldBeFalse(path + " reads the ETA");
             text.Contains("QualificationEta", StringComparison.Ordinal).ShouldBeFalse(path + " reads the ETA");
         }
-        Regex.IsMatch(File.ReadAllText(Repo("scripts", "lib", "rc-qualification-status.ps1")), @"(?i)\beta\s*=").ShouldBeFalse("the status object has an eta field");
+        Regex.IsMatch(File.ReadAllText(Repo("scripts", "lib", "Antiphon.Nightly", "RcQualificationStatus.cs")), @"(?i)\[""eta""\]").ShouldBeFalse("the status object has an eta field");
+        using var fixture = Nightly.NightlyFixture.Create("eta-status");
+        var status = RcQualificationStatus.Observe(new RcQualificationStatusOptions
+        {
+            CandidateId = "rc-eta", RunId = "run-eta", StateRoot = fixture.PathOf("state"), CoordinationRoot = fixture.PathOf("coord"),
+        }, fixture.Host(), new System.IO.Abstractions.FileSystem());
+        status.ContainsKey("eta").ShouldBeFalse("the status object has an eta field");
+        status["state"]!.AsObject().ContainsKey("eta").ShouldBeFalse("the status state has an eta field");
     }
 
     [Test]

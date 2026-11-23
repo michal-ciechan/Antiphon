@@ -2,8 +2,8 @@
 // Exit-NightlyExclusiveLock; CARD-0487, CARD-1386 dead-owner reclaim, CARD-1389 the reclaim race and the boot id,
 // CARD-1396 the shared reopen). The C# run core (NightlyRun.cs) takes it; nightly-run-impl.ps1 called it through the
 // nightly-common seams (New-ReleaseGateLockSeams in release-gate.ps1) until S20. S27 removed the old PowerShell functions except the reader. The record bytes are the ones
-// "[ordered]@{...} | ConvertTo-Json -Compress" wrote, so the still-PowerShell readers (Read-NightlyLockRecord,
-// rc-qualification-status.ps1, Read-RcQualificationRecord) read them unchanged. OS observation goes through
+// "[ordered]@{...} | ConvertTo-Json -Compress" wrote, so the readers (Read-NightlyLockRecord, still PowerShell, and
+// RcQualificationRecords, behind the rc-qualification-status and qualification-* commands) read them unchanged. OS observation goes through
 // INightlyProcessTable and the clock; nothing here is static state. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;

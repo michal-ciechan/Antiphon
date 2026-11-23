@@ -12,8 +12,9 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-2004. The registered scripts send their own <c>X-Antiphon-Caller</c> label.
-/// <c>scripts/lib/antiphon-caller.ps1</c> refuses any other value and does not copy it
-/// into the header or the error. The server list is <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
+/// <c>scripts/lib/antiphon-caller.ps1</c> (and its compiled reading, <c>Antiphon.Nightly.AntiphonCaller</c>, used by the
+/// status-snapshot command) refuses any other value and does not copy it into the header or the error. The server list is
+/// <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -50,11 +51,25 @@ public sealed class RegisteredCallerScriptTests
                 """{"status":"Working","nextStage":"review","handoff":"Review snapshot"}"""),
             _ => new(404, """{"detail":"Unexpected request"}""")
         });
-        var run = await RunAsync(stub, "status-snapshot.ps1",
-            "-ProjectId", ProjectId, "-Repository", repo.Path, "-Runner", "fixture-runner");
+        // The status-snapshot command (in-process since unit 7) keeps the registered label of the script it replaced.
+        var run = StatusSnapshotScriptTests.RunWith(Antiphon.Nightly.NightlyReport.HttpTransport(timeout: Antiphon.Nightly.StatusSnapshot.Deadline),
+            stub.BaseUrl.TrimEnd('/'), repo.Path, "--project-id", ProjectId);
         AssertRegisteredCaller(stub, "status-snapshot.ps1");
         stub.Calls.ShouldContain(c => c.Path == "/api/agent-tasks/" + TaskId);
-        run.ExitCode.ShouldBe(0, run.Stderr);
+        run.ExitCode.ShouldBe(0, run.Stdout);
+    }
+
+    [Test]
+    public void The_compiled_caller_list_is_the_server_list_and_refuses_without_echo()
+    {
+        Antiphon.Nightly.AntiphonCaller.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ShouldBe(
+            AgentTaskGetPollMetrics.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ToArray());
+        Antiphon.Nightly.AntiphonCaller.Label("  Status-Snapshot.ps1  ").ShouldBe("status-snapshot.ps1");
+        foreach (var label in new[] { "runner-drain.ps1", "phone-home", "", "status-snapshot" })
+        {
+            var refused = Should.Throw<InvalidOperationException>(() => Antiphon.Nightly.AntiphonCaller.Label(label));
+            if (label.Length > 0) refused.Message.ShouldNotContain(label);
+        }
     }
 
     [Test]

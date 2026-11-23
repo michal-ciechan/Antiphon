@@ -76,6 +76,20 @@ namespace Antiphon.Scripts
             [RefreshNightlyClassCostsCommand.Name] = RefreshNightlyClassCostsCommand.Run,
             // The away digest send answers every input itself: exit 0 sent, 1 refused or send_failed (one stderr line), 2 usage.
             [DigestCommand.Name] = DigestCommand.Run,
+            // The rc qualification status answers every input itself: exit 0 a coherent observation, 2 incomplete, invalid or usage.
+            [RcQualificationStatusCommand.Name] = RcQualificationStatusCommand.Run,
+            // The supervisor set answers every input itself. observe: exit 0 completed/running/supervisor-lost-run-alive, 3 run-lost,
+            // 2 otherwise; preflight: 0 or 2 longpaths-not-enabled; launch: 1 unreadable record, 2 refused, 3 a live run.lock, else
+            // build-slot's code; start-supervisor: 0 started, 1 refused or failed; supervise: 0, 1 after SUPERVISOR-ERROR; stop: 0
+            // stopped, 2 dry run or refused, 3 incomplete, 4 lock retained, 5 not Windows. Usage is 2 for each.
+            [QualificationObserveCommand.Name] = QualificationObserveCommand.Run,
+            [QualificationPreflightCommand.Name] = QualificationPreflightCommand.Run,
+            [QualificationLaunchCommand.Name] = QualificationLaunchCommand.Run,
+            [QualificationStartSupervisorCommand.Name] = QualificationStartSupervisorCommand.Run,
+            [QualificationSuperviseCommand.Name] = QualificationSuperviseCommand.Run,
+            [QualificationStopCommand.Name] = QualificationStopCommand.Run,
+            // The status snapshot answers every input itself: exit 0 every fact read, 2 partial facts or usage.
+            [StatusSnapshotCommand.Name] = StatusSnapshotCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -118,7 +132,11 @@ namespace Antiphon.Scripts
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
                 + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
-                + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage);
+                + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage
+                + " | " + RcQualificationStatusCommand.Usage
+                + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
+                + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
+                + " | " + StatusSnapshotCommand.Usage);
             return Usage;
         }
 

@@ -44,8 +44,9 @@ These directions override the cited standing rules in
    the next poll before diagnosing it. Windows chunks run strictly serially under one native lock.
    The run uses its own candidate directory; pushing to rc does not change its
    source. Logs and state are observations, never permission to stop the supervisor
-   or clear the lock. Use `scripts/rc-qualification-status.ps1` for a coherent
-   read-only status when its required identities are available.
+   or clear the lock. Use `scripts\antiphon.cmd rc-qualification-status --candidate-id <id>
+   --run-id <id> --state-root <dir> --coordination-root <dir> [--release-root <dir>]` for a
+   coherent read-only status when its required identities are available.
 
 2. **Arm three bounded watchers and re-arm about every 30 minutes.** Run each as a
    Monitor task with `timeout_ms: 1800000` in the orchestrator's
@@ -241,52 +242,54 @@ These directions override the cited standing rules in
 
 ### Supervisor launch set (CARD-1667)
 
-A new Full run is started with the repository set in `scripts/qualification/`, copied into the
-owned task directory with its launch record, never with a private copy. Run 7f8e9fd1 lost its
-supervisor (2026-11-02) because the supervisor shared its wrapper's console and wrote its log
-through a `1>` wrapper buffer; the run itself survived.
+A new Full run is started with the `antiphon-scripts` qualification commands of the candidate
+checkout (`scripts\antiphon.cmd <command>` on Windows, `scripts/antiphon <command>` on sh), never
+with a private copy. The launch record (`launch-record.json`) is written into the owned task
+directory. Run 7f8e9fd1 lost its supervisor (2026-11-02) because the supervisor shared its
+wrapper's console and wrote its log through a `1>` wrapper buffer; the run itself survived.
 
 - Every launch has its own fresh run id: `-RunId <id>` in the launch record's
-  `nightlyArguments` and the same value as `start-supervisor.ps1 -RunId`. The state root
+  `nightlyArguments` and the same value as `qualification-start-supervisor --run-id`. The state root
   (default `C:\Antiphon\nightly`) is shared by every nightly and rc run, so `last-run.json`
   usually holds the previous run's `completedAt`; only the run id tells them apart.
   Include the JSON argument pair `"-ReleaseRoot", "C:\\Antiphon\\releases"` in
   `nightlyArguments` for the standard Windows layout. An omitted or blank root causes
   exit 3 with `rc-release-root-required` in the final JSON's `refusal` field.
-- `launch-rc.ps1` needs PowerShell 7: the starter passes its own host to the supervisor and the
-  launch, so start the starter with `pwsh`, not `powershell.exe` (5.1 fails safely, launching
-  nothing). It reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
-  `nightlyArguments`), refuses (exit 2) a record without `-RunId` or with a run id other than the
-  supervisor's (`ANTIPHON_QUALIFICATION_RUN_ID`), refuses (exit 3) while `run.lock` names a live
-  owner or cannot be read or parsed (a dead owner is left to nightly-run), refuses a HEAD
-  mismatch, refuses (exit 2) `longpaths-not-enabled` unless `git config --local --get core.longpaths`
-  is `true` (fix: `git -C <checkout> config --local core.longpaths true`), and runs
-  `build-slot.ps1 -- nightly-run.ps1`. The `run.lock` check is point-in-time:
-  a run that starts while the launch waits for a build slot (up to 45 min) makes nightly-run
-  refuse it (exit 3), and one that ends in that wait lets it start after.
-- `preflight.ps1` is copied with this set and run on the checkout before `start-supervisor.ps1`.
+- `qualification-launch --config <launch-record.json>` is the supervisor's launch child. It reads
+  the record (`checkoutRoot`, `expectedSha`, `nightlyArguments`, optional `buildSlotLabel`),
+  refuses (exit 2) a record without `-RunId` or with a run id other than the supervisor's
+  (`ANTIPHON_QUALIFICATION_RUN_ID`), refuses (exit 3) while `run.lock` names a live owner or
+  cannot be read or parsed (a dead owner is left to nightly-run), refuses a HEAD mismatch, refuses
+  (exit 2) `longpaths-not-enabled` unless `git config --local --get core.longpaths` is `true` (fix:
+  `git -C <checkout> config --local core.longpaths true`), and runs the checkout's
+  `build-slot.ps1 -- nightly-run.ps1` with PowerShell 7 (`--powershell-path`; the starter resolves
+  `pwsh` on PATH and passes it down). The `run.lock` check is point-in-time: a run that starts
+  while the launch waits for a build slot (up to 45 min) makes nightly-run refuse it (exit 3), and
+  one that ends in that wait lets it start after.
+- `qualification-preflight --checkout-root <checkout>` runs on the checkout before the starter.
   It refuses (exit 2) `longpaths-not-enabled` with the same fix command when local
   `core.longpaths` is not `true`. It does not change the checkout.
-- `start-supervisor.ps1 -CheckoutRoot <checkout> -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
-  <candidate>\logs -StateRoot <state-dir> -RunId <id>` starts `supervise-rc.ps1` with its **own
-  hidden console** (setsid on Unix) and output in its own files, waits for
-  `supervisor-identity.json` and returns. Use the launch record's `checkoutRoot` as
-  `-CheckoutRoot`. The starter passes that path to the supervisor and both load their
-  libraries from the checkout. For an older checkout without the switch, run its starter
-  and observer from the checkout and omit the switch. Start the starter through `Win32_Process` Create to
-  leave the caller's Job Object. It refuses a task directory that already has a supervisor
-  identity and a run id that `last-run.json`, `run.lock` or the task directory's
-  `own-last-run.json` already names. observe, start-supervisor and supervise-rc read these
-  records with `FileShare.Delete`, so nightly-run's `File.Replace` of `last-run.json` is never
-  blocked.
-- `supervise-rc.ps1` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
+- `qualification-start-supervisor --task-root <task-dir> --launch-record <task-dir>\launch-record.json
+  --log-root <candidate>\logs --state-root <state-dir> --run-id <id>` copies the built CLI into
+  `<task-dir>\cli` and starts `qualification-supervise` from that copy (so the long-lived supervisor
+  never holds the checkout's build output) with its **own hidden console** (setsid on Unix) and its
+  output in its own files (`supervisor-stdout.log`, `supervisor-stderr.log`), waits for
+  `supervisor-identity.json`, writes `start-supervisor.json` and returns (exit 0 supervisor alive,
+  1 refused or failed). Run it from the candidate checkout. Start the starter through
+  `Win32_Process` Create to leave the caller's Job Object (its command line:
+  `cmd.exe /c <checkout>\scripts\antiphon.cmd qualification-start-supervisor ...`). It refuses a
+  task directory that already has a supervisor identity and a run id that `last-run.json`,
+  `run.lock` or the task directory's `own-last-run.json` already names. The observer, starter and
+  supervisor read these records with `FileShare.Delete`, so nightly-run's `File.Replace` of
+  `last-run.json` is never blocked.
+- `qualification-supervise` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
   PROGRESS, HANG_SUSPECTED, EXIT), `supervisor-heartbeat.json`, `launch-child.json` and finally
   `commission-exit.txt`, and records the run id in the identity and launch-child records. While
   `last-run.json` names its run id it copies it to `own-last-run.json` in the task directory, every
   poll and once more at child exit, because the next run overwrites the shared `last-run.json`. It
   only observes; it never stops anything.
-- `observe.ps1 -CheckoutRoot <checkout> -TaskRoot <task-dir> -StateRoot <state-dir>` reads the
-  library from the same checkout and credits only the run id in `supervisor-identity.json`.
+- `qualification-observe --task-root <task-dir> --state-root <state-dir>` credits only the run id
+  in `supervisor-identity.json`.
   The observer is read-only. `completedAt` for that run id in `last-run.json`, or in
   `own-last-run.json` once another run has overwritten `last-run.json`, is the end signal, not
   `commission-exit.txt`. A gone supervisor or stale heartbeat while that run still owns
@@ -302,9 +305,10 @@ through a `1>` wrapper buffer; the run itself survived.
   under LogRoot before any relaunch; never treat it as not-started. A nightly-run that exits
   through its error path releases `run.lock` without writing `completedAt`: observe reports `unknown`
   (`run-lock-missing`, exit 2), not `run-lost`; read `last-run.json` `phase` and `exitCode`.
-- Offline witness: `scripts/test-qualification-supervisor.ps1` (C1667). The Windows console
-  detach is recorded in `supervisor-identity.json` (`consoleProcessIds` must not contain the
-  starter pid); its native witness is still owed.
+- Offline witnesses: `QualificationSupervisorTests` and `QualificationStopTests` (C1667, C1507;
+  in-process, temp roots and fakes). The Windows console detach is recorded in
+  `supervisor-identity.json` (`consoleProcessIds` must not contain the starter pid); its native
+  witness is still owed.
 - For a future unexplained death, an operator (elevated, human-only) can enable
   `auditpol /set /subcategory:"Process Termination" /success:enable` on the desktop; Security
   event 4689 then records which process exited, when, and its exit status. It does not say who
@@ -312,13 +316,14 @@ through a `1>` wrapper buffer; the run itself survived.
 
 ### Stopping a recorded qualification (CARD-1507)
 
-`scripts/qualification/stop-supervisor.ps1` is the operator's stop tool. Stopping the live
-qualification run stays human-only (2026-10-31). Agents must not aim this script at the live
-run, its task directory, or `C:\Antiphon\verification`.
+`scripts\antiphon.cmd qualification-stop --task-root <task-dir> --coordination-root <dir> --run-id
+<id> --reason <text> [--confirm]` is the operator's stop tool. Stopping the live qualification run
+stays human-only (2026-10-31). Agents must not aim this command at the live run, its task
+directory, or `C:\Antiphon\verification`.
 
-The script is Windows-only and requires `-Confirm`. Without `-Confirm` it prints a dry run of
+The command is Windows-only and requires `--confirm`. Without `--confirm` it prints a dry run of
 the recorded supervisor and driver pids and identities, plus the planned lock action, then
-exits 2. Nothing is killed and no file changes. On a non-Windows host, `-Confirm` exits 5
+exits 2. Nothing is killed and no file changes. On a non-Windows host, `--confirm` exits 5
 before any kill or file change. It reads `TaskRoot\supervisor-identity.json` and
 `TaskRoot\launch-child.json`, re-observes each recorded pid and start, and also the command
 line when that record has one. It then runs `taskkill /PID <supervisor> /T /F`. A second
@@ -332,13 +337,14 @@ unknown, foreign, or changed lock is retained. The stop reason is appended to
 `TaskRoot\supervisor.log` with quotes and backslashes escaped, so a reason cannot forge the
 outcome or lock fields. A log write failure after the kills still prints the JSON result.
 The census covers the recorded supervisor and driver. Manual step 3 still checks any
-remaining candidate or run descendants the tree walk could not see. The script does not
-rewrite `last-run.json` and does not remove `run.lock`.
+remaining candidate or run descendants the tree walk could not see. The command does not
+rewrite `last-run.json` and does not remove `run.lock`. Exit codes: 0 stopped, 2 dry run or
+refused, 3 incomplete, 4 lock retained, 5 not Windows.
 
-When the script refuses, the manual steps in `docs/release-gates.md` remain the proof. A native
+When the command refuses, the manual steps in `docs/release-gates.md` remain the proof. A native
 Windows `taskkill` against a private sleeper tree (live supervisor, driver as its child, dead
-lock owner: exit 0, `kills=[supervisor]`, lock moved), and a Windows PowerShell 5.1 run of
-these scripts, stay pending. A Linux green does not discharge them.
+lock owner: exit 0, `kills=[supervisor]`, lock moved), and a native run of the command itself,
+stay pending. A Linux green does not discharge them.
 
 ### Pre-run workspace slot cold reset (CARD-0824 S1)
 

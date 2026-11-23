@@ -160,7 +160,7 @@ namespace Antiphon.Nightly
     public sealed record QualificationPlannedCost(double? Seconds, string Reason);
 
     /// <summary>
-    /// The supervisor's heartbeat loop (supervise-rc.ps1): the clock and the process table are seams; the previous
+    /// The supervisor's heartbeat loop (QualificationSupervise, the qualification-supervise command): the clock and the process table are seams; the previous
     /// heartbeat is kept between polls, and only once its file is written.
     /// </summary>
     public sealed class QualificationHeartbeatMonitor
@@ -179,7 +179,7 @@ namespace Antiphon.Nightly
         public static QualificationHeartbeatMonitor Production(double defaultIdleMinutes) =>
             new QualificationHeartbeatMonitor(TimeProvider.System, new QualificationProcessTable(), defaultIdleMinutes);
 
-        /// <summary>The idle budget of a chunk with no planned cost (supervise-rc -HangMinutes).</summary>
+        /// <summary>The idle budget of a chunk with no planned cost (qualification-supervise --hang-minutes).</summary>
         public double DefaultIdleMinutes { get; }
 
         /// <summary>The last heartbeat written; null before the first.</summary>

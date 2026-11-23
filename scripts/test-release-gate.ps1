@@ -4780,7 +4780,6 @@ function Clear-C599FixtureReadOnly {
     }
 }
 
-. (Join-Path $here 'fixtures/c1500-status.ps1')
 . (Join-Path $here 'fixtures/c1731-snapshot.ps1')
 . (Join-Path $here 'fixtures/c1731-evidence-path.ps1')
 . (Join-Path $here 'fixtures/c1733-allocator.ps1')

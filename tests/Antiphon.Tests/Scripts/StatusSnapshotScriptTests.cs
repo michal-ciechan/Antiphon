@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -8,6 +8,11 @@ using static Antiphon.Tests.Scripts.CardListSearchScriptTests;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// The status snapshot (StatusSnapshot, `antiphon-scripts status-snapshot`), in-process since it replaced
+/// scripts/status-snapshot.ps1 (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 7): the production HTTP transport against a
+/// loopback stub and the production git reader against a scratch repository with a bare origin.
+/// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class StatusSnapshotScriptTests
@@ -48,54 +53,78 @@ public sealed class StatusSnapshotScriptTests
             _ => new(404, """{"detail":"Unexpected request"}""")
         };
 
-        var text = await RunAsync(stub, repo.Path, "-ProjectId", project);
-        text.ExitCode.ShouldBe(0, text.Stderr);
+        var text = Run(stub, repo.Path, "--project-id", project);
+        text.ExitCode.ShouldBe(0, text.Stdout);
         text.Stdout.ShouldContain("12345678");
         text.Stdout.ShouldContain("Snapshot fixture");
         text.Stdout.ShouldContain("queued=2 blocked=1");
         text.Stdout.ShouldContain(master);
-        var json = await RunAsync(stub, repo.Path, "-Json", "-RcRunLogDir", logs, "-RcStateDir", state,
-            "-RcHeartbeatPath", heartbeat);
-        json.ExitCode.ShouldBe(0, json.Stderr);
+        text.Stdout.ShouldContain("refs/heads/rc/fixture");
+        var json = Run(stub, repo.Path, "--json", "--rc-run-log-dir", logs, "--rc-state-dir", state, "--rc-heartbeat-path", heartbeat);
+        json.ExitCode.ShouldBe(0, json.Stdout);
         using var parsed = JsonDocument.Parse(json.Stdout);
         var root = parsed.RootElement;
-        root.GetProperty("projectId").GetString().ShouldBe(project);
+        root.GetProperty("projectId").GetString().ShouldBe(project, "the project is discovered from the pipeline");
         root.GetProperty("master").GetProperty("tip").GetString().ShouldBe(master);
+        root.GetProperty("master").GetProperty("cachedOriginMasterLog").GetString()!.ShouldStartWith(master + "\t", customMessage: "the cached history is sha<TAB>subject");
         root.GetProperty("counts").GetProperty("inFlight").GetInt32().ShouldBe(1);
         root.GetProperty("counts").GetProperty("queued").GetInt32().ShouldBe(2);
         root.GetProperty("counts").GetProperty("blocked").GetInt32().ShouldBe(1);
         root.GetProperty("pipeline").GetProperty("stages")[0].GetProperty("inFlight")[0]
             .GetProperty("title").GetString().ShouldBe("Snapshot fixture");
         root.GetProperty("taskDetails")[0].GetProperty("nextStage").GetString().ShouldBe("review");
+        root.GetProperty("taskDetails").GetArrayLength().ShouldBe(1, "one GET per unique task id");
         root.GetProperty("rc").GetProperty("trxCount").GetInt32().ShouldBe(1);
         root.GetProperty("rc").GetProperty("scheduledEntries").GetInt32().ShouldBe(2);
+        root.GetProperty("rc").GetProperty("activeChunk").GetProperty("chunk").GetString().ShouldBe("two");
         root.GetProperty("rc").GetProperty("lastRun").GetProperty("runId").GetString().ShouldBe("run-fixture");
         root.GetProperty("rc").GetProperty("heartbeatAgeSeconds").GetDouble().ShouldBeGreaterThanOrEqualTo(0);
+        root.GetProperty("rcRefs")[0].GetProperty("ref").GetString().ShouldBe("refs/heads/rc/fixture");
         root.GetProperty("errors").GetArrayLength().ShouldBe(0);
         stub.Calls.ShouldAllBe(c => c.Method == "GET" && c.TaskToken == "synthetic-task-token");
         Files(repo.Path, repo.WorktreeRoot).ShouldBe(before, "snapshot must not create or change any file");
+    }
+
+    [Test]
+    public async Task Snapshot_reports_partial_facts_as_unverified_and_exits_2()
+    {
+        using var repo = new ScratchGitRepo("status-snapshot-partial");
+        await repo.CommitFileAsync("seed.txt", "no origin");
+        using var stub = new Stub("");
+        stub.Respond = (call, _) => call.Path switch
+        {
+            "/api/agent-tasks/pipeline" => new(200, """{"concurrencyScopes":[{"projectId":"a"},{"projectId":"b"}]}"""),
+            _ => new(503, """{"detail":"down"}""")
+        };
+        var logs = Path.Combine(repo.WorktreeRoot, "empty-logs");
+        Directory.CreateDirectory(logs);
+        var run = Run(stub, repo.Path, "--rc-run-log-dir", logs);
+        run.ExitCode.ShouldBe(2, run.Stdout);
+        run.Stdout.ShouldContain("TASKS counts unknown");
+        run.Stdout.ShouldContain("UNVERIFIED Project cannot be resolved uniquely from pipeline; supply --project-id.");
+        run.Stdout.ShouldContain("UNVERIFIED GET /api/session-runners/fixture-runner/slots unavailable (HTTP ServiceUnavailable).");
+        run.Stdout.ShouldContain("UNVERIFIED Remote master/rc refs unavailable.");
+        run.Stdout.ShouldContain("UNVERIFIED Remote master tip unknown.");
+        run.Stdout.ShouldContain("UNVERIFIED Active chunk unknown; inspect the recorded timing root.");
+        run.Stdout.ShouldNotContain("down", customMessage: "an answer body is never echoed");
+        var bad = Run(stub, repo.Path, "--project-id", "not-a-guid");
+        bad.Stdout.ShouldContain("UNVERIFIED ProjectId must be a GUID.");
+        Should.Throw<NightlyUsageException>(() => StatusSnapshotOptions.Parse(["--runner", "bad runner"], null, null, repo.Path));
+    }
+
+    internal static (int ExitCode, string Stdout) Run(Stub stub, string repository, params string[] args) =>
+        RunWith(NightlyReport.HttpTransport(timeout: StatusSnapshot.Deadline), stub.BaseUrl, repository, args);
+
+    internal static (int ExitCode, string Stdout) RunWith(NightlyReportHttp http, string api, string repository, params string[] args)
+    {
+        var output = new StringWriter();
+        var options = StatusSnapshotOptions.Parse(new[] { "--repository", repository, "--runner", "fixture-runner" }.Concat(args).ToArray(), api, "synthetic-task-token", null);
+        var exit = StatusSnapshot.Run(options, NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(), http, StatusSnapshot.ReadGit);
+        return (exit, output.ToString());
     }
 
     private static string[] Files(params string[] roots) => roots.SelectMany(root =>
         Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)).Order()
         .Select(path => path + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))))
         .ToArray();
-
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Stub stub, string repository, params string[] args)
-    {
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File",
-                     Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "status-snapshot.ps1"),
-                     "-Repository", repository, "-Runner", "fixture-runner" }.Concat(args))
-            start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = stub.BaseUrl;
-        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-        return (process.ExitCode, await stdout, await stderr);
-    }
 }

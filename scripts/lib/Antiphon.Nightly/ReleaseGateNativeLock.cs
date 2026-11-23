@@ -3,7 +3,7 @@
 // into this class. One atomic create-new lock serialises the master and RC lanes. A live owner is never stolen on age: the
 // caller records deferred-busy and waits for its next slot; a dead owner's lock is reported stale and is never reclaimed
 // here (docs/release-gates.md: manual recovery). The record bytes are the ones "[ordered]@{...} | ConvertTo-Json -Compress"
-// wrote, read unchanged by Read-NightlyLockRecord, rc-qualification-status.ps1 and qualification-stop.ps1. OS observation
+// wrote, read unchanged by Read-NightlyLockRecord and RcQualificationRecords (rc-qualification-status, qualification-stop). OS observation
 // goes through INightlyProcessTable and the clock. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;

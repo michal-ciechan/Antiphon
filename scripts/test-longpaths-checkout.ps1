@@ -32,23 +32,6 @@ function New-LpDirectory {
     return $path
 }
 
-function New-LpGitRepo {
-    param([string]$Root, [string]$Origin, [switch]$LongPaths)
-    $clone = Join-Path $Root 'checkout'
-    New-Item -ItemType Directory -Path $clone -Force | Out-Null
-    & git -C $clone init -q -b master
-    if ($LASTEXITCODE -ne 0) { & git -C $clone init -q }
-    & git -C $clone config user.email 'lp@example.invalid'
-    & git -C $clone config user.name 'lp'
-    & git -C $clone -c user.name=lp -c user.email=lp@example.invalid -c commit.gpgsign=false commit --allow-empty -q -m lp
-    if ($LASTEXITCODE -ne 0) { throw 'lp fixture commit failed' }
-    if (-not [string]::IsNullOrWhiteSpace($Origin)) { & git -C $clone remote add origin $Origin }
-    if ($LongPaths) { & git -C $clone config --local core.longpaths true }
-    $head = (@(& git -C $clone rev-parse HEAD) | Select-Object -First 1).ToString().Trim()
-    if ($head -notmatch '^[0-9a-f]{40}$') { throw ('lp fixture head unreadable: ' + $head) }
-    return [pscustomobject]@{ Path = $clone; Head = $head }
-}
-
 
 function Invoke-LpChild {
     param([string]$File, [string[]]$Arguments, [hashtable]$Environment)
@@ -191,73 +174,9 @@ function Test-LP_PathArithmetic {
     Assert-C487 $documented 'LP guard documents the 269 character sum and passes core.longpaths' $(if ($documented) { '' } else { 'missing override or arithmetic note' })
 }
 
-function Test-LP_LaunchRefuses {
-    $root = New-LpDirectory ('lp-launch-' + [guid]::NewGuid().ToString('N'))
-    $badText = ''
-    $badCode = -1
-    $goodText = ''
-    $detail = ''
-    $fix = ''
-    try {
-        $repo = New-LpGitRepo -Root $root
-        $state = Join-Path $root 'state'
-        New-Item -ItemType Directory -Path $state -Force | Out-Null
-        $config = Join-Path $root 'launch-record.json'
-        $record = [ordered]@{
-            checkoutRoot = $repo.Path
-            expectedSha = $repo.Head
-            nightlyArguments = @('-NoSync', '-RunId', 'lp-launch', '-StateRoot', $state)
-        }
-        [IO.File]::WriteAllText($config, ($record | ConvertTo-Json -Depth 4))
-        $fix = 'git -C ' + $repo.Path + ' config --local core.longpaths true'
-        $bad = Invoke-LpChild -File (Join-Path $here 'qualification/launch-rc.ps1') -Arguments @('-Config', $config) -Environment @{ ANTIPHON_QUALIFICATION_RUN_ID = 'lp-launch' }
-        $badCode = $bad.Code
-        $badText = $bad.Text
-        & git -C $repo.Path config --local core.longpaths true
-        $good = Invoke-LpChild -File (Join-Path $here 'qualification/launch-rc.ps1') -Arguments @('-Config', $config) -Environment @{ ANTIPHON_QUALIFICATION_RUN_ID = 'lp-launch' }
-        $goodText = $good.Text
-    } catch {
-        $detail = $_.Exception.Message
-    } finally {
-        Remove-LpTree $root
-    }
-    Assert-C487 ($badCode -eq 2 -and $badText.Contains('longpaths-not-enabled')) 'LP launch refuses longpaths-not-enabled' ($detail + ' exit=' + $badCode + ' ' + $badText)
-    Assert-C487 ($badText.Contains($fix) -and $fix.Contains('config --local core.longpaths true')) 'LP launch names the fix command' ($detail + ' ' + $badText)
-    Assert-C487 ($goodText.Contains('build-slot')) 'LP launch with longpaths continues to build-slot' ($detail + ' ' + $goodText)
-    Assert-C487 (-not $goodText.Contains('longpaths-not-enabled')) 'LP launch with longpaths does not refuse longpaths' ($detail + ' ' + $goodText)
-}
-
-# W2-nightly S20: LP_NoSyncRefuses runs NightlyRun.Run in-process (LongPathsCheckoutScriptTests).
-
-function Test-LP_PreflightRefuses {
-    $root = New-LpDirectory ('lp-preflight-' + [guid]::NewGuid().ToString('N'))
-    $script = Join-Path $here 'qualification/preflight.ps1'
-    $badText = ''
-    $badCode = -1
-    $goodText = ''
-    $goodCode = -1
-    $detail = ''
-    $fix = ''
-    try {
-        if (-not (Test-Path -LiteralPath $script)) { throw 'preflight.ps1 is absent' }
-        $repo = New-LpGitRepo -Root $root
-        $fix = 'git -C ' + $repo.Path + ' config --local core.longpaths true'
-        $bad = Invoke-LpChild -File $script -Arguments @('-CheckoutRoot', $repo.Path)
-        $badCode = $bad.Code
-        $badText = $bad.Text
-        & git -C $repo.Path config --local core.longpaths true
-        $good = Invoke-LpChild -File $script -Arguments @('-CheckoutRoot', $repo.Path)
-        $goodCode = $good.Code
-        $goodText = $good.Text
-    } catch {
-        $detail = $_.Exception.Message
-    } finally {
-        Remove-LpTree $root
-    }
-    Assert-C487 ($badCode -eq 2 -and $badText.Contains('longpaths-not-enabled')) 'LP preflight refuses longpaths-not-enabled' ($detail + ' exit=' + $badCode + ' ' + $badText)
-    Assert-C487 ($badText.Contains($fix) -and $fix.Contains('config --local core.longpaths true')) 'LP preflight names the fix command' ($detail + ' ' + $badText)
-    Assert-C487 ($goodCode -eq 0 -and -not $goodText.Contains('longpaths-not-enabled')) 'LP preflight accepts core.longpaths true' ($detail + ' exit=' + $goodCode + ' ' + $goodText)
-}
+# W2-nightly S20: LP_NoSyncRefuses runs NightlyRun.Run in-process (LongPathsCheckoutScriptTests); since unit 7 of
+# docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md LP_LaunchRefuses and LP_PreflightRefuses do too (qualification-launch,
+# qualification-preflight).
 
 function Write-LpReleaseSeams {
     param([string]$Path, [string]$Log, [string]$Sha)
@@ -313,4 +232,4 @@ if ($Case) {
 } else {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'LP_')) { & $fn }
 }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 19 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 8 })

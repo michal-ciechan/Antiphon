@@ -14,7 +14,7 @@ the `delegate.ps1 -Capability` UX live in [ops-http.md](ops-http.md).
 
 | Orchestrator skill | Use |
 |---|---|
-| [antiphon-status-update](../.claude/skills/antiphon-status-update/SKILL.md) | Operator status, rc progress, and in-flight work; gathers raw facts with `scripts/status-snapshot.ps1`. |
+| [antiphon-status-update](../.claude/skills/antiphon-status-update/SKILL.md) | Operator status, rc progress, and in-flight work; gathers raw facts with `scripts/antiphon status-snapshot`. |
 
 ## Orchestrator operational autonomy (restart, rollout)
 

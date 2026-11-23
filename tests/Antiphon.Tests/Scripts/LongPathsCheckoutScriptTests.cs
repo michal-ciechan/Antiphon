@@ -30,15 +30,61 @@ public sealed class LongPathsCheckoutScriptTests
             "LP guard documents the 269 character sum and passes core.longpaths"
         ], token);
 
+    // In-process since unit 7 of 2026-11-22-remaining-ps1-to-csharp.md (was the test-longpaths-checkout.ps1 case on
+    // scripts/qualification/launch-rc.ps1): qualification-launch with real git on a prepared clone refuses
+    // longpaths-not-enabled and names the fix command until the clone opts in, then hands build-slot to the launcher.
     [Test, Timeout(180_000)]
-    public Task LP_LaunchRefuses(CancellationToken token) =>
-        Run(nameof(LP_LaunchRefuses), 4,
-        [
-            "LP launch refuses longpaths-not-enabled",
-            "LP launch names the fix command",
-            "LP launch with longpaths continues to build-slot",
-            "LP launch with longpaths does not refuse longpaths"
-        ], token);
+    public void LP_LaunchRefuses(CancellationToken token)
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("lp-launch");
+        var clone = Clone(fixture);
+        var head = Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "rev-parse", "HEAD").Trim();
+        var state = fixture.PathOf("state");
+        Directory.CreateDirectory(state);
+        var config = fixture.PathOf("launch-record.json");
+        File.WriteAllText(config, new System.Text.Json.Nodes.JsonObject
+        {
+            ["checkoutRoot"] = clone, ["expectedSha"] = head, ["nightlyArguments"] = new System.Text.Json.Nodes.JsonArray("-NoSync", "-RunId", "lp-launch", "-StateRoot", state),
+        }.ToJsonString());
+        var launcher = new Antiphon.Tests.Scripts.Nightly.RecordingLauncher(_ => new Antiphon.Nightly.NightlyLaunchResult { ExitCode = 0 });
+        var host = RealGit(fixture, launcher);
+        (int Code, string Text) Launch()
+        {
+            var before = fixture.Out.ToString().Length;
+            var code = Antiphon.Nightly.QualificationLaunch.Run(Antiphon.Nightly.QualificationLaunchOptions.Parse(["--config", config], "lp-launch", "pwsh"), host,
+                new System.IO.Abstractions.FileSystem());
+            return (code, fixture.Out.ToString()[before..]);
+        }
+        var fix = "git -C " + clone + " config --local core.longpaths true";
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var bad = Launch();
+        rows.Check(bad.Code == 2 && bad.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal) && launcher.Launches.Count == 0,
+            "LP launch refuses longpaths-not-enabled", "exit=" + bad.Code + " " + bad.Text);
+        rows.Check(bad.Text.Contains(fix, StringComparison.Ordinal) && fix.Contains("config --local core.longpaths true", StringComparison.Ordinal), "LP launch names the fix command", bad.Text);
+        Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "config", "--local", "core.longpaths", "true");
+        var good = Launch();
+        rows.Check(good.Code == 0 && good.Text.Contains("build-slot", StringComparison.Ordinal)
+            && launcher.Launches.Count == 1 && launcher.Launches[0].Arguments.Contains(Path.Combine(clone, "scripts", "build-slot.ps1")),
+            "LP launch with longpaths continues to build-slot", good.Text);
+        rows.Check(!good.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal), "LP launch with longpaths does not refuse longpaths", good.Text);
+        rows.ShouldAllPass(4, "LP launch refuses longpaths-not-enabled", "LP launch names the fix command", "LP launch with longpaths continues to build-slot",
+            "LP launch with longpaths does not refuse longpaths");
+    }
+
+    private static string Clone(Antiphon.Tests.Scripts.Nightly.NightlyFixture fixture)
+    {
+        var clone = fixture.PathOf("checkout");
+        Directory.CreateDirectory(clone);
+        Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "init", "-q", "-b", "master");
+        Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "-c", "user.name=lp", "-c", "user.email=lp@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", "lp");
+        return clone;
+    }
+
+    private static Antiphon.Nightly.NightlyHost RealGit(Antiphon.Tests.Scripts.Nightly.NightlyFixture fixture, Antiphon.Nightly.INightlyLauncher launcher) => new()
+    {
+        Clock = TimeProvider.System, Git = Antiphon.Nightly.NightlyNativeGit.Run, Launcher = launcher, Processes = new Antiphon.Tests.Scripts.Nightly.FakeProcessTable(),
+        Probe = new Antiphon.Tests.Scripts.Nightly.FakeHostProbe(), Out = fixture.Out, Error = fixture.Error, Trace = TextWriter.Null,
+    };
 
     /// <summary>
     /// In-process since W2-nightly S20 (was the test-longpaths-checkout.ps1 case on the PowerShell run core): a -NoSync -WhatIf
@@ -82,14 +128,29 @@ public sealed class LongPathsCheckoutScriptTests
             "LP nosync with longpaths has an empty refusal");
     }
 
+    // In-process since unit 7 (was the test-longpaths-checkout.ps1 case on scripts/qualification/preflight.ps1).
     [Test, Timeout(180_000)]
-    public Task LP_PreflightRefuses(CancellationToken token) =>
-        Run(nameof(LP_PreflightRefuses), 3,
-        [
-            "LP preflight refuses longpaths-not-enabled",
-            "LP preflight names the fix command",
-            "LP preflight accepts core.longpaths true"
-        ], token);
+    public void LP_PreflightRefuses(CancellationToken token)
+    {
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("lp-preflight");
+        var clone = Clone(fixture);
+        var host = RealGit(fixture, new Antiphon.Tests.Scripts.Nightly.RecordingLauncher());
+        (int Code, string Text) Preflight()
+        {
+            var before = fixture.Out.ToString().Length;
+            var code = Antiphon.Nightly.QualificationLaunch.Preflight(Antiphon.Nightly.QualificationPreflightOptions.Parse(["--checkout-root", clone]), host);
+            return (code, fixture.Out.ToString()[before..]);
+        }
+        var fix = "git -C " + clone + " config --local core.longpaths true";
+        var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
+        var bad = Preflight();
+        rows.Check(bad.Code == 2 && bad.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal), "LP preflight refuses longpaths-not-enabled", "exit=" + bad.Code + " " + bad.Text);
+        rows.Check(bad.Text.Contains(fix, StringComparison.Ordinal) && fix.Contains("config --local core.longpaths true", StringComparison.Ordinal), "LP preflight names the fix command", bad.Text);
+        Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "config", "--local", "core.longpaths", "true");
+        var good = Preflight();
+        rows.Check(good.Code == 0 && !good.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal), "LP preflight accepts core.longpaths true", "exit=" + good.Code + " " + good.Text);
+        rows.ShouldAllPass(3, "LP preflight refuses longpaths-not-enabled", "LP preflight names the fix command", "LP preflight accepts core.longpaths true");
+    }
 
     [Test, Timeout(180_000)]
     public Task LP_CloneFlag(CancellationToken token) =>

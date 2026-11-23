@@ -13,11 +13,11 @@ Run from the repository root. General operating rules and dispatch mechanics liv
 ## Gather directly
 
 1. Read `GET /api/orchestrator-instructions` for current directions and seat target.
-   Run `pwsh -NoProfile -File scripts/status-snapshot.ps1 -ProjectId <id>` (add
-   `-Json` for machine output). Omit ProjectId only when the pipeline identifies
-   one project; ambiguity requires an explicit id. API URL and authentication use
+   Run `scripts/antiphon status-snapshot --project-id <id>` (`scripts\antiphon.cmd` on
+   Windows; add `--json` for machine output). Omit `--project-id` only when the pipeline
+   identifies one project; ambiguity requires an explicit id. API URL and authentication use
    `ANTIPHON_API` and the task-token header, as card.ps1/delegate.ps1 do.
-   The script is read-only, reads remote refs without fetching, and marks cached
+   The command is read-only, reads remote refs without fetching, and marks cached
    history. Exit 2 means partial facts: preserve every `UNVERIFIED`/`errors` entry.
 2. Check `GET /api/agent-tasks/pipeline?projectId=<id>` for stages in flight,
    queued, blocked, effective limits, hosts and remaining seats. Check

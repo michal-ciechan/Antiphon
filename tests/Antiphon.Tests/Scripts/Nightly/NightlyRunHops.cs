@@ -77,7 +77,7 @@ public static class NightlyRunHops
     }
 
     /// <summary>
-    /// The production launcher scripts/nightly-run.ps1 (-File, as Windmill and launch-rc start it) under Windows PowerShell 5.1
+    /// The production launcher scripts/nightly-run.ps1 (-File, as Windmill and qualification-launch start it) under Windows PowerShell 5.1
     /// (pwsh elsewhere, or when asked), with ANTIPHON_SCRIPTS_DLL naming the script harness host's echo mode for the nightly-run
     /// command (CLI_ECHO_COMMAND): nothing is built and nothing runs; the CLI prints the argv the launcher handed it.
     /// </summary>

@@ -11,12 +11,13 @@ namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
 /// W2-nightly S18: the lock records the compiled locks write (NightlyRunLock.cs, ReleaseGateNativeLock.cs) are read
-/// unchanged by the readers that stay PowerShell: Read-NightlyLockRecord (nightly-common.ps1; live-lane-run.ps1 reads the
-/// native lock through it), Read-RcQualificationRecord and Get-RcQualificationStatus (lib/rc-qualification-status.ps1,
-/// behind scripts/rc-qualification-status.ps1 and the qualification scripts). Each test writes the records here with the
-/// production process table and clock, keeps the owner's handle open as a run does, and reads them in a pwsh child (and
-/// Windows PowerShell 5.1 on Windows). The bytes are also the ones "[ordered]@{...} | ConvertTo-Json -Compress" gives for
-/// the same values. These tests launch PowerShell because the readers are production PowerShell.
+/// unchanged by every reader: Read-NightlyLockRecord (nightly-common.ps1, still PowerShell; live-lane-run.ps1 reads the
+/// native lock through it), and the C# readers of the qualification set, RcQualificationRecords.Read and
+/// RcQualificationStatus (unit 7 of 2026-11-22-remaining-ps1-to-csharp.md; they replaced lib/rc-qualification-status.ps1).
+/// Each test writes the records here with the production process table and clock and keeps the owner's handle open as a
+/// run does; the C# readers read them in this process, Read-NightlyLockRecord in a pwsh child (and Windows PowerShell 5.1
+/// on Windows). The bytes are also the ones "[ordered]@{...} | ConvertTo-Json -Compress" gives for the same values. These
+/// tests launch PowerShell because Read-NightlyLockRecord is production PowerShell.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -85,6 +86,31 @@ public sealed class NightlyLockFormatTests
         var script = fixture.PathOf("read-locks.ps1");
         File.WriteAllText(script, ReadScript, new UTF8Encoding(false));
 
+        // The C# readers, with the production process table: the record's pid and start are this process, matched to the tick.
+        var files = new System.IO.Abstractions.FileSystem();
+        foreach (var (name, record) in expected)
+        {
+            var read = RcQualificationRecords.Read(files, Path.GetFullPath(paths[name]));
+            read.Status.ShouldBe("ok", "RcQualificationRecords.Read " + name);
+            foreach (var field in name == "native" ? NativeFields : RunFields)
+            {
+                var value = RcQualificationRecords.Member(read.Record, field);
+                (RcQualificationRecords.Present(value) ? RcQualificationRecords.Text(value) : null).ShouldBe(record.Value(field), "RcQualificationRecords.Read " + name + "." + field);
+            }
+            RcQualificationRecords.IsInteger(RcQualificationRecords.Member(read.Record, "pid")).ShouldBeTrue("the pid is a JSON integer " + name);
+            var owner = RcQualificationOwner.Observe(read.Record, processes, RcQualificationOwner.ToleranceMilliseconds(new NightlyHostProbe().Platform()));
+            (owner.Status + "/" + owner.Reason).ShouldBe("alive/pid-start-match", "RcQualificationOwner.Observe " + name);
+        }
+        var status = RcQualificationStatus.Observe(new RcQualificationStatusOptions
+        {
+            CandidateId = "format-candidate", RunId = runId, StateRoot = state, CoordinationRoot = coord,
+        }, NightlyHost.Production(TextWriter.Null, TextWriter.Null), files);
+        var statusLocks = status["locks"]!;
+        ((string)statusLocks["run"]!["relationship"]! + "/" + (string)statusLocks["run"]!["ownerObservation"]!["status"]!).ShouldBe("this-run/alive", "RcQualificationStatus run lock");
+        ((string)statusLocks["native"]!["relationship"]! + "/" + (string)statusLocks["native"]!["ownerObservation"]!["status"]!).ShouldBe("this-run/alive", "RcQualificationStatus native lock");
+        ((string)statusLocks["native"]!["record"]!["lane"]!).ShouldBe("rc", "RcQualificationStatus native lane");
+        ((string)statusLocks["native"]!["record"]!["continuationId"]!).ShouldBe("continuation-1", "RcQualificationStatus native continuation");
+
         foreach (var host in Hosts())
         {
             var output = fixture.PathOf("observed-" + Path.GetFileNameWithoutExtension(host) + ".json");
@@ -101,23 +127,10 @@ public sealed class NightlyLockFormatTests
                 var nightly = read.GetProperty("nightly");
                 foreach (var field in fields)
                     Text(nightly.GetProperty(field)).ShouldBe(record.Value(field), label + " Read-NightlyLockRecord " + name + "." + field);
-                read.GetProperty("rcStatus").GetString().ShouldBe("ok", label + " Read-RcQualificationRecord " + name);
-                var rc = read.GetProperty("rc");
-                foreach (var field in fields)
-                    Text(rc.GetProperty(field)).ShouldBe(record.Value(field), label + " Read-RcQualificationRecord " + name + "." + field);
-                read.GetProperty("rcPidIsInteger").GetBoolean().ShouldBeTrue(label + " the pid is a JSON integer " + name);
-                // The record's pid and process start are this process: the owner observation matches them to the tick.
-                read.GetProperty("owner").GetString().ShouldBe("alive/pid-start-match", label + " Get-RcQualificationOwnerObservation " + name);
                 if (modern)
                     read.GetProperty("rebuilt").GetString().ShouldBe(Convert.ToBase64String(NightlyLockFixture.ReadShared(paths[name])),
                         label + " ConvertTo-Json -Compress of the same values gives the same bytes: " + name);
             }
-
-            var locks = root.GetProperty("status");
-            locks.GetProperty("run").GetString().ShouldBe("this-run/alive", label + " Get-RcQualificationStatus run lock");
-            locks.GetProperty("native").GetString().ShouldBe("this-run/alive", label + " Get-RcQualificationStatus native lock");
-            locks.GetProperty("nativeLane").GetString().ShouldBe("rc", label + " Get-RcQualificationStatus native lane");
-            locks.GetProperty("nativeContinuation").GetString().ShouldBe("continuation-1", label + " Get-RcQualificationStatus native continuation");
 
             var reclaim = root.GetProperty("reclaim");
             reclaim.GetProperty("reason").GetString().ShouldBe("dead-owner-legacy", label);
@@ -181,7 +194,7 @@ public sealed class NightlyLockFormatTests
 
     private static string? Text(JsonElement value) => value.ValueKind == JsonValueKind.Null ? null : value.ToString();
 
-    // pwsh, and Windows PowerShell 5.1 on Windows (rc-qualification-status.ps1 and nightly-common.ps1 still run there).
+    // pwsh, and Windows PowerShell 5.1 on Windows (nightly-common.ps1 still runs there).
     private static string[] Hosts()
     {
         var hosts = new List<string> { OperatingSystem.IsWindows() ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : "pwsh" };
@@ -220,13 +233,12 @@ public sealed class NightlyLockFormatTests
         }
     }
 
-    // Reads each lock with the PowerShell readers and rebuilds its bytes with ConvertTo-Json -Compress from the values
-    // the core wrote. Parseable by Windows PowerShell 5.1.
+    // Reads each lock with Read-NightlyLockRecord and rebuilds its bytes with ConvertTo-Json -Compress from the values the
+    // core wrote. Parseable by Windows PowerShell 5.1.
     private const string ReadScript = """
         param([string]$Repo, [string]$InputPath, [string]$ValuesPath, [string]$OutPath)
         $ErrorActionPreference = 'Stop'
         . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
-        . (Join-Path $Repo 'scripts/lib/rc-qualification-status.ps1')
         function Read-FormatMap([string]$Path, [bool]$Decode) {
             $map = @{}
             foreach ($line in [IO.File]::ReadAllLines($Path)) {
@@ -262,8 +274,6 @@ public sealed class NightlyLockFormatTests
             $fields = $runFields
             if ($name -eq 'native') { $fields = $nativeFields }
             $path = $in[$name]
-            $rc = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath($path))
-            $owner = Get-RcQualificationOwnerObservation $rc.record
             if ($name -eq 'native') {
                 $rebuilt = [ordered]@{ pid = [int]$v['native.pid']; processStartedAt = $v['native.processStartedAt']; runId = $v['native.runId']
                     lane = $v['native.lane']; continuationId = $v['native.continuationId']; acquiredAt = $v['native.acquiredAt'] }
@@ -275,24 +285,13 @@ public sealed class NightlyLockFormatTests
             }
             $reads[$name] = [ordered]@{
                 nightly = Get-FormatFields (Read-NightlyLockRecord -LockPath $path) $fields
-                rcStatus = [string]$rc.status
-                rc = Get-FormatFields $rc.record $fields
-                rcPidIsInteger = ($rc.record.pid -is [int] -or $rc.record.pid -is [long])
-                owner = ([string]$owner.status + '/' + [string]$owner.reason)
                 rebuilt = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(($rebuilt | ConvertTo-Json -Compress)))
             }
         }
-        $status = Get-RcQualificationStatus -CandidateId 'format-candidate' -RunId $in['runId'] -StateRoot $in['stateRoot'] -CoordinationRoot $in['coordinationRoot']
         $reclaim = [IO.File]::ReadAllText($in['reclaimRecord']) | ConvertFrom-Json
         $out = [ordered]@{
             psVersion = $PSVersionTable.PSVersion.ToString()
             reads = $reads
-            status = [ordered]@{
-                run = ([string]$status.locks.run.relationship + '/' + [string]$status.locks.run.ownerObservation.status)
-                native = ([string]$status.locks.native.relationship + '/' + [string]$status.locks.native.ownerObservation.status)
-                nativeLane = [string]$status.locks.native.record.lane
-                nativeContinuation = [string]$status.locks.native.record.continuationId
-            }
             reclaim = [ordered]@{
                 reason = [string]$reclaim.reason
                 newRunId = [string]$reclaim.newRunId
