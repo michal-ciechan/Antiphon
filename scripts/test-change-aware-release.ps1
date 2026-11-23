@@ -25,19 +25,6 @@ function Get-FxTreeDigest($Root) {
     return Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($files))
 }
 
-# The same tree Copy-Item -Recurse makes, through .NET: on Linux the provider copy costs ~85 ms an entry
-# (25 s for scripts/lib on server2, against 0.05 s for cp -r), and every New-Fx paid it (2026-11-23 note).
-function Copy-FxTree([string]$Source, [string]$Target) {
-    $base = [IO.Path]::GetFullPath($Source)
-    [void][IO.Directory]::CreateDirectory($Target)
-    foreach ($directory in [IO.Directory]::GetDirectories($base, "*", [IO.SearchOption]::AllDirectories)) {
-        [void][IO.Directory]::CreateDirectory((Join-Path $Target ([IO.Path]::GetRelativePath($base, $directory))))
-    }
-    foreach ($file in [IO.Directory]::GetFiles($base, "*", [IO.SearchOption]::AllDirectories)) {
-        [IO.File]::Copy($file, (Join-Path $Target ([IO.Path]::GetRelativePath($base, $file))))
-    }
-}
-
 function New-Fx {
     $root = Join-Path $ResultsDirectory ('space ' + [guid]::NewGuid().ToString('N'))
     $seed = Join-Path $root 'seed'; [void][IO.Directory]::CreateDirectory($seed)
@@ -47,7 +34,7 @@ function New-Fx {
     [void](Git-Fx $seed @('config','user.email','fixture@example.invalid'))
     [void](Git-Fx $seed @('config','core.autocrlf','false'))
     [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
-    Copy-FxTree "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib')
+    Copy-Item "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib') -Recurse
     Copy-C487NightlyCoreDependency -Root $seed
     # W2-nightly S17: the tests hop is the nightly-tests command; its sources are the scripts/lib copy above.
     foreach ($file in @('nightly-run.ps1','release-cut.ps1','release-candidate.ps1')) {
@@ -388,10 +375,7 @@ finally {
     $retained=Join-Path $repoRoot ('.antiphon/test-output/c1313-s6a/'+[guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($retained)
     foreach($item in Get-ChildItem $ResultsDirectory -Directory | Where-Object {$_.Name -match '^(native-|hop-native|hop-bindings|discovery)'}){Copy-Item $item.FullName $retained -Recurse}
-    # A gone root is skipped and the rest are named literally. Given a missing path, Get-ChildItem -Recurse
-    # takes the leaf as a filter and walks the whole results directory: 292 s for 3201 entries on
-    # server2, the C1590 gone-root cases' 5-minute timeouts (2026-11-23 inherited-Linux-reds note).
-    foreach($root in $script:FixtureRoots){if(Test-Path -LiteralPath $root){Get-ChildItem -LiteralPath $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}}
+    foreach($root in $script:FixtureRoots){Get-ChildItem $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}
     # Each fixture root holds nested Git repositories; delete it by its exact path so a
     # direct run leaves none behind in the caller's results directory (CARD-1590).
     foreach($root in $script:FixtureRoots){if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}}
