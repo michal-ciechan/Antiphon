@@ -403,6 +403,13 @@ public sealed class GitHubCodeHost(
         await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/pulls/{RequirePr(target)}/reviews",
             new { commit_id = headSha, body, @event = "APPROVE" }, ct);
 
+    /// <summary>How long a rebase is waited for, and how often the head is re-read meanwhile.</summary>
+    private static readonly TimeSpan RebaseSettleBudget = TimeSpan.FromSeconds(20);
+
+    private static readonly TimeSpan RebaseSettlePoll = TimeSpan.FromSeconds(2);
+
+    private static bool Same(string? a, string? b) => !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
     public const string UpdateBranchMutation = """
         mutation($id: ID!, $head: GitObjectID!, $method: PullRequestBranchUpdateMethod!) {
           updatePullRequestBranch(input: { pullRequestId: $id, expectedHeadOid: $head, updateMethod: $method }) {
@@ -432,8 +439,17 @@ public sealed class GitHubCodeHost(
                 && result.TryGetProperty("pullRequest", out var updatedPr)
                     ? Text(updatedPr, "headRefOid")
                     : null;
-            return new CodeHostBranchUpdate(true, string.Equals(head, expectedHeadSha, StringComparison.OrdinalIgnoreCase) ? null : head,
-                "Rebased onto the base branch.");
+            // GitHub answers the mutation before the rebase lands (live, 2026-11-23: the old head came
+            // back), so wait briefly for the new head. Reported now, the run accepts it as a base-only
+            // update and keeps its approval; seen later as a push, it would start a new round.
+            for (var waited = TimeSpan.Zero; Same(head, expectedHeadSha) && waited < RebaseSettleBudget; waited += RebaseSettlePoll)
+            {
+                await Task.Delay(RebaseSettlePoll, ct);
+                using var reread = Parse(await GetAsync(target, $"{RepoPath(target)}/pulls/{RequirePr(target)}", JsonMediaType, ct), "pull request");
+                head = reread.RootElement.TryGetProperty("head", out var headRef) ? Text(headRef, "sha") : head;
+            }
+
+            return new CodeHostBranchUpdate(true, Same(head, expectedHeadSha) ? null : head, "Rebased onto the base branch.");
         }
 
         var body = await SendAsync(target, HttpMethod.Put, $"{RepoPath(target)}/pulls/{RequirePr(target)}/update-branch",

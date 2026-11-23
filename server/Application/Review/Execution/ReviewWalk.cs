@@ -278,9 +278,18 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
         var binding = Binding;
         var baseSha = Iteration.BaseSha ?? Run.Subject.BaseSha;
         var headSha = Iteration.HeadSha ?? Run.Subject.HeadSha;
-        var since = Run.Iterations.Where(i => i.Iteration < Iteration.Iteration && i.HeadSha != null).MaxBy(i => i.Iteration)?.HeadSha;
+        var previous = Run.Iterations.Where(i => i.Iteration < Iteration.Iteration && i.HeadSha != null).MaxBy(i => i.Iteration);
+        var since = previous?.HeadSha;
         string? note = null;
-        if (since is not null && !string.Equals(since, headSha, StringComparison.OrdinalIgnoreCase))
+        // After a rebase or a merge of the base, since...head also spans the base's own commits (live,
+        // 2026-11-23: a 5-file PR rebased onto master came back as 58 files). Until interdiffs by patch
+        // id exist, a moved base reviews the whole change again.
+        if (since is not null && previous?.BaseSha is { Length: > 0 } previousBase && !string.Equals(previousBase, baseSha, StringComparison.OrdinalIgnoreCase))
+        {
+            note = $"The base moved ({ReviewIntake.Short(previousBase)} -> {ReviewIntake.Short(baseSha)}), so the change since "
+                + $"{ReviewIntake.Short(since)} would include the base's own commits; reviewing the whole change.";
+        }
+        else if (since is not null && !string.Equals(since, headSha, StringComparison.OrdinalIgnoreCase))
         {
             var incremental = new CodeHostRange(baseSha, headSha, since);
             try

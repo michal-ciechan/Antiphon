@@ -133,7 +133,8 @@ public static class ReviewBranchSteps
                 new BranchUpdateOutput(origin, fromHead, null, "unsupported", null));
 
         var update = await walk.Host.UpdateBranchAsync(walk.Binding.Target, fromHead, ct);
-        var summary = new StringBuilder($"Asked the code host to merge the base into {ReviewIntake.Short(fromHead)}");
+        var summary = new StringBuilder($"Asked the code host to bring {ReviewIntake.Short(fromHead)} up to date with the base"
+            + (string.IsNullOrWhiteSpace(update.Message) ? "" : $" ({update.Message.Trim().TrimEnd('.')})"));
         if (update.NewHeadSha is { Length: > 0 } newHead && !Same(newHead, fromHead))
         {
             walk.Run.Subject.HeadSha = newHead;

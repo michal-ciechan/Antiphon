@@ -116,6 +116,27 @@ public class GitHubThreadResolutionTests
         call.Variables.GetProperty("method").GetString().ShouldBe("REBASE");
     }
 
+    /// <summary>Live, GitHub answered the rebase mutation with the old head; the adapter waits for the new one.</summary>
+    [Test]
+    public async Task Update_branch_waits_for_the_rebased_head_when_github_answers_before_the_rebase_lands()
+    {
+        var head = new string('b', 40);
+        var rebased = new string('e', 40);
+        var reads = 0;
+        var handler = new GraphQlHandler(request => (request.Method.Method, request.RequestUri!.PathAndQuery) switch
+        {
+            ("GET", "/api/v3/repos/acme/widgets/pulls/42") => Interlocked.Increment(ref reads) == 1
+                ? Json($$"""{ "number": 42, "node_id": "PR_kwDO42", "head": { "sha": "{{head}}" } }""")
+                : Json($$"""{ "number": 42, "node_id": "PR_kwDO42", "head": { "sha": "{{rebased}}" } }"""),
+            var other => throw new InvalidOperationException($"Unexpected request {other}"),
+        }, _ => Json($$"""{ "data": { "updatePullRequestBranch": { "pullRequest": { "headRefOid": "{{head}}" } } } }"""));
+
+        var update = await Host(handler).UpdateBranchAsync(Target, head, CancellationToken.None);
+
+        update.NewHeadSha.ShouldBe(rebased, "the run accepts the rebased head as base-only only when it is reported");
+        reads.ShouldBe(2, "one read for the node id, one after the mutation");
+    }
+
     private static GitHubCodeHost Host(HttpMessageHandler handler)
     {
         var settings = new ReviewCodeHostSettings();
