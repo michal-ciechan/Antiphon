@@ -333,8 +333,8 @@ internal static partial class InProcessGitReads
 
     /// <summary>
     /// The object a full SHA-1 id names, read as an id, never as revision syntax: null for any other length, and
-    /// when a ref reads as that hex name (git then warns "refname ... is ambiguous", or with the object missing
-    /// reads the ref).
+    /// when a ref reads as that hex name (git still reads the hex as the id, but warns "refname ... is ambiguous"
+    /// on stderr first).
     /// </summary>
     private static GitObject? ById(Repository repo, string sha)
     {

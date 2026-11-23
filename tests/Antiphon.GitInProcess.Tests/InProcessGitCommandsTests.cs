@@ -122,12 +122,13 @@ public sealed class InProcessGitCommandsTests
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(unicode));
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified[..12]));
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified + modified[..24])); // 64 hex, not SHA-1
-        // A ref named after an id: git warns of ambiguity for a present object, reads the ref for a missing one.
-        var missing = new string('e', 40);
-        await f.RequiredAsync(f.Repository, "update-ref", "refs/heads/" + missing, modified);
-        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(missing));
-        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", missing]);
-        await f.RequiredAsync(f.Repository, "update-ref", "-d", "refs/heads/" + missing);
+        // A ref named after a present object's id: git reads the hex as the id but warns of ambiguity on stderr.
+        // The bare name is git's first rule, the file $GIT_DIR/<hex>.
+        var bare = Path.Combine(f.Repository, ".git", deleted);
+        await File.WriteAllTextAsync(bare, modified + "\n");
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(deleted));
+        await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", deleted]);
+        File.Delete(bare);
         await f.RequiredAsync(f.Repository, "update-ref", "refs/tags/" + deleted, modified);
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(deleted));
         await AssertSpawnsAsync(inProcess, f.Repository, ["ls-tree", "-r", "-z", deleted]);
