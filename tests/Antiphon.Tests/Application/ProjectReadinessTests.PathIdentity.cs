@@ -222,7 +222,16 @@ public partial class ProjectReadinessTests
         "\u212Aelvin", "kelvin", "KELVIN",
         "\u212Bngstrom", "ångstrom", "ÅNGSTROM",
         "\U00010400x", "\U00010428x",
+        // Review 5de0f5a5 round 4: a caseless supplementary-plane code point stays a literal (two
+        // UTF-16 units) in the pattern; U+20001 is a distinct sibling of the same UTF-16 length.
+        SupplementaryLiteral + "x", SupplementaryLiteral + "X", SupplementarySibling + "x",
     ];
+
+    /// <summary>U+20000, a caseless CJK Extension B code point outside the BMP.</summary>
+    internal const string SupplementaryLiteral = "\U00020000";
+
+    /// <summary>U+20001, the next caseless supplementary code point.</summary>
+    internal const string SupplementarySibling = "\U00020001";
 
     internal static IReadOnlyList<string> CaseFoldCorpus(string u)
     {
@@ -245,7 +254,8 @@ public partial class ProjectReadinessTests
     internal static async Task AssertPrefilterAdmitsEverySamePairAsync(
         Func<AppDbContext> createContext, Guid boardId, Func<Guid, string, Task<Agent>> seedAgent)
     {
-        var corpus = CaseFoldCorpus(Guid.NewGuid().ToString("N"));
+        var u = Guid.NewGuid().ToString("N");
+        var corpus = CaseFoldCorpus(u);
         var stored = new Dictionary<Guid, string>();
         foreach (var path in corpus)
             stored.Add((await seedAgent(boardId, path)).Id, path);
@@ -276,6 +286,28 @@ public partial class ProjectReadinessTests
 
         missed.ShouldBeEmpty();
         accepted.ShouldBeGreaterThan(corpus.Count, "the corpus must contain case-variant pairs, not only self-pairs");
+
+        // Review 5de0f5a5 round 4: exact rows for the literal supplementary-plane probes. The
+        // CaseFoldCorpus layout puts the x/X spellings at an even and an odd index, so the Windows
+        // rows are C:\fold-u\<cp>x and c:/FOLD-u/<cp>X/ and the sibling is C:\fold-u\<sibling>x.
+        Guid Id(string path) => stored.Single(row => string.Equals(row.Value, path, StringComparison.Ordinal)).Key;
+        async Task<List<Guid>> CandidatesAsync(string probe) =>
+            await db.Agents.AsNoTracking()
+                .Where(a => a.BoardId == boardId)
+                .Where(WorkingDirectoryIdentity.CandidateFilter<Agent>(a => a.WorkingDirectory, probe))
+                .Select(a => a.Id)
+                .ToListAsync();
+
+        var literalWindows = new[] { Id($@"C:\fold-{u}\{SupplementaryLiteral}x"), Id($"c:/FOLD-{u}/{SupplementaryLiteral}X/") };
+        var literalProbe = $"c:/fold-{u}/{SupplementaryLiteral}x/";
+        (await CandidatesAsync(literalProbe)).ShouldBe(literalWindows, ignoreOrder: true, $"probe '{literalProbe}'");
+        var siblingProbe = $@"C:\FOLD-{u}\{SupplementarySibling}X";
+        (await CandidatesAsync(siblingProbe)).ShouldBe([Id($@"C:\fold-{u}\{SupplementarySibling}x")], $"probe '{siblingProbe}'");
+        var literalLinux = $"/srv/fold-{u}/{SupplementaryLiteral}x";
+        (await CandidatesAsync(literalLinux)).ShouldBe(
+            [Id(literalLinux), Id($"/srv/fold-{u}/{SupplementaryLiteral}X")],
+            ignoreOrder: true,
+            $"probe '{literalLinux}' (ASCII case is folded by the prefilter, Same refines it)");
     }
 
     [Test]
