@@ -236,7 +236,7 @@ public sealed class ChannelOutboundUnifiedPathTests
         // A hang bound, not a budget, and only ever spent on a hang: a teardown here measured about 0.1 s (25 worlds,
         // 2.5 s in all, HP laptop on AC, 2026-11-22). It is UnifiedOutboundTransport's same 2 min, sized for a loaded
         // qualification host's DROP DATABASE WITH (FORCE), and one deadline covers every teardown a wait takes: in a test
-        // whose cases run side by side, its up to ten teardowns, which run concurrently rather than one after another.
+        // whose cases run side by side, its up to nine teardowns, which run concurrently rather than one after another.
         private static readonly TimeSpan TeardownHung = TimeSpan.FromMinutes(2);
         // The owner of a hung teardown handed to the class drain: never a TUnit test id, nor the "" of no test context.
         private const string HandedOff = "<hung>";
