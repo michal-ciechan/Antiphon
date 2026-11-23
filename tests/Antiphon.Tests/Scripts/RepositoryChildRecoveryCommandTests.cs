@@ -171,7 +171,7 @@ public sealed class RepositoryChildRecoveryCommandTests
             missing.Error.Trim().ShouldBe("WARNING: Repository recovery refused: Git common directory is missing or inaccessible.");
             Directory.Exists(Path.Combine(outside, "gone")).ShouldBeFalse();
         }
-        finally { Directory.Delete(outside, recursive: true); }
+        finally { ReadOnlyDirectory.Delete(outside); }
     }
 
     private static (int Exit, string Output, string Error) Run(string repository, IReadOnlyDictionary<int, string> answers, params string[] options) =>
