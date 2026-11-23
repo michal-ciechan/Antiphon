@@ -7,7 +7,10 @@ if ($SourceRef) {
     $source = (& git -C $repo show ($SourceRef + ':scripts/lib/c487-harness.ps1')) -join [Environment]::NewLine
     if ($LASTEXITCODE -ne 0) { throw 'source ref unavailable' }
 } else { $source = [IO.File]::ReadAllText((Join-Path $repo 'scripts/lib/c487-harness.ps1')) }
-. ([scriptblock]::Create($source))
+# A scriptblock built from text has an empty $PSScriptRoot, and the harness dot-sources
+# c487-nightly-tests.ps1 from its own directory (W2-nightly S17), so bind that directory here.
+$lib = (Join-Path $repo 'scripts/lib').Replace("'", "''")
+. ([scriptblock]::Create($source.Replace('$PSScriptRoot', "'" + $lib + "'")))
 $tokens = $null; $errors = $null
 $tree = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'harness source did not parse' }
