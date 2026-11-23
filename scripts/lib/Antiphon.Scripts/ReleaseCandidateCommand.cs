@@ -4,7 +4,7 @@
 // release-gate remote and the disk): an existing rc/YYYY-MM-DD tip is journalled and never pushed; a legacy stamp ref keeps
 // its create-only push; an omitted --ref refuses rc-ref-required. It replaced scripts/release-candidate.ps1 (deleted
 // 2026-11-23, unit 13 of 2026-11-22-remaining-ps1-to-csharp.md), with the same parameters as kebab-case flags; its test-only
-// -SeamsPath and its -PassThru are gone (scripts/release-cut.ps1 calls the C# in process). The "[release-candidate] ..."
+// -SeamsPath and its -PassThru are gone (the release cut, ReleaseCut.cs, calls the C# in process). The "[release-candidate] ..."
 // lines, then one compact JSON line (candidateId, ref, sha, pushed, resumed, refusal, exitCode) on stdout. Exit 0
 // journalled or WhatIf; 1 a clone, fetch, push or SHA failure, or a journal that cannot be written (one stderr line); 2
 // usage; 3 refused. ASCII only.

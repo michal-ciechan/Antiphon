@@ -349,7 +349,7 @@ public sealed class AntiphonCliLauncherTests
         Directory.Exists(refusedRoot).ShouldBeFalse("a refusal evaluates nothing and writes nothing");
     }
 
-    // ---- W2-nightly S20: scripts/nightly-run.ps1, the launcher Windmill's nightly job, release-cut and qualification-launch run ----
+    // ---- W2-nightly S20: scripts/nightly-run.ps1, the launcher Windmill's nightly job and qualification-launch run ----
 
     /// <summary>A temporary checkout root holding scripts/nightly-run.ps1 beside scripts/lib/antiphon-cli.ps1 (its bin-launcher stays there).</summary>
     private static NightlyFixture RunCheckout()
@@ -422,7 +422,7 @@ public sealed class AntiphonCliLauncherTests
         refused.Stderr.Trim().ShouldBe("nightly-run: seams-path-unsupported");
         Directory.Exists(state).ShouldBeFalse("a refusal runs nothing and writes nothing");
 
-        // -PassThru (release-cut's call) returns the run-core names instead of exiting.
+        // -PassThru returns the run-core names instead of exiting.
         File.WriteAllText(fixture.PathOf("passthru.ps1"), """
             param([string]$Entry, [string]$StateRoot)
             $r = & $Entry -StateRoot $StateRoot -SeamsPath 'seams.ps1' -PassThru
@@ -467,9 +467,10 @@ public sealed class AntiphonCliLauncherTests
     }
 
     /// <summary>
-    /// release-cut.ps1's call: in-process `&amp;` with its splat and -PassThru under pwsh, through the real nightly-run command (the
-    /// staged build). The run refuses (an unknown profile, before anything is written); the caller reads .ExitCode and .Refusal,
-    /// keeps running, and the completion record reached stdout.
+    /// The launcher's -PassThru contract: in-process `&amp;` with a splat and -PassThru under pwsh, through the real nightly-run
+    /// command (the staged build), as release-cut.ps1 called it until unit 15 of the 2026-11-22 plan (the release cut now runs
+    /// NightlyRun in its own process). The run refuses (an unknown profile, before anything is written); the caller reads
+    /// .ExitCode and .Refusal, keeps running, and the completion record reached stdout.
     /// </summary>
     [Test]
     public async Task Nightly_run_launcher_passthru_serves_release_cut()
@@ -494,5 +495,142 @@ public sealed class AntiphonCliLauncherTests
         record.RootElement.GetProperty("refusal").GetString().ShouldBe("unknown-profile");
         record.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(3);
         File.Exists(Path.Combine(state, "last-run.json")).ShouldBeFalse("refused before any state");
+    }
+
+    // ---- unit 15: scripts/release-cut.ps1, the launcher Windmill's antiphon_release_candidates job runs (pwsh -File) ----
+
+    /// <summary>A temporary checkout root holding scripts/release-cut.ps1 beside scripts/lib/antiphon-cli.ps1.</summary>
+    private static NightlyFixture CutCheckout()
+    {
+        var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1"), fixture.PathOf("scripts", "release-cut.ps1"));
+        return fixture;
+    }
+
+    /// <summary>release-cut.ps1's whole parameter block, each value distinct, and the switches (-SeamsPath and -PassThru are the launcher's own).</summary>
+    private static readonly (string Name, string? Value)[] EveryCutParameter =
+    [
+        ("-ReleaseRoot", @"C:\fixture root\releases"), ("-CoordinationRoot", @"C:\fixture root\coord"), ("-RemoteUrl", "https://example.invalid/fixture.git"),
+        ("-Repository", "fixture/repository"), ("-RunId", "u15-launcher"), ("-ScheduleSlot", "u/lndcobra/antiphon_release_candidates"), ("-JobId", "job-15"),
+        ("-Ref", "rc/2026-11-30"), ("-SelectionMode", "Shadow"), ("-BaselineSha", new string('b', 40)), ("-BaselineReceiptPath", @"C:\fixture root\receipt.json"),
+        ("-QualificationPath", @"C:\fixture root\claim.json"), ("-TimingRoot", @"C:\fixture root\timing"), ("-TrainManifestPath", @"C:\fixture root\train.json"),
+        ("-ReleaseIntentPath", @"C:\fixture root\intent.json"), ("-SelectionAttemptPath", @"C:\fixture root\attempt.json"), ("-SelectionAttemptDigest", new string('c', 64)),
+        ("-SelectionPath", @"C:\fixture root\selection.json"), ("-SelectionDigest", new string('d', 64)), ("-Attempt", "3"), ("-SkipPublish", null), ("-WhatIf", null),
+    ];
+
+    private static readonly Dictionary<string, string> CutEcho = new() { ["CLI_ECHO_COMMAND"] = "release-cut" };
+
+    [Test]
+    public async Task Release_cut_launcher_passes_every_parameter_as_its_flag_and_keeps_the_defaults()
+    {
+        using var fixture = CutCheckout();
+        var entry = fixture.PathOf("scripts", "release-cut.ps1");
+
+        var every = await NightlyRunHops.LauncherEcho(entry, EveryCutParameter.SelectMany(p => p.Value == null ? new[] { p.Name } : new[] { p.Name, p.Value }), fixture.Root,
+            pwsh: true, environment: CutEcho);
+        every.ExitCode.ShouldBe(0, every.Stderr);
+        var received = ReleaseCutOptions.Parse(every.Arguments.ShouldNotBeNull(every.Stdout + every.Stderr), "", _ => null);
+        // The options the same flags parse to directly: the launcher's translation, value for value (the result file is its own).
+        var expected = ReleaseCutOptions.Parse(
+            EveryCutParameter.SelectMany(p => p.Value == null ? new[] { NightlyRunHops.Kebab(p.Name) } : new[] { NightlyRunHops.Kebab(p.Name), p.Value }).ToArray(), "", _ => null);
+        received.ResultFile.ShouldNotBeNullOrWhiteSpace("the launcher always asks for the record");
+        received.ResultFile = "";
+        JsonSerializer.Serialize(received).ShouldBe(JsonSerializer.Serialize(expected));
+        (expected.SelectionMode, expected.Attempt, expected.SkipPublish, expected.WhatIf).ShouldBe(("Shadow", 3, true, true));
+
+        // Windmill's command line (-Ref, -ScheduleSlot, -JobId): every other value is the parameter block's default, which is the command's.
+        var windmill = await NightlyRunHops.LauncherEcho(entry, ["-Ref", "rc/2026-10-18", "-ScheduleSlot", "manual", "-JobId", "job-1"], fixture.Root, pwsh: true,
+            environment: CutEcho);
+        windmill.ExitCode.ShouldBe(0, windmill.Stderr);
+        var bound = ReleaseCutOptions.Parse(windmill.Arguments.ShouldNotBeNull(windmill.Stdout + windmill.Stderr), "", _ => null);
+        bound.ResultFile = "";
+        var defaults = ReleaseCutOptions.Parse(["--ref", "rc/2026-10-18", "--schedule-slot", "manual", "--job-id", "job-1"], "", _ => null);
+        JsonSerializer.Serialize(bound).ShouldBe(JsonSerializer.Serialize(defaults));
+        (bound.ReleaseRoot, bound.CoordinationRoot, bound.RemoteUrl, bound.Repository, bound.SelectionMode, bound.Attempt, bound.RunId, bound.SkipPublish)
+            .ShouldBe((@"C:\Antiphon\releases", @"C:\Antiphon\verification", "https://github.com/michal-ciechan/Antiphon", "michal-ciechan/Antiphon", "Full", 1, "", false));
+
+        // The 5.1 header, the parameter block as Windmill knows it, and no library but the CLI launcher.
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1"));
+        text.ShouldStartWith("#requires -Version 5.1");
+        text.ShouldContain("    [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',\n");
+        text.ShouldContain("    [string]$ReleaseRoot = 'C:\\Antiphon\\releases',\n");
+        text.ShouldContain("    [string]$SeamsPath = '',\n");
+        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray()
+            .ShouldBe([". (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')"]);
+        text.ShouldNotContain("[Antiphon.Nightly.");
+        text.ShouldNotContain("nightly-run.ps1");
+        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1")).All(b => b < 128).ShouldBeTrue("ASCII only");
+    }
+
+    [Test]
+    [Arguments("-SeamsPath", "seams.ps1", 3, "seams-path-unsupported")]
+    [Arguments("-ReleaseRoot", "", 2, "blank-release-root")]
+    [Arguments("-CoordinationRoot", "", 2, "blank-coordination-root")]
+    [Arguments("-RemoteUrl", "", 2, "blank-remote-url")]
+    [Arguments("-Repository", " ", 2, "blank-repository")]
+    public async Task Release_cut_launcher_refuses_seams_and_blank_production_roots_with_a_record(string parameter, string value, int code, string refusal)
+    {
+        // Seams never cross a process; a blank value would leave with its flag and the CLI would read the production default.
+        using var fixture = CutCheckout();
+        var entry = fixture.PathOf("scripts", "release-cut.ps1");
+        var expected = new ReleaseCutResult { ScheduleSlot = "manual", WindmillJobId = "job-1", Refusal = refusal, ExitCode = code }.ToJson();
+
+        var refused = await NightlyRunHops.LauncherEcho(entry, ["-Ref", "rc/2026-10-18", "-ScheduleSlot", "manual", "-JobId", "job-1", parameter, value], fixture.Root,
+            pwsh: true, environment: CutEcho);
+        refused.ExitCode.ShouldBe(code, refused.Stderr);
+        refused.Arguments.ShouldBeNull("the CLI never ran");
+        refused.Stdout.Replace("\r\n", "\n").TrimEnd('\n').Split('\n')[^1].ShouldBe(expected);
+        refused.Stderr.Trim().ShouldBe("release-cut: " + refusal);
+    }
+
+    [Test]
+    public async Task Release_cut_launcher_runs_the_command_and_passthru_returns_its_record()
+    {
+        using var fixture = CutCheckout();
+        var entry = fixture.PathOf("scripts", "release-cut.ps1");
+        var releases = fixture.PathOf("releases");
+        var expected = new ReleaseCutResult { ScheduleSlot = "manual", WindmillJobId = "job-1", Refusal = "ref-shape", ExitCode = 3 }.ToJson();
+
+        // The staged CLI's release-cut: a ref that is not rc/YYYY-MM-DD refuses before anything is read or written.
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", entry, "-Ref", "master", "-ReleaseRoot", releases, "-ScheduleSlot", "manual", "-JobId", "job-1" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        var direct = await Finish(Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start"));
+        direct.Exit.ShouldBe(3, direct.Stderr);
+        var lines = direct.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines.ShouldBe(["[release-cut] candidate cut refused (ref-shape).", expected]);
+        Directory.Exists(releases).ShouldBeFalse("refused before anything is written");
+
+        // -PassThru (a pwsh caller): the record read back from the CLI's result file, and the caller keeps running.
+        File.WriteAllText(fixture.PathOf("cut.ps1"), """
+            param([string]$Entry, [string]$Releases)
+            $r = & $Entry -Ref master -ReleaseRoot $Releases -ScheduleSlot manual -JobId job-1 -PassThru
+            [Console]::Out.WriteLine('after')
+            [Console]::Out.WriteLine((@($r.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
+            [Console]::Out.WriteLine([string]$r.exitCode + '|' + [string]$r.refusal + '|' + [string]$r.tested)
+            """);
+        var caller = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", fixture.PathOf("cut.ps1"), "-Entry", entry, "-Releases", releases }) caller.ArgumentList.Add(argument);
+        caller.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        var passThru = await Finish(Process.Start(caller) ?? throw new InvalidOperationException("pwsh did not start"));
+        passThru.Exit.ShouldBe(0, passThru.Stderr);
+        passThru.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ShouldBe(["[release-cut] candidate cut refused (ref-shape).", expected, "after",
+                "candidateId,ref,sha,scheduleSlot,windmillJobId,tested,published,tag,refusal,exitCode", "3|ref-shape|False"]);
+    }
+
+    [Test]
+    public async Task Release_cut_launcher_that_cannot_start_the_cli_exits_9_with_a_record()
+    {
+        using var fixture = CutCheckout();
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", fixture.PathOf("scripts", "release-cut.ps1"), "-Ref", "rc/2026-10-18", "-JobId", "job-1" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll");
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start"));
+        run.Exit.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+        run.Stdout.Trim().ShouldBe(new ReleaseCutResult { WindmillJobId = "job-1", Refusal = "release-cut-cli-unavailable", ExitCode = 9 }.ToJson());
     }
 }

@@ -3,20 +3,31 @@
 .SYNOPSIS
     CARD-1311: the RC lane entrypoint. Requires -Ref rc/YYYY-MM-DD.
 
-    1. The compiled release candidate (Antiphon.Nightly.ReleaseCandidate, the
-       release-candidate command) journals the existing remote tip. It does
-       not cut origin/master and it does not allocate a stamp.
-    2. scripts/nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate>
-       -ExpectedSha <sha> runs the rc profile against the candidate checkout
-       and private state root.
-    3. publication (Antiphon.Nightly.ReleasePublish, the publish-release command, run in
-       process from the loaded core) runs only on RC complete-green.
+    1. The compiled release candidate (Antiphon.Nightly.ReleaseCandidate) journals the existing
+       remote tip. It does not cut origin/master and it does not allocate a stamp.
+    2. The rc run (-Profile rc -Trigger rc -Ref <candidate> -ExpectedSha <sha>) runs against
+       the candidate checkout and private state root.
+    3. Publication (Antiphon.Nightly.ReleasePublish) runs only on RC complete-green.
 
-    A red or incomplete RC publishes nothing and keeps its evidence. This
-    script never moves a tested ref or retries a failed run in place.
+    A red or incomplete RC publishes nothing and keeps its evidence. Nothing moves a tested
+    ref or retries a failed run in place. Nothing writes the master attempt, green, monitor or
+    qualification receipt, and nothing restarts AppHost or the runner.
 
-    Nothing here writes the master attempt, green, monitor or qualification
-    receipt, and nothing here restarts AppHost or the runner.
+    Unit 15 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: a thin launcher.
+    The lane is C# (scripts/lib/Antiphon.Nightly/ReleaseCut.cs, the rc run NightlyRun in the
+    same process) run as `antiphon-scripts release-cut` through scripts/lib/antiphon-cli.ps1.
+    Windmill (u/lndcobra/antiphon_release_candidates) starts this file by path, so the
+    parameters, their defaults and the exit code are unchanged, and the last stdout line is
+    still the compact JSON record (candidateId, ref, sha, scheduleSlot, windmillJobId, tested,
+    published, tag, refusal, exitCode, then selection once an attempt is sealed), written by
+    the CLI. -SeamsPath is kept for binding only: seams never cross a process, so a non-empty
+    value refuses with exit 3 (seams-path-unsupported). An explicitly blank -ReleaseRoot,
+    -CoordinationRoot, -RemoteUrl or -Repository refuses with exit 2 (blank-release-root,
+    blank-coordination-root, blank-remote-url, blank-repository): the launcher drops a blank
+    value, and the CLI would read the production default. Exit 9: the CLI could not be built
+    or started (one stderr line, then a record with refusal release-cut-cli-unavailable).
+    -PassThru returns the record (read back from the CLI's --result-file) and never exits. No
+    library is dot-sourced except the launcher itself.
 
     ASCII-only on purpose - parseable under Windows PowerShell 5.1.
 #>
@@ -49,168 +60,84 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
-$lib = Join-Path $PSScriptRoot 'lib'
-. (Join-Path $lib 'nightly-common.ps1')
-# The candidate ref, the candidate journal (Antiphon.Nightly.ReleaseCandidate: unit 13 of
-# docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md deleted release-candidate.ps1), the credit decision, the
-# policy and the selection attempt (Antiphon.Nightly.ReleaseSelectionAttempt) are compiled: this entry point runs under pwsh
-# with the core. Its own git fetch is the production git (NightlyNativeGit.Run); a -SeamsPath (test only) is the
-# candidate's remote git and nightly-run's and the publisher's seams, never this fetch's.
-Assert-NightlyCoreAvailable 'release-cut'
-
-function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
-
-$checkout = Join-Path $ReleaseRoot 'checkout'
-$record = [ordered]@{
-    candidateId = ''
-    ref = ''
-    sha = ''
-    scheduleSlot = $ScheduleSlot
-    windmillJobId = $JobId
-    tested = $false
-    published = $false
-    tag = ''
-    refusal = ''
-    exitCode = 1
+# The record of a cut that never started (ReleaseCutResult's keys: empty identity, the exit code, the refusal), printed,
+# and the object -PassThru returns for it.
+function New-ReleaseCutLauncherRefusal {
+    param([int]$Code, [string]$Refusal)
+    $record = [ordered]@{
+        candidateId = ''; ref = ''; sha = ''; scheduleSlot = $ScheduleSlot; windmillJobId = $JobId
+        tested = $false; published = $false; tag = ''; refusal = $Refusal; exitCode = $Code
+    }
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $record -Compress))
+    return [pscustomobject]$record
 }
 
-$wanted = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($Ref, '')
-if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 'long-lived') {
-    if ([string]::IsNullOrWhiteSpace($Ref)) { $record.refusal = 'rc-ref-required' }
-    elseif (-not $wanted.Ok) { $record.refusal = [string]$wanted.Reason }
-    else { $record.refusal = 'rc-ref-required' }
-    $record.exitCode = 3
-    Write-CutLine ('candidate cut refused ({0}).' -f $record.refusal)
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json -InputObject $record -Compress)
+if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
+    [Console]::Error.WriteLine('release-cut: seams-path-unsupported')
+    $refused = New-ReleaseCutLauncherRefusal -Code 3 -Refusal 'seams-path-unsupported'
+    if ($PassThru) { return $refused }
     exit 3
 }
 
-# The candidate's remote git: a -SeamsPath file's $ReleaseGateSeams.Git, else production git (ReleaseGateRemote.Seamed).
-$ReleaseGateSeams = $null
-if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
-    if (-not (Test-Path -LiteralPath $SeamsPath)) { throw ('missing seams {0}' -f $SeamsPath) }
-    . $SeamsPath
-}
-$candidateOptions = [Antiphon.Nightly.ReleaseCandidateOptions]@{
-    ReleaseRoot = $ReleaseRoot; CheckoutRoot = $checkout; RemoteUrl = $RemoteUrl; Ref = $Ref; ScheduleSlot = $ScheduleSlot; WhatIf = [bool]$WhatIf
-}
-$candidateHost = [Antiphon.Nightly.NightlyHost]::Create($null, [Antiphon.Nightly.WatchedLauncher]::new($null), [Console]::Out, [Console]::Error, $null, $null, $null, $null)
-# A failure the candidate does not answer (a journal it cannot write) ends this run, as the script's terminating error did.
-try {
-    $cut = [Antiphon.Nightly.ReleaseCandidate]::Run($candidateOptions, $candidateHost, [System.IO.Abstractions.FileSystem]::new(),
-        [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $null, $null, $false))
-} catch { throw }
-$record.candidateId = [string]$cut.CandidateId
-$record.ref = [string]$cut.Ref
-$record.sha = [string]$cut.Sha
-if ([int]$cut.ExitCode -ne 0) {
-    $record.refusal = [string]$cut.Refusal
-    $record.exitCode = [int]$cut.ExitCode
-    Write-CutLine ('candidate cut refused ({0}).' -f $record.refusal)
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json -InputObject $record -Compress)
-    exit ([int]$record.exitCode)
+foreach ($blank in @(@('ReleaseRoot', 'blank-release-root'), @('CoordinationRoot', 'blank-coordination-root'), @('RemoteUrl', 'blank-remote-url'),
+        @('Repository', 'blank-repository'))) {
+    if ($PSBoundParameters.ContainsKey($blank[0]) -and [string]::IsNullOrWhiteSpace([string]$PSBoundParameters[$blank[0]])) {
+        [Console]::Error.WriteLine('release-cut: ' + $blank[1])
+        $refused = New-ReleaseCutLauncherRefusal -Code 2 -Refusal $blank[1]
+        if ($PassThru) { return $refused }
+        exit 2
+    }
 }
 
-$candidateRoot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $record.candidateId)
-$stateRoot = Join-Path $candidateRoot 'state'
-New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
+$arguments = @(
+    '--release-root', $ReleaseRoot,
+    '--coordination-root', $CoordinationRoot,
+    '--remote-url', $RemoteUrl,
+    '--repository', $Repository,
+    '--run-id', $RunId,
+    '--schedule-slot', $ScheduleSlot,
+    '--job-id', $JobId,
+    '--ref', $Ref,
+    '--selection-mode', $SelectionMode,
+    '--baseline-sha', $BaselineSha,
+    '--baseline-receipt-path', $BaselineReceiptPath,
+    '--qualification-path', $QualificationPath,
+    '--timing-root', $TimingRoot,
+    '--train-manifest-path', $TrainManifestPath,
+    '--release-intent-path', $ReleaseIntentPath,
+    '--selection-attempt-path', $SelectionAttemptPath,
+    '--selection-attempt-digest', $SelectionAttemptDigest,
+    '--selection-path', $SelectionPath,
+    '--selection-digest', $SelectionDigest,
+    '--attempt', [string]$Attempt
+)
+if ($SkipPublish) { $arguments += '--skip-publish' }
+if ($WhatIf) { $arguments += '--what-if' }
 
-if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
+# Always a result file: -PassThru reads it back, and its absence after exit 9 means the CLI never ran.
+$resultFile = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'antiphon-release-cut-' + [guid]::NewGuid().ToString('N') + '.json')
+$code = Invoke-AntiphonCli -Command 'release-cut' -Arguments $arguments -ResultFile $resultFile
+
+$result = $null
 try {
-    if (-not $WhatIf) {
-        $attemptFile = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $ReleaseRoot 'candidates') $record.candidateId) 'attempts') $RunId) 'selection-attempt.json'
-        if (Test-Path -LiteralPath $attemptFile) {
-            $sealed = Get-Content -LiteralPath $attemptFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            $sealedTiming = ''
-            if ($sealed.PSObject.Properties.Name -contains 'timingRoot') { $sealedTiming = [string]$sealed.timingRoot }
-            if (-not [string]::IsNullOrWhiteSpace($TimingRoot) -and ($TimingRoot -cne $sealedTiming)) { throw 'selection-attempt-conflict' }
-            $TimingRoot = $sealedTiming
-        } elseif ([string]::IsNullOrWhiteSpace($TimingRoot)) {
-            # The run's timing root under its log root (Resolve-QualificationTimingRoot, compiled: NightlyPaths.TimingRoot).
-            $TimingRoot = [string][Antiphon.Nightly.NightlyPaths]::TimingRoot('', (Join-Path $candidateRoot 'logs'), $RunId)
-        }
-        # Candidate journalling reads the remote ref; acquire its pinned object before
-        # selection without changing the long-lived ref or repinning the journal.
-        $fetch = [Antiphon.Nightly.NightlyNativeGit]::Run($checkout, [string[]]@('fetch','origin',$record.sha))
-        if ($fetch.ExitCode -ne 0) { throw 'selection-candidate-fetch' }
-        $request = @{RepositoryRoot=$checkout;Repository=$Repository;ReleaseRoot=$ReleaseRoot;CandidateSha=$record.sha
-            CandidateId=$record.candidateId;CandidateRef=$record.ref;Profile='rc';RunId=$RunId
-            SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
-        # Written in this process; a refusal is selection-refused:<reason>.
-        $bound = [Antiphon.Nightly.ReleaseSelectionAttempt]::Create([Antiphon.Nightly.ReleaseSelectionRequest]::From($request))
-        $SelectionAttemptPath=$bound.SelectionAttemptPath; $SelectionAttemptDigest=$bound.SelectionAttemptDigest
-        $SelectionPath=$bound.SelectionPath; $SelectionDigest=$bound.SelectionDigest; $BaselineSha=$bound.BaselineSha
-        $record.selection = $bound.Selection
+    if ([IO.File]::Exists($resultFile)) {
+        $text = [IO.File]::ReadAllText($resultFile)
+        # Strings stay the strings the cut wrote (pwsh 7.5 ConvertFrom-Json would make dates DateTime; 5.1 never does).
+        if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $result = $text | ConvertFrom-Json -DateKind String }
+        else { $result = $text | ConvertFrom-Json }
     }
 } catch {
-    $record.refusal=(Get-NightlyRefusalText $_); $record.exitCode=3
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json $record -Compress); exit 3
+    $result = $null
+} finally {
+    try { if ([IO.File]::Exists($resultFile)) { [IO.File]::Delete($resultFile) } } catch { }
 }
-
-$runArgs = @{
-    RunId = $RunId
-    Repository = $Repository
-    SelectionMode = $SelectionMode
-    BaselineSha = $BaselineSha
-    BaselineReceiptPath = $BaselineReceiptPath
-    QualificationPath = $QualificationPath
-    TimingRoot = $TimingRoot
-    TrainManifestPath = $TrainManifestPath
-    ReleaseIntentPath = $ReleaseIntentPath
-    SelectionAttemptPath = $SelectionAttemptPath
-    SelectionAttemptDigest = $SelectionAttemptDigest
-    SelectionPath = $SelectionPath
-    SelectionDigest = $SelectionDigest
-    Attempt = $Attempt
-    CheckoutRoot = $checkout
-    StateRoot = $stateRoot
-    LogRoot = (Join-Path $candidateRoot 'logs')
-    Ref = $record.ref
-    RemoteUrl = $RemoteUrl
-    Trigger = 'rc'
-    Profile = 'rc'
-    ExpectedSha = $record.sha
-    CandidateId = $record.candidateId
-    ReleaseRoot = $ReleaseRoot
-    CoordinationRoot = $CoordinationRoot
-    SeamsPath = $SeamsPath
-    PassThru = $true
-    WhatIf = $WhatIf
+if ($null -eq $result -and $code -eq 9) {
+    # The launcher's own failure (its stderr line is written): the CLI printed nothing, so the record is printed here.
+    $result = New-ReleaseCutLauncherRefusal -Code 9 -Refusal 'release-cut-cli-unavailable'
 }
-$run = & (Join-Path $PSScriptRoot 'nightly-run.ps1') @runArgs
-$record.tested = ([int]$run.ExitCode -eq 0)
-if (-not $record.tested) {
-    $record.refusal = [string]$run.Refusal
-    $record.exitCode = [int]$run.ExitCode
-    Write-CutLine ('rc run did not complete green; publishing nothing (exit {0}).' -f $record.exitCode)
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json -InputObject $record -Compress)
-    exit ([int]$record.exitCode)
+if ($PassThru) {
+    if ($null -eq $result) { $result = [pscustomobject]@{ exitCode = $code; refusal = '' } }
+    return $result
 }
-
-if ($SkipPublish -or $WhatIf) {
-    $record.exitCode = 0
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json -InputObject $record -Compress)
-    exit 0
-}
-
-# The publisher is compiled (unit 14 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md replaced the
-# publisher script): one call on the production release-gate host, its [publish-release] lines on this console. The
-# pinned scripts are this checkout's. A -SeamsPath is admitted as the publisher admits it: outside test mode it refuses
-# seams-outside-test-mode, and no fake git or GitHub is bound here, so test mode refuses test-mode-real-remote.
-$pub = [Antiphon.Nightly.ReleasePublish]::Run([Antiphon.Nightly.ReleasePublishOptions]@{
-        ReleaseRoot = $ReleaseRoot; CandidateId = $record.candidateId; CheckoutRoot = $checkout; Repository = $Repository
-        AntiphonApiUrl = [string]$env:ANTIPHON_API; ScriptsRoot = $PSScriptRoot; SeamsPath = $SeamsPath
-        TestMode = [Antiphon.Nightly.ReleaseGateRemote]::TestMode([string]$env:ANTIPHON_RELEASE_GATE_TEST_MODE)
-    }, [Antiphon.Nightly.ReleaseGateHost]::Production([Console]::Out))
-$record.published = [bool]$pub.Published
-$record.tag = [string]$pub.Tag
-$record.refusal = [string]$pub.Refusal
-$record.exitCode = [int]$pub.ExitCode
-if ($PassThru) { return [pscustomobject]$record }
-Write-Host (ConvertTo-Json -InputObject $record -Compress)
-exit ([int]$record.exitCode)
+exit $code

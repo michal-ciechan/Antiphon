@@ -1,0 +1,391 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Scripts;
+
+/// <summary>
+/// CARD-1311: the RC lane (Antiphon.Nightly.ReleaseCut, the release-cut command) in process. Unit 15 of
+/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md moved the body of scripts/release-cut.ps1 here; the script
+/// is Windmill's thin launcher (AntiphonCliLauncherTests' Release_cut_launcher cases). The candidate is the real
+/// ReleaseCandidate over a fake remote (FakeCandidateRemote) or a real local bare origin (ReleaseCutWorld.Real), the
+/// selection attempt the real ReleaseSelectionAttempt on a real checkout, the rc run a recorded stand-in (the run itself is
+/// ChangeAwareReleaseTests.C1313_ParameterHopsInProcess, through NightlyRun on an rc chain) and the publisher the real
+/// ReleasePublish in test mode over fake git and GitHub, so no real remote is ever reached.
+/// </summary>
+[Category("Integration")]
+public sealed class ReleaseCutTests
+{
+    [Test]
+    public void Refuses_a_ref_that_is_not_a_long_lived_rc_ref_before_anything_is_read()
+    {
+        foreach (var (reference, refusal) in new[]
+                 {
+                     ("", "rc-ref-required"), ("   ", "rc-ref-required"), ("release/rc-20260923T083000Z", "rc-ref-required"), ("rc/2026-13-01", "ref-date"),
+                     ("release/current", "ref-shape"), ("master", "ref-shape"),
+                 })
+        {
+            using var world = ReleaseCutWorld.Fake("cut-ref");
+            var result = world.Cut(o =>
+            {
+                o.Ref = reference;
+                o.ScheduleSlot = "u/lndcobra/antiphon_release_candidates";
+                o.JobId = "job-1";
+            });
+            (result.ExitCode, result.Refusal, result.Tested, result.Published).ShouldBe((3, refusal, false, false), reference);
+            world.Lines.ShouldBe(["[release-cut] candidate cut refused (" + refusal + ")."], reference);
+            world.Remote.Trace.ShouldBeEmpty(reference);
+            world.Runs.ShouldBeEmpty(reference);
+            Directory.Exists(Path.Combine(world.Release, "candidates")).ShouldBeFalse(reference);
+            result.ToJson().ShouldBe("{\"candidateId\":\"\",\"ref\":\"\",\"sha\":\"\",\"scheduleSlot\":\"u/lndcobra/antiphon_release_candidates\",\"windmillJobId\":\"job-1\","
+                + "\"tested\":false,\"published\":false,\"tag\":\"\",\"refusal\":\"" + refusal + "\",\"exitCode\":3}");
+        }
+    }
+
+    [Test]
+    public void A_candidate_refusal_ends_the_cut_with_the_candidate_s_answer()
+    {
+        using var world = ReleaseCutWorld.Fake("cut-missing", remoteHasRef: false);
+        var result = world.Cut();
+        (result.ExitCode, result.Refusal, result.Ref, result.Sha).ShouldBe((3, "rc-ref-missing", ReleaseCutWorld.Ref, ""));
+        world.Lines.ShouldContain("[release-candidate] REFUSED: remote " + ReleaseCutWorld.Ref + " does not exist.");
+        world.Lines[^1].ShouldBe("[release-cut] candidate cut refused (rc-ref-missing).");
+        world.Runs.ShouldBeEmpty();
+        world.HostGit.Calls.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void A_failure_while_sealing_the_selection_refuses_before_the_run()
+    {
+        // The pinned object's fetch fails.
+        using (var world = ReleaseCutWorld.Fake("cut-fetch"))
+        {
+            world.HostGit.Reply("fetch", new NightlyGitResult(1, "fatal: fixture"));
+            var result = world.Cut(o => o.RunId = "fetch-run");
+            (result.ExitCode, result.Refusal, result.Tested).ShouldBe((3, "selection-candidate-fetch", false));
+            world.HostGit.Lines.ShouldContain(line => line.Contains("fetch origin " + world.Sha, StringComparison.Ordinal));
+            world.Runs.ShouldBeEmpty();
+            File.Exists(Path.Combine(world.CandidateRoot, "candidate.json")).ShouldBeTrue("the candidate was journalled first");
+            Directory.Exists(Path.Combine(world.CandidateRoot, "state")).ShouldBeTrue();
+        }
+
+        // A sealed attempt for the run with another explicit timing root: refused before the fetch.
+        using (var world = ReleaseCutWorld.Fake("cut-conflict"))
+        {
+            var sealedAttempt = Path.Combine(world.CandidateRoot, "attempts", "sealed-run", "selection-attempt.json");
+            NightlyFixture.WriteJson(sealedAttempt, new { timingRoot = world.Fixture.PathOf("sealed timing") });
+            var result = world.Cut(o =>
+            {
+                o.RunId = "sealed-run";
+                o.TimingRoot = world.Fixture.PathOf("other timing");
+            });
+            (result.ExitCode, result.Refusal).ShouldBe((3, "selection-attempt-conflict"));
+            world.HostGit.Calls.ShouldBeEmpty();
+            world.Runs.ShouldBeEmpty();
+        }
+
+        // A checkout that cannot seal an attempt (no commit): the writer's refusal, as is.
+        using (var world = ReleaseCutWorld.Fake("cut-unsealable"))
+        {
+            var result = world.Cut();
+            result.ExitCode.ShouldBe(3);
+            result.Refusal.ShouldStartWith(ReleaseSelectionAttempt.RefusedPrefix);
+            world.Runs.ShouldBeEmpty();
+            world.Lines.ShouldNotContain(line => line.StartsWith(ReleaseCut.LinePrefix, StringComparison.Ordinal));
+        }
+    }
+
+    [Test]
+    public void What_if_journals_nothing_seals_nothing_and_publishes_nothing()
+    {
+        using var world = ReleaseCutWorld.Fake("cut-whatif");
+        var result = world.Cut(o =>
+        {
+            o.WhatIf = true;
+            o.RunId = "whatif-run";
+        });
+        (result.ExitCode, result.Refusal, result.Tested, result.Published, result.CandidateId).ShouldBe((0, "", true, false, world.CandidateId));
+        File.Exists(Path.Combine(world.CandidateRoot, "candidate.json")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(world.CandidateRoot, "attempts")).ShouldBeFalse();
+        world.HostGit.Calls.ShouldBeEmpty("no fetch under WhatIf");
+        var run = world.Runs.ShouldHaveSingleItem();
+        (run.WhatIf, run.Profile, run.Trigger, run.TimingRoot, run.SelectionAttemptPath, run.RunId).ShouldBe((true, "rc", "rc", "", "", "whatif-run"));
+        world.Lines.ShouldContain("[release-candidate] WhatIf: would journal " + ReleaseCutWorld.Ref + " at " + world.Sha);
+        world.Lines.ShouldNotContain(line => line.StartsWith("[publish-release]", StringComparison.Ordinal));
+        result.ToJson().ShouldNotContain("\"selection\"");
+    }
+
+    [Test]
+    public void A_red_or_throwing_run_publishes_nothing_and_keeps_the_run_s_answer()
+    {
+        using (var world = ReleaseCutWorld.Fake("cut-red"))
+        {
+            world.Answer = o => new NightlyRunResult { ExitCode = 4, Refusal = "", RunId = o.RunId };
+            var result = world.Cut(o => o.WhatIf = true);
+            (result.ExitCode, result.Refusal, result.Tested, result.Published).ShouldBe((4, "", false, false));
+            world.Lines[^1].ShouldBe("[release-cut] rc run did not complete green; publishing nothing (exit 4).");
+            world.Lines.ShouldNotContain(line => line.StartsWith("[publish-release]", StringComparison.Ordinal));
+        }
+
+        using (var world = ReleaseCutWorld.Fake("cut-refused-run"))
+        {
+            world.Answer = o => new NightlyRunResult { ExitCode = 3, Refusal = "deferred-busy", RunId = o.RunId };
+            var result = world.Cut(o => o.WhatIf = true);
+            (result.ExitCode, result.Refusal, result.Tested).ShouldBe((3, "deferred-busy", false));
+        }
+
+        using (var world = ReleaseCutWorld.Fake("cut-throw"))
+        {
+            world.Answer = _ => throw new InvalidOperationException("fixture failure");
+            var result = world.Cut(o =>
+            {
+                o.WhatIf = true;
+                o.RunId = "throw-run";
+            });
+            (result.ExitCode, result.Refusal, result.Tested).ShouldBe((1, "nightly-run-failed", false));
+            world.Fixture.Error.ToString().Trim().ShouldBe("nightly-run: InvalidOperationException: fixture failure");
+            var record = world.Lines.Single(line => line.StartsWith("{\"nativeRunId\"", StringComparison.Ordinal));
+            JsonNode.Parse(record)!["refusal"]!.GetValue<string>().ShouldBe("nightly-run-failed");
+            world.Lines[^1].ShouldBe("[release-cut] rc run did not complete green; publishing nothing (exit 1).");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    [Timeout(300_000)]
+    public void The_rc_run_gets_the_candidate_its_private_roots_and_the_sealed_selection(CancellationToken token)
+    {
+        using var world = ReleaseCutWorld.Real("cut-run");
+        var result = world.Cut(o =>
+        {
+            o.RunId = "cut-run";
+            o.Repository = "fixture/repository";
+            o.SkipPublish = true;
+            o.CoordinationRoot = world.Fixture.PathOf("coord");
+        });
+        (result.ExitCode, result.Refusal, result.Tested, result.Published).ShouldBe((0, "", true, false), string.Join("\n", world.Lines));
+        var run = world.Runs.ShouldHaveSingleItem();
+        var root = world.CandidateRoot;
+        var attempt = Path.Combine(root, "attempts", "cut-run", "selection-attempt.json");
+        var selection = Path.Combine(root, "attempts", "cut-run", "selection.json");
+        (run.Profile, run.Trigger, run.Ref, run.ExpectedSha, run.CandidateId).ShouldBe(("rc", "rc", ReleaseCutWorld.Ref, world.Sha, world.CandidateId));
+        (run.CheckoutRoot, run.StateRoot, run.LogRoot, run.ReleaseRoot, run.CoordinationRoot)
+            .ShouldBe((world.Checkout, Path.Combine(root, "state"), Path.Combine(root, "logs"), world.Release, world.Fixture.PathOf("coord")));
+        (run.RunId, run.Repository, run.RemoteUrl, run.SelectionMode, run.Attempt, run.BaselineSha).ShouldBe(("cut-run", "fixture/repository", world.Origin, "Full", 1, ""));
+        (run.SelectionAttemptPath, run.SelectionAttemptDigest, run.SelectionPath, run.SelectionDigest)
+            .ShouldBe((attempt, NightlyPaths.FileSha256(attempt), selection, NightlyPaths.FileSha256(selection)));
+        run.TimingRoot.ShouldBe(NightlyPaths.TimingRoot("", Path.Combine(root, "logs"), "cut-run"));
+        (run.NoSync, run.NoReport, run.WhatIf, run.AcceptCrossCandidateSeed, run.Suites).ShouldBe((false, false, false, false, (string[]?)null));
+        // Every value the run gets is a flag of the nightly-run command (the launcher's former hop): it parses back unchanged.
+        JsonSerializer.Serialize(NightlyRunOptions.Parse(run.ToArguments())).ShouldBe(JsonSerializer.Serialize(run));
+
+        Directory.Exists(run.StateRoot).ShouldBeTrue();
+        var journal = ReleaseGateFixture.ReadObject(Path.Combine(root, "candidate.json"));
+        (ReleaseGateFixture.Str(journal["sha"]), ReleaseGateFixture.Str(journal["ref"]), journal["pushed"]!.GetValue<bool>()).ShouldBe((world.Sha, ReleaseCutWorld.Ref, false));
+        world.HostGit.Lines.ShouldContain(line => line.Contains("fetch origin " + world.Sha, StringComparison.Ordinal));
+        var record = JsonNode.Parse(result.ToJson())!.AsObject();
+        record.Select(p => p.Key).ShouldBe(["candidateId", "ref", "sha", "scheduleSlot", "windmillJobId", "tested", "published", "tag", "refusal", "exitCode", "selection"]);
+        (ReleaseGateFixture.Str(record["selection"]!["runId"]), ReleaseGateFixture.Str(record["selection"]!["effectiveMode"])).ShouldBe(("cut-run", "Full"));
+        world.Lines.ShouldNotContain(line => line.StartsWith("[publish-release]", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    [Timeout(300_000)]
+    public void Only_a_green_run_reaches_the_publisher_and_it_is_asked_once_for_the_candidate(CancellationToken token)
+    {
+        using var world = ReleaseCutWorld.Real("cut-publish");
+        world.Answer = o => new NightlyRunResult { ExitCode = 1, Refusal = "", RunId = o.RunId };
+        var red = world.Cut(o => o.RunId = "red-run");
+        (red.ExitCode, red.Tested, red.Published).ShouldBe((1, false, false));
+        world.Lines.ShouldNotContain(line => line.StartsWith("[publish-release]", StringComparison.Ordinal));
+
+        // Green: the publisher (test mode, fake git and GitHub) is handed this release root and candidate. Nothing here
+        // wrote complete-green.json, so it refuses before reading any remote.
+        world.Answer = o => new NightlyRunResult { ExitCode = 0, RunId = o.RunId };
+        world.ClearLines();
+        var green = world.Cut(o => o.RunId = "green-run");
+        (green.ExitCode, green.Refusal, green.Tested, green.Published, green.Tag).ShouldBe((3, "missing-evidence", true, false, ""));
+        world.Lines.Where(line => line.StartsWith("[publish-release]", StringComparison.Ordinal))
+            .ShouldBe(["[publish-release] REFUSED: missing " + Path.Combine(world.CandidateRoot, "complete-green.json") + "."]);
+        world.PublisherGit.Trace.ShouldBeEmpty();
+        world.GitHub.Trace.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Options_take_every_flag_and_the_record_keeps_the_script_s_keys()
+    {
+        string[] every =
+        [
+            "--release-root", @"C:\r", "--coordination-root", @"C:\c", "--remote-url", "https://example.invalid/r.git", "--repository", "o/r", "--run-id", "run-1",
+            "--schedule-slot", "slot", "--job-id", "job", "--ref", "rc/2026-11-30", "--selection-mode", "shadow", "--baseline-sha", new string('b', 40),
+            "--baseline-receipt-path", @"C:\b.json", "--qualification-path", @"C:\q.json", "--timing-root", @"C:\t", "--train-manifest-path", @"C:\m.json",
+            "--release-intent-path", @"C:\i.json", "--selection-attempt-path", @"C:\a.json", "--selection-attempt-digest", new string('c', 64),
+            "--selection-path", @"C:\s.json", "--selection-digest", new string('d', 64), "--attempt", "3", "--skip-publish", "--what-if", "--result-file", @"C:\out.json",
+        ];
+        var variables = new Dictionary<string, string> { ["ANTIPHON_API"] = "http://127.0.0.1:1", [ReleaseGateRemote.TestModeVariable] = "1" };
+        var o = ReleaseCutOptions.Parse(every, @"C:\scripts", name => variables.TryGetValue(name, out var value) ? value : null);
+        (o.ReleaseRoot, o.CoordinationRoot, o.RemoteUrl, o.Repository, o.RunId, o.ScheduleSlot, o.JobId, o.Ref)
+            .ShouldBe((@"C:\r", @"C:\c", "https://example.invalid/r.git", "o/r", "run-1", "slot", "job", "rc/2026-11-30"));
+        (o.SelectionMode, o.BaselineSha, o.BaselineReceiptPath, o.QualificationPath, o.TimingRoot, o.TrainManifestPath, o.ReleaseIntentPath)
+            .ShouldBe(("Shadow", new string('b', 40), @"C:\b.json", @"C:\q.json", @"C:\t", @"C:\m.json", @"C:\i.json"));
+        (o.SelectionAttemptPath, o.SelectionAttemptDigest, o.SelectionPath, o.SelectionDigest, o.Attempt, o.SkipPublish, o.WhatIf, o.ResultFile)
+            .ShouldBe((@"C:\a.json", new string('c', 64), @"C:\s.json", new string('d', 64), 3, true, true, @"C:\out.json"));
+        (o.AntiphonApiUrl, o.TestMode, o.ScriptsRoot).ShouldBe(("http://127.0.0.1:1", true, @"C:\scripts"));
+
+        // The defaults are release-cut.ps1's.
+        var d = ReleaseCutOptions.Parse([], "", _ => null);
+        (d.ReleaseRoot, d.CoordinationRoot, d.RemoteUrl, d.Repository, d.SelectionMode, d.Attempt, d.Ref, d.TestMode)
+            .ShouldBe((@"C:\Antiphon\releases", @"C:\Antiphon\verification", "https://github.com/michal-ciechan/Antiphon", "michal-ciechan/Antiphon", "Full", 1, "", false));
+        Should.Throw<NightlyUsageException>(() => ReleaseCutOptions.Parse(["--selection-mode", "Incremental"], "", _ => null));
+        Should.Throw<NightlyUsageException>(() => ReleaseCutOptions.Parse(["--seams-path", "seams.ps1"], "", _ => null));
+        ReleaseGateRemote.TestMode("true").ShouldBeFalse("test mode is exactly '1'");
+
+        var record = new ReleaseCutResult
+        {
+            CandidateId = "rc-2026-11-30-aaaaaaaaaaaa", Ref = "rc/2026-11-30", Sha = new string('a', 40), ScheduleSlot = "manual", WindmillJobId = "j", Tested = true,
+            Published = true, Tag = "v2026.11.30.1-rc.1", ExitCode = 0, Selection = new System.Collections.Specialized.OrderedDictionary { ["runId"] = "r", ["contract"] = new Dictionary<string, object> { ["deep"] = new[] { 1, 2 } } },
+        };
+        record.ToJson().ShouldBe("{\"candidateId\":\"rc-2026-11-30-aaaaaaaaaaaa\",\"ref\":\"rc/2026-11-30\",\"sha\":\"" + new string('a', 40) + "\",\"scheduleSlot\":\"manual\","
+            + "\"windmillJobId\":\"j\",\"tested\":true,\"published\":true,\"tag\":\"v2026.11.30.1-rc.1\",\"refusal\":\"\",\"exitCode\":0,"
+            + "\"selection\":{\"runId\":\"r\",\"contract\":{\"deep\":[1,2]}}}");
+    }
+}
+
+/// <summary>
+/// One release root for the release cut: the candidate checkout at &lt;release&gt;\checkout, the candidate's remote, the host
+/// (real or fake git for the pinned object's fetch), a recorded stand-in for the rc run and a test-mode publisher over fake
+/// git and GitHub (its card readback refuses: no HTTP). Fake: an owned clone without commits and an in-memory remote whose
+/// rc/2026-10-27 is ShaB. Real: a git checkout on rc/2026-10-27 holding the committed selection inputs
+/// (NightlyRcChain.SelectionInputs), its bare origin and real git for the candidate's reads and the fetch.
+/// </summary>
+internal sealed class ReleaseCutWorld : IDisposable
+{
+    public const string Ref = "rc/2026-10-27";
+
+    private readonly List<NightlyRunOptions> _runs = [];
+
+    private ReleaseCutWorld(NightlyFixture fixture, ReleaseGateRemote candidateRemote, FakeCandidateRemote remote, FakeGit hostGit, string sha)
+    {
+        Fixture = fixture;
+        CandidateRemote = candidateRemote;
+        Remote = remote;
+        HostGit = hostGit;
+        Sha = sha;
+        PublisherGit = new FakeCandidateRemote(sha);
+        PublisherGit.Refs[Ref] = sha;
+    }
+
+    public NightlyFixture Fixture { get; }
+    public string Release => Fixture.PathOf("release");
+    public string Checkout => Path.Combine(Release, "checkout");
+    public string Origin => Fixture.PathOf("origin.git");
+    public string Sha { get; }
+    public string CandidateId => ReleaseGateCredit.Candidate(Ref, Sha).CandidateId;
+    public string CandidateRoot => ReleaseGateCredit.CandidateRoot(Release, CandidateId);
+
+    /// <summary>The candidate's remote as the cut uses it.</summary>
+    public ReleaseGateRemote CandidateRemote { get; }
+
+    /// <summary>The fake candidate remote (a Real world's is unused).</summary>
+    public FakeCandidateRemote Remote { get; }
+
+    /// <summary>The host's git: the fetch of the pinned object (a Real world forwards every unmatched call to real git).</summary>
+    public FakeGit HostGit { get; }
+
+    /// <summary>The publisher's git and GitHub seams.</summary>
+    public FakeCandidateRemote PublisherGit { get; }
+    public FakeReleaseGitHub GitHub { get; } = new();
+
+    /// <summary>The rc run's answer; the default is green.</summary>
+    public Func<NightlyRunOptions, NightlyRunResult> Answer { get; set; } = o => new NightlyRunResult { ExitCode = 0, RunId = o.RunId };
+
+    /// <summary>The options of every run, in order.</summary>
+    public IReadOnlyList<NightlyRunOptions> Runs => _runs;
+
+    /// <summary>The output lines so far.</summary>
+    public string[] Lines => Fixture.Out.ToString().Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToArray();
+
+    public void ClearLines() => Fixture.Out.GetStringBuilder().Clear();
+
+    public static ReleaseCutWorld Fake(string prefix, bool remoteHasRef = true)
+    {
+        var fixture = NightlyFixture.Create(prefix);
+        ReleaseCandidateCases.OwnedClone(fixture, Path.Combine("release", "checkout"));
+        var sha = new string('b', 40);
+        var remote = new FakeCandidateRemote(sha);
+        if (remoteHasRef) remote.Refs[Ref] = sha;
+        return new ReleaseCutWorld(fixture, new ReleaseGateRemote(remote.Run, null, null), remote, new FakeGit(""), sha);
+    }
+
+    public static ReleaseCutWorld Real(string prefix)
+    {
+        var fixture = NightlyFixture.Create(prefix);
+        try
+        {
+            var checkout = fixture.PathOf("release", "checkout");
+            Directory.CreateDirectory(checkout);
+            NightlyRcChain.Git(checkout, "init", "-q", "-b", Ref);
+            NightlyRcChain.Git(checkout, "config", "core.autocrlf", "false");
+            foreach (var file in NightlyRcChain.SelectionInputs)
+            {
+                var target = Path.Combine(checkout, file.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(Path.Combine(NightlyPlanCases.Repo, file.Replace('/', Path.DirectorySeparatorChar)), target);
+            }
+            NightlyRcChain.Git(checkout, "add", "--all");
+            NightlyRcChain.Git(checkout, "-c", "user.name=release-cut", "-c", "user.email=release-cut@example.invalid", "-c", "commit.gpgsign=false",
+                "-c", "core.hooksPath=.git/no-hooks", "commit", "-qm", "fixture");
+            var sha = NightlyRcChain.Git(checkout, "rev-parse", "HEAD").Trim();
+            File.WriteAllText(Path.Combine(checkout, ReleaseCandidate.OwnedMarker), "{\"kind\":\"release-clone\"}");
+            NightlyRcChain.Git(fixture.Root, "clone", "-q", "--bare", checkout, fixture.PathOf("origin.git"));
+            NightlyRcChain.Git(checkout, "remote", "add", "origin", fixture.PathOf("origin.git"));
+            var hostGit = new FakeGit("");
+            hostGit.Reply(_ => true, call => NightlyNativeGit.Run(call.WorkingDirectory, call.Arguments));
+            return new ReleaseCutWorld(fixture, ReleaseGateRemote.Production(), new FakeCandidateRemote(sha), hostGit, sha);
+        }
+        catch
+        {
+            fixture.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>The cut options for this world (the release root, its origin, the ref, test mode); edit changes them last.</summary>
+    public ReleaseCutOptions Options(Action<ReleaseCutOptions>? edit = null)
+    {
+        var options = new ReleaseCutOptions
+        {
+            ReleaseRoot = Release, RemoteUrl = Origin, Ref = Ref, CoordinationRoot = Fixture.PathOf("coord"), ScriptsRoot = ReleaseGateFixture.ScriptsRoot,
+            AntiphonApiUrl = "http://127.0.0.1:9/never", TestMode = true,
+        };
+        edit?.Invoke(options);
+        return options;
+    }
+
+    /// <summary>ReleaseCut.Run of this world's options on its host.</summary>
+    public ReleaseCutResult Cut(Action<ReleaseCutOptions>? edit = null) => ReleaseCut.Run(Options(edit), Host());
+
+    public ReleaseCutHost Host() => new()
+    {
+        Nightly = Fixture.Host(git: HostGit),
+        Files = new System.IO.Abstractions.FileSystem(),
+        CandidateRemote = CandidateRemote,
+        Run = options =>
+        {
+            _runs.Add(options);
+            return Answer(options);
+        },
+        Publisher = new ReleaseGateHost
+        {
+            Out = Fixture.Out, Clock = TimeProvider.System,
+            Seams = new ReleaseGateSeams { Git = PublisherGit.Run, GitHub = GitHub.Run },
+            CardReader = (_, _) => throw new InvalidOperationException("no release card readback in a release-cut test"),
+        },
+    };
+
+    public void Dispose() => Fixture.Dispose();
+}

@@ -123,6 +123,10 @@ public sealed class RcDirtyLaunchOrderTests
             Note(!HasDirtyOrderCaller(text), name + "-has-no-dirty-order-caller");
             Note(!text.Contains("Incremental", StringComparison.Ordinal), name + "-has-no-incremental-mode");
         }
+        // Unit 15 of the 2026-11-22 plan: release-cut.ps1 is the launcher of the release cut (ReleaseCut), Full by default.
+        var cut = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/ReleaseCut.cs");
+        Note(new ReleaseCutOptions().SelectionMode == "Full" && !HasDirtyOrderCaller(cut), "release-cut-has-no-dirty-order-caller");
+        Note(!cut.Contains("Incremental", StringComparison.Ordinal), "release-cut-has-no-incremental-mode");
         // W2-nightly S17: the nightly tests run is the nightly-tests command (scripts/nightly-tests.ps1 is deleted): its modes
         // are NightlyTestsOptions', Full by default.
         var testsOptions = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/NightlyTestsOptions.cs");

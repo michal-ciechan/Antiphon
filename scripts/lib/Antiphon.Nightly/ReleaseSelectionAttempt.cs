@@ -4,7 +4,7 @@
 // (docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, unit 8) moved the writer (New-ReleaseSelectionAttempt and
 // its core: Assert-ReleaseSelectionCommit, Save-ReleaseSelectionAttempt, Write-ReleaseSelectionOnce) and deleted
 // scripts/lib/release-selection.ps1, its pwsh worker (release-selection-worker.ps1) and the CLI's select-release twin. The
-// attempt is written in process by NightlyRun and by scripts/release-cut.ps1 (which loads the core); nothing needs pwsh
+// attempt is written in process by NightlyRun and by the release cut (ReleaseCut, unit 15); nothing needs pwsh
 // any more, so the selection-pwsh-required capability check went with the worker. A refusal is thrown as NightlyRefusal:
 // the reader's with its reason, Create's as selection-refused:<reason>. Plain C#: the attempt documents are read through
 // NightlyJson (PSObjects under PowerShell, PlainObjects otherwise). ASCII only.
@@ -22,7 +22,7 @@ using System.Text.RegularExpressions;
 namespace Antiphon.Nightly
 {
     /// <summary>
-    /// What Create writes and a receiving hop expects of a selection attempt (the request map of release-cut.ps1 and NightlyRun).
+    /// What Create writes and a receiving hop expects of a selection attempt (the request of ReleaseCut and NightlyRun).
     /// A value the caller did not give is null, as a missing hashtable key reads in PowerShell.
     /// </summary>
     public sealed class ReleaseSelectionRequest

@@ -1,7 +1,7 @@
 // The release gate's credit decision (moved from release-gate.ps1). D-2: a run earns master-scheduled or rc-release
 // credit from its own identity and real green flags, never a guessed kind. D-3: an RC earns credit only against the
 // SHA its candidate was pinned to, and a candidate ref is a legacy release/rc-<stamp> or a long-lived rc/YYYY-MM-DD.
-// The run core (NightlyRun.cs) calls it in-process; release-cut.ps1 runs under pwsh and loads this core. CreditVerdict and Verdict share one decision:
+// The run core (NightlyRun.cs) and the release cut (ReleaseCut.cs) call it in-process. CreditVerdict and Verdict share one decision:
 // the first reads a state as PowerShell does, the second reads plain values, so C# calls it in-process.
 using System;
 using System.Collections;

@@ -127,7 +127,7 @@ public sealed class TestPhaseSummaryTests
             C1514Support.Complete(writer.ShardPath!, "after-read").GetProperty("outcome").GetString().ShouldBe("Passed");
         }
         await C1514NativeProbe.VerifyAsync(cancellationToken);
-        // W2-nightly S27: test-phase-paths.ps1 is deleted; its timing root is in release-cut.ps1, which stays a 5.1-parseable entry.
+        // W2-nightly S27: test-phase-paths.ps1 is deleted; its timing root is the release cut's (ReleaseCut.cs since unit 15 of the 2026-11-22 plan), and release-cut.ps1 stays a 5.1-parseable launcher.
         foreach (var relative in new[] { "scripts/release-cut.ps1" })
         {
             var path = Path.Combine(C1514Support.RepoRoot(), relative);

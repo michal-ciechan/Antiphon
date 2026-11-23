@@ -1,7 +1,7 @@
 // CARD-0599 D-8/D-15, CARD-1311 and CARD-1339: publish one CalVer tag and GitHub Release for the exact tested SHA,
 // `antiphon-scripts publish-release --candidate-id <id> [...]`. It replaced scripts/publish-release.ps1 (deleted with unit
-// 14 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, which also deleted promote-release.ps1); release-cut.ps1
-// runs it in process from the core it loads. The cases run in process (ReleasePublishFixture and the classes that use it).
+// 14 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, which also deleted promote-release.ps1); the release
+// cut (ReleaseCut, the release-cut command) runs it in process. The cases run in process (ReleasePublishFixture and the classes that use it).
 //
 // It runs only on an RC complete-green. It validates the immutable candidate journal, the remote candidate SHA and - D-15 -
 // the pinned authority before it writes anything: the policy blob re-read through git at the pinned SHA, the exact rc suite

@@ -15,8 +15,9 @@ namespace Antiphon.Tests.Scripts;
 // nightly-tests executor runs (NightlyDispatch.CoordinateOrFailure over a NightlySuiteRunner, the run state filled as
 // Invoke-AntiphonNightlyTests fills it) on a RecordingLauncher whose behaviour is the driver's StartProcess seam, and its
 // timing table is QualificationTiming.Report, which the executor copies into summary.json (timingChunks, suiteTimeline).
-// Still launching PowerShell: the release-cut legs (scripts/release-cut.ps1, still production PowerShell). The timing-root
-// resolver is compiled (NightlyPaths.TimingRoot; W2-nightly S27 deleted scripts/lib/test-phase-paths.ps1).
+// The release-cut legs run the release cut in process (ReleaseCut, unit 15 of the 2026-11-22 plan; scripts/release-cut.ps1 is
+// its thin launcher). The timing-root resolver is compiled (NightlyPaths.TimingRoot; W2-nightly S27 deleted
+// scripts/lib/test-phase-paths.ps1).
 public sealed partial class QualificationTimingTests
 {
     private const string RunSha = "9f00008facfc48e75555c08df59887019b3f8dfe";
@@ -547,9 +548,10 @@ public sealed partial class QualificationTimingTests
     // ---- the timing-root resolver ----------------------------------------------------------------------------------
 
     // Resolve-QualificationTimingRoot is compiled (NightlyPaths.TimingRoot); W2-nightly S27 deleted
-    // scripts/lib/test-phase-paths.ps1, and release-cut.ps1 calls the compiled rule for a blank timing root. A blank root
-    // resolves to LogRoot/timing-<run> (LogRoot/timing without a run id, blank without a log root); an explicit one is kept.
-    // The PowerShell 5.1 load of the old library (and its Add-Type of the Linux identity) has no subject left.
+    // scripts/lib/test-phase-paths.ps1, and the release cut (ReleaseCut, unit 15 of the 2026-11-22 plan) calls the compiled
+    // rule for a blank timing root. A blank root resolves to LogRoot/timing-<run> (LogRoot/timing without a run id, blank
+    // without a log root); an explicit one is kept. The PowerShell 5.1 load of the old library (and its Add-Type of the
+    // Linux identity) has no subject left.
     [Test]
     public void Timing_root_resolver_is_the_compiled_rule()
     {
@@ -563,146 +565,82 @@ public sealed partial class QualificationTimingTests
         var unnamed = NightlyPaths.TimingRoot("", log, "");
         var none = NightlyPaths.TimingRoot("", "", "run-1");
         rows.Check(unnamed == Path.Combine(log, "timing") && none == "", "no-run-id-and-no-log-root", unnamed + " | " + none);
-        var cut = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "release-cut.ps1"));
-        rows.Check(cut.Contains("[Antiphon.Nightly.NightlyPaths]::TimingRoot(", StringComparison.Ordinal) && !cut.Contains("test-phase-paths.ps1", StringComparison.Ordinal),
+        var cut = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "lib", "Antiphon.Nightly", "ReleaseCut.cs"));
+        rows.Check(cut.Contains("NightlyPaths.TimingRoot(\"\", logRoot, runId)", StringComparison.Ordinal)
+            && !File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "release-cut.ps1")).Contains("TimingRoot(", StringComparison.Ordinal),
             "release-cut-calls-the-compiled-resolver");
         rows.ShouldAllPass(5);
     }
 
     // ---- F2: release-cut seals the timing root --------------------------------------------------------------------
 
-    // Replaying a sealed blank timingRoot through release-cut keeps the seal; an explicit root is sealed; an absent one
-    // defaults for a new attempt. Subject: scripts/release-cut.ps1 (still production PowerShell) and the selection
-    // attempt it seals (ReleaseSelectionAttempt.Create from the loaded core), run in a pwsh child on a fixture checkout
-    // with the release-gate seams. Each leg tolerates a refusal other than selection-attempt-conflict (the S20 seams
-    // refusal included).
+    // Replaying a sealed blank timingRoot through the release cut keeps the seal; an explicit root is sealed; an absent one
+    // defaults for a new attempt; another explicit root against a sealed attempt conflicts. Subject: ReleaseCut.Run (the
+    // body of scripts/release-cut.ps1 until unit 15 of the 2026-11-22 plan) and the selection attempt it seals
+    // (ReleaseSelectionAttempt.Create), in process on a real candidate checkout with its bare origin (ReleaseCutWorld.Real);
+    // the rc run is a recorded green stand-in and nothing publishes (SkipPublish).
     [Test]
     [Category("Integration")]
     [ParallelLimiter<ProcessSpawnLimit>]
     [Timeout(600_000)]
-    public async Task Release_cut_seals_the_timing_root(CancellationToken cancellationToken)
+    public void Release_cut_seals_the_timing_root(CancellationToken cancellationToken)
     {
         var rows = new NightlyCaseRows();
-        var root = NewRoot();
-        try
+        using var world = ReleaseCutWorld.Real("qtiming-cut");
+        var candidate = ReleaseGateCredit.Candidate(ReleaseCutWorld.Ref, world.Sha);
+        var seed = ReleaseSelectionAttempt.Create(new ReleaseSelectionRequest
         {
-            var script = Path.Combine(root, "release-cut-timing.ps1");
-            File.WriteAllText(script, ReleaseCutScript, Encoding.ASCII);
-            var result = Path.Combine(root, "result.json");
-            var ran = await PowerShellChild(Pwsh(), [script, NightlyPlanCases.Repo, Path.Combine(root, "cut"), result], cancellationToken);
-            using var doc = JsonDocument.Parse(File.Exists(result) ? File.ReadAllText(result) : "{}");
-            var r = doc.RootElement;
-            var detail = Text(r, "error") + "\n" + ran.Text;
-            rows.Check(Bool(r, "blank"), "blank-sealed-replay-preserves-attempt", Text(r, "blankDetail") + " " + detail);
-            rows.Check(Bool(r, "explicit"), "explicit-timing-root-is-sealed", Text(r, "explicitDetail") + " " + detail);
-            rows.Check(Bool(r, "absent"), "absent-timing-root-defaults-for-new-attempt", Text(r, "absentDetail") + " " + detail);
-        }
-        finally { Cleanup(root); }
-        rows.ShouldAllPass(3);
+            RepositoryRoot = world.Checkout, Repository = "michal-ciechan/Antiphon", ReleaseRoot = world.Release, CandidateSha = world.Sha,
+            CandidateId = candidate.CandidateId, CandidateRef = candidate.Ref, Profile = "rc", RunId = "blank-replay", SelectionMode = "Full", Attempt = "1",
+            BaselineSha = "", BaselineReceiptPath = "", QualificationPath = "", TimingRoot = "", TrainManifestPath = "", ReleaseIntentPath = "",
+        });
+        var blank = world.Cut(o =>
+        {
+            o.RunId = "blank-replay";
+            o.TimingRoot = "";
+            o.SkipPublish = true;
+        });
+        var sealedText = File.ReadAllText(seed.SelectionAttemptPath);
+        rows.Check(NightlyPaths.FileSha256(seed.SelectionAttemptPath) == seed.SelectionAttemptDigest && sealedText.Contains("\"timingRoot\":\"\"", StringComparison.Ordinal)
+            && blank.ExitCode == 0 && world.Runs[^1].TimingRoot == "", "blank-sealed-replay-preserves-attempt", "refusal=" + blank.Refusal + " timing=" + world.Runs.LastOrDefault()?.TimingRoot);
+
+        var attempts = Path.Combine(world.CandidateRoot, "attempts");
+        var explicitTiming = Path.Combine(world.Release, "explicit-timing");
+        var explicitCut = world.Cut(o =>
+        {
+            o.RunId = "explicit-run";
+            o.TimingRoot = explicitTiming;
+            o.SkipPublish = true;
+        });
+        var explicitSealed = Sealed(ReleaseGateFixture.ReadObject(Path.Combine(attempts, "explicit-run", "selection-attempt.json")), "timingRoot");
+        rows.Check(explicitCut.ExitCode == 0 && explicitSealed == explicitTiming && world.Runs[^1].TimingRoot == explicitTiming, "explicit-timing-root-is-sealed",
+            "refusal=" + explicitCut.Refusal + " sealed=" + explicitSealed);
+
+        var absentCut = world.Cut(o =>
+        {
+            o.RunId = "absent-run";
+            o.TimingRoot = "";
+            o.SkipPublish = true;
+        });
+        var absentExpected = NightlyPaths.TimingRoot("", Path.Combine(world.CandidateRoot, "logs"), "absent-run");
+        var absentSealed = Sealed(ReleaseGateFixture.ReadObject(Path.Combine(attempts, "absent-run", "selection-attempt.json")), "timingRoot");
+        rows.Check(absentCut.ExitCode == 0 && absentSealed == absentExpected && world.Runs[^1].TimingRoot == absentExpected, "absent-timing-root-defaults-for-new-attempt",
+            "refusal=" + absentCut.Refusal + " sealed=" + absentSealed);
+
+        var runs = world.Runs.Count;
+        var conflict = world.Cut(o =>
+        {
+            o.RunId = "explicit-run";
+            o.TimingRoot = Path.Combine(world.Release, "another-timing");
+            o.SkipPublish = true;
+        });
+        rows.Check(conflict.ExitCode == 3 && conflict.Refusal == "selection-attempt-conflict" && world.Runs.Count == runs
+            && Sealed(ReleaseGateFixture.ReadObject(Path.Combine(attempts, "explicit-run", "selection-attempt.json")), "timingRoot") == explicitTiming,
+            "another-explicit-root-conflicts-with-the-seal", "refusal=" + conflict.Refusal);
+        rows.ShouldAllPass(4);
+
+        static string Sealed(System.Text.Json.Nodes.JsonObject document, string name) => ReleaseGateFixture.Str(document[name]);
     }
-
-    private const string ReleaseCutScript = """
-        param([string]$Repo, [string]$CutRoot, [string]$Result)
-        $ErrorActionPreference = 'Stop'
-        $lib = Join-Path $Repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        Assert-NightlyCoreAvailable 'release-cut-timing'
-        $out = [ordered]@{ blank = $false; explicit = $false; absent = $false; blankDetail = ''; explicitDetail = ''; absentDetail = ''; error = '' }
-        try {
-            New-Item -ItemType Directory -Path $CutRoot -Force | Out-Null
-            $release = Join-Path $CutRoot 'release'
-            $checkout = Join-Path $release 'checkout'
-            New-Item -ItemType Directory -Path $checkout -Force | Out-Null
-            $git = {
-                param([string]$Dir, [string[]]$GitArgs)
-                & git -C $Dir @GitArgs 1> $null
-                if ($LASTEXITCODE -ne 0) { throw ('git failed ' + ($GitArgs -join ' ')) }
-            }
-            & $git $checkout @('init', '-q', '-b', 'rc/2026-10-27')
-            & $git $checkout @('config', 'user.email', 'fixture@example.invalid')
-            & $git $checkout @('config', 'user.name', 'qtiming')
-            foreach ($rel in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json', 'scripts/lib/Antiphon.Nightly/TestSelection.cs',
-                    'scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs', 'scripts/lib/Antiphon.Nightly/TestSelectionGit.cs', 'scripts/lib/Antiphon.Nightly/TestSelectionJson.cs')) {
-                $dest = Join-Path $checkout $rel
-                New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
-                Copy-Item -LiteralPath (Join-Path $Repo $rel) -Destination $dest
-            }
-            & $git $checkout @('add', '--', '.')
-            & $git $checkout @('commit', '-qm', 'fixture')
-            $sha = (& git -C $checkout rev-parse HEAD).Trim()
-            [IO.File]::WriteAllText((Join-Path $checkout '.antiphon-release-owned'), '{"kind":"release-clone"}')
-            $origin = Join-Path $CutRoot 'origin.git'
-            & git -C $CutRoot clone --bare $checkout $origin 1> $null
-            if ($LASTEXITCODE -ne 0) { throw 'origin clone failed' }
-            & git -C $checkout remote add origin $origin
-            if ($LASTEXITCODE -ne 0) { throw 'origin remote failed' }
-            $shaFile = Join-Path $CutRoot 'sha.txt'
-            [IO.File]::WriteAllText($shaFile, $sha)
-            $cutSeam = Join-Path $CutRoot 'seam.ps1'
-            $seamTemplate = @'
-        $ReleaseGateSeams = @{
-            Git = {
-                param($WorkingDirectory, $Arguments)
-                $joined = @($Arguments) -join ' '
-                if ($joined -match 'ls-remote') {
-                    $value = [IO.File]::ReadAllText('__SHA_FILE__').Trim()
-                    return @{ ExitCode = 0; Output = ($value + " refs/heads/rc/2026-10-27`n") }
-                }
-                return @{ ExitCode = 0; Output = '' }
-            }
-            GitHub = { return @{ ExitCode = 0; Output = '' } }
-        }
-        '@
-            [IO.File]::WriteAllText($cutSeam, $seamTemplate.Replace('__SHA_FILE__', $shaFile).Replace("`r", ''))
-            $candidate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-27', $sha)
-            $blankRun = 'blank-replay'
-            $blankRequest = @{
-                RepositoryRoot = $checkout; Repository = 'michal-ciechan/Antiphon'; ReleaseRoot = $release
-                CandidateSha = $sha; CandidateId = [string]$candidate.CandidateId; CandidateRef = [string]$candidate.Ref
-                Profile = 'rc'; RunId = $blankRun; SelectionMode = 'Full'; Attempt = 1
-                BaselineSha = ''; BaselineReceiptPath = ''; QualificationPath = ''; TimingRoot = ''
-                TrainManifestPath = ''; ReleaseIntentPath = ''
-            }
-            $seed = [Antiphon.Nightly.ReleaseSelectionAttempt]::Create([Antiphon.Nightly.ReleaseSelectionRequest]::From($blankRequest))
-            $seedDigest = [string]$seed.SelectionAttemptDigest
-            $cut = Join-Path $Repo 'scripts/release-cut.ps1'
-            $coord = Join-Path $CutRoot 'coord'
-            $blankCut = & $cut -ReleaseRoot $release -CoordinationRoot $coord -Ref 'rc/2026-10-27' -RunId $blankRun -TimingRoot '' -SeamsPath $cutSeam -SkipPublish -PassThru
-            $afterDigest = Get-NightlyFileSha256 $seed.SelectionAttemptPath
-            $sealedText = [IO.File]::ReadAllText($seed.SelectionAttemptPath)
-            $blankRefusal = [string]$blankCut.refusal
-            $out.blank = ($afterDigest -eq $seedDigest -and $sealedText.Contains('"timingRoot":""') -and $blankRefusal -notmatch 'selection-attempt-conflict')
-            $out.blankDetail = 'refusal=' + $blankRefusal + ' digest=' + ($afterDigest -eq $seedDigest)
-
-            $attempts = Join-Path (Join-Path (Join-Path $release 'candidates') $candidate.CandidateId) 'attempts'
-            $explicitTiming = Join-Path $release 'explicit-timing'
-            $explicitCut = & $cut -ReleaseRoot $release -CoordinationRoot $coord -Ref 'rc/2026-10-27' -RunId 'explicit-run' -TimingRoot $explicitTiming -SeamsPath $cutSeam -SkipPublish -PassThru
-            $explicitAttempt = Join-Path (Join-Path $attempts 'explicit-run') 'selection-attempt.json'
-            $explicitOk = $false
-            if (Test-Path -LiteralPath $explicitAttempt) {
-                $explicitDoc = Get-Content -LiteralPath $explicitAttempt -Raw -Encoding UTF8 | ConvertFrom-Json
-                $explicitOk = ([string]$explicitDoc.timingRoot -eq $explicitTiming)
-            }
-            $out.explicit = ($explicitOk -and [string]$explicitCut.refusal -notmatch 'selection-attempt-conflict')
-            $out.explicitDetail = 'refusal=' + [string]$explicitCut.refusal + ' sealed=' + $explicitOk
-
-            $absentCut = & $cut -ReleaseRoot $release -CoordinationRoot $coord -Ref 'rc/2026-10-27' -RunId 'absent-run' -TimingRoot '' -SeamsPath $cutSeam -SkipPublish -PassThru
-            $absentAttempt = Join-Path (Join-Path $attempts 'absent-run') 'selection-attempt.json'
-            $absentLog = Join-Path (Join-Path (Join-Path $release 'candidates') ([string]$candidate.CandidateId)) 'logs'
-            $absentExpected = [Antiphon.Nightly.NightlyPaths]::TimingRoot('', $absentLog, 'absent-run')
-            $absentOk = $false
-            if (Test-Path -LiteralPath $absentAttempt) {
-                $absentDoc = Get-Content -LiteralPath $absentAttempt -Raw -Encoding UTF8 | ConvertFrom-Json
-                $absentOk = ([string]$absentDoc.timingRoot -eq $absentExpected)
-            }
-            $out.absent = ($absentOk -and [string]$absentCut.refusal -ne 'selection-attempt-conflict')
-            $out.absentDetail = 'refusal=' + [string]$absentCut.refusal + ' sealed=' + $absentOk
-        } catch {
-            $out.error = 'release-cut-timing ' + $_.Exception.Message
-        }
-        [IO.File]::WriteAllText($Result, ($out | ConvertTo-Json -Compress))
-        exit 0
-        """;
 
     // ---- run and seam helpers --------------------------------------------------------------------------------------
 
@@ -835,18 +773,6 @@ public sealed partial class QualificationTimingTests
     {
         var task = Task.Run(read);
         return task.Wait(TimeSpan.FromSeconds(15)) ? (true, task.Result) : (false, default!);
-    }
-
-    private static string Pwsh() => OperatingSystem.IsWindows() ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : "pwsh";
-
-    private static Task<(int ExitCode, string Text)> PowerShellChild(string exe, string[] arguments, CancellationToken cancellationToken)
-    {
-        var start = new ProcessStartInfo(exe);
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        return C1514Support.RunProcess(start, cancellationToken);
     }
 
     /// <summary>

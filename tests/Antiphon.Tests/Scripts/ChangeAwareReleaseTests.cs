@@ -70,10 +70,14 @@ public sealed class ChangeAwareReleaseTests
             if (ReleaseGateCredit.Verdict(state).Ok) rejected = false;
         }
         rows.Check(rejected, "C1313 unqualified-no-credit");
-        // release-cut.ps1 (still PowerShell, started by Windmill) defaults the mode to Full and hands it to the attempt.
-        var cut = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1"));
-        rows.Check(cut.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal)
-            && cut.Contains("SelectionMode=$SelectionMode", StringComparison.Ordinal) && cut.Contains("[Antiphon.Nightly.ReleaseSelectionAttempt]::Create(", StringComparison.Ordinal),
+        // The release cut (ReleaseCut; scripts/release-cut.ps1, started by Windmill, is its launcher) defaults the mode to Full
+        // and hands it to the attempt.
+        var launcher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1"));
+        var cutSource = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "ReleaseCut.cs"));
+        rows.Check(launcher.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal)
+            && launcher.Contains("'--selection-mode', $SelectionMode", StringComparison.Ordinal) && new ReleaseCutOptions().SelectionMode == "Full"
+            && ReleaseCutOptions.Parse([], "", _ => null).SelectionMode == "Full" && cutSource.Contains("SelectionMode = options.SelectionMode ?? \"\"", StringComparison.Ordinal)
+            && cutSource.Contains("ReleaseSelectionAttempt.Create(", StringComparison.Ordinal),
             "C1313 default-full");
 
         var (chain, b, a, release) = Fixture("c1313-mode");
@@ -219,7 +223,7 @@ public sealed class ChangeAwareReleaseTests
     }
 
     /// <summary>
-    /// The attempt binds every hop parameter. The hop itself (release-cut's splat through the launcher, the self-update and
+    /// The attempt binds every hop parameter. The hop itself (the options the release cut hands the run, the self-update and
     /// tests hops, the child consuming the bound selection) is C1313_ParameterHopsInProcess; here the attempt: the bound
     /// selection executes Full, an identical request resumes it, a changed one conflicts, a retry keeps the prior attempt,
     /// and the hop reader refuses a changed train manifest, a changed selection file or another candidate.
@@ -273,97 +277,80 @@ public sealed class ChangeAwareReleaseTests
     }
 
     /// <summary>
-    /// W2-nightly S20: release-cut.ps1's hop into the launcher. An AST check (a pwsh child parses both scripts): every key of
-    /// release-cut's $runArgs splat is a parameter of scripts/nightly-run.ps1 and, but -PassThru and -SeamsPath (the
-    /// launcher's own), a flag of the nightly-run command; release-cut calls the launcher once with that splat and reads
-    /// .ExitCode and .Refusal; the launcher dot-sources only lib/antiphon-cli.ps1. Then the hop in-process: a Shadow
-    /// selection with a baseline bound for the candidate (NightlyRun.SelectionAttempt, the run's own writer), that splat's
-    /// values as the command's options, NightlyRun.Run through the sync, the self-update hop and the tests hop
-    /// (NightlyRcChain), and the child's summary consumes exactly the bound selection (hop-baseline-bound).
+    /// The hop from the release cut into the run. Unit 15 of the 2026-11-22 plan moved the body of release-cut.ps1 (which
+    /// splatted its $runArgs into the scripts/nightly-run.ps1 launcher, checked here by an AST probe) to ReleaseCut, which
+    /// runs NightlyRun in process. Here ReleaseCut.Run on an rc chain (NightlyRcChain; the release root is the chain's root,
+    /// so the cut's checkout is the chain's clone): the candidate journalled from the real bare origin, a Shadow selection
+    /// with a baseline sealed by the cut, then NightlyRun.Run of the options the cut hands it, through the sync, the
+    /// self-update hop and the tests hop. Every value the cut hands the run is a flag of the nightly-run command
+    /// (hop-cut-options-are-run-flags), the run gets exactly the attempt the cut sealed (hop-cut-hands-the-sealed-attempt),
+    /// and the child's summary consumes exactly the bound selection (hop-baseline-bound). Nothing publishes (SkipPublish).
     /// </summary>
     [Test, Timeout(1_200_000)]
-    public async Task C1313_ParameterHopsInProcess(CancellationToken token)
+    public void C1313_ParameterHopsInProcess(CancellationToken token)
     {
         var rows = new NightlyCaseRows();
-        var scripts = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts");
-        var probe = Path.Combine(Path.GetTempPath(), "c1313-splat-" + Guid.NewGuid().ToString("N") + ".ps1");
-        File.WriteAllText(probe, SplatProbe);
-        System.Text.Json.JsonElement ast;
-        try
+        using var chain = new NightlyRcChain("c1313-hops", "rc/2026-10-19");
+        chain.Write("client/src/App.tsx", "baseline client");
+        var b = chain.Commit("baseline");
+        chain.Write("tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs", "candidate provider");
+        var a = chain.Commit("candidate");
+        chain.Publish();
+        var release = chain.Root;
+        var claims = Path.Combine(release, "qualification λ");
+        Directory.CreateDirectory(claims);
+        File.WriteAllText(Path.Combine(claims, "claim.json"), "{\"status\":\"unqualified\"}");
+        File.WriteAllText(Path.Combine(release, "future train.json"), "{\"fixture\":\"opaque input only\"}");
+        var id = chain.CandidateId(a);
+        var options = new ReleaseCutOptions
         {
-            var start = new System.Diagnostics.ProcessStartInfo("pwsh");
-            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", probe, "-Cut", Path.Combine(scripts, "release-cut.ps1"), "-Run", Path.Combine(scripts, "nightly-run.ps1") })
-                start.ArgumentList.Add(argument);
-            var ran = await C1514Support.RunProcess(start, token);
-            var line = ran.Text.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("{\"keys\"", StringComparison.Ordinal));
-            line.ShouldNotBeNull("the AST probe printed nothing (exit " + ran.ExitCode + ")\n" + ran.Text);
-            using var document = System.Text.Json.JsonDocument.Parse(line);
-            ast = document.RootElement.Clone();
-        }
-        finally { File.Delete(probe); }
-        var keys = ast.GetProperty("keys").EnumerateArray().Select(k => k.GetString()!).ToArray();
-        var parameters = ast.GetProperty("params").EnumerateArray().Select(k => k.GetString()!).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var flags = NightlyRunOptions.Valued.Concat(NightlyRunOptions.Switches).ToHashSet(StringComparer.Ordinal);
-        var launcherOnly = new[] { "PassThru", "SeamsPath" };
-        var unmapped = keys.Where(k => !parameters.Contains(k) || (!launcherOnly.Contains(k) && !flags.Contains(NightlyRunHops.Kebab("-" + k)))).ToArray();
-        rows.Check(keys.Length >= 20 && unmapped.Length == 0, "C1313 hop-splat-keys-are-launcher-parameters", "keys=" + string.Join(",", keys) + " unmapped=" + string.Join(",", unmapped));
-        var cut = File.ReadAllText(Path.Combine(scripts, "release-cut.ps1"));
-        rows.Check(ast.GetProperty("calls").GetInt32() == 1 && cut.Contains("[int]$run.ExitCode", StringComparison.Ordinal) && cut.Contains("[string]$run.Refusal", StringComparison.Ordinal),
-            "C1313 hop-release-cut-reads-the-launcher-result", "calls=" + ast.GetProperty("calls").GetInt32());
-        var dots = ast.GetProperty("dot").EnumerateArray().Select(d => d.GetString()!).ToArray();
-        rows.Check(dots.Length == 1 && dots[0].Contains("antiphon-cli.ps1", StringComparison.Ordinal), "C1313 hop-launcher-dot-sources-only-the-cli-launcher", string.Join(" | ", dots));
-
-        using (var chain = new NightlyRcChain("c1313-hops", "rc/2026-10-19"))
+            ReleaseRoot = release, RemoteUrl = chain.Origin, Ref = chain.Ref, Repository = "fixture/repository", RunId = "hop-run", SelectionMode = "Shadow",
+            BaselineSha = b, BaselineReceiptPath = Path.Combine(release, "absent receipt.json"), QualificationPath = Path.Combine(claims, "claim.json"),
+            TimingRoot = Path.Combine(release, "timing root"), TrainManifestPath = Path.Combine(release, "future train.json"),
+            ReleaseIntentPath = Path.Combine(release, "future intent.json"), CoordinationRoot = chain.Fixture.PathOf("coord"), SkipPublish = true,
+        };
+        NightlyRunOptions? handed = null;
+        NightlyRunResult? run = null;
+        var github = new FakeReleaseGitHub();
+        var cut = ReleaseCut.Run(options, new ReleaseCutHost
         {
-            chain.Write("client/src/App.tsx", "baseline client");
-            var b = chain.Commit("baseline");
-            chain.Write("tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs", "candidate provider");
-            var a = chain.Commit("candidate");
-            chain.Publish();
-            var release = chain.Fixture.PathOf("releases λ");
-            Directory.CreateDirectory(Path.Combine(release, "qualification"));
-            File.WriteAllText(Path.Combine(release, "qualification", "claim.json"), "{\"status\":\"unqualified\"}");
-            File.WriteAllText(Path.Combine(release, "future train.json"), "{\"fixture\":\"opaque input only\"}");
-            var id = chain.CandidateId(a);
-            var q = new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase)
+            Nightly = chain.Host(),
+            Files = new System.IO.Abstractions.FileSystem(),
+            CandidateRemote = ReleaseGateRemote.Production(),
+            Run = o =>
             {
-                ["RepositoryRoot"] = chain.Clone, ["CandidateSha"] = a, ["CandidateRef"] = chain.Ref, ["Repository"] = "fixture/repository", ["Profile"] = "rc",
-                ["ReleaseRoot"] = release, ["CandidateId"] = id, ["RunId"] = "hop-run", ["SelectionMode"] = "Shadow", ["BaselineSha"] = b,
-                ["BaselineReceiptPath"] = Path.Combine(release, "absent receipt.json"), ["QualificationPath"] = Path.Combine(release, "qualification", "claim.json"),
-                ["TimingRoot"] = Path.Combine(release, "timing root"), ["TrainManifestPath"] = Path.Combine(release, "future train.json"),
-                ["ReleaseIntentPath"] = Path.Combine(release, "future intent.json"), ["SelectionAttemptPath"] = "", ["SelectionAttemptDigest"] = "", ["SelectionPath"] = "",
-                ["SelectionDigest"] = "", ["Attempt"] = 1,
-            };
-            var bound = NightlyRun.SelectionAttempt(q);
-            // release-cut's $runArgs, through the launcher's translation (-Key value to --kebab-key value) to the command's options.
-            var candidateRoot = ReleaseGateCredit.CandidateRoot(release, id);
-            var runArgs = new (string Key, string Value)[]
+                handed = o;
+                return run = chain.Run(o);
+            },
+            Publisher = new ReleaseGateHost
             {
-                ("RunId", "hop-run"), ("Repository", "fixture/repository"), ("SelectionMode", "Shadow"), ("BaselineSha", bound.BaselineSha),
-                ("BaselineReceiptPath", (string)q["BaselineReceiptPath"]!), ("QualificationPath", (string)q["QualificationPath"]!), ("TimingRoot", (string)q["TimingRoot"]!),
-                ("TrainManifestPath", (string)q["TrainManifestPath"]!), ("ReleaseIntentPath", (string)q["ReleaseIntentPath"]!), ("SelectionAttemptPath", bound.SelectionAttemptPath),
-                ("SelectionAttemptDigest", bound.SelectionAttemptDigest), ("SelectionPath", bound.SelectionPath), ("SelectionDigest", bound.SelectionDigest), ("Attempt", "1"),
-                ("CheckoutRoot", chain.Clone), ("StateRoot", Path.Combine(candidateRoot, "state")), ("LogRoot", Path.Combine(candidateRoot, "logs")), ("Ref", chain.Ref),
-                ("RemoteUrl", chain.Origin), ("Trigger", "rc"), ("Profile", "rc"), ("ExpectedSha", a), ("CandidateId", id), ("ReleaseRoot", release),
-                ("CoordinationRoot", chain.Fixture.PathOf("coord")),
-            };
-            var options = NightlyRunOptions.Parse(NightlyRunHops.LauncherFlags(runArgs.SelectMany(p => new[] { "-" + p.Key, p.Value }).ToArray()));
-            var run = chain.Run(options);
-            var summaries = Directory.GetFiles(Path.Combine(release, "candidates"), "summary.json", SearchOption.AllDirectories)
-                .Select(f => System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(f)))
-                .Where(n => n is System.Text.Json.Nodes.JsonObject o && o.ContainsKey("runId")).ToArray();
-            var consumed = summaries.Length == 1 ? summaries[0]!["selection"] : null;
-            string C(string name) => consumed?[name]?.GetValue<string>() ?? "";
-            var train = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes((string)q["TrainManifestPath"]!))).ToLowerInvariant();
-            rows.Check(consumed != null && C("baselineSha") == b && C("candidateSha") == a && C("runId") == "hop-run" && C("timingRoot") == (string)q["TimingRoot"]!
-                && C("baselineReceiptPath") == (string)q["BaselineReceiptPath"]! && C("qualificationPath") == (string)q["QualificationPath"]!
-                && C("releaseIntentPath") == (string)q["ReleaseIntentPath"]! && C("trainManifestPath") == (string)q["TrainManifestPath"]! && C("trainDigest") == train
-                && C("selectionDigest") == bound.SelectionDigest && run.Phase == "hop" && chain.SelfHops.Count == 1 && chain.TestsHops.Count == 1,
-                "C1313 hop-baseline-bound", "phase=" + run.Phase + " exit=" + run.ExitCode + " refusal=" + run.Refusal + " summaries=" + summaries.Length + " consumed="
-                + consumed?.ToJsonString() + "\n" + chain.Fixture.Out + chain.Fixture.Error);
-        }
-        rows.ShouldAllPass(4, "C1313 hop-splat-keys-are-launcher-parameters", "C1313 hop-release-cut-reads-the-launcher-result",
-            "C1313 hop-launcher-dot-sources-only-the-cli-launcher", "C1313 hop-baseline-bound");
+                Out = chain.Fixture.Out, Clock = TimeProvider.System, Seams = new ReleaseGateSeams { Git = new FakeCandidateRemote(a).Run, GitHub = github.Run },
+                CardReader = (_, _) => throw new InvalidOperationException("no release card readback in a hop test"),
+            },
+        });
+        var detail = "cut=" + cut.ExitCode + "/" + cut.Refusal + "\n" + chain.Fixture.Out + chain.Fixture.Error;
+        var attemptPath = Path.Combine(ReleaseGateCredit.CandidateRoot(release, id), "attempts", "hop-run", "selection-attempt.json");
+        var selectionPath = Path.Combine(ReleaseGateCredit.CandidateRoot(release, id), "attempts", "hop-run", "selection.json");
+        rows.Check(handed != null && System.Text.Json.JsonSerializer.Serialize(NightlyRunOptions.Parse(handed.ToArguments())) == System.Text.Json.JsonSerializer.Serialize(handed)
+            && handed.ToArguments().Length >= 40 && handed.Profile == "rc" && handed.Trigger == "rc" && handed.ExpectedSha == a && handed.CandidateId == id,
+            "C1313 hop-cut-options-are-run-flags", handed == null ? detail : string.Join(" ", handed.ToArguments()));
+        rows.Check(handed != null && handed.SelectionAttemptPath == attemptPath && handed.SelectionAttemptDigest == NightlyPaths.FileSha256(attemptPath)
+            && handed.SelectionPath == selectionPath && handed.SelectionDigest == NightlyPaths.FileSha256(selectionPath) && handed.BaselineSha == b
+            && handed.TimingRoot == options.TimingRoot && handed.SelectionMode == "Shadow", "C1313 hop-cut-hands-the-sealed-attempt", detail);
+        var summaries = Directory.GetFiles(Path.Combine(release, "candidates"), "summary.json", SearchOption.AllDirectories)
+            .Select(f => System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(f)))
+            .Where(n => n is System.Text.Json.Nodes.JsonObject o && o.ContainsKey("runId")).ToArray();
+        var consumed = summaries.Length == 1 ? summaries[0]!["selection"] : null;
+        string C(string name) => consumed?[name]?.GetValue<string>() ?? "";
+        var train = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(options.TrainManifestPath))).ToLowerInvariant();
+        rows.Check(consumed != null && C("baselineSha") == b && C("candidateSha") == a && C("runId") == "hop-run" && C("timingRoot") == options.TimingRoot
+            && C("baselineReceiptPath") == options.BaselineReceiptPath && C("qualificationPath") == options.QualificationPath
+            && C("releaseIntentPath") == options.ReleaseIntentPath && C("trainManifestPath") == options.TrainManifestPath && C("trainDigest") == train
+            && C("selectionDigest") == handed?.SelectionDigest && run?.Phase == "hop" && chain.SelfHops.Count == 1 && chain.TestsHops.Count == 1
+            && github.Trace.Count == 0,
+            "C1313 hop-baseline-bound", "phase=" + run?.Phase + " exit=" + run?.ExitCode + " refusal=" + run?.Refusal + " summaries=" + summaries.Length + " consumed="
+            + consumed?.ToJsonString() + "\n" + detail);
+        rows.ShouldAllPass(3, "C1313 hop-cut-options-are-run-flags", "C1313 hop-cut-hands-the-sealed-attempt", "C1313 hop-baseline-bound");
     }
 
     // A refusal of Create naming the reason, with no attempt written for the request's run.
@@ -374,21 +361,4 @@ public sealed class ChangeAwareReleaseTests
         var refusal = Refusal(request);
         return refusal.StartsWith(ReleaseSelectionAttempt.RefusedPrefix, StringComparison.Ordinal) && refusal.Contains(reason, StringComparison.Ordinal) && File.Exists(attempt) == existed;
     }
-
-    // The AST of release-cut.ps1's $runArgs splat and its launcher call, and of the launcher's parameter block and dot-sources.
-    private const string SplatProbe = """
-        param([string]$Cut, [string]$Run)
-        $ErrorActionPreference = 'Stop'
-        $tokens = $null; $errors = $null
-        $cutAst = [Management.Automation.Language.Parser]::ParseFile($Cut, [ref]$tokens, [ref]$errors)
-        if ($errors.Count) { throw ($errors | Out-String) }
-        $assign = @($cutAst.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$runArgs' }, $true))[0]
-        $keys = @($assign.Right.Expression.KeyValuePairs | ForEach-Object { [string]$_.Item1.Value })
-        $calls = @($cutAst.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.Extent.Text -match "nightly-run\.ps1'\) @runArgs$" }, $true)).Count
-        $runAst = [Management.Automation.Language.Parser]::ParseFile($Run, [ref]$tokens, [ref]$errors)
-        if ($errors.Count) { throw ($errors | Out-String) }
-        $params = @($runAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        $dot = @($runAst.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Dot' }, $true) | ForEach-Object { $_.Extent.Text })
-        [Console]::Out.WriteLine((ConvertTo-Json -Compress -Depth 4 -InputObject ([ordered]@{ keys = $keys; params = $params; calls = $calls; dot = $dot })))
-        """;
 }

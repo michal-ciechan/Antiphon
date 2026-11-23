@@ -1,9 +1,9 @@
 // CARD-0599 (D-3) and CARD-1311 (D-1, D-2): journal one release candidate. `antiphon-scripts release-candidate [--ref
 // <ref>] [--release-root <dir>] [--checkout-root <dir>] [--remote-url <url>] [--source-ref <ref>] [--schedule-slot <slot>]
 // [--what-if]`. It replaced scripts/release-candidate.ps1 (Invoke-AntiphonReleaseCandidate), deleted with unit 13 of
-// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; scripts/release-cut.ps1 (the RC lane entry Windmill starts)
-// calls ReleaseCandidate.Run from the core it loads, handing a test -SeamsPath file's git to the remote. The cases run in
-// process (ReleaseCandidateTests, ReleaseCandidateRemoteRefTests).
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; the RC lane (ReleaseCut, the release-cut command that
+// scripts/release-cut.ps1, Windmill's entry, launches since unit 15) calls ReleaseCandidate.Run in process. The cases run in
+// process (ReleaseCandidateTests, ReleaseCandidateGitTests, ReleaseCutTests).
 //
 // An omitted ref refuses rc-ref-required and pushes nothing. A long-lived rc/YYYY-MM-DD must already exist on the remote:
 // its tip is journalled under rc-YYYY-MM-DD- plus the first 12 hex digits of the tested SHA; the branch is not created or

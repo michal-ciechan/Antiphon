@@ -388,13 +388,18 @@ public sealed class ReleasePublishTests
     [Test]
     public void Release_cut_publishes_through_the_compiled_publisher_once()
     {
-        // release-cut.ps1 (still PowerShell, started by the Windmill job antiphon-release-candidates) runs the publisher's C#
-        // in process from the core it loads: one call, no wrapper function, no script.
-        var cut = File.ReadAllText(Path.Combine(ReleaseGateFixture.ScriptsRoot, "release-cut.ps1"));
-        Regex.Matches(cut, Regex.Escape("[Antiphon.Nightly.ReleasePublish]::Run(")).Count.ShouldBe(1);
-        cut.ShouldContain("[Antiphon.Nightly.ReleaseGateHost]::Production([Console]::Out)");
-        cut.ShouldContain("ScriptsRoot = $PSScriptRoot");
+        // The release cut (ReleaseCut, the release-cut command; scripts/release-cut.ps1, started by the Windmill job
+        // antiphon-release-candidates, is its thin launcher since unit 15) runs the publisher's C# in process: one call on the
+        // host's publisher (ReleaseGateHost.Production in the command), no wrapper function, no script. The behaviour is
+        // ReleaseCutTests.Only_a_green_run_reaches_the_publisher_and_it_is_asked_once_for_the_candidate.
+        var cut = File.ReadAllText(Path.Combine(ReleaseGateFixture.ScriptsRoot, "lib", "Antiphon.Nightly", "ReleaseCut.cs"));
+        Regex.Matches(cut, Regex.Escape("ReleasePublish.Run(")).Count.ShouldBe(1);
+        cut.ShouldContain("Publisher = ReleaseGateHost.Production(nightly.Out)");
+        cut.ShouldContain("ScriptsRoot = options.ScriptsRoot ?? \"\"");
         cut.ShouldNotContain("publish-release.ps1");
+        var launcher = File.ReadAllText(Path.Combine(ReleaseGateFixture.ScriptsRoot, "release-cut.ps1"));
+        launcher.ShouldNotContain("[Antiphon.Nightly.", Case.Sensitive);
+        launcher.ShouldNotContain("publish-release", Case.Sensitive);
         File.Exists(Path.Combine(ReleaseGateFixture.ScriptsRoot, "publish-release.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(ReleaseGateFixture.ScriptsRoot, "promote-release.ps1")).ShouldBeFalse();
     }

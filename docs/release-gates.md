@@ -531,7 +531,7 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 | Script | Job |
 |---|---|
 | `scripts\antiphon.cmd release-candidate --ref <ref>` | Journal an existing `rc/YYYY-MM-DD` tip, or keep today's create-only push for a legacy stamp ref. An omitted `--ref` refuses. |
-| `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green (it runs the candidate's and the publisher's C# in process). |
+| `scripts/release-cut.ps1` (`scripts\antiphon.cmd release-cut --ref <rc/YYYY-MM-DD>`) | The lane entrypoint: journal the named rc ref, run the `rc` profile on it and publish only on RC complete-green. The script is the launcher Windmill starts; the lane is the `release-cut` command, which runs the candidate, the rc run and the publisher in one process. |
 | `scripts\antiphon.cmd publish-release --candidate-id <id> [--what-if]` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
 | `scripts\antiphon.cmd promote-release --tag <vYYYY.MM.DD.N-rc.K> --candidate-id <id> [--what-if]` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
 | `scripts\antiphon.cmd release-status` | Is the running build a published release? Read-only. |
@@ -540,8 +540,13 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 `release-candidate`, `publish-release`, `promote-release`, `release-status` and `register-release-gates` are commands of
 `antiphon-scripts` (`scripts/antiphon` from sh); the release gate is C# in `scripts/lib/Antiphon.Nightly`
 (`ReleaseCandidate.cs`, `ReleasePublish.cs`, `ReleasePromote.cs` and their host `ReleaseGateHost.cs`, over
-`ReleaseGateRemote.cs`, `ReleaseGateJournal.cs` and `ReleaseGateTags.cs`). `release-cut.ps1` runs the candidate and the
-publisher in process from the core it loads.
+`ReleaseGateRemote.cs`, `ReleaseGateJournal.cs` and `ReleaseGateTags.cs`). The lane is `ReleaseCut.cs` (the `release-cut`
+command): `scripts/release-cut.ps1` keeps its parameters for Windmill and passes them to the command as kebab-case flags
+(`-Ref` is `--ref`, `-SkipPublish` is `--skip-publish`); it refuses a `-SeamsPath` (exit 3, `seams-path-unsupported`) and an
+explicitly blank `-ReleaseRoot`, `-CoordinationRoot`, `-RemoteUrl` or `-Repository` (exit 2). The command prints its
+`[release-cut]` lines (with the candidate's, the run's and the publisher's), then one JSON record (`candidateId`, `ref`,
+`sha`, `scheduleSlot`, `windmillJobId`, `tested`, `published`, `tag`, `refusal`, `exitCode`, then `selection` once an
+attempt is sealed); its exit code is the record's.
 
 The candidate prints its `[release-candidate]` lines, then one JSON line (`candidateId`, `ref`, `sha`, `pushed`, `resumed`,
 `refusal`, `exitCode`); it exits 0 when journalled (or with `--what-if`), 1 on a clone, fetch, push or SHA failure, 3 on a

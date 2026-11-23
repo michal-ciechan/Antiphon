@@ -84,7 +84,7 @@ internal static class C1514Support
             var dir = new DirectoryInfo(start);
             while (dir is not null)
             {
-                // W2-nightly S27: test-phase-paths.ps1 is deleted; release-cut.ps1 (a Windmill entry) holds its timing root.
+                // W2-nightly S27: test-phase-paths.ps1 is deleted; release-cut.ps1 (a Windmill entry, the release cut's launcher) marks the root.
                 if (File.Exists(Path.Combine(dir.FullName, "scripts", "release-cut.ps1")))
                     return dir.FullName;
                 dir = dir.Parent;

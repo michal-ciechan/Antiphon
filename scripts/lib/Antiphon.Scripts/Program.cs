@@ -114,6 +114,10 @@ namespace Antiphon.Scripts
             // The release candidate answers every input itself: exit 0 journalled or WhatIf, 1 a clone, fetch, push, SHA or
             // journal-write failure, 2 usage, 3 refused (its JSON line last on stdout).
             [ReleaseCandidateCommand.Name] = ReleaseCandidateCommand.Run,
+            // The release cut answers every input itself: exit 0 published, or green with --skip-publish or --what-if, 3
+            // refused, otherwise the candidate's, the run's or the publisher's (its JSON record last on stdout); 1 a candidate
+            // journal or state root that cannot be written; 2 usage.
+            [ReleaseCutCommand.Name] = ReleaseCutCommand.Run,
             // The publisher and the promoter answer every input themselves: exit 0 published, promoted, resumed or --what-if,
             // 1 a remote write (or the promoter's journal record) failed, 2 usage, 3 refused.
             [PublishReleaseCommand.Name] = PublishReleaseCommand.Run,
@@ -156,7 +160,7 @@ namespace Antiphon.Scripts
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
                 + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
                 + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage
-                + " | " + ReleaseCandidateCommand.Usage
+                + " | " + ReleaseCandidateCommand.Usage + " | " + ReleaseCutCommand.Usage
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage);
             return Usage;
