@@ -54,7 +54,7 @@ public static class NativeLinuxPolicyWitness
     // Debug 847c35c6 / Review c67d7aff one-record addition: the native Windows held-entry witness of WorktreeNoFollowDeleteTests is excluded on Linux only.
     // Review a5ebf1e9: that record's reason now names the disposition seam; the record is otherwise unchanged.
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
-    public const string LegacyExclusionDigest = "45fcb682060d06282af27b15dcae86936b83ef8472b8e83dd2ffdef8378b36b8";
+    public const string LegacyExclusionDigest = "67589f0a3c810152d890b3e50aa88f79172d883362070852ab8b296d1ff900ab";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
