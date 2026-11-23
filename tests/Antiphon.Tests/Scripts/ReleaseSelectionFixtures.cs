@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Text;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -66,7 +67,7 @@ internal sealed class SelectionRepository : IDisposable
             foreach (var entry in new DirectoryInfo(Root).EnumerateFileSystemInfos())
             {
                 if (entry.Name == ".git") continue;
-                if (entry is DirectoryInfo directory) directory.Delete(true);
+                if (entry is DirectoryInfo directory) ReadOnlyDirectory.Delete(directory.FullName);
                 else entry.Delete();
             }
         }
