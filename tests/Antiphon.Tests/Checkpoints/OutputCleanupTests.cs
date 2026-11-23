@@ -306,11 +306,69 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         context.InProcessIndexReads.ShouldBeGreaterThan(readsAtChange, "the entries after the change read the index again");
     }
 
+    // CARD-2052 Review r2 (2ff6a0bc) D-1: a filesystem layer that is not the native one sends every tracked check to
+    // git, which binds no index version. The target is staged after git called it untracked, while its content is
+    // being hashed. Its unlink needs a tracked check made after that validation: the target survives, the untracked
+    // owned siblings are still removed.
+    [Test]
+    public void git_fallback_target_staged_during_its_hash_leaves_the_file_in_place()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "TRACKED");
+        CommitAll(root);
+        var git = new UntrackedAnswerGit("target.dll");
+        var io = new StageDuringHashIo(root, "bin-c2052/d/target.dll", git);
+        var (context, output, target) = TrackedIndexFixture(root, new CheckpointCleanupContext(io, git));
+        var reads = context.InProcessIndexReads;
+
+        var result = CleanTrackedIndexFixture(context, root, output);
+
+        AssertTargetKept(root, output, target, result);
+        io.Staged.ShouldBeTrue("the target was staged during the hash that followed git's untracked answer");
+        context.InProcessIndexReads.ShouldBe(reads, "every tracked check went to git");
+        CheckpointFixtureProcess.Git(root, "ls-files", "--", "bin-c2052/d/target.dll").ShouldContain("target.dll");
+    }
+
+    // Real git, recording when an ls-files naming the file returned nothing (an untracked answer).
+    private sealed class UntrackedAnswerGit(string fileName) : ICheckpointGitRunner
+    {
+        private readonly CheckpointNativeGitRunner _inner = new();
+        public bool AnsweredUntracked { get; private set; }
+
+        public CheckpointGitResult Run(CheckpointGitRequest request)
+        {
+            var result = _inner.Run(request);
+            if (request.Arguments.Contains("ls-files") && result.Exit == 0 && result.Stdout.Length == 0
+                && request.Arguments.Any(argument => Path.GetFileName(argument) == fileName))
+                AnsweredUntracked = true;
+            return result;
+        }
+    }
+
+    // Stages the file (once) when its content is opened for reading after git called it untracked.
+    private sealed class StageDuringHashIo(string root, string relative, UntrackedAnswerGit git) : ForwardingNativeIo
+    {
+        public bool Staged { get; private set; }
+
+        public override ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
+        {
+            if (!Staged && git.AnsweredUntracked && Path.GetFileName(path) == Path.GetFileName(relative))
+            {
+                Staged = true;
+                CheckpointFixtureProcess.Git(root, "add", "-f", "--", relative);
+            }
+            return base.OpenRead(path, request);
+        }
+    }
+
     // An owned output of two deep files, the target one level up and the ledger at its top: the removal reaches the
     // deep files first, then the target.
-    private (CheckpointCleanupContext Context, string Output, string Target) TrackedIndexFixture(string root)
+    private (CheckpointCleanupContext Context, string Output, string Target) TrackedIndexFixture(string root,
+        CheckpointCleanupContext? supplied = null)
     {
-        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner());
+        var context = supplied ?? new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner());
         var write = new CheckpointWrite(context);
         var output = Path.Combine(root, "bin-c2052");
         write.Require(write.CreateFreshDirectory(output, write.Under(root)));
