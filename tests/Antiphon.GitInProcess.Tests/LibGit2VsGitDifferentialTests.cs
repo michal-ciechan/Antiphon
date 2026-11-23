@@ -320,8 +320,8 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.RequiredAsync(repo, "branch", "via-link");
         // HEAD a symref to refs/heads/via-link, a link whose text names the checked-out branch (the shape
         // core.preferSymlinkRefs writes: git reads that text as a symref; libgit2 reads the file it reaches).
-        // Here libgit2 cannot read such a link at all (relative to its own directory it reaches nothing), so this
-        // pins the fallback; the target's RefFileIsLink check is a second line for a link libgit2 does read.
+        // Relative to its own directory the link reaches nothing: where libgit2 then reads the ref as missing, the
+        // target's RefFileIsLink check is what makes this fall back; on Windows libgit2 fails on it either way.
         var link = Path.Combine(gitDir, "refs", "heads", "via-link");
         File.Delete(link);
         try { File.CreateSymbolicLink(link, branch.Replace('/', Path.DirectorySeparatorChar)); }

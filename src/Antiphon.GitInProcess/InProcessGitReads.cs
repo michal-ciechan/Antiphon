@@ -604,9 +604,12 @@ internal static partial class InProcessGitReads
         var gitDir = repo.Info.Path;
         var common = CommonDirectory(gitDir);
         if (common is null) return true;
-        // LinkTarget, not the ReparsePoint attribute: cloud placeholders and deduplicated files are plain refs.
+        // The cached ReparsePoint attribute first, then LinkTarget (which opens the file): cloud placeholders and
+        // deduplicated files are reparse points but plain refs.
         foreach (var dir in new[] { gitDir, common })
-            if (new FileInfo(Path.Combine(dir, name)) is { Exists: true, LinkTarget: not null }) return true;
+            if (new FileInfo(Path.Combine(dir, name)) is { Exists: true } file
+                && (file.Attributes & FileAttributes.ReparsePoint) != 0 && file.LinkTarget is not null)
+                return true;
         return false;
     }
 
