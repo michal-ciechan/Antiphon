@@ -58,6 +58,13 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string Fingerprint { get; }
     public List<string[]> Trace { get; } = [];
     public List<string[]> OwnedTrace { get; } = [];
+
+    /// <summary>
+    /// Debug 847c35c6 / Review c67d7aff: the retired administrative entry's delete. A test injects the
+    /// refusal Windows gives while a scanner holds an entry, which Linux cannot raise.
+    /// </summary>
+    public Antiphon.Server.Infrastructure.Git.WorktreeRenames AdminDeleteRenames { get; set; }
+        = Antiphon.Server.Infrastructure.Git.WorktreeRenames.System;
     /// <summary>CARD-0688: every command with the directory it ran in.</summary>
     public List<(string Directory, string[] Arguments)> Commands { get; } = [];
     /// <summary>CARD-0642 D-8 / CARD-0688: one-round-trip remote source rechecks, and a hook keyed by their ordinal.</summary>
