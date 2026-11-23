@@ -800,6 +800,8 @@ public sealed class TestTimingSession : IDisposable
         "compose-fixture-delete",
         "raw-reflog-fault", "source-snapshot",
         "historical migration database",
+        "C-locale readiness database",
+        "C-locale readiness database tip",
         "host-load API read fixtures",
         "host-load probe initialization",
         "host-load world initialization",

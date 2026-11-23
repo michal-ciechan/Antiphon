@@ -326,6 +326,9 @@ internal static class WindowsUnitSkipRoster
     // Review 0d322ed5: the impacted-class checkpoint row for path-identity readiness selects these
     // existing Linux skips; listing them lets the receipt qualify them (skip_identity_unlisted).
     internal const string AgentStartRecoveryCmdReason = "Agent start recovery's live executable is cmd.exe from the Windows system directory; Linux has no cmd.exe.";
+    // Review 5bfb258d: CP-10 selects GrokRulesLaunchRefusalTests; its Herdr and PtyHost refusal rows skip
+    // on Linux (master-inherited), so the receipt can only qualify them when they are listed here.
+    internal const string GrokRawArgvRefusalCmdReason = "CARD-0882: the Windows Grok raw-argv refusal policy fixture launches cmd.exe from the Windows system directory; Linux has no cmd.exe.";
     internal static readonly Entry[] WindowsOnly =
     [
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Cwd_census_skips_exited_process_with_retained_handle", 1, "An exited Windows process can retain an open kernel handle after losing its cwd memory"),
@@ -335,6 +338,8 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Application", "AgentSessionServiceIntegrationTests", "AgentSessionService_start_to_first_text_delta_with_real_worktree_and_raw_pty", 1, "Raw PTY integration uses Windows ConPTY in this test."),
         new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Interactive_start_failure_marks_agent_failed_not_working", 1, AgentStartRecoveryCmdReason),
         new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Observed_exit_closes_session_and_resets_agent", 2, AgentStartRecoveryCmdReason),
+        new("Antiphon.Tests.Application", "GrokRulesLaunchRefusalTests", "Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists", 1, GrokRawArgvRefusalCmdReason),
+        new("Antiphon.Tests.Application", "GrokRulesLaunchRefusalTests", "Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists", 1, GrokRawArgvRefusalCmdReason),
         new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "AlwaysOn_channel_bound_survives_child_death_and_replies", 2, "CARD-0865: the two ClaudeCode rows skip on Linux until standing/always-on channel parity has native recovery fixes; the Grok row runs."),
         new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Unsafe_grok_rules_on_the_named_seat_refuse_before_any_pane_and_leave_the_streak_untouched", 1, "CARD-0865: Linux Grok named-seat argv policy parity awaits repair."),
         new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Standing_claude_ptyhost_native_wire_missing_target_never_creates", 1, "CARD-0878: Linux PtyHost output/exit race can miss native-session-missing classification."),
