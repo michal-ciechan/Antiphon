@@ -96,6 +96,9 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "master^{commit}");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", "master^{commit}");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--is-inside-work-tree");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--show-prefix");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD");
+        await CompareAsync(cwd, Expect.Answered, "symbolic-ref", "--quiet", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", "refs/heads/no-such-branch");
         await CompareAsync(cwd, Expect.Answered, "worktree", "list", "--porcelain");
@@ -302,6 +305,48 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(Path.Combine(fixture.Repository, "sub-does-not-exist"), Expect.Fallback, "rev-parse", "HEAD");
         Directory.CreateDirectory(Path.Combine(fixture.Repository, "sub"));
         await CompareAsync(Path.Combine(fixture.Repository, "sub"), Expect.Fallback, "rev-parse", "HEAD");
+        // Below the root the prefix is a path, git's to spell.
+        await CompareAsync(Path.Combine(fixture.Repository, "sub"), Expect.Fallback, "rev-parse", "--show-prefix");
+    }
+
+    [Test]
+    public async Task Head_reads_match_git_when_unborn_detached_or_read_otherwise()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var head = (await fixture.RequiredAsync(repo, "rev-parse", "HEAD")).Trim();
+        string[][] quiet = [["rev-parse", "--verify", "--quiet", "HEAD"], ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]];
+        string[][] warned = [["rev-parse", "HEAD"], ["rev-parse", "--verify", "HEAD^{commit}"], ["--no-optional-locks", "rev-parse", "HEAD"]];
+        // Another rule's ref named HEAD, loose or packed: git warns of ambiguity unless --quiet.
+        foreach (var other in new[] { "refs/HEAD", "refs/tags/HEAD", "refs/heads/HEAD", "refs/remotes/HEAD", "refs/remotes/HEAD/HEAD" })
+        {
+            await fixture.RequiredAsync(repo, "update-ref", other, head);
+            foreach (var args in warned) await CompareAsync(repo, Expect.Fallback, args);
+            foreach (var args in quiet) await CompareAsync(repo, Expect.Answered, args);
+            await fixture.RequiredAsync(repo, "update-ref", "-d", other);
+        }
+        await fixture.RequiredAsync(repo, "update-ref", "refs/tags/HEAD", head);
+        await fixture.RequiredAsync(repo, "pack-refs", "--all");
+        foreach (var args in warned) await CompareAsync(repo, Expect.Fallback, args);
+        await fixture.RequiredAsync(repo, "update-ref", "-d", "refs/tags/HEAD");
+        foreach (var args in warned) await CompareAsync(repo, Expect.Answered, args);
+
+        // Detached: symbolic-ref's silent 1, HEAD still a commit.
+        await fixture.RequiredAsync(repo, "checkout", "--quiet", "--detach");
+        await CompareAsync(repo, Expect.Answered, "symbolic-ref", "--quiet", "HEAD");
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD");
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--show-prefix");
+
+        // Unborn: HEAD names a branch no ref holds, a silent 1; a loose file of that name, even broken, is git's.
+        var unborn = Path.Combine(fixture.Root, "unborn");
+        Directory.CreateDirectory(unborn);
+        await fixture.RequiredAsync(unborn, "init", "--quiet", "-b", "trunk");
+        await CompareAsync(unborn, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD");
+        await CompareAsync(unborn, Expect.Answered, "symbolic-ref", "--quiet", "HEAD");
+        await CompareAsync(unborn, Expect.Answered, "rev-parse", "--show-prefix");
+        await File.WriteAllTextAsync(Path.Combine(unborn, ".git", "refs", "heads", "trunk"), "not a ref\n");
+        await CompareAsync(unborn, Expect.Fallback, "rev-parse", "--verify", "--quiet", "HEAD");
     }
 
     [Test]
@@ -376,9 +421,13 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.RequiredAsync(repo, "worktree", "lock", fixture.Source);
         await CompareAsync(repo, Expect.Answered, "worktree", "list", "--porcelain");
 
+        // Inside the git directory, in a bare repository, or in a work tree moved by config, the prefix is git's.
+        await CompareAsync(Path.Combine(repo, ".git"), Expect.Fallback, "rev-parse", "--show-prefix");
+        await CompareAsync(fixture.Remote, Expect.Fallback, "rev-parse", "--show-prefix");
         // A work tree moved by config is git's.
         await fixture.RequiredAsync(repo, "config", "core.worktree", repo);
         await CompareAsync(repo, Expect.Fallback, "rev-parse", "--is-inside-work-tree");
+        await CompareAsync(repo, Expect.Fallback, "rev-parse", "--show-prefix");
         await CompareAsync(repo, Expect.Fallback, "worktree", "list", "--porcelain");
     }
 

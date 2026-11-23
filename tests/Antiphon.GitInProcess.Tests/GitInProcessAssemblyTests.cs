@@ -60,7 +60,7 @@ public sealed class GitInProcessAssemblyTests
             File.ReadAllText(file).ShouldContain(ns);
         }
 
-        CountTestAttributes(mirror).ShouldBe(31 + 3 + 1); // + LibGit2VsGitDifferentialTests.For_each_ref_formats_match_git
+        CountTestAttributes(mirror).ShouldBe(31 + 3 + 1 + 1); // + LibGit2VsGitDifferentialTests.For_each_ref_formats_match_git, Head_reads_match_git_when_unborn_detached_or_read_otherwise
     }
 
     [Test]

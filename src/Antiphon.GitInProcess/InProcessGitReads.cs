@@ -124,7 +124,7 @@ internal static partial class InProcessGitReads
     /// For runners that hand git's stderr to their callers as well (<c>WorktreeManager</c>,
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
-    /// <c>symbolic-ref -q</c>, <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
+    /// <c>symbolic-ref -q</c> (or <c>--quiet</c>), <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
     /// </summary>
     internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
     {
@@ -141,7 +141,7 @@ internal static partial class InProcessGitReads
         var answer = TryAnswer(repository, arguments);
         if (answer is null) return null;
         var silent = answer.ExitCode == 0
-            || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q", _]
+            || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q" or "--quiet", _]
                 or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _];
         return silent ? (answer.ExitCode, answer.Output) : null;
     }
@@ -224,9 +224,9 @@ internal static partial class InProcessGitReads
         {
             // rev-parse --verify [--quiet] <rev>^{commit}  |  rev-parse HEAD  |  rev-parse --is-inside-work-tree
             case "rev-parse" when a.Count == 3 && a[1] == "--verify" && a[2].EndsWith("^{commit}", StringComparison.Ordinal):
-                return Commit(repo, a[2][..^"^{commit}".Length], peel: true);
+                return Commit(repo, a[2][..^"^{commit}".Length], peel: true, quiet: false);
             case "rev-parse" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && a[3].EndsWith("^{commit}", StringComparison.Ordinal):
-                return Commit(repo, a[3][..^"^{commit}".Length], peel: true);
+                return Commit(repo, a[3][..^"^{commit}".Length], peel: true, quiet: true);
             case "rev-parse" when a is [_, "--is-inside-work-tree"]:
                 return InsideWorkTree(repo, repository);
             // rev-parse --show-toplevel | rev-parse --path-format=absolute --git-dir, run at a checkout root: the same
@@ -237,7 +237,16 @@ internal static partial class InProcessGitReads
             case "rev-parse" when a is [_, "--path-format=absolute", "--git-dir"]:
                 return InsideWorkTree(repo, repository) is null ? null : PathAnswer(repo.Info.Path);
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
-                return Commit(repo, "HEAD", peel: false);
+                return Commit(repo, "HEAD", peel: false, quiet: false);
+            // rev-parse --verify --quiet HEAD: HEAD's commit as rev-parse HEAD prints it (--quiet keeps an ambiguity
+            // warning off stderr); an unborn HEAD, naming a branch no ref holds, packed or loose, is the silent 1.
+            case "rev-parse" when a is [_, "--verify", "--quiet", "HEAD"]:
+                if (Commit(repo, "HEAD", peel: false, quiet: true) is { } head) return head;
+                return repo.Refs["HEAD"] is SymbolicReference { TargetIdentifier: var branch } && IsPlainRef(branch)
+                    && repo.Refs[branch] is null && !HasLooseRef(repo, branch) ? Exit(1) : null;
+            // rev-parse --show-prefix at a checkout root: the empty prefix, after --is-inside-work-tree's checks.
+            case "rev-parse" when a is [_, "--show-prefix"]:
+                return InsideWorkTree(repo, repository) is null ? null : Ok("\n");
 
             // rev-parse [--verify [--quiet]] <full ref>: the ref's own object id, unpeeled (a tag ref names its tag
             // object), when the name is that ref's only reading (OnlyReading). A direct ref only; a missing one is
@@ -293,9 +302,9 @@ internal static partial class InProcessGitReads
             case "show-ref" when a.Count == 3 && a[1] == "--exists" && IsPlainRef(a[2]):
                 return repo.Refs[a[2]] is null ? Exit(2) : Ok("");
 
-            // symbolic-ref -q <ref>: 0 + target when it points at a direct or missing ref, 1 when the
+            // symbolic-ref -q|--quiet <ref>: 0 + target when it points at a direct or missing ref, 1 when the
             // ref itself is direct. A chain (target is itself symbolic) is git's: git follows it.
-            case "symbolic-ref" when a.Count == 3 && a[1] == "-q" && (a[2] == "HEAD" || IsPlainRef(a[2])):
+            case "symbolic-ref" when a.Count == 3 && a[1] is ("-q" or "--quiet") && (a[2] == "HEAD" || IsPlainRef(a[2])):
             {
                 var found = repo.Refs[a[2]];
                 if (found is DirectReference) return Exit(1);
@@ -447,10 +456,12 @@ internal static partial class InProcessGitReads
     /// <see cref="ShortName"/> resolves exactly as git would. Without <paramref name="peel"/> the object must itself
     /// be a commit (a detached HEAD at a tag is git's).
     /// </summary>
-    private static LandingGitResult? Commit(Repository repo, string revision, bool peel)
+    private static LandingGitResult? Commit(Repository repo, string revision, bool peel, bool quiet)
     {
         if (!(revision == "HEAD" || IsPlainRef(revision) || GitText.IsOid(revision)))
-            return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel) : null;
+            return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel, quiet) : null;
+        // HEAD read another way too: git warns "refname 'HEAD' is ambiguous." on stderr unless --quiet.
+        if (revision == "HEAD" && !quiet && HeadReadOtherwise(repo)) return null;
         // A full ref only as its name's only reading: another one makes git warn of ambiguity on stderr.
         if (revision != "HEAD" && IsPlainRef(revision) && (repo.Refs[revision] is null || !OnlyReading(repo, revision)))
             return null;
@@ -569,6 +580,14 @@ internal static partial class InProcessGitReads
         if (common is null || MovesOrBaresMain(common) || File.Exists(Path.Combine(repo.Info.Path, "config.worktree"))) return null;
         return Ok("true\n");
     }
+
+    /// <summary>
+    /// A ref another of git's <c>ref_rev_parse_rules</c> reads as <c>HEAD</c> (refs/HEAD, refs/tags/HEAD,
+    /// refs/heads/HEAD, refs/remotes/HEAD, refs/remotes/HEAD/HEAD), packed or loose, even broken.
+    /// </summary>
+    private static bool HeadReadOtherwise(Repository repo) =>
+        new[] { "refs/HEAD", "refs/tags/HEAD", "refs/heads/HEAD", "refs/remotes/HEAD", "refs/remotes/HEAD/HEAD" }
+            .Any(name => repo.Refs[name] is not null || HasLooseRef(repo, name));
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
     private static string? Direct(Repository repo, string name) =>
