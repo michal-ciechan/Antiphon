@@ -28,7 +28,6 @@
     { "path": "tests/test-selection-policy.json", "consumers": ["*"], "reason": "forced-full-policy" },
     { "path": "tests/rc-project-categories.json", "consumers": ["*"], "reason": "forced-full-policy" },
     { "path": "scripts/lib/**", "consumers": ["*"], "reason": "forced-full-selector" },
-    { "path": "scripts/qualification/**", "consumers": ["*"], "reason": "forced-full-selector" },
     { "path": "scripts/nightly-*.ps1", "consumers": ["*"], "reason": "forced-full-selector" },
     { "path": "scripts/release-*.ps1", "consumers": ["*"], "reason": "forced-full-selector" },
     { "path": "scripts/rc-*.ps1", "consumers": ["*"], "reason": "forced-full-selector" },
