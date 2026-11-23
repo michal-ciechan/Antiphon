@@ -140,9 +140,23 @@ internal static class WorktreeNoFollowDelete
     }
 
     /// <summary>
-    /// Runs one disposition attempt (0 on success, else its Win32 code) and returns the final code.
+    /// Debug 847c35c6: the held handle shares no delete, yet a scanner or indexer that had the freshly
+    /// written entry open still makes the disposition fail with a sharing violation (seen on Windows Full
+    /// run 557cdb63). As the no-follow open does, a sharing or lock violation or access denied (the codes
+    /// <see cref="WorktreeRenames.IsSharingConflict"/> treats as transient) is retried at most
+    /// <see cref="WorktreeRenames.SharingAttempts"/> times, <see cref="WorktreeRenames.SharingPause"/> apart,
+    /// through the same handle, so nothing is re-opened or followed. Any other code, or the conflict at the
+    /// last attempt, is returned as the refusal. Returns 0 on success, else the final Win32 code.
     /// </summary>
-    internal static int SettleDisposition(Func<int> attempt, Action<TimeSpan> pause) => attempt();
+    internal static int SettleDisposition(Func<int> attempt, Action<TimeSpan> pause)
+    {
+        for (var n = 1; ; n++)
+        {
+            var error = attempt();
+            if (error is not (5 or 32 or 33) || n == WorktreeRenames.SharingAttempts) return error;
+            pause(WorktreeRenames.SharingPause);
+        }
+    }
 
     private static int TrySetDisposition(SafeFileHandle handle)
     {
