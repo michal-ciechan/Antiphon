@@ -115,6 +115,12 @@ public sealed class InProcessGitCommandsTests
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths((await f.RequiredAsync(f.Repository, "rev-parse", seed + "^{tree}")).Trim()));
         var nested = await CommitAsync(f, modified, ("keep.txt", null, false), ("keep.txt/inner.txt", "inner\n", false));
         await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(nested));
+        // A mode change alone is a changed path; a non-ASCII name (git orders by UTF-8 bytes) and a short id are git's.
+        var chmod = await CommitAsync(f, modified, ("run.sh", "#!/bin/sh\n", false));
+        await AssertSameAsync(f, inProcess, git, f.Repository, CommitPaths(chmod));
+        var unicode = await CommitAsync(f, modified, ("caf\u00e9.txt", "e\n", false), ("\uFF01.txt", "x\n", false));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(unicode));
+        await AssertSpawnsAsync(inProcess, f.Repository, CommitPaths(modified[..12]));
     }
 
     private static string[] CommitPaths(string commit) =>
