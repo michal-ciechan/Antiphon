@@ -108,7 +108,7 @@ public sealed class ReleaseCandidateGitTests
     /// <summary>
     /// New-C1339Fixture for the candidate: a real checkout (commits A = Head and B), a real bare remote ("origin" of every
     /// candidate call), the owned marker and the candidate journal the publish fixture left (pinned at Head). Its NightlyGit
-    /// is the c1339-release-git.ps1 transport: origin is the bare remote, every call is traced, and the read and push faults
+    /// is a C# copy of the c1339-release-git.ps1 transport (deleted in unit 15): origin is the bare remote, every call is traced, and the read and push faults
     /// apply. Children inherit no credentials, hooks, signing or network protocols.
     /// </summary>
     private sealed class CandidateRemoteFixture : IDisposable

@@ -72,10 +72,9 @@ contract is unchanged. The rc lane tests one pinned SHA of the long-lived
 | Green written to | `C:\Antiphon\nightly\last-complete-green.json` | `C:\Antiphon\releases\candidates\<candidate-id>\complete-green.json` |
 | Earns | master daily readiness (Interim admission) | permission to publish one release |
 
-`NightlyRunParts.CompleteGreenPredicate` in `scripts/lib/Antiphon.Nightly/NightlyRunParts.cs` takes the credit
-kind it is being asked about and defaults to `master-scheduled`, so every pre-existing caller
-keeps its original meaning. The decision itself lives in `ReleaseGateCredit.Verdict`
-(`scripts/lib/Antiphon.Nightly/ReleaseGateCredit.cs`). Both kinds require:
+The decision lives in `ReleaseGateCredit.Verdict` (`scripts/lib/Antiphon.Nightly/ReleaseGateCredit.cs`): the run core
+asks it which credit kind a run earns and writes green to that kind's store only, so a master green never earns
+release credit and an RC green never backs into master readiness. Both kinds require:
 
 - `coverageComplete`, `testsPassed` and `reportDelivered` as **real booleans** - a JSON
   `"true"` string earns nothing;

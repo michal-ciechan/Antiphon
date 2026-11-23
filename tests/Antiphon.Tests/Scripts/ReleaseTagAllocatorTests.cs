@@ -14,8 +14,8 @@ namespace Antiphon.Tests.Scripts;
 // (scripts/lib/Antiphon.Nightly), so these cases moved from scripts/test-release-gate.ps1 in process with the same row names
 // and counts. They drive the production publisher and promoter against a real local bare remote through
 // ReleaseGateGitFixture, the C# twin of New-C1339FixtureSeed and of the confined transport adapter
-// scripts/fixtures/c1339-release-git.ps1. C1339_ExactRemoteRefs keeps only the candidate coordinator's rows (G-7..G-9,
-// release-candidate.ps1) and the PowerShell adapter's own guards (G-64, G-65) in the driver, for another unit; its
+// scripts/fixtures/c1339-release-git.ps1 (both deleted with the driver in unit 15). C1339_ExactRemoteRefs holds the
+// adapter's own guards (G-64, G-65) on that C# twin; the candidate's reads (G-7..G-9) are ReleaseCandidateGitTests and the
 // publisher and promoter rows (G-10..G-17) are C1339_ExactRemoteRefs_publisher_and_promoter. The remote-ref parser
 // (G-1..G-6) and the proposal over the journal and the inventory (G-22..G-24, G-27, G-28, G-67, G-68, G-70) run in process
 // since unit 12 (ReleaseGateLibraryTests).
@@ -481,12 +481,43 @@ public sealed class ReleaseTagAllocatorTests
     // ---- exact remote reads -----------------------------------------------------------------------------------------
 
     // G-7..G-9 (the candidate's reads) run in process since unit 13: ReleaseCandidateGitTests.C1339_CandidateRemoteReads;
-    // G-10..G-17 since unit 14 below. Only the PowerShell fixture adapter's guards stay in the driver.
+    // G-10..G-17 since unit 14 below. G-64 and G-65 are the confined transport adapter's own guards: the PowerShell adapter
+    // (scripts/fixtures/c1339-release-git.ps1) was deleted with the driver in unit 15, so they check its C# twin
+    // (ReleaseGateGitFixture.AssertContained and the adapter behind Transport). No control may run git, even under a
+    // deliberate mutation: the adapter traces an admitted call before it launches one, so an empty trace is no launch.
     [Test]
-    public Task C1339_ExactRemoteRefs() =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_ExactRemoteRefs", 2,
-            "C1339 G-64 fixture-path-contained",
-            "C1339 G-65 fixture-transport-allowlist");
+    public void C1339_ExactRemoteRefs()
+    {
+        var rows = new NightlyCaseRows();
+        using var fx = ReleaseGateGitFixture.Create();
+        using var outsideRoot = NightlyFixture.Create("c1339-outside");
+        var outside = outsideRoot.Root;
+        var link = Path.Combine(fx.Root, "escape");
+        EvidenceLinks.Owned(link, outside);
+        var checks = new List<ReleaseGateCheck>();
+        foreach (var bad in new[] { outside, link })
+        {
+            var refused = Refusal(() => ReleaseGateGitFixture.AssertContained(fx.Root, bad));
+            checks.Add(new ReleaseGateCheck((refused == "fixture-path-outside-root" || refused == "fixture-linked-path") && fx.GitTrace.Count == 0, bad + ": " + refused));
+        }
+        ReleaseGateFixture.Matrix(rows, "C1339 G-64 fixture-path-contained", checks);
+        checks = [];
+        foreach (var arguments in new string[][] { ["ls-remote", "--tags", "https://example.invalid/repo"], ["unknown"], ["push", "--mirror", "origin"] })
+        {
+            var refused = Refusal(() => fx.Transport(fx.Checkout, arguments));
+            checks.Add(new ReleaseGateCheck(refused is "fixture-transport-refused" or "fixture-command-refused" or "fixture-push-form" && fx.GitTrace.Count == 0,
+                string.Join(" ", arguments) + ": " + refused));
+        }
+        ReleaseGateFixture.Matrix(rows, "C1339 G-65 fixture-transport-allowlist", checks);
+        rows.ShouldAllPass(2, "C1339 G-64 fixture-path-contained", "C1339 G-65 fixture-transport-allowlist");
+
+        static string Refusal(Action action)
+        {
+            try { action(); }
+            catch (InvalidOperationException e) { return e.Message; }
+            return "accepted";
+        }
+    }
 
     [Test]
     public void C1339_ExactRemoteRefs_publisher_and_promoter()

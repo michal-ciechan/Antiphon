@@ -199,8 +199,7 @@ public sealed class ReleaseGateActivationTests
     /// result can never be read back as a master nightly result.
     /// </summary>
     [Test]
-    public async Task C599_CompletionHandoffs() => await Antiphon.Tests.Scripts.ScriptHarness.RunHarnessCaseAsync(
-        "test-release-gate.ps1", "C599", "C599_ReportLane", 5,
+    public void C599_CompletionHandoffs() => Antiphon.Tests.Scripts.ReleaseGateRunTests.ReportLaneRows().ShouldAllPass(5,
         "C599 ReportLane the two lanes write different green files",
         "C599 ReportLane master green path is unchanged",
         "C599 ReportLane rc green lands under its candidate root",
@@ -211,8 +210,7 @@ public sealed class ReleaseGateActivationTests
     /// through the production credit predicate so an RC green cannot occupy a master due day.
     /// </summary>
     [Test]
-    public async Task C599_MasterDueBoundary() => await Antiphon.Tests.Scripts.ScriptHarness.RunHarnessCaseAsync(
-        "test-release-gate.ps1", "C599", "C599_CreditVerdicts", 24,
+    public void C599_MasterDueBoundary() => Antiphon.Tests.Scripts.ReleaseGateRunTests.CreditVerdictRows().ShouldAllPass(24,
         "C599 CreditVerdicts control master green earns master credit",
         "C599 CreditVerdicts rc green never earns master credit",
         "C599 CreditVerdicts master green never earns release credit");

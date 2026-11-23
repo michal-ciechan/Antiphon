@@ -1,9 +1,11 @@
 // The pure parts of the nightly run core (moved from nightly-run-impl.ps1): the nightly-tests hop's options, the
-// stale line-ending paths git reports, the run directory name, the state paths and the complete-green predicate.
+// stale line-ending paths git reports and the run directory name. Unit 15 of
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md removed the PowerShell-shaped state paths and complete-green
+// predicate (Get-NightlyStatePaths, Test-NightlyCompleteGreenPredicate): their last caller was scripts/test-release-gate.ps1;
+// the run core decides credit with ReleaseGateCredit.Verdict.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Management.Automation;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
@@ -44,17 +46,9 @@ namespace Antiphon.Nightly
 
     public static class NightlyRunParts
     {
-        private static readonly string[] CreditKinds = { "master-scheduled", "rc-release" };
-
         // PowerShell -match: case-insensitive.
         private static readonly Regex EolLine = new Regex(@"^i/(\S*)\s+w/(\S*)\s+attr/([^\t]*)\t(.+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-        private static PSObject Note(params object[] pairs)
-        {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
-        }
 
         /// <summary>
         /// W2-nightly S17: the options of the nightly-tests hop (New-NightlyTestsHopArgumentList's values before, then the
@@ -141,27 +135,6 @@ namespace Antiphon.Nightly
         {
             var id = runId ?? "";
             return utc.ToUniversalTime().ToString("yyyy-MM-dd-HHmm", CultureInfo.InvariantCulture) + "-" + (id.Length > 8 ? id.Substring(0, 8) : id);
-        }
-
-        /// <summary>Get-NightlyStatePaths: { StateRoot, LastAttempt, LastGreen, Lock, Logs } under the state root.</summary>
-        public static PSObject StatePaths(string stateRoot) =>
-            Note("StateRoot", stateRoot ?? "", "LastAttempt", ReleaseGateCredit.Join(stateRoot, "last-run.json"),
-                "LastGreen", ReleaseGateCredit.Join(stateRoot, "last-complete-green.json"), "Lock", ReleaseGateCredit.Join(stateRoot, "run.lock"),
-                "Logs", ReleaseGateCredit.Join(stateRoot, "logs"));
-
-        /// <summary>
-        /// Test-NightlyCompleteGreenPredicate (CARD-0599 D-2): whether the state earns the named credit kind (master by
-        /// default, so an RC run never backs into master readiness). An unknown kind earns nothing.
-        /// </summary>
-        public static bool CompleteGreenPredicate(object state, string creditKind)
-        {
-            if (!LanguagePrimitives.IsTrue(state)) return false;
-            var want = (creditKind ?? "").Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(want)) want = "master-scheduled";
-            if (Array.IndexOf(CreditKinds, want) < 0) return false;
-            var verdict = ReleaseGateCredit.CreditVerdict(state);
-            if (!LanguagePrimitives.IsTrue(PsValue.Prop(verdict, "Ok"))) return false;
-            return string.Equals(PsValue.Str(PsValue.Prop(verdict, "CreditKind")), want, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -150,7 +150,7 @@ public sealed class NightlyPolicyTests
 
     // ---- fixtures ---------------------------------------------------------------------------------------
 
-    private static JsonObject Policy(int schemaVersion, bool profiles = true, bool omitE2EFromRc = false)
+    internal static JsonObject Policy(int schemaVersion, bool profiles = true, bool omitE2EFromRc = false)
     {
         var suites = new JsonObject
         {
@@ -185,8 +185,9 @@ public sealed class NightlyPolicyTests
         return policy;
     }
 
-    // The policy written as root/name/policy.json with its canonical hash stated (or a stale one).
-    private static string Write(string root, string name, JsonObject policy, bool staleHash = false)
+    // The policy written as root/name/policy.json with its canonical hash stated (or a stale one). ReleaseGatePolicyTests and
+    // ReleaseGateE2EEvidenceTests write New-C599Policy's policy through it.
+    internal static string Write(string root, string name, JsonObject policy, bool staleHash = false)
     {
         policy["policyHash"] = staleHash ? new string('0', 64) : NightlyPolicy.HashText(policy.ToJsonString());
         var dir = Path.Combine(root, name);

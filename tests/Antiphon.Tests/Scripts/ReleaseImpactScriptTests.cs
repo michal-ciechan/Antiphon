@@ -20,8 +20,8 @@ public sealed class ReleaseImpactScriptTests
 {
     private const string Project = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
     private const string Tests = "tests/Antiphon.Tests/Scripts/";
-    private const string Publication = Project + "::Antiphon.Tests.Scripts.ReleaseGatePolicyTests";
-    private const string Contract = Project + "::Antiphon.Tests.Scripts.ReleaseGateRunTests";
+    private const string CoreDriver = Project + "::Antiphon.Tests.Scripts.LiveLaneFingerprintTests";
+    private const string HarnessDriver = Project + "::Antiphon.Tests.Scripts.LongPathsCheckoutScriptTests";
     private const string Launcher = Project + "::Antiphon.Tests.Scripts.Nightly.AntiphonCliLauncherTests";
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
@@ -54,13 +54,13 @@ public sealed class ReleaseImpactScriptTests
         var result = Case(await Shared.Value, "real");
         // nightly-core.ps1 compiles every scripts/lib/Antiphon.Scripts source into the CLI, so a driver that loads it reaches them.
         // 2026-11-22 plan, unit 8: the release-selection and rc-project-selection drivers this case used are deleted (their
-        // classes run in process); test-release-gate.ps1 still loads nightly-core.ps1. Unit 14: the publication authority and
-        // contract classes run in process too, so the examples are the policy and run classes, which still run the driver.
-        Classes(result, "scripts/lib/Antiphon.Scripts/Program.cs").ShouldContain(Publication);
-        var chain = Chain(result, "scripts/lib/Antiphon.Scripts/Program.cs", Publication);
-        chain[..2].ShouldBe([Tests + "ReleaseGatePolicyTests.cs", "scripts/test-release-gate.ps1"]);
+        // classes run in process); unit 15 deleted test-release-gate.ps1, whose policy and run classes were the examples
+        // after unit 14. The example is the live-lane fingerprint class, whose driver still loads nightly-core.ps1.
+        Classes(result, "scripts/lib/Antiphon.Scripts/Program.cs").ShouldContain(CoreDriver);
+        var chain = Chain(result, "scripts/lib/Antiphon.Scripts/Program.cs", CoreDriver);
+        chain[..2].ShouldBe([Tests + "LiveLaneFingerprintTests.cs", "scripts/test-live-lane-fingerprint.ps1"]);
         chain[^2..].ShouldBe(["scripts/lib/nightly-core.ps1", "scripts/lib/Antiphon.Scripts/Program.cs"]);
-        Kinds(result, "scripts/test-release-gate.ps1", Publication).ShouldContain("script:basename");
+        Kinds(result, "scripts/test-live-lane-fingerprint.ps1", CoreDriver).ShouldContain("script:basename");
         Classes(result, "scripts/lib/Antiphon.Scripts/Program.cs").ShouldNotContain(Harmless);
         AssertIncomplete(result);
     }
@@ -69,9 +69,12 @@ public sealed class ReleaseImpactScriptTests
     public async Task DotSourceClosureReachesAuthority()
     {
         var result = Case(await Shared.Value, "real");
-        foreach (var (identity, file) in new[] { (Publication, "ReleaseGatePolicyTests.cs"), (Contract, "ReleaseGateRunTests.cs") })
-            Chain(result, "scripts/lib/c487-harness.ps1", identity).ShouldBe(
-                [Tests + file, "scripts/test-release-gate.ps1", "scripts/lib/c487-harness.ps1"], identity);
+        foreach (var (identity, file, driver) in new[]
+                 {
+                     (CoreDriver, "LiveLaneFingerprintTests.cs", "scripts/test-live-lane-fingerprint.ps1"),
+                     (HarnessDriver, "LongPathsCheckoutScriptTests.cs", "scripts/test-longpaths-checkout.ps1"),
+                 })
+            Chain(result, "scripts/lib/c487-harness.ps1", identity).ShouldBe([Tests + file, driver, "scripts/lib/c487-harness.ps1"], identity);
         // Fixture: constant foreach imports, multi-hop dot-source, Import-Module and two cycles.
         Paths(result, Looped).ShouldBe(new[]
         {
@@ -254,7 +257,7 @@ public sealed class ReleaseImpactScriptTests
         foreach (var path in new[]
         {
             Project, Tests + "ScriptHarness.cs",
-            Tests + "ReleaseGatePolicyTests.cs", Tests + "ReleaseGateRunTests.cs",
+            Tests + "LiveLaneFingerprintTests.cs", Tests + "LongPathsCheckoutScriptTests.cs",
             Tests + "Nightly/AntiphonCliLauncherTests.cs",
         })
             files[path] = File.ReadAllText(Path.Combine(root, path));
@@ -264,7 +267,7 @@ public sealed class ReleaseImpactScriptTests
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
             Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
         };
-        foreach (var name in new[] { "ReleaseGatePolicyTests", "ReleaseGateRunTests" })
+        foreach (var name in new[] { "LiveLaneFingerprintTests", "LongPathsCheckoutScriptTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
         consumers.Add(Consumer(Launcher, Tests + "Nightly/AntiphonCliLauncherTests.cs"));
         return new { name = "real", files, consumers, maxVisits = 0 };

@@ -6,8 +6,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0599 V-4 (harness half). Each method runs the matching <c>Test-C599_*</c> case of
-/// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION prerequisite probe, the production
+/// CARD-0599 V-4 (harness half), in process: the <c>Test-C599_*</c> cases of the deleted <c>scripts/test-release-gate.ps1</c>
+/// (unit 15 of the 2026-11-22 plan), with their row names, against the PRODUCTION prerequisite probe, the production
 /// native-classification rule, the production child-environment builder and the production MTP
 /// argument builder; since W2-nightly S11 the probe, the classification and the argument builder are
 /// NightlyTestsPlan, and their rows run in-process (C599_PrerequisiteProbe, C599_ExecutionArtifactsArgv).
@@ -25,10 +25,21 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseGateE2EEvidenceTests
 {
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public Task C599_Prerequisites() => RunCaseAsync("C599_Prerequisites", 2,
-        "C599 Prerequisites the rc profile requires e2e before any prerequisite check",
-        "C599 Prerequisites a failed prerequisite is a named red reason");
+    public void C599_Prerequisites()
+    {
+        // The production selection path must treat a failed prerequisite as red, never as a skip: the rc profile of a real
+        // policy (New-C599Policy) requires e2e, and the suite preparation that records the failure is NightlySuiteRunner
+        // (W2-nightly S13; RcFailedFirstPlannerTests runs it to the e2e-prerequisite-failed row).
+        using var fixture = NightlyFixture.Create("c599-prerequisites");
+        var rows = new NightlyCaseRows();
+        var policy = NightlyPolicy.Read(NightlyPlanCases.Repo, NightlyPolicyTests.Write(fixture.Root, "policy", NightlyPolicyTests.Policy(2))).Object;
+        rows.Check(NightlyPolicy.ProfileRequiredSuites(policy, "rc").Contains("e2e"), "C599 Prerequisites the rc profile requires e2e before any prerequisite check");
+        var runner = File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts", "lib", "Antiphon.Nightly", "NightlySuiteRunner.cs"));
+        rows.Check(runner.Contains("e2e-prerequisite-failed", StringComparison.Ordinal), "C599 Prerequisites a failed prerequisite is a named red reason");
+        rows.ShouldAllPass(2,
+            "C599 Prerequisites the rc profile requires e2e before any prerequisite check",
+            "C599 Prerequisites a failed prerequisite is a named red reason");
+    }
 
     /// <summary>The prerequisite rows of C599_Prerequisites: the probe, the native classification and the install launch.</summary>
     [Test]
@@ -66,13 +77,29 @@ public sealed class ReleaseGateE2EEvidenceTests
     }
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public Task C599_EnvironmentIsolation() => RunCaseAsync("C599_EnvironmentIsolation", 6,
-        "C599 EnvironmentIsolation ANTIPHON_HEADED_TESTS is cleared for an e2e child",
-        "C599 EnvironmentIsolation ANTIPHON_DISTILLER_APPLY_CANARY is cleared for an e2e child",
-        "C599 EnvironmentIsolation ANTIPHON_TG_TEST_TOKEN is cleared for an e2e child",
-        "C599 EnvironmentIsolation an unrelated variable survives",
-        "C599 EnvironmentIsolation the broker opt-in IS set for messaging");
+    public void C599_EnvironmentIsolation()
+    {
+        // The shipped policy's child environment: headed, distiller and live-Telegram variables are cleared for an e2e child,
+        // the rest survives, and only messaging gets the broker opt-in.
+        var rows = new NightlyCaseRows();
+        var policy = NightlyPolicy.Read(NightlyPlanCases.Repo, "").Object;
+        var env = NightlyPolicy.SafeChildEnvironment(policy, "e2e", new System.Collections.Hashtable(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ANTIPHON_HEADED_TESTS"] = "1", ["ANTIPHON_DISTILLER_APPLY_CANARY"] = "1", ["ANTIPHON_TG_TEST_TOKEN"] = "live-token", ["KEEP_ME"] = "yes",
+        });
+        foreach (var name in new[] { "ANTIPHON_HEADED_TESTS", "ANTIPHON_DISTILLER_APPLY_CANARY", "ANTIPHON_TG_TEST_TOKEN" })
+            rows.Check(PsValue.Str(env[name]) == "", "C599 EnvironmentIsolation " + name + " is cleared for an e2e child", PsValue.Str(env[name]));
+        rows.Check(PsValue.Str(env["KEEP_ME"]) == "yes", "C599 EnvironmentIsolation an unrelated variable survives");
+        rows.Check(!env.ContainsKey("ANTIPHON_BROKER_TESTS") || PsValue.Str(env["ANTIPHON_BROKER_TESTS"]) != "1", "C599 EnvironmentIsolation the broker opt-in is not set for e2e");
+        var messaging = NightlyPolicy.SafeChildEnvironment(policy, "messaging", new System.Collections.Hashtable(StringComparer.OrdinalIgnoreCase));
+        rows.Check(PsValue.Str(messaging["ANTIPHON_BROKER_TESTS"]) == "1", "C599 EnvironmentIsolation the broker opt-in IS set for messaging");
+        rows.ShouldAllPass(6,
+            "C599 EnvironmentIsolation ANTIPHON_HEADED_TESTS is cleared for an e2e child",
+            "C599 EnvironmentIsolation ANTIPHON_DISTILLER_APPLY_CANARY is cleared for an e2e child",
+            "C599 EnvironmentIsolation ANTIPHON_TG_TEST_TOKEN is cleared for an e2e child",
+            "C599 EnvironmentIsolation an unrelated variable survives",
+            "C599 EnvironmentIsolation the broker opt-in IS set for messaging");
+    }
 
     /// <summary>
     /// The executor rows of C599_ExecutionArtifacts, in-process since W2-nightly S12 (they read nightly-tests-impl.ps1's
@@ -132,7 +159,4 @@ public sealed class ReleaseGateE2EEvidenceTests
         rows.Check(message.Contains("diagnostic directory", StringComparison.OrdinalIgnoreCase), "C599 ExecutionArtifacts a missing diagnostic directory is refused", message);
         rows.ShouldAllPass(7);
     }
-
-    private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C599", caseName, expectedRows, requiredRows);
 }

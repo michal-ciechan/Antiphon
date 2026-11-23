@@ -1,14 +1,15 @@
 // The release gate's credit decision (moved from release-gate.ps1). D-2: a run earns master-scheduled or rc-release
 // credit from its own identity and real green flags, never a guessed kind. D-3: an RC earns credit only against the
 // SHA its candidate was pinned to, and a candidate ref is a legacy release/rc-<stamp> or a long-lived rc/YYYY-MM-DD.
-// The run core (NightlyRun.cs) and the release cut (ReleaseCut.cs) call it in-process. CreditVerdict and Verdict share one decision:
-// the first reads a state as PowerShell does, the second reads plain values, so C# calls it in-process.
+// The run core (NightlyRun.cs) and the release cut (ReleaseCut.cs) call it in-process, over plain values (Candidate, Verdict,
+// CreditStore, CandidatePaths). Unit 15 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md removed the
+// PowerShell-shaped twins (CandidateRef, GreenFlags, CreditVerdict, StatePaths): their last callers, scripts/release-cut.ps1's
+// body and scripts/test-release-gate.ps1, are C# or deleted.
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Management.Automation;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
@@ -56,12 +57,6 @@ namespace Antiphon.Nightly
         // PowerShell -cmatch: case-sensitive.
         private static readonly Regex FullShaPattern = new Regex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant);
 
-        private static PSObject Note(params object[] pairs)
-        {
-            var o = new PSObject();
-            for (var i = 0; i < pairs.Length; i += 2) o.Properties.Add(new PSNoteProperty((string)pairs[i], pairs[i + 1]));
-            return o;
-        }
 
         // Join-Path: on Windows '/' becomes '\'; at most one separator is dropped from each side of the join.
         internal static string Join(string parent, string child)
@@ -84,18 +79,9 @@ namespace Antiphon.Nightly
         /// <summary>
         /// Test-ReleaseGateCandidateRef (D-3): a legacy release/rc-yyyyMMddTHHmmssZ stamp, or a long-lived rc/YYYY-MM-DD
         /// (refs/heads/ stripped). The long-lived candidate id is rc-YYYY-MM-DD- plus the first 12 hex digits of a full
-        /// sha. Refused: { Ok, Reason (empty-ref, ref-timestamp, ref-date, ref-shape), Stamp, CandidateId, Ref, Kind };
-        /// accepted: { Ok, Reason, Stamp, Kind, CandidateId, Ref, CutUtc }.
+        /// sha (empty without one). Refused: Ok false with Reason (empty-ref, ref-timestamp, ref-date, ref-shape), Stamp and
+        /// Kind where known, no CandidateId or Ref.
         /// </summary>
-        public static PSObject CandidateRef(string reference, string sha)
-        {
-            var parsed = ParseCandidateRef(reference, sha);
-            if (!parsed.Ok) return Note("Ok", false, "Reason", parsed.Reason, "Stamp", parsed.Stamp, "CandidateId", "", "Ref", "", "Kind", parsed.Kind);
-            return Note("Ok", true, "Reason", "", "Stamp", parsed.Stamp, "Kind", parsed.Kind, "CandidateId", parsed.CandidateId, "Ref", parsed.Ref,
-                "CutUtc", parsed.CutUtc);
-        }
-
-        /// <summary>W2-nightly S19: CandidateRef over plain values, for a caller without PowerShell (NightlyRun).</summary>
         public static ReleaseGateCandidate Candidate(string reference, string sha)
         {
             var parsed = ParseCandidateRef(reference, sha);
@@ -194,31 +180,10 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Test-ReleaseGateGreenFlags (D-2): the flags both credit kinds share - real true booleans, a numeric exit code
-        /// of 0, a run id and a policy hash. { Ok, Reasons }.
-        /// </summary>
-        public static PSObject GreenFlags(object state)
-        {
-            if (state == null) return Note("Ok", false, "Reasons", new object[] { "missing-state" });
-            var reasons = GreenReasons(new PsCreditState(state));
-            return Note("Ok", reasons.Count == 0, "Reasons", Objects(reasons));
-        }
-
-        /// <summary>
-        /// Get-ReleaseGateCreditVerdict (D-2, the single decision point): { CreditKind, Ok, Reasons[, RequestedKind] } - the
-        /// credit this state earns ("" when none) and the reasons it did not. An RC earns credit only against the full
-        /// SHA its candidate was pinned to (D-3); an explicit coverage scope must be Full.
-        /// </summary>
-        public static PSObject CreditVerdict(object state)
-        {
-            if (state == null) return Note("CreditKind", "", "Ok", false, "Reasons", new object[] { "missing-state" });
-            var verdict = Decide(new PsCreditState(state));
-            if (string.IsNullOrWhiteSpace(verdict.RequestedKind)) return Note("CreditKind", "", "Ok", false, "Reasons", Objects(verdict.Reasons));
-            return Note("CreditKind", verdict.CreditKind, "Ok", verdict.Ok, "Reasons", Objects(verdict.Reasons), "RequestedKind", verdict.RequestedKind);
-        }
-
-        /// <summary>
-        /// CreditVerdict over plain values: a key is present when the dictionary contains it, booleans and numbers are
+        /// Get-ReleaseGateCreditVerdict (D-2, the single decision point) over plain values: the credit this state earns (""
+        /// when none) and the reasons it did not. The flags both kinds share are real true booleans, a numeric exit code of
+        /// 0, a run id and a policy hash; an RC earns credit only against the full SHA its candidate was pinned to (D-3); an
+        /// explicit coverage scope must be Full. A key is present when the dictionary contains it, booleans and numbers are
         /// themselves, and text fields read as invariant-culture strings.
         /// </summary>
         public static ReleaseGateCreditVerdict Verdict(IReadOnlyDictionary<string, object> state)
@@ -263,12 +228,6 @@ namespace Antiphon.Nightly
             return reasons;
         }
 
-        private static object[] Objects(IList<string> values)
-        {
-            var items = new object[values.Count];
-            for (var i = 0; i < items.Length; i++) items[i] = values[i];
-            return items;
-        }
 
         /// <summary>How the decision reads one credit state.</summary>
         private interface ICreditState
@@ -286,22 +245,6 @@ namespace Antiphon.Nightly
             int Int(object value);
         }
 
-        /// <summary>PowerShell's reading: $state.name, its base object, and [string] / [int] casts.</summary>
-        private sealed class PsCreditState : ICreditState
-        {
-            private readonly object state;
-
-            public PsCreditState(object state) { this.state = state; }
-
-            public bool Has(string name) =>
-                PsOps.Base(state) is IDictionary d ? d.Contains(name) : PSObject.AsPSObject(state).Properties[name] != null;
-
-            public object Value(string name) => PsOps.Base(PsValue.Prop(state, name));
-
-            public string Text(string name) => PsValue.Str(PsValue.Prop(state, name));
-
-            public int Int(object value) => (int)LanguagePrimitives.ConvertTo(value, typeof(int), CultureInfo.InvariantCulture);
-        }
 
         /// <summary>Plain values: the dictionary's own key comparison, invariant-culture text, Convert.ToInt32.</summary>
         private sealed class PlainCreditState : ICreditState
@@ -331,28 +274,9 @@ namespace Antiphon.Nightly
             Join(Join(string.IsNullOrWhiteSpace(releaseRoot) ? DefaultReleaseRoot : releaseRoot, "candidates"), candidateId);
 
         /// <summary>
-        /// Get-ReleaseGateStatePaths (D-2): the credit store. Master green is the only thing that reaches
-        /// stateRoot\last-complete-green.json; RC green lands in the candidate root. { CreditKind, Root, GreenPath,
-        /// JournalPath, ManifestPath, PublishJournalPath }.
-        /// </summary>
-        public static PSObject StatePaths(string creditKind, string stateRoot, string releaseRoot, string candidateId)
-        {
-            // -eq / -ne: case-insensitive.
-            if (string.Equals(creditKind, "rc-release", StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.IsNullOrWhiteSpace(candidateId)) throw new NightlyRefusal("rc credit requires a candidate id");
-                var root = CandidateRoot(releaseRoot, candidateId);
-                return Note("CreditKind", creditKind, "Root", root, "GreenPath", Join(root, "complete-green.json"), "JournalPath", Join(root, "candidate.json"),
-                    "ManifestPath", Join(root, "release-manifest.json"), "PublishJournalPath", Join(root, "publish.json"));
-            }
-            if (!string.Equals(creditKind, "master-scheduled", StringComparison.OrdinalIgnoreCase)) throw new NightlyRefusal("unknown credit kind " + creditKind);
-            return Note("CreditKind", creditKind, "Root", stateRoot ?? "", "GreenPath", Join(stateRoot, "last-complete-green.json"), "JournalPath", "",
-                "ManifestPath", "", "PublishJournalPath", "");
-        }
-
-        /// <summary>
-        /// W2-nightly S19: StatePaths' Root and GreenPath over plain values, for a caller without PowerShell (NightlyRun).
-        /// The same refusals.
+        /// Get-ReleaseGateStatePaths (D-2) over plain values (W2-nightly S19): the credit store's Root and GreenPath. Master
+        /// green is the only thing that reaches stateRoot\last-complete-green.json; RC green lands in the candidate root. A
+        /// blank candidate id for rc credit and an unknown credit kind refuse (case-insensitive kinds).
         /// </summary>
         public static ReleaseGateCreditStore CreditStore(string creditKind, string stateRoot, string releaseRoot, string candidateId)
         {
@@ -368,7 +292,7 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Unit 14 of 2026-11-22-remaining-ps1-to-csharp.md: StatePaths' rc-release paths over plain values, for the
-        /// publish-release and promote-release commands (no PowerShell). Refuses a blank candidate id as StatePaths does.
+        /// publish-release and promote-release commands (no PowerShell). Refuses a blank candidate id as CreditStore does.
         /// </summary>
         public static ReleaseGateCandidatePaths CandidatePaths(string releaseRoot, string candidateId)
         {

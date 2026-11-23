@@ -47,7 +47,9 @@ public sealed record ReleaseGateGitRun(int ExitCode, string Output, string Error
 /// Unit 14 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the C# twin of scripts/test-release-gate.ps1's
 /// CARD-1339 real-git fixture (New-C1339FixtureSeed and its helpers) and of the confined transport adapter
 /// scripts/fixtures/c1339-release-git.ps1 (Assert-C1339ContainedPath, Invoke-C1339GitProcess, Invoke-C1339FixtureGit),
-/// for the publisher's and promoter's C1339 cases that moved in process (ReleaseTagAllocatorTests).
+/// for the publisher's and promoter's C1339 cases that moved in process (ReleaseTagAllocatorTests). Unit 15 deleted the
+/// driver and those PowerShell fixtures; the adapter's own guards run on this twin (ReleaseTagAllocatorTests.C1339_ExactRemoteRefs:
+/// G-64, G-65; C1733AllocatorFixtureTests: the containment boundaries and private recipients).
 ///
 /// It composes a ReleaseGateFixture (Fx: the real policy checkout, the frozen authority, the RC green set, the in-memory
 /// GitHub recipient and the loopback release card) built with the base policy for repository fixture/release, and adds a
