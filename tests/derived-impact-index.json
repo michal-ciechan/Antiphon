@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 582,
+      "classes": 584,
       "reason": "cap",
-      "owed": 557,
+      "owed": 559,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -6323,6 +6323,12 @@
       ]
     },
     {
+      "path": "server/Application/Interfaces/IClaudeCli.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Interfaces/ICodeHost.cs",
       "classes": [
         "GitHubCodeHostTests",
@@ -6343,6 +6349,8 @@
     {
       "path": "server/Application/Interfaces/IDecisionModel.cs",
       "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests",
         "CompletionModelTests",
         "DecisionChainTests",
         "ReviewExecutorApiTests"
@@ -6469,6 +6477,12 @@
         "RunnerSyncLeaseFairnessTests",
         "StartRefAvailabilityTests",
         "TerminalTaskResidueTests"
+      ]
+    },
+    {
+      "path": "server/Application/Interfaces/IReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
       ]
     },
     {
@@ -6617,6 +6631,12 @@
       ]
     },
     {
+      "path": "server/Application/Review/CliReviewAgentRunner.cs",
+      "classes": [
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/Decisions/CompletionChain.cs",
       "classes": [
         "CompletionModelTests"
@@ -6625,6 +6645,7 @@
     {
       "path": "server/Application/Review/Decisions/DecisionChain.cs",
       "classes": [
+        "ClaudeCliTransportTests",
         "DecisionChainTests"
       ]
     },
@@ -13093,6 +13114,13 @@
       ]
     },
     {
+      "path": "server/Application/Settings/ReviewAgentSettings.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
       "path": "server/Application/Settings/ReviewCodeHostSettings.cs",
       "classes": [
         "GitHubCodeHostTests",
@@ -13106,6 +13134,8 @@
     {
       "path": "server/Application/Settings/ReviewDecisionSettings.cs",
       "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests",
         "CompletionModelTests",
         "DecisionChainTests",
         "ReviewCheckParserTests",
@@ -16749,6 +16779,20 @@
       "path": "server/Infrastructure/Review/ChatCompletionModels.cs",
       "classes": [
         "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/ClaudeCliModels.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/ClaudeCliProcess.cs",
+      "classes": [
+        "ClaudeCliLiveTests",
+        "ClaudeCliTransportTests"
       ]
     },
     {
