@@ -20,6 +20,12 @@ public sealed class ImpactedClassesCensusTests
     private const string Table = "{\"schema\":1,\"kinds\":[{\"id\":\"anchor\",\"globs\":[\"server/anchor.cs\"],\"classes\":[\"AnchorTests\"]}]}";
 
     [Test]
+    public void The_runner_names_the_selector_sources()
+    {
+        ImpactedClassesRun.SelectorSources.ShouldBe(ImpactedClasses.SelectorFiles);
+    }
+
+    [Test]
     public void Changed_new_and_removed_declarations_are_read_fresh()
     {
         using var fixture = new Fixture();

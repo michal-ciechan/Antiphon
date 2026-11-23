@@ -11,6 +11,18 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 internal static class ImpactedClassesRun
 {
+    /// <summary>
+    /// ImpactedClasses.SelectorFiles, as literals the derived impact index reads: through this helper (one hop) a change
+    /// to the selector's sources selects every class that runs the selector here (ImpactedClassesCensusTests guards
+    /// the list).
+    /// </summary>
+    public static readonly string[] SelectorSources =
+    [
+        "scripts/lib/Antiphon.Nightly/ImpactedClasses.cs",
+        "scripts/lib/Antiphon.Nightly/ImpactedClassesInputs.cs",
+        "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
+    ];
+
     /// <summary>One run: the exit code, stdout, and stdout followed by stderr.</summary>
     public static (int Exit, string Stdout, string Text) Select(string sourceRoot, params string[] args)
     {

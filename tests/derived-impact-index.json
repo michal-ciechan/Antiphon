@@ -4046,13 +4046,6 @@
       ]
     },
     {
-      "path": "scripts/impacted-classes.ps1",
-      "classes": [
-        "ImpactedClassesSelectorTests",
-        "ReleaseImpactEnvelopeTests"
-      ]
-    },
-    {
       "path": "scripts/keep-six.ps1",
       "classes": [
         "KeepSixDocumentationTests",
@@ -4093,6 +4086,28 @@
       "path": "scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs",
       "classes": [
         "LiveLaneCensusTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/ImpactedClasses.cs",
+      "classes": [
+        "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
+        "ImpactedClassesSelectorTests",
+        "MergeHighRadiusSubsetTests",
+        "ReleaseImpactEnvelopeTests",
+        "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/ImpactedClassesInputs.cs",
+      "classes": [
+        "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
+        "ImpactedClassesSelectorTests",
+        "MergeHighRadiusSubsetTests",
+        "ReleaseImpactEnvelopeTests",
+        "SelectorLineEndingAttributeTests"
       ]
     },
     {
@@ -4149,6 +4164,17 @@
       "path": "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
       "classes": [
         "RcRunEvidenceTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
+      "classes": [
+        "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
+        "ImpactedClassesSelectorTests",
+        "MergeHighRadiusSubsetTests",
+        "ReleaseImpactEnvelopeTests",
+        "SelectorLineEndingAttributeTests"
       ]
     },
     {
@@ -4321,12 +4347,6 @@
       "path": "scripts/lib/release-gate.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/release-impact.ps1",
-      "classes": [
-        "ReleaseImpactEnvelopeTests"
       ]
     },
     {
@@ -25366,12 +25386,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Scripts/DerivedSelectorReplay.cs",
-      "classes": [
-        "DerivedImpactIndexTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs",
       "classes": [
         "AgentTaskLandNotificationRescanTests"
@@ -25394,6 +25408,16 @@
         "HostJqFixtureClosureTests",
         "ProcessSpawnLimitTests",
         "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ImpactedClassesRun.cs",
+      "classes": [
+        "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
+        "ImpactedClassesSelectorTests",
+        "MergeHighRadiusSubsetTests",
+        "ReleaseImpactEnvelopeTests"
       ]
     },
     {
@@ -28688,6 +28712,7 @@
       "path": "tests/derived-impact-index.json",
       "classes": [
         "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
         "IncrementalSelectionSoundnessTests",
         "LandGeneratedArtifactTests",
         "RcInputManifestTests",
@@ -28723,6 +28748,7 @@
       "path": "tests/impacted-classes.json",
       "classes": [
         "DerivedImpactIndexTests",
+        "ImpactedClassesCensusTests",
         "ImpactedClassesSelectorTests",
         "IncrementalSelectionSoundnessTests",
         "PostLandEarlyWarningTests",
