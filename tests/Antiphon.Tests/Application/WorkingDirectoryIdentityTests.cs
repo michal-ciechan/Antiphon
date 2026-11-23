@@ -251,6 +251,12 @@ public class WorkingDirectoryIdentityTests
     [Arguments("C:/repos/\u652F\u4ED8\u670D\u52A1\u7EC4", "c:/REPOS/\u652F\u4ED8\u670D\u52A1\u7EC4/", true)]
     [Arguments("C:/repos/\u00C9\u652F", "c:/repos/00", false)]
     [Arguments("C:/repos/\u00C9\u652F", "c:/repos/\u00E9\u652F", true)]
+    [Arguments("c:/\U00020000x/", "C:\\\U00020000x", true)]
+    [Arguments("C:/\U00020000x", "c:/\U00020000X/", true)]
+    [Arguments("C:/\U00020000x", "c:/\U00020001x", false)]
+    [Arguments("C:/\U00020001x", "c:/\U00020000x", false)]
+    [Arguments("C:/\U00020000\U00010400", "c:/\U00020000\U00010428", true)]
+    [Arguments("C:/\U00010400\U00020000", "c:/\U00010428\U00020001", false)]
     public void Prefilter_stays_bounded_to_spellings_of_equal_length_and_ascii_text(string probe, string stored, bool admitted) =>
         CLocalePrefilterModel.Admits(stored, WorkingDirectoryIdentity.CandidatePattern(probe)).ShouldBe(admitted);
 
