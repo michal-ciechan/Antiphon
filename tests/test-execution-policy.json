@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "d3ed22557dc2cab8e068561183f933a56e21c1d65f4ef6c01d11ff7d7987aff6",
+  "policyHash": "3434a75826c8ddd945c68078ae9cfe28d457d376d3256e54137efad9b95d753e",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -2026,12 +2026,6 @@
       "id": "test-stage-value-report",
       "path": "scripts/test-stage-value-report.ps1",
       "disposition": "unattended",
-      "wildcard": false
-    },
-    {
-      "id": "test-qualification-graph",
-      "path": "scripts/test-qualification-graph.ps1",
-      "disposition": "argument-consumer",
       "wildcard": false
     }
   ],

@@ -524,7 +524,6 @@ public sealed class NightlyTestsRunTests
         "test-hooks scripts/test-hooks.ps1",
         "test-reap-zombie-agents scripts/test-reap-zombie-agents.ps1",
         "test-stage-value-report scripts/test-stage-value-report.ps1",
-        "test-qualification-graph scripts/test-qualification-graph.ps1",
     ];
 
     private static string[] CensusDrift(IEnumerable<(string Id, string Path)> census, string[] expected)
