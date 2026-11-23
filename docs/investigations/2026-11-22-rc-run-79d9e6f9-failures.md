@@ -56,3 +56,10 @@ The repair (`e0512e864`) records each launch's `Cwd` and asserts one launch unde
 `1beb89e8c9fcb1048e425dbce6bf4df7b2c0c62a` added `BridgeQueueHarness.WarmModel()` to `TestDbFixture.cs`, which Resilience compiles without the bridge harness.
 The commit records verification of `ChannelOutboundUnifiedPathTests` in `Antiphon.Tests`, where the call resolves. The original land's build selection is unverified.
 The existing CARD-1996 Merge rule covers this gap. For changes under `tests/Antiphon.Tests/TestHelpers`, build `Antiphon.sln` or each linking project and run `LinkedTestHelperClosureTests` before publishing.
+
+## Group 139 · C487 forced-Windows read-only witness (run `557cdb63`)
+
+`C487ReadOnlyCleanupWitnessTests.C487_WindowsReadOnlyWitness` failed with exit 1: `Join-Path` could not bind an empty `Path` at line 7 of `scripts/lib/c487-harness.ps1`. W2-nightly S17 (`1c04c5878`, after the previous seed `39ac64c90`) added `. (Join-Path $PSScriptRoot 'c487-nightly-tests.ps1')` to the harness. `scripts/fixtures/c487-readonly-windows-witness.ps1` loads that harness as text through `[scriptblock]::Create`, and in that case `$PSScriptRoot` is empty.
+This failure is deterministic on every platform, not specific to Windows. It was red on Linux at master `50d47f9b6` (1/1 failed, same message). S17's short verification did not select this `Integration` witness, and the witness has no direct-execution check of the harness file, so the first run that covered it was Windows Full.
+The repair (`fdef148a6`) replaces `$PSScriptRoot` in the text-loaded source with the harness's own `scripts/lib` directory. The test is green 3/3 and its class 1/1 on Linux, and the witness passes with `-SourceRef` at master and at `1c04c5878~1`.
+A change that makes a library dot-source a file through `$PSScriptRoot` should run every caller that loads the library as text (`git grep 'scriptblock]::Create'` next to the library name) in its short verification.
