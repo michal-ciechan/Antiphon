@@ -45,6 +45,10 @@ tests/fixtures/card0490-linux/*.sh text eol=lf
 
 # CARD-1313: the selector identity (TestSelection.SelectorFiles) is hashed as LF text and embedded in the core.
 scripts/lib/Antiphon.Nightly/TestSelection*.cs text eol=lf
+# Unit 4 of 2026-11-22-remaining-ps1-to-csharp.md: the release evidence binds the embedded impacted-classes selector
+# (ImpactedClasses.SelectorFiles) to its committed blobs byte for byte, so the working files stay LF.
+scripts/lib/Antiphon.Nightly/ImpactedClasses*.cs text eol=lf
+scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs text eol=lf
 
 # CARD-1820: the derived index is byte-compared, so a Windows checkout must keep LF.
 tests/derived-impact-index.json text eol=lf

@@ -20,5 +20,8 @@
     <!-- CARD-1313: the selector identity (TestSelection.SelectorFiles). The running selector compares its own sources
          with the candidate's blobs, so they travel with the assembly. -->
     <EmbeddedResource Include="TestSelection.cs;TestSelectionCatalog.cs;TestSelectionGit.cs;TestSelectionJson.cs" LogicalName="selector/%(Filename)%(Extension)" />
+    <!-- The impacted-classes selector identity (ImpactedClasses.SelectorFiles): the release evidence binds the running
+         selector's own bytes to the source checkout's committed blobs. -->
+    <EmbeddedResource Include="ImpactedClasses.cs;ImpactedClassesInputs.cs;ReleaseImpactEvidence.cs" LogicalName="impacted/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

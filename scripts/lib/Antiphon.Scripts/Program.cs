@@ -60,6 +60,9 @@ namespace Antiphon.Scripts
             [TestTimingEventCommand.Name] = TestTimingEventCommand.Run,
             // The change-aware selection proposal answers every input itself: exit 0 proposed, 2 refused (one stderr line) or usage.
             [TestSelectionCommand.Name] = TestSelectionCommand.Run,
+            // The impacted-classes selector answers every input itself: exit 0 selected, 1 the table, catalog or index refused
+            // or the audit failed, 2 usage, git failed or a release-evidence refusal.
+            [ImpactedClassesCommand.Name] = ImpactedClassesCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -99,7 +102,7 @@ namespace Antiphon.Scripts
             Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
-                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage);
+                + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage);
             return Usage;
         }
 
