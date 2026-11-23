@@ -141,8 +141,16 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             if (!index.DecisionStillHolds(context))
                 return PerEntryRefusal(full, stage, "preflight=index-changed-before-unlink");
         }
-        else if (SafeWrite.Preflight(root, [full]) is { } recheck)
-            return PerEntryRefusal(full, stage, "preflight-after-validation=" + recheck);
+        else
+        {
+            if (SafeWrite.Preflight(root, [full]) is { } recheck)
+                return PerEntryRefusal(full, stage, "preflight-after-validation=" + recheck);
+            // Review 2b79e113 (round 3) blocker 1: the stamp is re-read after content validation and that fresh lookup.
+            // A change to the index or any config input (an included file among them) since the decision keeps the
+            // entry, whatever git made of it.
+            if (index.ObservationChanged(context))
+                return PerEntryRefusal(full, stage, "preflight-after-validation=index-or-config-changed-before-unlink");
+        }
         // Review 2b79e113 (round 3) blocker 2: the last observation before the unlink. A fallback check that found no
         // repository (moved, removed or unreadable) answered "nothing tracked" from the absence of evidence; the entry
         // is kept unless the repository the removal started under is still the one that owns it.

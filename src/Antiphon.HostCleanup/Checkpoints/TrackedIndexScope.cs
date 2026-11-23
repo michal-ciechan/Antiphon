@@ -35,11 +35,13 @@ internal sealed class TrackedIndexScope
     private HashSet<string>? _entries;
     private HashSet<string>? _directories;
 
-    // The checkout and index version the current entry's in-process tracked decision was read from, or null when
-    // git answered it (or the layout has no stamp). Review 2ff6a0bc (round 2) D-1: an unbound decision never
-    // permits the unlink by itself; the caller asks again after content validation (CheckpointOutputLedger).
-    private string? _decidedOwner;
-    private TrackedIndexStamp? _decided;
+    // The checkout and the stamp observed when the current entry's tracked check was made (whoever answered it), and
+    // whether the in-process listing answered it from that stamp's version. Review 2ff6a0bc (round 2) D-1: an
+    // unbound decision never permits the unlink by itself; the caller asks again after content validation
+    // (CheckpointOutputLedger).
+    private string? _observedOwner;
+    private TrackedIndexStamp? _observed;
+    private bool _bound;
 
     internal void Clear()
     {
@@ -51,31 +53,47 @@ internal sealed class TrackedIndexScope
 
     internal void BeginDecision()
     {
-        _decidedOwner = null;
-        _decided = null;
+        _observedOwner = null;
+        _observed = null;
+        _bound = false;
     }
 
-    // Review 2b79e113 (round 3) blocker 1: only a complete, settled stamp (Reusable: every effective config input
-    // observed, no include, no per-worktree config, index outside the racy window) binds a decision. Any other
-    // decision stays unbound, so the caller asks again with no reuse after content validation.
+    // Review 2b79e113 (round 3) blocker 1: what the current entry's check saw, even when git answered it or the stamp
+    // is incomplete, so a change after the decision is still seen at the final check (ObservationChanged).
+    internal void Observe(string owner, TrackedIndexStamp stamp)
+    {
+        _observedOwner = owner;
+        _observed = stamp;
+        _bound = false;
+    }
+
+    // The in-process listing answered from this stamp's version. Review 2b79e113 (round 3) blocker 1: only a complete,
+    // settled stamp (Reusable: every config input observed and none of them includes another, no per-worktree
+    // config, index outside the racy window) binds a decision. Any other decision stays unbound, so the caller asks
+    // again with no reuse after content validation.
     internal void Decide(string owner, TrackedIndexStamp stamp)
     {
-        if (!stamp.Reusable)
-            return;
-        _decidedOwner = owner;
-        _decided = stamp;
+        Observe(owner, stamp);
+        _bound = stamp.Reusable;
     }
 
     // Whether the current entry's decision was read in process from a complete index version it recorded.
-    internal bool DecisionBound => _decided is { Reusable: true } && _decidedOwner is not null;
+    internal bool DecisionBound => _bound && _observed is { Reusable: true } && _observedOwner is not null;
 
     // Whether the index and every config input the current entry's decision was read from are still the current
     // version, re-read now (after content validation). An unbound decision, a stamp that cannot be read now, or one
     // that is no longer complete (an include or per-worktree config appeared) does not hold.
     internal bool DecisionStillHolds(CheckpointCleanupContext context) =>
-        _decided is { Reusable: true } && _decidedOwner is not null
-        && TrackedIndexStamp.Read(context, _decidedOwner) is { Reusable: true } fresh
-        && _decided.SameVersion(fresh);
+        DecisionBound
+        && TrackedIndexStamp.Read(context, _observedOwner!) is { Reusable: true } fresh
+        && _observed!.SameVersion(fresh);
+
+    // Review 2b79e113 (round 3) blocker 1: for an unbound decision, whether anything the stamp observed at the
+    // decision (the index, the config files and every file they include, the variables) is different now, or can no
+    // longer be read. False when the decision observed no stamp (nothing to compare; the fresh lookup decides).
+    internal bool ObservationChanged(CheckpointCleanupContext context) =>
+        _observed is not null && _observedOwner is not null
+        && !_observed.SameVersion(TrackedIndexStamp.Read(context, _observedOwner));
 
     // Keeps the listing only for a stamp that may be reused (settled, no include or per-worktree config).
     internal void Store(string owner, TrackedIndexStamp stamp, string listing)
@@ -188,8 +206,11 @@ internal sealed record TrackedIndexStamp(
                 repositoryFiles.Add(Path.Combine(common, "config.worktree"));
             }
             // Review 2b79e113 (round 3) blocker 1: an include (include.path or includeIf) in ANY consulted file,
-            // repository or user/system, brings in a file the stamp never observes, so the stamp is incomplete: it is
-            // neither reused nor bound, and the entry's unlink waits for a fresh lookup after content validation.
+            // repository or user/system, may hold settings the scope cannot interpret, so the stamp is never complete:
+            // it is neither reused nor bound, and the entry's unlink waits for a fresh lookup after content validation.
+            // The included files are still observed (path, metadata and bytes, recursively, whatever the include's
+            // condition), so a change to any of them between the decision and the unlink keeps the entry.
+            var included = new Queue<(string File, int Depth)>();
             foreach (var file in repositoryFiles.Concat(UserAndSystemConfigs()))
             {
                 if (Config(file, Stat, configs) is not { } text)
@@ -198,6 +219,20 @@ internal sealed record TrackedIndexStamp(
                     || text.Content.Contains("include", StringComparison.OrdinalIgnoreCase)
                     || text.Content.Contains("worktreeconfig", StringComparison.OrdinalIgnoreCase))
                     declines = true;
+                Includes(file, text.Content, 1, included, configs);
+            }
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (included.TryDequeue(out var next))
+            {
+                if (next.Depth > MaxIncludeDepth)
+                {
+                    configs.Append("include-depth-exceeded\0");
+                    continue;
+                }
+                if (!visited.Add(next.File))
+                    continue;
+                if (IncludedConfig(next.File, Stat, configs) is { } content)
+                    Includes(next.File, content, next.Depth + 1, included, configs);
             }
 
             var environment = string.Join("\0", StampedVariables.Select(name => name + "=" + System.Environment.GetEnvironmentVariable(name)));
@@ -236,6 +271,117 @@ internal sealed record TrackedIndexStamp(
     }
 
     private readonly record struct ConfigText(bool Exists, string Content);
+
+    // git's own include depth limit.
+    private const int MaxIncludeDepth = 10;
+
+    // Queues every "path = <value>" in one config file (include.path and includeIf.<condition>.path; any other
+    // section's "path" key too, which only observes one more file), resolved as git resolves an include: "~/" from
+    // HOME, a relative path from the including file's directory. A value the scope cannot resolve is recorded as such.
+    private static void Includes(string file, string content, int depth, Queue<(string, int)> into, StringBuilder stamp)
+    {
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r').Trim();
+            if (line.StartsWith('['))
+            {
+                var close = line.IndexOf(']');
+                if (close < 0)
+                    continue;
+                line = line[(close + 1)..].TrimStart();
+            }
+            if (!line.StartsWith("path", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var rest = line[4..].TrimStart();
+            if (!rest.StartsWith('='))
+                continue;
+            if (IncludeValue(rest[1..]) is not { } value || ResolveInclude(value, file) is not { } target)
+            {
+                stamp.Append("unresolved-include\0").Append(file).Append('\0').Append(line).Append('\0');
+                continue;
+            }
+            into.Enqueue((target, depth));
+        }
+    }
+
+    // A config value: quotes removed, \\ \" \n \t \b unescaped, a ; or # outside quotes ends it. Null for a
+    // continuation line or any other escape.
+    private static string? IncludeValue(string text)
+    {
+        var value = new StringBuilder();
+        var quoted = false;
+        var trailing = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '\\')
+            {
+                if (++i >= text.Length)
+                    return null;
+                var escaped = text[i] switch { '\\' => '\\', '"' => '"', 'n' => '\n', 't' => '\t', 'b' => '\b', _ => '\0' };
+                if (escaped == '\0')
+                    return null;
+                value.Append(escaped);
+                trailing = value.Length;
+                continue;
+            }
+            if (c == '"') { quoted = !quoted; trailing = value.Length; continue; }
+            if (!quoted && (c == ';' || c == '#'))
+                break;
+            if (!quoted && value.Length == 0 && char.IsWhiteSpace(c))
+                continue;
+            value.Append(c);
+            if (quoted || !char.IsWhiteSpace(c))
+                trailing = value.Length;
+        }
+        if (quoted)
+            return null;
+        var result = value.ToString(0, trailing);
+        return result.Length == 0 ? null : result;
+    }
+
+    private static string? ResolveInclude(string value, string includingFile)
+    {
+        if (value.StartsWith("%(", StringComparison.Ordinal) || value.Any(char.IsControl))
+            return null;
+        if (value.StartsWith("~/", StringComparison.Ordinal) || value == "~")
+        {
+            var home = System.Environment.GetEnvironmentVariable("HOME");
+            if (string.IsNullOrEmpty(home) && OperatingSystem.IsWindows())
+                home = System.Environment.GetEnvironmentVariable("USERPROFILE");
+            if (string.IsNullOrEmpty(home))
+                return null;
+            value = Path.Combine(home, value.Length > 2 ? value[2..] : "");
+        }
+        else if (value.StartsWith('~'))
+            return null;
+        var directory = Path.GetDirectoryName(includingFile);
+        return string.IsNullOrEmpty(directory) ? null : Path.GetFullPath(value, directory);
+    }
+
+    // Appends one included file's path, metadata and bytes; anything but a regular file up to 1 MiB is recorded by
+    // its metadata alone (its content is not followed). The content, for further includes.
+    private static string? IncludedConfig(string path, Func<string, CheckpointStat> stat, StringBuilder into)
+    {
+        var observed = stat(path);
+        into.Append("include\0").Append(path).Append('\0').Append(observed.ToString()).Append('\0');
+        if (observed.Kind != "file" || observed.Size > MaxConfigBytes)
+            return null;
+        byte[] bytes;
+        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            if (stream.Length > MaxConfigBytes)
+            {
+                into.Append("oversize\0");
+                return null;
+            }
+            bytes = new byte[stream.Length];
+            stream.ReadExactly(bytes);
+        }
+        var content = Encoding.Latin1.GetString(bytes);
+        into.Append(content).Append('\0');
+        return content;
+    }
 
     // Appends one config file's path, metadata and exact bytes (Latin-1 keeps every byte) to the stamp. Null for
     // anything but a regular file or nothing at all, and for a file over 1 MiB.

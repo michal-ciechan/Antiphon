@@ -341,6 +341,10 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         // answers again for as long as it still has it; any change, or a stamp that cannot be read, reads the index
         // again through every IndexListing check. Each in-process decision records the version it was read from.
         var stamp = scope is null ? null : TrackedIndexStamp.Read(context, owner);
+        // Review 2b79e113 (round 3) blocker 1: what this check saw is kept whoever answers it, so the final check before
+        // the unlink can tell that the index or any config input (included files too) changed since.
+        if (scope is not null && stamp is not null)
+            scope.Observe(owner, stamp);
         if (scope?.Answer(owner, stamp, relatives) is { } cached)
         {
             scope.Decide(owner, stamp!);
