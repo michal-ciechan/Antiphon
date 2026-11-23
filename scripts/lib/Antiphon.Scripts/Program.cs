@@ -117,8 +117,6 @@ namespace Antiphon.Scripts
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
                 + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
-                + " | " + ExportExpectedDurationRosterCommand.Usage
-                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
                 + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage);
             return Usage;
