@@ -1,0 +1,19 @@
+# CARD-1514 readiness path identity: re-cut onto master `e298e6fbb`
+
+Code task 84561585 re-cuts the reviewed readiness chain (Code c20eeb6a tip `0ad676b98811edc463ee251fe6a1f4fae595ce3a`, Review 56e21b88) onto master `e298e6fbb5c9125e3144e02b6f9a8432a229a3bc`. The production and test files of the chain are byte-identical to the reviewed tip. Its decisions, measurements and V-n rows stay in [the round 3/4 plan](2026-11-22-project-readiness-path-prefilter-r3-repair.md), which is unchanged. This amendment adds only the re-cut checkpoint table and R-4.
+
+- The readiness why-missed section now lives in [its own investigation note](../../investigations/2026-11-23-readiness-path-identity.md). The shared run `79d9e6f9` note stays as it is on master.
+- R-4 (Review 56e21b88 blocker 1): `AgentControlServiceIntegrationTests` wrote a fable hold to the shared fixture database in two tests, and a parallel `AgentSystemPromptLaunchTests.Interactive_launch_maps_frontier_level_to_fable` launch could read it. Both hold writers now run in an isolated database (`TestDbFixture.CreateIsolatedSchemaAsync`). `AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync` pins the isolation; it was red 2/2 at `79904873b`.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | recut | `tests/Antiphon.Tests -> bin-r845/` | original | `/*/*/ProjectReadinessTests/agent_counts_a_path_matched_agent_on_another_board` | V-1 | 1 passed, 0 failed/skipped | 1 | 15 | true |
+| CP-2 | recut | CP-1 | identity | `/*/*/(ProjectReadinessBatchTests*)\|(ProjectReadinessCollationTests*)\|(ProjectReadinessTests*)\|(ProjectSetupServiceTests*)\|(WorkingDirectoryIdentityTests*)/*` | V-2, V-3, V-4 | all listed, 0 failed/skipped | 193 | 6 | true |
+| CP-3 | recut | CP-1 | guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(SlowTestRegistryMergeTests*)\|(TestFixtureCleanupGuardTests*)\|(SlowTestTripwireTests*)\|(TestClassificationPolicyTests*)\|(TestLaneCategoryGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuardTests*)/*` | R-1 | all listed, 0 failed/skipped | 85 | 6 | true |
+| CP-4 | recut | CP-1 | impacted | `/*/*/(AgentAttachHerdrTests*)\|(AgentControlServiceIntegrationTests*)\|(AgentCreateRaceTests*)\|(AgentCreateSupervisionTests*)\|(AgentRemoteControlGateTests*)\|(AgentServiceIntegrationTests*)\|(AgentSessionBackendTests*)\|(AgentSessionLaunchFailureTests*)\|(AgentSessionServiceIntegrationTests*)\|(AgentStartRecoveryTests*)\|(AgentSupervisionTests*)\|(AgentSystemPromptLaunchTests*)\|(AgentTaskPoolTests*)\|(BoardServiceIntegrationTests*)\|(ContextCompactionAgentTests*)\|(DiagnosticsBundleServiceTests*)\|(HerdrAlwaysOnChannelParityTests*)\|(HerdrLabelFollowConcurrencyTests*)\|(HerdrPlacementSettingsTests*)\|(HerdrSupervisionBackoffTests*)\|(PhoneHomeStandingLaunchTests*)\|(ProjectCascadeForeignKeyTests*)\|(RemoteExecutableLaunchTests*)\|(SessionHealthTests*)/*` | R-2 | 0 failed; the 10 Linux skips are roster-listed | 514 | 12 | true |
+| CP-5 | recut | CP-1 | roster | `/*/*/WindowsUnitPlatformAdmissionTests/*` | R-3 | 0 failed; any skip is roster-listed | 5 | 4 | true |
+| CP-6 | recut | CP-1 | fable-hold | `/*/*/(AgentControlServiceIntegrationTests*)\|(AgentSystemPromptLaunchTests*)/(Start_returns_409_model_disabled_when_the_agent_alias_is_held)\|(Start_of_a_haiku_agent_succeeds_while_fable_is_held)\|(Interactive_launch_maps_frontier_level_to_fable)` | R-4 | 3 passed, 0 failed/skipped | 3 | 4 | true |
+
+CP-4 and CP-5 may record roster-listed skips. Qualify them with `pwsh -NoProfile -File scripts/validate-checkpoint-receipt.ps1 -Evidence <report.json> -ExpectedSourceSha <tip>`. The checkpoint tool's `validate` verb refuses every skip, so rows with skips do not count for that verb.
