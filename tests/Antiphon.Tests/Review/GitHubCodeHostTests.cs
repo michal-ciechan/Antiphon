@@ -170,6 +170,76 @@ public class GitHubCodeHostTests
         }
     }
 
+    [Test]
+    public async Task Polling_lists_page_open_prs_keep_only_pr_comments_and_post_on_the_conversation()
+    {
+        var firstPage = "[" + string.Join(",", Enumerable.Range(1, 100).Select(i =>
+            $$"""{ "number": {{i}}, "title": "PR {{i}}", "draft": false, "user": { "login": "dana" }, "base": { "ref": "main" }, "head": { "sha": "h{{i}}" }, "labels": [] }""")) + "]";
+        const string secondPage = """
+            [ { "number": 101, "title": "Spike the lease timeout", "draft": true, "user": { "login": "lee" },
+                "base": { "ref": "release/1.0", "sha": "bbbb" }, "head": { "ref": "spike", "sha": "cccc" },
+                "labels": [ { "name": "antiphon:skip" }, { "name": "area/api" } ], "updated_at": "2026-11-23T11:30:00Z" } ]
+            """;
+        const string comments = """
+            [ { "id": 9001, "html_url": "https://ghe.example/acme/widgets/pull/42#issuecomment-9001",
+                "issue_url": "https://ghe.example/api/v3/repos/acme/widgets/issues/42", "user": { "login": "lee" },
+                "author_association": "COLLABORATOR", "body": "/antiphon review focus on X", "created_at": "2026-11-23T10:05:00Z" },
+              { "id": 9002, "html_url": "https://ghe.example/acme/widgets/issues/7#issuecomment-9002",
+                "issue_url": "https://ghe.example/api/v3/repos/acme/widgets/issues/7", "user": { "login": "mallory" },
+                "author_association": "NONE", "body": "/antiphon recheck", "created_at": "2026-11-23T10:06:00Z" },
+              { "id": 9003, "html_url": "https://ghe.example/acme/widgets/issues/43#issuecomment-9003",
+                "pull_request_url": "https://ghe.example/api/v3/repos/acme/widgets/pulls/43",
+                "issue_url": "https://ghe.example/api/v3/repos/acme/widgets/issues/43", "user": { "login": "dana" },
+                "author_association": "OWNER", "body": "Thanks!", "created_at": "2026-11-23T10:07:00Z" } ]
+            """;
+        var posted = new List<(string Path, string Body)>();
+        var handler = new FakeHandler(r =>
+        {
+            var path = r.RequestUri!.PathAndQuery;
+            if (r.Method == HttpMethod.Post)
+                posted.Add((path, r.Content!.ReadAsStringAsync().GetAwaiter().GetResult()));
+            return path switch
+            {
+                "/api/v3/repos/acme/widgets/pulls?state=open&per_page=100&page=1" => Json(HttpStatusCode.OK, firstPage),
+                "/api/v3/repos/acme/widgets/pulls?state=open&per_page=100&page=2" => Json(HttpStatusCode.OK, secondPage),
+                "/api/v3/repos/acme/widgets/issues/comments?since=2026-11-23T10:00:00Z&per_page=100&page=1" => Json(HttpStatusCode.OK, comments),
+                "/api/v3/repos/acme/widgets/issues/42/comments" => Json(HttpStatusCode.Created,
+                    """{ "id": 9100, "html_url": "https://ghe.example/acme/widgets/pull/42#issuecomment-9100" }"""),
+                "/api/v3/repos/acme/widgets/issues/comments/9001/reactions" => Json(HttpStatusCode.Created, """{ "id": 1, "content": "eyes" }"""),
+                var other => throw new InvalidOperationException($"Unexpected request {r.Method} {other}"),
+            };
+        });
+        var host = Host(handler);
+        var repo = Target with { PrNumber = null };
+
+        var prs = await host.ListOpenPullRequestsAsync(repo, CancellationToken.None);
+        var listed = await host.ListConversationCommentsAsync(repo, new DateTime(2026, 11, 23, 10, 0, 0, DateTimeKind.Utc), CancellationToken.None);
+        var reply = await host.PostConversationCommentAsync(Target, "Round 2 queued.", CancellationToken.None);
+        await host.AddCommentReactionAsync(Target, "9001", "eyes", CancellationToken.None);
+
+        (host.Capabilities.CanListPullRequests, host.Capabilities.CanPostConversation).ShouldBe((true, true));
+        prs.Count.ShouldBe(101, "a full first page asks for the second");
+        prs[0].ShouldBe(prs[0] with { Number = 1, Title = "PR 1", AuthorLogin = "dana", IsDraft = false, BaseRef = "main", HeadSha = "h1" });
+        prs[0].Labels.ShouldBeEmpty();
+        var spike = prs.Single(p => p.Number == 101);
+        (spike.Title, spike.AuthorLogin, spike.IsDraft, spike.BaseRef, spike.HeadSha).ShouldBe(("Spike the lease timeout", "lee", true, "release/1.0", "cccc"));
+        spike.Labels.ShouldBe(["antiphon:skip", "area/api"]);
+        spike.UpdatedAt.ShouldBe(new DateTime(2026, 11, 23, 11, 30, 0, DateTimeKind.Utc));
+
+        listed.Select(c => c.Id).ShouldBe(["9001", "9003"], "9002 is on an issue, not a PR");
+        var command = listed[0];
+        (command.PrNumber, command.AuthorLogin, command.AuthorAssociation, command.Body).ShouldBe((42, "lee", "COLLABORATOR", "/antiphon review focus on X"));
+        command.CreatedAt.ShouldBe(new DateTime(2026, 11, 23, 10, 5, 0, DateTimeKind.Utc));
+        listed[1].PrNumber.ShouldBe(43, "the PR number of a comment whose html_url names the issue comes from pull_request_url");
+
+        reply.CommentId.ShouldBe("9100");
+        posted.Count.ShouldBe(2);
+        posted[0].Path.ShouldBe("/api/v3/repos/acme/widgets/issues/42/comments");
+        System.Text.Json.JsonDocument.Parse(posted[0].Body).RootElement.GetProperty("body").GetString().ShouldBe("Round 2 queued.");
+        System.Text.Json.JsonDocument.Parse(posted[1].Body).RootElement.GetProperty("content").GetString().ShouldBe("eyes");
+        handler.Requests.ShouldAllBe(q => q.Authorization == "Bearer tok-ghe");
+    }
+
     private static GitHubCodeHost Host(FakeHandler handler)
     {
         var settings = new ReviewCodeHostSettings();

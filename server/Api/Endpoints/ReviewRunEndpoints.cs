@@ -61,6 +61,10 @@ public static class ReviewRunEndpoints
             return Results.Accepted();
         });
 
+        // A manual review round with an optional steer; 409 at a gate (decide it instead), when finished or busy.
+        runs.MapPost("/{id:guid}/rounds", async (Guid id, ReviewRoundRequest? request, ReviewService service, ReviewViewer viewer, CancellationToken ct) =>
+            Results.Ok(await service.RequestRoundAsync(id, request?.SteerPrompt, viewer.Login, ct)));
+
         runs.MapPost("/{id:guid}/responses", async (Guid id, BatchFindingResponsesRequest request, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.RespondBatchAsync(id, request, ct)));
 
@@ -85,7 +89,29 @@ public static class ReviewRunEndpoints
         workflows.MapGet("/revisions/{id:guid}", async (Guid id, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.GetWorkflowRevisionAsync(id, ct)));
         workflows.MapPost("/validate", (WorkflowGraphDto graph, ReviewWorkflowService service) => Results.Ok(service.Validate(graph)));
+
+        // Code host polling (design 8.5): the settings and the last pass; a pass on demand, even with the timer off.
+        var polling = app.MapGroup("/api/review-polling").WithTags("Review engine");
+        polling.MapGet("/", (ReviewPollingState state, IOptions<ReviewPollingSettings> settings) => Results.Ok(state.ToDto(settings.Value)));
+        polling.MapPost("/poll", async (ReviewPoller poller, ReviewPollingState state, IOptions<ReviewPollingSettings> settings, CancellationToken ct) =>
+        {
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            budget.CancelAfter(PollTimeout);
+            try
+            {
+                await poller.PollOnceAsync("manual", budget.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Still waiting for a pass already running: the DTO says one is running.
+            }
+
+            return Results.Ok(state.ToDto(settings.Value));
+        });
     }
+
+    /// <summary>How long <c>POST /api/review-polling/poll</c> waits for its pass; a cut-short pass records the repos it reached.</summary>
+    public static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(90);
 
     private static T? ParseEnum<T>(string name, string? value) where T : struct, Enum
     {

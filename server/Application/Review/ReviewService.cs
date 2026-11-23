@@ -107,8 +107,17 @@ public sealed class ReviewService(
     /// the workflow executor. A local review takes <c>baseSha</c> and <c>headSha</c> as
     /// refs or commits (head defaults to <c>HEAD</c>).
     /// </summary>
-    public async Task<ReviewRunDetailDto> CreateRunAsync(CreateReviewRunRequest request, CancellationToken ct)
+    public Task<ReviewRunDetailDto> CreateRunAsync(CreateReviewRunRequest request, CancellationToken ct) =>
+        CreateRunAsync(request, "manual", null, ct);
+
+    /// <summary>
+    /// Intake as above, with the first iteration's <paramref name="trigger"/> (<c>manual</c>,
+    /// <c>opened</c> when polling found the PR, or <c>comment:&lt;id&gt;</c> for a PR comment command,
+    /// which also dedupes the command) and an optional steer prompt for round 1.
+    /// </summary>
+    public async Task<ReviewRunDetailDto> CreateRunAsync(CreateReviewRunRequest request, string trigger, string? steerPrompt, CancellationToken ct)
     {
+        var steer = Steer(steerPrompt);
         if (string.IsNullOrWhiteSpace(request.Repo))
             throw new ValidationException("repo", "A repo (owner/name) is required.");
         if (request.Host == ReviewHost.GitHub && request.PrNumber is null)
@@ -150,10 +159,11 @@ public sealed class ReviewService(
             WorkflowName = workflows.Default.Name,
             WorkflowHash = workflows.DefaultHash,
             WorkflowRevisionId = await EnsureDefaultRevisionAsync(ct),
+            SteerPrompt = steer,
             StartedAt = now,
             UpdatedAt = now,
         };
-        var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, Round = 1, Trigger = "manual", StartedAt = now };
+        var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, Round = 1, Trigger = trigger, StartedAt = now };
         var intakeNode = PendingIntake(run.Id, 1, 1);
         ReviewIntake.Apply(subject, iteration, intakeNode, snapshot, now);
         run.BaseTipSha = pr.BaseSha;
@@ -324,6 +334,148 @@ public sealed class ReviewService(
     }
 
     private static int NextSequence(ReviewRun run) => run.Nodes.Select(n => n.Sequence).DefaultIfEmpty(0).Max() + 1;
+
+    /// <summary>The longest steer prompt a round request takes.</summary>
+    public const int MaxSteerPromptLength = 4000;
+
+    public Task<ReviewRunDetailDto> RequestRoundAsync(Guid runId, string? steerPrompt, string actor, CancellationToken ct) =>
+        RequestRoundAsync(runId, steerPrompt, actor, null, ct);
+
+    /// <summary>
+    /// A manual review round (<c>POST /api/review-runs/{id}/rounds</c>, or a <c>/antiphon review</c>
+    /// comment), same round, carrying the steer prompt. A run parked at a wait that listens for
+    /// <c>recheck</c> (<c>await-fixes</c>) completes it with <c>recheck</c>. A run at a gate is refused:
+    /// the gate's another-round decision is the way there. A finished, demo or busy run is refused too.
+    /// Otherwise (approved, awaiting merge or failed) a new iteration starts like Refresh's recheck,
+    /// superseding the parked wait and withdrawing the approval status. <paramref name="marker"/>
+    /// (<c>comment:&lt;id&gt;</c>) is the new iteration's trigger, or goes in the completed wait's
+    /// summary, so the poller never acts on the same comment twice.
+    /// </summary>
+    public async Task<ReviewRunDetailDto> RequestRoundAsync(Guid runId, string? steerPrompt, string actor, string? marker, CancellationToken ct)
+    {
+        var steer = Steer(steerPrompt);
+        var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).Include(r => r.Nodes)
+            .AsSplitQuery().SingleOrDefaultAsync(r => r.Id == runId, ct)
+            ?? throw new NotFoundException("Review run", runId);
+        var who = string.IsNullOrWhiteSpace(actor) ? viewer.Login : actor.Trim();
+        if (run.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged)
+            throw new ConflictException($"Review run {run.Id} is {run.Status}; it takes no more rounds.", "review_run_finished");
+        var current = run.Iterations.MaxBy(i => i.Iteration);
+        if (current is null || run.Iterations.All(i => i.HeadSha is null))
+            throw new ConflictException($"Review run {run.Id} was never read from a code host (demo data); it takes no rounds.", "review_run_not_walked");
+
+        var parked = Parked(run, current);
+        if (run.Status == ReviewRunStatus.AtGate || parked is { Kind: ReviewNodeKind.Gate })
+        {
+            var gateNode = parked?.Kind == ReviewNodeKind.Gate ? parked.NodeId : "human";
+            throw new ConflictException(
+                $"Review run {run.Id} is waiting at its {gateNode} gate. Ask for another round with a steer prompt from the gate instead.",
+                "review_run_at_gate");
+        }
+
+        var now = Now();
+        var source = marker is null ? $"requested by {who}" : $"requested by {who} ({marker})";
+        IReadOnlyList<string> awaits = parked is { Kind: ReviewNodeKind.Wait }
+            ? workflows.Default.Node(parked.NodeId)?.ListParam("on") ?? []
+            : [];
+        if (parked is not null && awaits.Contains("recheck"))
+        {
+            // The executor follows the wait's recheck edge into a new iteration of the same round.
+            Complete(parked, "recheck", source, now);
+            run.SteerPrompt = steer;
+            run.BotOnlyRounds = 0;
+            run.Status = ReviewRunStatus.Queued;
+            run.WaitingOn = ReviewWaitingOn.Bot;
+            run.UpdatedAt = now;
+            await db.SaveChangesAsync(ct);
+            await PublishAsync(run.Id, ct);
+            executor.Wake();
+            return await GetRunAsync(run.Id, ct);
+        }
+
+        if (run.Status is ReviewRunStatus.Queued or ReviewRunStatus.Running)
+            throw new ConflictException($"Review run {run.Id} is already reviewing round {run.Round}; ask again once it waits for fixes or a merge.",
+                "review_run_busy");
+
+        // Approved, awaiting merge or failed: a new iteration, as Refresh starts one for a recheck.
+        var approved = run.Status is ReviewRunStatus.Approved or ReviewRunStatus.AwaitingMerge;
+        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run.Subject, ct));
+        var pr = snapshot.PullRequest;
+        if (pr.State is not CodeHostPullRequestState.Open)
+            throw new ConflictException($"The PR is {pr.State} on the code host; Refresh finishes the run.", "review_run_finished");
+        if (run.Subject.Host == ReviewHost.GitHub && pr.Title.Length > 0)
+            run.Subject.Title = pr.Title;
+        var previousHead = run.Subject.HeadSha.Length > 0 ? run.Subject.HeadSha : current.HeadSha ?? "";
+        var moved = !string.Equals(pr.HeadSha, previousHead, StringComparison.OrdinalIgnoreCase);
+        if (parked is not null)
+        {
+            parked.Status = ReviewNodeStatus.Skipped;
+            parked.CompletedAt = now;
+            parked.Summary = $"superseded: a review round was {source}";
+        }
+
+        await SupersedeGatesAsync(run, $"a review round was {source}", now, ct);
+        if (moved)
+            run.Round += 1;
+        var trigger = marker ?? "recheck";
+        var number = Math.Max(run.Nodes.Select(n => n.Iteration).DefaultIfEmpty(0).Max(), current.Iteration) + 1;
+        var iteration = new ReviewIteration { Id = Guid.NewGuid(), RunId = run.Id, Iteration = number, Round = run.Round, Trigger = trigger, StartedAt = now };
+        var intakeNode = PendingIntake(run.Id, number, NextSequence(run));
+        ReviewIntake.Apply(run.Subject, iteration, intakeNode, snapshot, now,
+            $"{trigger} {source}" + (moved ? $"; head moved {ReviewIntake.Short(previousHead)} -> {ReviewIntake.Short(pr.HeadSha)}" : ""));
+        run.BaseTipSha = pr.BaseSha;
+        // Added through the context: see Apply() on client-set Guid keys.
+        db.ReviewIterations.Add(iteration);
+        db.ReviewNodeExecutions.Add(intakeNode);
+        run.SteerPrompt = steer;
+        run.BotOnlyRounds = 0;
+        run.Status = ReviewRunStatus.Queued;
+        run.Stage = ReviewStage.Intake;
+        run.WaitingOn = ReviewWaitingOn.Bot;
+        run.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+        if (approved)
+            await WithdrawApprovalAsync(run, who, ct);
+        await PublishAsync(run.Id, ct);
+        executor.Wake();
+        return await GetRunAsync(run.Id, ct);
+    }
+
+    /// <summary>
+    /// A re-review revokes the approval, as a push does: <c>antiphon/approval</c> goes back to pending
+    /// at the head. Best effort; the new round sets it again. A posted approving review stays on the
+    /// code host (there is no dismissal yet).
+    /// </summary>
+    private async Task WithdrawApprovalAsync(ReviewRun run, string who, CancellationToken ct)
+    {
+        if (run.Subject.Host != ReviewHost.GitHub || run.Subject.HeadSha.Length == 0)
+            return;
+        try
+        {
+            var binding = router.Resolve(run.Subject);
+            if (!binding.Host.Capabilities.SupportsCommitStatuses)
+                return;
+            var root = settings.Value.PublicBaseUrl;
+            var link = string.IsNullOrWhiteSpace(root) ? null : $"{root.TrimEnd('/')}/reviews/{run.Id}";
+            await binding.Host.SetCommitStatusAsync(binding.Target, run.Subject.HeadSha,
+                new CodeHostCommitStatus(Execution.ReviewWalk.ApprovalStatusContext, CodeHostStatusState.Pending, $"Re-review requested by {who}", link), ct);
+        }
+        catch (CodeHostException)
+        {
+            // Best effort: the new round's statuses replace it.
+        }
+    }
+
+    /// <summary>A steer prompt trimmed, or null when blank; longer than <see cref="MaxSteerPromptLength"/> is refused.</summary>
+    private static string? Steer(string? steerPrompt)
+    {
+        if (string.IsNullOrWhiteSpace(steerPrompt))
+            return null;
+        var steer = steerPrompt.Trim();
+        return steer.Length <= MaxSteerPromptLength
+            ? steer
+            : throw new ValidationException("steerPrompt", $"A steer prompt is at most {MaxSteerPromptLength} characters.");
+    }
 
     /// <summary>A code host failure during a request becomes the API's error (404, 422 or 503).</summary>
     private static async Task<T> ReadIntakeAsync<T>(Func<Task<T>> read)

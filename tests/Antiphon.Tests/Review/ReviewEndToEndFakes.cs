@@ -13,18 +13,31 @@ namespace Antiphon.Tests.Review;
 public sealed class ScriptedCodeHost : ICodeHost
 {
     private readonly ConcurrentDictionary<int, ScriptedPr> _prs = new();
+    private readonly List<CodeHostConversationComment> _comments = [];
 
     public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
     public CodeHostCapabilities Capabilities { get; } = new(
         SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
-        CanReadFiles: false);
+        CanReadFiles: false, CanListPullRequests: true, CanPostConversation: true);
 
     public ScriptedPr Open(int number, string title, string author, string baseSha, string headSha, IReadOnlyList<CodeHostChangedFile> files, string diff) =>
         _prs[number] = new ScriptedPr(number, title, author, baseSha, headSha, files, diff);
 
     public ScriptedPr Pr(int number) => _prs[number];
+
+    /// <summary>A conversation comment on PR <paramref name="pr"/>, created now; the polling listing returns it.</summary>
+    public CodeHostConversationComment Comment(int pr, string id, string author, string association, string body)
+    {
+        var comment = new CodeHostConversationComment(id, pr, author, association, body, DateTime.UtcNow);
+        lock (_comments)
+            _comments.Add(comment);
+        return comment;
+    }
+
+    /// <summary>Every listing call's <c>since</c>, in order.</summary>
+    public List<DateTime> CommentListings { get; } = [];
 
     private ScriptedPr Of(CodeHostTarget target) =>
         target.PrNumber is { } n && _prs.TryGetValue(n, out var pr) ? pr : throw new CodeHostException(CodeHostFailureKind.NotFound, $"No PR {target.PrNumber}.");
@@ -144,6 +157,43 @@ public sealed class ScriptedCodeHost : ICodeHost
             return Task.FromResult(new CodeHostBranchUpdate(true, pr.HeadSha, "Updating pull request branch."));
         }
     }
+
+    public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<CodeHostOpenPullRequest>>(_prs.Values
+            .Select(pr => pr.Read(p => p.State == CodeHostPullRequestState.Open
+                ? new CodeHostOpenPullRequest(p.Number, p.Title, p.Author, p.IsDraft, "main", p.HeadSha, p.Labels.ToList(), DateTime.UtcNow)
+                : null))
+            .OfType<CodeHostOpenPullRequest>()
+            .OrderBy(p => p.Number)
+            .ToList());
+
+    /// <summary>Comments created at or after <paramref name="since"/> (they are never edited), oldest first.</summary>
+    public Task<IReadOnlyList<CodeHostConversationComment>> ListConversationCommentsAsync(CodeHostTarget target, DateTime since, CancellationToken ct)
+    {
+        lock (_comments)
+        {
+            CommentListings.Add(since);
+            return Task.FromResult<IReadOnlyList<CodeHostConversationComment>>(_comments.Where(c => c.CreatedAt >= since).OrderBy(c => c.CreatedAt).ToList());
+        }
+    }
+
+    public Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct)
+    {
+        var pr = Of(target);
+        lock (pr)
+        {
+            pr.ConversationReplies.Add(body);
+            return Task.FromResult(new CodeHostThreadReply($"conversation{pr.ConversationReplies.Count}", null));
+        }
+    }
+
+    public Task AddCommentReactionAsync(CodeHostTarget target, string commentId, string reaction, CancellationToken ct)
+    {
+        var pr = Of(target);
+        lock (pr)
+            pr.Reactions.Add((commentId, reaction));
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>One scripted PR. The test moves its head and base and reads what the engine wrote.</summary>
@@ -171,6 +221,10 @@ public sealed class ScriptedPr(int number, string title, string author, string b
     public List<(string CommentId, string Body)> Replies { get; } = [];
     public List<string> Resolved { get; } = [];
     public List<string> BranchUpdates { get; } = [];
+    public bool IsDraft { get; set; }
+    public List<string> Labels { get; } = [];
+    public List<string> ConversationReplies { get; } = [];
+    public List<(string CommentId, string Reaction)> Reactions { get; } = [];
 
     public void Push(string newHead, IReadOnlyList<CodeHostChangedFile> changed, string changedDiff)
     {
@@ -194,6 +248,12 @@ public sealed class ScriptedPr(int number, string title, string author, string b
     {
         lock (this)
             State = CodeHostPullRequestState.Merged;
+    }
+
+    public void Close()
+    {
+        lock (this)
+            State = CodeHostPullRequestState.Closed;
     }
 
     public T Read<T>(Func<ScriptedPr, T> read)

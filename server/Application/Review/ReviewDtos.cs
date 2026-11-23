@@ -228,6 +228,43 @@ public sealed record WorkflowValidationDto(bool Valid, IReadOnlyList<WorkflowDia
 /// <summary>The SignalR payload of <c>ReviewRunChanged</c>.</summary>
 public sealed record ReviewRunChangedEvent(Guid RunId);
 
+/// <summary>A manual review round (<c>POST /api/review-runs/{id}/rounds</c>), with an optional steer prompt.</summary>
+public sealed record ReviewRoundRequest(string? SteerPrompt = null);
+
+/// <summary>Polling settings and the last pass (<c>GET /api/review-polling</c>, design 8.5).</summary>
+public sealed record ReviewPollingDto(
+    bool Enabled,
+    int IntervalSeconds,
+    string CommandPrefix,
+    IReadOnlyList<ReviewPollingRepoDto> Repos,
+    bool Running,
+    ReviewPollingPassDto? LastPass);
+
+public sealed record ReviewPollingRepoDto(
+    string Repo,
+    ReviewHost Host,
+    IReadOnlyList<string> BaseBranches,
+    bool IncludeDrafts,
+    IReadOnlyList<string> SkipLabels,
+    string? RequireLabel);
+
+/// <summary>One polling pass. <c>Trigger</c> is <c>timer</c> or <c>manual</c>; <c>Ok</c> when no repo reported an error.</summary>
+public sealed record ReviewPollingPassDto(
+    string Trigger,
+    DateTime StartedAt,
+    DateTime FinishedAt,
+    bool Ok,
+    IReadOnlyList<ReviewPollingRepoPassDto> Repos);
+
+/// <summary>One repo in a pass; <c>Error</c> is the last error the pass hit for it, or null.</summary>
+public sealed record ReviewPollingRepoPassDto(
+    string Repo,
+    int OpenPullRequests,
+    int RunsStarted,
+    int RunsRefreshed,
+    int CommandsHandled,
+    string? Error);
+
 /// <summary>Converts <c>params</c> values that arrive as <see cref="JsonElement"/> into plain CLR values.</summary>
 public static class ReviewJsonValues
 {

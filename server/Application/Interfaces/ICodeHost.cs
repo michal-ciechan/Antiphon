@@ -5,8 +5,10 @@ namespace Antiphon.Server.Application.Interfaces;
 /// <summary>
 /// A code host (review engine design 8.1): GitHub over REST with a personal access token, or a local
 /// git repository holding a commit pair. Reads: the PR, its changed files, its unified diff, a
-/// comparison of two refs, the branch state and files at a commit. Writes: a review with inline
-/// comments, thread replies and resolution, commit statuses, an approval and a branch update. A
+/// comparison of two refs, the branch state and files at a commit, and for polling the open PRs and
+/// the PR conversation comments. Writes: a review with inline comments, thread replies and
+/// resolution, commit statuses, an approval, a branch update, and a PR conversation comment or a
+/// reaction. A
 /// caller checks <see cref="Capabilities"/> before a write; an adapter without one throws
 /// <see cref="CodeHostException"/> with <see cref="CodeHostFailureKind.Unsupported"/>. Teams,
 /// webhooks and events come later. <c>CodeHostRouter</c> picks the adapter and builds the
@@ -70,6 +72,31 @@ public interface ICodeHost
     /// new head when the host reports it at once, or null when the update is asynchronous (GitHub).
     /// </summary>
     Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct);
+
+    /// <summary>
+    /// The repo's open pull requests, for polling (design 8.5); <see cref="CodeHostTarget.PrNumber"/> is
+    /// ignored. Needs <see cref="CodeHostCapabilities.CanListPullRequests"/>.
+    /// </summary>
+    Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct);
+
+    /// <summary>
+    /// The repo's PR conversation comments (not inline review comments) created or edited at or after
+    /// <paramref name="since"/>, oldest first. Comments on issues are left out. Needs
+    /// <see cref="CodeHostCapabilities.CanListPullRequests"/>.
+    /// </summary>
+    Task<IReadOnlyList<CodeHostConversationComment>> ListConversationCommentsAsync(CodeHostTarget target, DateTime since, CancellationToken ct);
+
+    /// <summary>
+    /// Posts a comment on the conversation of the PR <see cref="CodeHostTarget.PrNumber"/>. Needs
+    /// <see cref="CodeHostCapabilities.CanPostConversation"/>.
+    /// </summary>
+    Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct);
+
+    /// <summary>
+    /// Adds a reaction (<c>eyes</c>, <c>+1</c>, …) to a conversation comment. Needs
+    /// <see cref="CodeHostCapabilities.CanPostConversation"/>.
+    /// </summary>
+    Task AddCommentReactionAsync(CodeHostTarget target, string commentId, string reaction, CancellationToken ct);
 }
 
 /// <summary>
@@ -138,6 +165,8 @@ public sealed record CodeHostChangedFile(
 /// <summary>
 /// Capability flags (design 8.1). The first four are the design's; the rest say which reads and
 /// writes the adapter implements, so the executor skips a write a host cannot make instead of failing.
+/// <see cref="CanListPullRequests"/> covers the two polling listings (open PRs and conversation
+/// comments); <see cref="CanPostConversation"/> covers a PR conversation comment and a reaction.
 /// </summary>
 public sealed record CodeHostCapabilities(
     bool SupportsCheckRuns,
@@ -149,7 +178,33 @@ public sealed record CodeHostCapabilities(
     bool SupportsCommitStatuses = false,
     bool CanApprove = false,
     bool CanUpdateBranch = false,
-    bool CanReadFiles = false);
+    bool CanReadFiles = false,
+    bool CanListPullRequests = false,
+    bool CanPostConversation = false);
+
+/// <summary>An open PR as a polling listing returns it (design 8.5). Labels are names.</summary>
+public sealed record CodeHostOpenPullRequest(
+    int Number,
+    string Title,
+    string AuthorLogin,
+    bool IsDraft,
+    string BaseRef,
+    string HeadSha,
+    IReadOnlyList<string> Labels,
+    DateTime UpdatedAt);
+
+/// <summary>
+/// A comment on a PR's conversation. <see cref="AuthorAssociation"/> is GitHub's
+/// <c>author_association</c>: <c>OWNER</c>, <c>MEMBER</c>, <c>COLLABORATOR</c>, <c>CONTRIBUTOR</c>,
+/// <c>NONE</c> and so on.
+/// </summary>
+public sealed record CodeHostConversationComment(
+    string Id,
+    int PrNumber,
+    string AuthorLogin,
+    string AuthorAssociation,
+    string Body,
+    DateTime CreatedAt);
 
 /// <summary><c>from...to</c>: the resolved ends, their merge base, the ahead and behind counts, and the changed files.</summary>
 public sealed record CodeHostComparison(

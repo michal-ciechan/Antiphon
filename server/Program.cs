@@ -211,6 +211,7 @@ try
             s.ApplyDefaultChain();
         });
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
+    builder.Services.Configure<ReviewPollingSettings>(builder.Configuration.GetSection(ReviewPollingSettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
     builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
@@ -1037,6 +1038,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<ReviewFindingSync>();
     builder.Services.AddSingleton<ReviewExecutorSignal>();
     builder.Services.AddHostedService<ReviewWorkflowExecutor>();
+    // Code host polling (design 8.5, Review:Polling): one singleton serves the timer and POST /api/review-polling/poll.
+    builder.Services.AddSingleton<ReviewPollingState>();
+    builder.Services.AddSingleton<ReviewPoller>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ReviewPoller>());
     builder.Services.AddHttpClient<GitHubIssuesTracker>();
     builder.Services.AddHttpClient<LinearTracker>();
     builder.Services.AddHttpClient<JiraTracker>();

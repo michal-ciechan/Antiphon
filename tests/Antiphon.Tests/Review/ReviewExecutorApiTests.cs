@@ -169,6 +169,17 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
             throw Unsupported();
 
+        public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<IReadOnlyList<CodeHostConversationComment>> ListConversationCommentsAsync(CodeHostTarget target, DateTime since, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct) =>
+            throw Unsupported();
+
+        public Task AddCommentReactionAsync(CodeHostTarget target, string commentId, string reaction, CancellationToken ct) => throw Unsupported();
+
         private static CodeHostException Unsupported() => new(CodeHostFailureKind.Unsupported, "The intake-only fake has no writes.");
     }
 

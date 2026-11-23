@@ -125,6 +125,19 @@ public sealed class LocalGitCodeHost(GitWorkspaceService git) : ICodeHost
     public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
         throw Unsupported("update a branch");
 
+    /// <summary>There are no pull requests to poll (capability <c>CanListPullRequests</c> is false).</summary>
+    public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
+        throw Unsupported("list pull requests");
+
+    public Task<IReadOnlyList<CodeHostConversationComment>> ListConversationCommentsAsync(CodeHostTarget target, DateTime since, CancellationToken ct) =>
+        throw Unsupported("list conversation comments");
+
+    public Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct) =>
+        throw Unsupported("post a conversation comment");
+
+    public Task AddCommentReactionAsync(CodeHostTarget target, string commentId, string reaction, CancellationToken ct) =>
+        throw Unsupported("react to a comment");
+
     private static CodeHostException Unsupported(string what) =>
         new(CodeHostFailureKind.Unsupported, $"A local git host cannot {what}; findings stay in Antiphon (design 8.2).");
 

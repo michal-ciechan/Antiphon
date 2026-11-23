@@ -2237,9 +2237,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 67,
+      "classes": 68,
       "reason": "cap",
-      "owed": 42,
+      "owed": 43,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -6329,7 +6329,8 @@
         "GitHubThreadResolutionTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
-        "ReviewExecutorApiTests"
+        "ReviewExecutorApiTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -6646,9 +6647,21 @@
       ]
     },
     {
+      "path": "server/Application/Review/ReviewDtos.cs",
+      "classes": [
+        "ReviewPollingApiTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/ReviewGrouping.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewPoller.cs",
+      "classes": [
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -13083,7 +13096,8 @@
         "GitHubCodeHostTests",
         "GitHubThreadResolutionTests",
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -13093,13 +13107,20 @@
         "DecisionChainTests",
         "ReviewCheckParserTests",
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewPollingApiTests"
       ]
     },
     {
       "path": "server/Application/Settings/ReviewPolicySettings.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ReviewPollingSettings.cs",
+      "classes": [
+        "ReviewPollingApiTests"
       ]
     },
     {
@@ -16723,6 +16744,12 @@
       "path": "server/Infrastructure/Review/ChatCompletionModels.cs",
       "classes": [
         "CompletionModelTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/GitHubAppTokens.cs",
+      "classes": [
+        "GitHubCodeHostTests"
       ]
     },
     {
@@ -25198,7 +25225,8 @@
       "path": "tests/Antiphon.Tests/Review/ReviewEndToEndFakes.cs",
       "classes": [
         "ReviewDelegationRunnerApiTests",
-        "ReviewEndToEndApiTests"
+        "ReviewEndToEndApiTests",
+        "ReviewPollingApiTests"
       ]
     },
     {

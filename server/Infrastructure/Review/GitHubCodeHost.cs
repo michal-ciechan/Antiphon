@@ -47,7 +47,10 @@ public sealed class GitHubCodeHost(
     public CodeHostCapabilities Capabilities { get; } = new(
         SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
-        CanReadFiles: true);
+        CanReadFiles: true, CanListPullRequests: true, CanPostConversation: true);
+
+    /// <summary>A polling listing reads at most this many pages (1,000 open PRs or comments).</summary>
+    public const int MaxListingPages = 10;
 
     /// <summary>The PR's review threads, a page at a time: each thread's node id and its first comment's database id.</summary>
     public const string ReviewThreadsQuery = """
@@ -411,6 +414,117 @@ public sealed class GitHubCodeHost(
         return new CodeHostBranchUpdate(true, null, message);
     }
 
+    /// <summary>
+    /// <c>GET pulls?state=open</c>, page by page. Each page is a conditional GET, so an unchanged
+    /// listing costs a 304 that GitHub does not count against the rate limit.
+    /// </summary>
+    public async Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct)
+    {
+        var prs = new List<CodeHostOpenPullRequest>();
+        for (var page = 1; page <= MaxListingPages; page++)
+        {
+            var body = await GetAsync(target, $"{RepoPath(target)}/pulls?state=open&per_page={PageSize}&page={page}", JsonMediaType, ct);
+            using var doc = ParseArray(body, "pull request list");
+            var count = 0;
+            foreach (var pr in doc.RootElement.EnumerateArray())
+            {
+                prs.Add(ParseOpenPullRequest(pr));
+                count++;
+            }
+
+            if (count < PageSize)
+                break;
+        }
+
+        return prs;
+    }
+
+    /// <summary>
+    /// <c>GET issues/comments?since=</c>, page by page, keeping comments on PRs: a PR comment's
+    /// <c>html_url</c> has <c>/pull/</c>, or the comment carries a <c>pull_request_url</c>. The URL only
+    /// changes when <paramref name="since"/> does, so a caller that keeps its cursor still gets 304s.
+    /// </summary>
+    public async Task<IReadOnlyList<CodeHostConversationComment>> ListConversationCommentsAsync(CodeHostTarget target, DateTime since, CancellationToken ct)
+    {
+        var utc = since.Kind == DateTimeKind.Local ? since.ToUniversalTime() : DateTime.SpecifyKind(since, DateTimeKind.Utc);
+        var stamp = utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        var comments = new List<CodeHostConversationComment>();
+        for (var page = 1; page <= MaxListingPages; page++)
+        {
+            var body = await GetAsync(target, $"{RepoPath(target)}/issues/comments?since={stamp}&per_page={PageSize}&page={page}", JsonMediaType, ct);
+            using var doc = ParseArray(body, "comment list");
+            var count = 0;
+            foreach (var comment in doc.RootElement.EnumerateArray())
+            {
+                count++;
+                if (ParseConversationComment(comment) is { } parsed)
+                    comments.Add(parsed);
+            }
+
+            if (count < PageSize)
+                break;
+        }
+
+        return comments;
+    }
+
+    /// <summary><c>POST issues/{n}/comments</c>: a PR's conversation is its issue; the Pull requests permission is enough.</summary>
+    public async Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct)
+    {
+        var created = await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/issues/{RequirePr(target)}/comments", new { body }, ct);
+        using var doc = Parse(created, "comment");
+        return new CodeHostThreadReply(doc.RootElement.TryGetProperty("id", out var id) ? id.ToString() : "", Text(doc.RootElement, "html_url"));
+    }
+
+    /// <summary><c>POST issues/comments/{id}/reactions</c>.</summary>
+    public async Task AddCommentReactionAsync(CodeHostTarget target, string commentId, string reaction, CancellationToken ct) =>
+        await SendAsync(target, HttpMethod.Post, $"{RepoPath(target)}/issues/comments/{Uri.EscapeDataString(commentId)}/reactions",
+            new { content = reaction }, ct);
+
+    public static CodeHostOpenPullRequest ParseOpenPullRequest(JsonElement pr) => new(
+        pr.GetProperty("number").GetInt32(),
+        Text(pr, "title") ?? "",
+        pr.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object ? Text(user, "login") ?? "" : "",
+        pr.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True,
+        pr.TryGetProperty("base", out var @base) && @base.ValueKind == JsonValueKind.Object ? Text(@base, "ref") ?? "" : "",
+        pr.TryGetProperty("head", out var head) && head.ValueKind == JsonValueKind.Object ? Text(head, "sha") ?? "" : "",
+        pr.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+            ? labels.EnumerateArray().Select(l => l.ValueKind == JsonValueKind.Object ? Text(l, "name") : null).OfType<string>().ToList()
+            : [],
+        Time(pr, "updated_at") ?? DateTime.MinValue);
+
+    /// <summary>A comment on a PR, or null for a comment on an issue.</summary>
+    public static CodeHostConversationComment? ParseConversationComment(JsonElement comment)
+    {
+        var number = NumberAfter(Text(comment, "html_url"), "/pull/");
+        if (number is null && Text(comment, "pull_request_url") is { } pullUrl)
+            number = NumberAfter(pullUrl, "/pulls/") ?? NumberAfter(Text(comment, "issue_url"), "/issues/");
+        if (number is null || !comment.TryGetProperty("id", out var id))
+            return null;
+        return new CodeHostConversationComment(
+            id.ToString(),
+            number.Value,
+            comment.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object ? Text(user, "login") ?? "" : "",
+            Text(comment, "author_association") ?? "NONE",
+            Text(comment, "body") ?? "",
+            Time(comment, "created_at") ?? DateTime.MinValue);
+    }
+
+    /// <summary>The number after the last <paramref name="marker"/> in a URL (<c>…/pull/12#issuecomment-1</c> is 12).</summary>
+    private static int? NumberAfter(string? url, string marker)
+    {
+        if (string.IsNullOrEmpty(url))
+            return null;
+        var at = url.LastIndexOf(marker, StringComparison.Ordinal);
+        if (at < 0)
+            return null;
+        var start = at + marker.Length;
+        var end = start;
+        while (end < url.Length && char.IsAsciiDigit(url[end]))
+            end++;
+        return end > start && int.TryParse(url.AsSpan(start, end - start), out var n) ? n : null;
+    }
+
     public static CodeHostPullRequest ParsePullRequest(JsonElement root)
     {
         var merged = root.TryGetProperty("merged", out var m) && m.ValueKind == JsonValueKind.True
@@ -602,8 +716,23 @@ public sealed class GitHubCodeHost(
         }
     }
 
+    /// <summary>A listing must be a JSON array; anything else is an unavailable host.</summary>
+    private static JsonDocument ParseArray(string body, string what)
+    {
+        var doc = Parse(body, what);
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            return doc;
+        doc.Dispose();
+        throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub returned a {what} that is not a JSON array.");
+    }
+
     private static string? Text(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static DateTime? Time(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.TryGetDateTimeOffset(out var at)
+            ? at.UtcDateTime
+            : null;
 
     private static int Int(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var n) ? n : 0;
