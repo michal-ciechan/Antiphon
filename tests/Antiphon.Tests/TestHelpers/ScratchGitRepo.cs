@@ -97,10 +97,14 @@ public sealed class ScratchGitRepo : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        // A fixture's commit is setup, not the code under test: no auto-maintenance child after it (a git process of
-        // its own, about 0.18 s on the HP laptop; 165 a run of AgentTaskReplyIntegrationTests). Set on this process's
-        // command line only, so no config a test reads (config --list, the environment) changes.
-        if (args.Length > 0 && args[0] is "commit" or "merge" or "cherry-pick" or "am" or "rebase")
+        // A fixture's commit, merge or fetch is setup, not the code under test: no auto-maintenance child after it (a
+        // git process of its own, about 0.18 s on the HP laptop; 165 a run of AgentTaskReplyIntegrationTests). It is
+        // set on this command line, after which git hands it to the hooks and child gits this command starts
+        // (GIT_CONFIG_PARAMETERS); no fixture hook reads it, and no other command or test sees it. The verb may follow
+        // -c/-C pairs.
+        var verb = 0;
+        while (verb + 1 < args.Length && args[verb] is "-c" or "-C") verb += 2;
+        if (verb < args.Length && args[verb] is "commit" or "merge" or "cherry-pick" or "am" or "rebase" or "fetch" or "pull")
         {
             psi.ArgumentList.Add("-c");
             psi.ArgumentList.Add("maintenance.auto=false");
