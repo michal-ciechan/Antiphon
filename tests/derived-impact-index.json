@@ -2466,9 +2466,9 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
