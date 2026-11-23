@@ -21,6 +21,58 @@ namespace Antiphon.Tests.Agents;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class DirectSessionRunnerClientDisposalTests
 {
+    // Review 8f467d8d CP-7 (Grok, False): a host reaped between the /proc/<pid>/stat open and its read
+    // makes the read fail ESRCH (an IOException, not FileNotFound). The wait phase reported that as
+    // "process observation Unknown: IOException" although the host was gone. Only that vanish is Dead;
+    // any other read failure stays an unknown observation. Windows has no /proc: there the reader
+    // reaps the real child and then raises the same Linux errno to exercise the classification.
+    [Test]
+    [Arguments("reaped-mid-read")]
+    [Arguments("other-io-fault")]
+    public async Task Observation_of_a_process_reaped_between_stat_open_and_read_is_dead(string scenario)
+    {
+        const int Esrch = 3, Eio = 5;
+        var start = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe")) { ArgumentList = { "/d", "/q", "/c", "ping -n 60 127.0.0.1 >nul" } }
+            : new ProcessStartInfo("/bin/sleep") { ArgumentList = { "60" } };
+        start.UseShellExecute = false;
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("observation_child_start_failed");
+        try
+        {
+            var identity = new TestOwnedPtyHost.ProcessIdentity(child.Id, 1, DateTime.UtcNow, start.FileName);
+            string ReapBetweenOpenAndRead(int pid)
+            {
+                pid.ShouldBe(child.Id);
+                if (!OperatingSystem.IsLinux())
+                {
+                    child.Kill(entireProcessTree: true);
+                    child.WaitForExit();
+                    throw new IOException("No such process", Esrch);
+                }
+                using var stream = File.OpenRead($"/proc/{pid}/stat");
+                child.Kill();
+                child.WaitForExit(); // The runtime's SIGCHLD handling reaps its own child.
+                using var reader = new StreamReader(stream);
+                return reader.ReadToEnd();
+            }
+            string FailWhileAlive(int pid) => throw new IOException("Input/output error", Eio);
+            if (scenario == "reaped-mid-read")
+            {
+                TestOwnedPtyHost.ObserveProcess(identity, ReapBetweenOpenAndRead).State
+                    .ShouldBe(TestOwnedPtyHost.State.Dead, "reaped-between-open-and-read");
+                return;
+            }
+            var failure = Should.Throw<IOException>(() => TestOwnedPtyHost.ObserveProcess(identity, FailWhileAlive));
+            failure.ShouldNotBeOfType<FileNotFoundException>("an unexplained read failure is not proof of exit");
+            child.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     [Test]
     public async Task Lingering_exited_host_is_reaped_before_the_cleanup_returns()
     {
