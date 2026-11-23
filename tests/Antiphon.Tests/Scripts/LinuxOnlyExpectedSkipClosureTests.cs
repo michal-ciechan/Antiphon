@@ -8,8 +8,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1907. These four classes are the Windows Full run's unclassified Linux-only
-/// skips. Each method that skips on Windows because it is Linux-only must be covered
+/// CARD-1907. These classes are the Windows Full run's unclassified Linux-only
+/// skips (run 557cdb63 added QualificationTimingTests and ReviewEvidenceResettlementTests,
+/// whose five Linux-only methods reached Full unrostered). A partial class lists every
+/// file that declares it. Each method that skips on Windows because it is Linux-only must be covered
 /// by a windows exclusion whose reason starts with "Linux-only by construction:", or
 /// by a windows row in tests/expected-platform-skips.json, and nothing else in those
 /// classes may be covered. The sets are equal: no extra, none missing.
@@ -19,12 +21,18 @@ public sealed class LinuxOnlyExpectedSkipClosureTests
 {
     private const string LinuxOnlyPrefix = "Linux-only by construction:";
 
-    private static readonly (string ClassName, string RelativePath)[] Subjects =
+    private static readonly (string ClassName, string[] RelativePaths)[] Subjects =
     [
-        ("RcBridgeProbePlatformTests", "tests/Antiphon.Tests/Infrastructure/RcBridgeProbePlatformTests.cs"),
-        ("ZombieCensusPlatformTests", "tests/Antiphon.Tests/Infrastructure/ZombieCensusPlatformTests.cs"),
-        ("PwshPrivateCacheTests", "tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs"),
-        ("UnixPtyDeliveryEnvelopeTests", "tests/Antiphon.Agents.Pty.Tests/UnixPtyDeliveryEnvelopeTests.cs"),
+        ("RcBridgeProbePlatformTests", ["tests/Antiphon.Tests/Infrastructure/RcBridgeProbePlatformTests.cs"]),
+        ("ZombieCensusPlatformTests", ["tests/Antiphon.Tests/Infrastructure/ZombieCensusPlatformTests.cs"]),
+        ("PwshPrivateCacheTests", ["tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs"]),
+        ("UnixPtyDeliveryEnvelopeTests", ["tests/Antiphon.Agents.Pty.Tests/UnixPtyDeliveryEnvelopeTests.cs"]),
+        ("QualificationTimingTests",
+        [
+            "tests/Antiphon.Tests/Scripts/QualificationTimingTests.cs",
+            "tests/Antiphon.Tests/Scripts/QualificationTimingTests.Runs.cs",
+        ]),
+        ("ReviewEvidenceResettlementTests", ["tests/Antiphon.Tests/Application/ReviewEvidenceResettlementTests.cs"]),
     ];
 
     [Test]
@@ -35,7 +43,14 @@ public sealed class LinuxOnlyExpectedSkipClosureTests
         var source = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var subject in Subjects)
         {
-            var parsed = Parse(Path.Combine(root, subject.RelativePath), subject.ClassName);
+            var paths = subject.RelativePaths.Select(path => Path.GetFullPath(Path.Combine(root, path))).ToArray();
+            // Every partial file beside the first (ClassName.cs and ClassName.*.cs) is listed.
+            var siblings = Directory.GetFiles(Path.GetDirectoryName(paths[0])!, subject.ClassName + "*.cs")
+                .Where(file => Path.GetFileName(file) == subject.ClassName + ".cs"
+                    || Path.GetFileName(file).StartsWith(subject.ClassName + ".", StringComparison.Ordinal))
+                .Select(Path.GetFullPath);
+            siblings.Except(paths, StringComparer.Ordinal).ShouldBeEmpty(subject.ClassName + " partial files");
+            var parsed = Parse(paths, subject.ClassName);
             parsed.Tests.Count.ShouldBeGreaterThan(0, subject.ClassName);
             parsed.LinuxOnly.Count.ShouldBeGreaterThan(0, subject.ClassName);
             testsByClass.Add(subject.ClassName, parsed.Tests);
@@ -55,15 +70,21 @@ public sealed class LinuxOnlyExpectedSkipClosureTests
             "missing=[" + string.Join(", ", missing) + "] extra=[" + string.Join(", ", extra) + "]");
     }
 
-    private static (SortedSet<string> Tests, SortedSet<string> LinuxOnly) Parse(string path, string className)
+    private static (SortedSet<string> Tests, SortedSet<string> LinuxOnly) Parse(string[] paths, string className)
     {
-        var text = File.ReadAllText(path);
-        var tree = CSharpSyntaxTree.ParseText(text, new CSharpParseOptions(LanguageVersion.Preview), path);
-        var errors = tree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.ToString()).ToArray();
-        errors.ShouldBeEmpty(path);
-        var classDecl = tree.GetCompilationUnitRoot().DescendantNodes().OfType<ClassDeclarationSyntax>()
-            .Single(c => c.Identifier.Text == className);
-        var methods = classDecl.Members.OfType<MethodDeclarationSyntax>().ToArray();
+        var declared = new List<MethodDeclarationSyntax>();
+        foreach (var path in paths)
+        {
+            var text = File.ReadAllText(path);
+            var tree = CSharpSyntaxTree.ParseText(text, new CSharpParseOptions(LanguageVersion.Preview), path);
+            var errors = tree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.ToString()).ToArray();
+            errors.ShouldBeEmpty(path);
+            var classDecl = tree.GetCompilationUnitRoot().DescendantNodes().OfType<ClassDeclarationSyntax>()
+                .Single(c => c.Identifier.Text == className);
+            declared.AddRange(classDecl.Members.OfType<MethodDeclarationSyntax>());
+        }
+
+        var methods = declared.ToArray();
         var helpers = new HashSet<string>(StringComparer.Ordinal);
         foreach (var method in methods)
         {
