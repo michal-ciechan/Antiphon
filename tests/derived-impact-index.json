@@ -24298,6 +24298,7 @@
         "CheckpointExecutorLogTests",
         "CheckpointStatePublicationTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
+        "OutputCleanupTests",
         "TempRootSweepAnchoredDeleteTests"
       ]
     },
