@@ -19,7 +19,9 @@ param(
     [Parameter(Mandatory = $true)][int]$Pr,
     [string]$Repo = 'michal-ciechan/Antiphon',
     [string]$VaultItem = 'GitHub App - antiphon-review',
-    [string]$RequiredLabel = 'antiphon:live-check'
+    [string]$RequiredLabel = 'antiphon:live-check',
+    # Reuse the last build of tests/Antiphon.Tests instead of building first.
+    [switch]$NoBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,8 +54,10 @@ $env:ANTIPHON_LIVE_GITHUB_PR = "$Pr"
 $item = $null
 
 try {
+    $run = @('run', '--project', 'tests/Antiphon.Tests')
+    if ($NoBuild) { $run += '--no-build' }
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-slot.ps1') -Label review-live-github -- `
-        dotnet run --project tests/Antiphon.Tests -- --treenode-filter '/*/*/ReviewLiveGitHubTests/*'
+        dotnet @run -- --treenode-filter '/*/*/ReviewLiveGitHubTests/*'
     exit $LASTEXITCODE
 }
 finally {
