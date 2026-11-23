@@ -24,6 +24,15 @@ public sealed class SelectorLineEndingAttributeTests
         "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
     ];
 
+    // ImpactedClasses.SelectorFiles (unit 4 of the remaining-ps1 plan): the release evidence binds these embedded sources
+    // to their committed blobs byte for byte, so the working files must be the LF blobs.
+    private static readonly string[] ImpactedLfSources =
+    [
+        "scripts/lib/Antiphon.Nightly/ImpactedClasses.cs",
+        "scripts/lib/Antiphon.Nightly/ImpactedClassesInputs.cs",
+        "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
+    ];
+
     private const string PreservedBytes =
         "tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1";
 
@@ -31,18 +40,20 @@ public sealed class SelectorLineEndingAttributeTests
     public async Task C1313_live_scripts_are_forced_lf()
     {
         LiveLfScripts.ShouldBe(Antiphon.Nightly.TestSelection.SelectorFiles, "c1313-eol: the selector identity");
+        ImpactedLfSources.ShouldBe(Antiphon.Nightly.ImpactedClasses.SelectorFiles, "c1313-eol: the impacted-classes identity");
+        string[] lf = [.. LiveLfScripts, .. ImpactedLfSources];
         var root = DockerStackDocuments.RepoRoot;
-        var fields = (await Git(root, ["check-attr", "-z", "eol", "--", .. LiveLfScripts]))
+        var fields = (await Git(root, ["check-attr", "-z", "eol", "--", .. lf]))
             .Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        fields.Length.ShouldBe(LiveLfScripts.Length * 3, "c1313-eol: complete git check-attr response");
+        fields.Length.ShouldBe(lf.Length * 3, "c1313-eol: complete git check-attr response");
         var problems = new List<string>();
-        for (var i = 0; i < LiveLfScripts.Length; i++)
+        for (var i = 0; i < lf.Length; i++)
         {
             var offset = i * 3;
-            fields[offset].ShouldBe(LiveLfScripts[i]);
+            fields[offset].ShouldBe(lf[i]);
             fields[offset + 1].ShouldBe("eol");
             if (!string.Equals(fields[offset + 2], "lf", StringComparison.Ordinal))
-                problems.Add(LiveLfScripts[i] + " eol=" + fields[offset + 2]);
+                problems.Add(lf[i] + " eol=" + fields[offset + 2]);
         }
 
         problems.ShouldBeEmpty(string.Join("\n", problems));

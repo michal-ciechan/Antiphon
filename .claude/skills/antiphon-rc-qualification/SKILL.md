@@ -126,7 +126,8 @@ These directions override the cited standing rules in
    introducing commit/card;
    approving review(s) with scope (Full/Interim) and the selection they actually ran;
    why the failing test was outside that selection (lane/category/path);
-   the cheapest pre-land check as a path-glob -> class-filter entry for the impacted-classes table of CARD-1782.
+   the cheapest pre-land check as a path-glob -> class-filter entry for the impacted-classes table of CARD-1782;
+   check it with `scripts/antiphon impacted-classes --path <path,path> --json` (`scripts\antiphon.cmd` on Windows).
    Exemption: same cause as an already written note: link it.
    Same-cause chunks share that one note. The orchestrator aggregates the notes and
    files one Backlog card when a cause repeats.

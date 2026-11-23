@@ -14,8 +14,7 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(600_000)]
-[ClassDataSource<DerivedSelectorReplay>(Shared = SharedType.PerClass)]
-public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
+public sealed class DerivedImpactIndexTests
 {
     private const string MigrationPath = "server/Migrations/20261108121426_Card1773TranscriptPromptStampIndex.cs";
 
@@ -24,8 +23,6 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
     private const string LandingGitPath = "server/Infrastructure/Git/LandingGit.cs";
 
     private const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
-
-    private const string MasterSelector = "72fada66545c2dc96a0710827fbc57558700dd61";
 
     private const string PrecheckPath = "scripts/audit-land-verification-precheck.ps1";
 
@@ -311,7 +308,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         using var fixture = new Fixture();
         fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
         fixture.Add("tests/impacted-classes.json", AnchorTable("AddedTests"));
-        var ran = await SelectAsync(fixture.Root, "-Path", "tests/Antiphon.Tests/AddedTests.cs", "-Json");
+        var ran = await SelectAsync(fixture.Root, "--path", "tests/Antiphon.Tests/AddedTests.cs", "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         Strings(json.RootElement, "classes").ShouldContain("AddedTests");
@@ -421,14 +418,14 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         index.Edges.Any(edge => edge.Path == "Antiphon.sln").ShouldBeFalse();
         index.CappedPaths.Single(row => row.Path == "Antiphon.sln").Reason.ShouldBe("allowlist");
         DerivedImpactIndexBuilder.Write(fixture.Root, index);
-        var ran = await SelectAsync(fixture.Root, "-Path", "Antiphon.sln", "-Json");
+        var ran = await SelectAsync(fixture.Root, "--path", "Antiphon.sln", "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         Strings(json.RootElement, "classes").ShouldBeEmpty();
         Strings(json.RootElement, "derivedClasses").ShouldBeEmpty();
         Strings(json.RootElement, "skippedByCap").ShouldContain("Antiphon.sln");
 
-        var real = await SelectAsync(RepoRoot(), "-Path", "Antiphon.sln", "-Json");
+        var real = await SelectAsync(RepoRoot(), "--path", "Antiphon.sln", "--json");
         real.Exit.ShouldBe(0, real.Text);
         using var realJson = JsonDocument.Parse(real.Stdout);
         Strings(realJson.RootElement, "derivedClasses").ShouldBeEmpty();
@@ -440,7 +437,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
     [Test]
     public async Task migration_only_diff_keeps_hand_classes_and_the_derive_set()
     {
-        var ran = await SelectAsync(RepoRoot(), "-Path", MigrationPath, "-Json");
+        var ran = await SelectAsync(RepoRoot(), "--path", MigrationPath, "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         Strings(json.RootElement, "kinds").ShouldBe(["migration-generated-sql-text", "migrations"]);
@@ -474,7 +471,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         await File.WriteAllTextAsync(path, "{\"schema\":2,\"kinds\":[]}");
         try
         {
-            var ran = await SelectAsync(root, "-Path", MigrationPath, "-Json", "-Table", path);
+            var ran = await SelectAsync(root, "--path", MigrationPath, "--json", "--table", path);
             ran.Exit.ShouldBe(1, ran.Text);
             ran.Text.ShouldContain("schema", Case.Sensitive);
             using var json = JsonDocument.Parse(ran.Stdout);
@@ -489,7 +486,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
     [Test]
     public async Task merge_subset_on_a_derived_hit_emits_the_fixed_classes()
     {
-        var ran = await SelectAsync(RepoRoot(), "-MergeSubset", "-Path", LeakSweepPath, "-Json");
+        var ran = await SelectAsync(RepoRoot(), "--merge-subset", "--path", LeakSweepPath, "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         json.RootElement.GetProperty("mode").GetString().ShouldBe("merge-subset");
@@ -527,7 +524,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
               ]
             }
             """);
-        var method = await SelectAsync(fixture.Root, "-Path", PrecheckPath, "-Json");
+        var method = await SelectAsync(fixture.Root, "--path", PrecheckPath, "--json");
         method.Exit.ShouldBe(0, method.Text);
         using var methodJson = JsonDocument.Parse(method.Stdout);
         var filter = methodJson.RootElement.GetProperty("filters")[0].GetProperty("treenodeFilter").GetString();
@@ -541,7 +538,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             await File.WriteAllTextAsync(
                 list,
                 PrecheckPath + "\ntests/Antiphon.Tests/Application/LandGraphEvaluationTests.cs\n");
-            var whole = await SelectAsync(fixture.Root, "-FileList", list, "-Json");
+            var whole = await SelectAsync(fixture.Root, "--file-list", list, "--json");
             whole.Exit.ShouldBe(0, whole.Text);
             using var wholeJson = JsonDocument.Parse(whole.Stdout);
             var wholeFilter = wholeJson.RootElement.GetProperty("filters")[0].GetProperty("treenodeFilter").GetString();
@@ -577,7 +574,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         {
             var range = row.Sha + "^.." + row.Sha;
             var started = Stopwatch.StartNew();
-            var ran = await SelectAsync(root, "-Range", range, "-Json");
+            var ran = await SelectAsync(root, "--range", range, "--json");
             started.Stop();
             if (started.Elapsed > slowest)
                 slowest = started.Elapsed;
@@ -649,7 +646,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
     public async Task capped_real_paths_keep_the_specific_class()
     {
         var root = RepoRoot();
-        var lease = await SelectAsync(root, "-Path", LandingGitPath, "-Json");
+        var lease = await SelectAsync(root, "--path", LandingGitPath, "--json");
         lease.Exit.ShouldBe(0, lease.Text);
         using (var json = JsonDocument.Parse(lease.Stdout))
         {
@@ -663,7 +660,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             OwedCount(json.RootElement, LandingGitPath).ShouldBe(40);
         }
 
-        var leaseText = await SelectAsync(root, "-Path", LandingGitPath);
+        var leaseText = await SelectAsync(root, "--path", LandingGitPath);
         leaseText.Exit.ShouldBe(0, leaseText.Text);
         leaseText.Stdout.Replace("\r\n", "\n").Split('\n').ShouldContain(
             "owed/capped server/Infrastructure/Git/LandingGit.cs count=40 first=LandNonCodeSkipTests,"
@@ -671,7 +668,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             + "RepairSourceDispatchTests,RepositoryMutationLeaseDescribeTests,RunnerAlarmDeliveryTests,"
             + "RunnerStateAlarmExclusionTests");
 
-        var service = await SelectAsync(root, "-Path", NotificationServicePath, "-Json");
+        var service = await SelectAsync(root, "--path", NotificationServicePath, "--json");
         service.Exit.ShouldBe(0, service.Text);
         using (var json = JsonDocument.Parse(service.Stdout))
         {
@@ -680,7 +677,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             OwedCount(json.RootElement, NotificationServicePath).ShouldBe(17);
         }
 
-        var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
+        var sweep = await SelectAsync(root, "--path", LeakSweepPath, "--json");
         sweep.Exit.ShouldBe(0, sweep.Text);
         using var sweepJson = JsonDocument.Parse(sweep.Stdout);
         Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
@@ -688,39 +685,52 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(7);
     }
 
+    // CARD-1843. Every merge-subset entry runs in exactly the projects whose directories declare its class, a
+    // remainderProjects directory of the selection catalog being a project of its own, and the land rows stay at four
+    // land classes or fewer. Until 2026-11-22 this compared the output with a frozen PowerShell copy of the selector
+    // (72fada66, before the project map); the selector is C# now (unit 4 of the remaining-ps1 plan) and the invariant
+    // that comparison guarded is asserted directly.
     [Test]
-    public async Task merge_subset_matches_the_hand_selector()
+    public async Task merge_subset_runs_each_entry_in_its_declaring_projects()
     {
         var root = RepoRoot();
-        var master = Path.Combine(Path.GetTempPath(), "impacted-classes-master-" + Guid.NewGuid().ToString("N") + ".ps1");
-        await File.WriteAllTextAsync(master, GitShow(root, MasterSelector + ":scripts/impacted-classes.ps1"));
-        try
+        var declared = DeclaringProjects(root);
+        var mirrored = 0;
+        foreach (var sha in MergeRanges)
         {
-            var moved = 0;
-            foreach (var sha in MergeRanges)
+            var args = sha is null
+                ? new[] { "--merge-subset", "--json" }
+                : new[] { "--merge-subset", "--range", sha + "^.." + sha, "--json" };
+            var current = await SelectAsync(root, args);
+            current.Exit.ShouldBe(0, sha + " " + current.Text);
+            using var now = JsonDocument.Parse(current.Stdout);
+            foreach (var property in new[] { "filters", "windowsFilters" })
             {
-                var args = sha is null
-                    ? new[] { "-MergeSubset", "-Json" }
-                    : new[] { "-MergeSubset", "-Range", sha + "^.." + sha, "-Json" };
-                var current = await SelectAsync(root, args);
-                var previous = await SelectScriptAsync(root, master, args);
-                current.Exit.ShouldBe(0, sha + " " + current.Text);
-                previous.Exit.ShouldBe(0, sha + " " + previous.Text);
-                if (current.Stdout != previous.Stdout)
+                foreach (var (entry, projects) in FilterEntries(now.RootElement, property))
                 {
-                    AssertOnlyProjectsMoved(root, sha ?? "none", current.Stdout, previous.Stdout);
-                    moved++;
+                    var className = entry.Split('/')[0];
+                    var expected = declared.TryGetValue(className, out var found) ? found : ["tests/Antiphon.Tests"];
+                    projects.Order(StringComparer.Ordinal).ToArray()
+                        .ShouldBe(expected.Order(StringComparer.Ordinal).ToArray(), sha + " " + property + " " + entry);
+                    if (projects.Any(project => !HistoricalProjects.Contains(project) && project != "tests/Antiphon.Tests"))
+                        mirrored++;
+                }
+
+                foreach (var row in now.RootElement.GetProperty(property).EnumerateArray())
+                {
+                    var filter = row.GetProperty("treenodeFilter").GetString() ?? "";
+                    filter.Split('(', ')', '|', '/').Count(name => name.Contains("Land", StringComparison.Ordinal))
+                        .ShouldBeLessThanOrEqualTo(4, sha + " " + filter);
                 }
             }
+        }
 
-            // dff78584 edits LandingGit.cs, which selects the Server.Git mirror classes.
-            moved.ShouldBeGreaterThan(0, "no range exercised the CARD-1843 project map");
-        }
-        finally
-        {
-            File.Delete(master);
-        }
+        // dff78584 edits LandingGit.cs, which selects the Server.Git mirror classes.
+        mirrored.ShouldBeGreaterThan(0, "no range exercised the CARD-1843 project map");
     }
+
+    // The test projects of their own that predate the catalog's remainderProjects.
+    private static readonly string[] HistoricalProjects = ["tests/Antiphon.E2E", "tests/Antiphon.Messaging.Tests", "tests/Antiphon.SessionRunner.Tests"];
 
     [Test]
     public async Task windows_only_classes_stay_out_of_linux_filters()
@@ -733,7 +743,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         {
             if (sha is null)
                 continue;
-            var ran = await SelectAsync(root, "-Range", sha + "^.." + sha, "-Json");
+            var ran = await SelectAsync(root, "--range", sha + "^.." + sha, "--json");
             ran.Exit.ShouldBe(0, sha + " " + ran.Text);
             using var selected = JsonDocument.Parse(ran.Stdout);
             foreach (var name in WholeClasses(selected.RootElement, "filters"))
@@ -1104,7 +1114,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         fixture.Commit();
         var index = DerivedImpactIndexBuilder.Build(fixture.Root);
         DerivedImpactIndexBuilder.Write(fixture.Root, index);
-        var ran = await SelectAsync(fixture.Root, "-Path", "tests/Antiphon.Tests/" + className + ".cs", "-Json");
+        var ran = await SelectAsync(fixture.Root, "--path", "tests/Antiphon.Tests/" + className + ".cs", "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var document = JsonDocument.Parse(ran.Stdout);
         return new LaneProbe(index.WindowsOnly.ToArray(), index.LinuxOnly.ToArray(), document.RootElement.Clone());
@@ -1114,7 +1124,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
     {
         var index = DerivedImpactIndexBuilder.Build(fixture.Root);
         DerivedImpactIndexBuilder.Write(fixture.Root, index);
-        var ran = await SelectAsync(fixture.Root, "-Path", path, "-Json");
+        var ran = await SelectAsync(fixture.Root, "--path", path, "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         var document = JsonDocument.Parse(ran.Stdout);
         // The caller reads the element before the method returns to the test, which disposes nothing.
@@ -1143,41 +1153,8 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         throw new ShouldAssertException("owed row missing for " + path);
     }
 
-    // CARD-1843. The frozen selector runs a class outside E2E, Messaging and SessionRunner in Antiphon.Tests,
-    // and only in the project of its ordinal-first file. The current one runs it in every project that
-    // declares it, a remainderProjects directory of the selection catalog being a project of its own. A
-    // range whose output differs from the frozen one may differ only there: the other fields, the selected
-    // entries and the land rows stay the same, and each entry runs in exactly the projects declaring its class.
-    private static void AssertOnlyProjectsMoved(string root, string sha, string current, string previous)
-    {
-        using var now = JsonDocument.Parse(current);
-        using var then = JsonDocument.Parse(previous);
-        string[] grouped = ["filters", "windowsFilters", "treenodeFilter"];
-        now.RootElement.EnumerateObject().Select(property => property.Name).ToArray()
-            .ShouldBe(then.RootElement.EnumerateObject().Select(property => property.Name).ToArray(), sha);
-        foreach (var property in then.RootElement.EnumerateObject().Where(property => !grouped.Contains(property.Name)))
-            now.RootElement.GetProperty(property.Name).GetRawText().ShouldBe(property.Value.GetRawText(), sha + " " + property.Name);
-
-        var declared = DeclaringProjects(root);
-        foreach (var property in grouped[..2])
-        {
-            var nowEntries = FilterEntries(now.RootElement, property);
-            var thenEntries = FilterEntries(then.RootElement, property);
-            nowEntries.Keys.Order(StringComparer.Ordinal).ToArray()
-                .ShouldBe(thenEntries.Keys.Order(StringComparer.Ordinal).ToArray(), sha + " " + property + " entries");
-            foreach (var (entry, projects) in nowEntries)
-            {
-                var className = entry.Split('/')[0];
-                var expected = declared.TryGetValue(className, out var found) ? found : ["tests/Antiphon.Tests"];
-                projects.Order(StringComparer.Ordinal).ToArray()
-                    .ShouldBe(expected.Order(StringComparer.Ordinal).ToArray(), sha + " " + property + " " + entry);
-            }
-
-            LandRows(now.RootElement, property).ShouldBe(LandRows(then.RootElement, property), sha + " " + property + " land rows");
-        }
-    }
-
-    // Class name -> the projects whose directory holds a file declaring it.
+    // Class name -> the projects whose directory holds a file declaring it: the historical test projects and every
+    // remainderProjects directory of the selection catalog, the longest directory winning; tests/Antiphon.Tests otherwise.
     private static Dictionary<string, HashSet<string>> DeclaringProjects(string root)
     {
         using var catalog = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "tests", "test-selection-policy.json")));
@@ -1186,6 +1163,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             .Select(item => item.GetString() ?? "")
             .Where(entry => entry.StartsWith("tests/", StringComparison.Ordinal) && entry.EndsWith(".csproj", StringComparison.Ordinal))
             .Select(entry => entry[..entry.LastIndexOf('/')])
+            .Concat(HistoricalProjects)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var declaration = new System.Text.RegularExpressions.Regex(
@@ -1241,12 +1219,6 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         return entries;
     }
 
-    private static List<string> LandRows(JsonElement root, string property) =>
-        root.GetProperty(property).EnumerateArray()
-            .Where(row => row.TryGetProperty("id", out var id) && (id.GetString() ?? "").Contains("-land-", StringComparison.Ordinal))
-            .Select(row => row.GetRawText())
-            .ToList();
-
     private static HashSet<string> WholeClasses(JsonElement root, string property)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -1268,24 +1240,6 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         }
 
         return names;
-    }
-
-    private static string GitShow(string root, string spec)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("show");
-        start.ArgumentList.Add(spec);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, stderr);
-        return stdout;
     }
 
     private static List<string> Strings(JsonElement root, string property) =>
@@ -1311,8 +1265,9 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
-    private Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
-        SelectScriptAsync(root, Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), args);
+    // The selector in this process on the repository given, this checkout as its source root.
+    private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
+        ImpactedClassesRun.SelectAsync(RepoRoot(), ["--repo", root, .. args]);
 
     private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
     {
@@ -1326,7 +1281,7 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         start.ArgumentList.Add("-NonInteractive");
         start.ArgumentList.Add("-File");
         start.ArgumentList.Add(Path.Combine(RepoRoot(), "scripts", "regenerate-derived-impact-index.ps1"));
-        start.ArgumentList.Add("-Repo");
+        start.ArgumentList.Add("--repo");
         start.ArgumentList.Add(fixtureRoot);
         start.ArgumentList.Add("-NoBuild");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
@@ -1346,17 +1301,6 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         return (process.ExitCode, stdout, stdout + stderr);
-    }
-
-    private async Task<(int Exit, string Stdout, string Text)> SelectScriptAsync(
-        string root, string script, params string[] args)
-    {
-        var clock = Stopwatch.StartNew();
-        var result = await replay.SelectAsync(root, script, args);
-        if (Environment.GetEnvironmentVariable("ANTIPHON_SELECTOR_TIMING") == "1")
-            Console.WriteLine("SELECTOR_HOSTED elapsedMs=" + clock.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
-                + " script=" + Path.GetFileName(script) + " args=" + string.Join(" ", args) + " " + result.Text[result.Stdout.Length..].Trim());
-        return result;
     }
 
     private static string RepoRoot()

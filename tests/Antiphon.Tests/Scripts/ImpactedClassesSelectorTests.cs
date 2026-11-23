@@ -11,8 +11,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1782. The path-glob table and scripts/impacted-classes.ps1 select the test
-/// classes a high-blast-radius diff puts at risk. These witnesses are the ordinary
+/// CARD-1782. The path-glob table and the impacted-classes selector (Antiphon.Nightly.ImpactedClasses, the
+/// antiphon-scripts impacted-classes command, run here in process; scripts/impacted-classes.ps1 until 2026-11-22)
+/// select the test classes a high-blast-radius diff puts at risk. These witnesses are the ordinary
 /// proof: they fail while the selector is absent or stale, and they name the classes
 /// the 2026-11-08 rc misses actually broke.
 /// </summary>
@@ -63,7 +64,7 @@ public sealed partial class ImpactedClassesSelectorTests
     [Arguments("server/Application/Dtos/SessionQueueDtos.cs")]
     public async Task Input_uncertainty_paths_select_delivery_and_switch_witnesses(string path)
     {
-        var selected = await RunAsync(Root(), "-Path", path, "-Json");
+        var selected = await RunAsync(Root(), "--path", path, "--json");
         selected.Exit.ShouldBe(0, selected.Text);
         using var json = JsonDocument.Parse(selected.Stdout);
         Strings(json.RootElement, "kinds").ShouldContain("input-delivery-uncertainty", path);
@@ -102,7 +103,7 @@ public sealed partial class ImpactedClassesSelectorTests
             table.ShouldContain($"\"id\": \"{kind}\"", Case.Sensitive, kind);
         table.ShouldContain("\"cache\": \"none\"", Case.Sensitive, "no selector cache");
 
-        var audit = await RunAsync(root, "-Audit", "-Json");
+        var audit = await RunAsync(root, "--audit", "--json");
         audit.Exit.ShouldBe(0, audit.Text);
         using var json = JsonDocument.Parse(audit.Stdout);
         json.RootElement.GetProperty("ok").GetBoolean().ShouldBeTrue(audit.Text);
@@ -124,7 +125,7 @@ public sealed partial class ImpactedClassesSelectorTests
             "server/Bundles/stage-review.md");
 
         var guide = await File.ReadAllTextAsync(Path.Combine(root, "docs", "testing-and-build.md"));
-        guide.ShouldContain("scripts/impacted-classes.ps1", Case.Sensitive, "owner usage");
+        guide.ShouldContain("scripts/antiphon impacted-classes --range <base>..<tip> --json", Case.Sensitive, "owner usage");
         guide.ShouldContain(
             "Code and Review Final scope includes the impacted-classes rows",
             Case.Sensitive,
@@ -137,7 +138,7 @@ public sealed partial class ImpactedClassesSelectorTests
     public async Task downgrade_call_sites_are_exactly_the_derived_migration_files()
     {
         var root = Root();
-        var audit = await RunAsync(root, "-Audit", "-Json");
+        var audit = await RunAsync(root, "--audit", "--json");
         audit.Exit.ShouldBe(0, audit.Text);
         using var json = JsonDocument.Parse(audit.Stdout);
         var derived = json.RootElement.GetProperty("derivedFiles").EnumerateArray()
@@ -163,7 +164,7 @@ public sealed partial class ImpactedClassesSelectorTests
         await File.WriteAllTextAsync(path, broken);
         try
         {
-            var audit = await RunAsync(root, "-Audit", "-Json", "-Table", path);
+            var audit = await RunAsync(root, "--audit", "--json", "--table", path);
             audit.Exit.ShouldBe(1, audit.Text);
             audit.Stdout.ShouldContain("NoSuchImpactedClassTests", Case.Sensitive);
         }
@@ -194,7 +195,7 @@ public sealed partial class ImpactedClassesSelectorTests
         await File.WriteAllTextAsync(path, broken);
         try
         {
-            var audit = await RunAsync(root, "-Audit", "-Json", "-Table", path);
+            var audit = await RunAsync(root, "--audit", "--json", "--table", path);
             audit.Exit.ShouldBe(1, audit.Text);
             audit.Stdout.ShouldContain("scripts/lib/*.sh", Case.Sensitive);
         }
@@ -340,13 +341,13 @@ public sealed partial class ImpactedClassesSelectorTests
         await File.WriteAllTextAsync(path, table);
         try
         {
-            var audit = await RunAsync(root, "-Audit", "-Json", "-Table", path);
+            var audit = await RunAsync(root, "--audit", "--json", "--table", path);
             audit.Exit.ShouldBe(1, shape + " audit " + audit.Text);
             audit.Text.ShouldContain(needle, Case.Sensitive, shape + " audit");
             using (var json = JsonDocument.Parse(audit.Stdout))
                 json.RootElement.GetProperty("ok").GetBoolean().ShouldBeFalse(shape + " audit ok");
 
-            var selected = await RunAsync(root, "-Path", "server/Migrations/x.cs", "-Json", "-Table", path);
+            var selected = await RunAsync(root, "--path", "server/Migrations/x.cs", "--json", "--table", path);
             selected.Exit.ShouldBe(1, shape + " select " + selected.Text);
             selected.Text.ShouldContain(needle, Case.Sensitive, shape + " select");
             using var selectedJson = JsonDocument.Parse(selected.Stdout);
@@ -362,19 +363,19 @@ public sealed partial class ImpactedClassesSelectorTests
     public async Task malformed_range_and_path_are_refused()
     {
         var root = Root();
-        var both = await RunAsync(root, "-Range", "HEAD^..HEAD", "-Path", "server/Migrations/x.cs", "-Json");
+        var both = await RunAsync(root, "--range", "HEAD^..HEAD", "--path", "server/Migrations/x.cs", "--json");
         both.Exit.ShouldNotBe(0, both.Text);
-        both.Text.ShouldContain("-Range", Case.Sensitive);
-        both.Text.ShouldContain("-Path", Case.Sensitive);
+        both.Text.ShouldContain("--range", Case.Sensitive);
+        both.Text.ShouldContain("--path", Case.Sensitive);
 
         var list = Path.Combine(Path.GetTempPath(), "impacted-classes-list-" + Guid.NewGuid().ToString("N") + ".txt");
         await File.WriteAllTextAsync(list, "server/Migrations/x.cs\n");
         try
         {
-            var withList = await RunAsync(root, "-Range", "HEAD^..HEAD", "-FileList", list, "-Json");
+            var withList = await RunAsync(root, "--range", "HEAD^..HEAD", "--file-list", list, "--json");
             withList.Exit.ShouldNotBe(0, withList.Text);
-            withList.Text.ShouldContain("-Range", Case.Sensitive);
-            withList.Text.ShouldContain("-FileList", Case.Sensitive);
+            withList.Text.ShouldContain("--range", Case.Sensitive);
+            withList.Text.ShouldContain("--file-list", Case.Sensitive);
         }
         finally
         {
@@ -554,12 +555,12 @@ public sealed partial class ImpactedClassesSelectorTests
         await File.WriteAllTextAsync(list, string.Join("\n", WhyMissedRows.Select(row => row.Path)) + "\n");
         try
         {
-            var ran = await RunAsync(root, "-FileList", list, "-Json");
+            var ran = await RunAsync(root, "--file-list", list, "--json");
             ran.Exit.ShouldBe(0, ran.Text);
             using var json = JsonDocument.Parse(ran.Stdout);
             AssertWhyMissedSelection(json.RootElement);
 
-            var text = await RunAsync(root, "-FileList", list);
+            var text = await RunAsync(root, "--file-list", list);
             text.Exit.ShouldBe(0, text.Text);
             text.Stdout.Replace("\r\n", "\n").Split('\n')
                 .ShouldContain("windowsFilter=tests/Antiphon.Tests " + WindowsTestsFilter);
@@ -589,7 +590,7 @@ public sealed partial class ImpactedClassesSelectorTests
         const string windowsE2e = "/*/*/(AgentTaskLandDeliveryE2ETests*)/*";
         const string path = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
-        var text = await RunAsync(root, "-Path", path);
+        var text = await RunAsync(root, "--path", path);
         text.Exit.ShouldBe(0, text.Text);
         var lines = text.Stdout.Replace("\r\n", "\n").Split('\n')
             .Where(line => line.StartsWith("treenodeFilter=", StringComparison.Ordinal))
@@ -598,7 +599,7 @@ public sealed partial class ImpactedClassesSelectorTests
         foreach (var name in LandNotificationClasses)
             lines[0].ShouldContain("(" + name + "*)", Case.Sensitive, name);
 
-        var ran = await RunAsync(root, "-Path", path, "-Json");
+        var ran = await RunAsync(root, "--path", path, "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(LandNotificationDerivedFilter);
@@ -635,7 +636,7 @@ public sealed partial class ImpactedClassesSelectorTests
         {
             CreateMarkerRemovalRepository(scratch);
             await File.WriteAllTextAsync(tablePath, "{\"schema\":1,\"kinds\":[" + kind + "]}");
-            var removed = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Range", "HEAD^..HEAD", "-Json");
+            var removed = await RunAsync(root, "--repo", scratch, "--table", tablePath, "--range", "HEAD^..HEAD", "--json");
             removed.Exit.ShouldBe(0, removed.Text);
             using (var selected = JsonDocument.Parse(removed.Stdout))
                 AssertCensusPair(selected.RootElement);
@@ -643,7 +644,7 @@ public sealed partial class ImpactedClassesSelectorTests
             var addedOnly = kind.Replace("\"removed\": true", "\"removed\": false", StringComparison.Ordinal);
             addedOnly.ShouldNotBe(kind);
             await File.WriteAllTextAsync(tablePath, "{\"schema\":1,\"kinds\":[" + addedOnly + "]}");
-            var missed = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Range", "HEAD^..HEAD", "-Json");
+            var missed = await RunAsync(root, "--repo", scratch, "--table", tablePath, "--range", "HEAD^..HEAD", "--json");
             missed.Exit.ShouldBe(0, missed.Text);
             using var notSelected = JsonDocument.Parse(missed.Stdout);
             Should.Throw<ShouldAssertException>(() => AssertCensusPair(notSelected.RootElement));
@@ -796,7 +797,7 @@ public sealed partial class ImpactedClassesSelectorTests
 
     private static async Task<JsonDocument> SelectAsync(string root, string range)
     {
-        var ran = await RunAsync(root, "-Range", range, "-Json");
+        var ran = await RunAsync(root, "--range", range, "--json");
         ran.Exit.ShouldBe(0, range + " " + ran.Text);
         return JsonDocument.Parse(ran.Stdout);
     }
@@ -826,29 +827,9 @@ public sealed partial class ImpactedClassesSelectorTests
         return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
-    private static async Task<(int Exit, string Stdout, string Text)> RunAsync(string root, params string[] args)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(root, "scripts", "impacted-classes.ps1"));
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await process.WaitForExitAsync(timeout.Token);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        return (process.ExitCode, stdout, stdout + stderr);
-    }
+    // The selector in this process, the checkout root as its source root (the command line of impacted-classes).
+    private static Task<(int Exit, string Stdout, string Text)> RunAsync(string root, params string[] args) =>
+        ImpactedClassesRun.SelectAsync(root, args);
 
     private static string Root()
     {
@@ -1054,7 +1035,7 @@ public sealed partial class ImpactedClassesSelectorTests
                 "public sealed class OtherProtectedTests\n{\n}\n",
                 "public sealed class OtherProtectedTests\n{\n    // ProtectedData\n}\n",
                 DpapiStubs);
-            var selected = await RunAsync(root, "-Repo", source, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
+            var selected = await RunAsync(root, "--repo", source, "--table", table, "--range", "HEAD^..HEAD", "--json");
             selected.Exit.ShouldBe(0, selected.Text);
             using (var json = JsonDocument.Parse(selected.Stdout))
                 Names(json, "kinds").ShouldContain("dpapi-protected-data");
@@ -1069,7 +1050,7 @@ public sealed partial class ImpactedClassesSelectorTests
                 "{\n  \"schema\": 1\n}\n",
                 "{\n  \"schema\": 1,\n  \"note\": \"ProtectedData\"\n}\n",
                 DpapiStubs);
-            var self = await RunAsync(root, "-Repo", tableDiff, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
+            var self = await RunAsync(root, "--repo", tableDiff, "--table", table, "--range", "HEAD^..HEAD", "--json");
             self.Exit.ShouldBe(0, self.Text);
             using var selfJson = JsonDocument.Parse(self.Stdout);
             Names(selfJson, "kinds").ShouldNotContain("dpapi-protected-data");
@@ -1126,7 +1107,7 @@ public sealed partial class ImpactedClassesSelectorTests
         bool onLinux = false)
     {
         var root = Root();
-        var ran = await RunAsync(root, "-Path", path, "-Json");
+        var ran = await RunAsync(root, "--path", path, "--json");
         ran.Exit.ShouldBe(0, path + " " + ran.Text);
         using (var json = JsonDocument.Parse(ran.Stdout))
             AssertSelected(json.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly, onLinux);
@@ -1138,7 +1119,7 @@ public sealed partial class ImpactedClassesSelectorTests
             var laneWindows = mergeWindows ?? windows;
             var laneOnly = mergeWindowsOnly ?? windowsOnly;
             var laneAlsoOnly = mergeAlsoWindowsOnly ?? alsoWindowsOnly;
-            var merged = await RunAsync(root, "-MergeSubset", "-Path", path, "-Json");
+            var merged = await RunAsync(root, "--merge-subset", "--path", path, "--json");
             merged.Exit.ShouldBe(0, path + " merge " + merged.Text);
             using var mergeJson = JsonDocument.Parse(merged.Stdout);
             AssertSelected(mergeJson.RootElement, kind, needle, laneWindows, also, laneOnly, laneAlsoOnly, onLinux);
@@ -1230,7 +1211,7 @@ public sealed partial class ImpactedClassesSelectorTests
         await File.WriteAllTextAsync(path, table);
         try
         {
-            var ran = await RunAsync(root, "-Path", "server/Migrations/x.cs", "-Json", "-Table", path);
+            var ran = await RunAsync(root, "--path", "server/Migrations/x.cs", "--json", "--table", path);
             ran.Exit.ShouldBe(0, lane + " " + ran.Text);
             return JsonDocument.Parse(ran.Stdout);
         }
@@ -1525,7 +1506,7 @@ public sealed partial class ImpactedClassesSelectorTests
             AssertProjectOf(unlisted, "SharedTests", "tests/Antiphon.Tests");
 
             await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + ",");
-            var refused = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Path", "src/Mirror/x.cs", "-Json");
+            var refused = await RunAsync(root, "--repo", scratch, "--table", tablePath, "--path", "src/Mirror/x.cs", "--json");
             refused.Exit.ShouldBe(1, refused.Text);
             refused.Text.ShouldContain("test-selection-policy.json", Case.Sensitive);
         }
@@ -1555,8 +1536,8 @@ public sealed partial class ImpactedClassesSelectorTests
     private static async Task<List<(string Project, string Filter)>> ProjectRowsAsync(string root, bool merge, string path)
     {
         var ran = merge
-            ? await RunAsync(root, "-MergeSubset", "-Path", path, "-Json")
-            : await RunAsync(root, "-Path", path, "-Json");
+            ? await RunAsync(root, "--merge-subset", "--path", path, "--json")
+            : await RunAsync(root, "--path", path, "--json");
         ran.Exit.ShouldBe(0, path + " " + ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         return FilterRows(json.RootElement, "filters");
@@ -1564,7 +1545,7 @@ public sealed partial class ImpactedClassesSelectorTests
 
     private static async Task<List<(string Project, string Filter)>> ScratchRowsAsync(string root, string scratch, string tablePath)
     {
-        var ran = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Path", "src/Mirror/x.cs", "-Json");
+        var ran = await RunAsync(root, "--repo", scratch, "--table", tablePath, "--path", "src/Mirror/x.cs", "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         return FilterRows(json.RootElement, "filters");

@@ -88,7 +88,10 @@ namespace Antiphon.Nightly
         // driver. Not a claim of transitive closure.
         private static readonly string[] RequiredAlgorithmPaths =
         {
-            "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1",
+            // The impacted-classes selector and its release evidence (ImpactedClasses.SelectorFiles; scripts/impacted-classes.ps1
+            // and scripts/lib/release-impact.ps1 until 2026-11-22).
+            "scripts/lib/Antiphon.Nightly/ImpactedClasses.cs", "scripts/lib/Antiphon.Nightly/ImpactedClassesInputs.cs",
+            "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
             // The selection's canonical JSON, digest and git reads (scripts/lib/test-selection.ps1 until 2026-11-22).
             "scripts/lib/Antiphon.Nightly/TestSelection.cs", "scripts/lib/Antiphon.Nightly/TestSelectionCatalog.cs",
             "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs", "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs",
@@ -110,7 +113,7 @@ namespace Antiphon.Nightly
         public static RcAlgorithmCoverage AlgorithmCoverage(IEnumerable<string> coveredPaths = null)
         {
             var covered = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var path in coveredPaths ?? new[] { "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1" })
+            foreach (var path in coveredPaths ?? ImpactedClasses.SelectorFiles)
                 if (!covered.Add(path)) throw Refuse("duplicate-algorithm-path");
             var missing = RcInputInventory.Sorted(RequiredAlgorithmPaths.Where(p => !covered.Contains(p)));
             return new RcAlgorithmCoverage

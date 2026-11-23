@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
@@ -10,7 +9,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1783. The Merge batch and the rc cut always run one fixed high-radius
 /// subset. These witnesses fail while that subset is absent from the Merge
-/// process or from scripts/impacted-classes.ps1 -MergeSubset.
+/// process or from impacted-classes --merge-subset (Antiphon.Nightly.ImpactedClasses, run in process).
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -150,7 +149,7 @@ public sealed class MergeHighRadiusSubsetTests
         using (var brokenLane = JsonDocument.Parse(droppedLane))
             Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(brokenLane.RootElement));
 
-        var ran = await RunAsync(root, "-MergeSubset", "-Path", "server/Infrastructure/Git/ServerGitIdentity.cs", "-Json");
+        var ran = await RunAsync(root, "--merge-subset", "--path", "server/Infrastructure/Git/ServerGitIdentity.cs", "--json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var lane = JsonDocument.Parse(ran.Stdout);
         AssertWindowsLane(lane.RootElement);
@@ -211,7 +210,7 @@ public sealed class MergeHighRadiusSubsetTests
         // A command row runs no tests, and a missing minimum hides zero executed tests.
         var command = table.Replace(
             "| `" + TestsFilter.Replace("|", "\\|", StringComparison.Ordinal) + "` |",
-            "| scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json |",
+            "| scripts/antiphon impacted-classes --merge-subset --range <base>..<tip> --json |",
             StringComparison.Ordinal);
         command.ShouldNotBe(table);
         Should.Throw<ShouldAssertException>(() => AssertRows(command));
@@ -237,7 +236,7 @@ public sealed class MergeHighRadiusSubsetTests
     {
         var root = Root();
         using var json = await SelectMergeAsync(root, MigrationRange);
-        var ran = await RunAsync(root, "-MergeSubset", "-Range", MigrationRange);
+        var ran = await RunAsync(root, "--merge-subset", "--range", MigrationRange);
         ran.Exit.ShouldBe(0, ran.Text);
         AssertTextFilters(ran.Stdout, json.RootElement);
 
@@ -298,7 +297,7 @@ public sealed class MergeHighRadiusSubsetTests
         loop.ShouldContain("before pushing the rc ref", Case.Sensitive);
         loop.ShouldContain("does not push that ref while the row is red", Case.Sensitive);
         loop.ShouldContain("server/Migrations/**", Case.Sensitive);
-        loop.ShouldContain("scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json", Case.Sensitive);
+        loop.ShouldContain("scripts/antiphon impacted-classes --merge-subset --range <base>..<tip> --json", Case.Sensitive);
         loop.ShouldContain("CP-merge-subset", Case.Sensitive);
         loop.ShouldContain("merge-high-radius", Case.Sensitive);
         loop.ShouldContain(TestsFilter, Case.Sensitive);
@@ -315,7 +314,7 @@ public sealed class MergeHighRadiusSubsetTests
 
         guide.ShouldContain("A Merge batch appends the union", Case.Sensitive);
         guide.ShouldContain("fixed high-radius subset", Case.Sensitive);
-        guide.ShouldContain("scripts/impacted-classes.ps1 -MergeSubset", Case.Sensitive);
+        guide.ShouldContain("scripts/antiphon impacted-classes --merge-subset", Case.Sensitive);
     }
 
     private static void AssertFixed(JsonElement root)
@@ -463,10 +462,10 @@ public sealed class MergeHighRadiusSubsetTests
 
     private static async Task<JsonDocument> SelectMergeAsync(string root, string? range = null)
     {
-        var args = new List<string> { "-MergeSubset", "-Json" };
+        var args = new List<string> { "--merge-subset", "--json" };
         if (range is not null)
         {
-            args.Add("-Range");
+            args.Add("--range");
             args.Add(range);
         }
 
@@ -475,29 +474,9 @@ public sealed class MergeHighRadiusSubsetTests
         return JsonDocument.Parse(ran.Stdout);
     }
 
-    private static async Task<(int Exit, string Stdout, string Text)> RunAsync(string root, params string[] args)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(root, "scripts", "impacted-classes.ps1"));
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-        await process.WaitForExitAsync(timeout.Token);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        return (process.ExitCode, stdout, stdout + stderr);
-    }
+    // The selector in this process, the checkout root as its source root (the command line of impacted-classes).
+    private static Task<(int Exit, string Stdout, string Text)> RunAsync(string root, params string[] args) =>
+        ImpactedClassesRun.SelectAsync(root, args);
 
     private static string Root()
     {

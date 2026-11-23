@@ -2,16 +2,30 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-1820 S1R1. impacted-classes --release-evidence (Antiphon.Nightly.ReleaseImpactEvidence, in process; until
+/// 2026-11-22 scripts/impacted-classes.ps1 -ReleaseEvidence and scripts/lib/release-impact.ps1). The envelope is always
+/// incomplete/Full, and its algorithm identity binds the running selector's own bytes to the source checkout's blobs.
+/// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseImpactEnvelopeTests
 {
+    // ImpactedClasses.SelectorFiles, as literals the derived impact index reads.
+    private static readonly string[] AlgorithmFiles =
+    [
+        "scripts/lib/Antiphon.Nightly/ImpactedClasses.cs",
+        "scripts/lib/Antiphon.Nightly/ImpactedClassesInputs.cs",
+        "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
+    ];
+
     [Test]
     public async Task Fixture_repositories_live_under_system_temp_outside_the_checkout()
     {
@@ -21,6 +35,14 @@ public sealed class ReleaseImpactEnvelopeTests
         (Path.IsPathRooted(fromCheckout) || fromCheckout.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             .ShouldBeTrue("the fixture is outside the checkout, including when temp is on another drive");
         (await fixture.GitAsync("rev-parse", "--is-inside-work-tree")).Trim().ShouldBe("true");
+    }
+
+    [Test]
+    public void Algorithm_files_are_the_selector_identity()
+    {
+        AlgorithmFiles.ShouldBe(ImpactedClasses.SelectorFiles);
+        foreach (var path in AlgorithmFiles)
+            ImpactedClasses.RunningSource(path).ShouldBe(File.ReadAllBytes(Path.Combine(RepoRoot(), path)), path + " runs as checked out");
     }
 
     [Test]
@@ -64,7 +86,7 @@ public sealed class ReleaseImpactEnvelopeTests
     public async Task OrdinaryModeRemainsAdvisory()
     {
         await using var fixture = await Fixture.CreateAsync(withIndex: true);
-        var ordinary = await fixture.SelectAsync("-Path", "input.txt", "-Json");
+        var ordinary = fixture.Select("--path", "input.txt", "--json");
         ordinary.Exit.ShouldBe(0, ordinary.Text);
         using var json = JsonDocument.Parse(ordinary.Stdout);
         json.RootElement.EnumerateObject().Select(p => p.Name).ShouldBe(new[]
@@ -81,72 +103,70 @@ public sealed class ReleaseImpactEnvelopeTests
         // CLI refusal is distinct from a valid but incomplete request. Both deny carry.
         foreach (var conflict in new[]
                  {
-                     new[] { "-Range", fixture.Baseline + ".." + fixture.Candidate },
-                     new[] { "-Path", "input.txt" }, new[] { "-FileList", "input.txt" },
-                     new[] { "-MergeSubset" }, new[] { "-Audit" }, new[] { "-Table", "custom.json" },
+                     new[] { "--range", fixture.Baseline + ".." + fixture.Candidate },
+                     new[] { "--path", "input.txt" }, new[] { "--file-list", "input.txt" },
+                     new[] { "--merge-subset" }, new[] { "--audit" }, new[] { "--table", "custom.json" },
                  })
         {
-            var refused = await fixture.SelectAsync(fixture.ReleaseArguments().Concat(conflict).ToArray());
+            var refused = fixture.Select(fixture.ReleaseArguments().Concat(conflict).ToArray());
             refused.Exit.ShouldBe(2, refused.Text);
             AssertRefused(refused.Stdout);
         }
         foreach (var replacement in new[]
                  {
-                     ("-BaselineSha", "HEAD"), ("-CandidateSha", "deadbeef"),
-                     ("-CandidateSha", new string('0', 40)), ("-TargetPlatform", "unknown"),
+                     ("--baseline-sha", "HEAD"), ("--candidate-sha", "deadbeef"),
+                     ("--candidate-sha", new string('0', 40)), ("--target-platform", "unknown"),
                  })
         {
             var arguments = fixture.ReleaseArguments();
             arguments[Array.IndexOf(arguments, replacement.Item1) + 1] = replacement.Item2;
-            var refused = await fixture.SelectAsync(arguments);
+            var refused = fixture.Select(arguments);
             refused.Exit.ShouldBe(2, refused.Text);
             AssertRefused(refused.Stdout);
         }
-        var missingEndpoint = await fixture.SelectAsync("-ReleaseEvidence", "-Json", "-TargetPlatform", "linux");
+        var missingEndpoint = fixture.Select("--release-evidence", "--json", "--target-platform", "linux");
         missingEndpoint.Exit.ShouldBe(2, missingEndpoint.Text);
         AssertRefused(missingEndpoint.Stdout);
-        var noJson = await fixture.SelectAsync(fixture.ReleaseArguments().Where(x => x != "-Json").ToArray());
+        var noJson = fixture.Select(fixture.ReleaseArguments().Where(x => x != "--json").ToArray());
         noJson.Exit.ShouldBe(2, noJson.Text);
-        var noOptIn = await fixture.SelectAsync("-CandidateSha", fixture.Candidate, "-Json");
+        var noOptIn = fixture.Select("--candidate-sha", fixture.Candidate, "--json");
         noOptIn.Exit.ShouldBe(2, noOptIn.Text);
         AssertRefused(noOptIn.Stdout);
-        var windows = await fixture.SelectAsync(fixture.ReleaseArguments().Select(x => x == "linux" ? "windows" : x).ToArray());
+        var windows = fixture.Select(fixture.ReleaseArguments().Select(x => x == "linux" ? "windows" : x).ToArray());
         windows.Exit.ShouldBe(0, windows.Text);
         using var windowsJson = JsonDocument.Parse(windows.Stdout);
         AssertIncomplete(windowsJson.RootElement, fixture.Baseline, fixture.Candidate, algorithmSha, "windows");
     }
 
-    // CARD-1866 A-1 / M7: exercise a private committed copy of the real algorithm.
-    // Text attributes can conceal changed raw bytes from filtered hash-object.
+    // CARD-1866 A-1 / M7: a private source checkout whose committed blobs are the running selector's own bytes. A
+    // committed algorithm that is not the one running is refused, also when only its line endings differ: the identity
+    // binds raw blobs, so a normalised comparison (which would accept the CRLF copy) must not be what decides.
     [Test]
-    [Arguments("scripts/impacted-classes.ps1", false)]
-    [Arguments("scripts/lib/release-impact.ps1", false)]
-    [Arguments("scripts/impacted-classes.ps1", true)]
-    [Arguments("scripts/lib/release-impact.ps1", true)]
+    [Arguments("scripts/lib/Antiphon.Nightly/ImpactedClasses.cs", false)]
+    [Arguments("scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs", false)]
+    [Arguments("scripts/lib/Antiphon.Nightly/ImpactedClasses.cs", true)]
+    [Arguments("scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs", true)]
     public async Task AlgorithmSourceDriftIsRefused(string path, bool normalized)
     {
         await using var fixture = await Fixture.CreateAsync();
-        var clean = await fixture.SelectCopiedAlgorithmAsync();
+        await using var source = await Fixture.CreateSourceAsync();
+        var clean = fixture.Select(source.Root, fixture.ReleaseArguments());
         clean.Exit.ShouldBe(0, clean.Text);
         using (var json = JsonDocument.Parse(clean.Stdout))
-            AssertIncomplete(json.RootElement, fixture.Baseline, fixture.Candidate, fixture.Candidate);
+            AssertIncomplete(json.RootElement, fixture.Baseline, fixture.Candidate, (await source.GitAsync("rev-parse", "HEAD")).Trim());
 
-        var full = Path.Combine(fixture.Root, path);
-        var original = await File.ReadAllTextAsync(full);
-        await File.WriteAllTextAsync(full, normalized
-            ? original.Replace("\n", "\r\n", StringComparison.Ordinal)
-            : original + "\n# changed algorithm bytes\n");
+        var running = Encoding.UTF8.GetString(ImpactedClasses.RunningSource(path));
+        var changed = normalized ? running.Replace("\n", "\r\n", StringComparison.Ordinal) : running + "\n// changed algorithm bytes\n";
+        await File.WriteAllTextAsync(Path.Combine(source.Root, path), changed);
+        await source.GitAsync("add", "--", path);
+        await source.CommitAsync();
+        var committed = (await source.GitAsync("rev-parse", "HEAD:" + path)).Trim();
+        committed.ShouldNotBe(ReleaseImpactEvidence.BlobId(ImpactedClasses.RunningSource(path), committed.Length));
         if (normalized)
-        {
-            var committed = (await fixture.GitAsync("rev-parse", "HEAD:" + path)).Trim();
-            (await fixture.GitAsync("hash-object", "--", path)).Trim().ShouldBe(committed,
-                "text normalization must conceal the changed bytes from the old guard");
-            (await fixture.GitAsync("hash-object", "--no-filters", "--", path)).Trim().ShouldNotBe(committed);
-        }
-        else
-            (await fixture.GitAsync("status", "--porcelain")).ShouldContain(path);
+            (await source.GitAsync("show", "HEAD:" + path)).Replace("\r\n", "\n", StringComparison.Ordinal)
+                .ShouldBe(running, "line-ending normalisation must conceal the changed bytes from a text compare");
 
-        var refused = await fixture.SelectCopiedAlgorithmAsync();
+        var refused = fixture.Select(source.Root, fixture.ReleaseArguments());
         refused.Exit.ShouldBe(2, refused.Text);
         AssertRefused(refused.Stdout);
         using var result = JsonDocument.Parse(refused.Stdout);
@@ -155,34 +175,47 @@ public sealed class ReleaseImpactEnvelopeTests
             "refusal must not publish a usable algorithm identity");
     }
 
+    // The digest is over the committed blobs of exactly the algorithm files at the source commit: another commit moves
+    // algorithmSha but not the digest, and a committed change to an algorithm file is refused rather than given a digest
+    // (the running selector is not that algorithm).
     [Test]
     public async Task AlgorithmDigestBindsCommittedBlobs()
     {
         await using var fixture = await Fixture.CreateAsync();
+        await using var source = await Fixture.CreateSourceAsync();
         async Task<string> DigestAsync()
         {
             var inventory = new StringBuilder();
-            foreach (var path in new[] { "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1" })
-                inventory.Append(path).Append('\0').Append((await fixture.GitAsync("rev-parse", "HEAD:" + path)).Trim()).Append('\n');
+            foreach (var path in AlgorithmFiles)
+                inventory.Append(path).Append('\0').Append((await source.GitAsync("rev-parse", "HEAD:" + path)).Trim()).Append('\n');
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory.ToString())));
         }
         async Task<string> AssertIdentityAsync()
         {
-            var result = await fixture.SelectCopiedAlgorithmAsync();
+            var result = fixture.Select(source.Root, fixture.ReleaseArguments());
             result.Exit.ShouldBe(0, result.Text);
             using var json = JsonDocument.Parse(result.Stdout);
             var value = json.RootElement;
             // The algorithm can be newer than either analyzed endpoint.
-            AssertIncomplete(value, fixture.Baseline, fixture.Candidate, (await fixture.GitAsync("rev-parse", "HEAD")).Trim());
+            AssertIncomplete(value, fixture.Baseline, fixture.Candidate, (await source.GitAsync("rev-parse", "HEAD")).Trim());
             var digest = value.GetProperty("algorithmDigest").GetString()!;
             digest.ShouldBe(await DigestAsync());
             return digest;
         }
         var before = await AssertIdentityAsync();
-        await File.AppendAllTextAsync(Path.Combine(fixture.Root, "scripts/lib/release-impact.ps1"), "\n# new committed algorithm\n");
-        await fixture.GitAsync("add", ".");
-        await fixture.CommitAsync();
-        (await AssertIdentityAsync()).ShouldNotBe(before);
+        var firstSha = (await source.GitAsync("rev-parse", "HEAD")).Trim();
+        await File.WriteAllTextAsync(Path.Combine(source.Root, "notes.txt"), "not an algorithm file\n");
+        await source.GitAsync("add", ".");
+        await source.CommitAsync();
+        (await source.GitAsync("rev-parse", "HEAD")).Trim().ShouldNotBe(firstSha);
+        (await AssertIdentityAsync()).ShouldBe(before);
+
+        await File.AppendAllTextAsync(Path.Combine(source.Root, AlgorithmFiles[2]), "\n// new committed algorithm\n");
+        await source.GitAsync("add", ".");
+        await source.CommitAsync();
+        var changed = fixture.Select(source.Root, fixture.ReleaseArguments());
+        changed.Exit.ShouldBe(2, changed.Text);
+        changed.Stdout.ShouldContain("algorithm source drift");
     }
 
     [Test]
@@ -227,8 +260,6 @@ public sealed class ReleaseImpactEnvelopeTests
         value.GetProperty("compatibility").GetProperty("globalIncompatibilityReasons").GetArrayLength().ShouldBeGreaterThan(0);
     }
 
-    private sealed record Result(int Exit, string Stdout, string Text);
-
     private sealed class Fixture(string root, string baseline, string candidate) : IAsyncDisposable
     {
         public string Root { get; } = root;
@@ -241,13 +272,6 @@ public sealed class ReleaseImpactEnvelopeTests
             var owner = new Fixture(root, "", "");
             try
             {
-                foreach (var path in new[] { "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1" })
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, path))!);
-                    await File.WriteAllTextAsync(Path.Combine(root, path),
-                        (await File.ReadAllTextAsync(Path.Combine(RepoRoot(), path))).Replace("\r\n", "\n", StringComparison.Ordinal));
-                }
-                await File.WriteAllTextAsync(Path.Combine(root, ".gitattributes"), "*.ps1 text eol=lf\n");
                 Directory.CreateDirectory(Path.Combine(root, "tests", "Antiphon.Tests"));
                 await File.WriteAllTextAsync(Path.Combine(root, "tests", "Antiphon.Tests", "EnvelopeProbeTests.cs"), "public sealed class EnvelopeProbeTests { }\n");
                 await File.WriteAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"),
@@ -255,16 +279,41 @@ public sealed class ReleaseImpactEnvelopeTests
                 if (withIndex)
                     await File.WriteAllTextAsync(Path.Combine(root, "tests", "derived-impact-index.json"), "{\"schema\":1,\"edges\":[],\"cappedPaths\":[]}\n");
                 await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "baseline\n");
-                var fixture = new Fixture(root, "", "");
-                await fixture.GitAsync("init", "-q");
-                await fixture.GitAsync("config", "core.autocrlf", "false");
-                await fixture.GitAsync("add", ".");
-                await fixture.CommitAsync();
-                var baseline = (await fixture.GitAsync("rev-parse", "HEAD")).Trim();
+                await owner.GitAsync("init", "-q");
+                await owner.GitAsync("config", "core.autocrlf", "false");
+                await owner.GitAsync("add", ".");
+                await owner.CommitAsync();
+                var baseline = (await owner.GitAsync("rev-parse", "HEAD")).Trim();
                 await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "candidate\n");
-                await fixture.GitAsync("add", ".");
-                await fixture.CommitAsync();
-                return new Fixture(root, baseline, (await fixture.GitAsync("rev-parse", "HEAD")).Trim());
+                await owner.GitAsync("add", ".");
+                await owner.CommitAsync();
+                return new Fixture(root, baseline, (await owner.GitAsync("rev-parse", "HEAD")).Trim());
+            }
+            catch
+            {
+                await owner.DisposeAsync();
+                throw;
+            }
+        }
+
+        // A source checkout holding the running selector's own bytes of the algorithm files, committed as they are.
+        public static async Task<Fixture> CreateSourceAsync()
+        {
+            var root = Directory.CreateTempSubdirectory("antiphon-envelope-source-").FullName;
+            var owner = new Fixture(root, "", "");
+            try
+            {
+                foreach (var path in AlgorithmFiles)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, path))!);
+                    await File.WriteAllBytesAsync(Path.Combine(root, path), ImpactedClasses.RunningSource(path));
+                }
+                await File.WriteAllTextAsync(Path.Combine(root, ".gitattributes"), "* -text\n");
+                await owner.GitAsync("init", "-q");
+                await owner.GitAsync("config", "core.autocrlf", "false");
+                await owner.GitAsync("add", ".");
+                await owner.CommitAsync();
+                return owner;
             }
             catch
             {
@@ -301,6 +350,7 @@ public sealed class ReleaseImpactEnvelopeTests
 
         public Task<string> CommitAsync() => GitAsync("-c", "user.name=Envelope fixture", "-c", "user.email=envelope@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
 
+        // The selector's source root here is this checkout, so the algorithm is the checkout's HEAD.
         public async Task<string> AlgorithmShaAsync() => (await GitAsync("-C", RepoRoot(), "rev-parse", "HEAD")).Trim();
 
         public async Task<string> GitAsync(params string[] arguments)
@@ -311,29 +361,33 @@ public sealed class ReleaseImpactEnvelopeTests
         }
 
         public string[] ReleaseArguments(string? candidate = null) =>
-            ["-ReleaseEvidence", "-BaselineSha", Baseline, "-CandidateSha", candidate ?? Candidate, "-TargetPlatform", "linux", "-Json"];
+            ["--release-evidence", "--baseline-sha", Baseline, "--candidate-sha", candidate ?? Candidate, "--target-platform", "linux", "--json"];
 
-        public async Task<JsonElement> ReleaseAsync(string? candidate = null)
+        public Task<JsonElement> ReleaseAsync(string? candidate = null)
         {
-            // Red-first adapter: before S1R1 exists, exercise the real successful ordinary selector.
-            // Its advisory payload must fail the same envelope assertions, rather than a missing API.
-            var arguments = File.Exists(Path.Combine(RepoRoot(), "scripts", "lib", "release-impact.ps1"))
-                ? ReleaseArguments(candidate)
-                : ["-Range", Baseline + ".." + (candidate ?? Candidate), "-Json"];
-            var result = await SelectAsync(arguments);
+            var result = Select(ReleaseArguments(candidate));
             result.Exit.ShouldBe(0, result.Text);
             using var document = JsonDocument.Parse(result.Stdout);
-            return document.RootElement.Clone();
+            return Task.FromResult(document.RootElement.Clone());
         }
 
-        public Task<Result> SelectCopiedAlgorithmAsync() => RunAsync("pwsh",
-            new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "impacted-classes.ps1"), "-Repo", Root }
-                .Concat(ReleaseArguments()).ToArray(), 120);
+        // The selector on this fixture's repository, its algorithm source the checkout (or the source given).
+        public (int Exit, string Stdout, string Text) Select(params string[] arguments) => Select(RepoRoot(), arguments);
 
-        public Task<Result> SelectAsync(params string[] arguments) => RunAsync("pwsh",
-            new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), "-Repo", Root }.Concat(arguments).ToArray(), 120);
+        public (int Exit, string Stdout, string Text) Select(string sourceRoot, string[] arguments)
+        {
+            var watch = Stopwatch.StartNew();
+            try
+            {
+                return ImpactedClassesRun.Select(sourceRoot, ["--repo", Root, .. arguments]);
+            }
+            finally
+            {
+                Console.WriteLine($"C1820 phase=select elapsedMs={watch.ElapsedMilliseconds} fixture={Path.GetFileName(Root)}");
+            }
+        }
 
-        private async Task<Result> RunAsync(string command, string[] arguments, int seconds)
+        private async Task<(int Exit, string Stdout, string Text)> RunAsync(string command, string[] arguments, int seconds)
         {
             var start = new ProcessStartInfo(command) { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
@@ -348,7 +402,7 @@ public sealed class ReleaseImpactEnvelopeTests
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
                 await process.WaitForExitAsync(deadline.Token);
                 await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(10));
-                return new Result(process.ExitCode, stdout.Result, stdout.Result + stderr.Result);
+                return (process.ExitCode, stdout.Result, stdout.Result + stderr.Result);
             }
             finally
             {

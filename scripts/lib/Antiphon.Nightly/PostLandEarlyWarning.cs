@@ -119,7 +119,7 @@ namespace Antiphon.Nightly
         /// scripts/build-slot.ps1 under the product root. POST_LAND_WARNING_SLOT_SCRIPT sets it (SlotCommandFor).
         /// </summary>
         public IReadOnlyList<string> SlotCommand { get; set; }
-        /// <summary>The impacted-classes selector. Null is pwsh -File scripts/impacted-classes.ps1 -Json under the product root.</summary>
+        /// <summary>The impacted-classes selector. Null is ImpactedClasses.Run in this process (ImpactedSelector).</summary>
         public Func<PostLandSelectorRequest, PostLandSelection> Selector { get; set; }
         /// <summary>Starts the detached lane (run mode). The CLI relaunches itself with --child, under setsid where it exists.</summary>
         public Action<PostLandChildLaunch> LaunchChild { get; set; }
@@ -680,16 +680,23 @@ namespace Antiphon.Nightly
 
         // ---- the selector ----------------------------------------------------------------------------------------------
 
-        /// <summary>The impacted-classes selector, still PowerShell: pwsh -File scripts/impacted-classes.ps1 -Json.</summary>
-        public static PostLandSelection PowerShellSelector(string productRoot, PostLandSelectorRequest request)
+        /// <summary>
+        /// The impacted-classes selector in this process (ImpactedClasses.Run with --json on the request's repository: the
+        /// file list when there is one, else the range; the table when given), its output read as a selection.
+        /// </summary>
+        public static PostLandSelection ImpactedSelector(string productRoot, PostLandSelectorRequest request)
         {
-            var selector = Path.Combine(productRoot, "scripts", "impacted-classes.ps1");
-            var arguments = new List<string> { "-NoProfile", "-NonInteractive", "-File", selector, "-Json", "-Repo", request.Repo };
-            if (!string.IsNullOrWhiteSpace(request.FileList)) arguments.AddRange(new[] { "-FileList", request.FileList });
-            else arguments.AddRange(new[] { "-Range", request.BaseSha + ".." + request.TipSha });
-            if (!string.IsNullOrWhiteSpace(request.Table)) arguments.AddRange(new[] { "-Table", request.Table });
-            var ran = RunProcess("pwsh", request.Repo, arguments);
-            return ParseSelection(ran.Exit, ran.Stdout, ran.Stderr);
+            var fileList = !string.IsNullOrWhiteSpace(request.FileList);
+            var options = new ImpactedClassesOptions
+            {
+                Repo = request.Repo, Json = true, SourceRoot = productRoot, CurrentDirectory = request.Repo,
+                FileList = fileList ? request.FileList : null, Range = fileList ? null : request.BaseSha + ".." + request.TipSha,
+                Table = string.IsNullOrWhiteSpace(request.Table) ? null : request.Table,
+            };
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exit = ImpactedClasses.Run(options, NightlyHost.Create(null, new WatchedLauncher(), stdout, stderr, null, null, null, null));
+            return ParseSelection(exit, stdout.ToString(), stderr.ToString());
         }
 
         /// <summary>The selector's exit and output as a selection: its classes and each windowsFilters treenodeFilter.</summary>
@@ -1044,7 +1051,7 @@ namespace Antiphon.Nightly
             if (!force && IsCompleted(Path.Combine(receiptRoot, tipSha + ".json"))) return Stop("skipped-completed", "already-completed", 0);
             if (settings.PlanDelayMs > 0) System.Threading.Thread.Sleep(settings.PlanDelayMs);
             var request = new PostLandSelectorRequest { Repo = repo, BaseSha = baseSha, TipSha = tipSha, FileList = fileList, Table = table, ChangedPaths = changed };
-            var selection = settings.Selector != null ? settings.Selector(request) : PowerShellSelector(settings.ProductRoot, request);
+            var selection = settings.Selector != null ? settings.Selector(request) : ImpactedSelector(settings.ProductRoot, request);
             if (!selection.Ok)
             {
                 stderr.WriteLine(selection.Error);

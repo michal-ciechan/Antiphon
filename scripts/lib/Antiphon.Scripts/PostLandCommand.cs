@@ -2,8 +2,8 @@
 // [--receipt-root <dir>] [--table <json>] [--file-list <txt>] [--run-id <32 hex>]. The Linux post-land early warning
 // (Antiphon.Nightly.PostLandEarlyWarning). The POST_LAND_WARNING_* variables are its seams. Run mode detaches by
 // relaunching this executable with the internal --child flag, under setsid where it exists; the lane writes its own
-// stdout and stderr to <receipt-root>/<tip>/lane-<run-id>.log and .err. The build slot (scripts/build-slot.ps1) and the
-// impacted-classes selector (scripts/impacted-classes.ps1) are still PowerShell and still start under pwsh.
+// stdout and stderr to <receipt-root>/<tip>/lane-<run-id>.log and .err. The build slot (scripts/build-slot.ps1) is still
+// PowerShell and still starts under pwsh; the impacted-classes selector (ImpactedClasses) runs in this process.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
