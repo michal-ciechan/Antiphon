@@ -77,6 +77,9 @@ public sealed class NightlyHealthTests
 
     private static string Reasons(NightlyHealthVerdict health) => string.Join(",", health.Reasons);
 
+    /// <summary>A row detail that names the verdict, so a failed row says what the evaluator decided and why.</summary>
+    private static string Verdict(NightlyHealthVerdict health) => $"healthy={health.Healthy} pending={health.Pending} reasons=[{Reasons(health)}]";
+
     private static string LondonDate(DateTime utc) => NightlyLondon.DateText(NightlyLondon.ToLocal(utc));
 
     // ---- HealthFx: New-HealthFx / Invoke-HealthFx ----
@@ -249,14 +252,31 @@ public sealed class NightlyHealthTests
         rows.ShouldPass(1);
     }
 
+    /// <summary>
+    /// G109: today's job and the native state name different SHAs, so the verdict carries sha-mismatch. The row asserts
+    /// the reason itself at fixed London instants across the due day (inside the 00:00-01:00 start grace, before the
+    /// 08:00 deadline, after it), never bare !Healthy at the wall clock: a row that leans on an incidental overdue-start
+    /// or missing-expected-run reason goes red inside the start grace (rc run 557cdb63, group 140). The matching-SHA
+    /// control proves the reason comes from the SHA.
+    /// </summary>
     [Test]
     public void C487_G109()
     {
         var rows = new Rows();
-        var h = NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(), [new NightlyWindmillJob { Sha = "aaa", NativeRunId = "r1" }],
-            State(new { runId = "r1", sha = "bbb", coverageComplete = true, testsPassed = true, reportDelivered = true }), DateTime.UtcNow, expectedScriptHash: "a");
-        rows.Check(!h.Healthy, "G109 sha mismatch");
-        rows.ShouldPass(1);
+        var date = new DateTime(2026, 11, 23, 0, 0, 0, DateTimeKind.Unspecified);
+        foreach (var (hour, minute) in new[] { (0, 15), (0, 45), (1, 30), (9, 0), (23, 30) })
+        {
+            var now = TimeZoneInfo.ConvertTimeToUtc(date.AddHours(hour).AddMinutes(minute), NightlyLondon.TimeZone);
+            NightlyHealthVerdict At(string sha) => NightlyHealth.Evaluate(Registration(hash: "a"), Schedule(),
+                [new NightlyWindmillJob { Sha = "aaa", NativeRunId = "r1" }],
+                State(new { runId = "r1", sha, coverageComplete = true, testsPassed = true, reportDelivered = true }), now, expectedScriptHash: "a");
+            var mismatch = At("bbb");
+            var match = At("aaa");
+            var at = $"{hour:00}:{minute:00} London";
+            rows.Check(!mismatch.Healthy && mismatch.Reasons.Contains("sha-mismatch"), $"G109 sha mismatch {at}", Verdict(mismatch));
+            rows.Check(!match.Reasons.Contains("sha-mismatch"), $"G109 sha match control {at}", Verdict(match));
+        }
+        rows.ShouldPass(10);
     }
 
     [Test]
