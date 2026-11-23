@@ -16658,7 +16658,8 @@
     {
       "path": "server/Infrastructure/Git/WorktreeRenames.cs",
       "classes": [
-        "LandingRemovalPolicyControlTests"
+        "LandingRemovalPolicyControlTests",
+        "WorktreeNoFollowDeleteTests"
       ]
     },
     {
