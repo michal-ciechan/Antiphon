@@ -874,7 +874,7 @@ health episode. A committed caller note keeps its durable queue identity through
 
 ### Gotcha #77
 
-- **A routing pin can list more than one (kind, level).** CARD-0322 stores the list on the pin (`CandidatesJson`); the walker is CARD-0090's. A one-candidate Required pin is still 409 `model_disabled` on hold. Two or more candidates walk in order; exhausted is Blocked for a human. Write lists with `routing-pin.ps1 set -Candidates Kind/Level,...`. Do not append a guessed default.
+- **A routing pin can list more than one (kind, level).** CARD-0322 stores the list on the pin (`CandidatesJson`); the walker is CARD-0090's. A one-candidate Required pin is still 409 `model_disabled` on hold. Two or more candidates walk in order; exhausted is Blocked for a human. Write lists with `scripts/antiphon routing-pin set --candidates Kind/Level,...`. Do not append a guessed default.
 
 ### CARD-0144 — Remote Control cleanup follow-up
 

@@ -44,7 +44,7 @@ public sealed class MigrateStagePinsScriptTests
         run.Output.ShouldContain("effective AFTER apply: Required pin Codex/Frontier,Codex/High,ClaudeCode/High");
         run.Output.ShouldContain("after separate pin clear: role Codex/Frontier,Codex/High,ClaudeCode/High");
         run.Output.ShouldContain("Read back with complexity-chain.ps1 get -Role Plan");
-        run.Output.ShouldContain("routing-pin.ps1 clear -Role Plan");
+        run.Output.ShouldContain("Separate operator command after review: scripts/antiphon routing-pin clear --role Plan");
         fixture.Api.Cells.Count.ShouldBe(0);
 
         // The explicit spelling used for an optional live read has the same GET-only boundary.
@@ -243,7 +243,7 @@ public sealed class MigrateStagePinsScriptTests
         var absent = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
         absent.ExitCode.ShouldBe(1, absent.Output);
         absent.Output.ShouldContain("restore refused: Plan has no Required stage pin");
-        absent.Output.ShouldContain("routing-pin.ps1 set -Role Plan -Provenance Human -Strength Required -Candidates Codex/Frontier,Codex/High,ClaudeCode/High");
+        absent.Output.ShouldContain("scripts/antiphon routing-pin set --role Plan --provenance Human --strength Required --candidates Codex/Frontier,Codex/High,ClaudeCode/High");
         fixture.Api.Requests.Skip(start).Select(r => r.Method).Distinct().ShouldBe(new[] { "GET" });
         fixture.CellsJson.ShouldBe(cells);
         fixture.Api.Pins.AddRange(pins);

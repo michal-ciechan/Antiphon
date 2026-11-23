@@ -1,17 +1,17 @@
-using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// The pipeline-definition command (Antiphon.Nightly.PipelineDefinitionCli, which replaced scripts/pipeline-definition.ps1 in
+/// unit 24 of the 2026-11-22 plan) in process, on a recording transport: each verb's route and body, the stages file sent as
+/// the revision, and the refusals before any request. Nothing leaves the process.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class PipelineDefinitionScriptTests
 {
     private const string Id = "11111111-1111-1111-1111-111111111111";
@@ -19,152 +19,126 @@ public sealed class PipelineDefinitionScriptTests
     private const string Project = "33333333-3333-3333-3333-333333333333";
 
     [Test]
-    public async Task List_gets_the_collection()
+    public void List_gets_the_collection()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "list");
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("GET");
-        stub.LastPath.ShouldBe("/api/pipeline-definitions");
+        var http = Stub();
+        var run = Run(http, "list");
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("GET", "/api/pipeline-definitions"));
+        using var printed = JsonDocument.Parse(run.Output);
+        printed.RootElement.GetProperty("id").GetString().ShouldBe(Id);
+
+        Run(http, "list", "--include-archived").Exit.ShouldBe(0);
+        http.Calls[^1].Path.ShouldBe("/api/pipeline-definitions?includeArchived=true");
     }
 
     [Test]
-    public async Task Get_gets_by_id()
+    public void Get_gets_by_id()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "get", "-Id", Id);
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("GET");
-        stub.LastPath.ShouldBe($"/api/pipeline-definitions/{Id}");
+        var http = Stub();
+        var run = Run(http, "get", "--id", Id);
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("GET", $"/api/pipeline-definitions/{Id}"));
     }
 
     [Test]
-    public async Task Clone_posts_clone_with_name()
+    public void Clone_posts_clone_with_name()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "clone", "-Id", Id, "-Name", "Mine");
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("POST");
-        stub.LastPath.ShouldBe($"/api/pipeline-definitions/{Id}/clone");
-        stub.LastBody!.RootElement.GetProperty("name").GetString().ShouldBe("Mine");
+        var http = Stub();
+        var run = Run(http, "clone", "--id", Id, "--name", "Mine");
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("POST", $"/api/pipeline-definitions/{Id}/clone"));
+        using var body = JsonDocument.Parse(http.Calls.Single().Body!);
+        body.RootElement.GetProperty("name").GetString().ShouldBe("Mine");
     }
 
     [Test]
     public async Task Revise_posts_the_stages_file_as_the_revision_body()
     {
-        await using var stub = new Stub();
+        var http = Stub();
         var file = Path.GetTempFileName();
         try
         {
             const string stages = "[{\"role\":\"Code\",\"bundleKey\":\"stage-code\",\"allowedNext\":[\"review\"]}]";
             await File.WriteAllTextAsync(file, stages);
-            var run = await RunAsync(stub, "revise", "-Id", Id, "-StagesFile", file, "-Note", "tighten");
-            run.ExitCode.ShouldBe(0, run.Output);
-            stub.LastPath.ShouldBe($"/api/pipeline-definitions/{Id}/revisions");
-            stub.LastBody!.RootElement.GetProperty("stages").GetRawText().ShouldBe(stages);
-            stub.LastBody.RootElement.GetProperty("changeNote").GetString().ShouldBe("tighten");
+            var run = Run(http, "revise", "--id", Id, "--stages-file", file, "--note", "tighten");
+            run.Exit.ShouldBe(0, run.All);
+            http.Calls.Single().Path.ShouldBe($"/api/pipeline-definitions/{Id}/revisions");
+            using var body = JsonDocument.Parse(http.Calls.Single().Body!);
+            body.RootElement.GetProperty("stages").GetRawText().ShouldBe(stages);
+            body.RootElement.GetProperty("changeNote").GetString().ShouldBe("tighten");
+
+            Run(http, "revise", "--id", Id, "--stages-file", file).Exit.ShouldBe(0);
+            using var noNote = JsonDocument.Parse(http.Calls[^1].Body!);
+            noNote.RootElement.GetProperty("changeNote").ValueKind.ShouldBe(JsonValueKind.Null);
+
+            await File.WriteAllTextAsync(file, """{"role":"Code"}""");
+            var notArray = Run(http, "revise", "--id", Id, "--stages-file", file);
+            notArray.Exit.ShouldBe(1);
+            notArray.Error.Trim().ShouldBe("Stages file must contain a JSON array.");
+            var missing = Run(http, "revise", "--id", Id, "--stages-file", file + ".missing");
+            missing.Exit.ShouldBe(1);
+            missing.Error.Trim().ShouldBe("Stages file does not exist: " + file + ".missing");
+            http.Calls.Count.ShouldBe(2, "a refused stages file sends nothing");
         }
         finally { File.Delete(file); }
     }
 
     [Test]
-    public async Task SetBoard_puts_the_pointer()
+    public void SetBoard_puts_the_pointer()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "set-board", "-Board", Board, "-Id", Id);
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("PUT");
-        stub.LastPath.ShouldBe($"/api/boards/{Board}/pipeline");
-        stub.LastBody!.RootElement.GetProperty("pipelineDefinitionId").GetString().ShouldBe(Id);
+        var http = Stub();
+        var run = Run(http, "set-board", "--board", Board, "--id", Id);
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("PUT", $"/api/boards/{Board}/pipeline"));
+        using var body = JsonDocument.Parse(http.Calls.Single().Body!);
+        body.RootElement.GetProperty("pipelineDefinitionId").GetString().ShouldBe(Id);
     }
 
     [Test]
-    public async Task SetProject_puts_the_pointer()
+    public void SetProject_puts_the_pointer()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "set-project", "-Project", Project, "-Id", Id);
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("PUT");
-        stub.LastPath.ShouldBe($"/api/projects/{Project}/pipeline");
-        stub.LastBody!.RootElement.GetProperty("pipelineDefinitionId").GetString().ShouldBe(Id);
+        var http = Stub();
+        var run = Run(http, "set-project", "--project", Project, "--id", Id);
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("PUT", $"/api/projects/{Project}/pipeline"));
+        using var body = JsonDocument.Parse(http.Calls.Single().Body!);
+        body.RootElement.GetProperty("pipelineDefinitionId").GetString().ShouldBe(Id);
     }
 
     [Test]
-    public async Task SetBoard_Inherit_puts_null()
+    public void SetBoard_Inherit_puts_null()
     {
-        await using var stub = new Stub();
-        var run = await RunAsync(stub, "set-board", "-Board", Board, "-Inherit");
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("PUT");
-        stub.LastPath.ShouldBe($"/api/boards/{Board}/pipeline");
-        stub.LastBody!.RootElement.GetProperty("pipelineDefinitionId").ValueKind.ShouldBe(JsonValueKind.Null);
+        var http = Stub();
+        var run = Run(http, "set-board", "--board", Board, "--inherit");
+        run.Exit.ShouldBe(0, run.All);
+        (http.Calls.Single().Method, http.Calls.Single().Path).ShouldBe(("PUT", $"/api/boards/{Board}/pipeline"));
+        using var body = JsonDocument.Parse(http.Calls.Single().Body!);
+        body.RootElement.GetProperty("pipelineDefinitionId").ValueKind.ShouldBe(JsonValueKind.Null);
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(Stub stub, params string[] args)
+    [Test]
+    public void A_malformed_command_line_is_a_usage_error_and_a_refusal_is_printed()
     {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/pipeline-definition.ps1"));
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = stub.BaseUrl;
-        start.Environment.Remove("ANTIPHON_TASK_TOKEN");
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-        var output = await stdout + await stderr;
-        if (process.ExitCode == 0)
-            await stub.Request.WaitAsync(TimeSpan.FromSeconds(5));
-        return (process.ExitCode, output);
+        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "PipelineDefinitionCli.cs")).ShouldAllBe(b => b < 128);
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse(["get"], null, null)).Message.ShouldBe("--id is required for get");
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse(["clone", "--id", Id], null, null)).Message.ShouldBe("--name is required for clone");
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse(["get", "--id", Id, "--inherit"], null, null)).Message.ShouldBe("--inherit does not apply to get");
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse(["set-project", "--project", Project], null, null)).Message.ShouldBe("--id is required for set-project");
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse(["set-board", "--board", Board, "--id", Id, "--inherit"], null, null)).Message
+            .ShouldBe("give --id or --inherit, not both");
+        Should.Throw<NightlyUsageException>(() => PipelineDefinitionCliOptions.Parse([], null, null));
+
+        var refused = new RecordingOperatorHttp(_ => new(409, """{"detail":"The definition is archived.","code":"pipeline_definition_archived"}"""));
+        var run = Run(refused, "set-board", "--board", Board, "--id", Id);
+        run.Exit.ShouldBe(1);
+        run.Error.ShouldContain($"Antiphon PUT /api/boards/{Board}/pipeline failed: The definition is archived.");
+        run.Error.ShouldContain("code pipeline_definition_archived");
     }
 
-    private sealed class Stub : IAsyncDisposable
-    {
-        private readonly HttpListener _listener = new();
-        public string BaseUrl { get; }
-        public string? LastMethod { get; private set; }
-        public string? LastPath { get; private set; }
-        public JsonDocument? LastBody { get; private set; }
-        public Task Request { get; }
+    private static RecordingOperatorHttp Stub() => new(_ => new(200, $$"""{"id":"{{Id}}"}"""));
 
-        public Stub()
-        {
-            var socket = new TcpListener(IPAddress.Loopback, 0);
-            socket.Start();
-            var port = ((IPEndPoint)socket.LocalEndpoint).Port;
-            socket.Stop();
-            BaseUrl = $"http://127.0.0.1:{port}";
-            _listener.Prefixes.Add(BaseUrl + "/");
-            _listener.Start();
-            Request = ServeAsync();
-        }
-
-        private async Task ServeAsync()
-        {
-            var context = await _listener.GetContextAsync();
-            LastMethod = context.Request.HttpMethod;
-            LastPath = context.Request.RawUrl;
-            if (context.Request.HasEntityBody)
-            {
-                using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                LastBody = JsonDocument.Parse(await reader.ReadToEndAsync());
-            }
-            var body = Encoding.UTF8.GetBytes("{}");
-            context.Response.ContentType = "application/json";
-            context.Response.ContentLength64 = body.Length;
-            await context.Response.OutputStream.WriteAsync(body);
-            context.Response.Close();
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            LastBody?.Dispose();
-            _listener.Close();
-            return ValueTask.CompletedTask;
-        }
-    }
+    private static BoardCommandRun.Result Run(RecordingOperatorHttp http, params string[] args) =>
+        BoardCommandRun.Run(host => PipelineDefinitionCli.Run(PipelineDefinitionCliOptions.Parse(args, BoardCommandRun.Api, null), host,
+            new System.IO.Abstractions.FileSystem(), http.Transport));
 }

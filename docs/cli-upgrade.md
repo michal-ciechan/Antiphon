@@ -75,7 +75,7 @@ Every repo place that names a model or a CLI version (check all of them in the s
 | `server/Application/Services/ModelLevelAliases.cs` | The ladder (`ForCodexEntry`, `ForClaude`, `ForGrok`) and `MinimumCodexCliVersion` floors. The runner uses the shared GPT-6.2 catalog floor at cold launch when the selected launcher has a fresh, matching version observation. |
 | `server/Application/Core/ModelAlias.cs` | Slug constants, `DelegatableAliases` (what `-Model` and holds accept), `Normalize`, `CanonicalHoldAlias`. |
 | `server/Application/Services/AgentTuiRunnerCatalog.cs` | Curated profile model lists per kind. |
-| `GET /api/model-availability` / `scripts/model-availability.ps1` | Live holds (verbs `get`, `hold`, `clear`). |
+| `GET /api/model-availability` / `scripts/antiphon model-availability` | Live holds (verbs `get`, `hold`, `clear`). |
 | `GET /api/complexity-chains` | The role x complexity matrix (cells, not pins). |
 | `docs/agent-kinds.md` §3 and §4-6 | Ladder table, floors, per-kind launch notes. |
 | `docker/session-runner-grok/Dockerfile` | `CODEX_VERSION` + `CODEX_SHA512`, `CLAUDE_CODE_VERSION` + `CLAUDE_CODE_SHA256`, `GROK_VERSION` + `GROK_SHA256`. |
@@ -335,8 +335,8 @@ Only after step 6 passes on the new CLI everywhere:
 
 - Ladder cells: change `ModelLevelAliases` (and `docs/agent-kinds.md` §3) in a reviewed change. The
   role x complexity matrix is `GET /api/complexity-chains`: edit cells there, not routing pins.
-- Model availability: `pwsh -NoProfile -File scripts/model-availability.ps1 get`, `hold -Kind Codex
-  -Model <slug> [-Until <ISO-8601Z>] [-Reason r]`, `clear -Kind Codex -Model <slug>`. A hold refuses
+- Model availability: `scripts/antiphon model-availability get`, `hold --kind Codex
+  --model <slug> [--until <ISO-8601Z>] [--reason r]`, `clear --kind Codex --model <slug>`. A hold refuses
   only that alias.
 - Record every ladder or hold change with the operator's date in `docs/agent-kinds.md`, in the
   shape "operator 2026-11-19".

@@ -70,7 +70,7 @@ public class ModelLevelAliasDisplayTests
     [Test]
     public void a_codex_kind_level_routing_pin_token_resolves_the_remapped_alias()
     {
-        // routing-pin.ps1 -Candidates sends Kind/Level tokens; the server alias is ModelLevelAliases.For.
+        // The routing-pin command's --candidates sends Kind/Level tokens; the server alias is ModelLevelAliases.For.
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.High))
             .ShouldBe("Codex/High (gpt-6.2-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Medium))

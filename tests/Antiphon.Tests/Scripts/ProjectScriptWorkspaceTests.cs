@@ -1,16 +1,17 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0458. The project command's set --default-worker-workspace (Antiphon.Nightly.ProjectCli, which replaced
+/// scripts/project.ps1 in unit 24 of the 2026-11-22 plan) in process against a recording stand-in for the project API that
+/// keeps the stored values: the value round-trips by name or guid, the other fields are re-sent unchanged, the commit
+/// policy and the workspace leave each other alone, and an invalid value never PUTs. Nothing leaves the process.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ProjectScriptWorkspaceTests
 {
     [Test]
@@ -20,18 +21,16 @@ public sealed class ProjectScriptWorkspaceTests
     [Arguments("Worktree", true)]
     [Arguments("Inherit", false)]
     [Arguments("Inherit", true)]
-    public async Task C458_SetDefaultWorkerWorkspaceRoundTrips(string value, bool byGuid)
+    public void C458_SetDefaultWorkerWorkspaceRoundTrips(string value, bool byGuid)
     {
-        using var stub = new ProjectStub { Workspace = "Shared" };
-        var run = await RunAsync(stub.BaseUrl, "set", byGuid ? ProjectStub.Id : "antiphon",
-            "-DefaultWorkerWorkspace", value);
-        run.ExitCode.ShouldBe(0, run.Output);
+        var stub = new WorkspaceProjectApi { Workspace = "Shared" };
+        var run = stub.Run("set", byGuid ? WorkspaceProjectApi.Id : "antiphon", "--default-worker-workspace", value.ToLowerInvariant());
+        run.Exit.ShouldBe(0, run.All);
         stub.PutCount.ShouldBe(1);
-        stub.LastPut!.RootElement.GetProperty("defaultWorkerWorkspace").GetString().ShouldBe(value);
+        stub.LastPut!.RootElement.GetProperty("defaultWorkerWorkspace").GetString().ShouldBe(value, "sent in its listed spelling");
         var expected = value == "Inherit" ? null : value;
         stub.Workspace.ShouldBe(expected);
-        using var client = new HttpClient();
-        using var detail = JsonDocument.Parse(await client.GetStringAsync(stub.BaseUrl + "/api/projects/" + ProjectStub.Id));
+        using var detail = JsonDocument.Parse(stub.Answer("GET", "/api/projects/" + WorkspaceProjectApi.Id).Body);
         detail.RootElement.GetProperty("defaultWorkerWorkspace").GetString().ShouldBe(expected);
         detail.RootElement.GetProperty("effectiveWorkerWorkspace").GetString().ShouldBe(expected ?? "Worktree");
         run.Output.ShouldContain("configuredWorkerWorkspace=" + (expected ?? "Worktree"));
@@ -39,11 +38,11 @@ public sealed class ProjectScriptWorkspaceTests
     }
 
     [Test]
-    public async Task C458_SetWorkspacePreservesOtherProjectFields()
+    public void C458_SetWorkspacePreservesOtherProjectFields()
     {
-        using var stub = new ProjectStub();
-        var run = await RunAsync(stub.BaseUrl, "set", "antiphon", "-DefaultWorkerWorkspace", "Shared");
-        run.ExitCode.ShouldBe(0, run.Output);
+        var stub = new WorkspaceProjectApi();
+        var run = stub.Run("set", "antiphon", "--default-worker-workspace", "Shared");
+        run.Exit.ShouldBe(0, run.All);
         var body = stub.LastPut!.RootElement;
         body.GetProperty("name").GetString().ShouldBe("antiphon");
         body.GetProperty("gitRepositoryUrl").GetString().ShouldBe("https://example.test/repo.git");
@@ -57,115 +56,81 @@ public sealed class ProjectScriptWorkspaceTests
         body.TryGetProperty("defaultLaunchEnv", out _).ShouldBeFalse();
         stub.CommitOnSettle.ShouldBe("Off");
         stub.DefaultLaunchEnv.ShouldBe("sentinel");
+        stub.Requests.ShouldBe(["GET /api/projects", "PUT /api/projects/" + WorkspaceProjectApi.Id]);
     }
 
     [Test]
-    public async Task C458_SetCommitPolicyPreservesWorkspace()
+    public void C458_SetCommitPolicyPreservesWorkspace()
     {
-        using var stub = new ProjectStub { Workspace = "Worktree" };
-        var run = await RunAsync(stub.BaseUrl, "set", "antiphon", "-CommitOnSettle", "Off");
-        run.ExitCode.ShouldBe(0, run.Output);
+        var stub = new WorkspaceProjectApi { Workspace = "Worktree" };
+        var run = stub.Run("set", "antiphon", "--commit-on-settle", "Off");
+        run.Exit.ShouldBe(0, run.All);
         stub.LastPut!.RootElement.TryGetProperty("defaultWorkerWorkspace", out _).ShouldBeFalse();
         stub.Workspace.ShouldBe("Worktree");
         stub.CommitOnSettle.ShouldBe("Off");
     }
 
     [Test]
-    public async Task C458_InvalidWorkspaceNeverPuts()
+    public void C458_InvalidWorkspaceNeverPuts()
     {
-        using var stub = new ProjectStub();
+        var stub = new WorkspaceProjectApi();
         foreach (var bad in new[] { "ReadOnly", "unknown" })
         {
-            var run = await RunAsync(stub.BaseUrl, "set", "antiphon", "-DefaultWorkerWorkspace", bad);
-            run.ExitCode.ShouldNotBe(0);
+            var run = stub.Run("set", "antiphon", "--default-worker-workspace", bad);
+            run.Exit.ShouldBe(2);
+            run.Error.ShouldContain("--default-worker-workspace must be one of Shared, Worktree, Inherit, not '" + bad + "'");
         }
         stub.PutCount.ShouldBe(0);
+        stub.Requests.ShouldBeEmpty();
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(string api, params string[] args)
-    {
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "project.ps1"));
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = api;
-        start.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
-    }
-
-    private sealed class ProjectStub : IDisposable
+    // The ProjectStub of the script driver, as a transport: GET /api/projects answers the one project in an array, GET
+    // /api/projects/{id} the project, and a PUT stores the workspace and commit policy it carries and answers the project.
+    private sealed class WorkspaceProjectApi
     {
         public const string Id = "11111111-1111-1111-1111-111111111111";
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-        public string BaseUrl { get; }
         public string? Workspace { get; set; }
         public string? CommitOnSettle { get; set; } = "Off";
         public string DefaultLaunchEnv { get; set; } = "sentinel";
         public int PutCount { get; private set; }
         public JsonDocument? LastPut { get; private set; }
+        public List<string> Requests { get; } = [];
 
-        public ProjectStub()
+        public BoardCommandRun.Result Run(params string[] args)
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        private async Task PumpAsync()
-        {
-            while (!_cts.IsCancellationRequested)
+            var http = new RecordingOperatorHttp(call =>
             {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch { return; }
-                if (context.Request.HttpMethod == "PUT")
-                {
-                    using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                    LastPut?.Dispose();
-                    LastPut = JsonDocument.Parse(await reader.ReadToEndAsync());
-                    var body = LastPut.RootElement;
-                    if (body.TryGetProperty("defaultWorkerWorkspace", out var workspace))
-                        Workspace = workspace.GetString() is "Inherit" ? null : workspace.GetString();
-                    if (body.TryGetProperty("commitOnSettle", out var commit))
-                        CommitOnSettle = commit.GetString();
-                    PutCount++;
-                }
-                var dto = new
-                {
-                    id = Id, name = "antiphon", gitRepositoryUrl = "https://example.test/repo.git",
-                    localRepositoryPath = @"C:\src\repo", baseBranch = "release", constitutionPath = "AGENTS.md",
-                    gitHubIntegrationEnabled = true, notificationsEnabled = true, repositoryVisibility = "Private",
-                    defaultLaunchEnv = new { KEEP = DefaultLaunchEnv }, commitOnSettle = CommitOnSettle,
-                    effectiveCommitOnSettle = false, defaultWorkerWorkspace = Workspace,
-                    effectiveWorkerWorkspace = Workspace ?? "Worktree",
-                    dispatchHonorsWorkspaceDefault = false,
-                };
-                var json = JsonSerializer.Serialize(dto);
-                if (context.Request.HttpMethod == "GET" && context.Request.Url!.AbsolutePath == "/api/projects")
-                    json = "[" + json + "]";
-                var bytes = Encoding.UTF8.GetBytes(json);
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(bytes);
-                context.Response.Close();
-            }
+                Requests.Add(call.Method + " " + call.Path);
+                return Answer(call.Method, call.Path, call.Body);
+            });
+            return BoardCommandRun.Run(host => ProjectCli.Run(ProjectCliOptions.Parse(args, BoardCommandRun.Api, null), host,
+                new System.IO.Abstractions.FileSystem(), http.Transport));
         }
 
-        public void Dispose()
+        public NightlyReportHttpResponse Answer(string method, string path, string? body = null)
         {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch { }
-            _listener.Close();
-            LastPut?.Dispose();
-            _cts.Dispose();
+            if (method == "PUT")
+            {
+                LastPut = JsonDocument.Parse(body!);
+                var put = LastPut.RootElement;
+                if (put.TryGetProperty("defaultWorkerWorkspace", out var workspace))
+                    Workspace = workspace.GetString() is "Inherit" ? null : workspace.GetString();
+                if (put.TryGetProperty("commitOnSettle", out var commit))
+                    CommitOnSettle = commit.GetString();
+                PutCount++;
+            }
+            var dto = new
+            {
+                id = Id, name = "antiphon", gitRepositoryUrl = "https://example.test/repo.git",
+                localRepositoryPath = @"C:\src\repo", baseBranch = "release", constitutionPath = "AGENTS.md",
+                gitHubIntegrationEnabled = true, notificationsEnabled = true, repositoryVisibility = "Private",
+                defaultLaunchEnv = new { KEEP = DefaultLaunchEnv }, commitOnSettle = CommitOnSettle,
+                effectiveCommitOnSettle = false, defaultWorkerWorkspace = Workspace,
+                effectiveWorkerWorkspace = Workspace ?? "Worktree",
+                dispatchHonorsWorkspaceDefault = false,
+            };
+            var json = JsonSerializer.Serialize(dto);
+            return new NightlyReportHttpResponse(200, method == "GET" && path == "/api/projects" ? "[" + json + "]" : json);
         }
     }
 }

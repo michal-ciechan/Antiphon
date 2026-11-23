@@ -994,8 +994,9 @@ public sealed partial class ImpactedClassesSelectorTests
     [Test]
     public async Task C1819_capability_script_selects_the_dpapi_classes_on_windows()
     {
+        // The DPAPI writer is the capability command's C# since unit 24 of the 2026-11-22 plan (scripts/capability.ps1 is gone).
         await AssertFakeDiff(
-            "scripts/capability.ps1",
+            "scripts/lib/Antiphon.Nightly/CapabilityCli.cs",
             "dpapi-protected-data",
             "CapabilityScriptTests",
             windows: true,

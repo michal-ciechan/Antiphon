@@ -51,33 +51,40 @@ public sealed class CommitOnSettleScriptTests
         server.RequestCount.ShouldBe(0);
     }
 
+    // The project command (Antiphon.Nightly.ProjectCli, which replaced scripts/project.ps1 in unit 24 of the 2026-11-22 plan)
+    // runs in process on a recording transport that answers as the project API.
     [Test]
     [Arguments("On", "On")]
     [Arguments("Off", "Off")]
     [Arguments("Inherit", "Inherit")]
-    public async Task Project_set_CommitOnSettle_puts_the_value(string value, string expected)
+    public void Project_set_CommitOnSettle_puts_the_value(string value, string expected)
     {
-        using var stub = new ProjectApiStub();
-        var run = await RunProjectAsync(stub.BaseUrl, "set", "antiphon", "-CommitOnSettle", value);
+        var http = CommitPolicyProjectApi();
+        var run = RunProject(http, "set", "antiphon", "--commit-on-settle", value);
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastMethod.ShouldBe("PUT");
-        stub.LastPutBody.ShouldNotBeNull()
-            .RootElement.GetProperty("commitOnSettle").GetString().ShouldBe(expected);
+        run.Exit.ShouldBe(0, run.All);
+        http.Calls.Select(c => c.Method).ShouldBe(["GET", "PUT"]);
+        using var put = JsonDocument.Parse(http.Calls[^1].Body!);
+        put.RootElement.GetProperty("commitOnSettle").GetString().ShouldBe(expected);
+        run.Output.ShouldContain("commitOnSettle=" + expected);
     }
 
     [Test]
-    public async Task Project_set_PUT_carries_the_GET_fields_unchanged()
+    public void Project_set_PUT_carries_the_GET_fields_unchanged()
     {
-        using var stub = new ProjectApiStub();
-        var run = await RunProjectAsync(stub.BaseUrl, "set", "antiphon", "-CommitOnSettle", "Off");
+        var http = CommitPolicyProjectApi();
+        var run = RunProject(http, "set", "antiphon", "--commit-on-settle", "Off");
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        var put = stub.LastPutBody.ShouldNotBeNull().RootElement;
-        put.GetProperty("name").GetString().ShouldBe(ProjectApiStub.Canned.Name);
-        put.GetProperty("gitRepositoryUrl").GetString().ShouldBe(ProjectApiStub.Canned.GitUrl);
-        put.GetProperty("baseBranch").GetString().ShouldBe(ProjectApiStub.Canned.BaseBranch);
+        run.Exit.ShouldBe(0, run.All);
+        using var body = JsonDocument.Parse(http.Calls[^1].Body!);
+        var put = body.RootElement;
+        put.GetProperty("name").GetString().ShouldBe("antiphon");
+        put.GetProperty("gitRepositoryUrl").GetString().ShouldBe("https://example.test/antiphon.git");
+        put.GetProperty("baseBranch").GetString().ShouldBe("master");
+        put.GetProperty("constitutionPath").GetString().ShouldBe("AGENTS.md");
+        put.GetProperty("gitHubIntegrationEnabled").GetBoolean().ShouldBeFalse();
         put.TryGetProperty("defaultLaunchEnv", out _).ShouldBeFalse();
+        put.TryGetProperty("localRepositoryPath", out _).ShouldBeFalse("a null field the GET answered is not re-sent");
     }
 
     [Test]
@@ -112,7 +119,7 @@ public sealed class CommitOnSettleScriptTests
     [Test]
     public void Commit_on_settle_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "project.ps1", "delegate.ps1", "task-commit.ps1" })
+        foreach (var name in new[] { "lib/Antiphon.Nightly/ProjectCli.cs", "delegate.ps1", "task-commit.ps1" })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);
@@ -166,29 +173,25 @@ public sealed class CommitOnSettleScriptTests
         return (process.ExitCode, await stdout + await stderr);
     }
 
-    private static async Task<(int ExitCode, string Output)> RunProjectAsync(string api, params string[] args)
-    {
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "project.ps1"));
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-        startInfo.Environment["ANTIPHON_API"] = api.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
+    private static BoardCommandRun.Result RunProject(RecordingOperatorHttp http, params string[] args) =>
+        BoardCommandRun.Run(host => Antiphon.Nightly.ProjectCli.Run(Antiphon.Nightly.ProjectCliOptions.Parse(args, BoardCommandRun.Api, null), host,
+            new System.IO.Abstractions.FileSystem(), http.Transport));
 
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
-    }
+    // The project API as the script driver's stub answered it: the one project in an array for the list, the project for the PUT.
+    private static RecordingOperatorHttp CommitPolicyProjectApi() => new(call =>
+    {
+        const string project = """
+            {"id":"11111111-1111-1111-1111-111111111111","name":"antiphon",
+             "gitRepositoryUrl":"https://example.test/antiphon.git","baseBranch":"master",
+             "constitutionPath":"AGENTS.md","gitHubIntegrationEnabled":false,
+             "notificationsEnabled":false,"createdAt":"2026-09-15T00:00:00Z",
+             "updatedAt":"2026-09-15T00:00:00Z","defaultLaunchEnv":{"KEEP":"yes"},
+             "localRepositoryPath":null,"commitOnSettle":null,"effectiveCommitOnSettle":true}
+            """;
+        if (call.Method != "PUT") return new(200, "[" + project + "]");
+        using var put = JsonDocument.Parse(call.Body!);
+        return new(200, project.Replace("\"commitOnSettle\":null", "\"commitOnSettle\":\"" + put.RootElement.GetProperty("commitOnSettle").GetString() + "\""));
+    });
 
     private sealed class CommitApiStub : IDisposable
     {
@@ -242,73 +245,6 @@ public sealed class CommitOnSettleScriptTests
             try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
             _listener.Close();
             LastBody?.Dispose();
-            _cts.Dispose();
-        }
-    }
-
-    private sealed class ProjectApiStub : IDisposable
-    {
-        public static readonly (string Name, string GitUrl, string BaseBranch) Canned =
-            ("antiphon", "https://example.test/antiphon.git", "master");
-
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-
-        public ProjectApiStub()
-        {
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
-        public string? LastMethod { get; private set; }
-        public JsonDocument? LastPutBody { get; private set; }
-
-        private async Task PumpAsync()
-        {
-            while (!_cts.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-
-                LastMethod = context.Request.HttpMethod;
-                JsonDocument? body = null;
-                using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
-                {
-                    var raw = await reader.ReadToEndAsync();
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        body = JsonDocument.Parse(raw);
-                }
-
-                if (context.Request.HttpMethod == "PUT" && body is not null)
-                    LastPutBody = body;
-
-                const string cannedObject = """
-                    {"id":"11111111-1111-1111-1111-111111111111","name":"antiphon",
-                     "gitRepositoryUrl":"https://example.test/antiphon.git","baseBranch":"master",
-                     "constitutionPath":"AGENTS.md","gitHubIntegrationEnabled":false,
-                     "notificationsEnabled":false,"createdAt":"2026-09-15T00:00:00Z",
-                     "updatedAt":"2026-09-15T00:00:00Z","defaultLaunchEnv":{"KEEP":"yes"},
-                     "commitOnSettle":null,"effectiveCommitOnSettle":true}
-                    """;
-                var payload = Encoding.UTF8.GetBytes(
-                    context.Request.HttpMethod == "PUT" ? cannedObject : "[" + cannedObject + "]");
-                context.Response.StatusCode = 200;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(payload);
-                context.Response.Close();
-            }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            LastPutBody?.Dispose();
             _cts.Dispose();
         }
     }

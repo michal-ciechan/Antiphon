@@ -502,7 +502,7 @@
     {
       "id": "dpapi-protected-data",
       "globs": [
-        "scripts/capability.ps1",
+        "scripts/lib/Antiphon.Nightly/CapabilityCli.cs",
         "tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs",
         "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs"
       ],

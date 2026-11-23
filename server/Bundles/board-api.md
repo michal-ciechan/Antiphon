@@ -11,7 +11,7 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 
 - An **external** ChatGPT/Codex caller dispatches with `delegate.ps1 -Capability <name>` (the name,
   never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit
-  `Delegation:AllowedRoots`. Operator issue is `capability.ps1`.
+  `Delegation:AllowedRoots`. Operator issue is `scripts\antiphon.cmd capability issue` (Windows).
 
 - Address cards as `CARD-0051`, `card-51`, `#51`, `51`, or a guid; use `-Board` to scope identifiers.
 

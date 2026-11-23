@@ -95,18 +95,18 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 224,
+      "classes": 225,
       "reason": "cap",
-      "owed": 199,
+      "owed": 200,
       "first": [
+        "CodexMcpBootProbeTests",
         "CommitOnSettleDocumentationTests",
         "DockerStackDocumentationTests",
         "KeepSixDocumentationTests",
         "LandGraphLandRefreshTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "PipelineDefinitionDocumentationTests",
-        "PipelineHandoffRouteDocumentationTests",
-        "PostLandRetrospectiveContractTests"
+        "PipelineHandoffRouteDocumentationTests"
       ]
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
@@ -2291,15 +2291,6 @@
       "owed": 1,
       "first": [
         "SpecialistToolPolicyTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/TestHelpers/EphemeralHttpListener.cs",
-      "classes": 26,
-      "reason": "cap",
-      "owed": 1,
-      "first": [
-        "TaskCeilingScriptTests"
       ]
     },
     {
@@ -2669,7 +2660,7 @@
         "BlockedTaskParkProjectionTests",
         "ChannelContractsTests",
         "CheckpointManifestDocumentationTests",
-        "CodexMcpBootProbeTests",
+        "CommitOnSettleScriptTests",
         "InstructionFileStampTests",
         "LiveLaneIsolationTests",
         "OrchestratorInstructionsGuidanceTests",
@@ -3747,12 +3738,6 @@
       ]
     },
     {
-      "path": "scripts/capability.ps1",
-      "classes": [
-        "ImpactedClassesSelectorTests"
-      ]
-    },
-    {
       "path": "scripts/card.ps1",
       "classes": [
         "CardFilePrivacyScriptTests",
@@ -4023,6 +4008,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/CapabilityCli.cs",
+      "classes": [
+        "ImpactedClassesSelectorTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/ClassCostRefresh.cs",
       "classes": [
         "ClassCostMeasurementTests"
@@ -4156,6 +4147,12 @@
       "path": "scripts/lib/Antiphon.Nightly/NightlyTestsOptions.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/PipelineDefinitionCli.cs",
+      "classes": [
+        "PipelineDefinitionDocumentationTests"
       ]
     },
     {
@@ -4440,13 +4437,6 @@
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
         "TestSelectionTests"
-      ]
-    },
-    {
-      "path": "scripts/pipeline-definition.ps1",
-      "classes": [
-        "PipelineDefinitionDocumentationTests",
-        "PipelineDefinitionScriptTests"
       ]
     },
     {
@@ -24931,6 +24921,7 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/BuildSlotBrokerFixture.cs",
       "classes": [
+        "AppHostWatchdogStateAttentionServiceTests",
         "CheckpointAdmissionContractTests",
         "CheckpointSlotContractTests",
         "CheckpointSlotExecutorTests"
@@ -25475,6 +25466,21 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/BoardCommandRun.cs",
+      "classes": [
+        "CapabilityScriptTests",
+        "CommitOnSettleScriptTests",
+        "DispatchConcurrencyScriptTests",
+        "ModelAvailabilityScriptTests",
+        "PipelineDefinitionScriptTests",
+        "ProjectCommandTests",
+        "ProjectScriptWorkspaceTests",
+        "RoutingPinScriptTests",
+        "ScheduleCommandTests",
+        "SpecialistRoutingScriptTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -25543,6 +25549,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/CardListSearchScriptTests.cs",
+      "classes": [
+        "CardRelationshipScriptTests",
+        "StatusSnapshotScriptTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/CardRelationshipScriptTests.cs",
       "classes": [
         "RcCoverageAdmissionTests"
@@ -25559,12 +25572,6 @@
       "classes": [
         "DerivedImpactIndexTests",
         "LandGeneratedArtifactTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs",
-      "classes": [
-        "AgentTaskLandNotificationRescanTests"
       ]
     },
     {
@@ -26069,9 +26076,18 @@
       "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
       "classes": [
         "C1960WorkspaceSlotsScriptTests",
+        "CapabilityScriptTests",
+        "CommitOnSettleScriptTests",
+        "DispatchConcurrencyScriptTests",
         "KeepSixCommandTests",
+        "ModelAvailabilityScriptTests",
+        "PipelineDefinitionScriptTests",
+        "ProjectCommandTests",
+        "ProjectScriptWorkspaceTests",
+        "RoutingPinScriptTests",
         "RunnerDrainScriptTests",
         "RunnerSlotsCommandTests",
+        "ScheduleCommandTests",
         "WorktreeResidueScriptTests"
       ]
     },
@@ -27040,7 +27056,6 @@
       "path": "tests/Antiphon.Tests/TestHelpers/EphemeralHttpListener.cs",
       "classes": [
         "C1960WorkspaceSlotsScriptTests",
-        "CapabilityScriptTests",
         "CardCloseDeploymentPromptScriptTests",
         "CardDiagnoseScriptTests",
         "CardFileBootstrapCheckTests",
@@ -27055,15 +27070,13 @@
         "DelegateScriptTitleTests",
         "DelegateScriptVerificationRoundTests",
         "DelegateScriptWorktreeBaseTests",
-        "DispatchConcurrencyScriptTests",
         "EphemeralHttpListenerTests",
         "GithubSyncScriptTests",
         "GrokRulesLiveMappedDispatchTests",
-        "ModelAvailabilityScriptTests",
         "PostLandMutationAdmissionTests",
-        "ProjectScriptWorkspaceTests",
         "RegisteredCallerScriptTests",
-        "RoutingPinScriptTests"
+        "RoutingPinScriptTests",
+        "TaskCeilingScriptTests"
       ]
     },
     {

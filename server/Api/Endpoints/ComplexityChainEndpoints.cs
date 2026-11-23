@@ -9,7 +9,7 @@ public static class ComplexityChainEndpoints
 {
     /// <summary>
     /// Per-(role, complexity) fallback chains (CARD-0090, CARD-0332). Own group, not hung off
-    /// routing-pins: that script is card+stage grain and this is neither. Two-segment
+    /// routing-pins: that command is card+stage grain and this is neither. Two-segment
     /// PUT/DELETE /{complexity} is the any-role alias of /any/{complexity}.
     /// </summary>
     public static void MapComplexityChainEndpoints(this WebApplication app)

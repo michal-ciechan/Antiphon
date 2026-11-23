@@ -273,7 +273,7 @@ Revision stages are ordered `{role, bundleKey, allowedNext}` rows. Roles are the
 `AgentTaskRole` stages; bundle keys name shipping `stage-*` bundles; allowed next tokens
 must name a stage in the same revision or `land`, `decide`, or `none`. Built-in definitions
 may be cloned but not edited or archived. Archived definitions remain resolvable by existing
-pointers; new pointer writes to them return 409. `scripts/pipeline-definition.ps1` exposes
+pointers; new pointer writes to them return 409. `scripts/antiphon pipeline-definition` exposes
 list, get, clone, revise, set-board, and set-project.
 
 ### Agents and their sessions
@@ -737,7 +737,7 @@ DELETE /api/routing-pins/{id}                         clear (204 if already clea
 
 A pin is the standing instruction the **next** create reads; it does not rewrite Queued work.
 Stage-wide: omit `card`. A `PUT` for Check, Distill or Diagnose is 422
-(`RoutingPinServiceTests.A_specialist_role_has_no_stage_to_pin`). Script: `scripts/routing-pin.ps1 get|set|clear`.
+(`RoutingPinServiceTests.A_specialist_role_has_no_stage_to_pin`). Command: `scripts/antiphon routing-pin get|set|clear`.
 `delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
 refused (that would be a stage-wide pin).
 
@@ -921,8 +921,8 @@ DELETE /api/model-availability/{kind}/{alias}          clear (204 if already cle
 
 `kind` is the enum member name (`ClaudeCode`, `Grok`, `Codex`). `alias` is a `ModelLevelAliases`
 value or `*` (kind-wide, OR'd with per-alias rows). PUT body: `{ disabledUntil?: utc, reason?:
-string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Script:
-`scripts/model-availability.ps1 get|hold|clear`.
+string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Command:
+`scripts/antiphon model-availability get|hold|clear`.
 
 ```
 GET    /api/subscription-usage                        latest stored observation per (kind, profile)
@@ -1081,7 +1081,7 @@ Preserve that bundle and make it available to the validating server; the correct
 
 ### Schedules
 
-`ScheduleEndpoints.cs` — the API behind `scripts/schedule.ps1` (CARD-0057: prompt delivery and card actions).
+`ScheduleEndpoints.cs` — the API behind `scripts/antiphon schedule` (CARD-0057: prompt delivery and card actions).
 
 ```
 GET    /api/schedules?agentId=&cardId=&boardId=&enabled=
@@ -1094,7 +1094,7 @@ DELETE /api/schedules/{id}
 POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance recurrence
 ```
 
-`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. `kind: Prompt` enqueues WhenIdle onto a standing agent. `kind: Card` moves a card (`Start=None` bookkeeping, `Release` lifts the auto-dispatch hold, `Spawn` launches now). `Release`/`Spawn` without `acceptSpend: true` is 422 `spend_unacknowledged` with the preview embedded. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline. Card create: `schedule.ps1 new -Card … -To … -Start … -AcceptSpend`. `cardId` on create/preview/list is identifier-or-guid (`CARD-nnnn`, `card-51`, `#51`, `51`, or the guid), resolved by `CardService.ResolveCardIdAsync`.
+`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. `kind: Prompt` enqueues WhenIdle onto a standing agent. `kind: Card` moves a card (`Start=None` bookkeeping, `Release` lifts the auto-dispatch hold, `Spawn` launches now). `Release`/`Spawn` without `acceptSpend: true` is 422 `spend_unacknowledged` with the preview embedded. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `--prompt-file` on the command, never inline. Card create: `scripts/antiphon schedule new --card … --to … --start … --accept-spend`. `cardId` on create/preview/list is identifier-or-guid (`CARD-nnnn`, `card-51`, `#51`, `51`, or the guid), resolved by `CardService.ResolveCardIdAsync`.
 
 ### Runner profiles and credentials
 
@@ -1142,7 +1142,7 @@ POST   /api/delegation-capabilities/{id}/revoke      200, no token
 ```
 
 Secret and key **values are write-only** — nothing reads one back out over HTTP. Capability GET
-list/detail never include the raw token; issue/rotate return it once for `scripts/capability.ps1`.
+list/detail never include the raw token; issue/rotate return it once for `scripts\antiphon.cmd capability` (Windows, DPAPI).
 `IssueDelegationCapabilityRequest` / `DelegationCapabilityDto` live in
 `server/Application/Dtos/DelegationCapabilityDtos.cs`.
 
@@ -1371,7 +1371,7 @@ concurrency tokens and PowerShell's quoting hazards.
 | Script | For |
 |---|---|
 | `scripts/card.ps1` | `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, `-Limits`. Long text via `-DescriptionFile` / `-ReasonFile`, never inline. |
-| `scripts/schedule.ps1` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `-PromptFile`. Prints preview before create. |
+| `scripts/antiphon schedule` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `--prompt-file`. Prints preview before create. |
 | `scripts/delegate.ps1` | create / `-Status` / `-Reply` / `-Refine` a delegated task |
 | `scripts/github-sync.ps1` | a bidirectional tracker push |
 | `scripts/checkpoint-task.ps1` | WIP-commit a stalled task's work without killing it |

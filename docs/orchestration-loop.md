@@ -646,7 +646,7 @@ is the `orchestrator` bundle; this section carries the reasons.
    `population` and `canOverride`: the flag is legal only when `population` is `open` and
    `canOverride` is true. A queued population, `canOverride` false, or a same-stage collision
    never justifies it. Read `GET /api/agent-tasks/pipeline?projectId=` (or `?unscoped=true` for
-   the null bucket) and `scripts/dispatch-concurrency.ps1` for the effective mode, sources,
+   the null bucket) and `scripts/antiphon dispatch-concurrency` for the effective mode, sources,
    revisions, and open/parallel/queued counts. The shipped role defaults stay Code 2, Review 2,
    and other stages 1; the operator's four-per-stage and six-on-server2 instruction still bounds
    commissioning. An API ceiling is not permission to spend up to it.
@@ -672,8 +672,8 @@ up to that shortfall under the same pipeline rules, or declare a hold with
 
 The operator's standing rules for every orchestrator seat, in full. The `orchestrator` bundle, AGENTS.md and the antiphon-orchestrator and antiphon-delegate skills point here and restate nothing; numbers that the generated instructions file owns (caps, host budgets, pins, the keep-six target) are referenced, never copied.
 
-1. **Failures get a Debug task.** A failed dispatch, launch or infrastructure failure (`[task ... failed]` with a launch or save error, `Agent process did not become ready`, `Process exited`, `Dispatch failed before a session existed`) gets a Debug delegate immediately, briefed with the exact error text, times, task ids and what else was in flight; one retry is allowed as first aid so the in-flight target holds, but a retry is never the whole response. Search the board before filing the fix card; when the operator asks for Codex Astra debug tasks, dispatch them with `-Kind Codex -Level Frontier` and raise the Debug role cap through `scripts/dispatch-concurrency.ps1 set` with the operator's words as the reason.
-2. **Keep the in-flight target on the landing host.** The target counts tasks running on server2 that land onto master (section 9 of the generated instructions carries the live number; the operator said 7 on 2026-10-22), and desktop-only Windows work such as qualification monitors or CP-6 style runs is extra. Refill to the target after every completion; when the project cap is lower, raise it through `scripts/dispatch-concurrency.ps1 set` with the operator's words as the reason rather than exceeding it with `-IgnoreConcurrencyLimit`.
+1. **Failures get a Debug task.** A failed dispatch, launch or infrastructure failure (`[task ... failed]` with a launch or save error, `Agent process did not become ready`, `Process exited`, `Dispatch failed before a session existed`) gets a Debug delegate immediately, briefed with the exact error text, times, task ids and what else was in flight; one retry is allowed as first aid so the in-flight target holds, but a retry is never the whole response. Search the board before filing the fix card; when the operator asks for Codex Astra debug tasks, dispatch them with `-Kind Codex -Level Frontier` and raise the Debug role cap through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason.
+2. **Keep the in-flight target on the landing host.** The target counts tasks running on server2 that land onto master (section 9 of the generated instructions carries the live number; the operator said 7 on 2026-10-22), and desktop-only Windows work such as qualification monitors or CP-6 style runs is extra. Refill to the target after every completion; when the project cap is lower, raise it through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason rather than exceeding it with `-IgnoreConcurrencyLimit`.
 3. **An Interim Review cannot approve a land.** When the plan's closed checkpoint list holds a row that cannot finish on the loaded host, have the Code owner amend the plan first, descoping the row with the reason and the minimal-testing rule below and recording inherited reds as documented non-receipt rows, so that scope Full is reachable before the Final Review is commissioned.
 4. **Review verdict policy, no whack-a-mole.** `found` is for a regression, a new reachable fail-open or a test that cannot fail. When a Review reports examples of one bypass class, the fix changes the design (default-deny, one canonical pipeline or normaliser, a table with a witness per row), and the next round checks that the class is closed with one witness, never more examples of a closed class. Rounds are capped at three under [Review rounds](#review-rounds); after round 1 a Review reports no new attack classes.
 5. **Verify the card binding.** Read the card title before binding a task to a card identifier (a task was once bound to the wrong card from memory); when no card fits, file the card first.
@@ -1128,9 +1128,9 @@ The following write is for the activation owner **after** the gates, never a
 Code test, tracker tick or automatic fleet migration:
 
 ```powershell
-pwsh -NoProfile -File scripts/routing-pin.ps1 get -Role Debug -Json
-pwsh -NoProfile -File scripts/routing-pin.ps1 get -Role Review -Json
-pwsh -NoProfile -File scripts/routing-pin.ps1 set -Role Debug -Provenance Human -Strength Required -Candidates 'Grok/High,ClaudeCode/High' -Reason 'CARD-1011: qualified Windows Grok; approved role-wide Debug policy, Grok first and Opus fallback.'
+scripts\antiphon.cmd routing-pin get --role Debug --json
+scripts\antiphon.cmd routing-pin get --role Review --json
+scripts\antiphon.cmd routing-pin set --role Debug --provenance Human --strength Required --candidates 'Grok/High,ClaudeCode/High' --reason 'CARD-1011: qualified Windows Grok; approved role-wide Debug policy, Grok first and Opus fallback.'
 ```
 
 Read both pins back after the write. If activation fails, pause new affected
@@ -1361,7 +1361,7 @@ this route where it did," not a new way to change RolePolicy or to control a run
 
 **Role policy section and delegate modal level (CARD-0097).** Data: `GET /api/role-policy` (its
 block in [antiphon-api.md](antiphon-api.md)). RolePolicy is the `Delegation:RolePolicy`
-configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
+configuration section; pins: `scripts/antiphon routing-pin` and `/api/routing-pins`.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
@@ -1372,7 +1372,7 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | `Effective next create` column label (a projection of `effective`, not a create result) | Vitest `C097 V06 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `Required Human pin → Codex/Frontier (gpt-6-astra)`; `default → ClaudeCode/Low (haiku)`; candidate-free pin → `no candidate (agent-only or forbid-only; see the pin)`; unknown source → `unknown` |
 | Stage pin column | Vitest `C097 V25 stage-pin-column-and-effective`, `client/src/features/settings/RolePolicySection.test.tsx` | Plan pin shows `Required Human pin`, numbered candidates with availability and the reason; both next-create lines read `Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra` (CARD-1250); an unpinned row shows `—` |
 | Route failure stays inside the section | Vitest `C097 V09 role-policy-failure-keeps-siblings`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 500 → `Could not load role policy.` in the section; availability, runner defaults and matrix still render |
-| Section has no editor; its copy names `scripts/routing-pin.ps1` as the pin writer | not covered by a test | — |
+| Section has no editor; its copy names `scripts/antiphon routing-pin` as the pin writer | not covered by a test | — |
 | Delegate modal preselects the role-policy level | Vitest `C097 V16 server-level-preselects`, `client/src/features/delegations/DelegateModal.test.tsx` | Mutation row `High` → `tier-High`, `delegate-tier-source-rolePolicy`; create body `modelLevel: null` |
 | An `effective.source` `pin` level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | Plan row with `level` `Frontier` and a Required ClaudeCode/High single pin → `delegate-tier-source-pin`, `tier-High`, no `tier-Frontier` |
 | Route failure discloses unknown routing | Vitest `C097 V18 route-failure-discloses-unknown`, same file | 500 → `delegate-tier-source-unknown`, no `tier-Low` promise; Delegate enabled after typing a goal |
@@ -1410,10 +1410,10 @@ concurrency, workspace and runner conditions as server dependencies (V24).
 
 **Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use.
 Read the live pins with
-`GET /api/routing-pins?role=<Role>` or `scripts/routing-pin.ps1 get -Role <Role>` (or
+`GET /api/routing-pins?role=<Role>` or `scripts/antiphon routing-pin get --role <Role>` (or
 `/settings?tab=routing`) before assuming the matrix is misconfigured. Clearing a pin, or
 downgrading it from Required to Preferred, is an operator decision made through
-`scripts/routing-pin.ps1`; CARD-0333's matrix UI is read-only for pins.
+`scripts/antiphon routing-pin`; CARD-0333's matrix UI is read-only for pins.
 
 **Matrix cells with a failed read (CARD-1258, CARD-1270).** A role cell's effective view reads
 the stage pin, the chain, the chain metadata, a standing agent's label and each candidate's
@@ -1537,7 +1537,7 @@ These are operator instructions; the live migration and rollback are not accepta
    run) against the live server; read the table and keep the printed snapshot path; `-Apply -OutDir <dir>`; then for
    each role run `complexity-chain.ps1 get -Role <R>` and read the Routing tab (each migrated cell now says
    `Required Human pin → …` above an own rule whose list equals the pin's). Only then clear the pins, one role at a
-   time, with `pwsh -NoProfile -File scripts/routing-pin.ps1 clear -Role <R>`, and re-read `get -Role <R>`: the
+   time, with `scripts/antiphon routing-pin clear --role <R>`, and re-read `get --role <R>`: the
    `effective:` line now reads `role` with the same list. The expected cell contents, from the live pins:
 
    | Role (pin id) | Hard = Medium = Easy |
@@ -1566,7 +1566,7 @@ These are operator instructions; the live migration and rollback are not accepta
 
    | Step | Operator action | Why in this position | Bound by |
    |---|---|---|---|
-   | 1 | For each role whose pin was cleared in §6.3: `pwsh -NoProfile -File scripts/routing-pin.ps1 set -Role <R> -Provenance Human -Strength Required -Candidates <list> -Reason <text>`, list and reason from the §6.3 table | A Required pin with candidates bypasses the row for an ordinary create (`RoutingCandidates.cs:58-63`) and for the two children (D-3 step 3). Deleting the Review cells first would put a plain Worker/Review create on RolePolicy's ClaudeCode/Frontier (`DelegationSettings.cs:358`) until the Review pin is back, where before the migration it ran Codex/Frontier | — (operator step) |
+   | 1 | For each role whose pin was cleared in §6.3: `scripts/antiphon routing-pin set --role <R> --provenance Human --strength Required --candidates <list> --reason <text>`, list and reason from the §6.3 table | A Required pin with candidates bypasses the row for an ordinary create (`RoutingCandidates.cs:58-63`) and for the two children (D-3 step 3). Deleting the Review cells first would put a plain Worker/Review create on RolePolicy's ClaudeCode/Frontier (`DelegationSettings.cs:358`) until the Review pin is back, where before the migration it ran Codex/Frontier | — (operator step) |
    | 2 | Read back each role: `complexity-chain.ps1 get -Role <R>` prints `effective: pin …`; stop here if any `set` failed — nothing has been removed yet | the pin, not the cell, is the governing rule from here on | V-D6 (the line) |
    | 3 | `pwsh -NoProfile -File scripts/migrate-stage-pins-to-cells.ps1 -Restore -Snapshot <first snapshot> -OutDir <dir>` | the script re-checks step 1 itself and refuses with zero writes while a migrated role has no Required stage pin (D-9 precondition 1); with pins back, the order in which cells are removed or re-PUT does not matter | V-E12 (refusal, then proceed), V-E6 (per-case action), V-E4 `restore` (stop on non-2xx) |
 
@@ -1612,7 +1612,7 @@ Editing (`DispatchConcurrencyEditor.test.tsx` unless named):
 |---|---|
 | 14 role rows plus Overall (15 rows), 16 with a DTO-only `FutureRole`; inherited cells show value and source label (`Global override`, `Built-in default`) | `C506 V08 rows-and-sources`, `C506 V08 dto-only-role` |
 | `mode` is displayed as text, with no mode combobox or textbox | `C506 V08 rows-and-sources` |
-| `scripts/dispatch-concurrency.ps1 set` sends a file's `mode` with the other overrides | TUnit `DispatchConcurrencyScriptTests.Set_reads_then_sends_exact_snapshot` (`tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs`; run through the build slot per [testing-and-build.md](testing-and-build.md)) |
+| `scripts/antiphon dispatch-concurrency set` sends a file's `mode` with the other overrides | TUnit `DispatchConcurrencyScriptTests.Set_reads_then_sends_exact_snapshot` (`tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs`; run through the build slot per [testing-and-build.md](testing-and-build.md)) |
 | `usePutDispatchConcurrency` sends exactly the keys `expectedRevision`, `expectedGlobalRevision`, `overrides`, `reason` (trimmed), `provenance: "Human"` to the scope's route | `C506 V05 global`, `C506 V05 project-zero`, `C506 V05 project-existing` (`dispatchConcurrency.test.ts`) |
 | With no saved overrides, switching on Code max parallel and setting 1 sends `overrides: { roles: { Code: { maxParallel: 1 } } }` (project and global) | `C506 V09 sparse-project`, `C506 V09 sparse-global` |
 | After another writer changes only `mode` at r8 (live event or 409), the next Save body carries r8's `mode` when r8 has one and omits it when r8 has none, with the saved limit overrides and the edited cell | `C506 S2F1 live mode-changed`, `… mode-added`, `… mode-removed`, and the three `C506 S2F1 conflict …` cases |
@@ -1694,7 +1694,7 @@ The preparer pushes that branch with `git push origin <branch>` and no `-u` (CAR
 
 A runner-bound task crosses the dispatcher's claim twice (CARD-0672). The first crossing cuts its desktop worktree and starts the preparer, under the repository mutation lease. A later re-arm, when the desktop worktree is already cut, the mirror is not recorded, and the progress baseline is already captured, takes no repository lease: that claim runs no git. A re-arm with no baseline still takes the lease, because capturing the baseline does. The second, once the mirror is recorded, only claims the row and launches into the mirror, and takes **no** lease: a runner session never writes the desktop checkout, and only the leased settlement sync moves it (invariant I-A). Repair, SourceLanding and Interim claims keep the lease on every crossing. A queued task refused the lease registers as a lease waiter; a land about to acquire that repository's lease yields while any waiter is registered (hold `repository_lease_yielded_to_dispatch`), so the dispatcher's next tick takes the lease in the gap. Each land request yields for at most `Delegation:LandYieldToDispatchMaxSeconds` (default 90, 0 disables the yield), so N queued waiters cost the land queue about N × 5 seconds. A registered waiter keeps its turn, and its original age, across a tick whose only hold for that task is a prerequisite of the cut: the same-card base inspection is pending, or the observation went stale at claim (CARD-1427; membership never registers a waiter, only a refusal does). The same-card inspection result is not consumed by being read: a cut the lease refused reuses it on its next attempt, until its intent changes, the claim's revalidation under the lease finds it stale (the task is then re-inspected at once and keeps its turn), the task leaves the queue, or 10 minutes pass (CARD-1428). A sibling-land hold or an unknown-integration result is still re-inspected every time, because only a fresh observation lifts it. The 32-entry inspection capacity counts in-flight work only. `HeldAged` rows and the `DispatchHeld` item carry a per-class wait ledger (`leaseWait=`, `prepWait=`, `runnerWait=`, `capWait=`, `otherWait=`, `inspectionWait=`, `class=`; attention `holdClass`) so lease starvation and runner capacity read apart.
 
-Start a new project through `POST /api/projects/setup` (or `scripts/project.ps1 new -Dir ... -Orchestrator -Start`): it creates the project, board, and preset agent in one transaction and returns readiness. `POST /api/agents` remains for adding an agent to a project that already exists.
+Start a new project through `POST /api/projects/setup` (or `scripts/antiphon project new --dir ... --orchestrator --start`): it creates the project, board, and preset agent in one transaction and returns readiness. `POST /api/agents` remains for adding an agent to a project that already exists.
 
 Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).
 Never launch the `claude` CLI directly, and never a `launch-remote` script. When setting
@@ -2289,7 +2289,7 @@ cannot open it.
 
 ## 9. What to automate first
 
-**Scheduled prompts have shipped** (CARD-0057 phase 1, `scripts/schedule.ps1`) — a `Daily` schedule
+**Scheduled prompts have shipped** (CARD-0057 phase 1, `scripts/antiphon schedule`) — a `Daily` schedule
 to the orchestrator is how the unmerged-branch sweep from §1 runs. The check-in timer (CARD-0047)
 and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of payback for what's left:
 
@@ -2411,12 +2411,12 @@ target `Antiphon-Orchestrator`, `WhenTargetDown=Queue`. Live id
 `d687a6bf-e286-4592-92a7-799386235a68` (created 2026-09-05). Recreate with:
 
 ```powershell
-pwsh -NoProfile -File scripts/schedule.ps1 new `
-  -Name "Output distiller prompt review" `
-  -Agent Antiphon-Orchestrator `
-  -Repeat Daily -AtLocal 09:00 -DaysOfWeek 1 `
-  -TimeZone "Europe/London" -WhenTargetDown Queue `
-  -PromptFile <path-to-the-PromptText-below>
+scripts\antiphon.cmd schedule new `
+  --name "Output distiller prompt review" `
+  --agent Antiphon-Orchestrator `
+  --repeat Daily --at-local 09:00 --days-of-week 1 `
+  --time-zone "Europe/London" --when-target-down Queue `
+  --prompt-file <path-to-the-PromptText-below>
 ```
 
 **PromptText** (the schedule body; keep it identical when recreating):

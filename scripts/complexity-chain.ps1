@@ -30,8 +30,8 @@
 # fill a tier with no row and ship EMPTY until a human sets them. Auto never overwrites Human
 # (409 complexity_chain_human), and an Auto cell write is refused when the any-role row is Human.
 #
-# -Candidates is Kind/Level pairs, comma-separated, order preserved. This is not a routing-pin.ps1
-# verb: that script is card+stage grain and this is neither. The script always uses the
+# -Candidates is Kind/Level pairs, comma-separated, order preserved. This is not a routing-pin
+# verb: that command is card+stage grain and this is neither. The script always uses the
 # three-segment path (/any/Hard or /Plan/Hard); the two-segment alias exists for CARD-0090 callers.
 [CmdletBinding()]
 param(
@@ -306,7 +306,7 @@ switch ($Verb) {
 
         $pinStatus = $null
         if ($ClearStagePin) {
-            # Same grain lookup and DELETE-by-id semantics as routing-pin.ps1 clear -Role.
+            # Same grain lookup and DELETE-by-id semantics as scripts/antiphon routing-pin clear --role.
             # This point is reached only after the three PUTs returned successfully.
             $pins = Invoke-Antiphon -Method GET -Path ('/api/routing-pins?role={0}' -f $Role)
             $match = @($pins.pins) | Where-Object {

@@ -14,9 +14,14 @@ public sealed class PipelineDefinitionDocumentationTests
         api.ShouldContain("GET    /api/pipeline-definitions");
         api.ShouldContain("POST   /api/pipeline-definitions/{id}/revisions");
         api.ShouldContain("PUT    /api/boards/{id}/pipeline");
-        File.ReadAllText(Path.Combine(root, "docs/ops-http.md")).ShouldContain("pipeline-definitions");
+        var ops = File.ReadAllText(Path.Combine(root, "docs/ops-http.md"));
+        ops.ShouldContain("pipeline-definitions");
         File.ReadAllText(Path.Combine(root, "docs/agent-card-lifecycle.md")).ShouldContain("CardWorkflowRunStatus");
-        File.Exists(Path.Combine(root, "scripts/pipeline-definition.ps1")).ShouldBeTrue();
+        // The pipeline-definition command (unit 24 of the 2026-11-22 plan) replaced scripts/pipeline-definition.ps1.
+        ops.ShouldContain("scripts/antiphon pipeline-definition");
+        api.ShouldContain("scripts/antiphon pipeline-definition");
+        File.Exists(Path.Combine(root, "scripts/lib/Antiphon.Nightly/PipelineDefinitionCli.cs")).ShouldBeTrue();
+        File.Exists(Path.Combine(root, "scripts/pipeline-definition.ps1")).ShouldBeFalse();
     }
 
     private static string RepositoryRoot()

@@ -14,7 +14,7 @@
 # queued), axis, occupants and cap. Re-send with -IgnoreConcurrencyLimit only when population
 # is open, canOverride is true, and the axis is absolute with no occupant in the stage you are dispatching.
 # A queued population, canOverride false, or a same-stage collision never justifies the flag.
-# Read the scoped pipeline or scripts/dispatch-concurrency.ps1 before raising a durable limit.
+# Read the scoped pipeline or scripts/antiphon dispatch-concurrency before raising a durable limit.
 #
 # CARD-1995: a -Land refused with target_build_broken (a recent land build of the same target
 # failed in a project this diff does not change, and that failure was not the failing land's own)
@@ -249,7 +249,7 @@ param(
     # Record this dispatch's Role/Card/Kind/Level as a HUMAN, REQUIRED routing pin (CARD-0305), so
     # the next create against this card+stage runs the same way without being told again. Refused
     # without a card: a stage-wide pin changes routing for EVERY card and must be written
-    # deliberately with routing-pin.ps1, never as a side effect of one dispatch.
+    # deliberately with scripts/antiphon routing-pin, never as a side effect of one dispatch.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$Pin,
 
@@ -447,7 +447,7 @@ if ($hasCapability) {
     }
     $capabilityPath = Join-Path $capabilityStore ($capabilityName + '.dpapi')
     if (-not (Test-Path -LiteralPath $capabilityPath)) {
-        Write-Error ("capability '{0}' is not installed under {1}; ask the operator to run capability.ps1 issue" -f $capabilityName, $capabilityStore)
+        Write-Error ("capability '{0}' is not installed under {1}; ask the operator to run scripts\antiphon.cmd capability issue" -f $capabilityName, $capabilityStore)
         exit 1
     }
     try {
@@ -1213,11 +1213,11 @@ switch ($PSCmdlet.ParameterSetName) {
         # -Pin writes a pin for THIS card+stage. With nothing that could bind a card - no -Card, no
         # CARD-nnnn in the title, and no task token whose own card could be inherited - it would
         # write a STAGE-WIDE pin that changes routing for every card. That is a deliberate act, so
-        # it goes through routing-pin.ps1 rather than falling out of one dispatch.
+        # it goes through scripts/antiphon routing-pin rather than falling out of one dispatch.
         if ($Pin -and -not $Card -and $titleText -notmatch '(?i)\bCARD-[0-9]+\b' `
                 -and [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
             Write-Error ('-Pin without a card would write a stage-wide pin. Pass -Card CARD-nnnn ' `
-                + '(or lead -Title with it), or write the stage pin explicitly with routing-pin.ps1.')
+                + '(or lead -Title with it), or write the stage pin explicitly with scripts/antiphon routing-pin set.')
             exit 1
         }
         # Same wording as the server's 422 - refused locally so the mistake costs no round trip.
@@ -1472,7 +1472,7 @@ switch ($PSCmdlet.ParameterSetName) {
             "$($created.warning)" -match 'routing exhausted')
         if ($routingExhausted) {
             Write-Output ("BLOCKED - {0}" -f $created.warning)
-            Write-Output ('A human decides: clear a hold (model-availability.ps1 clear), wait for a reset, or delegate.ps1 -Reroute <id> -Kind .. -Level ..  Do NOT pick a kind yourself.')
+            Write-Output ('A human decides: clear a hold (scripts/antiphon model-availability clear), wait for a reset, or delegate.ps1 -Reroute <id> -Kind .. -Level ..  Do NOT pick a kind yourself.')
         }
         else {
             Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
@@ -1556,7 +1556,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Pin) {
             if (-not $created.cardId) {
                 Write-Output ('WARNING: -Pin wrote nothing - this task bound no card, and a pin ' `
-                        + 'with no card is a stage-wide rule. Use routing-pin.ps1 if that is what you meant.')
+                        + 'with no card is a stage-wide rule. Use scripts/antiphon routing-pin set if that is what you meant.')
             }
             else {
                 $pinBody = @{

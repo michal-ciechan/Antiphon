@@ -1,6 +1,6 @@
 # CARD-0097 S-E. Preview and snapshot stage pins into role/complexity cells.
 # Default and -DryRun issue GETs; -Apply writes Human cells, retaining the pins.
-# Review the read-back before using routing-pin.ps1 clear as a separate command.
+# Review the read-back before using scripts/antiphon routing-pin clear as a separate command.
 # Rollback: recreate Required stage pins, read back, then -Restore using the FIRST
 # snapshot. Later apply snapshots contain migrated values, not the original cells.
 # ASCII-only source for Windows PowerShell 5.1; operator text comes from the API
@@ -143,7 +143,7 @@ try {
             })
             if ($required.Count -eq 0) {
                 $pairs = Get-Pairs $original[0].candidates
-                throw "restore refused: $migratedRole has no Required stage pin; run routing-pin.ps1 set -Role $migratedRole -Provenance Human -Strength Required -Candidates $pairs -Reason <text> first"
+                throw "restore refused: $migratedRole has no Required stage pin; run scripts/antiphon routing-pin set --role $migratedRole --provenance Human --strength Required --candidates $pairs --reason <text> first"
             }
         }
         $changes = @()
@@ -246,7 +246,7 @@ try {
     else { Write-Output 'Dry run: zero writes. Use -Apply to write the previewed cells from a fresh read.' }
     foreach ($migratedRole in $seenRoles) {
         Write-Output "Read back with complexity-chain.ps1 get -Role $migratedRole and review the effective diff BEFORE clearing the pin."
-        Write-Output "Separate operator command after review: routing-pin.ps1 clear -Role $migratedRole"
+        Write-Output "Separate operator command after review: scripts/antiphon routing-pin clear --role $migratedRole"
     }
     exit 0
 }

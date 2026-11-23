@@ -54,7 +54,7 @@ export function RolePolicySection() {
         <SectionHeading />
         <Text size="sm" c="dimmed">
           The configured RolePolicy for each role beside its active stage-wide pin. Read-only here;
-          pins are set with scripts/routing-pin.ps1. These Settings projections assume no card, explicit provider kind, agent or
+          pins are set with scripts/antiphon routing-pin. These Settings projections assume no card, explicit provider kind, agent or
           level. Modal previews with a possible card binding withhold the target because card pins are absent from these reads.
           Identifier boundaries are exact for ASCII neighbours; a non-ASCII neighbour counts as a possible
           boundary because browser and server Unicode tables can differ. A single composed pin target bypasses the matrix; otherwise eligible Workers use the

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "8d70614c77ab5074db7db23b254e9d29fe963f9b79b216580fbda76f8892e0ef",
+  "policyHash": "a52162a12fe061d85b1c001955247b7844a1b281dc532d70dff5dce319ac9774",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -643,7 +643,7 @@
             "issue_does_not_print_the_token_and_dpapi_round_trips"
           ],
           "platform": "linux",
-          "reason": "Windows DPAPI round trip: capability.ps1 writes and the test reads a ProtectedData CurrentUser blob, which only Windows supports. The method remains required on Windows; error_paths_never_contain_the_token stays required on both platforms.",
+          "reason": "Windows DPAPI round trip: the capability command writes and the test reads a ProtectedData CurrentUser blob, which only Windows supports. The method remains required on Windows; error_paths_never_contain_the_token stays required on both platforms.",
           "owner": "CARD-1811"
         },
         {

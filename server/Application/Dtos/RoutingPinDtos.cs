@@ -57,7 +57,7 @@ public sealed record RoutingPinDto(
     int CandidateCount = 0);
 
 /// <summary>
-/// One pin candidate as GET returns it, with live availability so <c>routing-pin.ps1 get</c>
+/// One pin candidate as GET returns it, with live availability so <c>scripts/antiphon routing-pin get</c>
 /// can say why a list is exhausted without a dispatch.
 /// </summary>
 public sealed record RoutingPinCandidateDto(

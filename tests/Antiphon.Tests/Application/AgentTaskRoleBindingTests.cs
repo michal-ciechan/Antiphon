@@ -62,7 +62,8 @@ public class AgentTaskRoleBindingTests(AntiphonWebAppFactory factory)
             .Where(name => !AgentTaskRoles.IsSpecialist(Enum.Parse<AgentTaskRole>(name)))
             .ToArray();
         ScriptedRoles("delegate.ps1").ShouldBe(expected, ignoreOrder: true);
-        ScriptedRoles("routing-pin.ps1").ShouldBe(expected, ignoreOrder: true);
+        // The routing-pin command (unit 24 of the 2026-11-22 plan) replaced routing-pin.ps1 and its Role ValidateSet.
+        Antiphon.Nightly.RoutingPinCliOptions.Roles.ShouldBe(expected, ignoreOrder: true);
         ScriptedRoles("complexity-chain.ps1")
             .ShouldBe(expected.Append("Any").ToArray(), ignoreOrder: true);
     }

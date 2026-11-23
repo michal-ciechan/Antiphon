@@ -141,6 +141,17 @@ namespace Antiphon.Scripts
             [OperatorCommands.WorktreeResidue] = OperatorCommands.RunWorktreeResidue,
             [OperatorCommands.RunnerSlots] = OperatorCommands.RunRunnerSlots,
             [OperatorCommands.KeepSix] = OperatorCommands.RunKeepSix,
+            // The board API commands answer every input themselves (unit 24): exit 0 done, 1 a refused value or a failed request
+            // (one stderr line; capability: also an unknown or ambiguous name, an answer without a token, or issue/rotate off
+            // Windows; schedule: also an unacknowledged spend), 2 usage.
+            [BoardCommands.Capability] = BoardCommands.RunCapability,
+            [BoardCommands.ModelAvailability] = BoardCommands.RunModelAvailability,
+            [BoardCommands.SpecialistRouting] = BoardCommands.RunSpecialistRouting,
+            [BoardCommands.PipelineDefinition] = BoardCommands.RunPipelineDefinition,
+            [BoardCommands.Project] = BoardCommands.RunProject,
+            [BoardCommands.Schedule] = BoardCommands.RunSchedule,
+            [BoardCommands.DispatchConcurrency] = BoardCommands.RunDispatchConcurrency,
+            [BoardCommands.RoutingPin] = BoardCommands.RunRoutingPin,
             // The repository child journal recovery answers every input itself (unit 23): exit 0 no record retained, 3 busy,
             // retained, unconfirmed or refused, 2 usage.
             [RecoverRepositoryChildrenCommand.Name] = RecoverRepositoryChildrenCommand.Run,
@@ -190,7 +201,7 @@ namespace Antiphon.Scripts
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
-                + " | " + RecoverRepositoryChildrenCommand.Usage);
+                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage);
             return Usage;
         }
 
