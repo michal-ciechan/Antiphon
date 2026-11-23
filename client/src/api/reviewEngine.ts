@@ -1,7 +1,7 @@
 import { apiGet, apiPost } from './client'
 
 /**
- * Review engine API (docs/features/012-review-engine/api.md, contract v0.4). Types mirror the
+ * Review engine API (docs/features/012-review-engine/api.md, contract v0.5). Types mirror the
  * contract exactly; enums are the server's PascalCase strings. The client builds against the
  * `ReviewApi` seam so the in-memory fake (features/review/fake) and the HTTP implementation below
  * are interchangeable. HTTP is the default; `reviewApiMode()` picks the fake only on request. The
@@ -360,7 +360,7 @@ export interface CreateReviewRunRequest {
   title?: string
 }
 
-/** `POST /api/review-runs/{id}/rounds` (contract v0.4): a manual round, same round, with an optional steer. */
+/** `POST /api/review-runs/{id}/rounds` (contract v0.5): a manual round, same round, with an optional steer. */
 export interface ReviewRoundRequest {
   steerPrompt?: string
 }
@@ -394,7 +394,7 @@ export interface ReviewPollingPassDto {
   repos: ReviewPollingRepoPassDto[]
 }
 
-/** `GET /api/review-polling` (contract v0.4): the polling settings and the last pass, kept in memory. */
+/** `GET /api/review-polling` (contract v0.5): the polling settings and the last pass, kept in memory. */
 export interface ReviewPollingDto {
   enabled: boolean
   intervalSeconds: number

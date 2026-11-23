@@ -1,7 +1,7 @@
-# Review engine API contract (v0.4)
+# Review engine API contract (v0.5)
 
-Status: working contract for the first implementation slice, 2026-11-22; v0.4 (polling and manual
-rounds) 2026-11-23. The client builds against
+Status: working contract for the first implementation slice, 2026-11-22; v0.4 (failure policy) and v0.5 (polling and
+manual rounds) 2026-11-23. The client builds against
 it with a fake implementation first. The server then implements the same routes. Change this file
 first when the contract changes. Owner design: [design.md](design.md).
 
