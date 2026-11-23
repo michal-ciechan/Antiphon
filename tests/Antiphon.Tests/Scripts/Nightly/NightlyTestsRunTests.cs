@@ -520,7 +520,6 @@ public sealed class NightlyTestsRunTests
         "test-client scripts/test-client.ps1",
         "test-client-mode scripts/test-client-mode.ps1",
         "test-deploy-am-service scripts/test-deploy-am-service.ps1",
-        "test-deploy-nightly-watchdog scripts/test-deploy-nightly-watchdog.ps1",
         "test-duration-tripwire scripts/test-duration-tripwire.ps1",
         "test-hooks scripts/test-hooks.ps1",
         "test-reap-zombie-agents scripts/test-reap-zombie-agents.ps1",

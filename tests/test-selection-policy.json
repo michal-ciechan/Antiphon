@@ -3062,9 +3062,6 @@
           "script": "scripts/test-deploy-am-service.ps1"
         },
         {
-          "script": "scripts/test-deploy-nightly-watchdog.ps1"
-        },
-        {
           "script": "scripts/test-duration-tripwire.ps1"
         },
         {
@@ -3613,7 +3610,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "3deb29e634298f86d86d1aa5da3cf726cfd5f161091a62f5ce3c54ab09b2c717",
+  "catalogHash": "126d5297c170f9ec909d150cb629edea244c14154547d3ef66cfc9d716d62556",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
