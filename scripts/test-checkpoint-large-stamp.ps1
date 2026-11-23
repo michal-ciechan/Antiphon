@@ -208,8 +208,5 @@ public sealed class LargeZeroStream : Stream
         if ($LASTEXITCODE) { throw 'mkfifo failed' }
         try { Assert-Equal (Get-CheckpointContentStamp $fifo) 'unreadable|selected file is not regular' 'FIFO' } finally { [IO.File]::Delete($fifo) }
     }
-} elseif ($Mode -eq 'parser') {
-    & pwsh -NoProfile -NonInteractive -File (Join-Path $Repository 'scripts/test-checkpoint-stamp-ps51-parse.ps1') -AllowPwsh
-    if ($LASTEXITCODE) { throw 'PS7 parser witness failed' }
 } else { throw "unknown mode: $Mode" }
 "C1532 $Mode PASS"

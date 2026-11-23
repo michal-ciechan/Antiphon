@@ -2157,9 +2157,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 74,
+      "classes": 73,
       "reason": "cap",
-      "owed": 49,
+      "owed": 48,
       "first": [
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
@@ -4369,7 +4369,9 @@
     {
       "path": "scripts/lib/checkpoint-file-reader.ps1",
       "classes": [
-        "CheckpointReadStallWitnessTests"
+        "CheckpointLargeStampScriptTests",
+        "CheckpointReadStallWitnessTests",
+        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {
@@ -4512,7 +4514,8 @@
     {
       "path": "scripts/run-checkpoint.ps1",
       "classes": [
-        "CheckpointColdBuildTests"
+        "CheckpointColdBuildTests",
+        "CheckpointLargeStampScriptTests"
       ]
     },
     {
@@ -4577,12 +4580,6 @@
       "path": "scripts/test-checkpoint-output-inventory.ps1",
       "classes": [
         "CheckpointFreshOutputSealTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-pool-saturation.ps1",
-      "classes": [
-        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {
@@ -25200,6 +25197,12 @@
       "classes": [
         "CheckpointRecoveryWindowsTests",
         "CheckpointRunOwnershipTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/EmbeddedCheckpointReader.cs",
+      "classes": [
+        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {

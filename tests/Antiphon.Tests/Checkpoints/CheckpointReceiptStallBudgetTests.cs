@@ -50,6 +50,9 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         refused.InnerException.ShouldBeOfType<IOException>();
     }
 
+    // The child is the staged script harness host (checkpoint-pool-witness): it caps its own pool, which this
+    // shared test process must not do. embedded=true hands it the reader scripts/lib/checkpoint-file-reader.ps1
+    // embeds, compiled from that file's source; false, the library CheckpointFileReader.
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -57,11 +60,15 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
     public async Task healthy_receipts_complete_with_every_pool_worker_occupied(bool embedded)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux scheduling witness; no native Windows qualification");
-        var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-pool-saturation.ps1"),
-                     "-Repository", CheckpointFixtures.RepoRoot, "-Scratch", TempDir(), "-Assembly", typeof(CheckpointFileReader).Assembly.Location })
+        var scratch = TempDir();
+        var (assembly, type) = embedded
+            ? (EmbeddedCheckpointReader.EmitTo(Path.Combine(scratch, "embedded-reader")), EmbeddedCheckpointReader.TypeName)
+            : (typeof(CheckpointFileReader).Assembly.Location, typeof(CheckpointFileReader).FullName!);
+        var host = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
+        File.Exists(host).ShouldBeTrue("the script harness host must be staged by the build");
+        var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in new[] { "exec", host, "checkpoint-pool-witness", assembly, type, Path.Combine(scratch, "receipts") })
             psi.ArgumentList.Add(arg);
-        if (embedded) psi.ArgumentList.Add("-Embedded");
         using var child = Process.Start(psi)!;
         RegisterCheckpointChild(child);
         var stdout = child.StandardOutput.ReadToEndAsync();
@@ -70,6 +77,7 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         try { await child.WaitForExitAsync(safety.Token); }
         catch (OperationCanceledException) { child.Kill(true); await child.WaitForExitAsync(); throw; }
         child.ExitCode.ShouldBe(0, await stdout + await stderr);
+        (await stdout).ShouldContain("PASS pool-saturation readers=4");
     }
 
     [Test]

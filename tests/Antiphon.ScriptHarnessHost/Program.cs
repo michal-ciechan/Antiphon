@@ -23,6 +23,8 @@ if (args.Length >= 3 && args[0] == "fixture-grandchild")
     return await FixtureGrandchild(args[1], args[2]);
 if (args.Length == 4 && args[0] == "c1375-owned-tree")
     return C1375OwnedTree(args[1], args[2], args[3]);
+if (args.Length == 4 && args[0] == "checkpoint-pool-witness")
+    return CheckpointPoolWitness(args[1], args[2], args[3]);
 if (args.Length == 1 && args[0] == "windows-sentinel" && OperatingSystem.IsWindows())
 {
     await Task.Delay(TimeSpan.FromSeconds(20));
@@ -324,6 +326,59 @@ static int CliEcho(string[] args)
         while (!File.Exists(hold) && DateTime.UtcNow < deadline) Thread.Sleep(20);
     }
     return int.TryParse(Environment.GetEnvironmentVariable("CLI_ECHO_EXIT"), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code) ? code : 0;
+}
+
+// CARD-1601's pool witness for CheckpointReceiptStallBudgetTests: checkpoint-pool-witness <assembly> <type> <root>.
+// The reader type (the library CheckpointFileReader, or the ConfinedFileReader the test compiled from
+// scripts/lib/checkpoint-file-reader.ps1) is loaded from its file. This process caps its own thread pool at four
+// workers and occupies all four with healthy receipt reads, which must still complete: the reader waits on its
+// dedicated I/O thread, never on a pool worker. Its own process, because the cap is process-wide.
+static int CheckpointPoolWitness(string assemblyPath, string typeName, string root)
+{
+    var reader = System.Reflection.Assembly.LoadFrom(assemblyPath).GetType(typeName, throwOnError: true)!;
+    Directory.CreateDirectory(root);
+    var path = Path.Combine(root, "receipt.json");
+    var expected = Enumerable.Repeat((byte)42, 85).ToArray();
+    File.WriteAllBytes(path, expected);
+    var read = reader.GetMethods().Single(m => m.Name == "ReadBytes" && m.GetParameters().Length == 5 && m.GetParameters()[0].ParameterType == typeof(string));
+    ThreadPool.GetMinThreads(out var min, out var minIo);
+    ThreadPool.GetMaxThreads(out var max, out var maxIo);
+    using var entered = new CountdownEvent(4);
+    using var release = new ManualResetEventSlim();
+    using var finished = new CountdownEvent(4);
+    Exception? failure = null;
+    var completed = false;
+    try
+    {
+        if (!ThreadPool.SetMinThreads(4, minIo) || !ThreadPool.SetMaxThreads(4, maxIo)) throw new InvalidOperationException("could not cap isolated pool");
+        for (var i = 0; i < 4; i++)
+            Task.Run(() =>
+            {
+                entered.Signal();
+                release.Wait();
+                try
+                {
+                    var bytes = (byte[])read.Invoke(null, [root, path, 1024, null, CancellationToken.None])!;
+                    if (!bytes.SequenceEqual(expected)) throw new InvalidDataException("wrong receipt bytes");
+                }
+                catch (Exception ex) { Interlocked.CompareExchange(ref failure, ex, null); }
+                finally { finished.Signal(); }
+            });
+        if (!entered.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("pool callers did not enter");
+        release.Set();
+        completed = finished.Wait(TimeSpan.FromSeconds(10));
+    }
+    finally
+    {
+        ThreadPool.SetMaxThreads(max, maxIo);
+        ThreadPool.SetMinThreads(min, minIo);
+        release.Set();
+        if (!finished.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("isolated pool did not drain after restoration");
+    }
+    if (!completed) throw new TimeoutException("healthy receipts did not complete with all pool workers occupied");
+    if (failure is not null) throw new InvalidOperationException("healthy receipt refused", failure);
+    Console.WriteLine("PASS pool-saturation readers=4");
+    return 0;
 }
 
 static void PublishIdentity(string directory, string name)
