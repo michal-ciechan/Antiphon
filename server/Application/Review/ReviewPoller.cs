@@ -151,9 +151,13 @@ public sealed class ReviewPoller(
             }
 
             // A queued run is the executor's next work, and its intake pins the current head; refreshing
-            // it again before then would start a second iteration for the same push.
+            // it again before then would start a second iteration for the same push. A running run is
+            // mid-walk: its own branch update may have just moved the head that the walk has not saved
+            // yet (live, 2026-11-23: the bot's base-only rebase was refreshed as a push and started a
+            // new round). The next pass sees the settled run.
             var current = await LatestRunsAsync(db, repo.Host, name, ct);
-            foreach (var run in current.Values.Where(r => r.Walked && r.Status is not (ReviewRunStatus.Closed or ReviewRunStatus.Merged or ReviewRunStatus.Queued)))
+            foreach (var run in current.Values.Where(r => r.Walked
+                         && r.Status is not (ReviewRunStatus.Closed or ReviewRunStatus.Merged or ReviewRunStatus.Queued or ReviewRunStatus.Running)))
             {
                 var due = !open.TryGetValue(run.PrNumber, out var listed) || !string.Equals(listed.HeadSha, run.HeadSha, StringComparison.OrdinalIgnoreCase);
                 if (!due)
