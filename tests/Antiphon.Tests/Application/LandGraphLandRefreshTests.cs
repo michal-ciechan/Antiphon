@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -12,6 +16,11 @@ namespace Antiphon.Tests.Application;
 /// refreshes the land-graph files, notifies, and never asks. Property and construct refusals,
 /// a malformed manifest, a refresh outside the batch's files, and a check that still fails
 /// after the refresh stay hard failures. A bare -Update outside that path stays forbidden.
+/// The land-graph-land-refresh command (LandGraphLandRefresh; it replaced
+/// scripts/land-graph-land-refresh.ps1, unit 11 of 2026-11-22-remaining-ps1-to-csharp.md) runs
+/// in process with real git; the stub cases answer its audit and pin printer with
+/// LandGraphRefreshSteps (the former -AuditScript and -PinScript stubs), the real cases run the
+/// land-graph-audit command and the staged tool.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -21,41 +30,6 @@ public sealed class LandGraphLandRefreshTests
     private const string Evaluation = "server/Application/Services/LandVerificationBuildGraph.evaluation.txt";
     private const string PinsFile = "server/Application/Services/LandVerificationBuildGraph.pins.txt";
     private const string CommitSubject = "chore: refresh land-graph records for the landing batch";
-
-    private const string AuditStub = """
-        param([switch]$Check, [switch]$Update, [switch]$LandRefresh)
-        $ErrorActionPreference = 'Stop'
-        $log = $env:C1753_LOG
-        if ($Update) {
-            Add-Content -LiteralPath $log -Value ('update landrefresh=' + $LandRefresh.IsPresent)
-            if ($env:C1753_UPDATE_CODE -eq '1') { exit 1 }
-            # Write the bytes (a fresh modification time), as the real -Update does. Copy-Item keeps the
-            # source's older time, and a same-size record then looks unchanged to git's stat check.
-            [System.IO.File]::WriteAllBytes($env:C1753_MANIFEST, [System.IO.File]::ReadAllBytes($env:C1753_NEW_MANIFEST))
-            [System.IO.File]::WriteAllBytes($env:C1753_EVAL, [System.IO.File]::ReadAllBytes($env:C1753_NEW_EVAL))
-            exit 0
-        }
-        $prior = 0
-        if (Test-Path -LiteralPath $log) {
-            foreach ($line in [System.IO.File]::ReadAllLines($log)) {
-                if ($line.StartsWith('check')) { $prior++ }
-            }
-        }
-        Add-Content -LiteralPath $log -Value 'check'
-        if ($prior -eq 0) {
-            if (-not [string]::IsNullOrEmpty($env:C1753_FIRST_TEXT)) { Write-Output $env:C1753_FIRST_TEXT }
-            exit ([int]$env:C1753_FIRST_CODE)
-        }
-        if (-not [string]::IsNullOrEmpty($env:C1753_SECOND_TEXT)) { Write-Output $env:C1753_SECOND_TEXT }
-        exit ([int]$env:C1753_SECOND_CODE)
-        """;
-
-    private const string PinStub = """
-        param([string]$Repo)
-        $ErrorActionPreference = 'Stop'
-        [Console]::Out.Write([System.IO.File]::ReadAllText($env:C1753_PIN_TEXT))
-        exit 0
-        """;
 
     [Test]
     [Timeout(60_000)]
@@ -292,6 +266,100 @@ public sealed class LandGraphLandRefreshTests
     }
 
     [Test]
+    [Timeout(60_000)]
+    public void card_note_posts_the_notice_with_the_task_token()
+    {
+        using var fixture = new Fixture();
+        var pins = PinLine("App/App.csproj", "Build", new string('A', 64));
+        fixture.Seed(pins, ("App/App.csproj", Project("net9.0")));
+        fixture.Write("App/App.csproj", Project("net10.0"));
+        fixture.Commit("batch");
+        var posts = new List<(string Method, string Uri, IReadOnlyDictionary<string, string> Headers, string Body)>();
+        var result = fixture.Run(Check("manifest does not match the selected graph"), pins, card: "CARD-1753", token: "task-token",
+            board: (method, uri, headers, body) =>
+            {
+                posts.Add((method, uri, headers, body));
+                return new NightlyReportHttpResponse(201, "{}");
+            });
+
+        result.Code.ShouldBe(0, result.Text);
+        result.Text.ShouldNotContain("post-failed");
+        posts.Count.ShouldBe(1);
+        posts[0].Method.ShouldBe("POST");
+        posts[0].Uri.ShouldBe("http://127.0.0.1:1/api/cards/CARD-1753/discussion");
+        posts[0].Headers["X-Antiphon-Task-Token"].ShouldBe("task-token");
+        using var body = JsonDocument.Parse(posts[0].Body);
+        var note = body.RootElement.GetProperty("body").GetString()!;
+        note.ShouldStartWith("LAND-GRAPH-NOTICE action=refresh\n");
+        note.ShouldContain("changed-records:App/App.csproj\n");
+        note.ShouldEndWith("card-note: recorded\n");
+        LandGraphLandRefresh.JsonString("a\"b\\c\nd\re\tf\u0001g").ShouldBe("\"a\\\"b\\\\c\\nd\\re\\tf g\"");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public void failed_update_restores_the_staged_pins_and_does_not_commit()
+    {
+        using var fixture = new Fixture();
+        var oldHash = new string('A', 64);
+        var pins = PinLine("App/App.csproj", "Build", oldHash);
+        fixture.Seed(pins, ("App/App.csproj", Project("net9.0")));
+        fixture.Write("App/App.csproj", Project("net10.0"));
+        fixture.Commit("batch");
+        var batch = fixture.Head();
+        var before = File.ReadAllBytes(Path.Combine(fixture.Repo, PinsFile.Replace('/', Path.DirectorySeparatorChar)));
+        var result = fixture.Run(Check("refused: App/App.csproj Target Build (changed pin)"),
+            PinLine("App/App.csproj", "Build", new string('B', 64)), updateCode: 1);
+
+        result.Code.ShouldBe(1, result.Text);
+        result.Text.ShouldContain("action=refuse reason=update-failed");
+        fixture.UpdateCount().ShouldBe(1);
+        fixture.Head().ShouldBe(batch);
+        File.ReadAllBytes(Path.Combine(fixture.Repo, PinsFile.Replace('/', Path.DirectorySeparatorChar))).ShouldBe(before);
+        AssertNoQuestion(result.Text);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public void unknown_base_and_dirty_worktree_refuse_before_any_update()
+    {
+        using var fixture = new Fixture();
+        var pins = PinLine("App/App.csproj", "Build", new string('A', 64));
+        fixture.Seed(pins, ("App/App.csproj", Project("net9.0")));
+        fixture.Write("App/App.csproj", Project("net10.0"));
+        fixture.Commit("batch");
+        var batch = fixture.Head();
+
+        var unknown = fixture.Run(Check("manifest does not match the selected graph"), pins, baseSha: new string('0', 40));
+        unknown.Code.ShouldBe(1, unknown.Text);
+        unknown.Text.ShouldContain("action=refuse reason=bad-base");
+        fixture.LogText().ShouldBeEmpty("a bad base refuses before the first check");
+
+        File.WriteAllText(Path.Combine(fixture.Repo, "untracked.txt"), "x");
+        var dirty = fixture.Run(Check("manifest does not match the selected graph"), pins);
+        dirty.Code.ShouldBe(1, dirty.Text);
+        dirty.Text.ShouldContain("action=refuse reason=dirty-worktree");
+        fixture.UpdateCount().ShouldBe(0);
+        fixture.Head().ShouldBe(batch);
+    }
+
+    [Test]
+    public void command_line_needs_a_base_and_reads_the_card_note_settings_from_the_caller()
+    {
+        var options = LandGraphLandRefreshOptions.Parse(["--base", "abc", "--card", "CARD-1", "--note-path", "n.txt"], "repo", "http://board", "token", null);
+        options.Base.ShouldBe("abc");
+        options.RepoRoot.ShouldBe("repo");
+        options.Card.ShouldBe("CARD-1");
+        options.NotePath.ShouldBe("n.txt");
+        options.Api.ShouldBe("http://board");
+        options.TaskToken.ShouldBe("token");
+        LandGraphLandRefreshOptions.Parse(["--base", "abc", "--repo", "elsewhere"], "repo", null!, null!, null).RepoRoot.ShouldBe("elsewhere");
+        Should.Throw<NightlyUsageException>(() => LandGraphLandRefreshOptions.Parse([], "repo", "", "", null)).Message.ShouldBe("missing --base");
+        Should.Throw<NightlyUsageException>(() => LandGraphLandRefreshOptions.Parse(["--base", "abc", "--audit-script", "x"], "repo", "", "", null));
+        Should.Throw<NightlyUsageException>(() => LandGraphLandRefreshOptions.Parse(["-Base", "abc"], "repo", "", "", null));
+    }
+
+    [Test]
     public void instructions_say_the_land_path_refreshes_and_bare_update_stays_forbidden()
     {
         const string forbidden = "A bare `-Update` outside that land path stays forbidden.";
@@ -304,7 +372,8 @@ public sealed class LandGraphLandRefreshTests
         rule.ShouldNotContain("nobody else runs it");
         rule.ShouldNotContain("operator/audit-only");
         rule.ShouldNotContain("stops on this digest");
-        rule.ShouldContain("scripts/land-graph-land-refresh.ps1");
+        rule.ShouldContain("land-graph-land-refresh --base");
+        rule.ShouldNotContain("land-graph-land-refresh.ps1");
         rule.ShouldContain("never asks");
         rule.ShouldContain(forbidden);
         rule.ShouldContain("policyHash");
@@ -316,7 +385,8 @@ public sealed class LandGraphLandRefreshTests
         var author = loop.IndexOf("Author-time `-Update` requires", StringComparison.Ordinal);
         var runtime = loop.IndexOf("adds zero land-time runtime work", author, StringComparison.Ordinal);
         var authorWindow = loop[author..runtime];
-        authorWindow.ShouldContain("scripts/land-graph-land-refresh.ps1");
+        authorWindow.ShouldContain("land-graph-land-refresh");
+        authorWindow.ShouldNotContain("land-graph-land-refresh.ps1");
         authorWindow.ShouldContain(forbidden);
         loop.ShouldContain("adds zero land-time runtime work: land still compares the embedded manifest only.");
 
@@ -346,23 +416,30 @@ public sealed class LandGraphLandRefreshTests
         var skill = File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-rc-qualification", "SKILL.md"));
         skill.ShouldContain("Fixers never run native tests, tags, or land graph `-Update`.");
         skill.ShouldNotContain("may use the documented `-Update` once");
-        skill.ShouldContain("scripts/land-graph-land-refresh.ps1");
+        skill.ShouldContain("land-graph-land-refresh --base");
+        File.Exists(Path.Combine(root, "scripts", "land-graph-land-refresh.ps1")).ShouldBeFalse("the refresh is the land-graph-land-refresh command");
 
-        var scriptPath = Path.Combine(root, "scripts", "land-graph-land-refresh.ps1");
-        File.Exists(scriptPath).ShouldBeTrue(scriptPath);
-        var script = File.ReadAllText(scriptPath);
-        script.All(static c => c <= 127).ShouldBeTrue("land-graph-land-refresh.ps1 must stay ASCII");
-        script.ShouldNotContain("Read-Host");
+        // The command (scripts/lib/Antiphon.Nightly) and its CLI entry never ask, and name every notice.
+        var script = File.ReadAllText(Path.Combine(root, "scripts/lib/Antiphon.Nightly/LandGraphLandRefresh.cs"));
+        var entry = File.ReadAllText(Path.Combine(root, "scripts/lib/Antiphon.Scripts/LandGraphLandRefreshCommand.cs"));
+        script.All(static c => c <= 127).ShouldBeTrue("LandGraphLandRefresh.cs must stay ASCII");
+        entry.All(static c => c <= 127).ShouldBeTrue("LandGraphLandRefreshCommand.cs must stay ASCII");
+        foreach (var source in new[] { script, entry })
+        {
+            source.ShouldNotContain("Read-Host");
+            source.ShouldNotContain("ReadLine");
+            source.ShouldNotContain("Console.In");
+        }
         script.ShouldContain("LAND-GRAPH-NOTICE");
-        script.ShouldContain("reason=property-or-construct");
-        script.ShouldContain("reason=malformed-manifest");
-        script.ShouldContain("reason=outside-batch");
-        script.ShouldContain("reason=check-after-refresh");
+        script.ShouldContain("Refuse(\"property-or-construct\")");
+        script.ShouldContain("Refuse(\"malformed-manifest\")");
+        script.ShouldContain("Refuse(\"outside-batch\")");
+        script.ShouldContain("Refuse(\"check-after-refresh\")");
         script.ShouldContain("reason=inherited-mismatch");
 
-        var audit = File.ReadAllText(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
-        audit.ShouldContain("-LandRefresh");
-        audit.ShouldContain("only for scripts/land-graph-land-refresh.ps1");
+        var audit = File.ReadAllText(Path.Combine(root, "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs"));
+        audit.ShouldContain("--land-refresh");
+        audit.ShouldContain("only for the land-graph-land-refresh command");
         audit.ShouldContain("commit source and pins before auditing");
         // The pending pins a land refresh stages are hashed from the working tree (the script's body is C# now).
         var gate = File.ReadAllText(Path.Combine(root, "tools", "Antiphon.LandGraphAudit.Core", "LandGraphAuditGate.cs"));
@@ -574,40 +651,30 @@ public sealed class LandGraphLandRefreshTests
         await Git(root, "config", "core.autocrlf", "false");
     }
 
+    // The land-graph-land-refresh command in process with its production steps: the land-graph-audit command (the staged
+    // tool, which the fixture has no project to rebuild) and the tool's --print-pins, real git, no card.
     private static async Task<(int Code, string Text)> RunRealRefresh(string root, string baseSha, TimeSpan timeout)
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "land-graph-land-refresh.ps1");
-        var audit = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File", script,
-            "-Base", baseSha, "-Repo", root, "-AuditScript", audit,
-        })
-            start.ArgumentList.Add(arg);
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(timeout);
         try
         {
-            await process.WaitForExitAsync(deadline.Token);
+            return await Task.Run(() =>
+            {
+                using var output = new StringWriter();
+                using var error = new StringWriter();
+                var options = LandGraphLandRefreshOptions.Parse(["--base", baseSha, "--repo", root], root, "", "", LandGraphCommandHost.Environment());
+                var code = LandGraphLandRefresh.Run(options, LandGraphCommandHost.Create(output, error), new FileSystem(), UnreachableBoard);
+                return (code, output.ToString() + error.ToString());
+            }).WaitAsync(timeout);
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
             throw new TimeoutException("real land-graph refresh exceeded " + timeout.TotalSeconds.ToString("0") + " s");
         }
-
-        return (process.ExitCode, await stdout + await stderr);
     }
+
+    // The board at 127.0.0.1:1: every post fails to connect.
+    private static NightlyReportHttpResponse UnreachableBoard(string method, string uri, IReadOnlyDictionary<string, string> headers, string body) =>
+        throw new HttpRequestException("connection refused: " + uri);
 
     private static Task Git(string root, params string[] args) => GitText(root, args);
 
@@ -703,8 +770,6 @@ public sealed class LandGraphLandRefreshTests
         public string Root { get; }
         public string Repo { get; }
         public string BaseSha { get; private set; } = "";
-        private readonly string _audit;
-        private readonly string _pinsScript;
         private readonly string _log;
 
         public Fixture()
@@ -712,11 +777,7 @@ public sealed class LandGraphLandRefreshTests
             Root = Path.Combine(Path.GetTempPath(), "c1753-" + Guid.NewGuid().ToString("N"));
             Repo = Path.Combine(Root, "repo");
             Directory.CreateDirectory(Repo);
-            _audit = Path.Combine(Root, "audit.ps1");
-            _pinsScript = Path.Combine(Root, "pins.ps1");
             _log = Path.Combine(Root, "audit.log");
-            File.WriteAllText(_audit, AuditStub, new UTF8Encoding(false));
-            File.WriteAllText(_pinsScript, PinStub, new UTF8Encoding(false));
             Git("init", "-b", "main");
             Git("config", "user.email", "land-graph-test@example.com");
             Git("config", "user.name", "land-graph-test");
@@ -738,38 +799,66 @@ public sealed class LandGraphLandRefreshTests
             return selected;
         }
 
+        // The land-graph-land-refresh command in process on this fixture, its audit and pin printer answered as the former
+        // -AuditScript and -PinScript stubs did: the first --check answers check, every later one the second answer; an
+        // --update logs whether it came with --land-refresh and then writes the new records (fresh bytes, so git's stat
+        // check sees them; the real --update writes them too) unless updateCode fails it; the printer prints printedPins.
+        // The board defaults to http://127.0.0.1:1, which no post reaches.
         public (int Code, string Text) Run(
             (int Code, string? Text, string? SecondText) check,
             string printedPins,
             string? notePath = null,
-            string? card = null)
+            string? card = null,
+            int updateCode = 0,
+            string? baseSha = null,
+            string token = "",
+            NightlyReportHttp? board = null)
         {
             var head = Fingerprint(Selected(Repo, "HEAD"));
-            var manifestCopy = Path.Combine(Root, "new-manifest.txt");
-            var evalCopy = Path.Combine(Root, "new-eval.txt");
+            var utf8 = new UTF8Encoding(false);
+            var newManifest = head.Digest + "\n" + head.Count.ToString() + "\n";
             var pinCopy = Path.Combine(Root, "printed-pins.txt");
-            File.WriteAllText(manifestCopy, head.Digest + "\n" + head.Count.ToString() + "\n", new UTF8Encoding(false));
-            File.WriteAllText(pinCopy, printedPins, new UTF8Encoding(false));
+            File.WriteAllText(pinCopy, printedPins, utf8);
             var pinBlob = Out("hash-object", pinCopy).Trim();
-            File.WriteAllText(evalCopy, head.Digest + "\n9.0.100\n" + pinBlob + "\n", new UTF8Encoding(false));
+            var newEvaluation = head.Digest + "\n9.0.100\n" + pinBlob + "\n";
             var secondFails = check.SecondText is not null && check.SecondText != "ok";
-            var env = new Dictionary<string, string>
+            var checks = 0;
+            var steps = new LandGraphRefreshSteps
             {
-                ["C1753_LOG"] = _log,
-                ["C1753_FIRST_CODE"] = check.Code.ToString(),
-                ["C1753_FIRST_TEXT"] = check.Text ?? "",
-                ["C1753_SECOND_CODE"] = secondFails ? "1" : "0",
-                ["C1753_SECOND_TEXT"] = check.SecondText ?? "",
-                ["C1753_UPDATE_CODE"] = "0",
-                ["C1753_NEW_MANIFEST"] = manifestCopy,
-                ["C1753_NEW_EVAL"] = evalCopy,
-                ["C1753_MANIFEST"] = Path.Combine(Repo, Manifest.Replace('/', Path.DirectorySeparatorChar)),
-                ["C1753_EVAL"] = Path.Combine(Repo, Evaluation.Replace('/', Path.DirectorySeparatorChar)),
-                ["C1753_PIN_TEXT"] = pinCopy,
-                ["ANTIPHON_API"] = "http://127.0.0.1:1",
-                ["ANTIPHON_TASK_TOKEN"] = "",
+                Audit = options =>
+                {
+                    options.RepoRoot.ShouldBe(Path.GetFullPath(Repo));
+                    options.CaptureOutput.ShouldBeTrue();
+                    options.TimeoutMilliseconds.ShouldBe(LandGraphLandRefresh.AuditTimeoutMilliseconds);
+                    options.Check.ShouldBe(!options.Update);
+                    if (options.Update)
+                    {
+                        File.AppendAllText(_log, "update landrefresh=" + (options.LandRefresh ? "True" : "False") + "\n");
+                        if (updateCode != 0) return new LandGraphStep(updateCode, "");
+                        File.WriteAllText(Path.Combine(Repo, Manifest.Replace('/', Path.DirectorySeparatorChar)), newManifest, utf8);
+                        File.WriteAllText(Path.Combine(Repo, Evaluation.Replace('/', Path.DirectorySeparatorChar)), newEvaluation, utf8);
+                        return new LandGraphStep(0, "");
+                    }
+                    options.LandRefresh.ShouldBeFalse();
+                    File.AppendAllText(_log, "check\n");
+                    return ++checks == 1
+                        ? new LandGraphStep(check.Code, check.Text ?? "")
+                        : new LandGraphStep(secondFails ? 1 : 0, check.SecondText ?? "");
+                },
+                PrintPins = repo =>
+                {
+                    repo.ShouldBe(Path.GetFullPath(Repo));
+                    return new LandGraphStep(0, printedPins);
+                },
             };
-            return RunScript(env, notePath, card);
+            var arguments = new List<string> { "--base", baseSha ?? BaseSha, "--repo", Repo };
+            if (notePath is not null) arguments.AddRange(["--note-path", notePath]);
+            if (card is not null) arguments.AddRange(["--card", card]);
+            var refresh = LandGraphLandRefreshOptions.Parse(arguments, Repo, "http://127.0.0.1:1", token, LandGraphCommandHost.Environment());
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            var code = LandGraphLandRefresh.Run(refresh, LandGraphCommandHost.Create(output, error), new FileSystem(), board ?? new NightlyReportHttp(UnreachableBoard), steps);
+            return (code, output.ToString() + error.ToString());
         }
 
         public void Write(string relative, string content)
@@ -811,44 +900,7 @@ public sealed class LandGraphLandRefreshTests
         {
             Root = existingRoot;
             Repo = Path.Combine(existingRoot, "repo");
-            _audit = Path.Combine(existingRoot, "audit.ps1");
-            _pinsScript = Path.Combine(existingRoot, "pins.ps1");
             _log = Path.Combine(existingRoot, "audit.log");
-        }
-
-        private (int Code, string Text) RunScript(Dictionary<string, string> env, string? notePath, string? card)
-        {
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "land-graph-land-refresh.ps1");
-            var start = new ProcessStartInfo("pwsh")
-            {
-                WorkingDirectory = Repo,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Base", BaseSha, "-Repo", Repo, "-AuditScript", _audit, "-PinScript", _pinsScript })
-                start.ArgumentList.Add(arg);
-            if (notePath is not null)
-            {
-                start.ArgumentList.Add("-NotePath");
-                start.ArgumentList.Add(notePath);
-            }
-            if (card is not null)
-            {
-                start.ArgumentList.Add("-Card");
-                start.ArgumentList.Add(card);
-            }
-            foreach (var pair in env) start.Environment[pair.Key] = pair.Value;
-            using var process = Process.Start(start)!;
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(45_000))
-            {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit();
-                throw new TimeoutException("land-graph refresh script exceeded 45 s");
-            }
-            return (process.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
         }
 
         private void Git(params string[] args)

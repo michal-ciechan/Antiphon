@@ -7,7 +7,7 @@ namespace Antiphon.LandGraphAudit;
 
 /// <summary>
 /// The PowerShell language rules the land-graph pre-check was written against, so that
-/// <see cref="LandGraphPrecheck"/> decides exactly as scripts/audit-land-verification-precheck.ps1 did.
+/// <see cref="LandGraphPrecheck"/> decides exactly as the former scripts/audit-land-verification-precheck.ps1 did.
 /// Each member names the construct it stands for. Measured on pwsh 7.6 (.NET 10):
 /// <list type="bullet">
 /// <item><c>-eq</c>, <c>-ieq</c>, <c>-contains</c> and <c>switch</c> on strings compare with the invariant

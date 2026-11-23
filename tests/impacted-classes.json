@@ -347,7 +347,8 @@
       "id": "land-graph-land-refresh",
       "globs": [
         "tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs",
-        "scripts/land-graph-land-refresh.ps1"
+        "scripts/lib/Antiphon.Nightly/LandGraphLandRefresh.cs",
+        "scripts/lib/Antiphon.Scripts/LandGraphLandRefreshCommand.cs"
       ],
       "classes": [
         "LandGraphLandRefreshTests"
@@ -443,7 +444,9 @@
       "id": "land-graph-precheck",
       "globs": [
         "tools/Antiphon.LandGraphAudit.Core/**",
-        "scripts/audit-land-verification*.ps1"
+        "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs",
+        "scripts/lib/Antiphon.Nightly/LandAuditTool.cs",
+        "scripts/lib/Antiphon.Scripts/LandGraphAuditCommand.cs"
       ],
       "classes": [
         "LandGraphEvaluationTests"

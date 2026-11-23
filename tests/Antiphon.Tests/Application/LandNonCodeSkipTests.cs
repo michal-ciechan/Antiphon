@@ -372,7 +372,7 @@ public sealed class LandNonCodeSkipTests
         var digest = LandVerificationBuildGraph.FingerprintOf(selected);
         digest.ShouldBe(LandVerificationBuildGraph.Fingerprint,
             $"selected definitions={selected.Count}; audited definitions={LandVerificationBuildGraph.AuditedCount}; " +
-            "run scripts/audit-land-verification-graph.ps1 -Check to capture the admission refusal");
+            "run scripts/antiphon land-graph-audit --check to capture the admission refusal");
         LandVerificationBuildGraph.AuditedCount.ShouldBe(selected.Count);
 
         var manifestLines = await File.ReadAllLinesAsync(Path.Combine(root, "server", "Application", "Services",
@@ -381,27 +381,11 @@ public sealed class LandNonCodeSkipTests
         manifestLines[0].ShouldBe(digest);
         int.Parse(manifestLines[1], CultureInfo.InvariantCulture).ShouldBe(selected.Count);
 
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
-        start.ArgumentList.Add("-Check");
-        start.ArgumentList.Add("-ToolPath");
-        start.ArgumentList.Add(LandGraphEvaluationTests.ToolDll());
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        process.ExitCode.ShouldBe(0, stdout + stderr);
-        stdout.ShouldContain("digest=" + digest);
-        stdout.ShouldContain("count=" + selected.Count.ToString(CultureInfo.InvariantCulture));
+        // The land-graph-audit command in process, on the staged tool as given (the tool and the evaluator are real children).
+        var audit = await LandGraphEvaluationTests.RunGraphScriptAsync(root, ["--check", "--tool-path", LandGraphEvaluationTests.ToolDll()]);
+        audit.ExitCode.ShouldBe(0, audit.Text);
+        audit.StandardOutput.ShouldContain("digest=" + digest);
+        audit.StandardOutput.ShouldContain("count=" + selected.Count.ToString(CultureInfo.InvariantCulture));
     }
 
     [Test]
@@ -3123,7 +3107,7 @@ public sealed class LandNonCodeSkipTests
     private static Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(string root, string culture, params string[] args) =>
         RunAuditAsync(root, culture, environment: null, args);
 
-    // The pre-check runs in-process: LandGraphPrecheck is the code scripts/audit-land-verification-precheck.ps1
+    // The pre-check runs in-process: LandGraphPrecheck is the code the land-graph-precheck command
     // runs through the LandGraphAudit tool. The culture is the calling thread's for the run (CultureInfo flows
     // per thread and async context, so a parallel class is unaffected); the environment reaches the git
     // processes the audit starts, and its PATH chooses which git that is, as it did for the script.

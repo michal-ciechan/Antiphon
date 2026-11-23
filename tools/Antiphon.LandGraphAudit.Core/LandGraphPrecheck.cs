@@ -1,6 +1,6 @@
 // Moved from the header of scripts/audit-land-verification-precheck.ps1 when its rules were ported here.
 // CARD-1483 S5: internal emulation pre-check. This is not evaluation approval.
-// The production entry point is audit-land-verification-graph.ps1, which requires both checks.
+// The production entry point is the land-graph-audit command, which requires both checks.
 // CARD-1385: hash the dotnet-build definition files at HEAD and compare them
 // with server/Application/Services/LandVerificationBuildGraph.manifest.txt.
 // CARD-1390: the trailing NUL check is ordinal. Every ls-tree row is validated,
@@ -122,9 +122,9 @@ namespace Antiphon.LandGraphAudit;
 
 /// <summary>
 /// CARD-1483 S5: the internal emulation pre-check of the land build graph. This is not evaluation approval;
-/// scripts/audit-land-verification-graph.ps1 requires both this check and real MSBuild evaluation.
-/// A port of the former scripts/audit-land-verification-precheck.ps1 (which now only runs this through the
-/// LandGraphAudit tool's <c>precheck</c> command); every rule below keeps the script's CARD-1385, 1390, 1400,
+/// the land-graph-audit command requires both this check and real MSBuild evaluation.
+/// A port of the former scripts/audit-land-verification-precheck.ps1 (the land-graph-precheck command now runs this
+/// through the LandGraphAudit tool's <c>precheck</c> command); every rule below keeps the script's CARD-1385, 1390, 1400,
 /// 1409, 1483 and 1613 semantics, its messages and its exit codes. The PowerShell operators it was written
 /// with are reproduced by <see cref="Ps"/>, including the XML adapter's property shadowing, so a definition
 /// file is classified exactly as the script classified it.

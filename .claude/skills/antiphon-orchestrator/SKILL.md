@@ -191,8 +191,8 @@ in `docs/orchestration-loop.md`.
    task to resolve it — check for one (`role=Merge`, `status=Dispatched`) before manually retrying;
    don't duplicate it.
 6. A batch's own land-graph mismatch refreshes and never asks. Before `-Land`, run
-   `scripts/land-graph-land-refresh.ps1` when `-Check` fails solely on that batch's
-   records. See [land-graph refresh](../../../docs/orchestration-loop.md#land-graph-refresh).
+   `scripts/antiphon land-graph-land-refresh --base <batch-base>` (`scripts\antiphon.cmd` on
+   Windows) when `land-graph-audit --check` fails solely on that batch's records. See [land-graph refresh](../../../docs/orchestration-loop.md#land-graph-refresh).
    A bare `-Update` outside that land path stays forbidden. After a confirmed `Landed` outcome, restart AppHost only when the landed commit is the
    `rc/YYYY-MM-DD` rc tip the hosts run. A master-only land does not restart AppHost or server2.
    When a restart is due, advance the checkout those hosts run to that tip (`git pull --rebase`

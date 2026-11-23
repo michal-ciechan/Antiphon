@@ -142,7 +142,11 @@ public sealed partial class LandGraphEvaluationTests
         var root = RepoRoot();
         var files = Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit"), "*.cs")
             .Concat(Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit.Core"), "*.cs"))
-            .Append(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+            // The land-graph commands that resolve and run the tool (the former audit-land-verification-graph.ps1 and the
+            // land refresh) carry no witness clock either.
+            .Append(Path.Combine(root, "scripts", "lib", "Antiphon.Nightly", "LandGraphAuditRun.cs"))
+            .Append(Path.Combine(root, "scripts", "lib", "Antiphon.Nightly", "LandGraphLandRefresh.cs"))
+            .Append(Path.Combine(root, "scripts", "lib", "Antiphon.Nightly", "LandAuditTool.cs"));
         foreach (var file in files)
         {
             var text = await File.ReadAllTextAsync(file);

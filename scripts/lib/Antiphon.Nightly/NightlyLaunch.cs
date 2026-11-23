@@ -74,6 +74,15 @@ namespace Antiphon.Nightly
         public string LogText { get; set; } = "";
 
         /// <summary>
+        /// A Watched launch with CaptureOutput: its stdout lines alone, each followed by "\n" (unit 11 of
+        /// 2026-11-22-remaining-ps1-to-csharp.md: the land-graph commands read a tool's stdout apart from its stderr).
+        /// </summary>
+        public string StandardOutputText { get; set; } = "";
+
+        /// <summary>A Watched launch with CaptureOutput: its stderr lines alone, each followed by "\n".</summary>
+        public string StandardErrorText { get; set; } = "";
+
+        /// <summary>
         /// Owned custody: every descendant exited and the output drained (NativeProcessResult.CleanupComplete); null when
         /// the launcher did not observe it (a fake standing in for the child, as the controlled-I/O seam did).
         /// </summary>
@@ -167,6 +176,8 @@ namespace Antiphon.Nightly
             foreach (var argument in launch.Arguments ?? Array.Empty<string>()) start.ArgumentList.Add(argument ?? "");
             ApplyEnvironment(start, launch.Environment);
             var lines = new List<string>();
+            var outputLines = new List<string>();
+            var errorLines = new List<string>();
             if (launch.CaptureOutput)
             {
                 start.RedirectStandardOutput = true;
@@ -177,13 +188,17 @@ namespace Antiphon.Nightly
             using var process = new Process { StartInfo = start };
             if (launch.CaptureOutput)
             {
-                void Line(object sender, DataReceivedEventArgs e)
+                void Line(List<string> stream, string data)
                 {
-                    if (e.Data == null) return;
-                    lock (lines) lines.Add(e.Data);
+                    if (data == null) return;
+                    lock (lines)
+                    {
+                        lines.Add(data);
+                        stream.Add(data);
+                    }
                 }
-                process.OutputDataReceived += Line;
-                process.ErrorDataReceived += Line;
+                process.OutputDataReceived += (sender, e) => Line(outputLines, e.Data);
+                process.ErrorDataReceived += (sender, e) => Line(errorLines, e.Data);
             }
             if (!process.Start()) throw new InvalidOperationException("the child did not start: " + launch.FileName);
             if (launch.CaptureOutput)
@@ -199,21 +214,27 @@ namespace Antiphon.Nightly
                 process.WaitForExit();
                 result.TimedOut = true;
                 result.ExitCode = 1;
-                result.LogText = Captured(lines);
+                Captured(result, lines, outputLines, errorLines);
                 return result;
             }
             // Without a timeout WaitForExit also waits for redirected streams to reach their end.
             process.WaitForExit();
             result.ExitCode = process.ExitCode;
-            result.LogText = Captured(lines);
+            Captured(result, lines, outputLines, errorLines);
             return result;
         }
 
         private static readonly System.Text.UTF8Encoding Utf8NoBom = new System.Text.UTF8Encoding(false);
 
-        private static string Captured(List<string> lines)
+        private static void Captured(NightlyLaunchResult result, List<string> lines, List<string> outputLines, List<string> errorLines)
         {
-            lock (lines) return lines.Count == 0 ? "" : string.Join("\n", lines) + "\n";
+            static string Text(List<string> stream) => stream.Count == 0 ? "" : string.Join("\n", stream) + "\n";
+            lock (lines)
+            {
+                result.LogText = Text(lines);
+                result.StandardOutputText = Text(outputLines);
+                result.StandardErrorText = Text(errorLines);
+            }
         }
 
         /// <summary>A watched child has been waited for; its descendants are not tracked, so nothing is left to wait on.</summary>

@@ -6,15 +6,15 @@ namespace Antiphon.LandGraphAudit;
 
 /// <summary>
 /// CARD-1483 S5 (with CARD-1528, 1540, 1753 and 1780): author-time approval of the land build graph. This is
-/// the body of scripts/audit-land-verification-graph.ps1, ported to C# with the same steps in the same order,
-/// the same refusal messages and the same exit codes; the script is now a wrapper that resolves the built
+/// the body of the former scripts/audit-land-verification-graph.ps1, ported to C# with the same steps in the same order,
+/// the same refusal messages and the same exit codes; the land-graph-audit command (antiphon-scripts) resolves the built
 /// tool (rebuilding it when stale) and runs its <c>audit</c> command, which calls <see cref="Run"/>.
 /// <list type="bullet">
 /// <item>-Update requires the emulation pre-check (<see cref="LandGraphPrecheck"/>, in process) AND the real
 /// MSBuild evaluation (the tool's evaluator, a child process). -Check verifies the pre-check, the manifest and
 /// the digest/pins record, and always evaluates. The recorded SDK must be a stable release selectable by the
 /// committed latestMinor policy (global.json at HEAD).</item>
-/// <item>-LandRefresh is only for scripts/land-graph-land-refresh.ps1, and only together with -Update. It lets
+/// <item>-LandRefresh is only for the land-graph-land-refresh command, and only together with -Update. It lets
 /// that script stage pins beside the manifest for one land-graph commit. Without -Update it refuses. A bare
 /// -Update still refuses with "commit source and pins before auditing".</item>
 /// <item>The evaluator's own clocks bound each solution pass and the canary copy. This wait is the evaluator's
@@ -118,7 +118,7 @@ public static class LandGraphAuditGate
                     else head = options.Head;
 
                     // The pre-check is the same build's LandGraphPrecheck, called directly (no child process);
-                    // scripts/audit-land-verification-precheck.ps1 is the same code for standalone use.
+                    // the land-graph-precheck command runs the same code for standalone use.
                     var toolPath = options.ToolPath;
                     // The script built the pre-check child's arguments here; GetFullPath is the only call that can fail.
                     PsNet.Call("GetFullPath", 1, () => Path.GetFullPath(toolPath));
@@ -248,7 +248,7 @@ public static class LandGraphAuditGate
             if (!Ps.CEq(GetGitValue("rev-parse", "HEAD"), head)) throw new AuditRefusal("HEAD changed during audit");
             // Evaluation reads disk, while the pre-check hashes HEAD. Bind the two.
             // Generated records are the only tracked paths permitted to differ.
-            // Pending pins are allowed only for scripts/land-graph-land-refresh.ps1.
+            // Pending pins are allowed only for the land-graph-land-refresh command.
             var arguments = new List<string> { "diff", "--quiet", "HEAD", "--", ".", ":(exclude)" + ManifestRelative, ":(exclude)" + EvaluationRelative };
             if (allowPendingPins) arguments.Add(":(exclude)" + PinsRelative);
             var run = InvokeChild("git", arguments);

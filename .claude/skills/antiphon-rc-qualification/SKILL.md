@@ -155,14 +155,15 @@ These directions override the cited standing rules in
    Run the **real** graph evaluator under the build-slot gate on the final tree:
 
    ```powershell
-   pwsh -NoProfile -File scripts/build-slot.ps1 -Label rc-merge-graph -- scripts/audit-land-verification-graph.ps1 -Check
+   pwsh -NoProfile -File scripts/build-slot.ps1 -Label rc-merge-graph -- scripts\antiphon.cmd land-graph-audit --check
    ```
 
-   Supply the documented built audit tool when needed; its build also takes a slot
-   and uses an isolated OutputPath. When `-Check` fails solely because this batch
-   changed a build-definition record, the selected digest or count, or a target pin,
-   run `scripts/land-graph-land-refresh.ps1 -Base <batch-base>` before the land. It
-   refreshes once, commits only the land-graph files, re-runs `-Check`, and never
+   (`scripts/antiphon land-graph-audit --check` on sh.) Supply the documented built audit
+   tool (`--tool-path`) when needed; its build also takes a slot and uses an isolated
+   OutputPath. When `--check` fails solely because this batch changed a build-definition
+   record, the selected digest or count, or a target pin, run
+   `scripts\antiphon.cmd land-graph-land-refresh --base <batch-base>` before the land. It
+   refreshes once, commits only the land-graph files, re-runs `--check`, and never
    asks. See [land-graph refresh](../../../docs/orchestration-loop.md#land-graph-refresh).
    A bare `-Update` outside that land path stays forbidden. A property or construct
    refusal, a malformed manifest, a refresh outside the batch's own files, and a

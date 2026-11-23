@@ -106,7 +106,8 @@ public sealed class SourceRevisionStampContractTests
             ("scripts/lib/nightly-core.ps1", "dotnet build"),
             // W2-nightly S17: the nightly tests run (nightly-tests-impl.ps1 is deleted) builds Antiphon.sln unstamped.
             ("scripts/lib/Antiphon.Nightly/NightlyTests.cs", "\"build\", \"Antiphon.sln\""),
-            ("scripts/lib/land-audit-tool.ps1", "dotnet build"),
+            // Unit 11 of 2026-11-22-remaining-ps1-to-csharp.md: the land-graph tool's rebuild (scripts/lib/land-audit-tool.ps1 is deleted).
+            ("scripts/lib/Antiphon.Nightly/LandAuditTool.cs", "\"build\", project"),
             ("server/Application/Services/AgentTaskLandService.cs", "\"build\", \"--artifacts-path\""),
             ("tools/Antiphon.Checkpoints/Execution/BuildStep.cs", "\"build\", project"),
         };

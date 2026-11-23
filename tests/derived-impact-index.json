@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 31,
+      "classes": 32,
       "reason": "allowlist"
     },
     {
@@ -2189,18 +2189,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 35,
+      "classes": 37,
       "reason": "cap",
-      "owed": 10,
+      "owed": 12,
       "first": [
+        "NightlyLockFormatTests",
+        "NightlyReportTests",
         "QualificationTimingTests",
         "RcFailedFirstPlannerTests",
         "RcProjectSelectionTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseSelectionHopSeedTests",
-        "ToolchainFloorTwinTests",
-        "ExpectedPlatformSkipRosterTests",
-        "NightlySummaryWitnessTests"
+        "ToolchainFloorTwinTests"
       ]
     },
     {
@@ -3584,25 +3584,6 @@
       ]
     },
     {
-      "path": "scripts/audit-land-verification-graph.ps1",
-      "classes": [
-        "LandGraphEvaluationTests",
-        "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests",
-        "ReleaseImpactEvaluationTests"
-      ]
-    },
-    {
-      "path": "scripts/audit-land-verification-precheck.ps1",
-      "classes": [
-        "DerivedImpactIndexTests",
-        "LandGraphEvaluationTests",
-        "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests",
-        "ReleaseImpactEvaluationTests"
-      ]
-    },
-    {
       "path": "scripts/autostart-apphost.ps1",
       "classes": [
         "LinuxServerRestartGateTests",
@@ -4044,12 +4025,6 @@
       ]
     },
     {
-      "path": "scripts/land-graph-land-refresh.ps1",
-      "classes": [
-        "LandGraphLandRefreshTests"
-      ]
-    },
-    {
       "path": "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs",
       "classes": [
         "AwayDigestSendTests"
@@ -4117,6 +4092,34 @@
         "MergeHighRadiusSubsetTests",
         "ReleaseImpactEnvelopeTests",
         "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/LandAuditTool.cs",
+      "classes": [
+        "LandGraphCommandTests",
+        "SourceRevisionStampContractTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs",
+      "classes": [
+        "DerivedImpactIndexTests",
+        "LandGraphCommandTests",
+        "LandGraphEvaluationTests",
+        "LandGraphLandRefreshTests",
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/LandGraphLandRefresh.cs",
+      "classes": [
+        "LandGraphCommandTests",
+        "LandGraphEvaluationTests",
+        "LandGraphLandRefreshTests",
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -4309,6 +4312,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Scripts/LandGraphLandRefreshCommand.cs",
+      "classes": [
+        "LandGraphLandRefreshTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/Program.cs",
       "classes": [
         "ReleaseImpactScriptTests"
@@ -4356,16 +4365,6 @@
       "path": "scripts/lib/checkpoint-file-reader.ps1",
       "classes": [
         "CheckpointReadStallWitnessTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/land-audit-tool.ps1",
-      "classes": [
-        "LandGraphEvaluationTests",
-        "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests",
-        "ReleaseImpactEvaluationTests",
-        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -24301,6 +24300,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/LandGraphCommandHost.cs",
+      "classes": [
+        "LandGraphEvaluationTests",
+        "LandGraphLandRefreshTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationCanaryEntryTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
@@ -25572,6 +25578,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
+        "LandAuditToolResolverTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
@@ -25582,6 +25589,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
+        "LandAuditToolResolverTests",
+        "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "NightlyReclaimRaceTests",
         "NightlyRunTests",
@@ -25637,14 +25646,14 @@
         "AntiphonCliLauncherTests",
         "AwayDigestSendTests",
         "ClassCostMeasurementTests",
+        "LandAuditToolResolverTests",
+        "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
         "NightlyHealthTests",
         "NightlyHostTests",
-        "NightlyLockFormatTests",
-        "NightlyReportTests",
         "NightlyRunParityTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
@@ -25758,6 +25767,8 @@
       "classes": [
         "ClassCostMeasurementTests",
         "ExpectedDurationSyncTests",
+        "LandAuditToolResolverTests",
+        "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
@@ -28965,6 +28976,7 @@
     {
       "path": "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs",
       "classes": [
+        "DerivedImpactIndexTests",
         "ImpactedClassesSelectorTests"
       ]
     },

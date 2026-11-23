@@ -197,6 +197,13 @@ public sealed class NightlyScriptsTests
                      // (deploy-nightly-watchdog.ps1 and test-deploy-nightly-watchdog.ps1 are deleted).
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyWatchdogDeploy.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "DeployNightlyWatchdogCommand.cs"),
+                     // Unit 11: the land-graph audit, pre-check, refresh and tool resolver and their commands (the
+                     // audit-land-verification-*.ps1, land-graph-land-refresh.ps1 and lib/land-audit-tool.ps1 are deleted).
+                     Path.Combine("lib", "Antiphon.Nightly", "LandAuditTool.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "LandGraphAuditRun.cs"),
+                     Path.Combine("lib", "Antiphon.Nightly", "LandGraphLandRefresh.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "LandGraphAuditCommand.cs"),
+                     Path.Combine("lib", "Antiphon.Scripts", "LandGraphLandRefreshCommand.cs"),
                      Path.Combine("lib", "nightly-common.ps1"),
                      // W2-nightly S27: lib/nightly-coverage.ps1 is deleted.
                      // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).

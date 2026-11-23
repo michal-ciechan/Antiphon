@@ -332,9 +332,11 @@ public sealed partial class LandGraphEvaluationTests
         gate.ShouldContain("return EvaluationBudget.ToolCeilingSeconds;", Case.Sensitive);
         gate.ShouldNotContain("grace = 30", Case.Sensitive);
         gate.ShouldNotContain("WitnessClock", Case.Sensitive);
-        var script = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"));
-        script.ShouldNotContain("$grace = 30", Case.Sensitive);
-        script.ShouldNotContain("WitnessClock", Case.Sensitive);
+        // The land-graph-audit command (the former graph script) passes the budget on and adds no wait of its own.
+        var command = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs"));
+        command.ShouldNotContain("grace", Case.Insensitive);
+        command.ShouldNotContain("WitnessClock", Case.Sensitive);
+        command.ShouldContain("\"--evaluation-budget-seconds\", options.EvaluationBudgetSeconds.ToString(CultureInfo.InvariantCulture)", Case.Sensitive);
         var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit.Core", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
         budgetSource.ShouldContain("public const int MeasuredLinuxCopyP95Milliseconds = 3751;", Case.Sensitive);
@@ -471,8 +473,8 @@ public sealed partial class LandGraphEvaluationTests
             var update = await RunScriptAsync(moved, "-Update");
             update.ExitCode.ShouldBe(0, update.Text);
             Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before, update.Text);
-            // One second can expire during pass 1. The script still has to exit 1 and leave no canary.
-            var check = await RunGraphScriptAsync(moved, ["-Check", "-EvaluationBudgetSeconds", "1"], timeoutSeconds: 120);
+            // One second can expire during pass 1. The command still has to exit 1 and leave no canary.
+            var check = await RunGraphScriptAsync(moved, ["--check", "--evaluation-budget-seconds", "1"], timeoutSeconds: 120);
             check.ExitCode.ShouldBe(1, check.Text);
             check.Text.ShouldContain("audit refused", Case.Sensitive);
             check.Text.ShouldNotContain("approved", Case.Sensitive);
@@ -500,46 +502,30 @@ public sealed partial class LandGraphEvaluationTests
         Directory.Exists(path).ShouldBeFalse(path);
     }
 
+    // The land-graph-audit command (antiphon-scripts) end to end, in process: the command line is parsed as the CLI parses
+    // it (a malformed one answers the CLI's usage line and exit 2), the repository defaults to root, the environment is
+    // this process's with the overrides applied (the audit's children then drop the MSBuild* names), and the tool, git
+    // and the evaluator are real children whose output lands in the run's text.
     internal static async Task<ToolRun> RunGraphScriptAsync(string root, IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string?>? environment = null, int timeoutSeconds = 360)
     {
-        var start = new ProcessStartInfo("pwsh")
+        return await Task.Run(() =>
         {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray())
-            start.Environment.Remove(key);
-        if (environment is not null)
-        {
-            foreach (var (key, value) in environment)
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            int code;
+            try
             {
-                if (value is null) start.Environment.Remove(key);
-                else start.Environment[key] = value;
+                var options = Antiphon.Nightly.LandGraphAuditRunOptions.Parse(arguments, root, LandGraphCommandHost.Environment(environment));
+                code = Antiphon.Nightly.LandGraphAuditRun.Run(options, LandGraphCommandHost.Create(stdout, stderr), new System.IO.Abstractions.FileSystem()).ExitCode;
             }
-        }
-
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-        try { await process.WaitForExitAsync(deadline.Token); }
-        catch
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            throw;
-        }
-
-        var outText = await stdout;
-        var errText = await stderr;
-        return new ToolRun(process.ExitCode, outText + errText) { StandardOutput = outText, StandardError = errText };
+            catch (Antiphon.Nightly.NightlyUsageException usage)
+            {
+                stderr.WriteLine("usage: antiphon-scripts land-graph-audit: " + usage.Message);
+                code = 2;
+            }
+            return new ToolRun(code, stdout.ToString() + stderr.ToString()) { StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+        }).WaitAsync(TimeSpan.FromSeconds(timeoutSeconds));
     }
 
     private static async Task<(int Pass, int Copy, int Total, int Grace, int Ceiling)> PrintBudgetAsync(int? passMs, int? copyMs, bool? windows)
@@ -586,8 +572,9 @@ public sealed partial class LandGraphEvaluationTests
         var shimDir = Path.Combine(Path.GetTempPath(), "c1483-dotnet-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(shimDir);
         var shim = Path.Combine(shimDir, "dotnet");
-        // The graph script hosts its body as `dotnet <dll> audit` (the pre-check runs inside it). That launch is
-        // not the evaluator. Forward it to the real dotnet and keep every other invocation slow.
+        // The command hosts the audit as `dotnet <dll> audit` (the pre-check runs inside it). That launch is not the
+        // evaluator (and this process starts it from its own PATH); the tool's own children get the shim first. Forward an
+        // audit launch to the real dotnet and keep every other invocation slow.
         var sleep = sleepSeconds.ToString(CultureInfo.InvariantCulture);
         var shimBody = """
             #!/bin/sh
@@ -632,28 +619,9 @@ public sealed partial class LandGraphEvaluationTests
         File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         try
         {
-            var start = new ProcessStartInfo("pwsh")
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            start.Environment["PATH"] = shimDir + ":" + start.Environment["PATH"];
-            var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
-            var command = "Set-StrictMode -Version Latest; & '" + script.Replace("'", "''") + "' -Check -EvaluationBudgetSeconds " + budgetSeconds.ToString(CultureInfo.InvariantCulture);
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
-            using var process = Process.Start(start)!;
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            try { await process.WaitForExitAsync(deadline.Token); }
-            catch
-            {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
-                throw;
-            }
-            return new ToolRun(process.ExitCode, await stdout + await stderr);
+            var path = shimDir + ":" + Environment.GetEnvironmentVariable("PATH");
+            return await RunGraphScriptAsync(root, ["--check", "--evaluation-budget-seconds", budgetSeconds.ToString(CultureInfo.InvariantCulture)],
+                new Dictionary<string, string?> { ["PATH"] = path }, timeoutSeconds: 60);
         }
         finally
         {
@@ -661,13 +629,11 @@ public sealed partial class LandGraphEvaluationTests
         }
     }
 
+    // A fixture repository for the land-graph-audit command: the empty pins file and the staged tool copied to the default
+    // bin-land-audit folder. It has no tool project, so the command uses that DLL as given and never rebuilds it.
     internal static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
     {
         files[PinsFile] = "";
-        files["scripts/audit-land-verification-graph.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/audit-land-verification-graph.ps1"));
-        files["scripts/lib/land-audit-tool.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/lib/land-audit-tool.ps1"));
-        var precheck = Path.Combine(RepoRoot(), "scripts/audit-land-verification-precheck.ps1");
-        if (File.Exists(precheck)) files["scripts/audit-land-verification-precheck.ps1"] = await File.ReadAllTextAsync(precheck);
         var repo = await AuditRepo.CreateAsync(files);
         var output = repo.Full("tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0");
         Directory.CreateDirectory(output);
@@ -676,8 +642,8 @@ public sealed partial class LandGraphEvaluationTests
         return repo;
     }
 
-    // The pre-check runs in-process: LandGraphPrecheck is the code scripts/audit-land-verification-precheck.ps1
-    // runs through the LandGraphAudit tool, and the graph-script tests above still run that wrapper end to end.
+    // The pre-check runs in-process: LandGraphPrecheck is the code the land-graph-precheck command runs through the
+    // LandGraphAudit tool, and the graph tests above run the land-graph-audit command end to end.
     internal static async Task<ToolRun> RunPrecheckAsync(string root, string mode, string? manifestPath = null)
     {
         if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
@@ -717,30 +683,30 @@ public sealed partial class LandGraphEvaluationTests
         return repo;
     }
 
-    // The graph script's body runs in process: LandGraphAuditGate is the code scripts/audit-land-verification-graph.ps1
-    // runs through the LandGraphAudit tool's 'audit' command, with the pre-check in process and the MSBuild evaluation as a
-    // child process (the staged tool DLL). The wrapper only resolves the tool and passes the gate's output and exit code
-    // through, so a call whose tool the wrapper would rebuild or fail to find runs the real wrapper through pwsh instead,
-    // as do the end-to-end tests (RunGraphScriptAsync, the kill, timeout and land-refresh tests).
-    internal static async Task<ToolRun> RunScriptAsync(string root, string mode,
-        string script = "audit-land-verification-graph.ps1", params string[] extra)
+    // The audit's body runs in process where the command would run the tool as given: LandGraphAuditGate is the code the
+    // land-graph-audit command runs through the LandGraphAudit tool's 'audit' command, with the pre-check in process and
+    // the MSBuild evaluation as a child process (the staged tool DLL). The command only resolves the tool and passes the
+    // gate's output and exit code through, so a call whose tool the command would rebuild or fail to find runs the command
+    // itself in process (RunGraphScriptAsync), as do the end-to-end tests (the kill, timeout and land-refresh tests).
+    internal static async Task<ToolRun> RunScriptAsync(string root, string mode, params string[] extra)
     {
         if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
-        if (extra.Length != 0 && (extra.Length != 2 || extra[0] is not ("-ManifestPath" or "-ToolPath")))
-            throw new ArgumentException("unsupported script arguments");
-        var scriptPath = Path.GetFullPath(Path.Combine(root, "scripts", script));
-        var toolPath = extra.Length == 2 && extra[0] == "-ToolPath" ? extra[1] : null;
-        var tool = script == "audit-land-verification-graph.ps1" && (extra.Length == 0 || toolPath is not null)
-            ? CurrentToolWithoutRebuild(root, toolPath)
-            : null;
-        if (tool is null) return await RunScriptProcessAsync(root, mode, script, extra);
-        return await RunGateAsync(scriptPath, mode, tool);
+        if (extra.Length != 0 && (extra.Length != 2 || extra[0] != "-ToolPath"))
+            throw new ArgumentException("unsupported audit arguments");
+        var toolPath = extra.Length == 2 ? extra[1] : null;
+        var tool = CurrentToolWithoutRebuild(root, toolPath);
+        if (tool is null)
+        {
+            var arguments = new List<string> { mode == "-Check" ? "--check" : "--update" };
+            if (toolPath is not null) arguments.AddRange(["--tool-path", toolPath]);
+            return await RunGraphScriptAsync(root, arguments);
+        }
+        return await RunGateAsync(root, mode, tool);
     }
 
-    private static async Task<ToolRun> RunGateAsync(string scriptPath, string mode, string tool)
+    private static async Task<ToolRun> RunGateAsync(string root, string mode, string tool)
     {
-        // $RepoRoot = Split-Path -Parent $PSScriptRoot.
-        var repoRoot = Path.GetDirectoryName(Path.GetDirectoryName(scriptPath))!;
+        var repoRoot = Path.GetFullPath(root).TrimEnd('\\', '/');
         return await Task.Run(() =>
         {
             using var stdout = new StringWriter();
@@ -755,8 +721,8 @@ public sealed partial class LandGraphEvaluationTests
         }).WaitAsync(TimeSpan.FromSeconds(360));
     }
 
-    // Resolve-LandAuditTool's answer where it needs no rebuild: an explicit DLL that exists, or (a fixture, which has no
-    // tool project) the copied bin-land-audit DLL. Anything else is the wrapper's to resolve.
+    // LandAuditTool.Resolve's answer where it needs no rebuild: an explicit DLL that exists, or (a fixture, which has no
+    // tool project) the copied bin-land-audit DLL. Anything else is the command's to resolve.
     private static string? CurrentToolWithoutRebuild(string root, string? toolPath)
     {
         var repoRoot = Path.GetFullPath(root).TrimEnd('\\', '/');
@@ -769,25 +735,5 @@ public sealed partial class LandGraphEvaluationTests
         if (File.Exists(Path.Combine(repoRoot, "tools", "Antiphon.LandGraphAudit", "Antiphon.LandGraphAudit.csproj"))) return null;
         var dll = Path.Combine(repoRoot, "tools", "Antiphon.LandGraphAudit", "bin-land-audit", "Release", "net10.0", "Antiphon.LandGraphAudit.dll");
         return File.Exists(dll) ? dll : null;
-    }
-
-    private static async Task<ToolRun> RunScriptProcessAsync(string root, string mode, string script, string[] extra)
-    {
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
-        // Exercise absent/empty/value wrapper inputs under strict PowerShell semantics too.
-        static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
-        var command = "Set-StrictMode -Version Latest; & " + Quote(Path.Combine(root, "scripts", script)) + " " + mode;
-        if (extra.Length != 0) command += " " + extra[0] + " " + Quote(extra[1]);
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(360));
-        try { await process.WaitForExitAsync(deadline.Token); }
-        catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
-        var outText = await stdout;
-        var errText = await stderr;
-        return new ToolRun(process.ExitCode, outText + errText) { StandardOutput = outText, StandardError = errText };
     }
 }

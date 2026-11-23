@@ -24,7 +24,11 @@ public sealed class DerivedImpactIndexTests
 
     private const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
-    private const string PrecheckPath = "scripts/audit-land-verification-precheck.ps1";
+    // The land-graph pre-check's rules: a change to the audit tool alone selects the budget method (the selector's tool-only rule).
+    private const string PrecheckPath = "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs";
+
+    // The land-graph-audit command (unit 11 of 2026-11-22-remaining-ps1-to-csharp.md; it replaced the audit-land-verification-*.ps1).
+    private const string AuditCommandPath = "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs";
 
     private static readonly string[] HandMigrationClasses =
     [
@@ -185,7 +189,7 @@ public sealed class DerivedImpactIndexTests
         Edge(index, LandingGitPath).ShouldContain("DispatchBaseNotificationTests");
         Edge(index, NotificationServicePath).ShouldContain("PostLandMutationDeliveryTests");
         Edge(index, LeakSweepPath).ShouldContain("PtyHostAdoptionTests");
-        Edge(index, PrecheckPath).ShouldContain("LandGraphEvaluationTests");
+        Edge(index, AuditCommandPath).ShouldContain("LandGraphEvaluationTests");
     }
 
     // CARD-1838. A stale committed index is rewritten by the Merge script, and a second run
@@ -518,7 +522,7 @@ public sealed class DerivedImpactIndexTests
               "cappedPaths": [],
               "edges": [
                 {
-                  "path": "scripts/audit-land-verification-precheck.ps1",
+                  "path": "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs",
                   "classes": [ "LandGraphEvaluationTests" ]
                 }
               ]

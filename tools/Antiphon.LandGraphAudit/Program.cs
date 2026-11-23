@@ -38,11 +38,11 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        // The emulation pre-check (scripts/audit-land-verification-precheck.ps1 runs it). It loads no MSBuild,
+        // The emulation pre-check (the land-graph-precheck command runs it). It loads no MSBuild,
         // evaluates nothing and is not an approval: the graph script still requires the evaluation below.
         if (args.Length > 0 && args[0] == "release-inputs") return ReleaseInputCommand.Run(args[1..]);
         if (args.Length > 0 && args[0] == "precheck") return Precheck(args);
-        // The graph audit (scripts/audit-land-verification-graph.ps1 runs it): LandGraphAuditGate, with the pre-check
+        // The graph audit (the land-graph-audit command runs it): LandGraphAuditGate, with the pre-check
         // in this process and the evaluation below as a child process of this one. Dispatched before MSBuild is located;
         // its exit 0 is the gate's approval after the child's evaluation approved, never an evaluation of its own.
         if (args.Length > 0 && args[0] == "audit") return Audit(args);
@@ -51,7 +51,7 @@ public static class Program
         if (args.Length > 0 && args[0].Length > 0 && !args[0].StartsWith('-'))
         {
             Console.Error.WriteLine($"unknown command '{args[0]}': this Antiphon.LandGraphAudit build does not match the "
-                + "calling script; rebuild it (scripts/lib/land-audit-tool.ps1 rebuilds the default tool automatically)");
+                + "calling command; rebuild it (the land-graph commands rebuild the default tool automatically)");
             return UnknownCommand;
         }
         AppDomain.CurrentDomain.ProcessExit += static (_, _) => CanaryRepository.DeleteActive();

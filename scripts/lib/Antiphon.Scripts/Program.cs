@@ -111,6 +111,12 @@ namespace Antiphon.Scripts
             [ReleaseStatusCommand.Name] = ReleaseStatusCommand.Run,
             // The release-gate registration answers every input itself: exit 0 done, 1 a write or readback failed, 2 usage, 3 refused.
             [RegisterReleaseGatesCommand.Name] = RegisterReleaseGatesCommand.Run,
+            // The land graph audit answers every input itself: exit 0 approved, 1 refused, 2 usage. The pre-check: exit 0 matched
+            // or written, 1 mismatch, refusal or a failed tool, 2 a git failure or usage. The land refresh: exit 0 current,
+            // refreshed or an inherited mismatch warned, 1 refused (one LAND-GRAPH-NOTICE line) or failed, 2 usage.
+            [LandGraphAuditCommand.Name] = LandGraphAuditCommand.Run,
+            [LandGraphAuditCommand.PrecheckName] = LandGraphAuditCommand.RunPrecheck,
+            [LandGraphLandRefreshCommand.Name] = LandGraphLandRefreshCommand.Run,
         };
 
         public static int Main(string[] args)
@@ -142,7 +148,8 @@ namespace Antiphon.Scripts
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
                 + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
-                + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage);
+                + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage
+                + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage);
             return Usage;
         }
 

@@ -7,7 +7,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-1385: dotnet-build definition files only. The digest is the embedded manifest
-/// written by scripts/audit-land-verification-graph.ps1. A missing or unreadable manifest
+/// written by the land-graph-audit command (antiphon-scripts). A missing or unreadable manifest
 /// does not match, so the land builds. Loading it never throws from type initialization.
 /// </summary>
 internal sealed class LandVerificationBuildGraph
