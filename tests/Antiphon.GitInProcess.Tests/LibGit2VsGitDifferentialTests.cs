@@ -316,25 +316,39 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.InitializeAsync();
         var repo = fixture.Repository;
         var head = (await fixture.RequiredAsync(repo, "rev-parse", "HEAD")).Trim();
-        string[][] quiet = [["rev-parse", "--verify", "--quiet", "HEAD"], ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]];
-        string[][] warned = [["rev-parse", "HEAD"], ["rev-parse", "--verify", "HEAD^{commit}"], ["--no-optional-locks", "rev-parse", "HEAD"]];
-        // Another rule's ref named HEAD, loose or packed: git warns of ambiguity unless --quiet.
+        string[][] reads =
+        [
+            ["rev-parse", "HEAD"], ["rev-parse", "--verify", "HEAD^{commit}"], ["--no-optional-locks", "rev-parse", "HEAD"],
+            ["rev-parse", "--verify", "--quiet", "HEAD"], ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+        ];
+        // Another rule's ref named HEAD, loose or packed, broken or dangling: git warns on stderr (of ambiguity
+        // unless --quiet, of a broken or dangling ref even under --quiet), so every HEAD read is git's.
+        var tagHead = Path.Combine(repo, ".git", "refs", "tags", "HEAD");
         foreach (var other in new[] { "refs/HEAD", "refs/tags/HEAD", "refs/heads/HEAD", "refs/remotes/HEAD", "refs/remotes/HEAD/HEAD" })
         {
             await fixture.RequiredAsync(repo, "update-ref", other, head);
-            foreach (var args in warned) await CompareAsync(repo, Expect.Fallback, args);
-            foreach (var args in quiet) await CompareAsync(repo, Expect.Answered, args);
+            foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
             await fixture.RequiredAsync(repo, "update-ref", "-d", other);
         }
         await fixture.RequiredAsync(repo, "update-ref", "refs/tags/HEAD", head);
         await fixture.RequiredAsync(repo, "pack-refs", "--all");
-        foreach (var args in warned) await CompareAsync(repo, Expect.Fallback, args);
+        foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
         await fixture.RequiredAsync(repo, "update-ref", "-d", "refs/tags/HEAD");
-        foreach (var args in warned) await CompareAsync(repo, Expect.Answered, args);
+        await File.WriteAllTextAsync(tagHead, "garbage\n");
+        foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
+        File.Delete(tagHead);
+        await fixture.RequiredAsync(repo, "symbolic-ref", "refs/heads/HEAD", "refs/heads/deleted-branch");
+        foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
+        File.Delete(Path.Combine(repo, ".git", "refs", "heads", "HEAD"));
+        foreach (var args in reads) await CompareAsync(repo, Expect.Answered, args);
+        // The silent path itself answers (CompareAsync checks stderr only where it does).
+        InProcessGitReads.TryAnswerSilently(repo, ["rev-parse", "--verify", "--quiet", "HEAD"]).ShouldNotBeNull();
+        InProcessGitReads.TryAnswerSilently(repo, ["rev-parse", "--show-prefix"]).ShouldNotBeNull();
 
         // Detached: symbolic-ref's silent 1, HEAD still a commit.
         await fixture.RequiredAsync(repo, "checkout", "--quiet", "--detach");
         await CompareAsync(repo, Expect.Answered, "symbolic-ref", "--quiet", "HEAD");
+        InProcessGitReads.TryAnswerSilently(repo, ["symbolic-ref", "--quiet", "HEAD"]).ShouldBe((1, ""));
         await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD");
         await CompareAsync(repo, Expect.Answered, "rev-parse", "--show-prefix");
 
@@ -343,8 +357,14 @@ public sealed class LibGit2VsGitDifferentialTests
         Directory.CreateDirectory(unborn);
         await fixture.RequiredAsync(unborn, "init", "--quiet", "-b", "trunk");
         await CompareAsync(unborn, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD");
+        InProcessGitReads.TryAnswerSilently(unborn, ["rev-parse", "--verify", "--quiet", "HEAD"]).ShouldBe((1, ""));
         await CompareAsync(unborn, Expect.Answered, "symbolic-ref", "--quiet", "HEAD");
         await CompareAsync(unborn, Expect.Answered, "rev-parse", "--show-prefix");
+        // After an unborn HEAD git reads the other rules: an annotated tag named HEAD is its answer.
+        await fixture.RequiredAsync(repo, "tag", "--annotate", "--message", "to be named HEAD", "head-tag", head);
+        await fixture.RequiredAsync(unborn, "fetch", "--quiet", repo, "refs/tags/head-tag:refs/tags/HEAD");
+        await CompareAsync(unborn, Expect.Fallback, "rev-parse", "--verify", "--quiet", "HEAD");
+        File.Delete(Path.Combine(unborn, ".git", "refs", "tags", "HEAD"));
         await File.WriteAllTextAsync(Path.Combine(unborn, ".git", "refs", "heads", "trunk"), "not a ref\n");
         await CompareAsync(unborn, Expect.Fallback, "rev-parse", "--verify", "--quiet", "HEAD");
     }
