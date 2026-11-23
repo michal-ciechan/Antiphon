@@ -1,21 +1,21 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1820 S1R5 (V-5). <c>scripts/lib/release-impact-scripts.ps1</c> closes test classes over the
-/// scripts they reach: ScriptHarness basenames, dot-source/import chains, compiled script helpers and
-/// paths embedded in command strings. Real repository sources are parsed as data, never executed.
-/// Unknown closure keeps a caller-path reason and Full.
+/// CARD-1820 S1R5 (V-5). <see cref="ReleaseImpactScripts"/> closes test classes over the scripts they reach: ScriptHarness
+/// basenames, dot-source/import chains, compiled script helpers and paths embedded in command strings. Real repository
+/// sources are parsed as data, never executed. Unknown closure keeps a caller-path reason and Full.
+/// 2026-11-22 plan, unit 17: the closure was scripts/lib/release-impact-scripts.ps1, which this class dot-sourced in a pwsh
+/// child; it is C# in the core now (its PowerShell reader is <c>PsReader</c>) and every case runs in process on the same
+/// inventories. <see cref="PowerShellFormsKeepTheirTargets"/> pins the PowerShell's answers on the forms it reads.
 /// </summary>
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseImpactScriptTests
 {
     private const string Project = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
@@ -28,13 +28,14 @@ public sealed class ReleaseImpactScriptTests
     private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicProbe";
     private const string SeedDeclaration = "fixture/tests/Seed/SeedProbe.cs";
     private const string Seeded = "fixture/tests/Seed/Seed.csproj::Fixture.SeedProbe";
+    private const string Formed = "fixture/tests/T/T.csproj::Fixture.FormsProbe";
     private static readonly string LongSeed = "fixture/" + new string('x', 300) + ".ps1";
 
-    // The real tree is immutable input: loaded and closed once per run in one bounded process.
-    private static readonly Lazy<Task<JsonElement>> Shared = new(() => CloseAsync([RealCase()]));
+    // The real tree is immutable input: loaded and closed once per run.
+    private static readonly Lazy<JsonElement> Shared = new(() => Close([RealCase()]));
 
-    // Seed-token variants share one bounded process; each case is its own immutable inventory.
-    private static readonly Lazy<Task<JsonElement>> SeedResults = new(() => CloseAsync(
+    // Seed-token variants share one run; each case is its own immutable inventory.
+    private static readonly Lazy<JsonElement> SeedResults = new(() => Close(
     [
         SeedCase("escape", "\"../../outside.ps1\""),
         SeedCase("dotdot", "\"fixture/scripts/../scripts/real.ps1\""),
@@ -49,9 +50,9 @@ public sealed class ReleaseImpactScriptTests
     ]));
 
     [Test]
-    public async Task BasenameReachesCliSource()
+    public void BasenameReachesCliSource()
     {
-        var result = Case(await Shared.Value, "real");
+        var result = Case(Shared.Value, "real");
         // nightly-core.ps1 compiles every scripts/lib/Antiphon.Scripts source into the CLI, so a driver that loads it reaches them.
         // 2026-11-22 plan, unit 8: the release-selection and rc-project-selection drivers this case used are deleted (their
         // classes run in process); unit 15 deleted test-release-gate.ps1, whose policy and run classes were the examples
@@ -66,9 +67,9 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task DotSourceClosureReachesAuthority()
+    public void DotSourceClosureReachesAuthority()
     {
-        var result = Case(await Shared.Value, "real");
+        var result = Case(Shared.Value, "real");
         foreach (var (identity, file, driver) in new[]
                  {
                      (CoreDriver, "LiveLaneFingerprintTests.cs", "scripts/test-live-lane-fingerprint.ps1"),
@@ -97,9 +98,9 @@ public sealed class ReleaseImpactScriptTests
     // so no twin test embeds a script path any more. The embedded path is the 5.1 launcher, which stays PowerShell (end
     // state 5): the launcher test's driver script, a C# raw string, dot-sources scripts/lib/antiphon-cli.ps1.
     [Test]
-    public async Task EmbeddedPathReachesLauncherTest()
+    public void EmbeddedPathReachesLauncherTest()
     {
-        var result = Case(await Shared.Value, "real");
+        var result = Case(Shared.Value, "real");
         Kinds(result, "scripts/lib/antiphon-cli.ps1", Launcher).ShouldContain("script:embedded");
         Chain(result, "scripts/lib/antiphon-cli.ps1", Launcher).ShouldBe(
             [Tests + "Nightly/AntiphonCliLauncherTests.cs", "scripts/lib/antiphon-cli.ps1"]);
@@ -110,7 +111,7 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task DynamicScriptTargetIsIncomplete()
+    public void DynamicScriptTargetIsIncomplete()
     {
         const string entry = "fixture/scripts/entry.ps1";
         var variants = new (string Name, string Body, Dictionary<string, string> Extra, int Visits, string Reason)[]
@@ -132,9 +133,9 @@ public sealed class ReleaseImpactScriptTests
                 ["fixture/scripts/hop3.ps1"] = "# beyond the bound\n",
             }, 2, "script-target-unresolved:fixture/scripts/hop2.ps1:budget"),
         };
-        var cases = new List<object> { DynamicCase("control", "", new(), 0) };
+        var cases = new List<ClosureCase> { DynamicCase("control", "", new(), 0) };
         cases.AddRange(variants.Select(v => DynamicCase(v.Name, v.Body, v.Extra, v.Visits)));
-        var results = await CloseAsync(cases);
+        var results = Close(cases);
 
         // Positive control: a bounded constant closure resolves with no path-specific reason.
         var control = Case(results, "control");
@@ -158,18 +159,18 @@ public sealed class ReleaseImpactScriptTests
 
     // Seed tokens that miss an exact inventory key keep a path-specific reason, never a silent drop.
     [Test]
-    public async Task EscapingSeedPathIsOutside()
+    public void EscapingSeedPathIsOutside()
     {
-        var result = Case(await SeedResults.Value, "escape");
+        var result = Case(SeedResults.Value, "escape");
         Reasons(result).ShouldContain(SeedReason("outside"));
         Classes(result, "outside.ps1").ShouldBeEmpty("an escaping literal never reaches a root file");
         AssertSeedControl(result);
     }
 
     [Test]
-    public async Task NormalizedSeedPathRecordsInventoryEdge()
+    public void NormalizedSeedPathRecordsInventoryEdge()
     {
-        var result = Case(await SeedResults.Value, "dotdot");
+        var result = Case(SeedResults.Value, "dotdot");
         Classes(result, "fixture/scripts/real.ps1").ShouldBe([Seeded]);
         Chain(result, "fixture/scripts/real.ps1", Seeded).ShouldBe([SeedDeclaration, "fixture/scripts/real.ps1"]);
         Kinds(result, "fixture/scripts/real.ps1", Seeded).ShouldContain("script:path");
@@ -181,9 +182,9 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task RootedSeedPathIsOutside()
+    public void RootedSeedPathIsOutside()
     {
-        var results = await SeedResults.Value;
+        var results = SeedResults.Value;
         foreach (var name in new[] { "drive", "unc", "rooted" })
         {
             var result = Case(results, name);
@@ -194,9 +195,9 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task CaseOnlySeedMatchIsNamed()
+    public void CaseOnlySeedMatchIsNamed()
     {
-        var results = await SeedResults.Value;
+        var results = SeedResults.Value;
         var basename = Case(results, "case-basename");
         Reasons(basename).ShouldContain(SeedReason("case:Foo.ps1"));
         Classes(basename, "fixture/scripts/foo.ps1").ShouldBe([Seeded], "the folded match stays a conservative positive");
@@ -208,9 +209,9 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task FoldedSeedBasenameWithTwoFilesIsAmbiguous()
+    public void FoldedSeedBasenameWithTwoFilesIsAmbiguous()
     {
-        var result = Case(await SeedResults.Value, "case-twins");
+        var result = Case(SeedResults.Value, "case-twins");
         Reasons(result).ShouldContain(SeedReason("ambiguous:Twin.ps1"));
         Reasons(result).ShouldNotContain(SeedReason("case:Twin.ps1"));
         foreach (var twin in new[] { "fixture/scripts/twin.ps1", "fixture/tools/TWIN.ps1" })
@@ -219,9 +220,9 @@ public sealed class ReleaseImpactScriptTests
     }
 
     [Test]
-    public async Task UnmatchedSeedPathIsMissing()
+    public void UnmatchedSeedPathIsMissing()
     {
-        var results = await SeedResults.Value;
+        var results = SeedResults.Value;
         var missing = Case(results, "missing");
         Reasons(missing).ShouldContain(SeedReason("missing:fixture/scripts/absent.ps1"));
         Reasons(missing).ShouldContain(SeedReason("missing:absent-leaf.ps1"));
@@ -233,7 +234,124 @@ public sealed class ReleaseImpactScriptTests
         bounded.ShouldBe([SeedReason(detail[..128] + "~" + digest[..16])]);
     }
 
-    private static object RealCase()
+    // Unit 17: the forms the PowerShell read through System.Management.Automation's parser, now read by PsReader. Each
+    // row's paths and reasons are the PowerShell closure's answer on the same inventory (pwsh 7.6, before the .ps1 was
+    // deleted): dot-source and call targets in every quoting, [IO.Path] calls, Import-Module, pwsh -File, bash and node
+    // scripts, Add-Type sources, Split-Path parents, constant foreach, scoped and typed variables, cwd-relative calls,
+    // a parameter and a compound assignment (dynamic), Invoke-Expression, a syntax error and its recovery (parse),
+    // switch, try, loops, hashtables, here-strings and script blocks.
+    [Test]
+    public void PowerShellFormsKeepTheirTargets()
+    {
+        var results = Close([FormsCase("forms", FormsBody), FormsCase("misc", MiscBody)]);
+        var forms = Case(results, "forms");
+        Paths(forms, Formed).ShouldBe(new[]
+        {
+            "fixture/outside.ps1", "fixture/scripts/entry.ps1", "fixture/scripts/lib/Mod.psm1", "fixture/scripts/lib/a.ps1",
+            "fixture/scripts/lib/b.ps1", "fixture/scripts/lib/c.cs", "fixture/scripts/lib/d.cs", "fixture/scripts/lib/e.cs",
+            "fixture/scripts/lib/w.ps1", "fixture/scripts/lib/x.ps1", "fixture/scripts/lib/y.ps1", "fixture/scripts/lib/z.ps1",
+            "fixture/scripts/n.mjs", "fixture/scripts/p.ps1", "fixture/scripts/s.sh", "scripts/lib/w.ps1",
+        });
+        const string entry = "script-target-unresolved:fixture/scripts/entry.ps1:";
+        Reasons(forms).ShouldBe(new[]
+        {
+            "script-closure-uncertified", entry + "compile", entry + "cwd:./lib/x.ps1", entry + "cwd:./lib/y.ps1",
+            entry + "cwd:./lib/z.ps1", entry + "cwd:lib/a.ps1", entry + "cwd:lib/x.ps1", entry + "dynamic", entry + "parse",
+            "script-target-unresolved:fixture/scripts/n.mjs:language", "script-target-unresolved:fixture/scripts/s.sh:language",
+        });
+        AssertIncomplete(forms);
+        var misc = Case(results, "misc");
+        Paths(misc, Formed).ShouldBe(new[]
+        {
+            "fixture/scripts/entry.ps1", "fixture/scripts/lib/a.ps1", "fixture/scripts/lib/b.ps1", "fixture/scripts/lib/x.ps1",
+            "fixture/scripts/lib/y.ps1", "fixture/scripts/lib/z.ps1",
+        });
+        Reasons(misc).ShouldBe(new[] { "script-closure-uncertified", entry + "dynamic" });
+        AssertIncomplete(misc);
+    }
+
+    private const string FormsBody = """
+        . "$PSScriptRoot\lib\x.ps1"
+        . ($PSScriptRoot + '/lib/y.ps1')
+        . ([IO.Path]::Combine($PSScriptRoot, 'lib', 'z.ps1'))
+        Import-Module "$PSScriptRoot/lib/Mod.psm1" -Force
+        & pwsh -File (Join-Path $PSScriptRoot 'p.ps1')
+        pwsh -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot/p.ps1" -Name x
+        bash "$PSScriptRoot/s.sh"
+        node --max-old-space-size=4096 $PSScriptRoot/n.mjs
+        python -m tool
+        Add-Type -Path (Join-Path $PSScriptRoot 'lib/c.cs')
+        Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/d.cs')))
+        $src = Get-Content (Join-Path $PSScriptRoot 'lib/e.cs') -Raw; Add-Type -TypeDefinition $src
+        Add-Type -AssemblyName System.Web
+        iex $code
+        $root = Split-Path $PSScriptRoot -Parent
+        . "$root/scripts/lib/w.ps1"
+        foreach ($n in @('a', 'b')) { . "$PSScriptRoot/lib/$n.ps1" }
+        $h = @"
+        x $y
+        "@
+        $x = "$PSScriptRoot/../outside.ps1"
+        ${PSScriptRoot}/lib/x.ps1 | Out-Null
+        $script:base = $PSScriptRoot; . "$script:base\lib\y.ps1"
+        [string]$q = Join-Path $PSScriptRoot 'lib/z.ps1'; . $q
+        $r = 'lib/x.ps1'; $r += 'x'; . $r
+        function f([string]$p) { . $p }
+        . .\lib\x.ps1
+        & ./lib/y.ps1
+        ./lib/z.ps1 -A 1
+        lib/a.ps1
+        Microsoft.PowerShell.Utility\Write-Output x
+        $t = $c ? 'a' : 'b'; $u = $v ?? 'w'; a && b || c
+        Get-Item (Join-Path $PSScriptRoot 'lib/b.ps1') | Select-Object -First 1
+        $m = "{0}/lib/a.ps1" -f $PSScriptRoot
+        [IO.Path]::GetDirectoryName($PSCommandPath) | Out-Null
+        . ([System.IO.Path]::Combine((Split-Path -Parent $PSScriptRoot), 'scripts', 'lib', 'w.ps1'))
+        'scripts/lib/w.ps1' | Out-Null
+        git show HEAD:scripts/lib/w.ps1 2>&1 | Out-Null
+        """;
+
+    private const string MiscBody = """
+        switch -Regex ($x) { 'a' { . "$PSScriptRoot/lib/a.ps1" } default { . "$PSScriptRoot/lib/b.ps1" } }
+        try { . "$PSScriptRoot/lib/x.ps1" } catch [System.Exception] { } finally { }
+        do { $i++ } while ($i -lt 3)
+        for ($i = 0; $i -lt 3; $i++) { }
+        while ($true) { break }
+        trap { continue }
+        $l = @(
+          'a'
+          'b', 'c'
+        )
+        $v = 1,2 + 3 -f 'a', 'b'
+        $o = [ordered]@{ k = 'v'; 'q' = (Join-Path $PSScriptRoot 'lib/y.ps1') }
+        $z = $o.k.Substring(0, 1).ToUpper()
+        $w = @"
+        $(Join-Path $PSScriptRoot 'lib/z.ps1')
+        "@
+        & { param($a) . $a } "$PSScriptRoot/lib/x.ps1"
+        $f = { . "$PSScriptRoot/lib/a.ps1" }
+        Invoke-Command -ScriptBlock { . "$PSScriptRoot/lib/b.ps1" }
+        """;
+
+    private static ClosureCase FormsCase(string name, string body)
+    {
+        var files = new SortedDictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["fixture/scripts/lib/x.ps1"] = "# x\n", ["fixture/scripts/lib/y.ps1"] = "# y\n", ["fixture/scripts/lib/z.ps1"] = "# z\n",
+            ["fixture/scripts/lib/a.ps1"] = "# a\n", ["fixture/scripts/lib/b.ps1"] = "# b\n", ["fixture/scripts/lib/w.ps1"] = "# w\n",
+            ["fixture/scripts/lib/Mod.psm1"] = "# m\n", ["fixture/scripts/p.ps1"] = "# p\n",
+            ["fixture/scripts/s.sh"] = "echo fixture/scripts/lib/x.ps1\n", ["fixture/scripts/n.mjs"] = "import 'fixture/scripts/lib/y.ps1'\n",
+            ["fixture/scripts/lib/c.cs"] = "class C {}\n", ["fixture/scripts/lib/d.cs"] = "class D {}\n", ["fixture/scripts/lib/e.cs"] = "class E {}\n",
+            ["scripts/lib/w.ps1"] = "# real-like w\n", ["fixture/outside.ps1"] = "# o\n",
+            ["fixture/tests/T/T.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+            ["fixture/tests/T/Probe.cs"] = "class Probe { void R() => Run(\"entry.ps1\"); }\n",
+            // The raw strings' lines end with the source file's line ends; the reader takes either.
+            ["fixture/scripts/entry.ps1"] = body,
+        };
+        return new ClosureCase(name, files, [Consumer(Formed, "fixture/tests/T/Probe.cs")], 0);
+    }
+
+    private static ClosureCase RealCase()
     {
         var root = RepoRoot();
         var files = new SortedDictionary<string, string?>(StringComparer.Ordinal);
@@ -262,7 +380,7 @@ public sealed class ReleaseImpactScriptTests
         })
             files[path] = File.ReadAllText(Path.Combine(root, path));
         foreach (var (path, text) in ChainFixture()) files[path] = text;
-        var consumers = new List<object>
+        var consumers = new List<ReleaseScriptConsumer>
         {
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
             Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
@@ -270,7 +388,7 @@ public sealed class ReleaseImpactScriptTests
         foreach (var name in new[] { "LiveLaneFingerprintTests", "LongPathsCheckoutScriptTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
         consumers.Add(Consumer(Launcher, Tests + "Nightly/AntiphonCliLauncherTests.cs"));
-        return new { name = "real", files, consumers, maxVisits = 0 };
+        return new ClosureCase("real", files, consumers, 0);
     }
 
     private static Dictionary<string, string> ChainFixture() => new(StringComparer.Ordinal)
@@ -305,7 +423,7 @@ public sealed class ReleaseImpactScriptTests
         ["fixture/scripts/lib/module-helper.ps1"] = "function Get-FixtureHelper { 'helper' }\n",
     };
 
-    private static object DynamicCase(string name, string body, Dictionary<string, string> extra, int visits)
+    private static ClosureCase DynamicCase(string name, string body, Dictionary<string, string> extra, int visits)
     {
         var literal = name == "ambiguous" ? "twin.ps1" : "entry.ps1";
         var files = new SortedDictionary<string, string?>(StringComparer.Ordinal)
@@ -317,10 +435,10 @@ public sealed class ReleaseImpactScriptTests
             ["fixture/scripts/lib/const.ps1"] = "function Get-FixtureConstant { 'constant' }\n",
         };
         foreach (var (path, text) in extra) files[path] = text;
-        return new { name, files, consumers = new[] { Consumer(Dynamic, "fixture/tests/Dyn/DynamicProbe.cs") }, maxVisits = visits };
+        return new ClosureCase(name, files, [Consumer(Dynamic, "fixture/tests/Dyn/DynamicProbe.cs")], visits);
     }
 
-    private static object SeedCase(string name, params string[] literals)
+    private static ClosureCase SeedCase(string name, params string[] literals)
     {
         var calls = string.Concat(literals.Select(l => $"        await Harness.RunAsync({l});\n"));
         var files = new SortedDictionary<string, string?>(StringComparer.Ordinal)
@@ -340,7 +458,7 @@ public sealed class ReleaseImpactScriptTests
             files["fixture/scripts/twin.ps1"] = "# one\n";
             files["fixture/tools/TWIN.ps1"] = "# two\n";
         }
-        return new { name, files, consumers = new[] { Consumer(Seeded, SeedDeclaration) }, maxVisits = 0 };
+        return new ClosureCase(name, files, [Consumer(Seeded, SeedDeclaration)], 0);
     }
 
     private static string SeedReason(string detail) => "script-target-unresolved:" + SeedDeclaration + ":" + detail;
@@ -352,10 +470,10 @@ public sealed class ReleaseImpactScriptTests
         AssertIncomplete(result);
     }
 
-    private static object Consumer(string identity, string declaration)
+    private static ReleaseScriptConsumer Consumer(string identity, string declaration)
     {
         var split = identity.IndexOf("::", StringComparison.Ordinal);
-        return new { project = identity[..split], fullName = identity[(split + 2)..], declarationPaths = new[] { declaration } };
+        return new ReleaseScriptConsumer(identity[..split], identity[(split + 2)..], [declaration]);
     }
 
     private static JsonElement Case(JsonElement results, string name) => results.GetProperty("cases").GetProperty(name);
@@ -388,61 +506,27 @@ public sealed class ReleaseImpactScriptTests
 
     private static void AssertIncomplete(JsonElement result)
     {
+        result.GetProperty("schema").GetString().ShouldBe("antiphon-release-script-closure-v1");
         result.GetProperty("complete").GetBoolean().ShouldBeFalse();
         result.GetProperty("fallback").GetString().ShouldBe("Full");
         result.GetProperty("incompleteReasons").GetArrayLength().ShouldBeGreaterThan(0);
     }
 
-    private static async Task<JsonElement> CloseAsync(IReadOnlyList<object> cases)
+    // Each case's closure document under {"cases": {name: closure}}, the shape the PowerShell's JSON adapter returned.
+    private static JsonElement Close(IReadOnlyList<ClosureCase> cases)
     {
-        var library = Path.Combine(RepoRoot(), "scripts", "lib", "release-impact-scripts.ps1");
-        var directory = Directory.CreateTempSubdirectory("antiphon-script-closure-");
-        var input = Path.Combine(directory.FullName, "input.json");
-        var driver = Path.Combine(directory.FullName, "driver.ps1");
-        try
+        var text = new StringBuilder("{\"cases\":{");
+        for (var i = 0; i < cases.Count; i++)
         {
-            await File.WriteAllTextAsync(input, JsonSerializer.Serialize(new { cases }));
-            await File.WriteAllTextAsync(driver,
-                "param([string]$Library, [string]$InputPath)\n$ErrorActionPreference = 'Stop'\n. $Library\nInvoke-ReleaseImpactScriptClosureJson -InputPath $InputPath\n");
-            var (exit, stdout, text) = await RunAsync(["-NoProfile", "-NonInteractive", "-File", driver, "-Library", library, "-InputPath", input], 120);
-            exit.ShouldBe(0, text);
-            using var document = JsonDocument.Parse(stdout);
-            return document.RootElement.Clone();
+            if (i > 0) text.Append(',');
+            var closure = ReleaseImpactScripts.Close(cases[i].Files, cases[i].Consumers, cases[i].MaxVisits);
+            text.Append(JsonSerializer.Serialize(cases[i].Name)).Append(':').Append(closure.ToJson());
         }
-        finally
-        {
-            // Only this run's exclusively created files: no recursive delete.
-            File.Delete(input);
-            File.Delete(driver);
-            directory.Delete();
-        }
+        using var document = JsonDocument.Parse(text.Append("}}").ToString());
+        return document.RootElement.Clone();
     }
 
-    private static async Task<(int Exit, string Stdout, string Text)> RunAsync(string[] arguments, int seconds)
-    {
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        var watch = Stopwatch.StartNew();
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        try
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
-            await process.WaitForExitAsync(deadline.Token);
-            await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(10));
-            return (process.ExitCode, stdout.Result, stdout.Result + stderr.Result);
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-            }
-            Console.WriteLine($"C1820 phase=script-closure elapsedMs={watch.ElapsedMilliseconds}");
-        }
-    }
+    private sealed record ClosureCase(string Name, IReadOnlyDictionary<string, string?> Files, IReadOnlyList<ReleaseScriptConsumer> Consumers, int MaxVisits);
 
     private static string RepoRoot()
     {
