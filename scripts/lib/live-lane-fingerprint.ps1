@@ -2,7 +2,8 @@
 # CARD-1545 S2a-1: live-lane input fingerprint. Diagnostic and shadow-only: it never earns
 # gate credit or stands for execution. It reads Git objects at one commit only (no working
 # tree, no mtime) and makes the lane DUE whenever an input is not proven covered.
-. "$PSScriptRoot/rc-project-selection.ps1"
+# The rc project graph (Read, Resolve, BlobText) is the loaded core's Antiphon.Nightly.RcProjectSelection.
+. "$PSScriptRoot/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/live-lane-attestation.ps1"
 
 $script:LiveLaneDeclarationPath='tests/live-lane-inputs.json'
@@ -66,7 +67,7 @@ function Read-LiveLaneBlob {
     # The bytes of the tree entry at Path, read by its blob id: the same bytes as <sha>:<path>.
     param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path, [hashtable]$Cache)
     if ($null -eq $Cache) { return [Antiphon.Nightly.TestSelectionGit]::Blob($RepositoryRoot, $Sha, $Path) }
-    return Read-RcProjectBlob $RepositoryRoot $Tree[$Path].blob $Cache
+    return [Antiphon.Nightly.RcProjectSelection]::BlobText($RepositoryRoot, $Tree[$Path].blob, $Cache)
 }
 
 function Read-LiveLaneDeclaration {
@@ -143,7 +144,7 @@ function Get-LiveLaneImportSet {
             if ($document -isnot [Xml.XmlDocument]) { continue }
             foreach ($node in $document.SelectNodes("//*[local-name()='Import']")) {
                 # An unresolvable import is already a graph reason naming this input.
-                try { $queue.Enqueue((Resolve-RcProjectInput $input $node.GetAttribute('Project'))) } catch { }
+                try { $queue.Enqueue([Antiphon.Nightly.RcProjectSelection]::Resolve($input, $node.GetAttribute('Project'), $input, $false)) } catch { }
             }
         }
     }
@@ -245,7 +246,7 @@ function Get-LiveLaneFingerprintCore {
     }
 
     # Closure from the candidate graph: selected test projects and every transitive reference.
-    $graph=Read-RcProjectGraph $RepositoryRoot $Sha $DocumentCache $listing
+    $graph=[Antiphon.Nightly.RcProjectSelection]::Read($RepositoryRoot, $Sha, $DocumentCache, $listing, $null)
     $closure=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $queue=[Collections.Generic.Queue[string]]::new()
     foreach ($project in $selected) { if ($closure.Add($project)) { $queue.Enqueue($project) } }

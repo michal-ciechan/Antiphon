@@ -487,7 +487,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(NightlyCoreGoldenTests*)|(NightlyRunParityTests*)|(NightlyScriptsTests*)"
         + "|(PendingSettlementDeliveryTests*)|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
-        + "|(RcFailedFirstExecutionTests*)|(RcRunEvidenceTests*)|(RcStoppedRunSeedTests*)"
+        + "|(RcFailedFirstExecutionTests*)|(RcProjectSelectionTests*)|(RcRunEvidenceTests*)|(RcStoppedRunSeedTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(ReleaseGateFollowupTests*)|(ReleaseGateRunTests*)"
         + "|(ReleaseImpactScriptTests*)|(ReleaseSelectionHopSeedTests*)|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"

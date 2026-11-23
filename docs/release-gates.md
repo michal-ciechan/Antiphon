@@ -836,11 +836,11 @@ with the run. The Windows Full run itself uses its own candidate directory, not 
 
 ## Advisory project batches (CARD-1545 first slice)
 
-`scripts/select-rc-project-batches.ps1 -BaselineSha <full sha> -CandidateSha <full sha>`
+`scripts\antiphon.cmd select-rc-project-batches --baseline-sha <full sha> --candidate-sha <full sha>`
 reads committed files and `tests/rc-project-categories.json`. Its JSON manifest
 contains both ProjectReference graphs, direct references, transitive downstream
 projects, linked Compile/content inputs, categories and proposed whole-test-project batches.
-Use `-OutputPath <new file>` to retain an intent without overwriting an older one.
+Use `--output-path <new file>` to retain an intent without overwriting an older one (`--repository-root <dir>` reads another checkout).
 The release selection intent records the same data as `projectProposal` when a
 baseline and a non-Full request are present. This adds no test execution.
 

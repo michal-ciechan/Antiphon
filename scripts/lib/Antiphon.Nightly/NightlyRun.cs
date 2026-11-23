@@ -18,8 +18,9 @@
 // W2-nightly S20: wired as `antiphon-scripts nightly-run` (Antiphon.Scripts/NightlyRunCommand.cs, the production host and
 // NightlyRunBindings.Production); scripts/nightly-run.ps1 is its Windows PowerShell 5.1 launcher and nightly-run-impl.ps1
 // is deleted. Every observation of the machine goes through the run's NightlyHost; the collaborators that are another
-// lane's (the selection attempt writer, W2-rc) are NightlyRunBindings. Plain C#: no PowerShell types; records the core
-// returns are read through PsValue. ASCII only.
+// lane's (the selection attempt writer, W2-rc) are NightlyRunBindings. The selection attempt is written in process
+// (ReleaseSelectionAttempt.Create; the select-release hop and its pwsh worker are deleted, 2026-11-22 plan unit 8). Plain
+// C#: no PowerShell types; records the core returns are read through PsValue. ASCII only.
 #nullable disable
 using System;
 using System.Collections;
@@ -99,7 +100,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>A selection attempt written for a run (New-ReleaseSelectionAttempt's answer): its two files, their digests and its baseline.</summary>
+    /// <summary>A selection attempt written for a run (ReleaseSelectionAttempt.Create's answer): its two files, their digests, its baseline and the attempt document.</summary>
     public sealed class NightlySelectionBinding
     {
         public string SelectionAttemptPath { get; set; } = "";
@@ -107,6 +108,9 @@ namespace Antiphon.Nightly
         public string SelectionPath { get; set; } = "";
         public string SelectionDigest { get; set; } = "";
         public string BaselineSha { get; set; } = "";
+
+        /// <summary>The attempt document as written (null when a seam answered without one).</summary>
+        public object Selection { get; set; }
     }
 
     /// <summary>Test-NightlyRunContextOwnership's answer: Ok, or the refused field and reason; ClonePath is the resolved clone (its Clone).</summary>
@@ -121,15 +125,15 @@ namespace Antiphon.Nightly
         /// <summary>The checkout this code was built from (the hop rule); null: NightlyTests.ProductRoot().</summary>
         public string ProductRoot { get; set; }
 
-        /// <summary>The antiphon-scripts dll the tests hop and the selection attempt run (`dotnet exec`); null: this process's entry assembly.</summary>
+        /// <summary>The antiphon-scripts dll the tests hop runs (`dotnet exec`); null: this process's entry assembly.</summary>
         public string CliPath { get; set; }
 
         /// <summary>The report (its options -> its exit code); null: NightlyReport.Run in-process with the production seams on the host.</summary>
         public Func<NightlyReportOptions, int> Report { get; set; }
 
         /// <summary>
-        /// New-ReleaseSelectionAttempt (W2-rc): the request map (the PowerShell request's keys) -> the attempt written; a
-        /// refusal throws. Null: NightlyRun.SelectionWorker (select-release, then release-selection-worker.ps1 under pwsh).
+        /// The selection attempt writer: the request map (the request's keys) -> the attempt written; a refusal throws.
+        /// Null: NightlyRun.SelectionAttempt (ReleaseSelectionAttempt.Create in this process).
         /// </summary>
         public Func<IDictionary, NightlySelectionBinding> SelectionAttempts { get; set; }
 
@@ -138,9 +142,9 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// W2-nightly S20, the nightly-run command's bindings: the checkout this code was built from as the product root
-        /// (NightlyTests.ProductRoot), the given CLI dll for the tests hop and the selection attempt, the report in-process
-        /// on its production seams over the host, the selection attempt through that CLI's select-release (then the product
-        /// root's release-selection-worker.ps1 under pwsh), and the shadow evidence recorder from ANTIPHON_RC_RUN_EVIDENCE.
+        /// (NightlyTests.ProductRoot), the given CLI dll for the tests hop, the report in-process on its production seams
+        /// over the host, the selection attempt in this process (NightlyRun.SelectionAttempt), and the shadow evidence
+        /// recorder from ANTIPHON_RC_RUN_EVIDENCE.
         /// </summary>
         public static NightlyRunBindings Production(NightlyHost host, string cliPath)
         {
@@ -151,7 +155,7 @@ namespace Antiphon.Nightly
                 ProductRoot = productRoot,
                 CliPath = cliPath ?? "",
                 Report = options => NightlyReport.Run(options, NightlyReportSeams.Production(host, host.Variables)).ExitCode,
-                SelectionAttempts = NightlyRun.SelectionWorker(cliPath, Path.Combine(productRoot ?? "", "scripts", "lib"), host.Variables("PATH")),
+                SelectionAttempts = NightlyRun.SelectionAttempt,
                 RcEvidence = new RcRunEvidenceRecorder(host.Variables("ANTIPHON_RC_RUN_EVIDENCE"), false, false, line => NightlyTests.RunLine(host, line)),
             };
         }
@@ -239,8 +243,6 @@ namespace Antiphon.Nightly
 
             try
             {
-                try { ReleaseSelectionAttempt.AssertCapability(options.SelectionMode, host.Variables("PATH")); }
-                catch (Exception e) { return Refuse(e.Message, null); }
                 if (profile != "nightly" && profile != "rc")
                 {
                     Say("REFUSED: unknown profile " + profile + ".");
@@ -397,9 +399,8 @@ namespace Antiphon.Nightly
                             ("SelectionDigest", selectionDigest), ("Attempt", options.Attempt));
                         if (string.IsNullOrEmpty(selectionAttemptPath))
                         {
-                            var attempts = bindings.SelectionAttempts
-                                ?? SelectionWorker(CliPath(bindings), Path.Combine(bindings.ProductRoot ?? NightlyTests.ProductRoot() ?? "", "scripts", "lib"), host.Variables("PATH"));
-                            var bound = attempts(request) ?? throw new NightlyRefusal("selection-refused:no-answer");
+                            var attempts = bindings.SelectionAttempts ?? (Func<IDictionary, NightlySelectionBinding>)SelectionAttempt;
+                            var bound = attempts(request) ?? throw new NightlyRefusal(ReleaseSelectionAttempt.RefusedPrefix + "no-answer");
                             selectionAttemptPath = bound.SelectionAttemptPath ?? "";
                             selectionAttemptDigest = bound.SelectionAttemptDigest ?? "";
                             selectionPath = bound.SelectionPath ?? "";
@@ -910,51 +911,15 @@ namespace Antiphon.Nightly
         // ---- the selection attempt ----
 
         /// <summary>
-        /// New-ReleaseSelectionAttempt's process protocol: the request as JSON, then `dotnet exec &lt;cli&gt; select-release
-        /// &lt;request&gt; &lt;response&gt; &lt;scripts lib&gt;` (exit 0: answered) and otherwise release-selection-worker.ps1 under pwsh
-        /// (each at most 60 s); the response's value, or selection-refused:&lt;error&gt;. A selection mode other than Full needs
-        /// pwsh (selection-pwsh-required), and so does an attempt the compiled command hands back.
+        /// The default selection attempt writer: ReleaseSelectionAttempt.Create of the request map in this process (its
+        /// refusal, selection-refused:&lt;reason&gt;, is the run's). It replaced the select-release process hop and its
+        /// release-selection-worker.ps1 fallback under pwsh (2026-11-22 plan, unit 8).
         /// </summary>
-        public static Func<IDictionary, NightlySelectionBinding> SelectionWorker(string cliPath, string scriptsLib, string pathValue) => request =>
+        public static NightlySelectionBinding SelectionAttempt(IDictionary request)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
-            var pwsh = ReleaseSelectionAttempt.AssertCapability(PsValue.Str(request["SelectionMode"]), pathValue);
-            var requestPath = Path.GetTempFileName();
-            var responsePath = Path.GetTempFileName();
-            try
-            {
-                File.WriteAllText(requestPath, NightlyJson.Text(request, 20) ?? throw new NightlyRefusal("selection-request-unwritable"), new UTF8Encoding(false));
-                var handled = false;
-                if (!string.IsNullOrWhiteSpace(cliPath) && File.Exists(cliPath))
-                {
-                    var (code, timedOut) = Quiet("dotnet", new[] { "exec", cliPath, "select-release", requestPath, responsePath, scriptsLib ?? "" }, 60000);
-                    handled = !timedOut && code == 0;
-                }
-                if (!handled)
-                {
-                    if (pwsh == null) throw new NightlyRefusal("selection-pwsh-required");
-                    var worker = Path.Combine(scriptsLib ?? "", "release-selection-worker.ps1");
-                    var (_, timedOut) = Quiet(pwsh, new[] { "-NoProfile", "-NonInteractive", "-File", worker, "-RequestPath", requestPath, "-ResponsePath", responsePath }, 60000);
-                    if (timedOut) throw new NightlyRefusal("selection-worker-timeout");
-                }
-                JsonObject response = null;
-                try { response = JsonNode.Parse(File.ReadAllText(responsePath, Encoding.UTF8)) as JsonObject; }
-                catch (JsonException) { }
-                var ok = response != null && FieldNode(response, "ok") is JsonValue flag && flag.TryGetValue<bool>(out var yes) && yes;
-                if (!ok) throw new NightlyRefusal("selection-refused:" + (response == null ? "" : Field(response, "error")));
-                var value = FieldNode(response, "value") as JsonObject;
-                return new NightlySelectionBinding
-                {
-                    SelectionAttemptPath = Field(value, "SelectionAttemptPath"), SelectionAttemptDigest = Field(value, "SelectionAttemptDigest"),
-                    SelectionPath = Field(value, "SelectionPath"), SelectionDigest = Field(value, "SelectionDigest"), BaselineSha = Field(value, "BaselineSha"),
-                };
-            }
-            finally
-            {
-                TryDelete(requestPath);
-                TryDelete(responsePath);
-            }
-        };
+            return ReleaseSelectionAttempt.Create(ReleaseSelectionRequest.From(request));
+        }
 
         // ---- ownership and reparse (nightly-common.ps1) ----
 
@@ -1163,27 +1128,6 @@ namespace Antiphon.Nightly
         {
             try { if (File.Exists(path)) File.Delete(path); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
-        }
-
-        // A child with its output captured and discarded (CheckpointProcessRunner.Run without a sink): exit and timed out.
-        private static (int ExitCode, bool TimedOut) Quiet(string fileName, IEnumerable<string> arguments, int timeoutMilliseconds)
-        {
-            var start = new ProcessStartInfo(fileName) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var argument in arguments) start.ArgumentList.Add(argument ?? "");
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("the child did not start: " + fileName);
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(timeoutMilliseconds))
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) { }
-                process.WaitForExit();
-                return (1, true);
-            }
-            process.WaitForExit();
-            _ = stdout.Result;
-            _ = stderr.Result;
-            return (process.ExitCode, false);
         }
     }
 }

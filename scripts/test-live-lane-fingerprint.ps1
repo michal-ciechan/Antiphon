@@ -3,7 +3,7 @@
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
-. "$PSScriptRoot/lib/rc-project-selection.ps1"
+. "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $ResultsDirectory=New-C487Root $ResultsDirectory
 $script:Lane='fixture-lane'
@@ -140,9 +140,9 @@ switch ($Case) {
     'C1545_StableCanonicalInputs' {
         Put 'docs/unrelated.md' "changed`n"; $c=Commit
         # The reader's selection is computed before the fingerprint library is loaded.
-        $selectionBefore=(Get-RcProjectSelection $script:root $b $c).digest
+        $selectionBefore=[Antiphon.Nightly.RcProjectSelection]::Select($script:root, $b, $c, $null)['digest']
         . $script:Library
-        $selectionAfter=(Get-RcProjectSelection $script:root $b $c).digest
+        $selectionAfter=[Antiphon.Nightly.RcProjectSelection]::Select($script:root, $b, $c, $null)['digest']
         $f1=Fp $b; $f2=Fp $b; $j1=Canon $f1
         Check (($j1 -ceq (Canon $f2)) -and ($f1.digest -cmatch '^[0-9a-f]{64}$')) 'deterministic'
         $fc=Fp $c; $jc=Canon $fc
@@ -197,9 +197,9 @@ switch ($Case) {
         Put 'src/Agents.Pty/A.cs' "namespace Antiphon.Agents.Pty;`n// edit`n"; $c=Commit; $fc=Fp $c
         Check (Differs $fc $fb @('liveRoots','repositoryClosure')) 'direct-edge'
         Put 'src/Protocol/P.cs' "namespace Antiphon.PtyHost.Protocol;`n// edit`n"; $d=Commit; $fd=Fp $d
-        $graph=Read-RcProjectGraph $script:root $d
+        $graph=[Antiphon.Nightly.RcProjectSelection]::Read($script:root, $d, $null, $null, $null)
         $selected=@('tests/Pty.Tests/Pty.Tests.csproj','tests/Main.Tests/Main.Tests.csproj')
-        $expected=@($graph.projects.Keys | Where-Object { $down=@(Get-RcDownstream $graph.projects @($_)); @($selected | Where-Object { $down -ccontains $_ }).Count })
+        $expected=@($graph.projects.Keys | Where-Object { $down=@([Antiphon.Nightly.RcProjectSelection]::Downstream($graph, [string[]]@($_))); @($selected | Where-Object { $down -ccontains $_ }).Count })
         Check ((Differs $fd $fc) -and ([Antiphon.Nightly.TestSelectionJson]::Sorted($expected) -join ',') -ceq ([Antiphon.Nightly.TestSelectionJson]::Sorted(@($fd.closureProjects)) -join ',') -and $expected.Count -eq 6) 'transitive-edge' (@($fd.closureProjects) -join ',')
         Put 'tests/Pty.Tests/Pty.Tests.csproj' $script:PtyTestsProject.Replace('<ProjectReference Include="../../src/Agents.Pty/Agents.Pty.csproj" />','')
         $e=Commit; $fe=Fp $e

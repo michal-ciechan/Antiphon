@@ -80,7 +80,7 @@ public sealed class NightlyRunWorld : IDisposable
     /// <summary>The product root the run reads (null: the checkout these tests were built from).</summary>
     public string? ProductRoot { get; set; }
 
-    /// <summary>The selection attempt writer (null: NightlyRun.SelectionWorker over the staged CLI).</summary>
+    /// <summary>The selection attempt writer (null: NightlyRun.SelectionAttempt, in process).</summary>
     public Func<IDictionary, NightlySelectionBinding>? SelectionAttempts { get; set; }
 
     /// <summary>The trace file's text.</summary>

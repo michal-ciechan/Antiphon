@@ -748,9 +748,6 @@ public sealed class NightlyTestsRunTests
         // A Partial attempt never executes selected members.
         var partial = new PlainObject(("effectiveMode", "Partial"), ("coverageScope", "Full"));
         NightlyDiagnosticCases.Refusal(() => ReleaseSelectionAttempt.ResolveMembers(partial, ["antiphon"], [])).ShouldBe("selected-execution-unqualified");
-        // Full needs no pwsh; another mode does.
-        ReleaseSelectionAttempt.AssertCapability("Full", fixture.Root).ShouldBeNull();
-        NightlyDiagnosticCases.Refusal(() => ReleaseSelectionAttempt.AssertCapability("Shadow", fixture.Root)).ShouldBe("selection-pwsh-required");
     }
 
     [Test]

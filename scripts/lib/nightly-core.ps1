@@ -110,8 +110,7 @@ function Install-NightlyCoreBuild {
 # The scripts' command-line implementation (scripts/lib/Antiphon.Scripts): built the same way, keyed by its
 # own sources plus the shared CheckpointProcessRunner.cs, the core's build identity and the .NET version. Returns the command to start
 # (the built executable), or $null when it cannot be had: Windows PowerShell 5.1, ANTIPHON_SCRIPTS_CLI=off,
-# a copy of the scripts without the project, no SDK or a failed build (warned). Callers then keep their
-# PowerShell path; a command that cannot answer an input exactly also tells them to (exit 10).
+# a copy of the scripts without the project, no SDK or a failed build (warned).
 function Get-AntiphonScriptsCli {
     if ($null -ne $script:AntiphonScriptsCli) { if ($script:AntiphonScriptsCli) { return $script:AntiphonScriptsCli }; return $null }
     $script:AntiphonScriptsCli = ''

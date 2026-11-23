@@ -104,7 +104,7 @@ public sealed class AntiphonCliLauncherTests
 
         var unknown = await Run(fixture, StagedCli, "no-such-command", []);
         unknown.Exit.ShouldBe(2, unknown.Stderr);
-        unknown.Stderr.ShouldStartWith("usage: antiphon-scripts select-release");
+        unknown.Stderr.ShouldStartWith("usage: antiphon-scripts live-lane-evidence");
 
         var echoed = await Run(fixture, StagedEcho, "cli-echo", ["--flag", "value"], environment: new Dictionary<string, string> { ["CLI_ECHO_EXIT"] = "37" });
         echoed.Exit.ShouldBe(37, echoed.Stderr);

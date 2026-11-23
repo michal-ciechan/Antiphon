@@ -17,7 +17,7 @@ $commands = foreach ($name in @('pwsh', 'powershell', 'git', 'bash')) {
     [ordered]@{ name = $name; path = $(if ($command) { $command.Source }) }
 }
 $sources = foreach ($relative in @('scripts/lib/c487-harness.ps1', 'scripts/test-release-gate.ps1',
-        'scripts/test-rc-project-selection.ps1', 'scripts/test-run-checkpoint.ps1',
+        'tests/Antiphon.Tests/Scripts/RcProjectSelectionTests.cs', 'scripts/test-run-checkpoint.ps1',
         'scripts/fixtures/c1339-release-git.ps1', 'scripts/card.ps1',
         'tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs', 'tests/Antiphon.Tests/Scripts/WindowsScriptHarnessProcess.cs')) {
     $path = Join-Path $repo $relative

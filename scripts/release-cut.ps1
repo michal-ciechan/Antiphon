@@ -50,8 +50,8 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'release-gate.ps1')
-. (Join-Path $lib 'release-selection.ps1')
-# The candidate ref, the credit decision and the policy are compiled: this entry point runs under pwsh with the core.
+# The candidate ref, the credit decision, the policy and the selection attempt (Antiphon.Nightly.ReleaseSelectionAttempt)
+# are compiled: this entry point runs under pwsh with the core.
 Assert-NightlyCoreAvailable 'release-cut'
 
 function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
@@ -80,13 +80,6 @@ if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 
     if ($PassThru) { return [pscustomobject]$record }
     Write-Host (ConvertTo-Json -InputObject $record -Compress)
     exit 3
-}
-
-try { [void](Assert-ReleaseSelectionCapability $SelectionMode) }
-catch {
-    $record.refusal=$_.Exception.Message; $record.exitCode=3
-    if ($PassThru) { return [pscustomobject]$record }
-    Write-Host (ConvertTo-Json $record -Compress); exit 3
 }
 
 $cut = & (Join-Path $PSScriptRoot 'release-candidate.ps1') -ReleaseRoot $ReleaseRoot `
@@ -129,13 +122,14 @@ try {
         $request = @{RepositoryRoot=$checkout;Repository=$Repository;ReleaseRoot=$ReleaseRoot;CandidateSha=$record.sha
             CandidateId=$record.candidateId;CandidateRef=$record.ref;Profile='rc';RunId=$RunId
             SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
-        $bound = New-ReleaseSelectionAttempt $request
+        # Written in this process; a refusal is selection-refused:<reason>.
+        $bound = [Antiphon.Nightly.ReleaseSelectionAttempt]::Create([Antiphon.Nightly.ReleaseSelectionRequest]::From($request))
         $SelectionAttemptPath=$bound.SelectionAttemptPath; $SelectionAttemptDigest=$bound.SelectionAttemptDigest
         $SelectionPath=$bound.SelectionPath; $SelectionDigest=$bound.SelectionDigest; $BaselineSha=$bound.BaselineSha
         $record.selection = $bound.Selection
     }
 } catch {
-    $record.refusal=$_.Exception.Message; $record.exitCode=3
+    $record.refusal=(Get-NightlyRefusalText $_); $record.exitCode=3
     if ($PassThru) { return [pscustomobject]$record }
     Write-Host (ConvertTo-Json $record -Compress); exit 3
 }

@@ -572,9 +572,10 @@ public sealed partial class QualificationTimingTests
     // ---- F2: release-cut seals the timing root --------------------------------------------------------------------
 
     // Replaying a sealed blank timingRoot through release-cut keeps the seal; an explicit root is sealed; an absent one
-    // defaults for a new attempt. Subject: scripts/release-cut.ps1 and the release-selection attempt it seals (still
-    // production PowerShell), run in a pwsh child on a fixture checkout with the release-gate seams. Each leg tolerates a
-    // refusal other than selection-attempt-conflict (the S20 seams refusal included).
+    // defaults for a new attempt. Subject: scripts/release-cut.ps1 (still production PowerShell) and the selection
+    // attempt it seals (ReleaseSelectionAttempt.Create from the loaded core), run in a pwsh child on a fixture checkout
+    // with the release-gate seams. Each leg tolerates a refusal other than selection-attempt-conflict (the S20 seams
+    // refusal included).
     [Test]
     [Category("Integration")]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -606,7 +607,6 @@ public sealed partial class QualificationTimingTests
         $lib = Join-Path $Repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
         . (Join-Path $lib 'release-gate.ps1')
-        . (Join-Path $lib 'release-selection.ps1')
         $out = [ordered]@{ blank = $false; explicit = $false; absent = $false; blankDetail = ''; explicitDetail = ''; absentDetail = ''; error = '' }
         try {
             New-Item -ItemType Directory -Path $CutRoot -Force | Out-Null
@@ -663,7 +663,7 @@ public sealed partial class QualificationTimingTests
                 BaselineSha = ''; BaselineReceiptPath = ''; QualificationPath = ''; TimingRoot = ''
                 TrainManifestPath = ''; ReleaseIntentPath = ''
             }
-            $seed = New-ReleaseSelectionAttempt $blankRequest
+            $seed = [Antiphon.Nightly.ReleaseSelectionAttempt]::Create([Antiphon.Nightly.ReleaseSelectionRequest]::From($blankRequest))
             $seedDigest = [string]$seed.SelectionAttemptDigest
             $cut = Join-Path $Repo 'scripts/release-cut.ps1'
             $coord = Join-Path $CutRoot 'coord'

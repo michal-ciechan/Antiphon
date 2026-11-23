@@ -130,10 +130,9 @@ public sealed class RcDirtyLaunchOrderTests
         Note(NightlyTestsOptions.SelectionModes.SequenceEqual(["Full", "Shadow", "ChangeAware"]) && new NightlyTestsOptions().SelectionMode == "Full", "nightly-tests-modes-unchanged");
         Note(!HasDirtyOrderCaller(testsOptions) && !HasDirtyOrderCaller(testsRun), "nightly-tests-has-no-dirty-order-caller");
         Note(!testsOptions.Contains("Incremental", StringComparison.Ordinal) && !testsRun.Contains("Incremental", StringComparison.Ordinal), "nightly-tests-has-no-incremental-mode");
-        var selection = RcInputFixtureRepository.ReadSource("scripts/lib/release-selection.ps1");
-        Note(selection.Contains("effectiveMode='Full'", StringComparison.Ordinal), "release-selection-effective-mode-full");
-        var compiled = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Scripts/ReleaseSelection.cs");
-        Note(compiled.Contains("(\"effectiveMode\", \"Full\")", StringComparison.Ordinal), "compiled-selector-effective-mode-full");
+        // 2026-11-22 plan, unit 8: the selection attempt is the core's (release-selection.ps1 and the CLI's copy are deleted).
+        var compiled = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/ReleaseSelectionAttempt.cs");
+        Note(compiled.Contains("(\"effectiveMode\", \"Full\"), (\"coverageScope\", \"Full\")", StringComparison.Ordinal), "release-selection-effective-mode-full");
         Note(!compiled.Contains("Incremental", StringComparison.Ordinal), "compiled-selector-has-no-incremental");
         // The compiled credit verdict refuses an rc green whose explicit coverage scope is not Full.
         var scoped = new Dictionary<string, object?>(StringComparer.Ordinal)

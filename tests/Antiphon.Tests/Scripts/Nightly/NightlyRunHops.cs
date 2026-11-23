@@ -109,7 +109,7 @@ public static class NightlyRunHops
 
 /// <summary>
 /// W2-nightly S20: an rc run chain in-process, the C# twin of the fixtures that ran the PowerShell run core on seams
-/// (New-C599RunFx -Rc, New-Fx of test-change-aware-release.ps1, New-C1336Candidate): a seed repository on the candidate
+/// (New-C599RunFx -Rc, New-Fx of the deleted test-change-aware-release.ps1, New-C1336Candidate): a seed repository on the candidate
 /// branch carrying the committed selection inputs (TestSelection.ContractFiles: both policies, the selector identity
 /// sources and global.json), the catalog's source inputs as stubs, every policy project, its own
 /// scripts/nightly-run.ps1 (so the self-update hop fires) and both ownership markers; its bare origin; and a clone of

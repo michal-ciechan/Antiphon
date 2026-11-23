@@ -168,7 +168,6 @@ namespace Antiphon.Nightly
             object selection = null;
             try
             {
-                ReleaseSelectionAttempt.AssertCapability(options.SelectionMode, host.Variables("PATH"));
                 if (!string.IsNullOrEmpty(options.SelectionAttemptPath))
                 {
                     selection = ReleaseSelectionAttempt.Read(new ReleaseSelectionRequest

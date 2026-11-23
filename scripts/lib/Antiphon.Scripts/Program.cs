@@ -1,6 +1,6 @@
-// antiphon-scripts <command> [arguments]. Exit 0: handled (the command wrote its answer). Exit 10 (NotHandled):
-// the input is outside what this command answers exactly, nothing the caller relies on was written, and the
-// caller runs its PowerShell path. Exit 2: usage. The reason for NotHandled goes to stderr, one line.
+// antiphon-scripts <command> [arguments]. Every command answers every input itself: exit 0 handled (the command wrote
+// its answer), 2 usage, and each command's own refusal codes below. The NotHandled exit (10) that sent a caller back to
+// its PowerShell path went with select-release, the last command that used it (2026-11-22 plan, unit 8).
 // Exit 9 is reserved for the launchers (scripts/antiphon, scripts/antiphon.cmd, scripts/lib/antiphon-cli.ps1): the
 // CLI could not be built or started.
 using System;
@@ -14,13 +14,12 @@ namespace Antiphon.Scripts
     {
         public const int Handled = 0;
         public const int Usage = 2;
-        public const int NotHandled = 10;
 
         // The commands by name (ordinal). A handler gets the whole argv, the name included, and answers with the exit
         // code. An unknown name, or no name, prints the usage line and exits 2.
         private static readonly IReadOnlyDictionary<string, Func<string[], int>> Commands = new Dictionary<string, Func<string[], int>>(StringComparer.Ordinal)
         {
-            // The evidence scan answers every input itself (exit 0 or 2) and never hands back NotHandled.
+            // The evidence scan answers every input itself (exit 0 or 2).
             ["live-lane-evidence"] = LiveLaneEvidenceCommand,
             // The rc ledger commands answer every input themselves: exit 0 done, 1 refused (one stderr line), 2 usage.
             ["rc-ledger-stamp"] = RcLedgerStamp,
@@ -103,8 +102,8 @@ namespace Antiphon.Scripts
             ["live-lane-census"] = LiveLaneCensusCommand,
             ["live-lane-emit-policy-hash"] = LiveLaneEmitPolicyHash,
             ["live-lane-group"] = LiveLaneGroup,
-            // The release selection answers exactly or hands back NotHandled (exit 10).
-            ["select-release"] = SelectRelease,
+            // The rc project batches answer every input themselves: exit 0 proposed, 2 refused (one stderr line) or usage.
+            [SelectRcProjectBatchesCommand.Name] = SelectRcProjectBatchesCommand.Run,
         };
 
         public static int Main(string[] args)
@@ -126,8 +125,7 @@ namespace Antiphon.Scripts
 
         private static int WriteUsage()
         {
-            Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
-                + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
+            Console.Error.WriteLine("usage: antiphon-scripts live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
                 + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
@@ -136,7 +134,7 @@ namespace Antiphon.Scripts
                 + " | " + RcQualificationStatusCommand.Usage
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
-                + " | " + StatusSnapshotCommand.Usage);
+                + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage);
             return Usage;
         }
 
@@ -323,25 +321,6 @@ namespace Antiphon.Scripts
             {
                 Console.Error.WriteLine(e.Message);
                 return Refused;
-            }
-        }
-
-        private static int SelectRelease(string[] args)
-        {
-            if (args.Length != 3 && args.Length != 4) return WriteUsage();
-            try
-            {
-                return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
-            }
-            catch (NotHandledException e)
-            {
-                Console.Error.WriteLine("not-handled: " + e.Message);
-                return NotHandled;
-            }
-            catch (Exception e)
-            {
-                Console.Error.WriteLine("not-handled: " + e.GetType().Name + ": " + e.Message);
-                return NotHandled;
             }
         }
 
