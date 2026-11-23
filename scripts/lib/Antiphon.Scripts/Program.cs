@@ -68,6 +68,8 @@ namespace Antiphon.Scripts
             // The qualification watcher answers every input itself: exit 0 the window or the run ended, 1 the state file cannot be
             // read (one stderr line), 2 usage.
             [WatchQualCommand.Name] = WatchQualCommand.Run,
+            // The expected-duration roster export answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
+            [ExportExpectedDurationRosterCommand.Name] = ExportExpectedDurationRosterCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
@@ -108,7 +110,8 @@ namespace Antiphon.Scripts
                 + " | live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
-                + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage);
+                + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
+                + " | " + ExportExpectedDurationRosterCommand.Usage);
             return Usage;
         }
 

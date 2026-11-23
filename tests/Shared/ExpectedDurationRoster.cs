@@ -1,29 +1,11 @@
 using System.Globalization;
 using System.Reflection;
-using System.Text.Json;
+using Antiphon.Nightly;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Antiphon.TestSupport;
-
-/// <summary>
-/// CARD-1842. One roster class: the class-cost row's seconds and basis, and the
-/// measurement identity when the row has one.
-/// </summary>
-public sealed record ExpectedDurationEntry(
-    double Seconds,
-    string Basis,
-    string? HostId,
-    string? Os,
-    string? MeasuredRunId);
-
-/// <summary>
-/// CARD-1842. The roster file, or the projection of the class-cost file it must equal.
-/// </summary>
-public sealed record ExpectedDurationRosterDocument(
-    string Platform,
-    IReadOnlyDictionary<string, ExpectedDurationEntry> Classes);
 
 /// <summary>
 /// CARD-1842. One [ExpectedDuration] application. Seconds is null when the argument
@@ -32,22 +14,14 @@ public sealed record ExpectedDurationRosterDocument(
 public sealed record ExpectedDurationApplication(string ClassName, string Location, double? Seconds);
 
 /// <summary>
-/// CARD-1842. Reads tests/Shared/expected-duration-roster.json, the projection of
-/// scripts/lib/nightly-class-costs.json written by scripts/export-expected-duration-roster.ps1,
-/// and checks [ExpectedDuration] applications against it. The roster is not an embedded
-/// resource: a refresh must not change the test assembly.
+/// CARD-1842. Checks [ExpectedDuration] applications against tests/Shared/expected-duration-roster.json, the
+/// projection of scripts/lib/nightly-class-costs.json that `scripts/antiphon export-expected-duration-roster`
+/// writes. The roster file itself (its reader, the projection and the export) is
+/// Antiphon.Nightly.ExpectedDurationRosterFile in the compiled core; the attribute scan needs Roslyn, so it stays
+/// here and the CLI carries no test code.
 /// </summary>
 public static class ExpectedDurationRoster
 {
-    public const string Format = "antiphon-expected-duration-roster-v1";
-    public const string CostFormat = "antiphon-nightly-class-costs-v1";
-    public const string RelativePath = "tests/Shared/expected-duration-roster.json";
-    public const string CostFileRelativePath = "scripts/lib/nightly-class-costs.json";
-
-    public static ExpectedDurationRosterDocument Load(string path) => Read(path, Format, "expected-duration-roster");
-
-    public static ExpectedDurationRosterDocument ProjectCostFile(string path) => Read(path, CostFormat, "class-cost");
-
     public static IReadOnlyList<string> Differences(
         ExpectedDurationRosterDocument roster, ExpectedDurationRosterDocument expected)
     {
@@ -110,7 +84,7 @@ public static class ExpectedDurationRoster
             // The packer prices from the cost file and never reads the attribute.
             if (!roster.Classes.TryGetValue(application.ClassName, out var entry))
             {
-                failures.Add($"{application.Location}: {application.ClassName} carries [ExpectedDuration({Number(seconds)})] but is absent from {RelativePath}");
+                failures.Add($"{application.Location}: {application.ClassName} carries [ExpectedDuration({Number(seconds)})] but is absent from {ExpectedDurationRosterFile.RelativePath}");
                 continue;
             }
 
@@ -119,47 +93,6 @@ public static class ExpectedDurationRoster
         }
 
         return failures;
-    }
-
-    private static ExpectedDurationRosterDocument Read(string path, string format, string label)
-    {
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object
-            || !root.TryGetProperty("format", out var formatValue)
-            || formatValue.ValueKind != JsonValueKind.String
-            || formatValue.GetString() != format)
-            throw new InvalidDataException($"{label}-format: {path}");
-        if (!root.TryGetProperty("platform", out var platform) || platform.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException($"{label}-platform: {path}");
-        if (!root.TryGetProperty("classes", out var classes) || classes.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException($"{label}-classes: {path}");
-
-        var entries = new Dictionary<string, ExpectedDurationEntry>(StringComparer.Ordinal);
-        foreach (var row in classes.EnumerateObject())
-        {
-            if (row.Value.ValueKind != JsonValueKind.Object
-                || !row.Value.TryGetProperty("seconds", out var seconds) || seconds.ValueKind != JsonValueKind.Number
-                || !row.Value.TryGetProperty("basis", out var basis) || basis.ValueKind != JsonValueKind.String)
-                throw new InvalidDataException($"{label}-row: {row.Name}");
-            entries.Add(row.Name, new ExpectedDurationEntry(
-                seconds.GetDouble(),
-                basis.GetString()!,
-                OptionalString(row.Value, "hostId", label, row.Name),
-                OptionalString(row.Value, "os", label, row.Name),
-                OptionalString(row.Value, "measuredRunId", label, row.Name)));
-        }
-
-        return new ExpectedDurationRosterDocument(platform.GetString()!, entries);
-    }
-
-    private static string? OptionalString(JsonElement row, string name, string label, string className)
-    {
-        if (!row.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
-            return null;
-        if (value.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException($"{label}-{name}: {className}");
-        return value.GetString();
     }
 
     private static string RightmostName(NameSyntax name) => name switch

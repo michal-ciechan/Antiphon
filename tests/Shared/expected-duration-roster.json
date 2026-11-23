@@ -2,7 +2,7 @@
   "format": "antiphon-expected-duration-roster-v1",
   "platform": "windows",
   "costFile": "scripts/lib/nightly-class-costs.json",
-  "export": "pwsh -NoProfile -File scripts/export-expected-duration-roster.ps1",
+  "export": "scripts/antiphon export-expected-duration-roster",
   "classes": {
     "Antiphon.E2E.AgentE2ETests": {
       "seconds": 600,

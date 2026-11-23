@@ -1,6 +1,7 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.TestSupport;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -11,21 +12,25 @@ namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
 /// CARD-1842 S2. The expected-duration roster is a projection of the class-cost file, and an
-/// [ExpectedDuration] application must name a roster class and equal its roster seconds.
+/// [ExpectedDuration] application must name a roster class and equal its roster seconds. The export runs in this
+/// process (ExpectedDurationRosterFile.Run, the export-expected-duration-roster command); until 2026-11-23 it was
+/// scripts/export-expected-duration-roster.ps1 under pwsh.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ExpectedDurationSyncTests
 {
     [Test, Timeout(120_000)]
     public async Task RosterMatchesCostFile(CancellationToken token)
     {
-        var roster = ExpectedDurationRoster.Load(RepoPath(ExpectedDurationRoster.RelativePath));
-        var costs = ExpectedDurationRoster.ProjectCostFile(RepoPath(ExpectedDurationRoster.CostFileRelativePath));
+        // The roster and the cost file it projects, by path (a change to either selects this class).
+        ExpectedDurationRosterFile.RelativePath.ShouldBe("tests/Shared/expected-duration-roster.json");
+        ExpectedDurationRosterFile.CostFileRelativePath.ShouldBe("scripts/lib/nightly-class-costs.json");
+        var roster = ExpectedDurationRosterFile.Load(RepoPath(ExpectedDurationRosterFile.RelativePath));
+        var costs = ExpectedDurationRosterFile.ProjectCostFile(RepoPath(ExpectedDurationRosterFile.CostFileRelativePath));
         costs.Classes.Count.ShouldBeGreaterThan(0);
         roster.Classes.Count.ShouldBe(costs.Classes.Count);
         ExpectedDurationRoster.Differences(roster, costs).ShouldBeEmpty(
-            "re-run pwsh -NoProfile -File scripts/export-expected-duration-roster.ps1 after a class-cost refresh");
+            "re-run scripts/antiphon export-expected-duration-roster after a class-cost refresh");
 
         // The comparer is not a constant: one changed roster seconds is one difference.
         var (first, entry) = roster.Classes.OrderBy(pair => pair.Key, StringComparer.Ordinal).First();
@@ -41,9 +46,14 @@ public sealed class ExpectedDurationSyncTests
         try
         {
             var output = Path.Combine(scratch, "roster.json");
-            var ran = await Export(null, output, token);
+            var ran = Export(null, output);
             ran.ExitCode.ShouldBe(0, ran.Text);
-            ExpectedDurationRoster.Differences(ExpectedDurationRoster.Load(output), roster).ShouldBeEmpty(ran.Text);
+            ran.Text.ShouldBe("exported " + roster.Classes.Count + " classes -> " + output + Environment.NewLine);
+            ExpectedDurationRoster.Differences(ExpectedDurationRosterFile.Load(output), roster).ShouldBeEmpty(ran.Text);
+            var written = await File.ReadAllTextAsync(output, token);
+            written.ShouldBe(ExpectedDurationRosterFile.Text(roster, ExpectedDurationRosterFile.CostFileRelativePath));
+            written.ShouldContain("\"costFile\": \"scripts/lib/nightly-class-costs.json\",\n  \"export\": \"scripts/antiphon export-expected-duration-roster\",\n", Case.Sensitive);
+            written.ShouldNotContain("\r", Case.Sensitive);
 
             // Committed rows carry no measurement identity yet, so a fixture row proves the exporter copies it.
             var fixture = Path.Combine(scratch, "costs.json");
@@ -53,12 +63,38 @@ public sealed class ExpectedDurationSyncTests
                   "Fx.Bound":{"nodes":1,"seconds":600,"basis":"conservative-bound"}}}
                 """, token);
             var fixtureOutput = Path.Combine(scratch, "fixture-roster.json");
-            ran = await Export(fixture, fixtureOutput, token);
+            ran = Export(fixture, fixtureOutput);
             ran.ExitCode.ShouldBe(0, ran.Text);
-            var projected = ExpectedDurationRoster.ProjectCostFile(fixture);
+            var projected = ExpectedDurationRosterFile.ProjectCostFile(fixture);
             projected.Classes["Fx.Measured"].ShouldBe(new ExpectedDurationEntry(12.3, "trx", "host-a", "windows", "run-a"));
             projected.Classes["Fx.Bound"].ShouldBe(new ExpectedDurationEntry(600, "conservative-bound", null, null, null));
-            ExpectedDurationRoster.Differences(ExpectedDurationRoster.Load(fixtureOutput), projected).ShouldBeEmpty(ran.Text);
+            ExpectedDurationRoster.Differences(ExpectedDurationRosterFile.Load(fixtureOutput), projected).ShouldBeEmpty(ran.Text);
+            // A cost file outside the checkout is named by its full path; the classes are in ordinal order.
+            var fixtureText = await File.ReadAllTextAsync(fixtureOutput, token);
+            fixtureText.ShouldContain("\"costFile\": \"" + Path.GetFullPath(fixture).Replace('\\', '/') + "\"", Case.Sensitive);
+            fixtureText.IndexOf("\"Fx.Bound\"", StringComparison.Ordinal).ShouldBeLessThan(fixtureText.IndexOf("\"Fx.Measured\"", StringComparison.Ordinal));
+            fixtureText.ShouldContain("\"Fx.Bound\": {\n      \"seconds\": 600,\n      \"basis\": \"conservative-bound\",\n      \"hostId\": null,", Case.Sensitive);
+
+            // The export refuses what the projection refuses, and writes nothing.
+            foreach (var (name, body, reason) in new[]
+                     {
+                         ("format", """{"format":"other","platform":"windows","classes":{}}""", "class-cost-format"),
+                         ("platform", """{"format":"antiphon-nightly-class-costs-v1","platform":" ","classes":{}}""", "class-cost-platform"),
+                         ("classes", """{"format":"antiphon-nightly-class-costs-v1","platform":"windows"}""", "class-cost-classes"),
+                         ("seconds", """{"format":"antiphon-nightly-class-costs-v1","platform":"windows","classes":{"Fx.A":{"basis":"trx"}}}""", "class-cost-row: Fx.A"),
+                         ("basis", """{"format":"antiphon-nightly-class-costs-v1","platform":"windows","classes":{"Fx.A":{"seconds":1,"basis":" "}}}""", "class-cost-row: Fx.A"),
+                         ("host", """{"format":"antiphon-nightly-class-costs-v1","platform":"windows","classes":{"Fx.A":{"seconds":1,"basis":"trx","hostId":3}}}""", "class-cost-hostId: Fx.A"),
+                     })
+            {
+                var bad = Path.Combine(scratch, "bad-" + name + ".json");
+                await File.WriteAllTextAsync(bad, body, token);
+                var badOutput = Path.Combine(scratch, "bad-" + name + "-roster.json");
+                var refused = Export(bad, badOutput);
+                refused.ExitCode.ShouldBe(1, refused.Text);
+                refused.Text.ShouldStartWith("export-expected-duration-roster: " + reason, Case.Sensitive, refused.Text);
+                File.Exists(badOutput).ShouldBeFalse(name);
+            }
+            Export(Path.Combine(scratch, "missing.json"), Path.Combine(scratch, "missing-roster.json")).ExitCode.ShouldBe(1);
         }
         finally
         {
@@ -119,7 +155,7 @@ public sealed class ExpectedDurationSyncTests
         var applications = ExpectedDurationRoster.FindApplications(
             Fixture("Antiphon.Tests.TestHelpers", "ExpectedDurationAttributeOnlyFixture", Literal(seconds)), "fixture");
         applications.ShouldHaveSingleItem().ClassName.ShouldBe(name);
-        ExpectedDurationRoster.Check(roster, applications).ShouldHaveSingleItem().ShouldContain("absent from " + ExpectedDurationRoster.RelativePath, Case.Sensitive);
+        ExpectedDurationRoster.Check(roster, applications).ShouldHaveSingleItem().ShouldContain("absent from " + ExpectedDurationRosterFile.RelativePath, Case.Sensitive);
     }
 
     [Test, Timeout(120_000)]
@@ -128,13 +164,21 @@ public sealed class ExpectedDurationSyncTests
         PlatformTaxonomy.Derive([]).ShouldBe(PlatformClassLabel.Both);
         PlatformTaxonomy.Derive([new PlatformMember(true, PlatformDeclaration.LinuxOnly)]).LinuxOnly.ShouldBeTrue();
 
-        // The roster reader is not a platform function and does not call Derive.
-        var reader = CSharpSyntaxTree.ParseText(File.ReadAllText(RepoPath("tests/Shared/ExpectedDurationRoster.cs")));
-        var identifiers = reader.GetRoot().DescendantTokens()
-            .Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText).ToHashSet(StringComparer.Ordinal);
-        identifiers.ShouldContain("ExpectedDurationRoster");
-        identifiers.ShouldNotContain("PlatformTaxonomy");
-        identifiers.ShouldNotContain("Derive");
+        // The roster reader (the core's file reader and the test-side attribute check) is not a platform function and
+        // does not call Derive.
+        foreach (var (path, type) in new[]
+                 {
+                     ("tests/Shared/ExpectedDurationRoster.cs", "ExpectedDurationRoster"),
+                     ("scripts/lib/Antiphon.Nightly/ExpectedDurationRosterFile.cs", "ExpectedDurationRosterFile"),
+                 })
+        {
+            var reader = CSharpSyntaxTree.ParseText(File.ReadAllText(RepoPath(path)));
+            var identifiers = reader.GetRoot().DescendantTokens()
+                .Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText).ToHashSet(StringComparer.Ordinal);
+            identifiers.ShouldContain(type);
+            identifiers.ShouldNotContain("PlatformTaxonomy");
+            identifiers.ShouldNotContain("Derive");
+        }
     }
 
     [Test, Timeout(120_000)]
@@ -154,18 +198,17 @@ public sealed class ExpectedDurationSyncTests
             section.ShouldContain(sentence, Case.Sensitive);
     }
 
-    private static Task<(int ExitCode, string Text)> Export(string? costPath, string outputPath, CancellationToken token)
+    // The export-expected-duration-roster command line in this process, on a host whose stdout and stderr are captured.
+    private static (int ExitCode, string Text) Export(string? costPath, string outputPath)
     {
-        var start = new ProcessStartInfo("pwsh");
-        foreach (var argument in new[] { "-NoProfile", "-File", RepoPath("scripts/export-expected-duration-roster.ps1"), "-OutputPath", outputPath })
-            start.ArgumentList.Add(argument);
+        var arguments = new List<string> { "--output-path", outputPath };
         if (costPath is not null)
-        {
-            start.ArgumentList.Add("-CostPath");
-            start.ArgumentList.Add(costPath);
-        }
-
-        return C1514Support.RunProcess(start, token);
+            arguments.AddRange(["--cost-path", costPath]);
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var options = ExportExpectedDurationRosterOptions.Parse(arguments, RepoRoot, RepoRoot);
+        var exit = ExpectedDurationRosterFile.Run(options, NightlyHost.Create(null, new RecordingLauncher(), output, error, null, null, null, null));
+        return (exit, output.ToString() + error);
     }
 
     private static string Fixture(string ns, string type, string seconds) =>
@@ -174,7 +217,7 @@ public sealed class ExpectedDurationSyncTests
     private static string Literal(double seconds) => seconds.ToString("R", CultureInfo.InvariantCulture);
 
     private static ExpectedDurationRosterDocument LoadRoster() =>
-        ExpectedDurationRoster.Load(RepoPath(ExpectedDurationRoster.RelativePath));
+        ExpectedDurationRosterFile.Load(RepoPath(ExpectedDurationRosterFile.RelativePath));
 
     private static List<ExpectedDurationApplication> ScanTree(CancellationToken token)
     {

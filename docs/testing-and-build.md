@@ -1752,7 +1752,7 @@ Expected duration is one seconds number on the class-cost row. The roster beside
 An ExpectedDuration attribute, when present, must equal the roster seconds for that class.
 The class-cost row is `scripts/lib/nightly-class-costs.json` and the roster is
 `tests/Shared/expected-duration-roster.json`; re-run
-`pwsh -NoProfile -File scripts/export-expected-duration-roster.ps1` after a class-cost refresh,
+`scripts/antiphon export-expected-duration-roster` (`scripts\antiphon.cmd export-expected-duration-roster` on Windows) after a class-cost refresh,
 or `ExpectedDurationSyncTests` stays red (CARD-1842).
 
 ### Windows rc watchdogs and gate lanes (2026-10-18/19)
