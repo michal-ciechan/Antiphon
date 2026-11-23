@@ -75,3 +75,9 @@ Repair (test only, red witness `af8f35dd5`): the job is the due day's (`LocalDue
 `WindowsShellGuardAuditTests.Every_command_interpreter_literal_is_behind_a_windows_guard` flagged `C0824WindowsSlotHolderTests.cs:63`. The `cmd.exe` literal comes from `35a880de5` (the 2026-11-22 exited-process census witness). That commit landed after the previous seed, and the audit is a static source scan, so it was red on Linux at master `9d2f1cc6d` too (3/3). It is not a Windows-only problem.
 The method calls `NativeWindowsGate.Require` on its first line. The scanner only recognises `OperatingSystem.IsWindows()`, so it does not see this gate. The repair (test-only) adds the site to `Reviewed` with that reason, which matches the `C1022BackendLaunchTests` precedent.
 Short verification ran only the subject's `C0824WindowsSlotHolderTests` rows. No `tests/impacted-classes.json` trigger connects `cmd.exe` edits in `tests/Antiphon.SessionRunner.Tests/**/*.cs` to the audit. Any change that adds an interpreter literal there must run `/*/*/WindowsShellGuardAuditTests/*` (3 tests, under 1 s) before landing. A follow-up could add that trigger.
+
+## Final guards · Release-selection fixture cleanup (seeded run on `8d64518a9`)
+
+`TestFixtureCleanupGuardTests` flagged a raw `DirectoryInfo.Delete(true)` at `ReleaseSelectionFixtures.cs:69`. It came from `794aa6f1f` (unit 8 of the remaining-ps1 plan, 2026-11-23), which landed after the previous seed. The guard is a Roslyn source scan, so master `8d64518a9` was red on Linux too. It is not Windows-only.
+An operator session pushed the unit straight to master and ran only its ported classes. No Merge ran, so the existing `test-fixture-cleanup` trigger never selected the guard.
+Repair (test-only): `ReadOnlyDirectory.Delete`. Before any direct push that adds or ports a Git fixture, run the Final-guards filter. Detail: [release-selection fixture cleanup](2026-11-23-release-selection-fixture-cleanup.md).
