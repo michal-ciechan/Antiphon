@@ -2460,8 +2460,14 @@ public partial class AgentTaskDeliveryWatchdogTests
         services.AddSingleton<AgentTaskReplyService>();
         // CARD-0085: the bind-refusal recovery gate. Predating tests still Fail when neither arm
         // finds evidence (TempPath is not a repo and the title has no CARD-NNNN). Its
-        // GitWorkspaceService comes from AddDelegationWorktreeGraph above.
-        services.AddSingleton(Options.Create(recoverySettings ?? new DelegateBindRefusalRecoverySettings()));
+        // GitWorkspaceService comes from AddDelegationWorktreeGraph above. The JSONL arm gets an
+        // empty owned projects root unless a test passes its own: the null default is the host's
+        // ~/.claude/projects, which the arm walked in full for every never-started Claude suspect
+        // (a 23 s cold walk on a dev laptop). No test here asserts on a host transcript.
+        services.AddSingleton(Options.Create(recoverySettings ?? new DelegateBindRefusalRecoverySettings
+        {
+            ClaudeProjectsRoot = OwnedTempRoot.CreateOwned(),
+        }));
         services.AddSingleton<DelegateBindRefusalRecovery>();
         services.AddScoped<AgentTaskDispatcher>();
 
