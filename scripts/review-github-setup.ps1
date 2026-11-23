@@ -23,6 +23,9 @@ param(
     [string]$PublicBaseUrl = 'https://antiphon.desktop.codeperf.net',
     [string]$ViewerLogin = 'michal-ciechan',
     [string]$SecretsId = 'antiphon-server',
+    # Keep -Repo's merge gate on (the product default: a person confirms each merge or merges on GitHub)
+    # instead of turning it off so Antiphon merges approved PRs itself, by rebase.
+    [switch]$NoAutoMerge,
     # Prints the settings that would be written, with the key redacted, and writes nothing.
     [switch]$DryRun
 )
@@ -74,6 +77,8 @@ $settings = [ordered]@{
     # A one-person repo: the author may decide their own gates.
     'Review:Policy:AuthorMayDecideRepos:0'              = $Repo
 }
+# The merge gate is off for the repo: this instance merges its approved PRs itself, by rebase (design 4.12).
+if (-not $NoAutoMerge) { $settings['Review:Policy:GatesOff:merge-gate:0'] = $Repo }
 
 if ($DryRun) {
     foreach ($k in $settings.Keys) {

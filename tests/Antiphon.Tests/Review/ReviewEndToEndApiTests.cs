@@ -16,7 +16,8 @@ namespace Antiphon.Tests.Review;
 /// <summary>
 /// The whole default <c>pr-review</c> workflow over HTTP against the real host, executor and
 /// Postgres, with a scripted code host, decision model, reviewer agents and verifier: a PR is taken
-/// from intake to merge, once through a human approval and once through a bot approval.
+/// from intake to merge, once through a human approval and once through a bot approval, and once
+/// merged by Antiphon itself in a repo whose policy is afterApproval: merge.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ReviewEndToEnd")]
@@ -29,6 +30,9 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
     private static readonly string HeadSha = new('b', 40);
     private static readonly string FixedHeadSha = new('c', 40);
     private static readonly string MovedBaseSha = new('d', 40);
+
+    /// <summary>The one repo with the merge gate off (<c>Review:Policy:GatesOff:merge-gate</c>); acme/widgets keeps it on.</summary>
+    private const string AutoMergeRepo = "acme/automerge";
 
     private const string MixedGroup = "concurrency+correctness+tests";
     private const string LeaseAnchor = "finally { _lock.Release(); }";
@@ -96,7 +100,8 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
 
         // Categorise and select fail (no decision model answers) but continue: select reviews every
         // triggered check instead of none, and a refused status is a note on the step, not a failure.
-        var run = await WaitForAsync(client, id, "AwaitingMerge");
+        // The run gets as far as the merge gate, on by default for acme/widgets.
+        var run = await WaitForGateAsync(client, id, "MergeGate");
         var categorise = Node(run, 1, "categorise");
         categorise.GetProperty("status").GetString().ShouldBe("FailedContinued");
         categorise.GetProperty("summary").GetString()!.ShouldStartWith("Failed, continued (onFailure: continue)");
@@ -228,9 +233,18 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         using (var decided = await client.SendAsync(byLee))
             decided.StatusCode.ShouldBe(HttpStatusCode.OK, await decided.Content.ReadAsStringAsync());
 
-        // 6. base-moved says moved, base-drift unaffected, the branch is updated and the PR waits for its merge.
-        run = await WaitForAsync(client, id, "AwaitingMerge");
+        // 6. The merge gate opens (on by default) and leaves antiphon/approval alone; lee says merge.
+        run = await WaitForGateAsync(client, id, "MergeGate");
         Node(run, 2, "human-approve").GetProperty("outcome").GetString().ShouldBe("approve");
+        Node(run, 2, "merge-gate").GetProperty("status").GetString().ShouldBe("Waiting");
+        pr.Status("antiphon/approval", FixedHeadSha)!.Description.ShouldBe("Approved by lee");
+        var mergeGateId = OpenGate(run, "MergeGate").GetProperty("id").GetString();
+        using (var byLee = Request(HttpMethod.Post, $"/api/review-gates/{mergeGateId}/decision", "lee", new { decision = "Approve" }))
+        using (var decided = await client.SendAsync(byLee))
+            decided.StatusCode.ShouldBe(HttpStatusCode.OK, await decided.Content.ReadAsStringAsync());
+
+        // 7. base-moved says moved, base-drift unaffected, the branch is updated, then merged by rebase at the new head.
+        run = await WaitForAsync(client, id, "AwaitingMerge");
         Node(run, 2, "base-moved").GetProperty("outcome").GetString().ShouldBe("moved");
         Node(run, 2, "base-drift").GetProperty("outcome").GetString().ShouldBe("unaffected");
         Node(run, 2, "base-drift").GetProperty("summary").GetString()!.ShouldContain("no model call");
@@ -238,12 +252,13 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         pr.Read(p => p.BranchUpdates.ToList()).ShouldBe([FixedHeadSha]);
         var updatedHead = pr.Read(p => p.HeadSha);
         run.GetProperty("subject").GetProperty("headSha").GetString().ShouldBe(updatedHead);
-        pr.Status("antiphon/approval", FixedHeadSha)!.Description.ShouldBe("Approved by lee");
+        pr.Status("antiphon/approval", FixedHeadSha)!.Description.ShouldBe("Approved by lee", "the merge gate's decision is not an approval");
         pr.Status("antiphon/approval", updatedHead)!.State.ShouldBe(CodeHostStatusState.Success, "the approval carries to the base-only head");
         factory.Decisions.Requests.ShouldNotContain(r => r.Questions.Any(q => q.Name == "base_change_affects_pr"));
+        Node(run, 2, "merge").GetProperty("summary").GetString()!.ShouldStartWith($"Merged {updatedHead[..7]} by rebase");
+        pr.Read(p => p.Merges.ToList()).ShouldBe([(updatedHead, "rebase")]);
 
-        // 7. The PR is merged.
-        pr.Merge();
+        // 8. The next refresh sees the PR merged and closes the run.
         (await client.PostAsync($"/api/review-runs/{id}/refresh", null)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
         run = await WaitForAsync(client, id, "Merged");
         run.GetProperty("stage").GetString().ShouldBe("Done");
@@ -253,14 +268,15 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
             ("intake", "Succeeded", null), ("delta", "Succeeded", "incremental"), ("categorise", "Succeeded", "bugfix"), ("select", "Succeeded", null),
             ("group", "Succeeded", null), ("packs", "Succeeded", null), ("review", "Succeeded", null), ("collate", "Succeeded", null),
             ("verify", "Succeeded", null), ("publish", "Succeeded", null), ("route", "Succeeded", "clean"),
-            ("needs-human-approval", "Succeeded", "yes"), ("human-approve", "Succeeded", "approve"), ("base-moved", "Succeeded", "moved"),
-            ("base-drift", "Succeeded", "unaffected"), ("update-branch", "Succeeded", "approved"), ("await-merge", "Succeeded", "merge"),
+            ("needs-human-approval", "Succeeded", "yes"), ("human-approve", "Succeeded", "approve"), ("merge-gate", "Succeeded", "approve"),
+            ("base-moved", "Succeeded", "moved"), ("base-drift", "Succeeded", "unaffected"), ("update-branch", "Succeeded", "approved"),
+            ("merge", "Succeeded", null), ("await-merge", "Succeeded", "merge"),
         ]);
         Node(run, 1, "await-fixes").GetProperty("outcome").GetString().ShouldBe("push");
     }
 
     [Test]
-    public async Task A_low_risk_clean_pr_is_bot_approved_and_merged()
+    public async Task A_low_risk_clean_pr_is_bot_approved_and_merged_on_the_code_host_while_the_merge_gate_waits()
     {
         const int number = 102;
         var pr = factory.Host.Open(number, "Tidy the lease names", "dana", BaseSha, HeadSha, Files, Diff);
@@ -272,17 +288,18 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         created.StatusCode.ShouldBe(HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
-        var run = await WaitForAsync(client, id, "AwaitingMerge");
+        var run = await WaitForGateAsync(client, id, "MergeGate");
         run.GetProperty("needsHumanApproval").GetBoolean().ShouldBeFalse();
-        run.GetProperty("gates").GetArrayLength().ShouldBe(0);
+        run.GetProperty("gates").GetArrayLength().ShouldBe(1, "only the merge gate");
         Reviewers(run, 1).ShouldBe(["correctness"]);
         Node(run, 1, "bot-approve").GetProperty("summary").GetString()!.ShouldContain("not checked: ci-green, no-open-human-threads");
         (await FindingsAsync(client, id)).ShouldBeEmpty();
         pr.Read(p => p.Reviews.Count).ShouldBe(0, "a clean round posts no review");
         pr.Read(p => p.Approvals.ToList()).ShouldBe([HeadSha]);
         pr.Status("antiphon/review", HeadSha)!.Description.ShouldBe("No findings above the bar");
-        pr.Status("antiphon/approval", HeadSha)!.Description.ShouldBe("Approved by Antiphon");
+        pr.Status("antiphon/approval", HeadSha)!.Description.ShouldBe("Approved by Antiphon", "the merge gate leaves the approval as it is");
 
+        // A person merges on the code host instead of deciding the gate: the run ends there.
         pr.Merge();
         (await client.PostAsync($"/api/review-runs/{id}/refresh", null)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
         run = await WaitForAsync(client, id, "Merged");
@@ -291,10 +308,39 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
             ("intake", "Succeeded", null), ("delta", "Succeeded", "full"), ("categorise", "Succeeded", "bugfix"), ("select", "Succeeded", null),
             ("group", "Succeeded", null), ("packs", "Succeeded", null), ("review", "Succeeded", null), ("collate", "Succeeded", null),
             ("verify", "Succeeded", null), ("publish", "Succeeded", null), ("route", "Succeeded", "clean"),
-            ("needs-human-approval", "Succeeded", "no"), ("bot-approve", "Succeeded", null), ("base-moved", "Succeeded", "unchanged"),
-            ("await-merge", "Succeeded", "merge"),
+            ("needs-human-approval", "Succeeded", "no"), ("bot-approve", "Succeeded", null), ("merge-gate", "Succeeded", "merge"),
         ]);
-        pr.Read(p => p.BranchUpdates.Count).ShouldBe(0);
+        pr.Read(p => (p.BranchUpdates.Count, p.Merges.Count)).ShouldBe((0, 0), "Antiphon neither updated nor merged the branch");
+    }
+
+    [Test]
+    public async Task With_the_merge_gate_off_for_the_repo_the_approved_pr_is_merged_by_rebase_at_its_head()
+    {
+        const int number = 104;
+        var pr = factory.Host.Open(number, "Tidy the lease names", "dana", BaseSha, HeadSha, Files, Diff);
+        factory.Decisions.Categorise(externalContract: 0.1);
+        Applies(seed0001: 0.9, seed0002: 0.1, seed0004: 0.1, seed0006: 0.2);
+        using var client = factory.CreateClient();
+
+        using var created = await client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = AutoMergeRepo, prNumber = number });
+        created.StatusCode.ShouldBe(HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+
+        // Bot-approved, the merge gate passes without a person, then the merge step merges; the next
+        // refresh sees the PR merged and closes the run.
+        var run = await WaitForAsync(client, id, "AwaitingMerge");
+        run.GetProperty("gates").GetArrayLength().ShouldBe(0, "a gate that is off opens no queue item");
+        var gate = Node(run, 1, "merge-gate");
+        (gate.GetProperty("status").GetString(), gate.GetProperty("outcome").GetString()).ShouldBe(("Succeeded", "approve"));
+        gate.GetProperty("summary").GetString()!.ShouldStartWith($"Gate off for {AutoMergeRepo} (Review:Policy:GatesOff:merge-gate)");
+        var merge = Node(run, 1, "merge");
+        merge.GetProperty("status").GetString().ShouldBe("Succeeded");
+        merge.GetProperty("summary").GetString()!.ShouldStartWith($"Merged {HeadSha[..7]} by rebase");
+        pr.Read(p => p.Merges.ToList()).ShouldBe([(HeadSha, "rebase")]);
+
+        (await client.PostAsync($"/api/review-runs/{id}/refresh", null)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        run = await WaitForAsync(client, id, "Merged");
+        Node(run, 1, "await-merge").GetProperty("outcome").GetString().ShouldBe("merge");
     }
 
     /// <summary>The seed checks' <c>applies</c> answers; the rest are clearly no.</summary>
@@ -328,6 +374,30 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
             await Task.Delay(100);
         }
     }
+
+    /// <summary>Waits until the run has an open gate of <paramref name="kind"/> and is parked on it.</summary>
+    private static async Task<JsonElement> WaitForGateAsync(HttpClient client, string id, string kind)
+    {
+        var deadline = DateTime.UtcNow + StepTimeout;
+        while (true)
+        {
+            var run = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}");
+            var current = run.GetProperty("status").GetString();
+            if (current == "AtGate" && run.GetProperty("gates").EnumerateArray().Any(g => IsOpen(g, kind)))
+                return run;
+            if (current == "Failed")
+                throw new InvalidOperationException($"Run {id} failed while waiting for a {kind}: {Failure(run)}");
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException($"Run {id} did not open a {kind} within {StepTimeout}; it is {current}: {run}");
+            await Task.Delay(100);
+        }
+    }
+
+    private static JsonElement OpenGate(JsonElement run, string kind) =>
+        run.GetProperty("gates").EnumerateArray().Single(g => IsOpen(g, kind));
+
+    private static bool IsOpen(JsonElement gate, string kind) =>
+        gate.GetProperty("kind").GetString() == kind && gate.GetProperty("status").GetString() != "Done";
 
     private static async Task<JsonElement> WaitForFindingAsync(HttpClient client, string id, string key, Func<JsonElement, bool> done)
     {
@@ -401,6 +471,11 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
                 s.Chains["completions-cheap"] = [new ReviewDecisionChainEntry { Provider = "scripted-verifier" }];
             });
             services.PostConfigure<ReviewExecutorSettings>(s => s.PollSeconds = 1);
+            services.PostConfigure<ReviewPolicySettings>(s =>
+            {
+                s.GatesOff.Clear();
+                s.GatesOff["merge-gate"] = [AutoMergeRepo];
+            });
         }
     }
 }

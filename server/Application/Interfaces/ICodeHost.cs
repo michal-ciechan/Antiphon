@@ -74,6 +74,14 @@ public interface ICodeHost
     Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct);
 
     /// <summary>
+    /// Merges the PR with <paramref name="method"/> (<c>rebase</c>, <c>squash</c> or <c>merge</c>), only
+    /// while its head is still <paramref name="expectedHeadSha"/>: the host refuses when the head moved
+    /// since the approval. Throws <see cref="CodeHostException"/> when the host will not merge. Needs
+    /// <see cref="CodeHostCapabilities.CanMerge"/>.
+    /// </summary>
+    Task<CodeHostMerge> MergeAsync(CodeHostTarget target, string expectedHeadSha, string method, CancellationToken ct);
+
+    /// <summary>
     /// The repo's open pull requests, for polling (design 8.5); <see cref="CodeHostTarget.PrNumber"/> is
     /// ignored. Needs <see cref="CodeHostCapabilities.CanListPullRequests"/>.
     /// </summary>
@@ -180,7 +188,8 @@ public sealed record CodeHostCapabilities(
     bool CanUpdateBranch = false,
     bool CanReadFiles = false,
     bool CanListPullRequests = false,
-    bool CanPostConversation = false);
+    bool CanPostConversation = false,
+    bool CanMerge = false);
 
 /// <summary>An open PR as a polling listing returns it (design 8.5). Labels are names.</summary>
 public sealed record CodeHostOpenPullRequest(
@@ -247,6 +256,9 @@ public sealed record CodeHostCommitStatus(string Context, CodeHostStatusState St
 
 /// <summary>A branch update: whether it was made, the new head when known at once, and the host's message.</summary>
 public sealed record CodeHostBranchUpdate(bool Updated, string? NewHeadSha, string? Message);
+
+/// <summary>A merge: whether the host merged, the commit it made on the base (the last one for a rebase), and its message.</summary>
+public sealed record CodeHostMerge(bool Merged, string? MergeSha, string? Message);
 
 /// <summary>What went wrong with a code host call; the caller maps it to an HTTP error or a failed node.</summary>
 public enum CodeHostFailureKind

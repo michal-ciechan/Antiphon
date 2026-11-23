@@ -38,6 +38,10 @@ param(
     # Vite still listens on 127.0.0.1 only: Docker Desktop's host.docker.internal reaches it, and
     # Vite's allowedHosts already accepts *.laptop/*.desktop.codeperf.net.
     [string]$PublicBaseUrl,
+    # By default this instance turns -Repo's merge gate off, so it merges approved PRs itself, by rebase
+    # (Review:Policy:GatesOff:merge-gate). -NoAutoMerge keeps the gate on, the product default: a person
+    # confirms each merge in Antiphon or merges on GitHub.
+    [switch]$NoAutoMerge,
     [switch]$NoClient,
     # Leave GitHub polling off (a manual POST /api/review-polling/poll still runs a pass).
     [switch]$NoPolling,
@@ -147,6 +151,7 @@ $settings = [ordered]@{
     'Review__PublicBaseUrl'                                  = $(if ($PublicBaseUrl) { $PublicBaseUrl.TrimEnd('/') } else { "http://localhost:$ClientPort" })
     'Review__DefaultViewerLogin'                             = $ViewerLogin
     'Review__Policy__AuthorMayDecideRepos__0'                = $Repo
+    'Review__Policy__GatesOff__merge-gate__0'                = $(if ($NoAutoMerge) { $null } else { $Repo })
     'Review__Agents__Transport'                              = 'cli'
     'Review__Agents__Repos__0__Repo'                         = $Repo
     'Review__Agents__Repos__0__LocalPath'                    = $MirrorPath

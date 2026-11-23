@@ -15,6 +15,9 @@ public sealed record ApprovalRecord(string ApprovedSha, string? ReviewedBase, st
 
 public sealed record GateOutput(Guid GateId, IReadOnlyList<string> Reasons);
 
+/// <summary>An optional gate passed without a person: <c>Review:Policy:GatesOff</c> lists <see cref="Repo"/> for it.</summary>
+public sealed record GateSkipped(string NodeId, string Repo);
+
 public sealed record WaitOutput(IReadOnlyList<string> Awaits);
 
 public sealed record DriftRecord(string? From, string To);
@@ -136,12 +139,20 @@ public static class ReviewDecideSteps
     /// </summary>
     public static async Task<NodeResult> GateAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
+        var repo = walk.Run.Subject.Repo;
+        if (IsOptional(node) && walk.Policy.GateOff(node.Id, repo))
+            return NodeResult.Ok("approve", $"Gate off for {repo} (Review:Policy:GatesOff:{node.Id}): passed without a person", new GateSkipped(node.Id, repo));
+
+        var kind = GateKindOf(node);
+        if (kind == ReviewGateKind.MergeGate && (!walk.Host.Capabilities.CanMerge || walk.Run.Subject.PrNumber is null))
+            return NodeResult.Ok("approve", "Nothing for Antiphon to merge here (no PR, or the code host cannot merge): passed, the merge is left to the author",
+                new GateSkipped(node.Id, repo));
+
         var gate = await walk.Db.ReviewGates.FirstOrDefaultAsync(g => g.RunId == walk.Run.Id && g.NodeId == node.Id
             && g.Iteration == walk.Iteration.Iteration && g.Status != ReviewQueueItemStatus.Done, ct);
-        var reasons = GateReasons(walk, execution);
-        var kind = node.StringParam("gateKind") is { } named && Enum.TryParse<ReviewGateKind>(named, ignoreCase: true, out var parsed)
-            ? parsed
-            : node.Id.Contains("approve", StringComparison.OrdinalIgnoreCase) ? ReviewGateKind.ApprovalGate : ReviewGateKind.ReviewGate;
+        IReadOnlyList<string> reasons = kind == ReviewGateKind.MergeGate
+            ? ["approved: a person confirms the merge here, or merges on the code host"]
+            : GateReasons(walk, execution);
         if (gate is null)
         {
             gate = new ReviewGate
@@ -160,11 +171,23 @@ public static class ReviewDecideSteps
         }
 
         var team = gate.TeamKey is { } t ? $" ({t})" : "";
-        await walk.SetStatusAsync(ReviewWalk.ApprovalStatusContext, CodeHostStatusState.Pending,
-            kind == ReviewGateKind.ApprovalGate ? $"Waiting on human approval{team}" : $"Waiting on a human review{team}", ct);
+        // A merge gate opens after the approval, so antiphon/approval stays the success it is.
+        if (kind != ReviewGateKind.MergeGate)
+            await walk.SetStatusAsync(ReviewWalk.ApprovalStatusContext, CodeHostStatusState.Pending,
+                kind == ReviewGateKind.ApprovalGate ? $"Waiting on human approval{team}" : $"Waiting on a human review{team}", ct);
         return NodeResult.Wait($"Waiting on a human decision{team}: {string.Join("; ", reasons)}",
             new ParkState(ReviewRunStatus.AtGate, ReviewStage.HumanGate, ReviewWaitingOn.Humans), new GateOutput(gate.Id, reasons));
     }
+
+    /// <summary>The gate's kind: its <c>gateKind</c> param, else an approval gate when its id says approve.</summary>
+    public static ReviewGateKind GateKindOf(WorkflowNode node) =>
+        node.StringParam("gateKind") is { } named && Enum.TryParse<ReviewGateKind>(named, ignoreCase: true, out var parsed)
+            ? parsed
+            : node.Id.Contains("approve", StringComparison.OrdinalIgnoreCase) ? ReviewGateKind.ApprovalGate : ReviewGateKind.ReviewGate;
+
+    /// <summary>A gate the workflow marks <c>optional: true</c>, which <c>Review:Policy:GatesOff</c> may switch off per repo.</summary>
+    public static bool IsOptional(WorkflowNode node) =>
+        string.Equals(node.StringParam("optional"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// A wait (design 3.1): parks the run, with no seat held, on the events in <c>on</c>. Refresh turns

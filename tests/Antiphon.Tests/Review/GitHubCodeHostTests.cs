@@ -240,6 +240,38 @@ public class GitHubCodeHostTests
         handler.Requests.ShouldAllBe(q => q.Authorization == "Bearer tok-ghe");
     }
 
+    [Test]
+    public async Task A_merge_is_pinned_to_the_approved_head_and_a_moved_head_is_refused()
+    {
+        var head = new string('b', 40);
+        string? body = null;
+        var handler = new FakeHandler(r =>
+        {
+            r.Method.ShouldBe(HttpMethod.Put);
+            r.RequestUri!.PathAndQuery.ShouldBe("/api/v3/repos/acme/widgets/pulls/42/merge");
+            body = r.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("sha").GetString() == head
+                ? Json(HttpStatusCode.OK, """{ "sha": "cccccccccccccccccccccccccccccccccccccccc", "merged": true, "message": "Pull Request successfully merged" }""")
+                : Json(HttpStatusCode.Conflict, """{ "message": "Head branch was modified. Review and try the merge again." }""");
+        });
+        var host = Host(handler);
+        host.Capabilities.CanMerge.ShouldBeTrue();
+
+        var merged = await host.MergeAsync(Target, head, "rebase", CancellationToken.None);
+
+        merged.ShouldBe(new CodeHostMerge(true, new string('c', 40), "Pull Request successfully merged"));
+        using (var sent = System.Text.Json.JsonDocument.Parse(body!))
+        {
+            sent.RootElement.GetProperty("sha").GetString().ShouldBe(head);
+            sent.RootElement.GetProperty("merge_method").GetString().ShouldBe("rebase");
+        }
+
+        var refused = await Should.ThrowAsync<CodeHostException>(() => host.MergeAsync(Target, new string('d', 40), "rebase", CancellationToken.None));
+        refused.StatusCode.ShouldBe(409);
+        refused.Message.ShouldContain("Head branch was modified");
+        handler.Requests.Count.ShouldBe(2, "a 409 is not retried; only 405 (mergeability not computed yet) is");
+    }
+
     private static GitHubCodeHost Host(FakeHandler handler)
     {
         var settings = new ReviewCodeHostSettings();

@@ -125,6 +125,9 @@ public sealed class LocalGitCodeHost(GitWorkspaceService git) : ICodeHost
     public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
         throw Unsupported("update a branch");
 
+    public Task<CodeHostMerge> MergeAsync(CodeHostTarget target, string expectedHeadSha, string method, CancellationToken ct) =>
+        throw Unsupported("merge");
+
     /// <summary>There are no pull requests to poll (capability <c>CanListPullRequests</c> is false).</summary>
     public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
         throw Unsupported("list pull requests");

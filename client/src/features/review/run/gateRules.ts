@@ -27,10 +27,10 @@ export function lastDecidedGate(run: ReviewRunDetailDto): ReviewGateDto | undefi
 export function openGate(run: ReviewRunDetailDto): ReviewGateDto | undefined {
   const open = run.gates.filter((g) => g.status !== 'Done')
   // a gate the run is parked on comes before a pre-assigned one or an escalated dispute
-  return open.find((g) => g.kind === 'ReviewGate' || g.kind === 'ApprovalGate') ?? open[0]
+  return open.find((g) => g.kind === 'ReviewGate' || g.kind === 'ApprovalGate' || g.kind === 'MergeGate') ?? open[0]
 }
 
-export const DECISION_COPY: Record<'default' | 'DisputedFindings', Record<GateDecision, { label: string; description: string }>> = {
+export const DECISION_COPY: Record<'default' | 'DisputedFindings' | 'MergeGate', Record<GateDecision, { label: string; description: string }>> = {
   default: {
     Approve: { label: 'Approve', description: 'antiphon/approval → success at the reviewed head. Merge is left to the author.' },
     AnotherRound: { label: 'Another round', description: 'Resets the bot-only counter. The optional steer goes into every reviewer pack.' },
@@ -41,8 +41,13 @@ export const DECISION_COPY: Record<'default' | 'DisputedFindings', Record<GateDe
     AnotherRound: { label: 'Keep the finding', description: 'It stays open and is re-reviewed in the next round.' },
     Close: { label: 'Close the item', description: 'No change to the findings.' },
   },
+  MergeGate: {
+    Approve: { label: 'Merge', description: 'Antiphon brings the branch up to date with the base, then merges it by rebase at the approved head.' },
+    AnotherRound: { label: 'Another round', description: 'Resets the bot-only counter. The optional steer goes into every reviewer pack.' },
+    Close: { label: "Don't merge", description: 'Closes the review. The PR stays open and approved; anyone can still merge it on GitHub.' },
+  },
 }
 
 export function decisionCopy(kind: GateKind) {
-  return kind === 'DisputedFindings' ? DECISION_COPY.DisputedFindings : DECISION_COPY.default
+  return kind === 'DisputedFindings' ? DECISION_COPY.DisputedFindings : kind === 'MergeGate' ? DECISION_COPY.MergeGate : DECISION_COPY.default
 }

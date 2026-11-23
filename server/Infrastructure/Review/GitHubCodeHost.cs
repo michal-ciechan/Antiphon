@@ -47,7 +47,7 @@ public sealed class GitHubCodeHost(
     public CodeHostCapabilities Capabilities { get; } = new(
         SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
-        CanReadFiles: true, CanListPullRequests: true, CanPostConversation: true);
+        CanReadFiles: true, CanListPullRequests: true, CanPostConversation: true, CanMerge: true);
 
     /// <summary>A polling listing reads at most this many pages (1,000 open PRs or comments).</summary>
     public const int MaxListingPages = 10;
@@ -465,6 +465,34 @@ public sealed class GitHubCodeHost(
         }
 
         return new CodeHostBranchUpdate(true, null, message);
+    }
+
+    /// <summary>How often a merge GitHub answers 405 (not mergeable yet) is tried, and the pause between tries.</summary>
+    private const int MergeAttempts = 4;
+
+    private static readonly TimeSpan MergeRetryDelay = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// <c>PUT pulls/{n}/merge</c> with <c>sha</c> = the approved head, so GitHub refuses (409) a head that
+    /// moved since the approval. Just after a rebase GitHub may still be computing mergeability and
+    /// answer 405; that is retried a few times. A 405 merged nothing, so the retry is safe for a write.
+    /// </summary>
+    public async Task<CodeHostMerge> MergeAsync(CodeHostTarget target, string expectedHeadSha, string method, CancellationToken ct)
+    {
+        var path = $"{RepoPath(target)}/pulls/{RequirePr(target)}/merge";
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var doc = Parse(await SendAsync(target, HttpMethod.Put, path, new { sha = expectedHeadSha, merge_method = method }, ct), "merge");
+                var merged = doc.RootElement.TryGetProperty("merged", out var flag) && flag.ValueKind == JsonValueKind.True;
+                return new CodeHostMerge(merged, Text(doc.RootElement, "sha"), Text(doc.RootElement, "message"));
+            }
+            catch (CodeHostException ex) when (ex.StatusCode == 405 && attempt < MergeAttempts)
+            {
+                await Task.Delay(MergeRetryDelay, ct);
+            }
+        }
     }
 
     /// <summary>

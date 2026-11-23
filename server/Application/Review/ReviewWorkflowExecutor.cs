@@ -71,6 +71,7 @@ public sealed class ReviewWorkflowExecutor(
         ["CheckBaseMoved"] = ReviewBranchSteps.CheckBaseMovedAsync,
         ["BaseDriftCheck"] = ReviewBranchSteps.BaseDriftAsync,
         ["UpdateBranch"] = ReviewBranchSteps.UpdateBranchAsync,
+        ["Merge"] = ReviewBranchSteps.MergeAsync,
     };
 
     /// <summary>The steps this executor implements, for diagnostics and tests.</summary>
@@ -236,7 +237,8 @@ public sealed class ReviewWorkflowExecutor(
                 case ReviewNodeStatus.Succeeded:
                 case ReviewNodeStatus.Skipped:
                 case ReviewNodeStatus.FailedContinued:
-                    if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == "approve")
+                    // A merge gate's approve is "merge it": the PR was approved before the gate opened.
+                    if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == "approve" && ReviewDecideSteps.GateKindOf(node) != ReviewGateKind.MergeGate)
                         await ReviewDecideSteps.ApplyGateApprovalAsync(walk, frontier, ct);
                     if (!await FollowAsync(walk, node, frontier, ct))
                         return;
@@ -583,7 +585,7 @@ public sealed class ReviewWorkflowExecutor(
         (_, "NeedsHumanApproval" or "BotApprove") => ReviewStage.Approval,
         (ReviewNodeKind.Gate, _) => ReviewStage.HumanGate,
         (_, "RecordBaseDrift") => ReviewStage.AwaitingFixes,
-        (_, "CheckBaseMoved" or "BaseDriftCheck" or "UpdateBranch") => ReviewStage.BranchMaintenance,
+        (_, "CheckBaseMoved" or "BaseDriftCheck" or "UpdateBranch" or "Merge") => ReviewStage.BranchMaintenance,
         _ => current,
     };
 

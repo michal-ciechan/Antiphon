@@ -76,6 +76,7 @@ export function GatePanel({
   const notOffered = (['Approve', 'AnotherRound', 'Close'] as const).filter((d) => !decisions.includes(d))
   const openBlockers = findings.filter((f) => f.severity === 'Blocker' && (f.status === 'Open' || f.status === 'Disputed' || f.status === 'WillFix'))
   const dispute = gate.kind === 'DisputedFindings'
+  const mergeGate = gate.kind === 'MergeGate'
   const viewerName = personLabel(viewer.login, viewer.displayName)
 
   const submit = () => {
@@ -93,7 +94,9 @@ export function GatePanel({
   }
 
   const buttonLabel =
-    decision === 'Approve' && !dispute
+    decision === 'Approve' && mergeGate
+      ? `Merge ${shortSha(run.subject.headSha)}`
+      : decision === 'Approve' && !dispute
       ? `Approve ${shortSha(run.subject.headSha)}`
       : decision === 'AnotherRound' && !dispute
         ? `Start round ${run.round + 1}${steer.trim() ? ' with steer' : ''}`
@@ -126,6 +129,7 @@ export function GatePanel({
       ) : (
         <>
           {!dispute &&
+            !mergeGate &&
             (openBlockers.length > 0 ? (
               <Alert color="danger" variant="light" p={6} mb={6} icon={<TbLock size={14} />} title={<Text size="xs" fw={700}>Bot approval blocked: {openBlockers.length} open blocker{openBlockers.length === 1 ? '' : 's'}</Text>}>
                 <Text size="xs">
@@ -147,7 +151,7 @@ export function GatePanel({
                   disabled={!!blocked}
                   label={copy[d].label}
                   description={
-                    d === 'Approve' && !dispute && openBlockers.length > 0
+                    d === 'Approve' && !dispute && !mergeGate && openBlockers.length > 0
                       ? `${copy[d].description} ${openBlockers.length} open blocker${openBlockers.length === 1 ? '' : 's'} recorded as accepted risk by you.`
                       : copy[d].description
                   }
@@ -201,7 +205,7 @@ export function GatePanel({
           )}
         </>
       )}
-      {run.needsHumanApproval && !dispute && (
+      {run.needsHumanApproval && !dispute && !mergeGate && (
         <ExplainBadge
           mt={6}
           size="xs"

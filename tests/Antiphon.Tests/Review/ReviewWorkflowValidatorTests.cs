@@ -16,7 +16,9 @@ public class ReviewWorkflowValidatorTests
         var workflow = ReviewWorkflowYaml.LoadDefault();
 
         workflow.Name.ShouldBe("pr-review");
-        workflow.Nodes.Count.ShouldBe(22);
+        workflow.Nodes.Count.ShouldBe(24);
+        workflow.Edges.ShouldContain(e => e.From == "merge-gate" && e.To == "base-moved" && e.Label == "approve");
+        workflow.Node("merge-gate")!.StringParam("optional").ShouldBe("True", StringCompareShould.IgnoreCase);
         workflow.Sections.Select(s => s.Id).ShouldBe(["intake", "review", "decide", "branch"]);
         workflow.Edges.Count(e => e.MaxIterations is not null).ShouldBe(3);
         workflow.Edges.ShouldContain(e => e.From == "base-moved" && e.To == "base-drift" && e.Label == "moved|behind");

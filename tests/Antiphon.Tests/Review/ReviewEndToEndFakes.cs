@@ -20,7 +20,7 @@ public sealed class ScriptedCodeHost : ICodeHost
     public CodeHostCapabilities Capabilities { get; } = new(
         SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
-        CanReadFiles: false, CanListPullRequests: true, CanPostConversation: true);
+        CanReadFiles: false, CanListPullRequests: true, CanPostConversation: true, CanMerge: true);
 
     public ScriptedPr Open(int number, string title, string author, string baseSha, string headSha, IReadOnlyList<CodeHostChangedFile> files, string diff) =>
         _prs[number] = new ScriptedPr(number, title, author, baseSha, headSha, files, diff);
@@ -158,6 +158,20 @@ public sealed class ScriptedCodeHost : ICodeHost
         }
     }
 
+    /// <summary>Merges at once when the head is still the expected one, else refuses as GitHub does (409).</summary>
+    public Task<CodeHostMerge> MergeAsync(CodeHostTarget target, string expectedHeadSha, string method, CancellationToken ct)
+    {
+        var pr = Of(target);
+        lock (pr)
+        {
+            if (pr.HeadSha != expectedHeadSha)
+                throw new CodeHostException(CodeHostFailureKind.Unavailable, "GitHub PUT merge: HTTP 409: Head branch was modified.", 409);
+            pr.Merges.Add((expectedHeadSha, method));
+            pr.State = CodeHostPullRequestState.Merged;
+            return Task.FromResult(new CodeHostMerge(true, new string('a', 40), "Pull Request successfully merged"));
+        }
+    }
+
     public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<CodeHostOpenPullRequest>>(_prs.Values
             .Select(pr => pr.Read(p => p.State == CodeHostPullRequestState.Open
@@ -221,6 +235,7 @@ public sealed class ScriptedPr(int number, string title, string author, string b
     public List<(string CommentId, string Body)> Replies { get; } = [];
     public List<string> Resolved { get; } = [];
     public List<string> BranchUpdates { get; } = [];
+    public List<(string HeadSha, string Method)> Merges { get; } = [];
     public bool IsDraft { get; set; }
     public List<string> Labels { get; } = [];
     public List<string> ConversationReplies { get; } = [];

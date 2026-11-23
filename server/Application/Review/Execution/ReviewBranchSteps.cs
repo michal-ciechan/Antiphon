@@ -22,7 +22,10 @@ public sealed record BaseDriftOutput(
 
 public sealed record BranchUpdateOutput(string Origin, string FromHead, string? NewHead, string Result, string? Message);
 
-/// <summary>Branch maintenance (design 4.12, 4.13): base-moved, base-drift and update-branch.</summary>
+/// <summary>What <c>merge</c> did: <c>merged</c>, <c>refused</c> or <c>unsupported</c>, at which head and how.</summary>
+public sealed record MergeOutput(string Result, string HeadSha, string Method, string? MergeSha, string? Message);
+
+/// <summary>Branch maintenance (design 4.12, 4.13): base-moved, base-drift, update-branch and merge.</summary>
 public static class ReviewBranchSteps
 {
     public const string BaseDriftQuestion = "base_change_affects_pr";
@@ -152,6 +155,29 @@ public static class ReviewBranchSteps
         }
 
         return NodeResult.Ok(origin, summary.ToString(), new BranchUpdateOutput(origin, fromHead, update.NewHeadSha, "updated", update.Message));
+    }
+
+    /// <summary>
+    /// Merge (design 4.12): reached once the merge gate passed (a person said merge, or the gate is off
+    /// for the repo) and the branch is up to date. Asks the code host to merge the PR at the approved
+    /// head with <c>Review:Policy:MergeMethod</c>; the host refuses a head that moved. The run then goes
+    /// on to <c>await-merge</c>, which the code host's merged event closes. A refused merge fails the
+    /// step and, with <c>onFailure: continue</c>, still parks the PR for a person to merge.
+    /// </summary>
+    public static async Task<NodeResult> MergeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
+    {
+        var head = walk.HeadSha;
+        var method = walk.Policy.MergeMethod;
+        if (!walk.Host.Capabilities.CanMerge || walk.Run.Subject.PrNumber is null)
+            return NodeResult.Ok(null, "The code host cannot merge; left to the author", new MergeOutput("unsupported", head, method, null, null));
+
+        var merge = await walk.Host.MergeAsync(walk.Binding.Target, head, method, ct);
+        if (!merge.Merged)
+            return NodeResult.Fail($"The code host did not merge {ReviewIntake.Short(head)}: {merge.Message ?? "no reason given"}",
+                output: new MergeOutput("refused", head, method, merge.MergeSha, merge.Message));
+        return NodeResult.Ok(null,
+            $"Merged {ReviewIntake.Short(head)} by {method}{(merge.MergeSha is { Length: > 0 } sha ? $" as {ReviewIntake.Short(sha)}" : "")}",
+            new MergeOutput("merged", head, method, merge.MergeSha, merge.Message));
     }
 
     private static bool Same(string? a, string? b) => !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);

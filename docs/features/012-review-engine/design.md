@@ -635,7 +635,22 @@ carry a markdown summary and annotations.
 ### 4.12 After approval
 
 - **Merge setting per repo:** `afterApproval: leave-to-author (default) | enable-auto-merge | merge`,
-  with a merge method.
+  with a merge method. Built as a gate and a step:
+  - **`merge-gate`** follows every approval. It is a gate of kind `MergeGate` and is on by default:
+    a person confirms the merge in Antiphon (Merge or Don't merge), or merges on the code host, which
+    ends the run wherever it stands. Opening it leaves `antiphon/approval` as it is, and deciding it
+    records no new approval.
+  - **Switching it off:** the workflow marks it `optional: true`, and
+    `Review:Policy:GatesOff:merge-gate` lists the repos (or `*`) where it passes without a person, so
+    Antiphon merges by itself. Only optional gates can be switched off. With no PR, or a code host
+    that cannot merge, the gate passes and the merge is left to the author.
+  - **After it passes:** `base-moved`, `base-drift` and `update-branch` bring the branch up to date,
+    so the drift check is fresh at merge time.
+  - **`merge`** then merges through the code host with `Review:Policy:MergeMethod` (default `rebase`,
+    so no merge commit). The merge is pinned to the approved head, and GitHub refuses with 409 if the
+    head moved.
+  - **A refused merge** fails the step and continues (`onFailure: continue`), so the PR waits in
+    `await-merge` for a person. The code host's merged event closes the run.
 - **Checking the base after approval:** every approval (`bot-approve`, or `approve` at
   `human-approve` or `human-review`) goes to `base-moved`. This code step makes no model call. It
   fetches the base ref and compares a base with the current base tip (D-37):

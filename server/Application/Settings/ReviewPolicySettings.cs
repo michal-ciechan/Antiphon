@@ -80,6 +80,21 @@ public sealed class ReviewPolicySettings
     public bool AuthorMayDecide(string repo) =>
         AuthorMayDecideRepos.Any(r => string.Equals(r.Trim(), repo, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Gates switched off, by workflow node id: the repos (<c>owner/name</c>, or <c>*</c> for all) where
+    /// that gate passes without a person. Only a gate the workflow marks <c>optional: true</c> can be
+    /// switched off. For example <c>Review:Policy:GatesOff:merge-gate:0 = owner/name</c>: Antiphon then
+    /// merges that repo's approved PRs itself (design 4.12). Every gate is on by default.
+    /// </summary>
+    public Dictionary<string, List<string>> GatesOff { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool GateOff(string nodeId, string repo) =>
+        GatesOff.TryGetValue(nodeId, out var repos)
+        && repos.Any(r => r.Trim() == "*" || string.Equals(r.Trim(), repo, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>How Antiphon merges: <c>rebase</c> (the default, no merge commit), <c>squash</c> or <c>merge</c>.</summary>
+    public string MergeMethod { get; set; } = "rebase";
+
     public IReadOnlyList<ReviewRoundBarSettings> EffectivePost => Post is { Count: > 0 } post
         ? post.OrderBy(p => p.Round).ToList()
         :

@@ -139,6 +139,7 @@ export const GATE_KIND_META: Record<GateKind, { label: string; color: string }> 
   ApprovalGate: { label: 'Approval gate', color: 'success' },
   DisputedFindings: { label: 'Escalated dispute', color: 'danger' },
   LearnProposal: { label: 'Learn proposal', color: 'cyan' },
+  MergeGate: { label: 'Merge gate', color: 'blue' },
 }, plain)
 
 export const QUEUE_STATUS_META: Record<QueueItemStatus, { label: string; color: string }> = tolerant({

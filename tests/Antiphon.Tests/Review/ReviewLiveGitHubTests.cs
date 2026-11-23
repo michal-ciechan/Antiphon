@@ -150,9 +150,11 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
             ".[] | select(.user.login == \"antiphon-review[bot]\") | .body");
         replies.ShouldContain("queued", Case.Insensitive, "the bot answers the command on the PR");
         replies.ShouldContain(commentId, Case.Sensitive, "the reply carries the command's answer tag");
-        // The only finding was dismissed above, so the new round is clean and the bot approves; with
-        // keepUpToDate the branch is then rebased onto a moved base before the run waits for the merge.
-        await WaitForAsync(client, id, "AwaitingMerge");
+        // The only finding was dismissed above, so the new round is clean and the bot approves; the run
+        // then stops at the merge gate. It stays on (GatesOff is cleared below), so the scratch PR is
+        // never merged.
+        var gated = await WaitForAsync(client, id, "AtGate");
+        gated.GetProperty("gates").EnumerateArray().ShouldContain(g => g.GetProperty("kind").GetString() == "MergeGate" && g.GetProperty("status").GetString() != "Done");
     }
 
     private static async Task<JsonElement> PollAsync(HttpClient client)
@@ -262,6 +264,9 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
                 s.Chains["completions-cheap"] = [new ReviewDecisionChainEntry { Provider = "scripted-verifier" }];
             });
             services.PostConfigure<ReviewExecutorSettings>(s => s.PollSeconds = 1);
+            // The merge gate stays on whatever user-secrets say (review-github-setup.ps1 turns it off for
+            // the repo on the desktop): a live check must never merge the scratch PR.
+            services.PostConfigure<ReviewPolicySettings>(s => s.GatesOff.Clear());
             // Manual passes only (the timer stays off), and only the labelled scratch PR, draft or not.
             services.PostConfigure<ReviewPollingSettings>(s =>
             {

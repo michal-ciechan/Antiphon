@@ -11,7 +11,7 @@ sections:
   intake:  { title: Intake, nodes: [intake, delta, categorise, select, group, packs] }
   review:  { title: Review, nodes: [review, reviewer, collate, verify, publish], collapsed: true }
   decide:  { title: Decide, nodes: [route, await-fixes, record-drift, needs-human-approval, bot-approve, human-approve, human-review] }
-  branch:  { title: Branch maintenance, nodes: [base-moved, base-drift, update-branch, await-merge], collapsed: true }
+  branch:  { title: Branch maintenance, nodes: [merge-gate, base-moved, base-drift, update-branch, merge, await-merge], collapsed: true }
 nodes:
   intake:        { kind: code, run: Intake, description: "Pins the base and head SHAs, fetches the mirror and reads policy, checks and workflow at the base." }
   delta:         { kind: code, run: Delta, description: "Full review on the first iteration; afterwards limits the work to the change since the last reviewed SHA." }
@@ -34,21 +34,25 @@ nodes:
   human-review:  { kind: gate, queue: owning-team, decisions: [approve, another-round, close], description: "Opens after the bot-only round limit, or when a loop's iteration limit is exceeded." }
   base-moved:    { kind: code, run: CheckBaseMoved, outputs: [unchanged, moved, behind], description: "Compares the reviewed base with the base tip after an approval. No model call (D-37)." }
   update-branch: { kind: code, run: UpdateBranch, outputs: [approved, open], description: "Brings the branch up to date by merge or rebase; AI resolves conflicts." }
+  merge-gate:    { kind: gate, gateKind: MergeGate, optional: true, queue: owning-team, decisions: [approve, close], description: "After the approval a person confirms the merge, or merges on the code host. On by default; Review:Policy:GatesOff:merge-gate lists the repos where it is off and Antiphon merges by itself." }
+  merge:         { kind: code, run: Merge, onFailure: continue, description: "Merges the approved, up-to-date PR at its approved head (Review:Policy:MergeMethod, rebase by default). A refused merge leaves the PR for a person." }
   await-merge:   { kind: wait, on: [merge, close, push, base-moved], description: "Holds the approved PR until it's merged or closed. Keeps the approval while only the base branch moves." }
 edges:
   - intake -> delta -> categorise -> select -> group -> packs -> review -> collate -> verify -> publish -> route
   - route[bot-round-limit] -> human-review
   - route[findings] -> await-fixes
   - route[clean] -> needs-human-approval
-  - needs-human-approval[no] -> bot-approve -> base-moved
+  - needs-human-approval[no] -> bot-approve -> merge-gate
   - needs-human-approval[yes] -> human-approve
-  - human-approve[approve] -> base-moved
+  - human-approve[approve] -> merge-gate
+  - { edge: "merge-gate[approve] -> base-moved", description: "Merge: bring the branch up to date, then merge." }
   - { edge: "human-approve[another-round] -> intake", description: "Carries the steer prompt." }
   - human-review[another-round] -> intake
-  - human-review[approve] -> base-moved
-  - { edge: "base-moved[unchanged] -> await-merge", description: "No update and no model call." }
+  - human-review[approve] -> merge-gate
+  - { edge: "base-moved[unchanged] -> merge", description: "No update and no model call." }
   - base-moved[moved|behind] -> base-drift
-  - update-branch[approved] -> await-merge
+  - update-branch[approved] -> merge
+  - { edge: "merge -> await-merge", description: "Merged or left to the author, the run closes on the code host's merged event." }
   - { edge: "update-branch[open] -> await-fixes", description: "After an author opt-in; its own push is base-only." }
   - { edge: "await-fixes[push|recheck] -> intake", maxIterations: 20, overflow: human-review, description: "Delta re-runs the drift check if a drift is recorded." }
   - { edge: "await-merge[push] -> intake", maxIterations: 20, overflow: human-review, description: "Revokes the approval." }

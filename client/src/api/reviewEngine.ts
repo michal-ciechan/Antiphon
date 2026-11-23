@@ -52,7 +52,8 @@ export type ReasonCategory =
   | 'Duplicate'
   | 'StylePreference'
 export type DismissScope = 'Instance' | 'Path' | 'Repo' | 'Team'
-export type GateKind = 'ReviewGate' | 'ApprovalGate' | 'DisputedFindings' | 'LearnProposal'
+/** `MergeGate` (v0.6): after the approval a person confirms the merge; off per repo (`Review:Policy:GatesOff:merge-gate`). */
+export type GateKind = 'ReviewGate' | 'ApprovalGate' | 'DisputedFindings' | 'LearnProposal' | 'MergeGate'
 export type GateDecision = 'Approve' | 'AnotherRound' | 'Close'
 export type QueueItemStatus = 'Unassigned' | 'Assigned' | 'InProgress' | 'Done'
 export type Transport = 'Http' | 'Seat' | 'OneShot'

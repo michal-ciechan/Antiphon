@@ -130,6 +130,9 @@ public enum ReviewGateKind
     ApprovalGate,
     DisputedFindings,
     LearnProposal,
+
+    /// <summary>After the approval: a person confirms the merge (design 4.12). Optional, off per repo.</summary>
+    MergeGate,
 }
 
 public enum ReviewGateDecision

@@ -169,6 +169,9 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         public Task<CodeHostBranchUpdate> UpdateBranchAsync(CodeHostTarget target, string expectedHeadSha, CancellationToken ct) =>
             throw Unsupported();
 
+        public Task<CodeHostMerge> MergeAsync(CodeHostTarget target, string expectedHeadSha, string method, CancellationToken ct) =>
+            throw Unsupported();
+
         public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
             throw Unsupported();
 
