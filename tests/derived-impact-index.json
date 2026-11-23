@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 355,
+      "classes": 356,
       "reason": "allowlist"
     },
     {
@@ -2097,9 +2097,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 143,
       "reason": "cap",
-      "owed": 117,
+      "owed": 118,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "DelegateScriptLandApprovalTests",
@@ -2188,10 +2188,12 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 30,
+      "classes": 32,
       "reason": "cap",
-      "owed": 5,
+      "owed": 7,
       "first": [
+        "RcFailedFirstPlannerTests",
+        "ReleaseGateE2EEvidenceTests",
         "ReleaseSelectionHopSeedTests",
         "ToolchainFloorTwinTests",
         "ExpectedPlatformSkipRosterTests",
@@ -2201,12 +2203,14 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 27,
+      "classes": 29,
       "reason": "cap",
-      "owed": 2,
+      "owed": 4,
       "first": [
         "ReleaseGateFollowupTests",
-        "RcFullWatchdogTests"
+        "RcFullWatchdogTests",
+        "AwayDigestSendTests",
+        "TestTraceSummaryTests"
       ]
     },
     {
@@ -3829,12 +3833,6 @@
       ]
     },
     {
-      "path": "scripts/export-expected-duration-roster.ps1",
-      "classes": [
-        "ExpectedDurationSyncTests"
-      ]
-    },
-    {
       "path": "scripts/fixtures/c1008-fake-docker.sh",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -4049,6 +4047,18 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs",
+      "classes": [
+        "AwayDigestSendTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/ClassCostRefresh.cs",
+      "classes": [
+        "ClassCostMeasurementTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/DiagScan.cs",
       "classes": [
         "LiveLaneCensusTests"
@@ -4076,6 +4086,12 @@
       "path": "scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs",
       "classes": [
         "LiveLaneCensusTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/ExpectedDurationRosterFile.cs",
+      "classes": [
+        "ExpectedDurationSyncTests"
       ]
     },
     {
@@ -4142,6 +4158,18 @@
       "path": "scripts/lib/Antiphon.Nightly/NightlyTestsOptions.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/QualificationEta.cs",
+      "classes": [
+        "WatchQualTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/QualificationHeartbeat.cs",
+      "classes": [
+        "WatchQualTests"
       ]
     },
     {
@@ -4244,15 +4272,39 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/TestTraceSummary.cs",
+      "classes": [
+        "TestTraceSummaryTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/WatchQual.cs",
+      "classes": [
+        "WatchQualTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/Baseline.cs",
       "classes": [
         "ReleaseImpactScriptTests"
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Scripts/QualificationEtaCommand.cs",
+      "classes": [
+        "WatchQualTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/ReleaseSelection.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Scripts/WatchQualCommand.cs",
+      "classes": [
+        "WatchQualTests"
       ]
     },
     {
@@ -4294,6 +4346,7 @@
     {
       "path": "scripts/lib/nightly-class-costs.json",
       "classes": [
+        "ClassCostMeasurementTests",
         "ExpectedDurationSyncTests",
         "TimeoutAuditTests"
       ]
@@ -4331,6 +4384,12 @@
       "path": "scripts/lib/rc-project-selection.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/rc-qualification-status.ps1",
+      "classes": [
+        "WatchQualTests"
       ]
     },
     {
@@ -4386,6 +4445,12 @@
       "classes": [
         "PipelineDefinitionDocumentationTests",
         "PipelineDefinitionScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/rc-qualification-status.ps1",
+      "classes": [
+        "WatchQualTests"
       ]
     },
     {
@@ -4639,6 +4704,12 @@
         "AgentPinnedInstructionEndpointTests",
         "AgentTaskCallerResolutionTests",
         "EffectiveSettingsPipelineTests"
+      ]
+    },
+    {
+      "path": "server/Api/Endpoints/DigestEndpoints.cs",
+      "classes": [
+        "AwayDigestSendTests"
       ]
     },
     {
@@ -5240,7 +5311,8 @@
       "path": "server/Application/Dtos/AwayDigestDtos.cs",
       "classes": [
         "AwayDigestFormatterTests",
-        "AwayDigestProjectionTests"
+        "AwayDigestProjectionTests",
+        "AwayDigestSendTests"
       ]
     },
     {
@@ -25548,6 +25620,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
+        "AwayDigestSendTests",
         "ClassCostMeasurementTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
@@ -25564,13 +25637,12 @@
         "NightlyTestsRunTests",
         "QualificationTimingTests",
         "RcFailedFirstExecutionTests",
-        "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
-        "ReleaseGateE2EEvidenceTests",
         "ReleaseGateRunTests",
         "TestSelectionExecutionTests",
         "TestTimingReportTests",
         "TestTimingsTwinTests",
+        "TestTraceSummaryTests",
         "ToolchainFloorWarningTests"
       ]
     },
@@ -25675,6 +25747,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
+        "ClassCostMeasurementTests",
+        "ExpectedDurationSyncTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
@@ -25719,6 +25793,12 @@
       "path": "tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs",
       "classes": [
         "LinuxOnlyExpectedSkipClosureTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/QualificationEtaTests.cs",
+      "classes": [
+        "WatchQualTests"
       ]
     },
     {
@@ -26198,7 +26278,6 @@
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "ChangeAwareReleaseTests",
-        "ExpectedDurationSyncTests",
         "NativeLinuxPolicyExecutionTests",
         "NightlyPolicyTests",
         "NightlyRunTests",
@@ -28679,7 +28758,8 @@
     {
       "path": "tests/Shared/TestTrace.cs",
       "classes": [
-        "CodexCliObservationTests"
+        "CodexCliObservationTests",
+        "TestTraceSummaryTests"
       ]
     },
     {
