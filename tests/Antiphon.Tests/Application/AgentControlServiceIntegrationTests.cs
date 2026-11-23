@@ -1499,7 +1499,10 @@ public class AgentControlServiceIntegrationTests
     [Test]
     public async Task Start_returns_409_model_disabled_when_the_agent_alias_is_held()
     {
-        await using var db = CreateContext();
+        // The fable hold is global state; keep it in this test's own database (see
+        // AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync).
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(isolatedSchema.ConnectionString);
         var tempRoot = NewTempRoot();
         var holdId = Guid.NewGuid();
         try
@@ -1508,14 +1511,12 @@ public class AgentControlServiceIntegrationTests
             Directory.CreateDirectory(workspace);
             var adapter = new FakeAgentProtocolAdapter();
             await using var harness = BuildHarness(
-                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true);
+                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true,
+                connectionString: isolatedSchema.ConnectionString);
 
             var agent = await SeedAgentAsync(db, "Held Fable", workspace, AgentKind.ClaudeCode, profileId: null);
             agent.ModelLevel = AgentModelLevel.Frontier;
             await db.SaveChangesAsync();
-            await db.ModelAvailabilityHolds
-                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
-                .ExecuteDeleteAsync();
             db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
                 Id = holdId,
@@ -1542,8 +1543,6 @@ public class AgentControlServiceIntegrationTests
         }
         finally
         {
-            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
-            await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
     }
@@ -1551,7 +1550,10 @@ public class AgentControlServiceIntegrationTests
     [Test]
     public async Task Start_of_a_haiku_agent_succeeds_while_fable_is_held()
     {
-        await using var db = CreateContext();
+        // The fable hold is global state; keep it in this test's own database (see
+        // AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync).
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(isolatedSchema.ConnectionString);
         var tempRoot = NewTempRoot();
         var holdId = Guid.NewGuid();
         try
@@ -1560,14 +1562,12 @@ public class AgentControlServiceIntegrationTests
             Directory.CreateDirectory(workspace);
             var adapter = new FakeAgentProtocolAdapter();
             await using var harness = BuildHarness(
-                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true);
+                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true,
+                connectionString: isolatedSchema.ConnectionString);
 
             var agent = await SeedAgentAsync(db, "Haiku Interpreter", workspace, AgentKind.ClaudeCode, profileId: null);
             agent.ModelLevel = AgentModelLevel.Low;
             await db.SaveChangesAsync();
-            await db.ModelAvailabilityHolds
-                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
-                .ExecuteDeleteAsync();
             db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
                 Id = holdId,
@@ -1590,8 +1590,6 @@ public class AgentControlServiceIntegrationTests
         }
         finally
         {
-            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
-            await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
     }
