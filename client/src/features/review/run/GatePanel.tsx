@@ -1,8 +1,9 @@
-import { Alert, Badge, Box, Button, Group, Paper, Radio, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { Alert, Box, Button, Group, Paper, Radio, Stack, Text, Textarea, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbCircleCheck, TbLock } from 'react-icons/tb'
 import type { GateDecision, ReviewFindingDto, ReviewGateDto, ReviewRunDetailDto, ReviewViewerDto } from '../../../api/reviewEngine'
+import { ExplainBadge } from '../components/ExplainBadge'
 import { GatePasses } from '../components/GatePasses'
 import { PersonChip } from '../components/PersonChip'
 import { GateKindBadge, QueueStatusBadge } from '../components/ReviewBadges'
@@ -201,9 +202,33 @@ export function GatePanel({
         </>
       )}
       {run.needsHumanApproval && !dispute && (
-        <Badge mt={6} size="xs" variant="outline" color="pink" tt="none">
-          human approval is sticky for the rest of this PR
-        </Badge>
+        <ExplainBadge
+          mt={6}
+          size="xs"
+          variant="outline"
+          color="pink"
+          tt="none"
+          label="human approval is sticky for the rest of this PR"
+          hint="A round on this PR needed a human, so every later round needs one too. The bot won't approve this PR on its own."
+          title="Human approval is sticky"
+          testId="review-sticky-approval"
+        >
+          <Text size="xs">
+            A round on this PR needed a human to approve it (the reasons are listed above). From now on, every clean round on this PR waits for a
+            human as well, even if those reasons no longer apply. The bot won't approve this PR on its own.
+          </Text>
+          <Text size="xs">
+            <b>Comes back to you:</b> after a new push by the author (the push withdraws the approval and starts a new round), or when the base
+            branch moves in a way the drift check says could affect this PR.
+          </Text>
+          <Text size="xs">
+            <b>Doesn't need you again:</b> bringing the branch up to date with the base when the drift check says the base changes can't affect
+            it. The approval carries forward to the new head.
+          </Text>
+          <Text size="xs" c="dimmed">
+            Why: so the bot can't quietly approve a later version of a change that once needed a person.
+          </Text>
+        </ExplainBadge>
       )}
     </Paper>
   )
