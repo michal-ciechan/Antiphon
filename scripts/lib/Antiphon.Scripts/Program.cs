@@ -107,6 +107,10 @@ namespace Antiphon.Scripts
             // The nightly watchdog preflight or deploy answers every input itself: exit 0 done, 1 failed (one stderr line),
             // 2 usage, 3 no or invalid deploy profile (nothing contacted).
             [DeployNightlyWatchdogCommand.Name] = DeployNightlyWatchdogCommand.Run,
+            // The release status answers every input itself: exit 0 (its state on the JSON line), 2 usage.
+            [ReleaseStatusCommand.Name] = ReleaseStatusCommand.Run,
+            // The release-gate registration answers every input itself: exit 0 done, 1 a write or readback failed, 2 usage, 3 refused.
+            [RegisterReleaseGatesCommand.Name] = RegisterReleaseGatesCommand.Run,
         };
 
         public static int Main(string[] args)
@@ -138,7 +142,7 @@ namespace Antiphon.Scripts
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
                 + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
-                + " | " + DeployNightlyWatchdogCommand.Usage);
+                + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage);
             return Usage;
         }
 

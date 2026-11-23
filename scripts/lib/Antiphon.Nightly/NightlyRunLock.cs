@@ -1,7 +1,7 @@
 // W2-nightly S18: the per-task nightly run lock, <StateRoot>\run.lock (nightly-common.ps1 Get-NightlyLockPath ...
 // Exit-NightlyExclusiveLock; CARD-0487, CARD-1386 dead-owner reclaim, CARD-1389 the reclaim race and the boot id,
 // CARD-1396 the shared reopen). The C# run core (NightlyRun.cs) takes it; nightly-run-impl.ps1 called it through the
-// nightly-common seams (New-ReleaseGateLockSeams in release-gate.ps1) until S20. S27 removed the old PowerShell functions except the reader. The record bytes are the ones
+// nightly-common seams (New-ReleaseGateLockSeams in release-gate.ps1, since deleted) until S20. S27 removed the old PowerShell functions except the reader. The record bytes are the ones
 // "[ordered]@{...} | ConvertTo-Json -Compress" wrote, so the readers (Read-NightlyLockRecord, still PowerShell, and
 // RcQualificationRecords, behind the rc-qualification-status and qualification-* commands) read them unchanged. OS observation goes through
 // INightlyProcessTable and the clock; nothing here is static state. Plain C#: no PowerShell types. ASCII only.
@@ -675,8 +675,9 @@ namespace Antiphon.Nightly
     }
 
     /// <summary>
-    /// A process table over delegates: how release-gate.ps1 hands the nightly-common seams (or the compiled table) to the
-    /// locks. Plain delegates, no PowerShell types; a null delegate answers as an unknown process.
+    /// A process table over delegates (a test hands its own answers to the locks; release-gate.ps1 handed the nightly-common
+    /// seams until unit 12 of 2026-11-22-remaining-ps1-to-csharp.md). Plain delegates, no PowerShell types; a null delegate
+    /// answers as an unknown process.
     /// </summary>
     public sealed class NightlyDelegateProcessTable : INightlyProcessTable
     {
@@ -716,21 +717,4 @@ namespace Antiphon.Nightly
         public string HostId() => _hostId?.Invoke() ?? "";
     }
 
-    /// <summary>A clock over a delegate (Get-NightlyUtcNow and its UtcNow seam). A time without a zone reads as local, as ToUniversalTime reads it.</summary>
-    public sealed class NightlyDelegateClock : TimeProvider
-    {
-        private readonly Func<DateTime> _utcNow;
-
-        public NightlyDelegateClock(Func<DateTime> utcNow)
-        {
-            _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
-        }
-
-        /// <inheritdoc />
-        public override DateTimeOffset GetUtcNow()
-        {
-            var now = _utcNow();
-            return new DateTimeOffset(now.Kind == DateTimeKind.Utc ? now : now.ToUniversalTime(), TimeSpan.Zero);
-        }
-    }
 }

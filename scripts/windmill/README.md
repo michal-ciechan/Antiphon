@@ -37,9 +37,11 @@ derive the trigger from the runner's own `WM_SCHEDULE_PATH` matching the expecte
 otherwise pass `manual`. An API caller's trigger string cannot manufacture scheduled credit, and a
 missing schedule context refuses scheduled credit rather than defaulting to it.
 
-Registration is an operator step, and `scripts/register-release-gates.ps1` is its front door: preview
-by default with zero writes, `-Apply` to register with readback, schedules always **created
-disabled**, and `-EnableSchedule <nightly|readiness|rc>` (requires `-Apply`) to turn on exactly one.
+Registration is an operator step, and `scripts\antiphon.cmd register-release-gates --profile <json>`
+(`scripts/antiphon register-release-gates` from sh; the C# that replaced `register-release-gates.ps1`)
+is its front door: preview by default with zero writes, `--apply` to register with readback,
+schedules always **created disabled**, and `--enable-schedule <nightly|readiness|rc>` (requires
+`--apply`) to turn on exactly one.
 It reads its Windmill token from an operator-placed file named by an untracked profile
 (`release-gates-deploy.example.json` shows the shape) and never prints it. Do not infer live
 registration from these files. Do not mint tokens here. Do not put credentials or watchdog host

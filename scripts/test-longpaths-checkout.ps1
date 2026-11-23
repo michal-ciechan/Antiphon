@@ -14,7 +14,6 @@ if ([string]::IsNullOrWhiteSpace($env:TEMP)) {
 }
 . (Join-Path $here 'lib/c487-harness.ps1')
 . (Join-Path $here 'lib/nightly-common.ps1')
-. (Join-Path $here 'lib/release-gate.ps1')
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 
 function Remove-LpTree {

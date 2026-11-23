@@ -37,6 +37,11 @@
     -SeamsPath is test-only: it is refused unless ANTIPHON_RELEASE_GATE_TEST_MODE
     is exactly 1, and test mode is refused unless both the Git and GitHub
     adapters are fakes, so a real publication never runs on an injected clock.
+    The remote reads, the tag push, GitHub, the clock and the publication and
+    publish journals are compiled (Antiphon.Nightly ReleaseGateRemote and
+    ReleaseGateJournal, which replaced scripts/lib/release-gate.ps1); a seams
+    file's $ReleaseGateSeams.Git, .GitHub, .UtcNow and .JournalWrite are handed
+    to them.
 
     Publishing never restarts AppHost or the runner and never checks out a tag
     in the main worktree.
@@ -61,7 +66,6 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'publish-release'
-. (Join-Path $lib 'release-gate.ps1')
 
 function Write-PublishLine { param([string]$Message) Write-Host ('[publish-release] {0}' -f $Message) }
 
@@ -138,12 +142,18 @@ function Invoke-AntiphonPublishRelease {
         ManifestDigest = ''
     }
     # Review bf928242: seams (fake remote, injected clock) only in explicit test
-    # mode, and never alongside a real remote. Refused before anything is read.
-    $admission = Import-ReleaseGatePublisherSeams -SeamsPath $SeamsPath
+    # mode, and never alongside a real remote. Refused before anything is read;
+    # outside test mode a seams file is never loaded.
+    $testMode = [Antiphon.Nightly.ReleaseGateRemote]::TestMode([string]$env:ANTIPHON_RELEASE_GATE_TEST_MODE)
+    $ReleaseGateSeams = $null
+    if ($testMode -and -not [string]::IsNullOrWhiteSpace($SeamsPath) -and (Test-Path -LiteralPath $SeamsPath)) { . $SeamsPath }
+    $admission = [Antiphon.Nightly.ReleaseGateRemote]::PublisherAdmission($testMode, $SeamsPath, $ReleaseGateSeams.Git, $ReleaseGateSeams.GitHub)
     if (-not [string]::IsNullOrEmpty($admission)) {
         Write-PublishLine ('REFUSED: seam admission ({0}).' -f $admission)
         $result.Refusal = $admission; $result.ExitCode = 3; return [pscustomobject]$result
     }
+    $remoteGate = [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $ReleaseGateSeams.GitHub, $ReleaseGateSeams.UtcNow, $testMode)
+    $journals = [Antiphon.Nightly.ReleaseGateJournal]::new([TimeProvider]::System, $ReleaseGateSeams.JournalWrite)
     if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = [string]$env:ANTIPHON_API }
     if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = 'http://localhost:17202' }
     if ([string]::IsNullOrWhiteSpace($CandidateId)) {
@@ -166,7 +176,7 @@ function Invoke-AntiphonPublishRelease {
 
     # Resolve the remote candidate before any gate decision: a moved ref must
     # fail, and an unresolved remote is not treated as agreement.
-    $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref ([string]$candidate.ref)
+    $remote = $remoteGate.Head($CheckoutRoot, [string]$candidate.ref)
     $remoteSha = $remote.Sha
 
     # D-15: the authority is re-verified on every attempt, recovery included. It
@@ -174,14 +184,14 @@ function Invoke-AntiphonPublishRelease {
     # Repository is the publication destination (it must equal the frozen value and
     # the checkout's origin); evidence may not post-date the publisher's clock; the
     # receipt must match the release card as the Antiphon API serves it now.
-    $attemptUtc = (Get-ReleaseGateUtcNow).ToUniversalTime()
+    $attemptUtc = $remoteGate.UtcNow()
     $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, $attemptUtc, $AntiphonApiUrl, $PSScriptRoot)
     $gate = [Antiphon.Nightly.ReleaseGatePublication]::PublicationGate($green, $candidate, $remoteSha, $authority, $ExpectedPolicyHash, $RequiredSuites)
     if (-not $gate.Ok) {
         Write-PublishLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
     }
-    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $CheckoutRoot
+    $inventory = $remoteGate.TagInventory($CheckoutRoot)
     if (-not $inventory.Ok) {
         Write-PublishLine 'REFUSED: remote tag inventory could not be read.'
         $result.Refusal = 'remote-tag-inventory-failed'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -209,9 +219,9 @@ function Invoke-AntiphonPublishRelease {
     if ($WhatIf) {
         # Read-only: -WhatIf reports the proposed tag and never reserves it, so
         # publications.json is untouched (not created, not rewritten).
-        $reservation = Get-ReleaseGateTagProposal -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc -RemoteTags $inventory.Tags
+        $reservation = $journals.Proposal($publicationJournal, $CandidateId, $sha, $cutUtc, [string[]]$inventory.Tags)
     } else {
-        $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc -RemoteTags $inventory.Tags
+        $reservation = $journals.Reserve($publicationJournal, $CandidateId, $sha, $cutUtc, [string[]]$inventory.Tags)
     }
     $tag = $reservation.Tag
     $result.Tag = $tag
@@ -220,14 +230,14 @@ function Invoke-AntiphonPublishRelease {
     if (-not $WhatIf) {
         # A reservation's identity never changes after an external race. Refuse
         # before creating even a local tag, and leave the reservation for recovery.
-        $selected = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+        $selected = $remoteGate.Tag($CheckoutRoot, $tag)
         if ($selected.Status -ne 'Absent' -and ($selected.Status -ne 'Found' -or $selected.Sha -cne $sha)) {
             $result.Refusal = 'tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
         }
         $parsedTag = [Antiphon.Nightly.ReleaseGateTags]::Tag($tag)
         if ($parsedTag.Prerelease) {
             $finalTag = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsedTag.Date, $parsedTag.Sequence)
-            $final = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalTag
+            $final = $remoteGate.Tag($CheckoutRoot, $finalTag)
             if ($final.Status -ne 'Absent' -and ($final.Status -ne 'Found' -or $final.Sha -cne $sha)) {
                 $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
             }
@@ -283,7 +293,7 @@ function Invoke-AntiphonPublishRelease {
     }
 
     New-Item -ItemType Directory -Path $paths.Root -Force | Out-Null
-    [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'intent' -Fields @{
+    [void]$journals.WriteStep($publishJournal, 'intent', @{
         candidateId = $CandidateId; tag = $tag; sha = $sha; manifestDigest = $manifestDigest; repository = $Repository
         publicationAuthorityDigest = $pubAuthority.Digest
     })
@@ -292,32 +302,32 @@ function Invoke-AntiphonPublishRelease {
     Write-NightlyAtomicJson -Path $manifestPath -Object $manifest
 
     # 2/3. local annotated tag, then a create-only push of that tag alone.
-    if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-local')) {
-        $mk = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('tag', '-a', $tag, $sha, '-m', ('Antiphon {0}' -f $tag))
+    if (-not [Antiphon.Nightly.ReleaseGateJournal]::HasStep($publishJournal, 'tag-local')) {
+        $mk = $remoteGate.Git($CheckoutRoot, [string[]]@('tag', '-a', $tag, $sha, '-m', ('Antiphon {0}' -f $tag)))
         if ([int]$mk.ExitCode -ne 0) {
-            $show = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-list', '-n', '1', $tag)
+            $show = $remoteGate.Git($CheckoutRoot, [string[]]@('rev-list', '-n', '1', $tag))
             if ([int]$show.ExitCode -ne 0 -or -not [string]::Equals(([string]$show.Output).Trim(), $sha, [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PublishLine 'REFUSED: local tag creation failed and no matching tag exists.'
                 $result.Refusal = 'tag-local-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
         }
-        [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-local')
+        [void]$journals.WriteStep($publishJournal, 'tag-local', $null)
     }
-    if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-pushed')) {
-        $push = Push-ReleaseGateExactTag -WorkingDirectory $CheckoutRoot -Tag $tag
+    if (-not [Antiphon.Nightly.ReleaseGateJournal]::HasStep($publishJournal, 'tag-pushed')) {
+        $push = $remoteGate.PushExactTag($CheckoutRoot, $tag)
         if ([int]$push.ExitCode -ne 0) {
             # Re-read remote state after an ambiguous response before any further write.
-            $peek = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+            $peek = $remoteGate.Tag($CheckoutRoot, $tag)
             if ($peek.Status -ne 'Found' -or -not [string]::Equals($peek.Sha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PublishLine 'REFUSED: tag push failed and the remote tag does not hold the tested sha.'
                 $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
         }
-        [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-pushed')
+        [void]$journals.WriteStep($publishJournal, 'tag-pushed', $null)
     }
 
     # 4. verify the peeled remote target agrees with the tested sha.
-    $verify = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+    $verify = $remoteGate.Tag($CheckoutRoot, $tag)
     $peeledSha = $verify.Sha
     if ($verify.Status -ne 'Found' -or -not [string]::Equals($peeledSha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
         Write-PublishLine ('REFUSED: remote tag peels to {0}, expected {1}.' -f $peeledSha, $sha)
@@ -326,35 +336,29 @@ function Invoke-AntiphonPublishRelease {
 
     # 5. draft release.
     $notesPath = Join-Path $paths.Root 'release-notes.md'
-    $previousTag = ''
-    $journalAll = Get-ReleaseGatePublicationJournal -Path $publicationJournal
-    foreach ($row in @($journalAll.reservations)) {
-        if ([bool]$row.published -and -not [string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
-            $previousTag = [string]$row.tag
-        }
-    }
+    $previousTag = [Antiphon.Nightly.ReleaseGateJournal]::PreviousPublishedTag($publicationJournal, $CandidateId)
     $commits = @()
     $range = $sha
     if (-not [string]::IsNullOrWhiteSpace($previousTag)) { $range = ('{0}..{1}' -f $previousTag, $sha) }
-    $log = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('log', '--no-merges', '--format=%h %s', $range)
+    $log = $remoteGate.Git($CheckoutRoot, [string[]]@('log', '--no-merges', '--format=%h %s', $range))
     if ([int]$log.ExitCode -eq 0) {
         foreach ($l in (([string]$log.Output) -split "`n")) { if (-not [string]::IsNullOrWhiteSpace($l)) { $commits += $l.Trim() } }
     }
     Set-Content -LiteralPath $notesPath -Value (Get-ReleaseGateNotesBody -Manifest $manifest -PreviousTag $previousTag -Commits $commits) -Encoding UTF8
 
-    if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'draft-created')) {
+    if (-not [Antiphon.Nightly.ReleaseGateJournal]::HasStep($publishJournal, 'draft-created')) {
         $createArgs = @{ tag = $tag; notesFile = $notesPath }
         $parsedTag = [Antiphon.Nightly.ReleaseGateTags]::Tag($tag)
         if ($parsedTag.Ok -and $parsedTag.Prerelease) { $createArgs['prerelease'] = $true }
-        $create = Invoke-ReleaseGateGitHub -Verb 'release-create' -WorkingDirectory $CheckoutRoot -Arguments $createArgs
+        $create = $remoteGate.GitHub('release-create', $createArgs, $CheckoutRoot)
         if ([int]$create.ExitCode -ne 0) {
-            $view = Invoke-ReleaseGateGitHub -Verb 'release-view' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag }
+            $view = $remoteGate.GitHub('release-view', @{ tag = $tag }, $CheckoutRoot)
             if ([int]$view.ExitCode -ne 0) {
                 Write-PublishLine 'REFUSED: draft creation failed and no release exists for the tag.'
                 $result.Refusal = 'draft-create-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
         }
-        [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'draft-created')
+        [void]$journals.WriteStep($publishJournal, 'draft-created', $null)
     }
 
     # 6/7. assets, each journalled and read back by digest.
@@ -371,21 +375,21 @@ function Invoke-AntiphonPublishRelease {
     foreach ($asset in @($manifestPath, $summaryAssetPath)) {
         $name = [System.IO.Path]::GetFileName($asset)
         $step = ('asset:' + $name)
-        if (Test-ReleaseGateJournalStep -Path $publishJournal -Step $step) { continue }
-        $up = Invoke-ReleaseGateGitHub -Verb 'release-upload' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag; asset = $asset }
+        if ([Antiphon.Nightly.ReleaseGateJournal]::HasStep($publishJournal, $step)) { continue }
+        $up = $remoteGate.GitHub('release-upload', @{ tag = $tag; asset = $asset }, $CheckoutRoot)
         if ([int]$up.ExitCode -ne 0) {
             Write-PublishLine ('REFUSED: asset upload failed ({0}); release stays a draft.' -f $name)
             $result.Refusal = ('asset-upload-failed:' + $name); $result.ExitCode = 1; return [pscustomobject]$result
         }
-        [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step $step -Fields @{
+        [void]$journals.WriteStep($publishJournal, $step, @{
             ($step + ':digest') = (Get-NightlyFileSha256 -Path $asset)
         })
     }
 
     # 8. publish the draft, then persist the final identity.
-    $publish = Invoke-ReleaseGateGitHub -Verb 'release-publish' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag }
+    $publish = $remoteGate.GitHub('release-publish', @{ tag = $tag }, $CheckoutRoot)
     if ([int]$publish.ExitCode -ne 0) {
-        $view = Invoke-ReleaseGateGitHub -Verb 'release-view' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag }
+        $view = $remoteGate.GitHub('release-view', @{ tag = $tag }, $CheckoutRoot)
         $isDraft = $true
         if ([int]$view.ExitCode -eq 0 -and $view.Body) { $isDraft = [bool]$view.Body.isDraft }
         if ($isDraft) {
@@ -393,7 +397,7 @@ function Invoke-AntiphonPublishRelease {
             $result.Refusal = 'publish-failed'; $result.ExitCode = 1; return [pscustomobject]$result
         }
     }
-    $final = Invoke-ReleaseGateGitHub -Verb 'release-view' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag }
+    $final = $remoteGate.GitHub('release-view', @{ tag = $tag }, $CheckoutRoot)
     $releaseId = ''
     $releaseUrl = ''
     $stillDraft = $false
@@ -406,10 +410,10 @@ function Invoke-AntiphonPublishRelease {
         Write-PublishLine 'REFUSED: readback still reports a draft.'
         $result.Refusal = 'still-draft'; $result.ExitCode = 1; return [pscustomobject]$result
     }
-    [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'published' -Fields @{
+    [void]$journals.WriteStep($publishJournal, 'published', @{
         releaseId = $releaseId; releaseUrl = $releaseUrl; publishedAt = (Get-NightlyUtcNow).ToString('o')
     })
-    [void](Set-ReleaseGateReservationPublished -JournalPath $publicationJournal -CandidateId $CandidateId -ReleaseId $releaseId -ReleaseUrl $releaseUrl)
+    $journals.MarkPublished($publicationJournal, $CandidateId, $releaseId, $releaseUrl)
 
     $result.Published = $true
     $result.ReleaseId = $releaseId

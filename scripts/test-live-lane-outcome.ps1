@@ -315,10 +315,10 @@ function Test-StaleSharedLockRefuses {
         $ok=(Is $r 2 'stale-shared-lock') -and $r.Classification -ceq 'INVALID' -and $F.Starts -eq 0 -and $F.Slots -eq 0 -and [IO.File]::ReadAllText($p) -ceq $bytes
         Check $(if ($age.StartsWith('2000')) { 'stale' } else { 'age' }) $ok
     }
-    $q=New-Fixture; $owner=Enter-ReleaseGateNativeLock -CoordinationRoot $q.Request.CoordinationRoot -RunId foreign -Lane fixture-live
+    $q=New-Fixture; $foreign=[Antiphon.Nightly.ReleaseGateNativeLock]::Production(); $owner=$foreign.Enter($q.Request.CoordinationRoot,'foreign','fixture-live')
     $bytes=[IO.File]::ReadAllText($owner.Path); $r=Run $q
     Check 'busy' ((Is $r 21 'deferred-busy') -and $F.Starts -eq 0 -and $F.Slots -eq 0 -and [IO.File]::ReadAllText($owner.Path) -ceq $bytes)
-    Exit-ReleaseGateNativeLock -CoordinationRoot $q.Request.CoordinationRoot -RunId foreign
+    $foreign.Exit($q.Request.CoordinationRoot,'foreign')
 }
 try {
     if (-not (Get-Command Get-LiveLaneOutcome -ErrorAction SilentlyContinue)) {

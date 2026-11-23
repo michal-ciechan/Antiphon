@@ -66,7 +66,7 @@ public sealed class TestPhaseCustodyTests
             $repo = $args[1]
             $lib = Join-Path $repo 'scripts/lib'
             . (Join-Path $lib 'nightly-common.ps1')
-            . (Join-Path $lib 'release-gate.ps1')
+            Assert-NightlyCoreAvailable 'c1514-gate'
             $manifest = [Antiphon.Nightly.ReleaseGatePublication]::NewManifest(@{ repository = 'michal-ciechan/Antiphon'; sha = 'abc'; profile = 'rc' })
             $before = [Antiphon.Nightly.ReleaseGatePublication]::ManifestDigest($manifest)
             $timing = Join-Path $root 'timing'
@@ -103,13 +103,13 @@ public sealed class TestPhaseCustodyTests
             var dir = new DirectoryInfo(start);
             while (dir is not null)
             {
-                if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "release-gate.ps1")))
+                if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "nightly-core.ps1")))
                     return dir.FullName;
                 dir = dir.Parent;
             }
         }
 
-        throw new InvalidOperationException("scripts/lib/release-gate.ps1 not found");
+        throw new InvalidOperationException("scripts/lib/nightly-core.ps1 not found");
     }
 
     private static class C1514

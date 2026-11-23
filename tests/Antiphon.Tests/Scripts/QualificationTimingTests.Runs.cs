@@ -606,7 +606,7 @@ public sealed partial class QualificationTimingTests
         $ErrorActionPreference = 'Stop'
         $lib = Join-Path $Repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'release-gate.ps1')
+        Assert-NightlyCoreAvailable 'release-cut-timing'
         $out = [ordered]@{ blank = $false; explicit = $false; absent = $false; blankDetail = ''; explicitDetail = ''; absentDetail = ''; error = '' }
         try {
             New-Item -ItemType Directory -Path $CutRoot -Force | Out-Null

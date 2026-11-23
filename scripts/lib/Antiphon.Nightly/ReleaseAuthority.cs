@@ -252,12 +252,15 @@ namespace Antiphon.Nightly
         private static readonly Regex BuildOutput = new Regex("^(bin|obj)/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// The scripts pinned by digest, relative to the scripts directory. W2-nightly S27 deleted lib/nightly-coverage.ps1;
-        /// an older record that still binds it verifies, because Pinned checks only the keys listed here and SourceTrees.
+        /// The scripts pinned by digest, relative to the scripts directory. W2-nightly S27 deleted lib/nightly-coverage.ps1
+        /// and unit 12 of 2026-11-22-remaining-ps1-to-csharp.md lib/release-gate.ps1, whose behaviour is now
+        /// ReleaseGateRemote.cs, ReleaseGateJournal.cs and ReleaseGateTags.cs in lib/Antiphon.Nightly, pinned by that tree's
+        /// SourceTrees digest; an older record that still binds a deleted script verifies, because Pinned checks only the
+        /// keys listed here and SourceTrees.
         /// </summary>
         public static readonly string[] Scripts =
         {
-            "publish-release.ps1", "promote-release.ps1", "lib/release-gate.ps1", "lib/nightly-common.ps1", "lib/nightly-core.ps1",
+            "publish-release.ps1", "promote-release.ps1", "lib/nightly-common.ps1", "lib/nightly-core.ps1",
         };
 
         /// <summary>

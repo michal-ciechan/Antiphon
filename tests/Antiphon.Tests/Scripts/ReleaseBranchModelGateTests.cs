@@ -6,7 +6,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1311 S2, S3, and S4. <c>Test-C1311_LongLivedRcRef</c> calls the production
 /// ref parser, credit kind, and candidate journal. <c>Test-C1311_PreReleaseTag</c>
-/// calls tag parsing, the long-lived proposal, publish, and promote-release.
+/// calls publish and promote-release (its tag parsing and long-lived proposal rows run in process: ReleaseGateLibraryTests).
 /// <c>Test-C1311_MovingTipAuthority</c> pins one long-lived ref at two SHAs.
 /// A legacy stamp ref still earns <c>rc-release</c> and still publishes a final tag.
 /// </summary>
@@ -30,11 +30,7 @@ public sealed class ReleaseBranchModelGateTests
 
     [Test]
     public Task C1311_PreReleaseTag() =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1311", "C1311_PreReleaseTag", 8,
-            "C1311 PreReleaseTag v2026.10.15.2-rc.1 is accepted",
-            "C1311 PreReleaseTag v2026.10.15.2 is accepted",
-            "C1311 PreReleaseTag v2026.10.15.2-rc.0 refuses tag-shape",
-            "C1311 PreReleaseTag a long-lived proposal is vYYYY.MM.DD.N-rc.K",
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1311", "C1311_PreReleaseTag", 4,
             "C1311 PreReleaseTag promote creates the final tag at the peeled sha",
             "C1311 PreReleaseTag promote leaves the pre-release tag in place",
             "C1311 PreReleaseTag promote refuses a final tag at another sha",

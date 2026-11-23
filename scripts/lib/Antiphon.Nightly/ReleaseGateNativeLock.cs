@@ -1,6 +1,6 @@
 // W2-nightly S18: CARD-0599 D-4's shared native-run lock, <CoordinationRoot>\native-run.lock, ported from release-gate.ps1
-// (New-ReleaseGateLockOwner, Enter-ReleaseGateNativeLock, Exit-ReleaseGateNativeLock); those functions are now thin calls
-// into this class. One atomic create-new lock serialises the master and RC lanes. A live owner is never stolen on age: the
+// (New-ReleaseGateLockOwner, Enter-ReleaseGateNativeLock, Exit-ReleaseGateNativeLock); since unit 12 of
+// 2026-11-22-remaining-ps1-to-csharp.md deleted that library, callers (NightlyRun, live-lane-run.ps1) use this class. One atomic create-new lock serialises the master and RC lanes. A live owner is never stolen on age: the
 // caller records deferred-busy and waits for its next slot; a dead owner's lock is reported stale and is never reclaimed
 // here (docs/release-gates.md: manual recovery). The record bytes are the ones "[ordered]@{...} | ConvertTo-Json -Compress"
 // wrote, read unchanged by Read-NightlyLockRecord and RcQualificationRecords (rc-qualification-status, qualification-stop). OS observation
@@ -31,6 +31,12 @@ namespace Antiphon.Nightly
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
             _processes = processes ?? throw new ArgumentNullException(nameof(processes));
         }
+
+        /// <summary>
+        /// A lock on the system clock and this machine's process table: what Enter-/Exit-ReleaseGateNativeLock used for a
+        /// caller without nightly seams (the live lane, scripts/lib/live-lane-run.ps1). Enter and Exit on the same object.
+        /// </summary>
+        public static ReleaseGateNativeLock Production() => new ReleaseGateNativeLock(TimeProvider.System, new NightlyProcessTable());
 
         /// <summary>This process took the lock and has not released it.</summary>
         public bool OwnsLock { get; private set; }

@@ -7,6 +7,13 @@
 # at the I/O boundary only; no seam ever replaces a predicate or a gate.
 #
 # No build, no test assembly, no network and no live registration runs here.
+#
+# Unit 12 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: scripts/lib/release-gate.ps1,
+# release-status.ps1 and register-release-gates.ps1 are C# (Antiphon.Nightly ReleaseGateRemote, ReleaseGateJournal,
+# ReleaseGateTags, ReleaseStatus, ReleaseGateRegistration). Their cases run in process (ReleaseGateLibraryTests,
+# ReleaseStatusTests, ReleaseGateRegistrationTests); this harness keeps the cases of the still-PowerShell publisher,
+# promoter, candidate coordinator and cut, whose seams files hand $ReleaseGateSeams.Git, .GitHub, .UtcNow and
+# .JournalWrite to the C#. Fixture set-up calls the C# journal directly.
 param(
     [string]$Case = '',
     [string]$ResultsDirectory = ''
@@ -15,9 +22,10 @@ $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-. (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'test-release-gate'
 . (Join-Path $lib 'c487-harness.ps1')
+# Fixture set-up writes the publication journal through the production C# (reservedAt and publishedAt on the wall clock).
+$script:C599Journals = [Antiphon.Nightly.ReleaseGateJournal]::Production()
 
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 # CARD-0599: every seam this harness hands the publisher (fake Git, fake GitHub,
@@ -1257,7 +1265,7 @@ function Test-C599_TagRecovery {
         $r2 = Invoke-C599Publish -Fx $fx
         Assert-C487 -Cond ([string]$r2.Tag -eq [string]$r1.Tag) -Name ('C599 TagRecovery {0} restart reuses the same tag, not a new sequence' -f $cut) -Detail ([string]$r1.Tag + ' vs ' + [string]$r2.Tag)
         Assert-C487 -Cond ([int]$r2.ExitCode -eq 0 -and [bool]$r2.Published) -Name ('C599 TagRecovery {0} restart completes the publication' -f $cut) -Detail ([string]$r2.Refusal)
-        $journal = Get-ReleaseGatePublicationJournal -Path (Join-Path $fx.ReleaseRoot 'publications.json')
+        $journal = Get-Content -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json') -Raw | ConvertFrom-Json
         Assert-C487 -Cond (@($journal.reservations).Count -eq 1) -Name ('C599 TagRecovery {0} allocated exactly one reservation' -f $cut) -Detail ([string]@($journal.reservations).Count)
     }
     # A remote tag peeling to another sha is a hard refusal.
@@ -1397,7 +1405,7 @@ function Test-C599_PublishRecovery {
         $r2 = Invoke-C599Publish -Fx $fx
         Assert-C487 -Cond ([int]$r2.ExitCode -eq 0 -and [bool]$r2.Published) -Name ('C599 PublishRecovery {0} restart ends published' -f $cut) -Detail ([string]$r2.Refusal)
         Assert-C487 -Cond ([string]$r2.Tag -eq [string]$r1.Tag) -Name ('C599 PublishRecovery {0} recovery reuses the same tag' -f $cut) -Detail ([string]$r1.Tag + ' vs ' + [string]$r2.Tag)
-        $journal = Get-ReleaseGatePublicationJournal -Path (Join-Path $fx.ReleaseRoot 'publications.json')
+        $journal = Get-Content -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json') -Raw | ConvertFrom-Json
         $published = @($journal.reservations | Where-Object { [bool]$_.published })
         Assert-C487 -Cond ($published.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace([string]$published[0].releaseId)) -Name ('C599 PublishRecovery {0} exactly one published reservation with a release id' -f $cut) -Detail ([string]$published.Count)
     }
@@ -1419,37 +1427,8 @@ function Test-C599_ManifestAllowlist {
 
 # ============================================================== V-7 status ===
 
-function Test-C599_StatusIdentity {
-    $root = New-C599Root
-    $releaseRoot = Join-Path $root 'releases'
-    New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
-    $journal = Join-Path $releaseRoot 'publications.json'
-
-    $unknown = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaB -PassThru
-    Assert-C487 -Cond ([string]$unknown.state -eq 'unknown') -Name 'C599 StatusIdentity no publication journal is unknown, not latest' -Detail ([string]$unknown.state)
-
-    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $journal -CandidateId $CandidateId -Sha $ShaB -CutUtc ([datetime]'2026-09-23T08:30:00Z'))
-    $pending = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaB -PassThru
-    Assert-C487 -Cond ([string]$pending.state -eq 'unreleased integration build') -Name 'C599 StatusIdentity a reserved but unpublished tag is not released' -Detail ([string]$pending.state)
-
-    [void](Set-ReleaseGateReservationPublished -JournalPath $journal -CandidateId $CandidateId -ReleaseId 'R1' -ReleaseUrl 'https://example/releases/tag/v2026.09.23.1')
-    $released = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaB -PassThru
-    Assert-C487 -Cond ([string]$released.state -eq 'released' -and [string]$released.tag -eq 'v2026.09.23.1') -Name 'C599 StatusIdentity an exact sha match reports released with its tag' -Detail ([string]$released.tag)
-    Assert-C487 -Cond ([string]$released.releaseUrl -match 'releases/tag/v2026.09.23.1') -Name 'C599 StatusIdentity the release url is the GitHub tag address' -Detail ([string]$released.releaseUrl)
-
-    $newer = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaC -PassThru
-    Assert-C487 -Cond ([string]$newer.state -eq 'unreleased integration build') -Name 'C599 StatusIdentity a newer sha is NOT labelled as the latest release' -Detail ([string]$newer.state)
-    Assert-C487 -Cond ([string]::IsNullOrWhiteSpace([string]$newer.tag)) -Name 'C599 StatusIdentity a newer sha carries no tag' -Detail ([string]$newer.tag)
-
-    $caseInsensitive = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha ($ShaB.ToUpperInvariant()) -PassThru
-    Assert-C487 -Cond ([string]$caseInsensitive.state -eq 'released') -Name 'C599 StatusIdentity sha matching is case-insensitive' -Detail ([string]$caseInsensitive.state)
-}
-
 function Test-C599_NoActivation {
-    $text = Get-Content -LiteralPath (Join-Path $here 'release-status.ps1') -Raw
-    foreach ($forbidden in @('restart-apphost', 'Stop-Process', 'taskkill', 'git checkout', 'deploy-local')) {
-        Assert-C487 -Cond ($text -notmatch [regex]::Escape($forbidden)) -Name ('C599 NoActivation release-status performs no {0}' -f $forbidden)
-    }
+    # The release-status rows run in process (ReleaseStatusTests: it starts no process and runs no git).
     $pub = Get-Content -LiteralPath (Join-Path $here 'publish-release.ps1') -Raw
     foreach ($forbidden in @('restart-apphost', 'Stop-Process', 'taskkill', 'deploy-local')) {
         Assert-C487 -Cond ($pub -notmatch [regex]::Escape($forbidden)) -Name ('C599 NoActivation publish-release performs no {0}' -f $forbidden)
@@ -1478,308 +1457,6 @@ function Test-C599_NoActivation {
         -Name 'C599 NoActivation deletion matcher distinguishes a populated source refspec'
     $deletes = @(($trace -split "`n") | Where-Object { & $isTagDeletion $_ })
     Assert-C487 -Cond ($deletes.Count -eq 0) -Name 'C599 NoActivation no observed call deleted or re-created a tag' -Detail ($deletes -join ';')
-}
-
-# ======================================================== V-5 registration ===
-
-function New-C599WindmillFx {
-    <#
-      Stateful installed-API fixture. Write acceptance is separate from stored
-      state; only a GET readback proves a definition reached the workspace.
-    #>
-    param([hashtable]$Fail = @{}, [hashtable]$Existing = @{})
-    $root = New-C599Root
-    $store = Join-Path $root 'windmill.json'
-    $seed = [ordered]@{ scripts = [ordered]@{}; schedules = [ordered]@{} }
-    foreach ($k in $Existing.Keys) { $seed[$k] = $Existing[$k] }
-    Write-NightlyAtomicJson -Path $store -Object $seed
-    $failPath = Join-Path $root 'windmill-fail.json'
-    $failState = [ordered]@{}
-    foreach ($k in $Fail.Keys) { $failState[$k] = $Fail[$k] }
-    Write-NightlyAtomicJson -Path $failPath -Object $failState
-    $trace = Join-Path $root 'wm-trace.log'
-    $seams = Join-Path $root 'seams-wm.ps1'
-    $text = @"
-`$ReleaseGateSeams = @{
-    Windmill = {
-        param(`$Method, `$Path, `$Body, `$Context)
-        `$store = '$store'
-        `$failPath = '$failPath'
-        Add-Content -LiteralPath '$trace' -Value (`$Method + ' ' + `$Path) -Encoding ASCII
-        if (-not [string]::IsNullOrWhiteSpace([string]`$Context.token)) {
-            Add-Content -LiteralPath '$trace' -Value 'TOKEN-PRESENT' -Encoding ASCII
-        }
-        `$fail = Get-Content -LiteralPath `$failPath -Raw | ConvertFrom-Json
-        `$db = Get-Content -LiteralPath `$store -Raw | ConvertFrom-Json
-        `$scripts = @{}
-        foreach (`$p in @(`$db.scripts.PSObject.Properties)) { `$scripts[`$p.Name] = `$p.Value }
-        `$schedules = @{}
-        foreach (`$p in @(`$db.schedules.PSObject.Properties)) { `$schedules[`$p.Name] = `$p.Value }
-        function Save() {
-            `$obj = @{ scripts = `$scripts; schedules = `$schedules }
-            `$obj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath `$store -Encoding UTF8
-        }
-        `$key = ''
-        if (`$Path -match '/scripts/create') { `$key = 'script-create' }
-        elseif (`$Path -match '/schedules/create') { `$key = 'schedule-create' }
-        elseif (`$Path -match '/schedules/setenabled') { `$key = 'schedule-enable' }
-        elseif (`$Path -match '/scripts/get') { `$key = 'script-get' }
-        elseif (`$Path -match '/schedules/get') { `$key = 'schedule-get' }
-        `$shouldFail = (`$fail.PSObject.Properties.Name -contains `$key -and [bool]`$fail.`$key)
-        `$commits = (`$fail.PSObject.Properties.Name -contains (`$key + '_commits') -and [bool]`$fail.(`$key + '_commits'))
-        if (`$Method -eq 'GET') {
-            if (`$shouldFail) { return @{ Ok = `$false; Status = 503; Body = `$null } }
-            if (`$key -eq 'script-get') {
-                `$name = (`$Path -split '/scripts/get/p/')[1]
-                if (`$scripts.ContainsKey(`$name)) { return @{ Ok = `$true; Status = 200; Body = `$scripts[`$name] } }
-                return @{ Ok = `$false; Status = 404; Body = `$null }
-            }
-            `$name = (`$Path -split '/schedules/get/')[1]
-            if (`$schedules.ContainsKey(`$name)) { return @{ Ok = `$true; Status = 200; Body = `$schedules[`$name] } }
-            return @{ Ok = `$false; Status = 404; Body = `$null }
-        }
-        if (`$shouldFail -and -not `$commits) { return @{ Ok = `$false; Status = 500; Body = `$null } }
-        if (`$key -eq 'script-create') {
-            `$content = [string]`$Body.content
-            `$hash = (Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(`$Body)))
-            `$scripts[[string]`$Body.path] = [pscustomobject]@{ path = [string]`$Body.path; hash = `$hash; content = `$content; tag = [string]`$Body.tag }
-            Save
-        } elseif (`$key -eq 'schedule-create') {
-            `$schedules[[string]`$Body.path] = [pscustomobject]@{
-                path = [string]`$Body.path; schedule = [string]`$Body.schedule; timezone = [string]`$Body.timezone
-                script_path = [string]`$Body.script_path; enabled = [bool]`$Body.enabled; tag = [string]`$Body.tag
-            }
-            Save
-        } elseif (`$key -eq 'schedule-enable') {
-            `$name = (`$Path -split '/schedules/setenabled/')[1]
-            if (`$schedules.ContainsKey(`$name)) {
-                `$schedules[`$name] | Add-Member -NotePropertyName enabled -NotePropertyValue ([bool]`$Body.enabled) -Force
-                Save
-            }
-        }
-        if (`$shouldFail) { return @{ Ok = `$false; Status = 500; Body = `$null } }
-        return @{ Ok = `$true; Status = 200; Body = @{} }
-    }
-}
-"@
-    Set-Content -LiteralPath $seams -Value $text -Encoding ASCII
-    $tokenFile = Join-Path $root 'token.txt'
-    Set-Content -LiteralPath $tokenFile -Value 'wm-secret-token-value' -Encoding ASCII
-    $profile = Join-Path $root 'profile.json'
-    Write-NightlyAtomicJson -Path $profile -Object ([ordered]@{
-        windmillBaseUrl = 'http://windmill.invalid'
-        workspace = 'mc'
-        tokenFile = $tokenFile
-        repositoryPath = 'C:\src\Antiphon'
-        projectId = '00000000-0000-0000-0000-000000000001'
-    })
-    return [pscustomobject]@{ Root = $root; Store = $store; FailPath = $failPath; Seams = $seams; Profile = $profile; Trace = $trace; TokenFile = $tokenFile }
-}
-
-function Read-C599Windmill {
-    param($Fx)
-    return (Get-Content -LiteralPath $Fx.Store -Raw | ConvertFrom-Json)
-}
-
-function Set-C599WindmillFailure {
-    param($Fx, [string]$Key, [switch]$Clear, [switch]$CommitsAnyway)
-    $state = Get-Content -LiteralPath $Fx.FailPath -Raw | ConvertFrom-Json
-    $obj = [ordered]@{}
-    foreach ($p in @($state.PSObject.Properties)) { $obj[$p.Name] = $p.Value }
-    if ($Clear) { $obj.Remove($Key); $obj.Remove($Key + '_commits') }
-    else {
-        $obj[$Key] = $true
-        if ($CommitsAnyway) { $obj[$Key + '_commits'] = $true }
-    }
-    Write-NightlyAtomicJson -Path $Fx.FailPath -Object $obj
-}
-
-function Invoke-C599Register {
-    param($Fx, [hashtable]$Extra)
-    $splat = @{ Profile = $Fx.Profile; SeamsPath = $Fx.Seams; PassThru = $true }
-    if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
-    return (& (Join-Path $here 'register-release-gates.ps1') @splat)
-}
-
-function Test-C599_Preview {
-    $fx = New-C599WindmillFx
-    $r = Invoke-C599Register -Fx $fx
-    Assert-C487 -Cond ([int]$r.ExitCode -eq 0 -and [string]$r.Mode -eq 'preview') -Name 'C599 Preview a plain run is a preview' -Detail ([string]$r.Refusal)
-    Assert-C487 -Cond ([int]$r.Writes -eq 0) -Name 'C599 Preview a preview performs zero writes' -Detail ([string]$r.Writes)
-    $db = Read-C599Windmill -Fx $fx
-    Assert-C487 -Cond (@($db.scripts.PSObject.Properties).Count -eq 0 -and @($db.schedules.PSObject.Properties).Count -eq 0) -Name 'C599 Preview the workspace is untouched after a preview'
-    Assert-C487 -Cond (@($r.Rows).Count -eq 3) -Name 'C599 Preview all three definitions are previewed' -Detail ([string]@($r.Rows).Count)
-    foreach ($row in @($r.Rows)) {
-        Assert-C487 -Cond ([string]$row.action -like 'preview:*') -Name ('C599 Preview {0} row is marked preview' -f $row.key) -Detail ([string]$row.action)
-        Assert-C487 -Cond ((-not [string]::IsNullOrWhiteSpace([string]$row.desiredDigest)) -and (-not [string]::IsNullOrWhiteSpace([string]$row.cron)) -and (-not [string]::IsNullOrWhiteSpace([string]$row.timezone))) -Name ('C599 Preview {0} row carries digest, cron and timezone' -f $row.key) -Detail ([string]$row.cron)
-    }
-    # A preview never reads the token file at all.
-    $trace = ''
-    if (Test-Path -LiteralPath $fx.Trace) { $trace = Get-Content -LiteralPath $fx.Trace -Raw }
-    Assert-C487 -Cond ($trace -notmatch 'TOKEN-PRESENT') -Name 'C599 Preview a preview sends no token' -Detail $trace
-    # And -EnableSchedule without -Apply refuses outright.
-    $enable = Invoke-C599Register -Fx $fx -Extra @{ EnableSchedule = 'rc' }
-    Assert-C487 -Cond ([string]$enable.Refusal -eq 'enable-requires-apply') -Name 'C599 Preview -EnableSchedule without -Apply refuses' -Detail ([string]$enable.Refusal)
-}
-
-function Test-C599_ApplyReadback {
-    $fx = New-C599WindmillFx
-    $r = Invoke-C599Register -Fx $fx -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([int]$r.ExitCode -eq 0) -Name 'C599 ApplyReadback control apply succeeds' -Detail ([string]$r.Refusal)
-    $db = Read-C599Windmill -Fx $fx
-    foreach ($path in @('u/lndcobra/antiphon_nightly_tests', 'u/lndcobra/antiphon_nightly_readiness', 'u/lndcobra/antiphon_release_candidates')) {
-        Assert-C487 -Cond ($db.scripts.PSObject.Properties.Name -contains $path) -Name ('C599 ApplyReadback script {0} is stored' -f $path)
-        Assert-C487 -Cond ($db.schedules.PSObject.Properties.Name -contains $path) -Name ('C599 ApplyReadback schedule {0} is stored' -f $path)
-        Assert-C487 -Cond (-not [bool]$db.schedules.$path.enabled) -Name ('C599 ApplyReadback schedule {0} was created DISABLED' -f $path) -Detail ([string]$db.schedules.$path.enabled)
-    }
-    Assert-C487 -Cond ([string]$db.schedules.'u/lndcobra/antiphon_release_candidates'.schedule -eq '0 30 8,16 * * *') -Name 'C599 ApplyReadback the rc cron is the two-slot schedule' -Detail ([string]$db.schedules.'u/lndcobra/antiphon_release_candidates'.schedule)
-    Assert-C487 -Cond ([string]$db.schedules.'u/lndcobra/antiphon_release_candidates'.timezone -eq 'Europe/London') -Name 'C599 ApplyReadback the rc timezone is Europe/London'
-    Assert-C487 -Cond ([string]$db.schedules.'u/lndcobra/antiphon_nightly_tests'.schedule -eq '0 30 0 * * *') -Name 'C599 ApplyReadback the master cron is unchanged'
-    foreach ($row in @($r.Rows)) {
-        Assert-C487 -Cond (-not [string]::IsNullOrWhiteSpace([string]$row.readbackHash)) -Name ('C599 ApplyReadback {0} recorded a readback hash' -f $row.key) -Detail ([string]$row.readbackHash)
-    }
-    $trace = Get-Content -LiteralPath $fx.Trace -Raw
-    Assert-C487 -Cond ($trace -match 'TOKEN-PRESENT') -Name 'C599 ApplyReadback apply sends the token from the token file'
-    Assert-C487 -Cond ($trace -notmatch 'wm-secret-token-value') -Name 'C599 ApplyReadback the token VALUE never reaches the trace'
-
-    # Idempotent reapply: no duplicates, and an enabled schedule stays enabled.
-    $enabled = Invoke-C599Register -Fx $fx -Extra @{ Apply = $true; EnableSchedule = 'readiness' }
-    Assert-C487 -Cond ([int]$enabled.ExitCode -eq 0 -and [string]$enabled.Enabled -eq 'readiness') -Name 'C599 ApplyReadback an explicit selector enables exactly one schedule' -Detail ([string]$enabled.Refusal)
-    $db2 = Read-C599Windmill -Fx $fx
-    Assert-C487 -Cond ([bool]$db2.schedules.'u/lndcobra/antiphon_nightly_readiness'.enabled) -Name 'C599 ApplyReadback the selected schedule is enabled on readback'
-    Assert-C487 -Cond (-not [bool]$db2.schedules.'u/lndcobra/antiphon_release_candidates'.enabled) -Name 'C599 ApplyReadback enabling readiness did not enable rc'
-    Assert-C487 -Cond (-not [bool]$db2.schedules.'u/lndcobra/antiphon_nightly_tests'.enabled) -Name 'C599 ApplyReadback enabling readiness did not enable nightly'
-
-    $again = Invoke-C599Register -Fx $fx -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([int]$again.ExitCode -eq 0) -Name 'C599 ApplyReadback a second apply succeeds' -Detail ([string]$again.Refusal)
-    Assert-C487 -Cond ([int]$again.Writes -eq 0) -Name 'C599 ApplyReadback a second apply writes nothing (idempotent)' -Detail ([string]$again.Writes)
-    $db3 = Read-C599Windmill -Fx $fx
-    Assert-C487 -Cond (@($db3.scripts.PSObject.Properties).Count -eq 3) -Name 'C599 ApplyReadback a second apply created no duplicate scripts' -Detail ([string]@($db3.scripts.PSObject.Properties).Count)
-    Assert-C487 -Cond ([bool]$db3.schedules.'u/lndcobra/antiphon_nightly_readiness'.enabled) -Name 'C599 ApplyReadback a reapply PRESERVES an already enabled schedule'
-
-    # Persistence cuts across each write, with ready and unavailable recipients.
-    foreach ($key in @('script-create', 'schedule-create')) {
-        foreach ($cut in @('before-write', 'commit-then-lose-response')) {
-            $fx2 = New-C599WindmillFx
-            if ($cut -eq 'before-write') { Set-C599WindmillFailure -Fx $fx2 -Key $key }
-            else { Set-C599WindmillFailure -Fx $fx2 -Key $key -CommitsAnyway }
-            $bad = Invoke-C599Register -Fx $fx2 -Extra @{ Apply = $true }
-            Assert-C487 -Cond ([int]$bad.ExitCode -ne 0) -Name ('C599 ApplyReadback {0} {1} fails the apply' -f $key, $cut) -Detail ([string]$bad.Refusal)
-            $dbBad = Read-C599Windmill -Fx $fx2
-            if ($cut -eq 'before-write' -and $key -eq 'script-create') {
-                Assert-C487 -Cond (@($dbBad.scripts.PSObject.Properties).Count -eq 0) -Name 'C599 ApplyReadback a failed script write stored nothing'
-            }
-            Set-C599WindmillFailure -Fx $fx2 -Key $key -Clear
-            $recovered = Invoke-C599Register -Fx $fx2 -Extra @{ Apply = $true }
-            Assert-C487 -Cond ([int]$recovered.ExitCode -eq 0) -Name ('C599 ApplyReadback {0} {1} restart completes the apply' -f $key, $cut) -Detail ([string]$recovered.Refusal)
-            $dbOk = Read-C599Windmill -Fx $fx2
-            Assert-C487 -Cond (@($dbOk.scripts.PSObject.Properties).Count -eq 3 -and @($dbOk.schedules.PSObject.Properties).Count -eq 3) -Name ('C599 ApplyReadback {0} {1} recovery ends with exactly three of each' -f $key, $cut) -Detail ([string]@($dbOk.scripts.PSObject.Properties).Count)
-        }
-    }
-
-    # A readback outage is not success.
-    $fx3 = New-C599WindmillFx
-    Set-C599WindmillFailure -Fx $fx3 -Key 'script-get'
-    $outage = Invoke-C599Register -Fx $fx3 -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([int]$outage.ExitCode -ne 0) -Name 'C599 ApplyReadback a readback outage fails the apply' -Detail ([string]$outage.Refusal)
-
-    # An enable that does not read back enabled is not success.
-    $fx4 = New-C599WindmillFx
-    [void](Invoke-C599Register -Fx $fx4 -Extra @{ Apply = $true })
-    Set-C599WindmillFailure -Fx $fx4 -Key 'schedule-enable'
-    $enableFail = Invoke-C599Register -Fx $fx4 -Extra @{ Apply = $true; EnableSchedule = 'rc' }
-    Assert-C487 -Cond ([int]$enableFail.ExitCode -ne 0) -Name 'C599 ApplyReadback a failed enable is not success' -Detail ([string]$enableFail.Refusal)
-    $db4 = Read-C599Windmill -Fx $fx4
-    Assert-C487 -Cond (-not [bool]$db4.schedules.'u/lndcobra/antiphon_release_candidates'.enabled) -Name 'C599 ApplyReadback the rc schedule is still disabled after a failed enable'
-}
-
-function Test-C599_Concurrency {
-    # Concurrent drift: another writer changed the live cron under us.
-    $fx = New-C599WindmillFx
-    [void](Invoke-C599Register -Fx $fx -Extra @{ Apply = $true })
-    $db = Get-Content -LiteralPath $fx.Store -Raw | ConvertFrom-Json
-    $db.schedules.'u/lndcobra/antiphon_release_candidates' | Add-Member -NotePropertyName schedule -NotePropertyValue '0 0 3 * * *' -Force
-    $db | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $fx.Store -Encoding UTF8
-    $drift = Invoke-C599Register -Fx $fx -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([string]$drift.Refusal -eq 'schedule-drift') -Name 'C599 Concurrency concurrent cron drift refuses' -Detail ([string]$drift.Refusal)
-    $after = Get-Content -LiteralPath $fx.Store -Raw | ConvertFrom-Json
-    Assert-C487 -Cond ([string]$after.schedules.'u/lndcobra/antiphon_release_candidates'.schedule -eq '0 0 3 * * *') -Name 'C599 Concurrency the drifted schedule was not silently overwritten' -Detail ([string]$after.schedules.'u/lndcobra/antiphon_release_candidates'.schedule)
-
-    # Timezone drift is the same refusal.
-    $fx2 = New-C599WindmillFx
-    [void](Invoke-C599Register -Fx $fx2 -Extra @{ Apply = $true })
-    $db2 = Get-Content -LiteralPath $fx2.Store -Raw | ConvertFrom-Json
-    $db2.schedules.'u/lndcobra/antiphon_nightly_tests' | Add-Member -NotePropertyName timezone -NotePropertyValue 'UTC' -Force
-    $db2 | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $fx2.Store -Encoding UTF8
-    $tzDrift = Invoke-C599Register -Fx $fx2 -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([string]$tzDrift.Refusal -eq 'schedule-drift') -Name 'C599 Concurrency concurrent timezone drift refuses' -Detail ([string]$tzDrift.Refusal)
-}
-
-function Test-C599_ScheduleProvenance {
-    # The wrappers must derive trigger from the runner's schedule context.
-    $master = Get-Content -LiteralPath (Join-Path (Join-Path $here 'windmill') 'antiphon-nightly-tests.json') -Raw | ConvertFrom-Json
-    $content = [string]$master.content
-    Assert-C487 -Cond ($content -match 'WM_SCHEDULE_PATH') -Name 'C599 ScheduleProvenance the master wrapper reads WM_SCHEDULE_PATH'
-    Assert-C487 -Cond ($content -match 'TRIGGER=manual') -Name 'C599 ScheduleProvenance the master wrapper defaults to manual'
-    Assert-C487 -Cond ($content -match 'u/lndcobra/antiphon_nightly_tests') -Name 'C599 ScheduleProvenance the master wrapper checks its OWN schedule path'
-    Assert-C487 -Cond ($content -match '-Trigger \$TRIGGER') -Name 'C599 ScheduleProvenance the master wrapper passes the derived trigger'
-    Assert-C487 -Cond ($content -match '-Profile nightly') -Name 'C599 ScheduleProvenance the master wrapper pins the nightly profile'
-
-    $rc = Get-Content -LiteralPath (Join-Path (Join-Path $here 'windmill') 'antiphon-release-candidates.json') -Raw | ConvertFrom-Json
-    $rcContent = [string]$rc.content
-    Assert-C487 -Cond ($rcContent -match 'WM_SCHEDULE_PATH') -Name 'C599 ScheduleProvenance the rc wrapper reads WM_SCHEDULE_PATH'
-    Assert-C487 -Cond ($rcContent -match 'u/lndcobra/antiphon_release_candidates') -Name 'C599 ScheduleProvenance the rc wrapper checks its own schedule path'
-    Assert-C487 -Cond ($rcContent -notmatch 'TRIGGER=scheduled') -Name 'C599 ScheduleProvenance the rc wrapper never claims scheduled master credit'
-
-    $rcSched = Get-Content -LiteralPath (Join-Path (Join-Path $here 'windmill') 'antiphon-release-candidates.schedule.json') -Raw | ConvertFrom-Json
-    Assert-C487 -Cond (-not [bool]$rcSched.enabled) -Name 'C599 ScheduleProvenance the checked-in rc schedule payload is disabled'
-    Assert-C487 -Cond ([string]$rcSched.schedule -eq '0 30 8,16 * * *') -Name 'C599 ScheduleProvenance the rc payload carries the two-slot cron' -Detail ([string]$rcSched.schedule)
-
-    # CARD-0616: a raw JSON escape in a definition's human-facing prose (a Windows path
-    # whose \releases became a carriage return) survives registration and misreads the
-    # producer-owned clone path in the Windmill UI. Every checked-in definition's summary
-    # and description must be free of control characters.
-    $dirtyProse = @()
-    foreach ($def in (Get-ChildItem -LiteralPath (Join-Path $here 'windmill') -Filter '*.json' -File)) {
-        $obj = Get-Content -LiteralPath $def.FullName -Raw | ConvertFrom-Json
-        foreach ($field in @('summary', 'description')) {
-            $val = [string]$obj.$field
-            if ($val -match '[\x00-\x1f]') { $dirtyProse += ('{0}:{1}' -f $def.Name, $field) }
-        }
-    }
-    Assert-C487 -Cond ($dirtyProse.Count -eq 0) -Name 'C599 ScheduleProvenance no definition summary or description carries a control character' -Detail ($dirtyProse -join ',')
-    Assert-C487 -Cond ([string]$rc.description -match 'C:\\Antiphon\\releases\\checkout') -Name 'C599 ScheduleProvenance the rc description reads the producer-owned clone path intact' -Detail ([string]$rc.description)
-
-    # A pre-enabled rc payload is refused rather than registered.
-    $fx = New-C599WindmillFx
-    $defs = Join-Path $fx.Root 'defs'
-    New-Item -ItemType Directory -Path $defs -Force | Out-Null
-    Copy-Item -Path (Join-Path (Join-Path $here 'windmill') '*.json') -Destination $defs -Force
-    $bad = Get-Content -LiteralPath (Join-Path $defs 'antiphon-release-candidates.schedule.json') -Raw | ConvertFrom-Json
-    $bad | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
-    $bad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $defs 'antiphon-release-candidates.schedule.json') -Encoding UTF8
-    $r = Invoke-C599Register -Fx $fx -Extra @{ Apply = $true; DefinitionRoot = $defs }
-    Assert-C487 -Cond ([string]$r.Refusal -eq 'rc-schedule-preenabled') -Name 'C599 ScheduleProvenance a pre-enabled rc payload refuses' -Detail ([string]$r.Refusal)
-
-    # Profile hygiene: a non-mc workspace and an inline token both refuse.
-    $fx2 = New-C599WindmillFx
-    $p = Get-Content -LiteralPath $fx2.Profile -Raw | ConvertFrom-Json
-    $p | Add-Member -NotePropertyName workspace -NotePropertyValue 'other' -Force
-    $p | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $fx2.Profile -Encoding UTF8
-    $wrongWs = Invoke-C599Register -Fx $fx2
-    Assert-C487 -Cond ([string]$wrongWs.Refusal -eq 'profile-invalid') -Name 'C599 ScheduleProvenance a non-mc workspace refuses' -Detail ([string]$wrongWs.Refusal)
-
-    $fx3 = New-C599WindmillFx
-    $p3 = Get-Content -LiteralPath $fx3.Profile -Raw | ConvertFrom-Json
-    $p3 | Add-Member -NotePropertyName token -NotePropertyValue 'inline-secret' -Force
-    $p3 | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $fx3.Profile -Encoding UTF8
-    $inline = Invoke-C599Register -Fx $fx3
-    Assert-C487 -Cond ([string]$inline.Refusal -eq 'profile-invalid') -Name 'C599 ScheduleProvenance an inline token in the profile refuses' -Detail ([string]$inline.Refusal)
-
-    $fx4 = New-C599WindmillFx
-    Remove-Item -LiteralPath $fx4.TokenFile -Force
-    $noToken = Invoke-C599Register -Fx $fx4 -Extra @{ Apply = $true }
-    Assert-C487 -Cond ([string]$noToken.Refusal -eq 'token-unavailable') -Name 'C599 ScheduleProvenance a missing token file refuses the apply' -Detail ([string]$noToken.Refusal)
 }
 
 # ======================================================= V-4 e2e evidence ===
@@ -2442,7 +2119,7 @@ function Invoke-C599AFieldMatrix {
         @{ n = 'policyHash'; t = @('policy-hash-mismatch'); wt = 7; fv = ('0' * 64) },
         @{ n = 'requiredSuites'; t = @('authority-suites-type', 'authority-suites-mismatch'); wt = 8; fv = @($eight | Where-Object { $_ -ne 'e2e' }); k = @{ foreign = @('authority-suites-mismatch') } },
         @{ n = 'exclusions'; t = @('authority-exclusions-type', 'authority-exclusions-mismatch'); wt = 'none'; fv = 'drop-first'; k = @{ foreign = @('authority-exclusions-mismatch') } },
-        @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/release-gate.ps1'); wt = 'x'; fv = 'one-changed' },
+        @{ n = 'scriptHashes'; t = @('script-digest-mismatch:lib/nightly-common.ps1'); wt = 'x'; fv = 'one-changed' },
         @{ n = 'createdAt'; t = @('ledger-timestamps'); wt = $true; fv = '2026-09-23T09:00:00Z' }
     )
     $fields = @($fields | Select-Object -Skip $Skip -First $Take)
@@ -2461,7 +2138,7 @@ function Invoke-C599AFieldMatrix {
                         'array' { Set-C599AField $a $f.n (New-C599AWrapped -Value $a.($f.n)) }
                         'foreign' {
                             if ($f.fv -is [string] -and $f.fv -eq 'drop-first') { $a.exclusions = @($a.exclusions | Select-Object -Skip 1) }
-                            elseif ($f.fv -is [string] -and $f.fv -eq 'one-changed') { $a.scriptHashes.'lib/release-gate.ps1' = ('0' * 64) }
+                            elseif ($f.fv -is [string] -and $f.fv -eq 'one-changed') { $a.scriptHashes.'lib/nightly-common.ps1' = ('0' * 64) }
                             else { Set-C599AField $a $f.n $f.fv }
                         }
                     }
@@ -2516,7 +2193,7 @@ function Test-C599A_PinnedPolicyBindings {
             @{ l = 'exclusion methods joined string'; t = 'authority-exclusions-type'; e = { param($a) Set-C599AField $a.exclusions[0] 'methods' 'Live' } },
             @{ l = 'exclusion class array-wrapped'; t = 'authority-exclusions-type'; e = { param($a) Set-C599AField $a.exclusions[0] 'class' (New-C599AWrapped -Value ([string]$a.exclusions[0].class)) } },
             @{ l = 'exclusion row a string'; t = 'authority-exclusions-type'; e = { param($a) $a.exclusions = @('antiphon:ClaudeAdapterIntegrationTests') + @($a.exclusions | Select-Object -Skip 1) } },
-            @{ l = 'script digest array-wrapped'; t = 'script-digest-mismatch:lib/release-gate.ps1'; e = { param($a) $a.scriptHashes.'lib/release-gate.ps1' = (New-C599AWrapped -Value ([string]$a.scriptHashes.'lib/release-gate.ps1')) } },
+            @{ l = 'script digest array-wrapped'; t = 'script-digest-mismatch:lib/nightly-common.ps1'; e = { param($a) $a.scriptHashes.'lib/nightly-common.ps1' = (New-C599AWrapped -Value ([string]$a.scriptHashes.'lib/nightly-common.ps1')) } },
             @{ l = 'createdAt array-wrapped'; t = 'ledger-timestamps'; e = { param($a) Set-C599AField $a 'createdAt' (New-C599AWrapped -Value ([string]$a.createdAt)) } })) {
         $c599aShape = $shape
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label $shape.l -Expect @($shape.t) -Mutate { Update-C599AAuthority -Fx $fx -Mutate $c599aShape.e }
@@ -2918,7 +2595,7 @@ function Test-C599A_ExecutionLedgerJoins {
 
     # G-300: the authority, plan, discovery and every executable script digest bind.
     $m = @()
-    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
+    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/nightly-common.ps1', 'lib/nightly-core.ps1', 'lib/Antiphon.Nightly', '../src/Antiphon.IO.WriteBehind')) {
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('script ' + $scriptRel) -Expect @('script-digest-mismatch:' + $scriptRel) -Mutate {
             Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.$scriptRel = ('0' * 64) }
         }
@@ -3335,22 +3012,7 @@ function Test-C599A_PublisherTestMode {
     }
     Assert-C599AMatrix -Name 'C599 V-18: outside test mode a seams file is refused before it is loaded, the clock is never read and nothing remote is written' -Results $m
 
-    # The production clock function itself: the seam answers only in test mode.
-    $saved = $script:ReleaseGateSeams
-    $outside = ''
-    $inside = $null
-    try {
-        $script:ReleaseGateSeams = @{ UtcNow = { return $script:C599Now } }
-        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', $null)
-        try { $outside = 'returned ' + (Get-ReleaseGateUtcNow).ToString('o') } catch { $outside = 'refused' }
-        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', '1')
-        try { $inside = Get-ReleaseGateUtcNow } catch { $inside = $null }
-    } finally {
-        $script:ReleaseGateSeams = $saved
-        [Environment]::SetEnvironmentVariable('ANTIPHON_RELEASE_GATE_TEST_MODE', '1')
-    }
-    Assert-C487 -Cond ($outside -eq 'refused' -and $null -ne $inside -and $inside -eq $script:C599Now) `
-        -Name 'C599 V-18: the release-gate clock seam is refused outside test mode and honoured inside it' -Detail ('outside=' + $outside + ' inside=' + $inside)
+    # The clock seam's own refusal outside test mode is ReleaseGateLibraryTests.Clock_seam_answers_only_in_test_mode.
 
     # Test mode with a real remote refuses before any remote read or write. The
     # checkout's origin points at a missing local path for these variants, so even a
@@ -3484,9 +3146,9 @@ function Invoke-C1311Promote {
         $policyHash = $auth.policyHash
         $creditForReserve = $CreditSha
         if ([string]::IsNullOrWhiteSpace($creditForReserve)) { $creditForReserve = $HeadSha }
-        $reserved = New-ReleaseGateTagReservation -RemoteTags @() -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -Sha $creditForReserve -CutUtc (Get-C1311Utc '2026-10-15T00:00:00Z')
+        $reserved = $script:C599Journals.Reserve((Join-Path $release 'publications.json'), $CandidateId, $creditForReserve, (Get-C1311Utc '2026-10-15T00:00:00Z'), [string[]]@())
         $reservedTag = [string]$reserved.Tag
-        [void](Set-ReleaseGateReservationPublished -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -ReleaseId 'R-pre' -ReleaseUrl 'https://example/releases/tag/pre')
+        $script:C599Journals.MarkPublished((Join-Path $release 'publications.json'), $CandidateId, 'R-pre', 'https://example/releases/tag/pre')
         if ([string]::IsNullOrWhiteSpace($PreTag)) { $PreTag = $reservedTag }
     }
     $refs = @{}
@@ -3534,62 +3196,9 @@ function Test-C1311TraceClean([string]$Trace) {
 }
 
 function Test-C1311_PreReleaseTag {
-    # D-3/D-4: -rc.K parses, a long-lived id proposes one, and promote writes the
-    # final tag beside it. Stamp publication stays a final tag without --prerelease.
-    $accepted = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc.1')
-    $bareRc = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc')
-    Assert-C487 -Cond (
-        [bool]$accepted.Ok -and [bool]$accepted.Prerelease -and [int]$accepted.Rc -eq 1 -and [int]$accepted.Sequence -eq 2 -and
-        (-not [bool]$bareRc.Ok) -and [string]$bareRc.Reason -eq 'tag-shape') `
-        -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.1 is accepted' -Detail ('rc1=' + [string]$accepted.Reason + '/' + [string]$accepted.Prerelease + ' bare=' + [string]$bareRc.Reason)
-
-    $finalOnly = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2')
-    Assert-C487 -Cond ([bool]$finalOnly.Ok -and -not [bool]$finalOnly.Prerelease -and [int]$finalOnly.Sequence -eq 2) `
-        -Name 'C1311 PreReleaseTag v2026.10.15.2 is accepted' -Detail ([string]$finalOnly.Reason + '/' + [string]$finalOnly.Prerelease)
-
-    $zero = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc.0')
-    Assert-C487 -Cond ((-not [bool]$zero.Ok) -and [string]$zero.Reason -eq 'tag-shape') `
-        -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.0 refuses tag-shape' -Detail ([string]$zero.Reason)
-
-    $proposalRoot = New-C599Root
-    $proposalJournal = Join-Path $proposalRoot 'publications.json'
-    $cut = Get-C1311Utc '2026-10-15T00:00:00Z'
+    # D-3/D-4: promote writes the final tag beside the pre-release; stamp publication stays a final tag without
+    # --prerelease. The tag parse and the long-lived proposal rows run in process (ReleaseGateLibraryTests).
     $id1 = 'rc-2026-10-15-' + $ShaB.Substring(0, 12)
-    $id2 = 'rc-2026-10-15-' + $ShaC.Substring(0, 12)
-    $shaD = ('d' * 40)
-    $shaE = ('e' * 40)
-    $id3 = 'rc-2026-10-15-' + $shaD.Substring(0, 12)
-    $id4 = 'rc-2026-10-16-' + $shaE.Substring(0, 12)
-    $p1 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut
-    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut)
-    $p2 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut
-    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut)
-    $closed = $false
-    if (Get-Command -Name Set-ReleaseGateReservationFinalTag -ErrorAction SilentlyContinue) {
-        [void](Set-ReleaseGateReservationPublished -JournalPath $proposalJournal -CandidateId $id1 -ReleaseId 'fixture-pre' -ReleaseUrl 'https://example.invalid/pre')
-        $closed = [bool](Set-ReleaseGateReservationFinalTag -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -PreReleaseTag $p1.Tag -FinalTag 'v2026.10.15.1')
-    }
-    $p3 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id3 -Sha $shaD -CutUtc $cut
-    $p4 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id4 -Sha $shaE -CutUtc (Get-C1311Utc '2026-10-16T00:00:00Z')
-    $stampJournal = Join-Path $proposalRoot 'stamp.json'
-    $stampCut = Get-C1311Utc '2026-09-23T08:30:00Z'
-    $stampProposal = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
-    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut)
-    $reused = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
-    $threw = ''
-    try { [void](Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaC -CutUtc $stampCut) } catch { $threw = $_.Exception.Message }
-    Assert-C487 -Cond (
-        [string]$p1.Tag -eq 'v2026.10.15.1-rc.1' -and
-        [string]$p2.Tag -eq 'v2026.10.15.1-rc.2' -and
-        $closed -and
-        [string]$p3.Tag -eq 'v2026.10.15.2-rc.1' -and
-        [string]$p4.Tag -eq 'v2026.10.16.1-rc.1' -and
-        [string]$stampProposal.Tag -eq 'v2026.09.23.1' -and
-        [bool]$reused.Reused -and [string]$reused.Tag -eq 'v2026.09.23.1' -and
-        $threw -match 'already reserved') `
-        -Name 'C1311 PreReleaseTag a long-lived proposal is vYYYY.MM.DD.N-rc.K' `
-        -Detail ('p1=' + [string]$p1.Tag + ' p2=' + [string]$p2.Tag + ' closed=' + $closed + ' p3=' + [string]$p3.Tag + ' p4=' + [string]$p4.Tag + ' stamp=' + [string]$stampProposal.Tag + ' reused=' + [string]$reused.Tag + ' threw=' + $threw)
-
     $happy = Invoke-C1311Promote -Reserve -RemotePeel $ShaB -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB -SeedGitHub
     $finalSha = Read-C599Remote -Seams $happy.Git -Ref ('refs/tags/' + ($happy.PreTag -replace '-rc\.[0-9]+$', ''))
     $again = $null
@@ -3846,7 +3455,7 @@ function Test-C1311_MovingTipAuthority {
     $have = @()
     if ($null -ne $authDoc -and $null -ne $authDoc.scriptHashes) { $have = @($authDoc.scriptHashes.PSObject.Properties.Name) }
     $fresh = [Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here)
-    $same = ($want.Count -eq 7 -and $have.Count -eq $want.Count)
+    $same = ($want.Count -eq 6 -and $have.Count -eq $want.Count)
     $omitsTip = $true
     foreach ($rel in $want) {
         if ($have -notcontains $rel) { $same = $false; continue }
@@ -4003,52 +3612,7 @@ function Test-C1339_ExactRemoteRefs {
         $results += New-C1339Check ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head) ($order + ' refusal=' + $r.Refusal + ' peel=' + $peel)
     }
     Assert-C599AMatrix -Name 'C1339 G-13 promotion-pre-read' -Results $results
-
-    # Parser cases use complete real records; impossible output is introduced only
-    # for malformed/duplicate/query-failure boundaries.
-    $ref = 'refs/tags/' + $fx.PreTag + '^{}'
-    $nestedLine = $fx.B + "`trefs/tags/refs/tags/" + $fx.PreTag + '^{}'
-    $exactLine = $fx.Head + "`t" + $ref
-    $checks = @()
-    foreach ($output in @(($nestedLine + "`n" + $exactLine), ($exactLine + "`n" + $nestedLine))) {
-        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $output }, $ref)
-        $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'exact tag order'
-    }
-    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $nestedLine }, $ref)
-    $checks += New-C1339Check ($r.Status -eq 'Absent') 'nested only tag'
-    Assert-C599AMatrix 'C1339 G-1 exact-tag' $checks
-
-    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/archive/' + $fx.CandidateRef)))
-    $headRef = 'refs/heads/' + $fx.CandidateRef
-    $headOutput = Invoke-C1339LocalGit $fx @('ls-remote', '--heads', $fx.Bare)
-    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $headOutput }, $headRef)
-    $suffix = $fx.B + "`trefs/heads/archive/" + $fx.CandidateRef
-    $absent = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $suffix }, $headRef)
-    Assert-C487 -Cond ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head -and $absent.Status -eq 'Absent') -Name 'C1339 G-2 exact-head'
-    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ($fx.Head + "`t" + $ref.ToUpperInvariant()) }, $ref)
-    Assert-C487 -Cond ($r.Status -eq 'Absent') -Name 'C1339 G-3 ordinal-case'
-    $checks = @()
-    foreach ($sha in @('abcd', ('z' * 40))) {
-        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ($sha + "`t" + $ref) }, $ref)
-        $checks += New-C1339Check ($r.Status -eq 'Failed') $sha
-    }
-    Assert-C599AMatrix 'C1339 G-4 full-sha' $checks
-    $checks = @()
-    foreach ($output in @(($exactLine + "`n" + $fx.B + "`t" + $ref), ($fx.B + "`t" + $ref + "`n" + $exactLine))) {
-        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $output }, $ref)
-        $checks += New-C1339Check ($r.Status -eq 'Failed') 'conflicting duplicates'
-    }
-    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ("bad unrelated`n" + $exactLine) }, $ref)
-    $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'unrelated malformed record'
-    Assert-C599AMatrix 'C1339 G-5 ambiguous-record' $checks
-    $checks = @()
-    foreach ($output in @('', $exactLine)) {
-        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 1; Output = $output }, $ref)
-        $checks += New-C1339Check ($r.Status -eq 'Failed') 'failed query'
-    }
-    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = '' }, $ref)
-    $checks += New-C1339Check ($r.Status -eq 'Absent') 'successful empty query'
-    Assert-C599AMatrix 'C1339 G-6 query-failure' $checks
+    # G-1..G-6 (the exact remote-ref parser) run in process: ReleaseGateLibraryTests.C1339_ExactRemoteRefs_parser.
 
     $fx = New-C1339Fixture
     Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.B + "`trefs/heads/archive/" + $fx.CandidateRef)
@@ -4218,34 +3782,11 @@ function Test-C1339_RemoteTagAllocation {
     Add-C1339Tag $fx 'irrelevant' $fx.B
     Add-C1339Tag $fx 'v2026.10.15.3' $fx.Head
     $r = Invoke-C1339Publish $fx -WhatIf
-    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
-    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
+    # The inventory's own canonical filter (with and without peeled records) is ReleaseGateLibraryTests.Tag_inventory_keeps_canonical_release_tags_only.
     $output = Invoke-C1339LocalGit $fx @('ls-remote', '--tags', $fx.Bare)
     Set-C1339Read $fx 'origin' $output -Mode replace
-    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
-    $withPeels = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
-    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.1-rc.1' -and $inventory.Ok -and
-        @($inventory.Tags).Count -eq 1 -and $withPeels.Ok -and @($withPeels.Tags).Count -eq 1 -and $withPeels.Tags[0] -ceq 'v2026.10.15.3') -Name 'C1339 G-21 canonical-inventory' -Detail $r.Tag
-
-    $day = Get-C1311Utc '2026-10-15T12:00:00Z'
-    $journal = Join-Path (New-C599Root) 'publications.json'
-    $row = [Antiphon.Nightly.ReleaseGateTags]::ReservationEntry('journal-candidate', $fx.B, 'v2026.10.15.2-rc.7', 2, '', $false, '', '', '', 7, '')
-    Write-NightlyAtomicJson -Path $journal -Object @{ schemaVersion = 1; reservations = @($row) }
-    $proposalArgs = @{ JournalPath = $journal; CandidateId = $fx.CandidateId; Sha = $fx.Head; CutUtc = $day }
-    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1')
-    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.2-rc.8' -and @($r.Journal.reservations).Count -eq 1) -Name 'C1339 G-22 journal-union' -Detail $r.Tag
-    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.2', 'v2026.10.15.3')
-    # This extra final closes a journal-only open sequence too.
-    $closedJournal = $r.Tag -ceq 'v2026.10.15.4-rc.1'
-    $emptyJournal = Join-Path (New-C599Root) 'publications.json'
-    $proposalArgs.JournalPath = $emptyJournal
-    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.3')
-    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.2-rc.1' -and $closedJournal) -Name 'C1339 G-23 smallest-free' -Detail $r.Tag
-    $proposalArgs.CandidateId = $script:CandidateId
-    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.2-rc.4')
-    $proposalArgs.JournalPath = $journal
-    $r2 = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1')
-    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.3' -and $r2.Tag -ceq 'v2026.10.15.3') -Name 'C1339 G-24 legacy-occupancy' -Detail ($r.Tag + '/' + $r2.Tag)
+    $withPeels = Invoke-C1339Publish $fx -WhatIf
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.1-rc.1' -and $withPeels.ExitCode -eq 0 -and $withPeels.Tag -ceq 'v2026.10.15.1-rc.1') -Name 'C1339 G-21 canonical-inventory' -Detail ($r.Tag + '/' + $withPeels.Tag)
 
     $fx = New-C1339AllocationFixture
     $control = Invoke-C1339Publish $fx -WhatIf
@@ -4274,16 +3815,9 @@ function Test-C1339_RemoteTagAllocation {
     Assert-C487 -Cond ($first.Refusal -eq 'tag-push-failed' -and $second.ExitCode -eq 0 -and $second.Published -and $second.Resumed -and
         $first.Tag -ceq 'v2026.10.15.1-rc.1' -and $second.Tag -ceq $first.Tag -and @($stored.reservations).Count -eq 1 -and
         (Get-C1339Peel $fx $second.Tag) -ceq $fx.Head) -Name 'C1339 G-26 reservation-reuse' -Detail $second.Refusal
-    $before = [IO.File]::ReadAllText($journal)
-    $argsForProposal = @{ JournalPath = $journal; CandidateId = $fx.CandidateId; Sha = $fx.C; CutUtc = $day; RemoteTags = @() }
-    $errorText = ''
-    try { [void](Get-ReleaseGateTagProposal @argsForProposal) } catch { $errorText = $_.Exception.Message }
-    Assert-C487 -Cond ($errorText -match 'already reserved for sha' -and [IO.File]::ReadAllText($journal) -ceq $before) -Name 'C1339 G-27 candidate-sha-conflict' -Detail $errorText
-    $argsForProposal.Sha = $fx.Head; $argsForProposal.CandidateId = 'rc-2026-10-15-' + $fx.B.Substring(0, 12)
-    $errorText = ''
-    try { [void](Get-ReleaseGateTagProposal @argsForProposal) } catch { $errorText = $_.Exception.Message }
-    Assert-C487 -Cond ($errorText -match 'already reserved under candidate' -and [IO.File]::ReadAllText($journal) -ceq $before) -Name 'C1339 G-28 sha-candidate-conflict' -Detail $errorText
-
+    # G-22..G-24, G-27, G-28, G-67, G-68 and G-70 (the proposal over the journal and the inventory) run in process:
+    # ReleaseGateLibraryTests.C1339_RemoteTagAllocation_proposal.
+    $day = Get-C1311Utc '2026-10-15T12:00:00Z'
     foreach ($final in @($false, $true)) {
         $fx = New-C1339AllocationFixture
         $tag = $fx.PreTag; $reason = 'tag-conflict'; $label = 'C1339 G-29 selected-tag-recheck'
@@ -4310,26 +3844,11 @@ function Test-C1339_RemoteTagAllocation {
     $preview = Invoke-C1339Publish $fx -WhatIf
     $emptyPreview = $preview.ExitCode -eq 0 -and $preview.Tag -ceq 'v2026.10.15.2-rc.1' -and -not (Test-Path -LiteralPath $journal)
     $emptyAuthority = -not (Test-Path -LiteralPath $pubAuthority)
-    [void](New-ReleaseGateTagReservation -JournalPath $journal -CandidateId $fx.CandidateId -Sha $fx.Head -CutUtc $day -RemoteTags @('v2026.10.15.1'))
+    [void]$script:C599Journals.Reserve($journal, $fx.CandidateId, $fx.Head, $day, [string[]]@('v2026.10.15.1'))
     $before = [IO.File]::ReadAllText($journal)
     $preview = Invoke-C1339Publish $fx -WhatIf
     Assert-C487 -Cond ($emptyPreview -and $preview.ExitCode -eq 0 -and $preview.Resumed -and [IO.File]::ReadAllText($journal) -ceq $before -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-31 preview-reservation' -Detail $preview.Refusal
     Assert-C487 -Cond ($emptyAuthority -and -not (Test-Path -LiteralPath $pubAuthority)) -Name 'C1339 G-32 preview-authority'
-
-    $fx = New-C1339AllocationFixture
-    foreach ($tag in @('v2026.10.15.2-rc.9', 'v2026.10.15.3-rc.2', 'v2026.10.15.3-rc.4')) { Add-C1339Tag $fx $tag $fx.Head }
-    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
-    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
-    $ordered = @($inventory.Tags | Sort-Object)
-    $nChecks = @(); $kChecks = @()
-    foreach ($reverse in @($false, $true)) {
-        if ($reverse) { [array]::Reverse($ordered) }
-        $r = Get-ReleaseGateTagProposal -JournalPath (Join-Path $fx.ReleaseRoot 'publications.json') -CandidateId $fx.CandidateId -Sha $fx.Head -CutUtc $day -RemoteTags $ordered
-        $nChecks += New-C1339Check ($r.Sequence -eq 3) $r.Tag
-        $kChecks += New-C1339Check ($r.Rc -eq 5) $r.Tag
-    }
-    Assert-C599AMatrix 'C1339 G-67 greatest-open-n' $nChecks
-    Assert-C599AMatrix 'C1339 G-68 greatest-k' $kChecks
 
     $fx = New-C1339AllocationFixture
     Add-C1339Tag $fx 'v2026.10.15.1' $fx.Head
@@ -4341,19 +3860,6 @@ function Test-C1339_RemoteTagAllocation {
     Assert-C487 -Cond ($r.Refusal -eq 'tag-push-failed' -and @($stored.reservations).Count -eq 1 -and $stored.reservations[0].tag -ceq 'v2026.10.15.3-rc.1' -and
         $stored.reservations[0].candidateId -ceq $fx.CandidateId -and -not $stored.reservations[0].published) -Name 'C1339 G-69 no-invented-publications' -Detail $r.Refusal
 
-    $checks = @()
-    foreach ($function in @('Get-ReleaseGateTagProposal', 'New-ReleaseGateTagReservation')) {
-        $path = Join-Path (New-C599Root) 'publications.json'
-        $parameters = @{ JournalPath = $path; CandidateId = $fx.CandidateId; Sha = $fx.Head; CutUtc = $day }
-        $result = $null; $refused = ''
-        # ScriptHarness is a bounded -NonInteractive child; missing mandatory input
-        # cannot pause it for a prompt. All other arguments are valid.
-        try { $result = & $function @parameters -ErrorAction Stop } catch { $refused = $_.Exception.Message }
-        $checks += New-C1339Check ($null -eq $result -and $refused -match 'RemoteTags|mandatory|NonInteractive' -and -not (Test-Path -LiteralPath $path)) ($function + ':' + $refused)
-        $explicit = & $function @parameters -RemoteTags @()
-        $checks += New-C1339Check ($explicit.Tag -ceq 'v2026.10.15.1-rc.1') ($function + ': explicit empty')
-    }
-    Assert-C599AMatrix 'C1339 G-70 no-implicit-inventory' $checks
 }
 
 # ====================================================================== run ===
@@ -4429,8 +3935,8 @@ function Test-C1339_AllocationUtcDay {
 function Initialize-C1339PromotionReservation {
     param($Fx)
     $path = Join-Path $Fx.ReleaseRoot 'publications.json'
-    [void](New-ReleaseGateTagReservation -JournalPath $path -CandidateId $Fx.CandidateId -Sha $Fx.Head -CutUtc ([datetime]'2026-10-15T00:00:00Z') -RemoteTags @())
-    [void](Set-ReleaseGateReservationPublished -JournalPath $path -CandidateId $Fx.CandidateId -ReleaseId 'fixture-pre' -ReleaseUrl 'https://example.invalid/fixture/pre')
+    [void]$script:C599Journals.Reserve($path, $Fx.CandidateId, $Fx.Head, ([datetime]'2026-10-15T00:00:00Z'), [string[]]@())
+    $script:C599Journals.MarkPublished($path, $Fx.CandidateId, 'fixture-pre', 'https://example.invalid/fixture/pre')
 }
 
 function New-C1339PromotionFixture {
@@ -4476,8 +3982,8 @@ function Test-C1339_PromoteAuthorityHash {
     $snap = Save-C1339Snapshot $fx
     $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
     $auth = Get-Content (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') -Raw | ConvertFrom-Json
-    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 7 -and
-        $auth.scriptHashes.'promote-release.ps1' -ceq ([Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here))['promote-release.ps1']) 'five script and two source-tree digests'
+    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 6 -and
+        $auth.scriptHashes.'promote-release.ps1' -ceq ([Antiphon.Nightly.ReleaseAuthority]::ScriptHashes($here))['promote-release.ps1']) 'four script and two source-tree digests'
     foreach ($missing in @($false, $true)) {
         $hashChecks += Invoke-C1339AuthorityVariant $fx $snap {
             Update-C599AAuthority $fx { param($a)
@@ -4551,18 +4057,18 @@ function Invoke-C1339ReservationVariant {
 
 function Install-C1339WriterFault {
     param($Fx)
-    # Only this invocation's script scope, installed after the real imports by the
-    # existing admitted fixture. All other paths delegate to the production writer.
+    # The promoter hands the admitted seams' JournalWrite to its journal (Antiphon.Nightly.ReleaseGateJournal), so the
+    # fault reaches only the publication journal's writes; every other path, and an unfaulted write, is the production
+    # atomic replace.
     Add-Content -LiteralPath $Fx.Gh.Path -Encoding ASCII -Value @"
-`$script:C1339Writer = (Get-Command Write-NightlyAtomicJson).ScriptBlock
-function script:Write-NightlyAtomicJson {
-    param([string]`$Path, `$Object)
+`$ReleaseGateSeams.JournalWrite = {
+    param([string]`$Path, [string]`$Text)
     if (`$Path -ceq '$(Join-Path $Fx.ReleaseRoot 'publications.json')' -and (Test-Path '$($Fx.FaultPath)')) {
         `$fault = Get-Content '$($Fx.FaultPath)' -Raw | ConvertFrom-Json
         if (`$fault.writer -eq 'throw') { throw 'fixture-atomic-write-failure' }
         if (`$fault.writer -eq 'silent') { return }
     }
-    & `$script:C1339Writer -Path `$Path -Object `$Object
+    [Antiphon.Nightly.ReleaseGateJournal]::WriteAtomic(`$Path, `$Text)
 }
 "@
 }
@@ -4633,7 +4139,7 @@ function Invoke-C1339PromotionReservations {
             if ($variant.label -eq 'C1339 G-52 reservation-final-consistent') {
                 $path = Join-Path $fx.ReleaseRoot 'publications.json'
                 $before = [IO.File]::ReadAllText($path)
-                $wrongFinal = Set-ReleaseGateReservationFinalTag -JournalPath $path -CandidateId $fx.CandidateId -Sha $fx.Head -PreReleaseTag $fx.PreTag -FinalTag 'v2026.10.15.2'
+                $wrongFinal = $script:C599Journals.RecordFinalTag($path, $fx.CandidateId, $fx.Head, $fx.PreTag, 'v2026.10.15.2')
                 $checks += New-C1339Check (-not $wrongFinal -and [IO.File]::ReadAllText($path) -ceq $before) 'recorder final must match pre-release'
             }
             if (-not $resume) { Assert-C599AMatrix $variant.label $checks }
@@ -4702,7 +4208,7 @@ function Test-C1339_PromoteReservationAndTarget {
         $path = Join-Path $fx.ReleaseRoot 'publications.json'
         $unrelated = ''
         if ($fault -eq 'silent') {
-            [void](New-ReleaseGateTagReservation -JournalPath $path -CandidateId ('rc-2026-10-15-' + $fx.C.Substring(0,12)) -Sha $fx.C -CutUtc ([datetime]'2026-10-15T00:00:00Z') -RemoteTags @($fx.PreTag))
+            [void]$script:C599Journals.Reserve($path, ('rc-2026-10-15-' + $fx.C.Substring(0,12)), $fx.C, ([datetime]'2026-10-15T00:00:00Z'), [string[]]@($fx.PreTag))
             $unrelated = (Get-Content $path -Raw | ConvertFrom-Json).reservations[1] | ConvertTo-Json -Depth 12 -Compress
         }
         $expectedCount = if ($unrelated) { 2 } else { 1 }

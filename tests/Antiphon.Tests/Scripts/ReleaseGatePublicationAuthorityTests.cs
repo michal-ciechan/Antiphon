@@ -142,10 +142,9 @@ public sealed class ReleaseGatePublicationAuthorityTests
         "C599 V-12: the restored control publishes after only read-only GETs of the bound release card");
 
     [Test]
-    public Task C599A_PublisherTestMode() => RunCaseAsync("C599A_PublisherTestMode", 4,
+    public Task C599A_PublisherTestMode() => RunCaseAsync("C599A_PublisherTestMode", 3,
         "C599 V-18: in test mode the fake remote and the injected clock publish the valid control",
         "C599 V-18: outside test mode a seams file is refused before it is loaded, the clock is never read and nothing remote is written",
-        "C599 V-18: the release-gate clock seam is refused outside test mode and honoured inside it",
         "C599 V-18: test mode refuses a real remote: no seams file, or one without the Git or GitHub adapter");
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>

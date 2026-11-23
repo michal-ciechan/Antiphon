@@ -4,33 +4,18 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0599 V-7. Each method runs the matching <c>Test-C599_*</c> case of
-/// <c>scripts/test-release-gate.ps1</c> against the PRODUCTION status script and the production
-/// publication journal.
-///
-/// <para>The decisive behaviours: the running SHA is matched EXACTLY against published manifests,
-/// so a newer build reports <c>unreleased integration build</c> rather than borrowing the latest
-/// release's identity; a reserved-but-unpublished tag is not released; missing publication data is
-/// <c>unknown</c>, not the latest release; and no release operation restarts, deploys, kills or
-/// checks anything out.</para>
+/// CARD-0599 V-7. <c>Test-C599_NoActivation</c> of <c>scripts/test-release-gate.ps1</c> runs a real publication through
+/// the PRODUCTION publisher (still PowerShell) and inspects the git calls it actually made: no restart, kill or deploy,
+/// no force push, no tag deletion. The status itself is C# since unit 12 of 2026-11-22-remaining-ps1-to-csharp.md
+/// (<c>antiphon-scripts release-status</c>): its identity rows and its no-activation row run in process in
+/// <see cref="ReleaseStatusTests"/>, so this case no longer reads the deleted release-status.ps1.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseGateStatusTests
 {
     [Test]
-    public Task C599_StatusIdentity() => RunCaseAsync("C599_StatusIdentity", 7,
-        "C599 StatusIdentity no publication journal is unknown, not latest",
-        "C599 StatusIdentity a reserved but unpublished tag is not released",
-        "C599 StatusIdentity an exact sha match reports released with its tag",
-        "C599 StatusIdentity the release url is the GitHub tag address",
-        "C599 StatusIdentity a newer sha is NOT labelled as the latest release",
-        "C599 StatusIdentity a newer sha carries no tag");
-
-    [Test]
-    public Task C599_NoActivation() => RunCaseAsync("C599_NoActivation", 14,
-        "C599 NoActivation release-status performs no restart-apphost",
-        "C599 NoActivation release-status performs no git checkout",
+    public Task C599_NoActivation() => RunCaseAsync("C599_NoActivation", 9,
         "C599 NoActivation publish-release performs no restart-apphost",
         "C599 NoActivation control: the publication ran",
         "C599 NoActivation the publication really pushed something",

@@ -30,8 +30,9 @@
     refuses rc-ref-required.
 
 .PARAMETER SeamsPath
-    Injectable Git boundary for the offline contract tests. Never used in
-    production.
+    Injectable Git boundary for the offline contract tests ($ReleaseGateSeams.Git,
+    handed to the compiled Antiphon.Nightly.ReleaseGateRemote that replaced
+    scripts/lib/release-gate.ps1). Never used in production.
 #>
 param(
     [string]$ReleaseRoot = 'C:\Antiphon\releases',
@@ -49,8 +50,7 @@ $ErrorActionPreference = 'Continue'
 
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'release-gate.ps1')
-# The candidate ref and the release paths are compiled: this entry point runs under pwsh with the core.
+# The candidate ref, the release paths and the remote reads are compiled: this entry point runs under pwsh with the core.
 Assert-NightlyCoreAvailable 'release-candidate'
 
 function Write-CandidateLine { param([string]$Message) Write-Host ('[release-candidate] {0}' -f $Message) }
@@ -66,7 +66,12 @@ function Invoke-AntiphonReleaseCandidate {
         [string]$SeamsPath,
         [switch]$WhatIf
     )
-    Import-ReleaseGateSeams -SeamsPath $SeamsPath
+    $ReleaseGateSeams = $null
+    if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
+        if (-not (Test-Path -LiteralPath $SeamsPath)) { throw ('missing seams {0}' -f $SeamsPath) }
+        . $SeamsPath
+    }
+    $remoteGate = [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $null, $null, $false)
     $result = [ordered]@{
         ExitCode = 1
         Refusal = ''
@@ -137,7 +142,7 @@ function Invoke-AntiphonReleaseCandidate {
         if ($WhatIf) { Write-CandidateLine ('WhatIf: would clone -c core.longpaths=true {0} into {1}' -f $RemoteUrl, $CheckoutRoot) }
         else {
             New-Item -ItemType Directory -Path (Split-Path -Parent $CheckoutRoot) -Force | Out-Null
-            $clone = Invoke-ReleaseGateGit -WorkingDirectory (Split-Path -Parent $CheckoutRoot) -Arguments @('clone', '-c', 'core.longpaths=true', $RemoteUrl, $CheckoutRoot)
+            $clone = $remoteGate.Git((Split-Path -Parent $CheckoutRoot), [string[]]@('clone', '-c', 'core.longpaths=true', $RemoteUrl, $CheckoutRoot))
             if ([int]$clone.ExitCode -ne 0) {
                 Write-CandidateLine 'REFUSED: clone failed.'
                 $result.Refusal = 'clone-failed'; $result.ExitCode = 1; return [pscustomobject]$result
@@ -148,7 +153,7 @@ function Invoke-AntiphonReleaseCandidate {
 
     # A long-lived ref is already on the remote. Journal that tip. Do not push.
     if ($candidate.Kind -eq 'long-lived') {
-        $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+        $remote = $remoteGate.Head($CheckoutRoot, $candidate.Ref)
         if ($remote.Status -eq 'Failed') {
             Write-CandidateLine 'REFUSED: could not read the long-lived rc ref.'
             $result.Refusal = 'rc-ref-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -220,12 +225,12 @@ function Invoke-AntiphonReleaseCandidate {
         $result.Resumed = $true
         Write-CandidateLine ('resuming candidate {0} at {1}' -f $candidate.CandidateId, $sha)
     } else {
-        $fetch = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('fetch', 'origin', $SourceRef)
+        $fetch = $remoteGate.Git($CheckoutRoot, [string[]]@('fetch', 'origin', $SourceRef))
         if ([int]$fetch.ExitCode -ne 0) {
             Write-CandidateLine 'REFUSED: fetch failed.'
             $result.Refusal = 'fetch-failed'; $result.ExitCode = 1; return [pscustomobject]$result
         }
-        $rev = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'FETCH_HEAD')
+        $rev = $remoteGate.Git($CheckoutRoot, [string[]]@('rev-parse', 'FETCH_HEAD'))
         $sha = ([string]$rev.Output).Trim()
         if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($sha))) {
             Write-CandidateLine ('REFUSED: origin/{0} did not resolve to a full sha ({1}).' -f $SourceRef, $sha)
@@ -243,7 +248,7 @@ function Invoke-AntiphonReleaseCandidate {
     # D-3: an existing remote candidate ref at a different SHA is a hard refusal.
     # Resolve it BEFORE the push so an ambiguous earlier response cannot be
     # papered over with a second write.
-    $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+    $remote = $remoteGate.Head($CheckoutRoot, $candidate.Ref)
     if ($remote.Status -eq 'Failed') {
         Write-CandidateLine 'REFUSED: remote candidate could not be resolved.'
         $result.Refusal = 'remote-candidate-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -286,11 +291,11 @@ function Invoke-AntiphonReleaseCandidate {
     }
 
     # Create-only push. No --force, no lease, no ref move.
-    $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('{0}:refs/heads/{1}' -f $sha, $candidate.Ref))
+    $push = $remoteGate.Git($CheckoutRoot, [string[]]@('push', 'origin', ('{0}:refs/heads/{1}' -f $sha, $candidate.Ref)))
     if ([int]$push.ExitCode -ne 0) {
         # An ambiguous or failed push is resolved by re-reading the remote, never
         # by pushing again under a new identity.
-        $recheck = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+        $recheck = $remoteGate.Head($CheckoutRoot, $candidate.Ref)
         if ($recheck.Status -eq 'Found' -and [string]::Equals($recheck.Sha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
             Write-CandidateLine 'push response lost but the remote holds the pinned sha.'
             $journal.pushed = $true

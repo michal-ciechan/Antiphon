@@ -69,8 +69,8 @@ public sealed class ReleaseImpactScriptTests
     {
         var result = Case(await Shared.Value, "real");
         foreach (var (identity, file) in new[] { (Publication, "ReleaseGatePublicationAuthorityTests.cs"), (Contract, "ReleaseGateAuthorityContractTests.cs") })
-            Chain(result, "scripts/lib/release-gate.ps1", identity).ShouldBe(
-                [Tests + file, "scripts/test-release-gate.ps1", "scripts/lib/release-gate.ps1"], identity);
+            Chain(result, "scripts/lib/c487-harness.ps1", identity).ShouldBe(
+                [Tests + file, "scripts/test-release-gate.ps1", "scripts/lib/c487-harness.ps1"], identity);
         // Fixture: constant foreach imports, multi-hop dot-source, Import-Module and two cycles.
         Paths(result, Looped).ShouldBe(new[]
         {

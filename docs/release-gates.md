@@ -74,8 +74,8 @@ contract is unchanged. The rc lane tests one pinned SHA of the long-lived
 
 `NightlyRunParts.CompleteGreenPredicate` in `scripts/lib/Antiphon.Nightly/NightlyRunParts.cs` takes the credit
 kind it is being asked about and defaults to `master-scheduled`, so every pre-existing caller
-keeps its original meaning. The decision itself lives in `Get-ReleaseGateCreditVerdict`
-(`scripts/lib/release-gate.ps1`). Both kinds require:
+keeps its original meaning. The decision itself lives in `ReleaseGateCredit.Verdict`
+(`scripts/lib/Antiphon.Nightly/ReleaseGateCredit.cs`). Both kinds require:
 
 - `coverageComplete`, `testsPassed` and `reportDelivered` as **real booleans** - a JSON
   `"true"` string earns nothing;
@@ -208,7 +208,7 @@ Manual emergency stop and stale shared-lock recovery:
    preserved copy and verify the original path is absent before releasing the hold.
    The operational hold is essential: unchecked read/delete is not compare-and-swap.
    Failure retains evidence and does not authorize retry against a different lock.
-   `Enter-ReleaseGateNativeLock` intentionally does not auto-reclaim stale locks.
+   `ReleaseGateNativeLock.Enter` (`scripts/lib/Antiphon.Nightly/ReleaseGateNativeLock.cs`) intentionally does not auto-reclaim stale locks.
 5. **Record before any separately intended restart.** Keep stop time, reason,
    identities, before/after observations and retained lock path. Do not rewrite
    `last-run.json`, green files, journals or reports to manufacture a terminal
@@ -534,8 +534,13 @@ verified. A probe with opt-out `1` cannot count as native policy coverage.
 | `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green. |
 | `scripts/publish-release.ps1` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
 | `scripts/promote-release.ps1` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
-| `scripts/release-status.ps1` | Is the running build a published release? Read-only. |
-| `scripts/register-release-gates.ps1` | Idempotent Windmill registration front door. |
+| `scripts\antiphon.cmd release-status` | Is the running build a published release? Read-only. |
+| `scripts\antiphon.cmd register-release-gates` | Idempotent Windmill registration front door. |
+
+The remote reads, the tag push, GitHub, the publisher's clock and the publication journal the
+PowerShell scripts above use are C# (`scripts/lib/Antiphon.Nightly/ReleaseGateRemote.cs`,
+`ReleaseGateJournal.cs`, `ReleaseGateTags.cs`); `release-status` and `register-release-gates`
+are commands of `antiphon-scripts` (`scripts/antiphon` from sh).
 
 **Cut.** The release ref is `rc/YYYY-MM-DD`, with an optional `refs/heads/` prefix.
 A legacy stamp `release/rc-YYYYMMDDTHHMMSSZ` remains valid. `release/current` and any
@@ -664,13 +669,14 @@ The result's `gateCredit` is always false. An envelope that claims `gateCredit=t
 ## Release identity is not local activation
 
 `/api/version.version` remains the built SHA and `capabilities` remain feature probes; no new
-web route and no change to NuGet or SDK assembly versioning. `scripts/release-status.ps1`
-looks the running SHA up by **exact** match against published release manifests and returns
-one of:
+web route and no change to NuGet or SDK assembly versioning. `scripts\antiphon.cmd
+release-status [--release-root <dir>] [--version-url <url>] [--sha <sha>]` looks the running SHA
+up by **exact** match against published release manifests and prints one JSON line with one of:
 
 - `released` plus the matched tag and URL,
 - `unreleased integration build`,
-- `unknown` when publication or GitHub data is unavailable.
+- `unknown` when publication or version data is unavailable (no version answer, an answer
+  without a version, or no publication journal).
 
 An ancestor tag, or simply the newest release, is never reported as a newer running SHA's
 identity. Creating a release never restarts AppHost or the runner and never checks a tag out
@@ -696,21 +702,24 @@ coverage stays owned by CARD-0590 / CARD-0605.
 
 ## Registration (operator-run, S5/S6)
 
-`scripts/register-release-gates.ps1` is preview-only by default and writes nothing. It takes
-an untracked `-Profile <json>` with `windmillBaseUrl`, `workspace` (must be `mc`),
-`tokenFile`, `repositoryPath` and `projectId`; an inline token, password or secret in that
-profile is refused. The token is read from the operator-placed file and is never printed,
-logged or embedded in a script payload, and this script creates no token.
+`scripts\antiphon.cmd register-release-gates` (`scripts/antiphon register-release-gates` from sh;
+`scripts/lib/Antiphon.Nightly/ReleaseGateRegistration.cs`, which replaced
+`register-release-gates.ps1`) is preview-only by default and writes nothing. It takes an
+untracked `--profile <json>` with `windmillBaseUrl`, `workspace` (must be `mc`), `tokenFile`,
+`repositoryPath` and `projectId`; an inline token, password or secret in that profile is
+refused. The token is read from the operator-placed file only for `--apply`, is sent only in the
+Authorization header and is never printed, logged or embedded in a script payload, and this
+command creates no token. Exit 0 done, 1 a write or readback failed, 2 usage, 3 refused.
 
 ```powershell
-pwsh -NoProfile -File scripts/register-release-gates.ps1 -Profile C:\Antiphon\nightly\release-gates-deploy.json
-pwsh -NoProfile -File scripts/register-release-gates.ps1 -Profile C:\Antiphon\nightly\release-gates-deploy.json -Apply
-pwsh -NoProfile -File scripts/register-release-gates.ps1 -Profile C:\Antiphon\nightly\release-gates-deploy.json -Apply -EnableSchedule readiness
+scripts\antiphon.cmd register-release-gates --profile C:\Antiphon\nightly\release-gates-deploy.json
+scripts\antiphon.cmd register-release-gates --profile C:\Antiphon\nightly\release-gates-deploy.json --apply
+scripts\antiphon.cmd register-release-gates --profile C:\Antiphon\nightly\release-gates-deploy.json --apply --enable-schedule readiness
 ```
 
 Registration uses the installed Windmill HTTP API, never a database write. Scripts are
 created and read back by hash and content; schedules are always **created disabled**, and
-`-EnableSchedule <nightly|readiness|rc>` (which requires `-Apply`) turns on exactly one. An
+`--enable-schedule <nightly|readiness|rc>` (which requires `--apply`) turns on exactly one. An
 idempotent reapply discovers the existing objects, preserves an already-enabled matching
 schedule and refuses cron/timezone drift; disabling is always explicit and never an accident
 of the disabled creation payload. Enable `nightly` after its manual green and `rc` after RC

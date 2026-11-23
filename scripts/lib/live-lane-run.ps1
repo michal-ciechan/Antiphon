@@ -1,7 +1,9 @@
 #requires -Version 7.0
 # CARD-1545 S1b admission. All results are diagnostic; native/paid execution stays disabled.
+# The shared native-run lock is compiled (Antiphon.Nightly.ReleaseGateNativeLock; release-gate.ps1's
+# Enter-/Exit-ReleaseGateNativeLock went with unit 12 of 2026-11-22-remaining-ps1-to-csharp.md).
 . (Join-Path $PSScriptRoot 'nightly-common.ps1')
-. (Join-Path $PSScriptRoot 'release-gate.ps1')
+Assert-NightlyCoreAvailable 'live-lane-run'
 . (Join-Path $PSScriptRoot 'nightly-owned-process.ps1')
 . (Join-Path $PSScriptRoot 'live-lane-outcome.ps1')
 
@@ -93,13 +95,14 @@ function Invoke-LiveLaneRun {
         $result.ExitCode = 2; $result.Reason = 'request-invalid'; return $result
     }
     $owned = $false; $child = $null; $terminal = $false; $joined = $false; $context = $null; $cleanupAttempted = $false
+    $nativeLock = [Antiphon.Nightly.ReleaseGateNativeLock]::Production()
     try {
         $candidate = & $Boundary.Candidate $Request
         if ($candidate.Sha -cne $Request.Source -or $candidate.Clean -isnot [bool] -or -not $candidate.Clean) {
             $result.ExitCode = 2; $result.Reason = 'candidate-invalid'; return $result
         }
         # Atomic shared native lock always precedes slot or checkpoint admission.
-        $lock = Enter-ReleaseGateNativeLock -CoordinationRoot $Request.CoordinationRoot -RunId $Request.RunId -Lane $Request.Lane
+        $lock = $nativeLock.Enter($Request.CoordinationRoot, $Request.RunId, $Request.Lane)
         if (-not $lock.Ok) {
             $result.ExitCode = $(if ($lock.Reason -eq 'deferred-busy') { 21 } else { 2 })
             $result.Reason = $lock.Reason; return $result
@@ -224,7 +227,7 @@ function Invoke-LiveLaneRun {
             # Existing release helper is additionally guarded by PID/start/run/lane.
             # It cannot remove a lock replaced during teardown.
             if (Test-LiveLaneOwner $lock.Record $Request.CoordinationRoot) {
-                Exit-ReleaseGateNativeLock -CoordinationRoot $Request.CoordinationRoot -RunId $Request.RunId
+                $nativeLock.Exit($Request.CoordinationRoot, $Request.RunId)
                 if ($Boundary.Trace) { & $Boundary.Trace 'release' }
             }
         }

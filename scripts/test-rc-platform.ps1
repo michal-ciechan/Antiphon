@@ -2,9 +2,11 @@
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
 param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'release-gate', 'c487-harness')) {
+# The release-gate library is compiled (unit 12 of 2026-11-22-remaining-ps1-to-csharp.md): load the core it lives in.
+foreach ($name in @('nightly-common', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
 }
+Assert-NightlyCoreAvailable 'test-rc-platform'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 

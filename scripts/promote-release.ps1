@@ -16,6 +16,9 @@
     only while the live tip still equals its peeled SHA.
 
     -SeamsPath is test-only and uses the same admission as publish-release.ps1.
+    The remote reads, the tag push, the clock and the publication journal are
+    compiled (Antiphon.Nightly ReleaseGateRemote and ReleaseGateJournal, which
+    replaced scripts/lib/release-gate.ps1).
 
     ASCII-only on purpose - parseable under Windows PowerShell 5.1.
 #>
@@ -36,15 +39,14 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'nightly-core.ps1'); Assert-NightlyCoreAvailable 'promote-release'
-. (Join-Path $lib 'release-gate.ps1')
 
 function Write-PromoteLine { param([string]$Message) Write-Host ('[promote-release] {0}' -f $Message) }
 
 function Update-PromoteFinalTag {
-    param([string]$Root, [string]$Id, [string]$Sha, [string]$PreName, [string]$FinalName)
+    param($Journals, [string]$Root, [string]$Id, [string]$Sha, [string]$PreName, [string]$FinalName)
     $journalPath = Join-Path $Root 'publications.json'
     try {
-        return [bool](Set-ReleaseGateReservationFinalTag -JournalPath $journalPath -CandidateId $Id -Sha $Sha -PreReleaseTag $PreName -FinalTag $FinalName)
+        return [bool]$Journals.RecordFinalTag($journalPath, $Id, $Sha, $PreName, $FinalName)
     } catch {
         Write-PromoteLine ('journal recording failed: {0}' -f $_.Exception.Message)
         return $false
@@ -72,11 +74,17 @@ function Invoke-AntiphonPromoteRelease {
         Promoted = $false
         Resumed = $false
     }
-    $admission = Import-ReleaseGatePublisherSeams -SeamsPath $SeamsPath
+    # The publisher's seam admission: seams only in explicit test mode, never beside a real remote.
+    $testMode = [Antiphon.Nightly.ReleaseGateRemote]::TestMode([string]$env:ANTIPHON_RELEASE_GATE_TEST_MODE)
+    $ReleaseGateSeams = $null
+    if ($testMode -and -not [string]::IsNullOrWhiteSpace($SeamsPath) -and (Test-Path -LiteralPath $SeamsPath)) { . $SeamsPath }
+    $admission = [Antiphon.Nightly.ReleaseGateRemote]::PublisherAdmission($testMode, $SeamsPath, $ReleaseGateSeams.Git, $ReleaseGateSeams.GitHub)
     if (-not [string]::IsNullOrEmpty($admission)) {
         Write-PromoteLine ('REFUSED: seam admission ({0}).' -f $admission)
         $result.Refusal = $admission; $result.ExitCode = 3; return [pscustomobject]$result
     }
+    $remoteGate = [Antiphon.Nightly.ReleaseGateRemote]::Seamed($ReleaseGateSeams.Git, $ReleaseGateSeams.GitHub, $ReleaseGateSeams.UtcNow, $testMode)
+    $journals = [Antiphon.Nightly.ReleaseGateJournal]::new([TimeProvider]::System, $ReleaseGateSeams.JournalWrite)
     if ([string]::IsNullOrWhiteSpace($CandidateId)) {
         Write-PromoteLine 'REFUSED: -CandidateId is required.'
         $result.Refusal = 'missing-candidate'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -96,7 +104,7 @@ function Invoke-AntiphonPromoteRelease {
     $finalName = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsed.Date, ([int]$parsed.Sequence))
     $result.Tag = $finalName
 
-    $pre = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $Tag
+    $pre = $remoteGate.Tag($CheckoutRoot, $Tag)
     if ($pre.Status -eq 'Absent') {
         Write-PromoteLine ('REFUSED: pre-release tag {0} is not on the remote.' -f $Tag)
         $result.Refusal = 'prerelease-missing'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -135,7 +143,7 @@ function Invoke-AntiphonPromoteRelease {
 
     # The tested SHA is what is promoted. A live tip that has moved is a
     # different candidate. Refuse before any tag or GitHub write.
-    $live = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref ([string]$candidate.ref)
+    $live = $remoteGate.Head($CheckoutRoot, [string]$candidate.ref)
     $liveSha = $live.Sha
     if ($live.Status -ne 'Found') {
         Write-PromoteLine ('REFUSED: live ref {0} did not resolve.' -f [string]$candidate.ref)
@@ -146,7 +154,7 @@ function Invoke-AntiphonPromoteRelease {
         $result.Refusal = 'remote-candidate-moved'; $result.ExitCode = 3; return [pscustomobject]$result
     }
 
-    $final = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+    $final = $remoteGate.Tag($CheckoutRoot, $finalName)
     $finalPeeled = $final.Sha
     if ($final.Status -eq 'Failed') {
         Write-PromoteLine ('REFUSED: final tag {0} could not be verified.' -f $finalName)
@@ -157,14 +165,13 @@ function Invoke-AntiphonPromoteRelease {
             $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
     }
     # Requalify every attempt, including read-only previews and same-final recovery.
-    $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, (Get-ReleaseGateUtcNow), $AntiphonApiUrl, $PSScriptRoot)
+    $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $CheckoutRoot, $green, $candidate, $Repository, $remoteGate.UtcNow(), $AntiphonApiUrl, $PSScriptRoot)
     $gate = [Antiphon.Nightly.ReleaseGatePublication]::PublicationGate($green, $candidate, $liveSha, $authority, '', @())
     if (-not $gate.Ok) {
         Write-PromoteLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
     }
-    $reservation = Test-ReleaseGatePromotionReservation -JournalPath (Join-Path $ReleaseRoot 'publications.json') `
-        -CandidateId $CandidateId -Sha $peeled -PreReleaseTag $Tag -FinalTag $finalName
+    $reservation = [Antiphon.Nightly.ReleaseGateJournal]::PromotionReservation((Join-Path $ReleaseRoot 'publications.json'), $CandidateId, $peeled, $Tag, $finalName)
     if (-not $reservation.Ok) {
         Write-PromoteLine ('REFUSED: {0}.' -f $reservation.Reason)
         $result.Refusal = $reservation.Reason; $result.ExitCode = 3; return [pscustomobject]$result
@@ -178,9 +185,9 @@ function Invoke-AntiphonPromoteRelease {
     }
 
     if (-not $resume) {
-        $mk = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('tag', '-a', $finalName, $peeled, '-m', ('Antiphon {0}' -f $finalName))
+        $mk = $remoteGate.Git($CheckoutRoot, [string[]]@('tag', '-a', $finalName, $peeled, '-m', ('Antiphon {0}' -f $finalName)))
         if ($null -eq $mk -or [int]$mk.ExitCode -ne 0) {
-            $show = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-list', '-n', '1', $finalName)
+            $show = $remoteGate.Git($CheckoutRoot, [string[]]@('rev-list', '-n', '1', $finalName))
             $shown = ''
             if ($null -ne $show -and [int]$show.ExitCode -eq 0) { $shown = ([string]$show.Output).Trim() }
             if (-not [string]::Equals($shown, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
@@ -188,22 +195,22 @@ function Invoke-AntiphonPromoteRelease {
                 $result.Refusal = 'tag-local-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
         }
-        $push = Push-ReleaseGateExactTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+        $push = $remoteGate.PushExactTag($CheckoutRoot, $finalName)
         if ($null -eq $push -or [int]$push.ExitCode -ne 0) {
-            $again = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+            $again = $remoteGate.Tag($CheckoutRoot, $finalName)
             if ($again.Status -ne 'Found' -or -not [string]::Equals($again.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PromoteLine 'REFUSED: tag push failed and the remote tag does not hold the peeled sha.'
                 $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
         }
-        $verified = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+        $verified = $remoteGate.Tag($CheckoutRoot, $finalName)
         if ($verified.Status -ne 'Found' -or -not [string]::Equals($verified.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
             Write-PromoteLine ('REFUSED: final tag peels to {0}, expected {1}.' -f $verified.Sha, $peeled)
             $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
         }
     }
     # Fresh and resumed finals share the same checked persistence boundary.
-    if (-not (Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -Sha $peeled -PreName $Tag -FinalName $finalName)) {
+    if (-not (Update-PromoteFinalTag -Journals $journals -Root $ReleaseRoot -Id $CandidateId -Sha $peeled -PreName $Tag -FinalName $finalName)) {
         Write-PromoteLine ('REFUSED: final tag {0} is verified at {1}, but its journal record failed.' -f $finalName, $peeled)
         $result.Refusal = 'promotion-journal-write-failed'; $result.ExitCode = 1; return [pscustomobject]$result
     }

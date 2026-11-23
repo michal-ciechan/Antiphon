@@ -49,9 +49,9 @@ $ErrorActionPreference = 'Continue'
 
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'release-gate.ps1')
 # The candidate ref, the credit decision, the policy and the selection attempt (Antiphon.Nightly.ReleaseSelectionAttempt)
-# are compiled: this entry point runs under pwsh with the core.
+# are compiled: this entry point runs under pwsh with the core. Its own git fetch is the production git
+# (NightlyNativeGit.Run); a -SeamsPath is release-candidate's and nightly-run's, never this fetch's.
 Assert-NightlyCoreAvailable 'release-cut'
 
 function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
@@ -117,7 +117,7 @@ try {
         }
         # Candidate journalling reads the remote ref; acquire its pinned object before
         # selection without changing the long-lived ref or repinning the journal.
-        $fetch = Invoke-ReleaseGateGit -WorkingDirectory $checkout -Arguments @('fetch','origin',$record.sha)
+        $fetch = [Antiphon.Nightly.NightlyNativeGit]::Run($checkout, [string[]]@('fetch','origin',$record.sha))
         if ($fetch.ExitCode -ne 0) { throw 'selection-candidate-fetch' }
         $request = @{RepositoryRoot=$checkout;Repository=$Repository;ReleaseRoot=$ReleaseRoot;CandidateSha=$record.sha
             CandidateId=$record.candidateId;CandidateRef=$record.ref;Profile='rc';RunId=$RunId

@@ -4,7 +4,6 @@ param([string]$Case, [string]$ResultsDirectory, [switch]$PrintInputDigest)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
-. "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 . "$PSScriptRoot/lib/live-lane-run.ps1"
 $repo = Split-Path $PSScriptRoot -Parent
@@ -164,11 +163,12 @@ function Test-LockBeforeSlot {
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'ordered' ($F.Starts -eq 1 -and $F.Trace.Contains('slot:locked') -and $F.Trace.IndexOf('slot:locked') -lt $F.Trace.IndexOf('start:checkpoint-A'))
     $q = New-Fixture
-    $owner = Enter-ReleaseGateNativeLock -CoordinationRoot $q.Request.CoordinationRoot -RunId foreign -Lane fixture-live
+    $foreign = [Antiphon.Nightly.ReleaseGateNativeLock]::Production()
+    $owner = $foreign.Enter($q.Request.CoordinationRoot, 'foreign', 'fixture-live')
     $p = $owner.Path; $bytes = [IO.File]::ReadAllText($p)
     $r = Run-Fixture $q
     Check 'busy' ($r.ExitCode -eq 21 -and (No-Starts) -and [IO.File]::ReadAllText($p) -ceq $bytes)
-    Exit-ReleaseGateNativeLock -CoordinationRoot $q.Request.CoordinationRoot -RunId foreign
+    $foreign.Exit($q.Request.CoordinationRoot, 'foreign')
     $q = New-Fixture; $F.DenySlot = $true; $r = Run-Fixture $q
     Check 'slot-timeout' ($r.ExitCode -eq 4 -and $F.Trace.Contains('slot:locked') -and $F.Starts -eq 0 -and -not (Lock-Exists $q))
     foreach ($id in @('commission','budget')) {
