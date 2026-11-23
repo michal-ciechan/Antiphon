@@ -1527,6 +1527,7 @@ public class AgentControlServiceIntegrationTests
                 Reason = "session-limit resets 18:10 Europe/London",
             });
             await db.SaveChangesAsync();
+            await AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync(holdId);
 
             var ex = await Should.ThrowAsync<ModelDisabledException>(
                 () => harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None));
@@ -1578,6 +1579,7 @@ public class AgentControlServiceIntegrationTests
                 Reason = "Fable 5 per-model cap (no reset stated)",
             });
             await db.SaveChangesAsync();
+            await AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync(holdId);
 
             var detail = await harness.Control.StartAsync(
                 agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
@@ -1753,6 +1755,19 @@ public class AgentControlServiceIntegrationTests
 
     private static AppDbContext CreateContext(string? connectionString = null) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
+
+    // A model hold is global state: every launch with the model-availability gate reads it. A hold
+    // written to the shared fixture database blocks unrelated parallel launches of the same alias
+    // (AgentSystemPromptLaunchTests.Interactive_launch_maps_frontier_level_to_fable threw
+    // ModelDisabledException while the 409 test below held fable; Review 56e21b88). The hold-writing
+    // tests therefore run in an isolated schema, and this probe pins that their hold never reaches
+    // the shared database.
+    private static async Task AssertHoldIsInvisibleToTheSharedFixtureDatabaseAsync(Guid holdId)
+    {
+        await using var shared = CreateContext();
+        (await shared.ModelAvailabilityHolds.AnyAsync(h => h.Id == holdId))
+            .ShouldBeFalse("a model hold written to the shared fixture database leaks into parallel launches");
+    }
 
     internal static Harness BuildHarness(
         string tempRoot,
