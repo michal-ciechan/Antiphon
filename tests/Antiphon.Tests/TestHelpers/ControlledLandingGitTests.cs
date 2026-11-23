@@ -136,6 +136,37 @@ public sealed class ControlledLandingGitTests
         (await File.ReadAllTextAsync(Path.Combine(aside, "keep.txt"))).ShouldBe("seed\n");
     }
 
+    // Debug 847c35c6 / Review c67d7aff (run 557cdb63, group 141): the refused delete was this fake's single no-follow
+    // walk of the retired administrative entry, with no outer retry. A refusal now goes to the settled walk, which
+    // walks again in full after one pause.
+    [Test]
+    public async Task C847_UnregisterWalksARefusedAdminEntryDeleteAgain()
+    {
+        using var git = new ControlledLandingGit();
+        Directory.Move(git.Source, Path.Combine(git.Root, "source-set-aside"));
+        var retired = Antiphon.Server.Infrastructure.Git.WorktreeSetAside.RetiredAdminPath(git.CommonDir, git.Source);
+        var walks = new List<string>();
+        var pauses = new List<TimeSpan>();
+        git.AdminDeleteRenames = Antiphon.Server.Infrastructure.Git.WorktreeRenames.System with
+        {
+            Windows = true,
+            Pause = pauses.Add,
+            DeleteTree = (path, preserve) =>
+            {
+                walks.Add(path);
+                if (walks.Count == 1)
+                    throw new IOException("no_follow_delete_failed: " + path + ": sharing violation", 32);
+                Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(path, preserve);
+            },
+        };
+        var result = await git.UnregisterWorktreeAsync(git.Repository, git.Source, git.SourceGitDirectory, default);
+        result.Succeeded.ShouldBeTrue(result.Diagnostic);
+        walks.ShouldBe([retired, retired], "the refused walk is run again in full");
+        pauses.ShouldBe([Antiphon.Server.Infrastructure.Git.WorktreeRenames.SharingPause]);
+        Directory.Exists(retired).ShouldBeFalse();
+        Directory.Exists(git.SourceGitDirectory).ShouldBeFalse();
+    }
+
     [Test]
     public async Task C475_UnsupportedWorktreeOperationsAreRejected()
     {
