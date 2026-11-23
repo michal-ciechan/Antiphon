@@ -2189,47 +2189,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 42,
+      "classes": 44,
       "reason": "cap",
-      "owed": 17,
+      "owed": 19,
       "first": [
+        "TestSelectionExecutionTests",
         "TestTimingReportTests",
         "LongPathsCheckoutScriptTests",
         "NightlyLockFormatTests",
         "NightlyReportTests",
         "QualificationTimingTests",
         "RcFailedFirstPlannerTests",
-        "RcProjectSelectionTests",
-        "ReleaseGateE2EEvidenceTests"
+        "RcProjectSelectionTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 41,
+      "classes": 47,
       "reason": "cap",
-      "owed": 16,
+      "owed": 22,
       "first": [
+        "LongPathsCheckoutScriptTests",
+        "RcRosterRepairTests",
+        "ReleaseGateLibraryTests",
         "ToolchainFloorWarningTests",
         "NightlyPrerequisiteTests",
         "NightlyScriptsTests",
         "RcQualificationStatusTests",
-        "ReleaseCandidateTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseSelectionAttemptTests",
-        "ReleaseSelectionHopSeedTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 30,
-      "reason": "cap",
-      "owed": 5,
-      "first": [
-        "ReleaseGatePolicyTests",
-        "ReleaseGatePublicationAuthorityTests",
-        "ReleaseGatePublicationTests",
-        "ReleaseGateRunTests",
-        "ReleaseGateStatusTests"
+        "ReleaseCandidateTests"
       ]
     },
     {
@@ -2488,6 +2475,15 @@
         "ProjectSetupServiceTests",
         "RcHistoricalEvidenceTests",
         "RemoteScriptContractTests"
+      ]
+    },
+    {
+      "path": "tests/test-execution-policy.json",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "ReleaseGatePlatformTests"
       ]
     }
   ],
@@ -16541,13 +16537,6 @@
       ]
     },
     {
-      "path": "server/Infrastructure/Git/RepositoryVerificationWindows.cs",
-      "classes": [
-        "DelegationDispatchRecoveryBoundaryTests",
-        "EvidenceSupplementalDeletionGuardTests"
-      ]
-    },
-    {
       "path": "server/Infrastructure/Git/ServerGitIdentity.cs",
       "classes": [
         "ImpactedClassesSelectorTests",
@@ -25660,8 +25649,8 @@
         "RcFailureHistoryTests",
         "ReleaseCandidateGitTests",
         "ReleaseCandidateTests",
+        "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
-        "TestSelectionExecutionTests",
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests"
@@ -25681,7 +25670,6 @@
         "C1514LandingSplitBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
-        "LongPathsCheckoutScriptTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -25697,12 +25685,13 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcProjectSelectionTests",
-        "RcRosterRepairTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateE2EEvidenceTests",
-        "ReleaseGateLibraryTests",
+        "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRegistrationTests",
-        "ReleaseGateRunTests"
+        "ReleaseGateRunTests",
+        "ReleasePublishTests",
+        "ReleaseTagAllocatorTests"
       ]
     },
     {
@@ -25932,6 +25921,23 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseGateFixture.cs",
+      "classes": [
+        "ReleaseGateAuthorityContractTests",
+        "ReleaseGatePublicationAuthorityTests",
+        "ReleaseGateStatusTests",
+        "ReleasePromoteTests",
+        "ReleasePublishTests",
+        "ReleaseTagAllocatorTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseGateGitFixture.cs",
+      "classes": [
+        "ReleaseTagAllocatorTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
@@ -26039,11 +26045,11 @@
         "RcBoundaryPackTests",
         "RcCoverageAdmissionTests",
         "RcQualificationWatcherScriptTests",
-        "ReleaseBranchModelGateTests",
-        "ReleaseGateAuthorityContractTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
+        "ReleaseGatePolicyTests",
+        "ReleaseGateRunTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
@@ -28935,10 +28941,15 @@
         "RcProjectSelectionTests",
         "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
+        "ReleaseGateAuthorityContractTests",
         "ReleaseGateFollowupTests",
-        "ReleaseGatePlatformTests",
+        "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
+        "ReleaseGateStatusTests",
+        "ReleasePromoteTests",
+        "ReleasePublishTests",
         "ReleaseSelectionHopSeedTests",
+        "ReleaseTagAllocatorTests",
         "TestSelectionCatalogTests",
         "TestSelectionDependencyTests",
         "TestSelectionExecutionTests",
