@@ -14,7 +14,9 @@ namespace Antiphon.Checkpoints;
 //   Every in-process decision also records its version, and the unlink it authorizes happens only while the index is
 //   still that version (index-changed-before-unlink otherwise). What remains is the instant between that last stamp
 //   and the unlink syscall itself; only git's own index.lock could close it, and holding that lock would fail a
-//   concurrent git command and could be left behind by a crash.
+//   concurrent git command and could be left behind by a crash. Review 2ff6a0bc (round 2): a decision that bound no
+//   version (git answered it, or the layout has no stamp) is asked again after content validation, and the entry is
+//   kept unless that fresh check answers untracked.
 // - D-2. The stamp holds the index file's own checksum trailer (git writes the SHA-1 of the content as its last 20
 //   bytes, and ListIndex verifies it), so an equal-size rewrite that keeps the inode, size and both times inside one
 //   timestamp tick still shows a new version. An index written in the last 2 s (git's racy-index rule) is never
@@ -32,7 +34,8 @@ internal sealed class TrackedIndexScope
     private HashSet<string>? _directories;
 
     // The checkout and index version the current entry's in-process tracked decision was read from, or null when
-    // git answered it (or the layout has no stamp): then nothing binds the unlink, as before CARD-2052.
+    // git answered it (or the layout has no stamp). Review 2ff6a0bc (round 2) D-1: an unbound decision never
+    // permits the unlink by itself; the caller asks again after content validation (CheckpointOutputLedger).
     private string? _decidedOwner;
     private TrackedIndexStamp? _decided;
 
@@ -56,11 +59,14 @@ internal sealed class TrackedIndexScope
         _decided = stamp;
     }
 
-    // Whether the index the current entry's decision was read from is still the current version. A stamp that
-    // cannot be read now does not hold.
+    // Whether the current entry's decision was read in process from an index version it recorded.
+    internal bool DecisionBound => _decided is not null && _decidedOwner is not null;
+
+    // Whether the index the current entry's decision was read from is still the current version. An unbound
+    // decision, or a stamp that cannot be read now, does not hold.
     internal bool DecisionStillHolds(CheckpointCleanupContext context) =>
-        _decided is null || _decidedOwner is null
-        || _decided.SameVersion(TrackedIndexStamp.Read(context, _decidedOwner));
+        _decided is not null && _decidedOwner is not null
+        && _decided.SameVersion(TrackedIndexStamp.Read(context, _decidedOwner));
 
     // Keeps the listing only for a stamp that may be reused (settled, no include or per-worktree config).
     internal void Store(string owner, TrackedIndexStamp stamp, string listing)
@@ -150,12 +156,6 @@ internal sealed record TrackedIndexStamp(
             else
                 return null;
 
-            var indexPath = Path.Combine(gitDirectory, "index");
-            var index = Stat(indexPath);
-            if (index.Kind != "file" || index.Inode == 0 || index.Changed == 0)
-                return null;
-            if (Checksum(indexPath) is not { } indexVersion)
-                return null;
             var commonDirPath = Path.Combine(gitDirectory, "commondir");
             var commonDirFile = Stat(commonDirPath);
             var commonDirText = "";
@@ -192,6 +192,13 @@ internal sealed record TrackedIndexStamp(
                     return null;
 
             var environment = string.Join("\0", StampedVariables.Select(name => name + "=" + System.Environment.GetEnvironmentVariable(name)));
+            // Review 2ff6a0bc: the index is observed last, so a final check's trailer read is the stamp's latest one.
+            var indexPath = Path.Combine(gitDirectory, "index");
+            var index = Stat(indexPath);
+            if (index.Kind != "file" || index.Inode == 0 || index.Changed == 0)
+                return null;
+            if (Checksum(indexPath) is not { } indexVersion)
+                return null;
             var now = context.Time.GetUtcNow().ToUnixTimeMilliseconds() * 1_000_000L;
             var settled = index.Modified <= now - RacyNanoseconds;
             return new TrackedIndexStamp(gitDirectory, dotGitText, dotGit, index, indexVersion, commonDirFile,
