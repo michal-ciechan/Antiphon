@@ -343,13 +343,16 @@ internal sealed class TestOwnedPtyHost
             && directory >= 0 && directory + 1 < args.Length && SamePath(args[directory + 1], Path.GetDirectoryName(manifestPath)!);
     }
 
-    internal static Observation ObserveProcess(ProcessIdentity identity)
+    internal static Observation ObserveProcess(ProcessIdentity identity) => ObserveProcess(identity, null);
+
+    // readStat replaces only the /proc/<pid>/stat read so a test can place a real reap between open and read.
+    internal static Observation ObserveProcess(ProcessIdentity identity, Func<int, string>? readStat)
     {
         try
         {
             if (identity.Handle?.HasExited == true) return new(State.Dead, identity.Generation);
             using var process = Process.GetProcessById(identity.Pid);
-            var (generation, state, _) = OperatingSystem.IsLinux() ? Proc(identity.Pid)
+            var (generation, state, _) = OperatingSystem.IsLinux() || readStat is not null ? Proc(identity.Pid, readStat)
                 : (process.StartTime.ToUniversalTime().Ticks, process.HasExited ? 'X' : 'R', 0);
             if (generation != identity.Generation) return new(State.Reused, generation);
             return new(state is 'Z' or 'X' || process.HasExited ? State.Dead : State.Alive, generation);
@@ -359,12 +362,14 @@ internal sealed class TestOwnedPtyHost
         catch (DirectoryNotFoundException) { return new(State.Dead, identity.Generation); }
     }
 
-    private static (long Generation, char State, int Parent) Proc(int pid)
+    private static (long Generation, char State, int Parent) Proc(int pid, Func<int, string>? readStat = null)
     {
-        var stat = File.ReadAllText($"/proc/{pid}/stat");
+        var stat = (readStat ?? ReadStatFile)(pid);
         var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return (long.Parse(fields[19], CultureInfo.InvariantCulture), fields[0][0], int.Parse(fields[1], CultureInfo.InvariantCulture));
     }
+
+    private static string ReadStatFile(int pid) => File.ReadAllText($"/proc/{pid}/stat");
 
     private static IReadOnlyList<ProcessIdentity> CaptureDescendants(ProcessIdentity host)
     {
