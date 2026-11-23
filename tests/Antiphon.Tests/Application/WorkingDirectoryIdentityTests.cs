@@ -177,13 +177,16 @@ public class WorkingDirectoryIdentityTests
 
     /// <summary>
     /// The lemma the prefilter's wildcard rests on: invariant lower-casing maps every Unicode scalar
-    /// value to exactly one scalar value of the same UTF-16 length, and every non-ASCII value whose
-    /// lower case is ASCII has that target in <see cref="WorkingDirectoryIdentity.NonAsciiFoldTargets"/>.
+    /// value to exactly one scalar value of the same UTF-16 length, and
+    /// <see cref="WorkingDirectoryIdentity.CaseAmbiguousCodePoints"/> is exactly the set of members of
+    /// the invariant case classes (computed here with <c>string.ToLowerInvariant</c>) whose members
+    /// differ after ASCII-only lower-casing. Review f14ac37a round 3: code points without case
+    /// variants (CJK, digits) must stay literal.
     /// </summary>
     [Test]
     public void Invariant_lower_case_maps_each_code_point_to_one_code_point()
     {
-        var targets = new HashSet<char>();
+        var classes = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var violations = new List<string>();
         foreach (var value in ScalarValues())
         {
@@ -197,14 +200,25 @@ public class WorkingDirectoryIdentityTests
                 continue;
             }
 
-            if (value >= 0x80 && lower.Length == 1 && lower[0] < 0x80)
-                targets.Add(lower[0]);
+            if (!classes.TryGetValue(lower, out var members))
+                classes[lower] = members = [];
+            members.Add(text);
         }
 
         violations.ShouldBeEmpty();
-        WorkingDirectoryIdentity.NonAsciiFoldTargets.Order().ShouldBe(targets.Order());
-        WorkingDirectoryIdentity.NonAsciiFoldTargets.ShouldContain('k', "the Kelvin sign lower-cases to k");
-        WorkingDirectoryIdentity.NonAsciiFoldTargets.ShouldAllBe(c => char.IsAsciiLetterLower(c));
+        static string AsciiLower(string text) =>
+            text.Length == 1 && text[0] is >= 'A' and <= 'Z' ? ((char)(text[0] + 32)).ToString() : text;
+        var expected = classes.Values
+            .Where(members => members.Select(AsciiLower).Distinct(StringComparer.Ordinal).Skip(1).Any())
+            .SelectMany(members => members)
+            .Select(member => char.ConvertToUtf32(member, 0))
+            .Order()
+            .ToList();
+        WorkingDirectoryIdentity.CaseAmbiguousCodePoints.Order().ShouldBe(expected);
+        foreach (var cased in new[] { 'k', 'K', '\u212A', '\u00E9', '\u00C9', '\u00E5', '\u212B', '\u03C3', '\u03A3', '\u00DF', '\u1E9E' })
+            WorkingDirectoryIdentity.CaseAmbiguousCodePoints.ShouldContain((int)cased, $"U+{(int)cased:X4} has a case variant the C collation cannot fold");
+        foreach (var plain in new[] { 0x652F, 0x4ED8, 0x7EC4, 0x20000, '0', '9', '/', '_', 'a', 'A', 'z' })
+            WorkingDirectoryIdentity.CaseAmbiguousCodePoints.ShouldNotContain(plain, $"U+{plain:X4} must stay literal");
     }
 
     [Test]

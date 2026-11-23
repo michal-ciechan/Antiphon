@@ -44,14 +44,17 @@ namespace Antiphon.Server.Application.Services;
 /// 1.7 times the predicate it replaced). Under
 /// the <c>C</c> collation <c>lower</c> folds only ASCII letters, on every server, and <c>LIKE</c>
 /// compares code points (<c>_</c> matches exactly one). The pattern (<see cref="CandidatePattern"/>)
-/// is the probe's loose spelling (backslashes as slashes, trailing slashes trimmed) with each ASCII
-/// character lower-cased and escaped, and with the one-character wildcard <c>_</c> in place of every
-/// character whose case the database cannot fold the way <c>ToLowerInvariant</c> does: every
-/// non-ASCII code point, and every ASCII letter that some non-ASCII code point lower-cases to (the
-/// Kelvin sign lower-cases to <c>k</c>). <c>ToLowerInvariant</c> maps each code point to exactly one
-/// code point, so two spellings with equal <see cref="Key"/>s have loose spellings with the same
-/// number of code points that agree, after ASCII lower-casing, wherever the pattern keeps a
-/// literal. The prefilter therefore admits every pair <see cref="Same"/> accepts, whatever the
+/// is the probe's loose spelling (backslashes as slashes, trailing slashes trimmed) with each code
+/// point kept as its ASCII lower case (escaped), except that the one-character wildcard <c>_</c>
+/// replaces every code point whose invariant case class the database cannot fold: a code point
+/// whose class (the code points with the same <c>ToLowerInvariant</c>) holds two members that
+/// differ after ASCII-only lower-casing (é/É, the Kelvin sign with <c>k</c>/<c>K</c>). A code point
+/// with no case variant (CJK, digits, most punctuation) stays literal, so a CJK probe does not
+/// admit every same-length sibling (Review f14ac37a round 3: <c>C:/repos/支付服务组</c> admitted all
+/// of <c>C:/repos/00000</c>..<c>99999</c>). <c>ToLowerInvariant</c> maps each code point to exactly
+/// one code point, so two spellings with equal <see cref="Key"/>s have loose spellings with the same
+/// number of code points, pairwise in one class; wherever the pattern keeps a literal, that class
+/// has a single ASCII-lowered spelling, so both agree. The prefilter therefore admits every pair <see cref="Same"/> accepts, whatever the
 /// database locale (Review 0d322ed5: an <c>ILIKE</c> under a C-locale database did not). Callers
 /// keep only the returned candidates for which <see cref="Same"/> holds. LIKE wildcards in a path
 /// are escaped, so they match only themselves.
@@ -102,9 +105,9 @@ public static class WorkingDirectoryIdentity
     /// The <c>LIKE</c> pattern for <paramref name="path"/>, matched against the stored path's loose
     /// spelling lower-cased under the <c>C</c> collation. Each code point of the probe's loose
     /// spelling becomes its ASCII lower case (with <c>!</c>, <c>%</c> and <c>_</c> escaped by
-    /// <see cref="CandidatePatternEscape"/>), or <c>_</c> when it is not ASCII or is an ASCII
-    /// character that a non-ASCII code point lower-cases to. The pattern never uses <c>%</c> as a
-    /// wildcard, so it matches only loose spellings with the same number of code points.
+    /// <see cref="CandidatePatternEscape"/>), or <c>_</c> when it is in
+    /// <see cref="CaseAmbiguousCodePoints"/>. The pattern never uses <c>%</c> as a wildcard, so it
+    /// matches only loose spellings with the same number of code points.
     /// </summary>
     public static string CandidatePattern(string path)
     {
@@ -112,35 +115,31 @@ public static class WorkingDirectoryIdentity
         var pattern = new StringBuilder(loose.Length);
         foreach (var rune in loose.EnumerateRunes())
         {
-            if (!rune.IsAscii)
+            if (CaseAmbiguousCodePoints.Contains(rune.Value))
             {
                 pattern.Append('_');
                 continue;
             }
 
-            var lower = (char)rune.Value is >= 'A' and <= 'Z' ? (char)(rune.Value + 32) : (char)rune.Value;
-            if (NonAsciiFoldTargets.Contains(lower))
-            {
-                pattern.Append('_');
-                continue;
-            }
-
+            var lower = AsciiLower(rune.Value);
             if (lower is '!' or '%' or '_')
                 pattern.Append(CandidatePatternEscape);
-            pattern.Append(lower);
+            pattern.Append(char.ConvertFromUtf32(lower));
         }
 
         return pattern.ToString();
     }
 
     /// <summary>
-    /// The ASCII characters that some non-ASCII code point lower-cases to under
-    /// <c>ToLowerInvariant</c>, the folding <see cref="Key"/> uses (for example <c>k</c> from the
-    /// Kelvin sign). The <c>C</c> collation cannot fold those code points, so the pattern wildcards
-    /// their ASCII targets. Only BMP code points can lower-case to a single ASCII character, because
-    /// invariant casing never changes the UTF-16 length.
+    /// The Unicode scalar values the pattern wildcards: every member of an invariant case class
+    /// (scalar values with the same <c>ToLowerInvariant</c>, the folding <see cref="Key"/> uses)
+    /// whose members do not all have one spelling after ASCII-only lower-casing, which is all that
+    /// <c>lower(... COLLATE "C")</c> does. That is every non-ASCII letter with a case variant
+    /// (é/É, σ/Σ, the Deseret pairs), its lower-case target, and the ASCII letters a non-ASCII code
+    /// point lower-cases onto (<c>k</c>/<c>K</c> with the Kelvin sign). Computed from the runtime's
+    /// tables over all scalar values once per process.
     /// </summary>
-    internal static readonly FrozenSet<char> NonAsciiFoldTargets = ComputeNonAsciiFoldTargets();
+    internal static readonly FrozenSet<int> CaseAmbiguousCodePoints = ComputeCaseAmbiguousCodePoints();
 
     /// <summary>
     /// A PostgreSQL-translatable predicate selecting a superset of the rows whose stored path is the
@@ -196,19 +195,37 @@ public static class WorkingDirectoryIdentity
         return end == path.Length ? path : path[..end];
     }
 
-    private static FrozenSet<char> ComputeNonAsciiFoldTargets()
+    private static int AsciiLower(int value) => value is >= 'A' and <= 'Z' ? value + 32 : value;
+
+    private static FrozenSet<int> ComputeCaseAmbiguousCodePoints()
     {
-        var targets = new HashSet<char>();
-        for (var value = 0x80; value <= 0xFFFF; value++)
+        // Members of the class of each lower-case value L: every scalar value v with
+        // ToLowerInvariant(v) == L and v != L (collected here), plus L itself when it is its own lower
+        // case. Scalar values that no other value lower-cases onto and that are their own lower case
+        // form a class of one and never need a wildcard.
+        var classes = new Dictionary<int, List<int>>();
+        for (var value = 0; value <= 0x10FFFF; value++)
         {
             if (value is >= 0xD800 and <= 0xDFFF)
                 continue;
-            var lower = ((char)value).ToString().ToLowerInvariant();
-            if (lower.Length == 1 && lower[0] < 0x80)
-                targets.Add(lower[0]);
+            var lower = Rune.ToLowerInvariant(new Rune(value)).Value;
+            if (lower == value)
+                continue;
+            if (!classes.TryGetValue(lower, out var members))
+                classes[lower] = members = [];
+            members.Add(value);
         }
 
-        return targets.ToFrozenSet();
+        var ambiguous = new HashSet<int>();
+        foreach (var (lower, members) in classes)
+        {
+            if (Rune.ToLowerInvariant(new Rune(lower)).Value == lower)
+                members.Add(lower);
+            if (members.Select(AsciiLower).Distinct().Skip(1).Any())
+                ambiguous.UnionWith(members);
+        }
+
+        return ambiguous.ToFrozenSet();
     }
 
     private static readonly MethodInfo StringReplace =
