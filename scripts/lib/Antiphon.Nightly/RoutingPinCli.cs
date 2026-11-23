@@ -2,7 +2,7 @@
 // replaced scripts/routing-pin.ps1 (deleted 2026-11-23, unit 24 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md);
 // the CLI runs it as `antiphon-scripts routing-pin [...]` (scripts/antiphon routing-pin on sh, scripts\antiphon.cmd on Windows).
 // A pin is read by the NEXT create; it does not rewrite work that is already Queued. For a role-wide candidate change use
-// complexity-chain.ps1 set -Role <role> -Complexity All (its -ClearStagePin removes the stage pin after the three cell writes);
+// complexity-chain set --role <role> --complexity All (its --clear-stage-pin removes the stage pin after the three cell writes);
 // this command is for card pins, forbid lists, dates and standing-agent pins.
 //
 //   routing-pin [get] [--card CARD-0304] [--role Plan] [--json]

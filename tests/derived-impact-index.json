@@ -95,39 +95,39 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 226,
+      "classes": 227,
       "reason": "cap",
-      "owed": 201,
+      "owed": 202,
       "first": [
+        "ChannelContractsTests",
         "CodexMcpBootProbeTests",
         "CommitOnSettleDocumentationTests",
         "CommitOnSettleScriptTests",
         "DockerStackDocumentationTests",
         "KeepSixDocumentationTests",
         "LandGraphLandRefreshTests",
-        "PerTaskFinalUnitLaneWitnessTests",
-        "PipelineDefinitionDocumentationTests"
+        "PerTaskFinalUnitLaneWitnessTests"
       ]
     },
     {
       "path": "Antiphon.sln",
-      "classes": 367,
+      "classes": 366,
       "reason": "allowlist"
     },
     {
       "path": "CLAUDE.md",
-      "classes": 197,
+      "classes": 198,
       "reason": "cap",
-      "owed": 172,
+      "owed": 173,
       "first": [
+        "AgentTaskDispatchBaseGuardTests",
         "AgentTaskDispatchFailureTests",
         "AgentTaskInputSpillTests",
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandActiveSourceClaimTests",
         "AgentTaskLandAdmissionControlledTests",
         "AgentTaskLandAdmissionTests",
-        "AgentTaskLandMonitoringTests",
-        "AgentTaskMidTurnRefineTests"
+        "AgentTaskLandMonitoringTests"
       ]
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 154,
+      "classes": 153,
       "reason": "cap",
-      "owed": 129,
+      "owed": 128,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
         "AgentContextCheckTests",
@@ -2222,10 +2222,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
+        "RepositoryChildRecoveryCommandTests",
         "StageValueReportTests",
         "ZombieAgentReaperTests",
         "NightlyChunkRunnerTests"
@@ -2670,11 +2671,11 @@
         "AgentSystemPromptLaunchTests",
         "AgentWorkspaceProvisionerTests",
         "BlockedTaskParkProjectionTests",
-        "ChannelContractsTests",
         "CheckpointManifestDocumentationTests",
         "InstructionFileStampTests",
         "LiveLaneIsolationTests",
         "OrchestratorInstructionsGuidanceTests",
+        "OrchestratorWorkspaceCommandTests",
         "OrchestratorWorkspaceLayoutCanaryTests",
         "OrchestratorWorkspaceLayoutTests",
         "OrchestratorWorkspaceWarningTests",
@@ -2732,13 +2733,13 @@
         "AgentTaskCheckSweepTests",
         "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskDeliveryWatchdogTests",
-        "AgentTaskDispatchBaseGuardTests",
         "CardThreadEndpointTests",
         "ChannelContractsTests",
         "ClaudeHookAdditionalContextCanaryTests",
         "InstructionFileStampTests",
         "LiveClaudeIsolationWiringTests",
         "LiveLaneIsolationTests",
+        "OrchestratorWorkspaceCommandTests",
         "OrchestratorWorkspaceLayoutCanaryTests",
         "OrchestratorWorkspaceLayoutTests",
         "ProjectReadinessTests",
@@ -25510,9 +25511,12 @@
       "classes": [
         "CapabilityScriptTests",
         "CommitOnSettleScriptTests",
+        "ComplexityChainScriptTests",
         "DispatchConcurrencyScriptTests",
         "GithubSyncScriptTests",
+        "MigrateStagePinsScriptTests",
         "ModelAvailabilityScriptTests",
+        "OrchestratorWorkspaceCommandTests",
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
         "ProjectScriptWorkspaceTests",
@@ -25956,14 +25960,14 @@
         "NightlyTestsRunTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
+        "OrchestratorWorkspaceCommandTests",
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
         "RcRunEvidenceTests",
         "ReleaseGateLibraryTests",
         "ReleaseGatePlatformTests",
-        "ReleaseStatusTests",
-        "RepositoryChildRecoveryCommandTests"
+        "ReleaseStatusTests"
       ]
     },
     {
@@ -26132,6 +26136,7 @@
         "KeepSixCommandTests",
         "ModelAvailabilityScriptTests",
         "OrchestrationWatcherTests",
+        "OrchestratorWorkspaceCommandTests",
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
         "ProjectScriptWorkspaceTests",

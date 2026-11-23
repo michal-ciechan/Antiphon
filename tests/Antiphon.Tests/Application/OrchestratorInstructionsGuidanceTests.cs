@@ -107,12 +107,12 @@ public sealed class OrchestratorInstructionsGuidanceTests
     [Test]
     public void The_workspace_script_writes_the_rule_and_the_new_matcher()
     {
-        var script = Read("scripts", "orchestrator-workspace.ps1");
-        var claude = Slice(script, "function Write-ClaudeContext", "function Write-AgentsContext");
-        var agents = Slice(script, "function Write-AgentsContext", "function Write-ClaudeSettings");
-        claude.ShouldContain(WorkspaceRule);
-        agents.ShouldContain(WorkspaceRule);
-        script.ShouldContain("startup|resume|compact");
+        // The orchestrator-workspace command (unit 26 of the 2026-11-22 plan) replaced scripts/orchestrator-workspace.ps1:
+        // its two context writers and its settings writer are read in process.
+        Antiphon.Nightly.OrchestratorWorkspace.ClaudeContext("../antiphon/AGENTS.md").ShouldContain(WorkspaceRule);
+        Antiphon.Nightly.OrchestratorWorkspace.AgentsContext("../antiphon/AGENTS.md").ShouldContain(WorkspaceRule);
+        Antiphon.Nightly.OrchestratorWorkspace.ClaudeSettings("C:/src/antiphon/scripts/hooks/orchestrator-investigation-hook.mjs").ToJsonString()
+            .ShouldContain("startup|resume|compact");
     }
 
     [Test]
@@ -144,13 +144,6 @@ public sealed class OrchestratorInstructionsGuidanceTests
             ".claude/skills/antiphon-orchestrator/SKILL.md" => ("The owner is `docs/orchestration-loop.md` §1", "## 1. Dispatch the next stage"),
             _ => throw new ArgumentOutOfRangeException(nameof(relative)),
         };
-        var from = text.IndexOf(start, StringComparison.Ordinal);
-        var to = text.IndexOf(end, from + start.Length, StringComparison.Ordinal);
-        return text[from..to];
-    }
-
-    private static string Slice(string text, string start, string end)
-    {
         var from = text.IndexOf(start, StringComparison.Ordinal);
         var to = text.IndexOf(end, from + start.Length, StringComparison.Ordinal);
         return text[from..to];

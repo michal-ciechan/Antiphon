@@ -85,7 +85,7 @@ public sealed class OrchestratorWorkspaceWarningService
             var sibling = OrchestratorWorkspaceLayout.ProposedSiblingPath(cwd);
             var message =
                 $"Orchestrator '{agent.Name}' is launching from {state} at {cwd.Replace('\\', '/')} "
-                + $"(not a dedicated sibling workspace). Preview with scripts/orchestrator-workspace.ps1 plan. "
+                + $"(not a dedicated sibling workspace). Preview with scripts/antiphon orchestrator-workspace plan. "
                 + $"Proposed sibling: {sibling}. {key}";
 
             _db.AgentIncidents.Add(new AgentIncident

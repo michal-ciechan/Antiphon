@@ -129,8 +129,8 @@ public class ComplexityChainRoleTests
         walk.ExhaustedSentence().ShouldContain("no Plan/Hard row");
         walk.ExhaustedSentence().ShouldContain("no any-role Hard row");
         walk.ExhaustedSentence().ShouldContain("no config default");
-        walk.ExhaustedSentence().ShouldContain("set -Role Plan -Complexity Hard");
-        walk.ExhaustedSentence().ShouldContain("set -Complexity Hard for every role");
+        walk.ExhaustedSentence().ShouldContain("scripts/antiphon complexity-chain set --role Plan --complexity Hard");
+        walk.ExhaustedSentence().ShouldContain("set --complexity Hard for every role");
     }
 
     [Test]

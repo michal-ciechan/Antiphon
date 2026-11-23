@@ -1312,7 +1312,7 @@ revision, a reason, and Human provenance.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision.
 
 **The matrix governs an ordinary Worker dispatch; a pin is the exception.** For role-wide routing,
-write the role × complexity matrix with `scripts/complexity-chain.ps1` or the Routing tab.
+write the role × complexity matrix with `scripts/antiphon complexity-chain` or the Routing tab.
 An ordinary Worker create without an explicit kind/level, standing agent or model-disable bypass
 uses `Delegation:DefaultComplexity` (shipped `Medium`) when a role, any-role or config row resolves.
 RolePolicy supplies the fallback when that row is unset. A Required pin with candidates can
@@ -1331,7 +1331,7 @@ Codex Frontier candidates resolve to `gpt-6.2-astra`.
 | A held single Required target is refused; the unpinned exhausted default row becomes Blocked | `RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`; `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | 409 `model_disabled` for the single pin; Blocked with the cell named for the exhausted default row |
 | A standing-agent pin is displayed as agent-bound | `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | `source: agent`, empty candidate list, `governsDefault: false`, and a withholding reason |
 
-`delegate.ps1 -Pin` records a card exception. Read `complexity-chain.ps1 get -Role <R>` to see the
+`delegate.ps1 -Pin` records a card exception. Read `scripts/antiphon complexity-chain get --role <R>` to see the
 stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
 Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
@@ -1473,8 +1473,8 @@ The list is a sparse (role × complexity) matrix: the walk reads the role cell, 
 chain, then the config default. Exhaustion follows the refusal/Blocked rules below. Without `-Complexity`, an ordinary Worker uses the
 configured default tier when a row resolves, or RolePolicy when it does not (tests above).
 Combining `-Complexity` with `-Kind` or `-Level` is 422 (`ComplexityCreateTests.Explicit_kind_plus_complexity_is_422`).
-Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
-a cell, omit `-Role` for the any-role row). When the chain
+Config defaults ship empty; write the live lists with `scripts/antiphon complexity-chain set` (`--role Plan` for
+a cell, omit `--role` for the any-role row). When the chain
 is exhausted, a Required pin with one effective candidate applies single-target 409 checks
 (V17 D1). Otherwise the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
 **relay that to the operator; do not pick a kind yourself.** A human answers with Retry,
@@ -1488,22 +1488,22 @@ is itself held (CARD-0481).
 and after a row write that clears a pin:
 
 ```powershell
-pwsh -NoProfile -File scripts/complexity-chain.ps1 get -Role Review
-pwsh -NoProfile -File scripts/complexity-chain.ps1 set -Role Review -Complexity All -Candidates Codex/Frontier -ClearStagePin
-pwsh -NoProfile -File scripts/complexity-chain.ps1 get -Role Review
+scripts\antiphon.cmd complexity-chain get --role Review
+scripts\antiphon.cmd complexity-chain set --role Review --complexity All --candidates Codex/Frontier --clear-stage-pin
+scripts\antiphon.cmd complexity-chain get --role Review
 ```
 
-`-ClearStagePin` deletes the whole stage pin, including its forbidden list, dates and agent
+`--clear-stage-pin` deletes the whole stage pin, including its forbidden list, dates and agent
 assignment. It performs no automatic effective read-back. Inspect those fields before choosing
-the clear; the two `get -Role` commands above are operator work.
+the clear; the two `get --role` commands above are operator work.
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
 | Three cell writes precede the stage-pin DELETE | `ComplexityChainScriptTests.ClearStagePin_deletes_the_stage_pin_only_after_three_2xx` | Exact Hard/Medium/Easy PUTs, pin lookup, then DELETE by id; the card pin and another role's stage pin remain; no effective read-back request |
 | Partial writes leave the stage pin in place | `ComplexityChainScriptTests.ClearStagePin_is_skipped_when_a_tier_failed` | A failed tier stops the sequence before the pin clear |
-| `-ClearStagePin` needs a named role and `-Complexity All` | `ComplexityChainScriptTests.ClearStagePin_requires_All_and_a_named_role` | Invalid combinations exit before HTTP |
+| `--clear-stage-pin` needs a named role and `--complexity All` | `ComplexityChainScriptTests.ClearStagePin_requires_All_and_a_named_role` | Invalid combinations exit before HTTP |
 | GET prints the effective overlay | `ComplexityChainScriptTests.Get_Role_prints_the_effective_line` | Literal effective line from the role-view DTO |
-| Operator compares the effective view before and after clear, including forbidden aliases, dates and agent assignment | not covered by a test | Manual acceptance; the script test uses a pin id and checks deletion, not a field-rich live pin |
+| Operator compares the effective view before and after clear, including forbidden aliases, dates and agent assignment | not covered by a test | Manual acceptance; the command test uses a pin id and checks deletion, not a field-rich live pin |
 
 **Generated matrix instructions (CARD-0097).** The server projects the matrix into section 5 of
 `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md` and `GET /api/orchestrator-instructions`. Pins, model levels
@@ -1533,9 +1533,9 @@ caller activates S-A/S-B/S-D/S-E/S-F and checks `/api/version` plus the role-vie
 [landed matrix plan §6.3–6.5](superpowers/plans/2026-10-14-card-0097-matrix-plan.md#6-rollout-and-migration).
 These are operator instructions; the live migration and rollback are not acceptance work performed by S-F.
 
-3. **Migration (operator).** `pwsh -NoProfile -File scripts/migrate-stage-pins-to-cells.ps1 -OutDir <dir>` (dry
-   run) against the live server; read the table and keep the printed snapshot path; `-Apply -OutDir <dir>`; then for
-   each role run `complexity-chain.ps1 get -Role <R>` and read the Routing tab (each migrated cell now says
+3. **Migration (operator).** `scripts/antiphon migrate-stage-pins-to-cells --out-dir <dir>` (dry
+   run) against the live server; read the table and keep the printed snapshot path; `--apply --out-dir <dir>`; then for
+   each role run `scripts/antiphon complexity-chain get --role <R>` and read the Routing tab (each migrated cell now says
    `Required Human pin → …` above an own rule whose list equals the pin's). Only then clear the pins, one role at a
    time, with `scripts/antiphon routing-pin clear --role <R>`, and re-read `get --role <R>`: the
    `effective:` line now reads `role` with the same list. The expected cell contents, from the live pins:
@@ -1567,13 +1567,13 @@ These are operator instructions; the live migration and rollback are not accepta
    | Step | Operator action | Why in this position | Bound by |
    |---|---|---|---|
    | 1 | For each role whose pin was cleared in §6.3: `scripts/antiphon routing-pin set --role <R> --provenance Human --strength Required --candidates <list> --reason <text>`, list and reason from the §6.3 table | A Required pin with candidates bypasses the row for an ordinary create (`RoutingCandidates.cs:58-63`) and for the two children (D-3 step 3). Deleting the Review cells first would put a plain Worker/Review create on RolePolicy's ClaudeCode/Frontier (`DelegationSettings.cs:358`) until the Review pin is back, where before the migration it ran Codex/Frontier | — (operator step) |
-   | 2 | Read back each role: `complexity-chain.ps1 get -Role <R>` prints `effective: pin …`; stop here if any `set` failed — nothing has been removed yet | the pin, not the cell, is the governing rule from here on | V-D6 (the line) |
-   | 3 | `pwsh -NoProfile -File scripts/migrate-stage-pins-to-cells.ps1 -Restore -Snapshot <first snapshot> -OutDir <dir>` | the script re-checks step 1 itself and refuses with zero writes while a migrated role has no Required stage pin (D-9 precondition 1); with pins back, the order in which cells are removed or re-PUT does not matter | V-E12 (refusal, then proceed), V-E6 (per-case action), V-E4 `restore` (stop on non-2xx) |
+   | 2 | Read back each role: `scripts/antiphon complexity-chain get --role <R>` prints `effective: pin …`; stop here if any `set` failed — nothing has been removed yet | the pin, not the cell, is the governing rule from here on | V-D6 (the line) |
+   | 3 | `scripts/antiphon migrate-stage-pins-to-cells --restore --snapshot <first snapshot> --out-dir <dir>` | the command re-checks step 1 itself and refuses with zero writes while a migrated role has no Required stage pin (D-9 precondition 1); with pins back, the order in which cells are removed or re-PUT does not matter | V-E12 (refusal, then proceed), V-E6 (per-case action), V-E4 `restore` (stop on non-2xx) |
 
    Cells written by the row editor after the first snapshot are overwritten or deleted by step 3, which is why the
    runbook says to restore from the first snapshot and before any editor use. An Auto before-image is cleared, not
    re-created (D-9). An operator who wants the cells gone without recreating the pins is not rolling back: that is
-   `complexity-chain.ps1 clear -Role <R> -Complexity All` per role (S-D), chosen explicitly.
+   `scripts/antiphon complexity-chain clear --role <R> --complexity All` per role (S-D), chosen explicitly.
 
 **A Blocked-on-question child (CARD-0294 S1+S2).** The parent `[task … blocked]` note carries
 `reason:` / `asks:` / `authority:` / `next:` above the body, outside the excerpt window. If

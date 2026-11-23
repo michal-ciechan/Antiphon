@@ -166,7 +166,7 @@ public sealed class ComplexityRoutingService
             {
                 return RoutingExhaustedPrefix
                     + $"{Role}/{Complexity} chain is empty (no {Role}/{Complexity} row, no any-role {Complexity} row, no config default). "
-                    + $"Set one with complexity-chain.ps1 set -Role {Role} -Complexity {Complexity}, or set -Complexity {Complexity} for every role.";
+                    + $"Set one with scripts/antiphon complexity-chain set --role {Role} --complexity {Complexity}, or set --complexity {Complexity} for every role.";
             }
 
             return RoutingExhaustedPrefix

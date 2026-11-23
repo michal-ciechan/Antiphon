@@ -42,7 +42,7 @@ public class OrchestratorWorkspaceWarningTests
             rows.Count.ShouldBe(1);
             rows[0].Severity.ShouldBe(AlertSeverity.Warning);
             rows[0].FailureReason.ShouldStartWith(OrchestratorWorkspaceWarningService.FingerprintPrefix);
-            rows[0].Message.ShouldContain("orchestrator-workspace.ps1 plan");
+            rows[0].Message.ShouldContain("scripts/antiphon orchestrator-workspace plan");
         }
         finally
         {

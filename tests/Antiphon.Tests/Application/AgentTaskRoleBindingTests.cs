@@ -64,8 +64,10 @@ public class AgentTaskRoleBindingTests(AntiphonWebAppFactory factory)
         ScriptedRoles("delegate.ps1").ShouldBe(expected, ignoreOrder: true);
         // The routing-pin command (unit 24 of the 2026-11-22 plan) replaced routing-pin.ps1 and its Role ValidateSet.
         Antiphon.Nightly.RoutingPinCliOptions.Roles.ShouldBe(expected, ignoreOrder: true);
-        ScriptedRoles("complexity-chain.ps1")
-            .ShouldBe(expected.Append("Any").ToArray(), ignoreOrder: true);
+        // The complexity-chain command (unit 26) replaced complexity-chain.ps1 and its Role ValidateSet; Any is the any-role row.
+        Antiphon.Nightly.ComplexityChainCliOptions.Roles.ShouldBe(expected.Append("Any").ToArray(), ignoreOrder: true);
+        // The migration command (unit 26) migrates every stage role's pin.
+        Antiphon.Nightly.StagePinMigration.Roles.ShouldBe(expected, ignoreOrder: true);
     }
 
     internal static IReadOnlyList<string> ScriptedRoles(string script)

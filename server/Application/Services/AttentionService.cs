@@ -2474,7 +2474,7 @@ public sealed partial class AttentionService
                 Excerpt(
                     "The orchestrator is running in the checkout (or an unapproved/nested sibling) "
                     + "instead of a dedicated workspace. Detection only — the launch was not blocked. "
-                    + "scripts/orchestrator-workspace.ps1 plan previews the move."),
+                    + "scripts/antiphon orchestrator-workspace plan previews the move."),
                 r.CreatedAt,
                 null,
                 [AttentionAction.OpenAgent, AttentionAction.OpenDrawer]);

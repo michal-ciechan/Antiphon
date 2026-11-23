@@ -796,7 +796,7 @@ public sealed class ProjectSetupService
                 ReadinessLevel.Recommended,
                 ReadinessStatus.Warning,
                 $"Orchestrator '{match.Name}' has no working directory to classify.",
-                "Set the agent's working directory, then run scripts/orchestrator-workspace.ps1 plan.",
+                "Set the agent's working directory, then run scripts/antiphon orchestrator-workspace plan.",
                 new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
                 new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace"));
         }
@@ -824,8 +824,8 @@ public sealed class ProjectSetupService
                 ReadinessStatus.Warning,
                 $"Orchestrator '{match.Name}' is in a dedicated workspace whose CLI precondition is not approved.",
                 cli == OrchestratorWorkspaceCli.Claude
-                    ? "Claude will drop @../checkout/AGENTS.md until hasClaudeMdExternalIncludesApproved is true for the forward-slash project key. scripts/orchestrator-workspace.ps1 setup writes it."
-                    : "The CLI's project-trust flag is missing. scripts/orchestrator-workspace.ps1 setup writes it.",
+                    ? "Claude will drop @../checkout/AGENTS.md until hasClaudeMdExternalIncludesApproved is true for the forward-slash project key. scripts/antiphon orchestrator-workspace setup writes it."
+                    : "The CLI's project-trust flag is missing. scripts/antiphon orchestrator-workspace setup writes it.",
                 new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
                 new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
             OrchestratorWorkspaceState.DedicatedNested => Check(
@@ -833,7 +833,7 @@ public sealed class ProjectSetupService
                 ReadinessLevel.Recommended,
                 ReadinessStatus.Warning,
                 $"Orchestrator '{match.Name}' uses a nested layout that leaks Claude instructions into every delegate.",
-                $"Move to a sibling folder (e.g. {sibling}) with scripts/orchestrator-workspace.ps1 plan.",
+                $"Move to a sibling folder (e.g. {sibling}) with scripts/antiphon orchestrator-workspace plan.",
                 new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
                 new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
             OrchestratorWorkspaceState.CheckoutAsCwd => Check(
@@ -841,7 +841,7 @@ public sealed class ProjectSetupService
                 ReadinessLevel.Recommended,
                 ReadinessStatus.Warning,
                 $"Orchestrator '{match.Name}' runs in the checkout itself ({cwd.Replace('\\', '/')}); its CLAUDE.md, hooks and transcript root are shared with every delegate launched there.",
-                $"Proposed sibling: {sibling}. Preview with scripts/orchestrator-workspace.ps1 plan.",
+                $"Proposed sibling: {sibling}. Preview with scripts/antiphon orchestrator-workspace plan.",
                 new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
                 new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
             _ => Check(
@@ -849,7 +849,7 @@ public sealed class ProjectSetupService
                 ReadinessLevel.Recommended,
                 ReadinessStatus.Warning,
                 $"Orchestrator '{match.Name}' working directory is not a dedicated sibling workspace.",
-                $"Preview scripts/orchestrator-workspace.ps1 plan. Proposed sibling: {sibling}.",
+                $"Preview scripts/antiphon orchestrator-workspace plan. Proposed sibling: {sibling}.",
                 new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
                 new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
         };

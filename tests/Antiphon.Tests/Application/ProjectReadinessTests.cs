@@ -520,7 +520,7 @@ public partial class ProjectReadinessTests
             check.Fixes.ShouldNotBeNull();
             check.Fixes!.Count.ShouldBe(2);
             check.Fixes[1].Action.ShouldBe("acknowledge-orchestrator-workspace");
-            check.Detail.ShouldContain("orchestrator-workspace.ps1 plan");
+            check.Detail.ShouldContain("scripts/antiphon orchestrator-workspace plan");
         }
         finally
         {

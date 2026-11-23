@@ -822,8 +822,8 @@ DELETE /api/complexity-chains/{complexity}             alias of /any/{complexity
 POST   /api/agent-tasks/{id}/reroute                   { agentKind, modelLevel } — Blocked-for-routing or Queued
 ```
 
-Config defaults for chains ship **empty**. Script: `scripts/complexity-chain.ps1 get|set|clear`
-(`-Role` omitted or `Any` writes the any-role row). `delegate.ps1 -Complexity Hard|Medium|Easy`,
+Config defaults for chains ship **empty**. Command: `scripts/antiphon complexity-chain get|set|clear`
+(`--role` omitted or `Any` writes the any-role row). `delegate.ps1 -Complexity Hard|Medium|Easy`,
 `-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`. 422 for Check/Distill/Diagnose as a cell
 role ("seat-pinned roles are not routed by chains") and for an unknown role.
 
@@ -844,7 +844,7 @@ the request reads:
 
 | Sent | Active row | Result | Source |
 |---|---|---|---|
-| omitted | — | write without a version check (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1`): last writer wins; see below for a lost race | `ThrowIfStaleAsync` returns at once; `Put_twice_is_last_writer_wins_without_a_409` |
+| omitted | — | write without a version check (callers that predate CARD-1275; `scripts/antiphon migrate-stage-pins-to-cells`): last writer wins; see below for a lost race | `ThrowIfStaleAsync` returns at once; `Put_twice_is_last_writer_wins_without_a_409` |
 | `00000000-0000-0000-0000-000000000000` | absent | PUT creates the row; DELETE is a 204 no-op | `Stale_delete_is_409_and_keeps_the_row` (PUT); `ClearAsync` returns before the check (DELETE) |
 | `00000000-0000-0000-0000-000000000000` | present | 409 `complexity_chain_stale` | `Create_when_absent_needs_no_version_and_the_empty_token_refuses_an_existing_row` |
 | the row's token | present | write: a PUT is 200 with the new token, a DELETE 204 | `Stale_delete_is_409_and_keeps_the_row` (second PUT, fresh DELETE) |
@@ -882,7 +882,7 @@ token (or none), and a save with it is 409; a cell cleared between them is retur
 or token (`GetEffectiveAsync`;
 `The_role_view_reads_the_token_before_the_candidates_so_a_change_between_them_makes_a_save_stale`).
 The unfiltered list takes each entry's candidates and token from one row read (`GetAsync` and
-`ListLiveCellsAsync`, then `ToRowDtoAsync`). `complexity-chain.ps1 set|clear` reads
+`ListLiveCellsAsync`, then `ToRowDtoAsync`). `scripts/antiphon complexity-chain set|clear` reads
 `GET /api/complexity-chains` once and sends each cell's token from that read
 (`Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale`). The settings editor sends
 the version it opened; on a 409 it shows the stored row beside the draft as "Changed since you

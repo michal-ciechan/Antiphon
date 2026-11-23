@@ -429,7 +429,7 @@ public sealed class DelegationSettings
     /// Config defaults for a complexity tier with no active <c>ComplexityChains</c> row
     /// (CARD-0090). EMPTY as shipped — routing policy changed nine times in three days, so a
     /// seeded fable→opus→sol→grok chain would be wrong the moment it landed. A human writes
-    /// the live lists with <c>complexity-chain.ps1 set</c>.
+    /// the live lists with <c>scripts/antiphon complexity-chain set</c>.
     /// </summary>
     public Dictionary<string, List<ComplexityCandidateSettings>> ComplexityChains { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);

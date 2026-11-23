@@ -1,23 +1,27 @@
-using System.Diagnostics;
+using System.IO.Abstractions.TestingHelpers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0097 S-E: the migrate-stage-pins-to-cells command (Antiphon.Nightly.StagePinMigration, which replaced
+/// scripts/migrate-stage-pins-to-cells.ps1 in unit 26 of the 2026-11-22 plan) in process against the recording API stand-in
+/// (<see cref="ScriptedApi"/>), its snapshots on an in-memory file system under a temp-path root. Nothing leaves the process.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class MigrateStagePinsScriptTests
 {
     [Test]
-    public async Task Dry_run_writes_nothing_and_records_before_images()
+    public void Dry_run_writes_nothing_and_records_before_images()
     {
-        using var fixture = new Fixture();
-        var run = await fixture.RunAsync();
-        run.ExitCode.ShouldBe(0, run.Output);
+        var fixture = new Fixture();
+        var run = fixture.Run();
+        run.Exit.ShouldBe(0, run.All);
         fixture.Api.Requests.Select(r => r.Method).Distinct().ShouldBe(new[] { "GET" });
         fixture.Api.Requests.Select(r => r.Path).ShouldBe(new[] {
             "/api/routing-pins", "/api/model-availability",
@@ -29,7 +33,7 @@ public sealed class MigrateStagePinsScriptTests
             "/api/complexity-chains?role=Deploy", "/api/complexity-chains?role=Merge",
             "/api/complexity-chains?role=Mutation" });
         var snapshot = fixture.ReadSnapshot();
-        snapshot["apiBase"]!.GetValue<string>().ShouldBe(fixture.Api.BaseUrl.TrimEnd('/'));
+        snapshot["apiBase"]!.GetValue<string>().ShouldBe(OperatorApi.Base(ScriptedApi.BaseUrl));
         DateTimeOffset.Parse(snapshot["createdAt"]!.GetValue<string>()).ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-5));
         snapshot["pins"]!.AsArray().Count.ShouldBe(13);
         snapshot["cellsBefore"]!.AsArray().Count.ShouldBe(39);
@@ -37,35 +41,38 @@ public sealed class MigrateStagePinsScriptTests
             cell!["present"]!.GetValue<bool>().ShouldBeFalse();
         AssertPlan(snapshot["plan"]!.AsArray());
         run.Output.ShouldContain(fixture.SnapshotPath);
+        run.Output.ShouldContain("Snapshot folder: " + fixture.DirectoryPath);
         run.Output.Split('\n').Count(line => line.StartsWith("Plan |", StringComparison.Ordinal)).ShouldBe(1);
         foreach (var role in Roles)
             run.Output.ShouldContain($"{role} |");
         run.Output.ShouldContain("effective BEFORE: Required pin Codex/Frontier,Codex/High,ClaudeCode/High");
         run.Output.ShouldContain("effective AFTER apply: Required pin Codex/Frontier,Codex/High,ClaudeCode/High");
         run.Output.ShouldContain("after separate pin clear: role Codex/Frontier,Codex/High,ClaudeCode/High");
-        run.Output.ShouldContain("Read back with complexity-chain.ps1 get -Role Plan");
+        run.Output.ShouldContain("Plan | bbdce6e6-196f-45a5-a6de-f69d151a523c | Codex/Frontier,Codex/High,ClaudeCode/High | Hard absent (inherits none); Medium absent (inherits none); Easy absent (inherits none) | Human Codex/Frontier,Codex/High,ClaudeCode/High");
+        run.Output.ShouldContain("Dry run: zero writes. Use --apply to write the previewed cells from a fresh read.");
+        run.Output.ShouldContain("Read back with scripts/antiphon complexity-chain get --role Plan");
         run.Output.ShouldContain("Separate operator command after review: scripts/antiphon routing-pin clear --role Plan");
         fixture.Api.Cells.Count.ShouldBe(0);
 
         // The explicit spelling used for an optional live read has the same GET-only boundary.
-        var explicitDry = await fixture.RunAsync("-DryRun", "-Role", "Review");
-        explicitDry.ExitCode.ShouldBe(0, explicitDry.Output);
+        var explicitDry = fixture.Run("--dry-run", "--role", "review");
+        explicitDry.Exit.ShouldBe(0, explicitDry.All);
         fixture.Api.Requests.Select(r => r.Method).Distinct().ShouldBe(new[] { "GET" });
         explicitDry.Output.ShouldContain("Review |");
         explicitDry.Output.ShouldNotContain("Plan |");
     }
 
     [Test]
-    public async Task Manual_and_card_pins_are_listed_and_never_written()
+    public void Manual_and_card_pins_are_listed_and_never_written()
     {
-        using var fixture = new Fixture();
+        var fixture = new Fixture();
         fixture.Pin("Plan")["forbiddenAliases"] = new JsonArray("fable");
         fixture.Pin("Code")["notAfter"] = "2099-01-01T00:00:00Z";
         fixture.Pin("Review")["agentId"] = "d248ed59-8f72-4d15-bf5d-20fd57085829";
         fixture.Pin("Debug")["notBefore"] = "2026-01-01T00:00:00Z";
         var pinsBefore = fixture.PinsJson;
-        var run = await fixture.RunAsync("-Apply");
-        run.ExitCode.ShouldBe(0, run.Output);
+        var run = fixture.Run("--apply");
+        run.Exit.ShouldBe(0, run.All);
         foreach (var role in new[] { "Plan", "Code", "Review", "Debug" })
         {
             run.Output.ShouldContain($"{role} | manual");
@@ -79,46 +86,56 @@ public sealed class MigrateStagePinsScriptTests
     }
 
     [Test]
-    public async Task Apply_puts_three_cells_per_role_with_human_provenance_and_the_migration_reason()
+    public void Apply_puts_three_cells_per_role_with_human_provenance_and_the_migration_reason()
     {
-        using var fixture = new Fixture();
+        var fixture = new Fixture();
         var pinsBefore = fixture.PinsJson;
-        var run = await fixture.RunAsync("-Apply");
-        run.ExitCode.ShouldBe(0, run.Output);
+        var run = fixture.Run("--apply");
+        run.Exit.ShouldBe(0, run.All);
         AssertWrites(fixture.Api.Requests.Where(r => r.Method == "PUT").ToArray());
         fixture.Api.Cells.Count.ShouldBe(39);
         fixture.PinsJson.ShouldBe(pinsBefore);
         AssertNoPinWrites(fixture.Api);
+        run.Output.ShouldContain("written: " + string.Join(", ", CellPaths().Select(path => path["/api/complexity-chains/".Length..])));
+        run.Output.ShouldNotContain("Dry run");
 
         // A changed live candidate, rather than a copied migration table, must drive the PUT.
-        using var held = new Fixture();
+        var held = new Fixture();
         held.Pin("Plan")["candidates"] = JsonNode.Parse("""[{"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":false,"unavailableReason":"held"},{"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4","availableNow":false,"unavailableReason":"held"}]""");
         held.Pin("Plan")["candidateCount"] = 2;
-        var heldRun = await held.RunAsync("-Apply", "-Role", "Plan");
-        heldRun.ExitCode.ShouldBe(0, heldRun.Output);
-        heldRun.Output.ShouldContain("HELD Plan ClaudeCode/Frontier (fable): operator fable hold");
-        heldRun.Output.ShouldContain("HELD Plan Grok/Frontier (grok-4): operator Grok hold");
+        var heldRun = held.Run("--apply", "--role", "Plan");
+        heldRun.Exit.ShouldBe(0, heldRun.All);
+        heldRun.Output.ShouldContain("WARNING: HELD Plan ClaudeCode/Frontier (fable): operator fable hold");
+        heldRun.Output.ShouldContain("WARNING: HELD Plan Grok/Frontier (grok-4): operator Grok hold");
         held.Api.Cells.Count.ShouldBe(3);
         Pairs(held.Api.Cells["Plan/Hard"]["candidates"]!).ShouldBe("ClaudeCode/Frontier,Grok/Frontier");
         heldRun.Output.IndexOf("HELD Plan", StringComparison.Ordinal)
             .ShouldBeLessThan(heldRun.Output.IndexOf("written:", StringComparison.Ordinal));
         AssertNoPinWrites(held.Api);
+
+        // An expired hold warns nothing.
+        var expired = new Fixture();
+        expired.Api.Respond("GET", "/api/model-availability", 200,
+            """{"holds":[{"kind":"Codex","modelAlias":"*","disabledUntil":"2026-01-01T00:00:00Z","reason":"over"}],"available":[]}""");
+        var quiet = expired.Run("--role", "Plan");
+        quiet.Exit.ShouldBe(0, quiet.All);
+        quiet.Output.ShouldNotContain("HELD");
     }
 
     [Test]
     [Arguments("apply")]
     [Arguments("restore")]
-    public async Task A_non_2xx_stops_the_run_and_names_the_cells_written(string phase)
+    public void A_non_2xx_stops_the_run_and_names_the_cells_written(string phase)
     {
-        using var fixture = new Fixture();
+        var fixture = new Fixture();
         int start;
-        (int ExitCode, string Output) run;
+        BoardCommandRun.Result run;
         if (phase == "apply")
         {
             fixture.Api.Respond("PUT", "/api/complexity-chains/TestDesign/Medium", 500,
                 """{"detail":"cell refused","code":"test_migration_failed"}""");
             start = 0;
-            run = await fixture.RunAsync("-Apply");
+            run = fixture.Run("--apply");
             run.Output.ShouldContain("written: Plan/Hard, Plan/Medium, Plan/Easy, TestDesign/Hard");
             run.Output.ShouldContain("not written: TestDesign/Easy");
             fixture.Api.Requests.Last().Path.ShouldBe("/api/complexity-chains/TestDesign/Medium");
@@ -128,45 +145,51 @@ public sealed class MigrateStagePinsScriptTests
         else
         {
             fixture.SeedBefore("human");
-            var apply = await fixture.RunAsync("-Apply");
-            apply.ExitCode.ShouldBe(0, apply.Output);
+            var apply = fixture.Run("--apply");
+            apply.Exit.ShouldBe(0, apply.All);
             fixture.Api.Respond("DELETE", "/api/complexity-chains/TestDesign/Easy", 500,
                 """{"detail":"cell refused","code":"test_migration_failed"}""");
             start = fixture.Api.RequestCount;
-            run = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
+            run = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
             run.Output.ShouldContain("restored: Plan/Hard, Plan/Medium, Plan/Easy, TestDesign/Hard, TestDesign/Medium");
             run.Output.ShouldContain("not restored: Code/Hard");
             fixture.Api.Requests.Last().Path.ShouldBe("/api/complexity-chains/TestDesign/Easy");
             fixture.Api.Requests.Skip(start).Count(r => r.Method != "GET").ShouldBe(6);
         }
-        run.ExitCode.ShouldBe(1, run.Output);
-        run.Output.ShouldContain("500");
-        run.Output.ShouldContain("cell refused");
-        run.Output.ShouldContain("test_migration_failed");
-        fixture.Api.Requests.Skip(start).Last().Method.ShouldBe(phase == "apply" ? "PUT" : "DELETE");
+        run.Exit.ShouldBe(1, run.All);
+        run.All.ShouldContain("500");
+        run.All.ShouldContain("cell refused");
+        run.All.ShouldContain("test_migration_failed");
+        var verb = phase == "apply" ? "PUT" : "DELETE";
+        var cell = phase == "apply" ? "TestDesign/Medium" : "TestDesign/Easy";
+        // The status line names the failed cell on stdout; the failure is the one stderr line.
+        run.Output.ShouldContain("; failed: " + cell + " " + verb + " /api/complexity-chains/" + cell + " 500 ");
+        run.Error.Trim().ShouldStartWith(verb + " /api/complexity-chains/" + cell + " 500 {\"detail\":\"cell refused\"", Case.Sensitive);
+        fixture.Api.Requests.Skip(start).Last().Method.ShouldBe(verb);
         AssertNoPinWrites(fixture.Api);
     }
 
     [Test]
-    public async Task A_second_apply_sends_the_same_puts_and_leaves_the_store_unchanged()
+    public void A_second_apply_sends_the_same_puts_and_leaves_the_store_unchanged()
     {
-        using var fixture = new Fixture();
-        var first = await fixture.RunAsync("-Apply");
-        first.ExitCode.ShouldBe(0, first.Output);
+        var fixture = new Fixture();
+        var first = fixture.Run("--apply");
+        first.Exit.ShouldBe(0, first.All);
         var snapshot = fixture.SnapshotPath;
         var before = fixture.CellsJson;
         var firstWrites = fixture.Api.Requests.Where(r => r.Method == "PUT").ToArray();
         AssertWrites(firstWrites);
         var start = fixture.Api.RequestCount;
-        var second = await fixture.RunAsync("-Apply");
-        second.ExitCode.ShouldBe(0, second.Output);
+        var second = fixture.Run("--apply");
+        second.Exit.ShouldBe(0, second.All);
         var secondWrites = fixture.Api.Requests.Skip(start).Where(r => r.Method == "PUT").ToArray();
         AssertWrites(secondWrites);
         secondWrites.Select(r => r.Path + r.Body!.Value.GetRawText())
             .ShouldBe(firstWrites.Select(r => r.Path + r.Body!.Value.GetRawText()));
         fixture.CellsJson.ShouldBe(before);
-        Directory.GetFiles(fixture.DirectoryPath, "*.json").Length.ShouldBe(2);
-        File.Exists(snapshot).ShouldBeTrue();
+        fixture.Files.Directory.GetFiles(fixture.DirectoryPath, "*.json").Length.ShouldBe(2);
+        fixture.Files.File.Exists(snapshot).ShouldBeTrue();
+        fixture.SnapshotPath.ShouldBe(snapshot, "the first snapshot sorts first and is never replaced");
         AssertNoPinWrites(fixture.Api);
     }
 
@@ -174,14 +197,14 @@ public sealed class MigrateStagePinsScriptTests
     [Arguments("human")]
     [Arguments("human-expired")]
     [Arguments("auto")]
-    public async Task Restore_re_puts_human_before_images_and_deletes_absent_expired_and_auto_ones(string kind)
+    public void Restore_re_puts_human_before_images_and_deletes_absent_expired_and_auto_ones(string kind)
     {
-        using var fixture = new Fixture();
+        var fixture = new Fixture();
         fixture.SeedBefore(kind);
         var pinsBefore = fixture.PinsJson;
         var initialCells = fixture.CellsJson;
-        var apply = await fixture.RunAsync("-Apply");
-        apply.ExitCode.ShouldBe(0, apply.Output);
+        var apply = fixture.Run("--apply");
+        apply.Exit.ShouldBe(0, apply.All);
         var snapshot = fixture.ReadSnapshot();
         var prior = snapshot["cellsBefore"]!.AsArray().Single(c => c!["role"]!.GetValue<string>() == "Plan"
             && c["complexity"]!.GetValue<string>() == "Medium")!;
@@ -192,12 +215,12 @@ public sealed class MigrateStagePinsScriptTests
         if (kind == "human-expired")
         {
             prior["notAfter"] = "2026-01-01T00:00:00Z";
-            await File.WriteAllTextAsync(fixture.SnapshotPath, snapshot.ToJsonString());
+            fixture.Files.File.WriteAllText(fixture.SnapshotPath, snapshot.ToJsonString());
         }
         if (kind == "auto") apply.Output.ShouldContain("Auto (restore clears)");
         var start = fixture.Api.RequestCount;
-        var restore = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-        restore.ExitCode.ShouldBe(0, restore.Output);
+        var restore = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+        restore.Exit.ShouldBe(0, restore.All);
         var requests = fixture.Api.Requests.Skip(start).ToArray();
         requests.Take(13).Select(r => r.Method + " " + r.Path)
             .ShouldBe(Roles.Select(role => "GET /api/routing-pins?role=" + role));
@@ -219,11 +242,11 @@ public sealed class MigrateStagePinsScriptTests
         else
         {
             fixture.Api.Cells.Count.ShouldBe(0);
-            restore.Output.ShouldContain(kind == "auto" ? "Auto before-image not re-created; cleared" : "expired before restore; cleared");
+            restore.Output.ShouldContain(kind == "auto" ? "Plan/Medium: Auto before-image not re-created; cleared" : "Plan/Medium: expired before restore; cleared");
         }
         start = fixture.Api.RequestCount;
-        var second = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-        second.ExitCode.ShouldBe(0, second.Output);
+        var second = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+        second.Exit.ShouldBe(0, second.All);
         fixture.Api.Requests.Skip(start).Select(r => r.Method + r.Path + r.Body?.GetRawText())
             .ShouldBe(requests.Select(r => r.Method + r.Path + r.Body?.GetRawText()));
         fixture.PinsJson.ShouldBe(pinsBefore);
@@ -231,27 +254,27 @@ public sealed class MigrateStagePinsScriptTests
     }
 
     [Test]
-    public async Task Restore_refuses_until_each_migrated_roles_required_stage_pin_is_back()
+    public void Restore_refuses_until_each_migrated_roles_required_stage_pin_is_back()
     {
-        using var fixture = new Fixture();
-        var apply = await fixture.RunAsync("-Apply");
-        apply.ExitCode.ShouldBe(0, apply.Output);
+        var fixture = new Fixture();
+        var apply = fixture.Run("--apply");
+        apply.Exit.ShouldBe(0, apply.All);
         var pins = fixture.Api.Pins.Select(p => p.DeepClone().AsObject()).ToArray();
         var cells = fixture.CellsJson;
         fixture.Api.Pins.Clear();
         var start = fixture.Api.RequestCount;
-        var absent = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-        absent.ExitCode.ShouldBe(1, absent.Output);
-        absent.Output.ShouldContain("restore refused: Plan has no Required stage pin");
-        absent.Output.ShouldContain("scripts/antiphon routing-pin set --role Plan --provenance Human --strength Required --candidates Codex/Frontier,Codex/High,ClaudeCode/High");
+        var absent = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+        absent.Exit.ShouldBe(1, absent.All);
+        absent.Error.ShouldContain("restore refused: Plan has no Required stage pin");
+        absent.Error.ShouldContain("scripts/antiphon routing-pin set --role Plan --provenance Human --strength Required --candidates Codex/Frontier,Codex/High,ClaudeCode/High");
         fixture.Api.Requests.Skip(start).Select(r => r.Method).Distinct().ShouldBe(new[] { "GET" });
         fixture.CellsJson.ShouldBe(cells);
         fixture.Api.Pins.AddRange(pins);
         fixture.Pin("Review")["strength"] = "Preferred";
         start = fixture.Api.RequestCount;
-        var preferred = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-        preferred.ExitCode.ShouldBe(1, preferred.Output);
-        preferred.Output.ShouldContain("restore refused: Review has no Required stage pin");
+        var preferred = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+        preferred.Exit.ShouldBe(1, preferred.All);
+        preferred.Error.ShouldContain("restore refused: Review has no Required stage pin");
         fixture.Api.Requests.Skip(start).Any(r => r.Method != "GET").ShouldBeFalse();
         fixture.CellsJson.ShouldBe(cells);
         fixture.Pin("Review")["strength"] = "Required";
@@ -262,27 +285,86 @@ public sealed class MigrateStagePinsScriptTests
             fixture.Pin("Review")[field] = field switch {
                 "notAfter" => "2026-01-01T00:00:00Z", "notBefore" => "2099-01-01T00:00:00Z", _ => "card-a" };
             start = fixture.Api.RequestCount;
-            var inactive = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-            inactive.ExitCode.ShouldBe(1, inactive.Output);
-            inactive.Output.ShouldContain("restore refused: Review");
+            var inactive = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+            inactive.Exit.ShouldBe(1, inactive.All);
+            inactive.Error.ShouldContain("restore refused: Review");
             fixture.Api.Requests.Skip(start).Any(r => r.Method != "GET").ShouldBeFalse();
             fixture.Api.Pins.Single(p => p["id"]!.GetValue<string>() == "50328b61-de56-4508-a037-d707d652d583")[field] = null;
         }
         var snapshot = fixture.ReadSnapshot();
         snapshot["apiBase"] = "http://different.invalid";
         var wrongBase = Path.Combine(fixture.DirectoryPath, "wrong-base.json");
-        await File.WriteAllTextAsync(wrongBase, snapshot.ToJsonString());
+        fixture.Files.File.WriteAllText(wrongBase, snapshot.ToJsonString());
         start = fixture.Api.RequestCount;
-        var mismatch = await fixture.RunAsync("-Restore", "-Snapshot", wrongBase);
-        mismatch.ExitCode.ShouldBe(1, mismatch.Output);
-        mismatch.Output.ShouldContain("apiBase");
+        var mismatch = fixture.Run("--restore", "--snapshot", wrongBase);
+        mismatch.Exit.ShouldBe(1, mismatch.All);
+        mismatch.Error.ShouldContain("apiBase");
         fixture.Api.Requests.Skip(start).Any(r => r.Method != "GET").ShouldBeFalse();
         start = fixture.Api.RequestCount;
-        var restored = await fixture.RunAsync("-Restore", "-Snapshot", fixture.SnapshotPath);
-        restored.ExitCode.ShouldBe(0, restored.Output);
+        var restored = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath);
+        restored.Exit.ShouldBe(0, restored.All);
         fixture.Api.Requests.Skip(start).Count(r => r.Method == "DELETE").ShouldBe(39);
         fixture.Api.Cells.Count.ShouldBe(0);
         AssertNoPinWrites(fixture.Api);
+    }
+
+    [Test]
+    public void Restore_of_one_role_reads_and_writes_only_that_role()
+    {
+        var fixture = new Fixture();
+        fixture.Run("--apply").Exit.ShouldBe(0);
+        var start = fixture.Api.RequestCount;
+        var run = fixture.Run("--restore", "--snapshot", fixture.SnapshotPath, "--role", "Code");
+        run.Exit.ShouldBe(0, run.All);
+        fixture.Api.Requests.Skip(start).Select(r => r.Method + " " + r.Path).ShouldBe([
+            "GET /api/routing-pins?role=Code",
+            "DELETE /api/complexity-chains/Code/Hard", "DELETE /api/complexity-chains/Code/Medium", "DELETE /api/complexity-chains/Code/Easy"]);
+        run.Output.Trim().ShouldBe("restored: Code/Hard, Code/Medium, Code/Easy");
+        fixture.Api.Cells.Count.ShouldBe(36);
+    }
+
+    [Test]
+    public void Bad_command_lines_and_unreadable_inputs_are_refused_before_any_write()
+    {
+        var fixture = new Fixture();
+        foreach (var (args, message) in new (string[], string)[]
+        {
+            (["--dry-run", "--apply"], "--dry-run, --apply and --restore are mutually exclusive"),
+            (["--apply", "--restore", "--snapshot", "x.json"], "--dry-run, --apply and --restore are mutually exclusive"),
+            (["--restore"], "--restore requires --snapshot <first snapshot>"),
+            (["--snapshot", "x.json"], "--snapshot requires --restore"),
+            (["--role", "Any"], "--role must be one of Investigate, Plan,"),
+            (["--role", "Check"], "--role must be one of"),
+            (["-Apply"], "unexpected argument '-Apply'"),
+        })
+        {
+            var refused = fixture.Run(args);
+            refused.Exit.ShouldBe(2, string.Join(" ", args));
+            refused.Error.ShouldContain(message);
+        }
+        fixture.Api.RequestCount.ShouldBe(0);
+
+        var missing = fixture.Run("--restore", "--snapshot", Path.Combine(fixture.DirectoryPath, "no-such.json"));
+        missing.Exit.ShouldBe(1);
+        missing.Error.ShouldContain("does not exist");
+        var garbage = Path.Combine(fixture.DirectoryPath, "garbage.json");
+        fixture.Files.File.WriteAllText(garbage, "{not json");
+        var unreadable = fixture.Run("--restore", "--snapshot", garbage);
+        unreadable.Exit.ShouldBe(1);
+        unreadable.Error.ShouldContain("is not JSON");
+        fixture.Api.RequestCount.ShouldBe(0);
+
+        // A failed read is one stderr line and no snapshot.
+        var down = new Fixture();
+        down.Api.Respond("GET", "/api/routing-pins", 503, "");
+        var failed = down.Run("--apply");
+        failed.Exit.ShouldBe(1);
+        failed.Error.Trim().ShouldBe("GET /api/routing-pins 503 (no body)");
+        down.Files.Directory.GetFiles(down.DirectoryPath).ShouldBeEmpty();
+
+        var options = StagePinMigrationOptions.Parse([], null, null);
+        options.OutDir.ShouldBe(".antiphon/migration-snapshots");
+        options.Api.ShouldBe(OperatorApi.DefaultApi);
     }
 
     private static string[] Roles => ["Plan", "TestDesign", "Code", "Review", "Investigate", "Debug", "Coverage", "Docs", "Commit", "Test", "Deploy", "Merge", "Mutation"];
@@ -333,18 +415,23 @@ public sealed class MigrateStagePinsScriptTests
         "68d8d684-6766-40b7-b59d-8eb2751f5654", "6855ae74-d13c-449e-9d11-bbf62d5a5f89", "f890319f-87b0-408d-848d-762aee01206c",
         "e6d574aa-28a1-47b5-be8e-63bac635db33", "64e43198-dd6c-4347-9011-1897f89d3cf2"];
 
-    private sealed class Fixture : IDisposable
+    // The live census of 2026-10-14 as the API answered it, the snapshot folder on an in-memory file system under a temp-path
+    // root; each run is the command in process as the CLI runs it.
+    private sealed class Fixture
     {
         public ScriptedApi Api { get; } = new();
-        public string DirectoryPath { get; } = Directory.CreateTempSubdirectory("c097-migration-").FullName;
-        public string SnapshotPath => Directory.GetFiles(DirectoryPath, "migrate-stage-pins-*.json").OrderBy(File.GetCreationTimeUtc).First();
+        public MockFileSystem Files { get; } = new();
+        public string DirectoryPath { get; } = Path.Combine(Path.GetTempPath(), "c097-migration-" + Guid.NewGuid().ToString("N"));
+        // The names start with the UTC time to the tick, so the first snapshot sorts first.
+        public string SnapshotPath => Files.Directory.GetFiles(DirectoryPath, "migrate-stage-pins-*.json").Order(StringComparer.Ordinal).First();
         public string PinsJson => JsonSerializer.Serialize(Api.Pins);
         public string CellsJson => JsonSerializer.Serialize(Api.Cells.OrderBy(p => p.Key).ToDictionary(p => p.Key, p => p.Value));
         public JsonObject Pin(string role) => Api.Pins.Single(p => p["role"]!.GetValue<string>() == role && p["cardId"] is null);
-        public JsonObject ReadSnapshot() => JsonNode.Parse(File.ReadAllText(SnapshotPath))!.AsObject();
+        public JsonObject ReadSnapshot() => JsonNode.Parse(Files.File.ReadAllText(SnapshotPath, Encoding.UTF8))!.AsObject();
 
         public Fixture()
         {
+            Files.Directory.CreateDirectory(DirectoryPath);
             // Same GET shape as the live census on 2026-10-14, including shorthand AND candidates.
             for (var i = 0; i < Roles.Length; i++)
             {
@@ -380,23 +467,8 @@ public sealed class MigrateStagePinsScriptTests
             Api.Cells["Plan/Medium"] = cell;
         }
 
-        public async Task<(int ExitCode, string Output)> RunAsync(params string[] args)
-        {
-            var info = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File",
-                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "migrate-stage-pins-to-cells.ps1"), "-OutDir", DirectoryPath }.Concat(args))
-                info.ArgumentList.Add(arg);
-            info.Environment["ANTIPHON_API"] = Api.BaseUrl.TrimEnd('/');
-            info.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-            using var process = Process.Start(info) ?? throw new InvalidOperationException("pwsh did not start");
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            try { await process.WaitForExitAsync(timeout.Token); }
-            catch { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-            return (process.ExitCode, await stdout + await stderr);
-        }
-
-        public void Dispose() { Api.Dispose(); Directory.Delete(DirectoryPath, recursive: true); }
+        public BoardCommandRun.Result Run(params string[] args) =>
+            BoardCommandRun.Run(host => StagePinMigration.Run(StagePinMigrationOptions.Parse(["--out-dir", DirectoryPath, .. args], ScriptedApi.BaseUrl, null),
+                host, Files, Api.Transport));
     }
 }

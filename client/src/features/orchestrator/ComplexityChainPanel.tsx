@@ -4,7 +4,7 @@ import { useComplexityChains, type ComplexityChainDto } from '../../api/complexi
 
 /**
  * Read-only view of Hard/Medium/Easy chains (CARD-0090, CARD-0332). Writes are
- * scripts/complexity-chain.ps1. CARD-0333 builds the real grid; this panel only
+ * scripts/antiphon complexity-chain. CARD-0333 builds the real grid; this panel only
  * labels a cell distinctly from the any-role row so two Hard rows are not twins.
  */
 
@@ -40,7 +40,7 @@ export function ComplexityChainPanel() {
           </Text>
         ) : chains.every((c) => c.candidates.length === 0) ? (
           <Text size="sm" c="dimmed">
-            No chains set. Defaults stay empty until a human writes them with complexity-chain.ps1
+            No chains set. Defaults stay empty until a human writes them with scripts/antiphon complexity-chain
             set.
           </Text>
         ) : (

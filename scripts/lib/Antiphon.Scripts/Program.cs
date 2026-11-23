@@ -182,6 +182,14 @@ namespace Antiphon.Scripts
             [AgentHelperCommands.Logs] = AgentHelperCommands.RunLogs,
             [AgentHelperCommands.HangfireDashboard] = AgentHelperCommands.RunHangfireDashboard,
             [AgentHelperCommands.GithubSync] = AgentHelperCommands.RunGithubSync,
+            // The routing matrix and orchestrator workspace commands answer every input themselves (unit 26). complexity-chain:
+            // exit 0 done, 1 a refused value, a missing reason file or a failed request (a partial All: its status line on
+            // stdout). migrate-stage-pins-to-cells: 0 previewed, applied or restored, 1 refused or a failed request.
+            // orchestrator-workspace: 0 done, 1 an unresolvable project, no checkout, an unreadable marker or ~/.claude.json, or
+            // a failed request. Usage is 2 for each.
+            [RoutingWorkspaceCommands.ComplexityChain] = RoutingWorkspaceCommands.RunComplexityChain,
+            [RoutingWorkspaceCommands.MigrateStagePins] = RoutingWorkspaceCommands.RunMigrateStagePins,
+            [RoutingWorkspaceCommands.OrchestratorWorkspace] = RoutingWorkspaceCommands.RunOrchestratorWorkspace,
         };
 
         public static int Main(string[] args)
@@ -218,7 +226,7 @@ namespace Antiphon.Scripts
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
-                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage);
+                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage);
             return Usage;
         }
 

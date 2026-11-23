@@ -109,7 +109,7 @@ public sealed class ComplexityChainConcurrencyHttpTests
             body.GetProperty("code").GetString().ShouldBe("complexity_chain_stale");
             body.GetProperty("current").GetProperty("concurrencyToken").GetString().ShouldBe(created);
 
-            // Legacy caller with no token still overwrites (complexity-chain.ps1 before CARD-1275).
+            // Legacy caller with no token still overwrites (the complexity-chain script before CARD-1275).
             var overwrite = await PutAsync(client, "any/Easy", "Codex", "legacy overwrite", token: null);
             overwrite.StatusCode.ShouldBe(HttpStatusCode.OK);
             var last = await TokenAsync(overwrite);

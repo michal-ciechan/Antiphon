@@ -1,31 +1,31 @@
-using System.Collections.Concurrent;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 
 namespace Antiphon.Tests.Scripts;
 
-/// <summary>Loopback script fixture with ordered requests, response overrides and read-back state.</summary>
-internal class ScriptedApi : IDisposable
+/// <summary>
+/// An in-process stand-in for the complexity chain and routing pin API (unit 26 of the 2026-11-22 plan: the complexity-chain
+/// and migrate-stage-pins-to-cells commands, which replaced the scripts this fixture served over a loopback listener). It
+/// records every request in order, answers a matching override (the last one registered whose method and path prefix match)
+/// or its read-back state (cells with their CARD-1275 tokens, pins), and never leaves the process.
+/// </summary>
+internal class ScriptedApi
 {
-    internal sealed record Request(string Method, string Path, JsonElement? Body);
+    /// <summary>The fake API base the commands are given; the transport answers instead.</summary>
+    public const string BaseUrl = "http://127.0.0.1:17202/";
+
+    internal sealed record Request(string Method, string Path, JsonElement? Body, IReadOnlyDictionary<string, string> Headers);
     private sealed record Response(string Method, string Prefix, int Status, string Body);
-    private readonly HttpListener _listener;
-    private readonly Task _pump;
-    private readonly ConcurrentQueue<Request> _requests = new();
+    private readonly List<Request> _requests = [];
     private readonly List<Response> _responses = [];
 
-    public ScriptedApi()
+    public IReadOnlyList<Request> Requests
     {
-        BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-        _pump = Task.Run(PumpAsync);
+        get { lock (_requests) return _requests.ToArray(); }
     }
 
-    public string BaseUrl { get; }
-    public IReadOnlyList<Request> Requests => _requests.ToArray();
-    public int RequestCount => _requests.Count;
+    public int RequestCount => Requests.Count;
     public string? LastMethod => Requests.LastOrDefault()?.Method;
     public string? LastPath => Requests.LastOrDefault()?.Path;
     public JsonDocument? LastBody { get; private set; }
@@ -37,38 +37,30 @@ internal class ScriptedApi : IDisposable
     public void Respond(string method, string pathPrefix, int status, string body) =>
         _responses.Add(new Response(method, pathPrefix, status, body));
 
-    private async Task PumpAsync()
+    /// <summary>The commands' HTTP transport: one request in, its answer out.</summary>
+    public NightlyReportHttp Transport => (method, uri, headers, body) =>
     {
-        while (_listener.IsListening)
+        JsonElement? parsed = null;
+        if (!string.IsNullOrWhiteSpace(body))
         {
-            HttpListenerContext context;
-            try { context = await _listener.GetContextAsync(); }
-            catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException) { return; }
-
-            using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-            var raw = await reader.ReadToEndAsync();
-            JsonElement? body = null;
-            if (!string.IsNullOrWhiteSpace(raw))
-            {
-                LastBody?.Dispose();
-                LastBody = JsonDocument.Parse(raw);
-                body = LastBody.RootElement.Clone();
-            }
-            var request = new Request(context.Request.HttpMethod, context.Request.Url!.PathAndQuery, body);
-            _requests.Enqueue(request);
-            var response = _responses.LastOrDefault(r => r.Method == request.Method
-                && request.Path.StartsWith(r.Prefix, StringComparison.Ordinal));
-            var (status, payload) = response is null
-                ? Handle(request, context.Request.QueryString["role"])
-                : (response.Status, response.Body);
-            context.Response.StatusCode = status;
-            if (status != 204)
-            {
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(payload));
-            }
-            context.Response.Close();
+            LastBody = JsonDocument.Parse(body);
+            parsed = LastBody.RootElement.Clone();
         }
+        var request = new Request(method, new Uri(uri).PathAndQuery, parsed, new Dictionary<string, string>(headers ?? new Dictionary<string, string>()));
+        lock (_requests) _requests.Add(request);
+        var response = _responses.LastOrDefault(r => r.Method == request.Method && request.Path.StartsWith(r.Prefix, StringComparison.Ordinal));
+        var (status, payload) = response is null ? Handle(request, Role(request.Path)) : (response.Status, response.Body);
+        return new NightlyReportHttpResponse(status, status == 204 ? "" : payload);
+    };
+
+    private static string? Role(string path)
+    {
+        var query = path.IndexOf('?');
+        if (query < 0) return null;
+        foreach (var pair in path[(query + 1)..].Split('&'))
+            if (pair.StartsWith("role=", StringComparison.Ordinal))
+                return Uri.UnescapeDataString(pair["role=".Length..]);
+        return null;
     }
 
     private (int Status, string Body) Handle(Request request, string? role)
@@ -123,12 +115,5 @@ internal class ScriptedApi : IDisposable
         view["source"] = present ? "pin" : "config";
         view["concurrencyToken"] = Tokens.TryGetValue(key, out var token) ? token : null;
         return view;
-    }
-
-    public void Dispose()
-    {
-        _listener.Close();
-        _pump.GetAwaiter().GetResult();
-        LastBody?.Dispose();
     }
 }
