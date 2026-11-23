@@ -1295,22 +1295,22 @@ age is lower. `session-ansi` matches only `<32hex>.ansi.log` regular files in th
 validation and unlink share the session launch gate. The residue row preserves the configured root.
 `review-clone` recognizes `antiphon-review-<8hex>` containers and legacy `review-<8hex>-master[0-9]`
 names, but a matching name alone grants no deletion authority. Create new review/master scratch
-containers with `scripts/new-review-scratch.ps1 -TaskId <guid> -OwnerWorktree <absolute-worktree>`
-and clone into a child such as `master`. The helper records `.antiphon-scratch-owner` and refuses
+containers with `scripts/antiphon new-review-scratch --task-id <guid> --owner-worktree <absolute-worktree>`
+and clone into a child such as `master`. The command records `.antiphon-scratch-owner` and refuses
 existing containers; never retrofit a marker onto an old checkout. The owner and its retiring copies
 must be absent. A workspace-slot owner remains protected while that slot exists, including reuse.
 Only standalone clones with the runner's exact live origin are eligible: linked worktrees, unknown
 content, dirty/untracked work, hidden index flags, unpublished local/ref-log commits and audit failures
 are kept. Existing scratch worktrees need their owning repository's sanctioned removal path.
-`scripts/remove-review-scratch.ps1 -Root <container> -TempRoot <temp>` removes one container
-that script created: the name, the temp parent and `.antiphon-scratch-owner` are required.
+`scripts/antiphon remove-review-scratch --root <container> --temp-root <temp>` removes one container
+that `new-review-scratch` created: the name, the temp parent and `.antiphon-scratch-owner` are required.
 The container and every entry inside it must be ordinary files and directories. A symlink
 or other reparse point is refused, and so is any `.git` that is not directly under a
 top-level child, so a nested worktree or repository is kept. A top-level linked worktree
 is removed only when `git worktree list --porcelain`, run in the owning repository, names
-that child's resolved path exactly. Removal is `git worktree remove` and never `--force`.
+that child's full path (git's `/` separators on Windows compare equal). Removal is `git worktree remove` and never `--force`.
 A standalone clone in a child (the clone layout named above, whose `.git` is a directory)
-is refused and the container is kept. That clone is not this script's job; the disabled
+is refused and the container is kept. That clone is not this command's job; the disabled
 review-clone sweep remains the audited path for it. Any refusal or failed worktree remove
 leaves the container. CARD-1981 also registers the test producers `c459`,
 `c487-tw`, `c487-reg`, `antiphon-c448`, `antiphon-c1150`, `antiphon-remote-prep-ws`, `rh` and

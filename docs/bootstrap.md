@@ -542,7 +542,7 @@ logging survives any future turn-down of `Default`. Do not remove that override.
 ### Hangfire jobs
 
 In-process Hangfire dashboard: `http://localhost:17202/hangfire` (operator token; open it with
-`scripts/hangfire-dashboard.ps1`). Recurring jobs
+`scripts\antiphon.cmd hangfire-dashboard`). Recurring jobs
 register at process start when `Hangfire:ServerEnabled` is true. Hangfire:Storage defaults to
 InMemory. PostgreSql storage keeps those registrations across a process restart and refuses a
 second worker against that database. "Trigger now" on the dashboard is

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
@@ -93,10 +95,10 @@ public sealed class OwnedTempLeakTests
         try
         {
             var (task, owner) = OwnerUnder(parent);
-            var container = RunScript(0, "scripts/new-review-scratch.ps1",
-                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            var container = NewScratch(task, owner, parent);
             Directory.Exists(container).ShouldBeTrue();
-            RunScript(0, "scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            var removed = RemoveScratch(container, parent);
+            removed.Code.ShouldBe(0, removed.Text);
             Directory.Exists(container).ShouldBeFalse();
         }
         finally
@@ -113,7 +115,7 @@ public sealed class OwnedTempLeakTests
         Directory.CreateDirectory(fake);
         try
         {
-            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", fake, "-TempRoot", parent);
+            var exit = RemoveScratch(fake, parent);
             exit.Code.ShouldNotBe(0);
             Directory.Exists(fake).ShouldBeTrue();
         }
@@ -130,12 +132,11 @@ public sealed class OwnedTempLeakTests
         try
         {
             var (task, owner) = OwnerUnder(parent);
-            var container = RunScript(0, "scripts/new-review-scratch.ps1",
-                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            var container = NewScratch(task, owner, parent);
             var child = Path.Combine(container, "master");
             Directory.CreateDirectory(child);
             File.WriteAllText(Path.Combine(child, ".git"), "gitdir: /nowhere\n");
-            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            var exit = RemoveScratch(container, parent);
             exit.Code.ShouldNotBe(0);
             Directory.Exists(container).ShouldBeTrue();
         }
@@ -156,10 +157,9 @@ public sealed class OwnedTempLeakTests
             Git(repo, "worktree", "add", "-q", "--detach", outside, "HEAD");
             var readme = Path.Combine(outside, "README");
             var (task, owner) = OwnerUnder(parent);
-            var container = RunScript(0, "scripts/new-review-scratch.ps1",
-                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            var container = NewScratch(task, owner, parent);
             Directory.CreateSymbolicLink(Path.Combine(container, "link"), outside);
-            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            var exit = RemoveScratch(container, parent);
             File.Exists(readme).ShouldBeTrue("foreign worktree must stay");
             // Git for Windows checks the committed blob out as CRLF. The bytes must still be the seed.
             File.ReadAllText(readme).Replace("\r\n", "\n").ShouldBe("seed\n");
@@ -182,13 +182,12 @@ public sealed class OwnedTempLeakTests
         {
             var repo = InitRepo(parent);
             var (task, owner) = OwnerUnder(parent);
-            var container = RunScript(0, "scripts/new-review-scratch.ps1",
-                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            var container = NewScratch(task, owner, parent);
             var nested = Path.Combine(container, "sub", "wt");
             Git(repo, "worktree", "add", "-q", "--detach", nested, "HEAD");
             var dirty = Path.Combine(nested, "uncommitted.txt");
             File.WriteAllText(dirty, "keep-me\n");
-            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            var exit = RemoveScratch(container, parent);
             File.Exists(dirty).ShouldBeTrue("uncommitted file must stay");
             File.ReadAllText(dirty).ShouldBe("keep-me\n");
             exit.Code.ShouldNotBe(0);
@@ -197,6 +196,103 @@ public sealed class OwnedTempLeakTests
             // git worktree list prints '/' on Windows, including when the temp path is the long form.
             NormalizeWorktreePorcelain(Git(repo, "worktree", "list", "--porcelain"))
                 .ShouldContain(FullSlashPath(nested));
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
+    [Test]
+    public void Review_scratch_remove_removes_a_linked_worktree_child()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var repo = InitRepo(parent);
+            var (task, owner) = OwnerUnder(parent);
+            var container = NewScratch(task, owner, parent);
+            var child = Path.Combine(container, "master");
+            Git(repo, "worktree", "add", "-q", "--detach", child, "HEAD");
+            var removed = RemoveScratch(container, parent);
+            removed.Code.ShouldBe(0, removed.Text);
+            Directory.Exists(container).ShouldBeFalse();
+            // git worktree list prints '/' on Windows; the command compares full paths, so it named the child and removed it.
+            NormalizeWorktreePorcelain(Git(repo, "worktree", "list", "--porcelain")).ShouldNotContain(FullSlashPath(child));
+            File.Exists(Path.Combine(repo, "README")).ShouldBeTrue("the owning repository stays");
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
+    [Test]
+    public void Review_scratch_remove_refuses_a_standalone_clone()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var repo = InitRepo(parent);
+            var (task, owner) = OwnerUnder(parent);
+            var container = NewScratch(task, owner, parent);
+            Git(parent, "clone", "-q", repo, Path.Combine(container, "master"));
+            var exit = RemoveScratch(container, parent);
+            exit.Code.ShouldBe(1);
+            exit.Text.Trim().ShouldBe("Refusing standalone clone; container kept.");
+            Directory.Exists(Path.Combine(container, "master", ".git")).ShouldBeTrue();
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
+    [Test]
+    public void Review_scratch_remove_refuses_a_foreign_name_parent_or_missing_container()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            RemoveScratch(Path.Combine(parent, "not-a-container"), parent).Text.Trim().ShouldBe("Not a review scratch container.");
+            RemoveScratch(Path.Combine(parent, "nested", "antiphon-review-0123abcd"), parent).Text.Trim().ShouldBe("Container must sit directly under the temp root.");
+            var missing = RemoveScratch(Path.Combine(parent, "antiphon-review-0123abcd"), parent);
+            (missing.Code, missing.Text.Trim()).ShouldBe((1, "Scratch container does not exist."));
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
+    [Test]
+    public void Review_scratch_new_writes_the_owner_marker_and_refuses_a_foreign_owner_or_an_existing_container()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var (task, owner) = OwnerUnder(parent);
+            NewScratchRaw(Guid.NewGuid(), owner, parent).Text.Trim().ShouldBe("Task id must match its owner worktree.");
+            var loose = Path.Combine(parent, "elsewhere", Path.GetFileName(owner));
+            Directory.CreateDirectory(loose);
+            NewScratchRaw(task, loose, parent).Text.Trim().ShouldBe("Owner must be a task or workspace-slot directory under the runner worktrees root.");
+            NewScratchRaw(task, Path.Combine(parent, "worktrees", "task-0badc0de"), parent).Text.Trim().ShouldBe("Owner worktree must exist.");
+
+            var container = NewScratch(task, owner, parent);
+            Path.GetFileName(container).ShouldBe("antiphon-review-" + task.ToString("N")[..8]);
+            Path.GetDirectoryName(container).ShouldBe(Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar));
+            File.ReadAllText(Path.Combine(container, ".antiphon-scratch-owner")).ShouldBe(Path.GetFullPath(owner).Replace('\\', '/'));
+            var again = NewScratchRaw(task, owner, parent);
+            (again.Code, again.Text.Trim()).ShouldBe((1, "Scratch container already exists; do not replace its ownership."));
+
+            // A workspace-slot owner takes any task id.
+            var slot = Path.Combine(parent, "worktrees", "ws-slot-1");
+            Directory.CreateDirectory(slot);
+            NewScratchRaw(Guid.NewGuid(), slot, parent).Code.ShouldBe(0);
+
+            File.ReadAllBytes(Path.Combine(RepoRoot(), "scripts", "lib", "Antiphon.Nightly", "ReviewScratch.cs")).Count(b => b > 127).ShouldBe(0, "ASCII only");
+            foreach (var script in new[] { "new-review-scratch.ps1", "remove-review-scratch.ps1" })
+                File.Exists(Path.Combine(RepoRoot(), "scripts", script)).ShouldBeFalse(script + " is ported to C#");
         }
         finally
         {
@@ -222,36 +318,32 @@ public sealed class OwnedTempLeakTests
         return (task, owner);
     }
 
-    private static string RunScript(int expected, string relative, params string[] args)
+    // The review scratch commands (Antiphon.Nightly.ReviewScratch, which replaced scripts/new-review-scratch.ps1 and
+    // scripts/remove-review-scratch.ps1 in unit 25 of the 2026-11-22 plan) run in process: their flags parsed as the CLI
+    // parses them, the production host (real git) and the real file system under the owned temporary root.
+    private static string NewScratch(Guid task, string owner, string temp)
     {
-        var exit = RunScriptRaw(relative, args);
-        exit.Code.ShouldBe(expected, exit.Text);
-        return exit.Text;
+        var created = NewScratchRaw(task, owner, temp);
+        created.Code.ShouldBe(0, created.Text);
+        return created.Text.Trim();
     }
 
-    private static (int Code, string Text) RunScriptRaw(string relative, params string[] args)
+    private static (int Code, string Text) NewScratchRaw(Guid task, string owner, string temp)
     {
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-NonInteractive");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(Path.Combine(RepoRoot(), relative));
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(40_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            throw new TimeoutException(relative);
-        }
-        return (process.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var options = NewReviewScratchOptions.Parse(["--task-id", task.ToString(), "--owner-worktree", owner, "--temp-root", temp], Path.GetTempPath());
+        var code = ReviewScratch.New(options, NightlyHost.Production(output, error), new FileSystem());
+        return (code, output.ToString() + error.ToString());
+    }
+
+    private static (int Code, string Text) RemoveScratch(string container, string temp)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var options = RemoveReviewScratchOptions.Parse(["--root", container, "--temp-root", temp], Path.GetTempPath());
+        var code = ReviewScratch.Remove(options, NightlyHost.Production(output, error), new FileSystem());
+        return (code, output.ToString() + error.ToString());
     }
 
     private static string RepoRoot()

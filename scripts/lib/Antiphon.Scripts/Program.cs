@@ -165,6 +165,23 @@ namespace Antiphon.Scripts
             // positives. Usage is 2 for each.
             [SessionReaperCommands.ClaudeSessions] = SessionReaperCommands.RunClaudeSessions,
             [SessionReaperCommands.ZombieAgents] = SessionReaperCommands.RunZombieAgents,
+            // The agent and operator helpers answer every input themselves (unit 25). check-agent-context: exit 0 within the
+            // budget, 1 over it or unreadable. task-commit: 0 committed, 1 refused, pending inspection, no token or task id.
+            // new-review-scratch and remove-review-scratch: 0 done, 1 refused. trx-failures: 0. watch-master: 0. watch-tasks: 0,
+            // 1 an unusable state file. stage-value-report: 0 printed, 1 a failed request. logs: 0 printed, 1 a missing log, no
+            // live session, a failed request or ssh. hangfire-dashboard: 0 opened, 1 refused or failed, 2 not Windows.
+            // github-sync: 0 clean, 1 the request failed or a board reported an error. Usage is 2 for each.
+            [AgentHelperCommands.CheckAgentContext] = AgentHelperCommands.RunCheckAgentContext,
+            [AgentHelperCommands.TaskCommit] = AgentHelperCommands.RunTaskCommit,
+            [AgentHelperCommands.NewReviewScratch] = AgentHelperCommands.RunNewReviewScratch,
+            [AgentHelperCommands.RemoveReviewScratch] = AgentHelperCommands.RunRemoveReviewScratch,
+            [AgentHelperCommands.TrxFailures] = AgentHelperCommands.RunTrxFailures,
+            [AgentHelperCommands.WatchMaster] = AgentHelperCommands.RunWatchMaster,
+            [AgentHelperCommands.WatchTasks] = AgentHelperCommands.RunWatchTasks,
+            [AgentHelperCommands.StageValueReport] = AgentHelperCommands.RunStageValueReport,
+            [AgentHelperCommands.Logs] = AgentHelperCommands.RunLogs,
+            [AgentHelperCommands.HangfireDashboard] = AgentHelperCommands.RunHangfireDashboard,
+            [AgentHelperCommands.GithubSync] = AgentHelperCommands.RunGithubSync,
         };
 
         public static int Main(string[] args)
@@ -201,7 +218,7 @@ namespace Antiphon.Scripts
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
-                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage);
+                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage);
             return Usage;
         }
 

@@ -1477,7 +1477,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapHub<AntiphonHub>("/hubs/antiphon");
 
     // CARD-0658: the dashboard needs the operator credential (header token, or the session cookie
-    // scripts/hangfire-dashboard.ps1 bootstraps). The client address is not consulted: every
+    // scripts/antiphon hangfire-dashboard bootstraps). The client address is not consulted: every
     // request Kestrel receives is loopback (Aspire's DCP proxy, Vite, Caddy), so the former
     // LocalRequestsOnlyAuthorizationFilter admitted everything. Filters are AND-ed; this is the only one.
     app.MapHangfireDashboard("/hangfire", new DashboardOptions

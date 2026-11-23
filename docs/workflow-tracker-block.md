@@ -62,10 +62,10 @@ Work on {{ issue.identifier }}.
   structurally absent from the tick.
 - **Bidirectional (comments / labels / state / creates):** only from
   `POST /api/boards/{id}/tracker/sync`, `POST /api/tracker-sync/run`,
-  `scripts/github-sync.ps1`, the board "Sync tracker now" button, or the Windmill
-  `u/lndcobra/antiphon_github_sync` schedule (every 3 hours, `0 0 */3 * * *` Europe/London).
+  `scripts/antiphon github-sync`, the board "Sync tracker now" button, or the Windmill
+  `u/lndcobra/antiphon_github_sync` schedule (every 3 hours, `0 0 */3 * * *` Europe/London; it starts the thin launcher `scripts/github-sync.ps1`).
 - **Change notification (CARD-0171):** opt-in **per trigger**, via `?notify=true` on either
-  endpoint (`scripts/github-sync.ps1 -Notify` forwards it; the Windmill schedule passes it). The
+  endpoint (`scripts/antiphon github-sync --notify` forwards it; the Windmill schedule passes `-Notify`). The
   board button deliberately does not - a click must not ping a family chat. The target is
   **per board**: `tracker.notify_channel`. Both are required; the flag alone announces nothing,
   because the per-board config is the consent. Boards that changed are grouped by resolved
@@ -73,7 +73,7 @@ Work on {{ issue.identifier }}.
   announced reports why in the response's `notifications[]` (`notify_channel_unset`,
   `channel_not_found`, `channel_ambiguous`, `channel_disabled`, `send_failed`) - never an
   exception, never a failed sync, because the writes have already committed. A per-board
-  `error` is not a change and is never announced; `github-sync.ps1` exits 1 for it instead.
+  `error` is not a change and is never announced; `github-sync` exits 1 for it instead.
 
 ## Comment identity and echoes (CARD-0436)
 

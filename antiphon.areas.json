@@ -101,6 +101,7 @@
       "paths": [
         "server/Application/Services/Tracker*.cs",
         "scripts/github-sync.ps1",
+        "scripts/lib/Antiphon.Nightly/GithubSync.cs",
         "docs/workflow-tracker-block.md"
       ]
     },

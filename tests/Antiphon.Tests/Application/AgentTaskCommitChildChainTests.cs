@@ -178,7 +178,7 @@ public sealed partial class AgentTaskCommitEndpointTests
 
                 carrier.ShouldContain(child.Goal);
                 carrier.ShouldContain("explicitly authorized to commit");
-                carrier.ShouldContain("scripts/task-commit.ps1");
+                carrier.ShouldContain("scripts/antiphon task-commit");
                 carrier.ShouldContain("Do NOT push");
                 carrier.ShouldNotContain(DelegationReportFormatter.DoNotCommitLine);
                 childAdapter.SubmittedBodies.Count.ShouldBe(1);

@@ -57,14 +57,15 @@ These directions override the cited standing rules in
    directory outside the candidate, qualification state, and supervisor directories.
    Reuse that state when re-arming; never write into the observed live run.
    The repository watchers below REPLACE any private watcher copies; re-arm
-   these checked-in scripts and commands instead of retaining a divergent private version.
+   these checked-in commands instead of retaining a divergent private version.
 
    ```powershell
-   pwsh -NoProfile -File scripts/orchestration/watch-tasks.ps1 -ProjectId '<project-guid>' -StateFile '<owned-scratch>\tasks.json'
-   # Or use -BoardId <board-guid>; never enumerate the whole fleet implicitly.
+   scripts\antiphon.cmd watch-tasks --project-id '<project-guid>' --state-file '<owned-scratch>\tasks.json'
+   # Or use --board-id <board-guid>; never enumerate the whole fleet implicitly.
    scripts\antiphon.cmd watch-qual --log-dir '<candidate>\logs\<run>' --state-file '<owned-scratch>\qual.seen.txt' --heartbeat '<task-dir>\supervisor-heartbeat.json'
-   # Add --timing-root '<timing-root>' for one batch ETA line per poll; scripts/antiphon watch-qual ... on sh.
-   pwsh -NoProfile -File scripts/orchestration/watch-master.ps1 -From '<observed-master-full-sha>' -Repository '<repo-root>'
+   # Add --timing-root '<timing-root>' for one batch ETA line per poll.
+   scripts\antiphon.cmd watch-master --from '<observed-master-full-sha>' --repository '<repo-root>'
+   # On sh: scripts/antiphon watch-tasks|watch-qual|watch-master ...
    ```
 
    `watch-tasks` baselines existing terminal/Blocked tasks on the first successful
@@ -78,18 +79,15 @@ These directions override the cited standing rules in
    is a prompt to investigate, not a verdict. Heartbeat stalls are a detection and
    decision state, never automatic stop authority. `watch-master` observes the
    remote master ref with `git ls-remote`, without fetching or changing a checkout.
-   `watch-qual` is an `antiphon-scripts` command (`WatchQual.cs`, tested in-process by
-   `WatchQualTests`). The three PowerShell helpers are ASCII-only and run unchanged under
-   Windows PowerShell 5.1 (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...`)
-   as a fallback. Their offline smoke is `scripts/test-orchestration-watchers.ps1` (C487,
-   synthetic files and stubs only); run it under both `pwsh` and `powershell.exe` after editing a helper.
-   Under 5.1 `-File`, `$PSScriptRoot` is empty in an advanced script's param
-   defaults, so resolve it in the script body (C487 rejects it in param defaults).
+   All four watchers are `antiphon-scripts` commands (`WatchTasks.cs`, `WatchQual.cs`,
+   `WatchMaster.cs` and `TrxFailures.cs`), tested in process by `OrchestrationWatcherTests`
+   and `WatchQualTests` with synthetic files and stubs only.
 
 3. **Dispatch immediately on every `FAILURES` line.** First extract the real failure:
 
    ```powershell
-   pwsh -NoProfile -File scripts/orchestration/trx-failures.ps1 -Path '<completed-chunk.trx>'
+   scripts\antiphon.cmd trx-failures '<completed-chunk.trx>'
+   # Several files: trx-failures '<a.trx>' '<b.trx>'; scripts/antiphon trx-failures ... on sh.
    ```
 
    Capture the test name, exact message, top stack frame, duration, and relevant
@@ -179,7 +177,7 @@ These directions override the cited standing rules in
    an ordinary rebase land for that merge. For a task using managed landing, the
    orchestrator orders `delegate.ps1 -Land <task> -ExpectedSourceSha <full-sha>`.
    Confirm publication only with `git ls-remote origin refs/heads/<target>`;
-   `watch-master.ps1 -From <sha>` signals master movement, which must be matched to
+   `watch-master --from <sha>` signals master movement, which must be matched to
    the intended landed SHA (an unrelated advance alone proves nothing).
    Master publication is **not activation**: AppHost and server2 track rc, never
    master. Follow activation gates only when the rc tip changes.

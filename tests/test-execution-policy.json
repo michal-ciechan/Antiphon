@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a52162a12fe061d85b1c001955247b7844a1b281dc532d70dff5dce319ac9774",
+  "policyHash": "9116b27236596e744eb2eb80f58611f813956f95742a4b0ea22e05c8488c8f4a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -2019,12 +2019,6 @@
       "path": "scripts/test-hooks.ps1",
       "disposition": "unattended",
       "wildcard": false
-    },
-    {
-      "id": "test-stage-value-report",
-      "path": "scripts/test-stage-value-report.ps1",
-      "disposition": "unattended",
-      "wildcard": false
     }
   ],
   "watchdogs": {
@@ -2184,7 +2178,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "12f25bc35cd2e17e515f18fd366a415685aab8f30601816cff32ec5549989a3e",
+    "hash": "bfa7d4318a85ac75268cf89225b6fc0438968955542e717f3da4c9b540f6e44e",
     "path": "tests/test-selection-policy.json"
   }
 }

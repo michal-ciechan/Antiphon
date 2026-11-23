@@ -788,6 +788,46 @@ public sealed class AntiphonCliLauncherTests
         launcher.ShouldNotContain("[switch]$PassThru", Case.Sensitive, "the fixture seam is gone");
     }
 
+    // ---- unit 25: scripts/github-sync.ps1, the launcher Windmill's u/lndcobra/antiphon_github_sync starts by path with -Notify ----
+
+    [Test]
+    public async Task Github_sync_launcher_passes_every_parameter_as_its_flag_and_keeps_the_defaults()
+    {
+        using var fixture = CleanupCheckout("github-sync.ps1");
+        var entry = fixture.PathOf("scripts", "github-sync.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "github-sync" };
+
+        // Windmill's command line: -Notify, with the default base URL.
+        var windmill = await NightlyRunHops.LauncherEcho(entry, ["-Notify"], fixture.Root, environment: echo);
+        windmill.ExitCode.ShouldBe(0, windmill.Stderr);
+        windmill.Arguments.ShouldBe(["--base-url", "http://localhost:17202", "--notify"]);
+
+        var all = await NightlyRunHops.LauncherEcho(entry, ["-BoardId", "8988CA03-7414-47AD-B0B6-51556C701703", "-BaseUrl", "http://127.0.0.1:5000"], fixture.Root,
+            environment: echo);
+        all.ExitCode.ShouldBe(0, all.Stderr);
+        all.Arguments.ShouldBe(["--board-id", "8988ca03-7414-47ad-b0b6-51556c701703", "--base-url", "http://127.0.0.1:5000"]);
+        var received = GithubSyncOptions.Parse(all.Arguments.ShouldNotBeNull(all.Stdout + all.Stderr));
+        (received.BoardId, received.BaseUrl, received.Notify).ShouldBe(((Guid?)Guid.Parse("8988ca03-7414-47ad-b0b6-51556c701703"), "http://127.0.0.1:5000", false));
+
+        AssertThinLauncher("github-sync.ps1", "    [Guid]$BoardId,", "    [string]$BaseUrl = 'http://localhost:17202',", "    [switch]$Notify");
+    }
+
+    [Test]
+    public async Task Github_sync_launcher_that_cannot_start_the_cli_exits_9()
+    {
+        using var fixture = CleanupCheckout("github-sync.ps1");
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.PathOf("scripts", "github-sync.ps1"), "-Notify" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll");
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+        run.Exit.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+    }
+
     [Test]
     public async Task Claude_sessions_launcher_runs_the_command_on_a_saved_list_without_credentials_or_network()
     {

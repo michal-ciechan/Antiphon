@@ -4585,7 +4585,7 @@ public sealed class AgentTaskService
                 {pathBlock}
                 {stderrBit}
                 Commit only paths that are task {DelegationReportFormatter.Short(settled.Id)}'s work, judged from the report and git diff.
-                Use scripts/task-commit.ps1 -Paths ... -MessageFile ... which refuses ignored paths and ignore-rule edits.
+                Use scripts/antiphon task-commit --paths ... --message-file ... which refuses ignored paths and ignore-rule edits.
                 Never git add -f, never edit .gitignore or info/exclude, never push, never touch other dirty paths.
                 A refusal is reported, not worked around. Report the sha and paths, or the refusal verbatim.
                 """.ReplaceLineEndings("\n"),

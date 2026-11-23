@@ -87,39 +87,63 @@ public sealed class CommitOnSettleScriptTests
         put.TryGetProperty("localRepositoryPath", out _).ShouldBeFalse("a null field the GET answered is not re-sent");
     }
 
+    // The task-commit command (Antiphon.Nightly.TaskCommit, which replaced scripts/task-commit.ps1 in unit 25 of the 2026-11-22
+    // plan) runs in process on a recording transport that answers as the commit endpoint; the message file is a mock file.
     [Test]
-    public async Task Task_commit_script_posts_paths_and_message_to_the_commit_endpoint()
+    public void Task_commit_script_posts_paths_and_message_to_the_commit_endpoint()
     {
-        using var stub = new CommitApiStub(200, """{"sha":"abc1234","files":["x.md"]}""");
-        var messageFile = Path.GetTempFileName();
-        await File.WriteAllTextAsync(messageFile, "task 1234abcd: x");
-        var run = await RunTaskCommitAsync(stub.BaseUrl, "11111111-1111-1111-1111-111111111111", "tok",
-            "-Paths", "x.md", "-MessageFile", messageFile);
-        run.ExitCode.ShouldBe(0, run.Output);
-        stub.LastPath.ShouldEndWith("/api/agent-tasks/11111111-1111-1111-1111-111111111111/commit");
-        var body = stub.LastBody.ShouldNotBeNull().RootElement;
-        body.GetProperty("paths")[0].GetString().ShouldBe("x.md");
-        body.GetProperty("message").GetString().ShouldBe("task 1234abcd: x");
-        stub.LastToken.ShouldBe("tok");
+        var http = new RecordingOperatorHttp(_ => new(200, """{"sha":"abc1234","files":["x.md"]}"""));
+        var run = RunTaskCommit(http, "task 1234abcd: x", "--paths", "x.md", "--message-file", MessageFile);
+
+        run.Exit.ShouldBe(0, run.All);
+        run.Output.Trim().ShouldBe("committed abc1234 x.md");
+        var call = http.Calls.ShouldHaveSingleItem();
+        (call.Method, call.Uri).ShouldBe(("POST", BoardCommandRun.Api.TrimEnd('/') + "/api/agent-tasks/11111111-1111-1111-1111-111111111111/commit"));
+        using var body = JsonDocument.Parse(call.Body!);
+        body.RootElement.GetProperty("paths")[0].GetString().ShouldBe("x.md");
+        body.RootElement.GetProperty("message").GetString().ShouldBe("task 1234abcd: x");
+        call.Headers["X-Antiphon-Task-Token"].ShouldBe("tok");
     }
 
     [Test]
-    public async Task Task_commit_script_reports_a_409_refusal_verbatim_and_exits_nonzero()
+    public void Task_commit_splits_comma_separated_paths_and_reads_the_message_as_utf8()
     {
-        using var stub = new CommitApiStub(409, """{"code":"ignored_path_staged","detail":"a.secret"}""");
-        var messageFile = Path.GetTempFileName();
-        await File.WriteAllTextAsync(messageFile, "x");
-        var run = await RunTaskCommitAsync(stub.BaseUrl, "11111111-1111-1111-1111-111111111111", "tok",
-            "-Paths", "a.secret", "-MessageFile", messageFile);
-        run.ExitCode.ShouldNotBe(0);
-        run.Output.ShouldContain("ignored_path_staged");
-        run.Output.ShouldContain("a.secret");
+        var http = new RecordingOperatorHttp(_ => new(200, """{"sha":"abc1234","files":["a.md","b.md"]}"""));
+        var run = RunTaskCommit(http, "\uFEFFtask: caf\u00e9", "--paths", "a.md, ,b.md", "--message-file", MessageFile);
+
+        run.Exit.ShouldBe(0, run.All);
+        run.Output.Trim().ShouldBe("committed abc1234 a.md, b.md");
+        using var body = JsonDocument.Parse(http.Calls.ShouldHaveSingleItem().Body!);
+        body.RootElement.GetProperty("paths").EnumerateArray().Select(path => path.GetString()).ShouldBe(["a.md", "b.md"]);
+        body.RootElement.GetProperty("message").GetString().ShouldBe("task: caf\u00e9", "the BOM is dropped");
+    }
+
+    [Test]
+    public void Task_commit_script_reports_a_409_refusal_verbatim_and_exits_nonzero()
+    {
+        var http = new RecordingOperatorHttp(_ => new(409, """{"code":"ignored_path_staged","detail":"a.secret"}"""));
+        var run = RunTaskCommit(http, "x", "--paths", "a.secret", "--message-file", MessageFile);
+        run.Exit.ShouldBe(1);
+        run.Error.Trim().ShouldBe("""commit refused: {"code":"ignored_path_staged","detail":"a.secret"}""");
+        run.Output.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Task_commit_refuses_without_a_token_task_id_or_message_file()
+    {
+        var http = new RecordingOperatorHttp(_ => throw new InvalidOperationException("no request expected"));
+        RunTaskCommitAs(http, "x", token: "", args: ["--paths", "x.md", "--message-file", MessageFile]).Error.Trim().ShouldBe("ANTIPHON_TASK_TOKEN is required.");
+        RunTaskCommitAs(http, "x", taskId: "", args: ["--paths", "x.md", "--message-file", MessageFile]).Error.Trim().ShouldBe("ANTIPHON_TASK_ID is required.");
+        var missing = RunTaskCommitAs(http, null, args: ["--paths", "x.md", "--message-file", MessageFile]);
+        (missing.Exit, missing.Error.Trim()).ShouldBe((1, "--message-file '" + MessageFile + "' does not exist."));
+        RunTaskCommit(http, "x", args: ["--message-file", MessageFile]).Exit.ShouldBe(2, "--paths is required");
+        http.Calls.ShouldBeEmpty();
     }
 
     [Test]
     public void Commit_on_settle_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "lib/Antiphon.Nightly/ProjectCli.cs", "delegate.ps1", "task-commit.ps1" })
+        foreach (var name in new[] { "lib/Antiphon.Nightly/ProjectCli.cs", "delegate.ps1", "lib/Antiphon.Nightly/TaskCommit.cs" })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);
@@ -127,51 +151,35 @@ public sealed class CommitOnSettleScriptTests
             var firstNonAscii = Array.FindIndex(bytes, static b => b > 127);
             firstNonAscii.ShouldBe(-1, $"{name} has a non-ASCII byte at offset {firstNonAscii}");
         }
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "task-commit.ps1")).ShouldBeFalse("task-commit is a command");
     }
 
     [Test]
-    public async Task Task_commit_script_preserves_a_completed_commit_with_pending_inspection()
+    public void Task_commit_script_preserves_a_completed_commit_with_pending_inspection()
     {
         const string operation = "22222222-2222-2222-2222-222222222222";
-        using var stub = new CommitApiStub(503, """{"code":"commit_inspection_pending","committed":true,"operationId":"22222222-2222-2222-2222-222222222222"}""");
-        var messageFile = Path.GetTempFileName();
-        try
-        {
-            await File.WriteAllTextAsync(messageFile, "x");
-            var run = await RunTaskCommitAsync(stub.BaseUrl, "11111111-1111-1111-1111-111111111111", "tok",
-                "-Paths", "x.md", "-MessageFile", messageFile);
-            run.ExitCode.ShouldNotBe(0);
-            run.Output.ShouldContain("Commit succeeded; inspection pending");
-            run.Output.ShouldContain("/commit/" + operation);
-            run.Output.ShouldNotContain("commit refused");
-        }
-        finally { File.Delete(messageFile); }
+        var http = new RecordingOperatorHttp(_ => new(503, """{"code":"commit_inspection_pending","committed":true,"operationId":"22222222-2222-2222-2222-222222222222"}"""));
+        var run = RunTaskCommit(http, "x", "--paths", "x.md", "--message-file", MessageFile);
+        run.Exit.ShouldBe(1);
+        run.Error.ShouldContain("Commit succeeded; inspection pending");
+        run.Error.ShouldContain("GET /api/agent-tasks/11111111-1111-1111-1111-111111111111/commit/" + operation + " using the task token");
+        run.All.ShouldNotContain("commit refused");
     }
 
-    private static async Task<(int ExitCode, string Output)> RunTaskCommitAsync(
-        string api, string taskId, string token, params string[] args)
+    private const string MessageFile = "commit-message.txt";
+
+    // The message file holds message (null: no file); the CLI's environment is the API, the token and the task id.
+    private static BoardCommandRun.Result RunTaskCommitAs(RecordingOperatorHttp http, string? message, string token = "tok",
+        string taskId = "11111111-1111-1111-1111-111111111111", params string[] args)
     {
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "task-commit.ps1"));
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-        startInfo.Environment["ANTIPHON_API"] = api.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = token;
-        startInfo.Environment["ANTIPHON_TASK_ID"] = taskId;
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var files = new System.IO.Abstractions.TestingHelpers.MockFileSystem();
+        if (message != null) files.AddFile(MessageFile, new System.IO.Abstractions.TestingHelpers.MockFileData(Encoding.UTF8.GetBytes(message)));
+        return BoardCommandRun.Run(host => Antiphon.Nightly.TaskCommit.Run(Antiphon.Nightly.TaskCommitOptions.Parse(args, BoardCommandRun.Api, token, taskId), host,
+            files, http.Transport));
     }
+
+    private static BoardCommandRun.Result RunTaskCommit(RecordingOperatorHttp http, string message, params string[] args) =>
+        RunTaskCommitAs(http, message, args: args);
 
     private static BoardCommandRun.Result RunProject(RecordingOperatorHttp http, params string[] args) =>
         BoardCommandRun.Run(host => Antiphon.Nightly.ProjectCli.Run(Antiphon.Nightly.ProjectCliOptions.Parse(args, BoardCommandRun.Api, null), host,
@@ -192,60 +200,4 @@ public sealed class CommitOnSettleScriptTests
         using var put = JsonDocument.Parse(call.Body!);
         return new(200, project.Replace("\"commitOnSettle\":null", "\"commitOnSettle\":\"" + put.RootElement.GetProperty("commitOnSettle").GetString() + "\""));
     });
-
-    private sealed class CommitApiStub : IDisposable
-    {
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-        private readonly int _status;
-        private readonly string _response;
-
-        public CommitApiStub(int status, string response)
-        {
-            _status = status;
-            _response = response;
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
-        public string? LastPath { get; private set; }
-        public string? LastToken { get; private set; }
-        public JsonDocument? LastBody { get; private set; }
-
-        private async Task PumpAsync()
-        {
-            while (!_cts.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-                LastPath = context.Request.Url?.PathAndQuery;
-                LastToken = context.Request.Headers["X-Antiphon-Task-Token"];
-                using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
-                {
-                    var raw = await reader.ReadToEndAsync();
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        LastBody = JsonDocument.Parse(raw);
-                }
-
-                var payload = Encoding.UTF8.GetBytes(_response);
-                context.Response.StatusCode = _status;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(payload);
-                context.Response.Close();
-            }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            LastBody?.Dispose();
-            _cts.Dispose();
-        }
-    }
 }

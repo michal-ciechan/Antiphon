@@ -520,7 +520,6 @@ public sealed class NightlyTestsRunTests
         "test-deploy-am-service scripts/test-deploy-am-service.ps1",
         "test-duration-tripwire scripts/test-duration-tripwire.ps1",
         "test-hooks scripts/test-hooks.ps1",
-        "test-stage-value-report scripts/test-stage-value-report.ps1",
     ];
 
     private static string[] CensusDrift(IEnumerable<(string Id, string Path)> census, string[] expected)

@@ -95,23 +95,23 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 225,
+      "classes": 226,
       "reason": "cap",
-      "owed": 200,
+      "owed": 201,
       "first": [
         "CodexMcpBootProbeTests",
         "CommitOnSettleDocumentationTests",
+        "CommitOnSettleScriptTests",
         "DockerStackDocumentationTests",
         "KeepSixDocumentationTests",
         "LandGraphLandRefreshTests",
         "PerTaskFinalUnitLaneWitnessTests",
-        "PipelineDefinitionDocumentationTests",
-        "PipelineHandoffRouteDocumentationTests"
+        "PipelineDefinitionDocumentationTests"
       ]
     },
     {
       "path": "Antiphon.sln",
-      "classes": 362,
+      "classes": 367,
       "reason": "allowlist"
     },
     {
@@ -2099,18 +2099,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 149,
+      "classes": 154,
       "reason": "cap",
-      "owed": 124,
+      "owed": 129,
       "first": [
         "RunnerLinuxCompilerPolicyTests",
+        "AgentContextCheckTests",
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
-        "VerifyDindRunnerScriptTests",
-        "VolumeRetirementApplyGateTests"
+        "VerifyDindRunnerScriptTests"
       ]
     },
     {
@@ -2218,6 +2218,17 @@
         "ReleaseGateLibraryTests",
         "ToolchainFloorWarningTests",
         "NightlyPrerequisiteTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
+      "classes": 28,
+      "reason": "cap",
+      "owed": 3,
+      "first": [
+        "StageValueReportTests",
+        "ZombieAgentReaperTests",
+        "NightlyChunkRunnerTests"
       ]
     },
     {
@@ -2654,13 +2665,13 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "AgentBundleAttachmentTests",
+        "AgentContextCheckTests",
         "AgentContextContractTests",
         "AgentSystemPromptLaunchTests",
         "AgentWorkspaceProvisionerTests",
         "BlockedTaskParkProjectionTests",
         "ChannelContractsTests",
         "CheckpointManifestDocumentationTests",
-        "CommitOnSettleScriptTests",
         "InstructionFileStampTests",
         "LiveLaneIsolationTests",
         "OrchestratorInstructionsGuidanceTests",
@@ -4002,6 +4013,12 @@
       ]
     },
     {
+      "path": "scripts/github-sync.ps1",
+      "classes": [
+        "GithubSyncScriptTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs",
       "classes": [
         "AwayDigestSendTests"
@@ -4053,6 +4070,12 @@
       "path": "scripts/lib/Antiphon.Nightly/ExpectedDurationRosterFile.cs",
       "classes": [
         "ExpectedDurationSyncTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/GithubSync.cs",
+      "classes": [
+        "GithubSyncScriptTests"
       ]
     },
     {
@@ -4215,6 +4238,20 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/ReviewScratch.cs",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/StageValueReport.cs",
+      "classes": [
+        "StageValueReportTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/TestSelection.cs",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4301,9 +4338,33 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/TrxFailures.cs",
+      "classes": [
+        "OrchestrationWatcherTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/WatchMaster.cs",
+      "classes": [
+        "OrchestrationWatcherTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/WatchQual.cs",
       "classes": [
         "WatchQualTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/WatchTasks.cs",
+      "classes": [
+        "OrchestrationWatcherTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Scripts/AgentHelperCommands.cs",
+      "classes": [
+        "OrchestrationWatcherTests"
       ]
     },
     {
@@ -4415,15 +4476,6 @@
       ]
     },
     {
-      "path": "scripts/new-review-scratch.ps1",
-      "classes": [
-        "C1677TempFamilyRegistryTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests",
-        "OwnedTempLeakTests"
-      ]
-    },
-    {
       "path": "scripts/nightly-run.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4461,12 +4513,6 @@
       "path": "scripts/release-cut.ps1",
       "classes": [
         "TestPhaseSummaryTests"
-      ]
-    },
-    {
-      "path": "scripts/remove-review-scratch.ps1",
-      "classes": [
-        "OwnedTempLeakTests"
       ]
     },
     {
@@ -4522,12 +4568,6 @@
       "classes": [
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "scripts/task-commit.ps1",
-      "classes": [
-        "AgentTaskCommitEndpointTests"
       ]
     },
     {
@@ -25471,6 +25511,7 @@
         "CapabilityScriptTests",
         "CommitOnSettleScriptTests",
         "DispatchConcurrencyScriptTests",
+        "GithubSyncScriptTests",
         "ModelAvailabilityScriptTests",
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
@@ -25699,21 +25740,25 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
+        "AntiphonLogsTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
+        "OrchestrationWatcherTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
         "ReleaseStatusTests",
+        "StageValueReportTests",
         "ZombieAgentReaperTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
+        "AntiphonLogsTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
@@ -25724,11 +25769,13 @@
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
+        "OrchestrationWatcherTests",
         "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
+        "StageValueReportTests",
         "ToolchainFloorWarningTests",
         "ZombieAgentReaperTests"
       ]
@@ -25892,6 +25939,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
+        "AntiphonLogsTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ExpectedDurationSyncTests",
@@ -25899,7 +25947,6 @@
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
-        "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
         "NightlyRunTests",
@@ -25908,6 +25955,7 @@
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
         "NightlyVerificationContractTests",
+        "OrchestrationWatcherTests",
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
@@ -25915,8 +25963,7 @@
         "ReleaseGateLibraryTests",
         "ReleaseGatePlatformTests",
         "ReleaseStatusTests",
-        "RepositoryChildRecoveryCommandTests",
-        "ZombieAgentReaperTests"
+        "RepositoryChildRecoveryCommandTests"
       ]
     },
     {
@@ -26075,12 +26122,16 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
       "classes": [
+        "AntiphonLogsTests",
         "C1960WorkspaceSlotsScriptTests",
         "CapabilityScriptTests",
         "CommitOnSettleScriptTests",
         "DispatchConcurrencyScriptTests",
+        "GithubSyncScriptTests",
+        "HangfireDashboardCommandTests",
         "KeepSixCommandTests",
         "ModelAvailabilityScriptTests",
+        "OrchestrationWatcherTests",
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
         "ProjectScriptWorkspaceTests",
@@ -26088,6 +26139,7 @@
         "RunnerDrainScriptTests",
         "RunnerSlotsCommandTests",
         "ScheduleCommandTests",
+        "StageValueReportTests",
         "WorktreeResidueScriptTests"
       ]
     },
@@ -26231,7 +26283,6 @@
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
         "MechanicalPcRehearsalTests",
-        "RcQualificationWatcherScriptTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
       ]
@@ -27063,7 +27114,6 @@
         "CardListSearchScriptTests",
         "CardPlatformScriptTests",
         "CheckpointTaskScriptTests",
-        "CommitOnSettleScriptTests",
         "DelegateScriptBindDiagnosisTests",
         "DelegateScriptCapabilityTests",
         "DelegateScriptKindTests",
@@ -27071,7 +27121,6 @@
         "DelegateScriptVerificationRoundTests",
         "DelegateScriptWorktreeBaseTests",
         "EphemeralHttpListenerTests",
-        "GithubSyncScriptTests",
         "GrokRulesLiveMappedDispatchTests",
         "PostLandMutationAdmissionTests",
         "RegisteredCallerScriptTests",

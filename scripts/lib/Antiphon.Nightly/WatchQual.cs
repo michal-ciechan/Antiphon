@@ -105,8 +105,8 @@ namespace Antiphon.Nightly
         /// <summary>The TRX namespace (VisualStudio TeamTest 2010).</summary>
         public const string TrxNamespace = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
 
-        // The failure set of TrxReport and run-checkpoint.ps1.
-        private const string FailedResults = "//t:UnitTestResult[@outcome='Failed' or @outcome='Error' or @outcome='Timeout' or @outcome='Aborted']";
+        // The failure set of TrxReport and run-checkpoint.ps1 (and of TrxFailures).
+        internal const string FailedResults = "//t:UnitTestResult[@outcome='Failed' or @outcome='Error' or @outcome='Timeout' or @outcome='Aborted']";
 
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 

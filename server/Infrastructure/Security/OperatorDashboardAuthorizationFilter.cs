@@ -6,7 +6,7 @@ namespace Antiphon.Server.Infrastructure.Security;
 
 /// <summary>
 /// CARD-0658: the Hangfire dashboard's only authorization filter. A request is admitted when it
-/// carries a live dashboard session cookie (bootstrapped by <c>scripts/hangfire-dashboard.ps1</c>)
+/// carries a live dashboard session cookie (bootstrapped by <c>scripts/antiphon hangfire-dashboard</c>)
 /// or the operator token header. The client address is not consulted in either direction: every
 /// request Kestrel receives arrives as loopback (Aspire's DCP proxy, Vite, Caddy), and
 /// <c>X-Forwarded-*</c> is neither trusted nor required. Nothing here logs a credential.

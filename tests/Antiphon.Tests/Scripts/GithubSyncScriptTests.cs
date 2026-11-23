@@ -1,44 +1,52 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0171 S2 — <c>scripts/github-sync.ps1</c>. Drives the real script under pwsh against a
-/// local <see cref="HttpListener"/> standing in for the Antiphon API.
+/// CARD-0171 S2: the github-sync command (Antiphon.Nightly.GithubSync), in process on a recording transport that answers as
+/// the Antiphon API. It replaced the body of scripts/github-sync.ps1 (unit 25 of the 2026-11-22 plan), which stays as the
+/// thin launcher Windmill's u/lndcobra/antiphon_github_sync starts by path (its parameters are covered in
+/// AntiphonCliLauncherTests). Nothing here talks to GitHub or a server.
 /// </summary>
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[Category("Unit")]
 public sealed class GithubSyncScriptTests
 {
-    [Test]
-    public async Task Notify_forwards_the_query_parameter()
-    {
-        using var server = new StubApi(CleanBody());
-        var run = await RunAsync(server, "-Notify");
+    private const string BaseUrl = "http://127.0.0.1:17202";
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        server.LastQuery.ShouldBe("?notify=true");
-        server.LastPath.ShouldBe("/api/tracker-sync/run");
+    private static (BoardCommandRun.Result Run, RecordingOperatorHttp Http) Sync(string body, int status = 200, params string[] args)
+    {
+        var http = new RecordingOperatorHttp(_ => new NightlyReportHttpResponse(status, body));
+        var run = BoardCommandRun.Run(host => GithubSync.Run(GithubSyncOptions.Parse(["--base-url", BaseUrl + "/", .. args]), host, http.Transport));
+        return (run, http);
     }
 
     [Test]
-    public async Task Without_Notify_the_query_is_empty()
+    public void Notify_forwards_the_query_parameter()
     {
-        using var server = new StubApi(CleanBody());
-        var run = await RunAsync(server);
+        var (run, http) = Sync(CleanBody(), 200, "--notify");
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        server.LastQuery.ShouldBeEmpty();
+        run.Exit.ShouldBe(0, run.All);
+        var call = http.Calls.ShouldHaveSingleItem();
+        call.Method.ShouldBe("POST");
+        call.Path.ShouldBe("/api/tracker-sync/run?notify=true");
+        call.Headers.ShouldBeEmpty("the server holds the GitHub token; no credential is sent");
+        run.Output.ShouldContain("POST " + BaseUrl + "/api/tracker-sync/run?notify=true");
     }
 
     [Test]
-    public async Task A_board_error_exits_1()
+    public void Without_Notify_the_query_is_empty()
+    {
+        var (run, http) = Sync(CleanBody());
+
+        run.Exit.ShouldBe(0, run.All);
+        new Uri(http.Calls.ShouldHaveSingleItem().Uri).Query.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void A_board_error_exits_1()
     {
         // Before CARD-0171 this exited 0, so a failed sync was a green Windmill job.
         const string body = """
@@ -47,58 +55,76 @@ public sealed class GithubSyncScriptTests
             "creates":0,"externalReopens":0,"skips":[],"changes":[],
             "error":"GitHub returned 401 Unauthorized"}],"concurrentRunSkipped":false,"notifications":[]}
             """;
-        using var server = new StubApi(body);
-        var run = await RunAsync(server);
+        var (run, _) = Sync(body);
 
-        run.ExitCode.ShouldBe(1, run.Output);
+        run.Exit.ShouldBe(1, run.All);
         run.Output.ShouldContain("error=GitHub returned 401 Unauthorized");
-        run.Output.ShouldContain("board(s) reported an error");
+        run.Output.ShouldContain("1 board(s) reported an error.");
     }
 
     [Test]
-    public async Task A_clean_body_exits_0_and_prints_the_notification_lines()
+    public void A_clean_body_exits_0_and_prints_the_notification_lines()
     {
         const string body = """
             {"boards":[{"boardId":"11111111-1111-1111-1111-111111111111","boardName":"Antiphon board",
             "issuesPulled":12,"commentsIn":2,"commentsOut":1,"labelsChanged":3,"stateChanges":1,
-            "creates":0,"externalReopens":1,"skips":[],
+            "creates":0,"externalReopens":1,"skips":["closed_pr","label_conflict"],
             "changes":[{"kind":"CommentIn","cardIdentifier":"CARD-0170","externalKey":"#10","url":null}]}],
-            "concurrentRunSkipped":false,
+            "concurrentRunSkipped":true,
             "notifications":[
               {"boardId":"11111111-1111-1111-1111-111111111111","sent":true,
                "channelId":"caee9d25-b751-4401-a295-3b7e242842aa","reason":null},
               {"boardId":"22222222-2222-2222-2222-222222222222","sent":false,
                "channelId":null,"reason":"notify_channel_unset"}]}
             """;
-        using var server = new StubApi(body);
-        var run = await RunAsync(server, "-Notify");
+        var (run, _) = Sync(body, 200, "--notify");
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        run.Output.ShouldContain("commentsIn=2");
-        run.Output.ShouldContain("reopens=1");
-        run.Output.ShouldContain("changes=1");
+        run.Exit.ShouldBe(0, run.All);
+        run.Output.ShouldContain("HTTP 200");
+        run.Output.ShouldContain("  Antiphon board: pulled=12 commentsIn=2 commentsOut=1 labels=3 state=1 creates=0 reopens=1 changes=1 skips=[closed_pr, label_conflict]"
+            + Environment.NewLine);
+        run.Output.ShouldContain("  (concurrent run skipped for at least one board)");
         run.Output.ShouldContain("notified board 11111111-1111-1111-1111-111111111111 -> channel caee9d25-b751-4401-a295-3b7e242842aa");
         run.Output.ShouldContain("NOT notified board 22222222-2222-2222-2222-222222222222: notify_channel_unset");
     }
 
     [Test]
-    public async Task A_board_id_targets_the_per_board_endpoint()
+    public void A_board_id_targets_the_per_board_endpoint()
     {
-        using var server = new StubApi(CleanBody());
-        var run = await RunAsync(server, "-BoardId", "8988ca03-7414-47ad-b0b6-51556c701703", "-Notify");
+        var (run, http) = Sync(CleanBody(), args: ["--board-id", "8988CA03-7414-47AD-B0B6-51556C701703", "--notify"]);
 
-        run.ExitCode.ShouldBe(0, run.Output);
-        server.LastPath.ShouldBe("/api/boards/8988ca03-7414-47ad-b0b6-51556c701703/tracker/sync");
-        server.LastQuery.ShouldBe("?notify=true");
+        run.Exit.ShouldBe(0, run.All);
+        http.Calls.ShouldHaveSingleItem().Path.ShouldBe("/api/boards/8988ca03-7414-47ad-b0b6-51556c701703/tracker/sync?notify=true");
+        Should.Throw<NightlyUsageException>(() => GithubSyncOptions.Parse(["--board-id", "not-a-guid"]));
     }
 
     [Test]
-    public async Task A_non_success_response_exits_1()
+    public void A_non_success_response_exits_1()
     {
-        using var server = new StubApi("""{"title":"boom"}""", statusCode: 500);
-        var run = await RunAsync(server);
+        var (run, _) = Sync("""{"title":"boom"}""", status: 500);
 
-        run.ExitCode.ShouldBe(1, run.Output);
+        run.Exit.ShouldBe(1, run.All);
+        run.Error.ShouldContain("HTTP 500 from " + BaseUrl + "/api/tracker-sync/run");
+        run.Error.ShouldContain("""{"title":"boom"}""");
+        run.Output.ShouldNotContain("HTTP 500", Case.Sensitive, "a refusal is on stderr only");
+    }
+
+    [Test]
+    public void A_body_that_is_not_json_prints_as_is_and_exits_0()
+    {
+        var (run, _) = Sync("sync queued");
+
+        run.Exit.ShouldBe(0, run.All);
+        run.Output.ShouldContain("sync queued");
+    }
+
+    [Test]
+    public void The_default_base_url_is_the_apphost_port_and_the_source_is_ascii()
+    {
+        var options = GithubSyncOptions.Parse([]);
+        (options.BaseUrl, options.BoardId, options.Notify).ShouldBe(("http://localhost:17202", (Guid?)null, false));
+        foreach (var path in new[] { "scripts/lib/Antiphon.Nightly/GithubSync.cs", "scripts/github-sync.ps1" })
+            File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, path)).Count(b => b > 127).ShouldBe(0, path + " is ASCII-only");
     }
 
     private static string CleanBody() =>
@@ -108,83 +134,4 @@ public sealed class GithubSyncScriptTests
         "creates":0,"externalReopens":0,"skips":[],"changes":[]}],
         "concurrentRunSkipped":false,"notifications":[]}
         """;
-
-    private static Task<(int ExitCode, string Output)> RunAsync(StubApi server, params string[] args)
-    {
-        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "github-sync.ps1");
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(scriptPath);
-        startInfo.ArgumentList.Add("-BaseUrl");
-        startInfo.ArgumentList.Add(server.BaseUrl.TrimEnd('/'));
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-
-        return RunProcessAsync(startInfo);
-    }
-
-    private static async Task<(int ExitCode, string Output)> RunProcessAsync(ProcessStartInfo startInfo)
-    {
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
-    }
-
-    private sealed class StubApi : IDisposable
-    {
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-        private readonly string _body;
-        private readonly int _statusCode;
-
-        public StubApi(string body, int statusCode = 200)
-        {
-            _body = body;
-            _statusCode = statusCode;
-            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
-        public string LastPath { get; private set; } = "";
-        public string LastQuery { get; private set; } = "";
-
-        private async Task PumpAsync()
-        {
-            while (!_cts.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-
-                LastPath = context.Request.Url?.AbsolutePath ?? "";
-                LastQuery = context.Request.Url?.Query ?? "";
-
-                var payload = Encoding.UTF8.GetBytes(_body);
-                context.Response.StatusCode = _statusCode;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(payload);
-                context.Response.Close();
-            }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            try { _listener.Stop(); } catch (Exception) { }
-            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            _listener.Close();
-            _cts.Dispose();
-        }
-    }
 }

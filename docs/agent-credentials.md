@@ -283,7 +283,7 @@ The operator owns the copy. Names and locations only.
 
 The same token guards the Hangfire dashboard (CARD-0658). `/hangfire` admits a request carrying the header, or a
 live dashboard session cookie, and nothing else; there is no address check. The browser path is
-`scripts/hangfire-dashboard.ps1`: it sends the header to `POST /api/operator/dashboard-sessions`, which answers a
+`scripts\antiphon.cmd hangfire-dashboard`: it sends the header to `POST /api/operator/dashboard-sessions`, which answers a
 one-time login link (`/api/operator/dashboard-login?nonce=...`, single use, two minutes), and opens that link in
 the default browser. Redeeming it sets `antiphon-operator-dashboard` (`HttpOnly`, `SameSite=Strict`,
 `Path=/hangfire`, `Max-Age` 12 hours, `Secure` over HTTPS, including HTTPS terminated by the local proxy: `X-Forwarded-Proto: https` from a loopback peer, CARD-0676) and redirects to `/hangfire`. The server keeps only

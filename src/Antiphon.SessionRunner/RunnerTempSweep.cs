@@ -126,7 +126,7 @@ public sealed class RunnerTempSweep
             "claude-1654/-work-worktrees-task-0123abcd",
             Container: ClaudeContainer, DefaultEnabled: false, RequiresMirrorAbsent: true),
         new(ReviewClone, "^(?:antiphon-review-[0-9a-f]{8}|review-[0-9a-f]{8}-master[0-9]?)\\z",
-            "scripts/new-review-scratch.ps1", "'antiphon-review-'", "antiphon-review-0123abcd",
+            "scripts/lib/Antiphon.Nightly/ReviewScratch.cs", "\"antiphon-review-\"", "antiphon-review-0123abcd",
             DefaultEnabled: false, MinAgeHours: 168),
         new(SessionAnsi, "^[0-9a-f]{32}\\.ansi\\.log\\z",
             "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs", "$\"{_sessionId:N}.ansi.log\"",

@@ -9,7 +9,7 @@ namespace Antiphon.Server.Infrastructure.Security;
 /// header-authenticated operator can issue a nonce, so the store is bounded by operator activity;
 /// expired entries are swept on every call. Only SHA-256 hashes of nonces and session ids are
 /// kept, so a memory dump yields no live cookie. Sessions do not survive a restart: re-login is
-/// one command (<c>scripts/hangfire-dashboard.ps1</c>). Nothing here logs a value.
+/// one command (<c>scripts/antiphon hangfire-dashboard</c>). Nothing here logs a value.
 /// </summary>
 public sealed class OperatorDashboardSessions
 {

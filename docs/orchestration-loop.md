@@ -985,7 +985,7 @@ gets one retrospective. Record the landed and fix card GUIDs, the Review task an
 C, L, T, the observation source, `investigation pending` and `override pending`. Exclude the
 companion from feature picking; never Spawn it.
 
-Then override the Review finding so `scripts/stage-value-report.ps1` counts the miss:
+Then override the Review finding so `scripts/antiphon stage-value-report` counts the miss:
 `delegate.ps1 -Finding <review-task-guid> -Stage Review -Found "post-land miss: <fix card> <one
 line>"`, but only when `landing.cleanup` is `Complete`. The override supersedes the Clean row, and
 a later `-Land` retry for residue or cleanup loads evidence by ID and refuses a superseded row
@@ -2180,7 +2180,7 @@ CARD-0448 F2 retires the background backfill from that older event prose: histor
 rows remain historical projections and are not landing receipts or deletion authority. The
 landing operation owns new structured stage rows; no event prose is reparsed into green rows.
 `GET /api/stage-outcomes` (via
-`scripts/stage-value-report.ps1`, §9) is where these land automatically alongside delegate
+`scripts/antiphon stage-value-report`, §9) is where these land automatically alongside delegate
 self-reported and orchestrator-overridden stage rows for Review/Test/Merge/Deploy passes.
 
 ---
@@ -2297,8 +2297,8 @@ and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of
 2. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
 
 **Per-stage hit rate vs. cost has shipped** (CARD-0272, `GET /api/stage-outcomes`). Read it with
-`pwsh -File scripts/stage-value-report.ps1 [-Since iso] [-Until iso] [-Stage name] [-Card CARD-nnnn]
-[-Json]` — a table of runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per
+`scripts/antiphon stage-value-report [--since iso] [--until iso] [--stage name] [--card CARD-nnnn]
+[--json] [--include-superseded]` — a table of runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per
 finding and server seconds per stage. Use it before deciding whether a stage-shaped dispatch (§3)
 is worth its cost, not just when the card asks for a report.
 

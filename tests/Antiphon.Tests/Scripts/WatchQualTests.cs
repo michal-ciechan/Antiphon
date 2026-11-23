@@ -12,8 +12,8 @@ namespace Antiphon.Tests.Scripts;
 /// The watch-qual command (WatchQual.Run), in-process. It replaced scripts/orchestration/watch-qual.ps1 (plan
 /// 2026-11-22-remaining-ps1-to-csharp.md, unit 6). These cases replaced the CARD-1842 S5 driver
 /// scripts/test-watch-qual-eta.ps1 (the ETA line) and the watch-qual rows of the C487 smoke
-/// scripts/test-orchestration-watchers.ps1 (failures, partial TRX, re-arm, completion, heartbeat, the sleep clamp), which
-/// keeps the PowerShell helpers' rows. The log directory, state file, heartbeat and timing root are in a MockFileSystem;
+/// scripts/test-orchestration-watchers.ps1 (failures, partial TRX, re-arm, completion, heartbeat, the sleep clamp); its other
+/// rows (trx-failures, watch-tasks, watch-master) moved to OrchestrationWatcherTests in unit 25, and the driver is deleted. The log directory, state file, heartbeat and timing root are in a MockFileSystem;
 /// the clock is a FakeTimeProvider and the host's Sleep advances it, so no case waits.
 /// Not ported: the status object's property and parameter lists and the rc-qualification-status.ps1 wrapper's AST
 /// (PowerShell mechanics; the status is C# since unit 7, and StatusReadersDoNotReadEta keeps the ETA out of it), and the

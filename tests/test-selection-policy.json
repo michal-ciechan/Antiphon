@@ -3060,9 +3060,6 @@
         },
         {
           "script": "scripts/test-hooks.ps1"
-        },
-        {
-          "script": "scripts/test-stage-value-report.ps1"
         }
       ],
       "prerequisites": [],
@@ -3601,7 +3598,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "12f25bc35cd2e17e515f18fd366a415685aab8f30601816cff32ec5549989a3e",
+  "catalogHash": "bfa7d4318a85ac75268cf89225b6fc0438968955542e717f3da4c9b540f6e44e",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
