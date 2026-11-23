@@ -252,6 +252,19 @@ public sealed partial class ImpactedClassesSelectorTests
         }
     }
 
+    // Debug 02f9ccec: the review check seeds are embedded markdown that no test names by path, so the
+    // derived index has no edge for them; the review-check-seeds row selects the class that parses them.
+    [Test]
+    public async Task Review_seed_check_changes_select_the_seed_parser_tests()
+    {
+        var root = Root();
+        var ran = await RunAsync(root, "--path", "server/Application/Review/Checks/Seed/concurrency/SEED-0004.md", "--json");
+        ran.Exit.ShouldBe(0, ran.Text);
+        using var selected = JsonDocument.Parse(ran.Stdout);
+        Names(selected, "kinds").ShouldBe(["review-check-seeds"], ran.Stdout);
+        Names(selected, "classes").ShouldContain("ReviewCheckParserTests", ran.Stdout);
+    }
+
     [Test]
     public async Task label_remote_budget_and_checkpoint_ranges_select_their_rows()
     {
