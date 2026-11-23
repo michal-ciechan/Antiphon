@@ -243,7 +243,7 @@ internal static partial class InProcessGitReads
             // on to read it after an unborn HEAD, and warns of a broken or dangling one even under --quiet).
             case "rev-parse" when a is [_, "--verify", "--quiet", "HEAD"]:
                 if (HeadReadOtherwise(repo)) return null;
-                if (Commit(repo, "HEAD", peel: false) is { } head) return head;
+                if (repo.Lookup("HEAD") is Commit headCommit) return Ok(headCommit.Sha + "\n");
                 return repo.Refs["HEAD"] is SymbolicReference { TargetIdentifier: var branch } && IsPlainRef(branch)
                     && repo.Refs[branch] is null && !HasLooseRef(repo, branch) ? Exit(1) : null;
             // rev-parse --show-prefix at a checkout root: the empty prefix, after --is-inside-work-tree's checks.
@@ -312,7 +312,9 @@ internal static partial class InProcessGitReads
                 var found = repo.Refs[a[2]];
                 if (found is DirectReference) return Exit(1);
                 if (found is not SymbolicReference symbolic || !IsPlainRef(symbolic.TargetIdentifier)) return null;
-                return repo.Refs[symbolic.TargetIdentifier] is SymbolicReference ? null : Ok(symbolic.TargetIdentifier + "\n");
+                // A target that is a link is a symref to git, which follows it to the next name.
+                return repo.Refs[symbolic.TargetIdentifier] is SymbolicReference || RefFileIsLink(repo, symbolic.TargetIdentifier)
+                    ? null : Ok(symbolic.TargetIdentifier + "\n");
             }
 
             // worktree list --porcelain [-z]: git's registration listing, from the files git reads.
@@ -602,11 +604,9 @@ internal static partial class InProcessGitReads
         var gitDir = repo.Info.Path;
         var common = CommonDirectory(gitDir);
         if (common is null) return true;
+        // LinkTarget, not the ReparsePoint attribute: cloud placeholders and deduplicated files are plain refs.
         foreach (var dir in new[] { gitDir, common })
-        {
-            var file = new FileInfo(Path.Combine(dir, name));
-            if (file.Exists && (file.Attributes & FileAttributes.ReparsePoint) != 0) return true;
-        }
+            if (new FileInfo(Path.Combine(dir, name)) is { Exists: true, LinkTarget: not null }) return true;
         return false;
     }
 

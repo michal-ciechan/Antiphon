@@ -310,6 +310,36 @@ public sealed class LibGit2VsGitDifferentialTests
     }
 
     [Test]
+    public async Task Symlinked_refs_are_git_s_to_read()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var gitDir = Path.Combine(repo, ".git");
+        var branch = (await fixture.RequiredAsync(repo, "symbolic-ref", "HEAD")).Trim();
+        await fixture.RequiredAsync(repo, "branch", "via-link");
+        // HEAD a symref to refs/heads/via-link, a link whose text names the checked-out branch (the shape
+        // core.preferSymlinkRefs writes: git reads that text as a symref; libgit2 reads the file it reaches).
+        // Here libgit2 cannot read such a link at all (relative to its own directory it reaches nothing), so this
+        // pins the fallback; the target's RefFileIsLink check is a second line for a link libgit2 does read.
+        var link = Path.Combine(gitDir, "refs", "heads", "via-link");
+        File.Delete(link);
+        try { File.CreateSymbolicLink(link, branch.Replace('/', Path.DirectorySeparatorChar)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Skip.Test("symbolic links cannot be created here");
+        }
+        await fixture.RequiredAsync(repo, "symbolic-ref", "HEAD", "refs/heads/via-link");
+        await CompareAsync(repo, Expect.Fallback, "symbolic-ref", "--quiet", "HEAD");
+        await CompareAsync(repo, Expect.Fallback, "symbolic-ref", "-q", "HEAD");
+        // HEAD itself a link (core.preferSymlinkRefs' shape).
+        await fixture.RequiredAsync(repo, "symbolic-ref", "HEAD", branch);
+        File.Delete(Path.Combine(gitDir, "HEAD"));
+        File.CreateSymbolicLink(Path.Combine(gitDir, "HEAD"), branch.Replace('/', Path.DirectorySeparatorChar));
+        await CompareAsync(repo, Expect.Fallback, "symbolic-ref", "--quiet", "HEAD");
+    }
+
+    [Test]
     public async Task Head_reads_match_git_when_unborn_detached_or_read_otherwise()
     {
         await using var fixture = new LandingGitFixture();
@@ -336,9 +366,11 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.RequiredAsync(repo, "update-ref", "-d", "refs/tags/HEAD");
         await File.WriteAllTextAsync(tagHead, "garbage\n");
         foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
+        (await GitWithErrorAsync(repo, "rev-parse", "--verify", "--quiet", "HEAD")).Error.ShouldContain("ignoring broken ref");
         File.Delete(tagHead);
         await fixture.RequiredAsync(repo, "symbolic-ref", "refs/heads/HEAD", "refs/heads/deleted-branch");
         foreach (var args in reads) await CompareAsync(repo, Expect.Fallback, args);
+        (await GitWithErrorAsync(repo, "rev-parse", "--verify", "--quiet", "HEAD")).Error.ShouldContain("ignoring dangling symref");
         File.Delete(Path.Combine(repo, ".git", "refs", "heads", "HEAD"));
         foreach (var args in reads) await CompareAsync(repo, Expect.Answered, args);
         // The silent path itself answers (CompareAsync checks stderr only where it does).
@@ -364,6 +396,8 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.RequiredAsync(repo, "tag", "--annotate", "--message", "to be named HEAD", "head-tag", head);
         await fixture.RequiredAsync(unborn, "fetch", "--quiet", repo, "refs/tags/head-tag:refs/tags/HEAD");
         await CompareAsync(unborn, Expect.Fallback, "rev-parse", "--verify", "--quiet", "HEAD");
+        var tagObject = (await fixture.RequiredAsync(repo, "rev-parse", "refs/tags/head-tag")).Trim();
+        (await GitAsync(unborn, "rev-parse", "--verify", "--quiet", "HEAD")).ShouldBe(new LandingGitResult(0, tagObject + "\n", ""));
         File.Delete(Path.Combine(unborn, ".git", "refs", "tags", "HEAD"));
         await File.WriteAllTextAsync(Path.Combine(unborn, ".git", "refs", "heads", "trunk"), "not a ref\n");
         await CompareAsync(unborn, Expect.Fallback, "rev-parse", "--verify", "--quiet", "HEAD");
