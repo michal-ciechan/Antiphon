@@ -195,7 +195,11 @@ try
             }
         });
     builder.Services.Configure<ReviewExecutorSettings>(builder.Configuration.GetSection(ReviewExecutorSettings.SectionName));
-    builder.Services.Configure<ReviewAgentSettings>(builder.Configuration.GetSection(ReviewAgentSettings.SectionName));
+    builder.Services.AddOptions<ReviewAgentSettings>()
+        .Bind(builder.Configuration.GetSection(ReviewAgentSettings.SectionName))
+        .Validate(s => ReviewAgentTransports.IsKnown(s.Transport),
+            $"{ReviewAgentSettings.SectionName}:Transport must be '{ReviewAgentTransports.Delegation}' (the default) or '{ReviewAgentTransports.Cli}'.")
+        .ValidateOnStart();
     builder.Services.AddOptions<ReviewCompletionSettings>()
         .Bind(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName))
         .PostConfigure(s =>
@@ -1021,10 +1025,21 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<AnthropicMessagesCompletionModel>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
     builder.Services.AddTransient<ICompletionModel>(sp => sp.GetRequiredService<AnthropicMessagesCompletionModel>());
     builder.Services.AddScoped<ICompletionModel, DelegationCompletionModel>();
+    // One-shot claude -p on the local Claude Code sign-in (dialect claude-cli, no key; Review:Agents:Cli:Command).
+    builder.Services.AddSingleton<IClaudeCli, ClaudeCliProcess>();
+    builder.Services.AddSingleton<ICompletionModel, ClaudeCliCompletionModel>();
+    builder.Services.AddSingleton<IDecisionModel, ClaudeCliDecisionModel>();
     builder.Services.AddScoped<CompletionChain>();
-    // Reviewers are read-only Review delegate tasks in a worktree at the head (design 4.7, Review:Agents).
+    // Reviewers (design 4.7, Review:Agents): read-only Review delegate tasks in a worktree at the head, or with
+    // Review:Agents:Transport = cli, one-shot claude -p on this server in a detached worktree (no session runner).
     builder.Services.AddScoped<IReviewTaskGateway, AgentTaskReviewGateway>();
-    builder.Services.AddScoped<IReviewAgentRunner, DelegationReviewAgentRunner>();
+    builder.Services.AddSingleton<IReviewCheckout, GitReviewCheckout>();
+    builder.Services.AddSingleton<CliReviewAgentRunner>();
+    builder.Services.AddScoped<DelegationReviewAgentRunner>();
+    builder.Services.AddScoped<IReviewAgentRunner>(sp =>
+        ReviewAgentTransports.IsCli(sp.GetRequiredService<IOptions<ReviewAgentSettings>>().Value.Transport)
+            ? sp.GetRequiredService<CliReviewAgentRunner>()
+            : sp.GetRequiredService<DelegationReviewAgentRunner>());
     // Review engine code hosts (design 8): GitHub over REST with a PAT, and local git.
     builder.Services.AddSingleton<CodeHostResponseCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<CodeHostResponseCache>());

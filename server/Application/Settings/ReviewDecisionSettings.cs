@@ -53,6 +53,9 @@ public sealed class ReviewDecisionSettings
     }
 
     public const string SeatDialect = "seat";
+
+    /// <summary>One-shot <c>claude -p</c> on the local Claude Code sign-in: needs a model, no base URL and no key.</summary>
+    public const string ClaudeCliDialect = "claude-cli";
 }
 
 public static class JevDialects
@@ -67,7 +70,7 @@ public static class JevDialects
 
 public sealed class ReviewDecisionProvider
 {
-    /// <summary>A <see cref="JevDialects"/> value, or <c>seat</c>.</summary>
+    /// <summary>A <see cref="JevDialects"/> value, <c>seat</c>, or <c>claude-cli</c> (no base URL or key).</summary>
     public string Dialect { get; set; } = "";
 
     /// <summary>The proxy or API root. Optional for <c>typesafe-native</c> and <c>openrouter-systemone</c>.</summary>
@@ -212,6 +215,9 @@ public static class ReviewCompletionDialects
 
     /// <summary>A small delegate task answers (the subscription seat path).</summary>
     public const string Delegation = "delegation";
+
+    /// <summary>One-shot <c>claude -p</c> with no tools on the local Claude Code sign-in: needs a model, no base URL and no key.</summary>
+    public const string ClaudeCli = "claude-cli";
 }
 
 public sealed class ReviewCompletionProvider

@@ -209,8 +209,11 @@ public sealed class DelegationReviewAgentRunner(
     /// <summary>
     /// The reviewer's brief: what to review and at which head, that it is read-only, the pack (inline
     /// when it fits, else where to read it), the assigned checks and the review-findings/1.0 contract.
+    /// <paramref name="inlineLimit"/> overrides the inline bound (<c>InlinePackMaxChars</c> capped by the
+    /// task goal limit): the one-shot CLI passes <see cref="int.MaxValue"/> to always inline the pack.
+    /// With <paramref name="hasCheckout"/> false the reviewer is told it has the pack alone.
     /// </summary>
-    public static string Brief(ReviewAgentRequest request, ReviewAgentSettings options)
+    public static string Brief(ReviewAgentRequest request, ReviewAgentSettings options, int? inlineLimit = null, bool hasCheckout = true)
     {
         var subject = request.PrNumber is { } n ? $"{request.Repo} PR #{n}" : request.Repo;
         var text = new StringBuilder()
@@ -218,12 +221,16 @@ public sealed class DelegationReviewAgentRunner(
             .Append(request.RunId.ToString("D")).Append(", iteration ").Append(request.Iteration).Append(", round ").Append(request.Round)
             .Append(", reviewer group ").Append(request.GroupKey).Append(", attempt ").Append(request.Attempt).AppendLine(").")
             .AppendLine()
-            .AppendLine("This is a read-only code review. Your worktree is checked out at the reviewed head. Do not edit, commit or push,")
+            .AppendLine(hasCheckout
+                ? "This is a read-only code review. Your worktree is checked out at the reviewed head. Do not edit, commit or push,"
+                : "This is a read-only code review. No checkout of the repository is available: your folder is empty and the context pack below is all you have. Do not edit, commit or push,")
             .AppendLine("do not build or run tests, and do not delegate. The pipeline review rules about checkpoints, review evidence and")
             .AppendLine("landing do not apply to this task: its only output is the review-findings document described below.")
             .AppendLine()
             .AppendLine("Read the context pack: the PR, the diff, the outstanding findings, and your group's checks with their prompts.")
-            .AppendLine("Open any file in the worktree you need, and list each one you read beyond the pack in the context record.")
+            .AppendLine(hasCheckout
+                ? "Open any file in the worktree you need, and list each one you read beyond the pack in the context record."
+                : "Review from the pack alone and leave the context record out; mark a check unverified when it needs code the pack does not show.")
             .AppendLine("Anchor each finding on one line copied verbatim from the file at the reviewed head. Do not re-report the")
             .AppendLine("outstanding findings the pack lists.")
             .AppendLine()
@@ -234,7 +241,7 @@ public sealed class DelegationReviewAgentRunner(
             .AppendLine("After `=== end` you may add the usual report ending; nothing before the document is read.")
             .AppendLine();
 
-        var limit = Math.Min(Math.Max(0, options.InlinePackMaxChars), MaxGoalChars - text.Length - 200);
+        var limit = inlineLimit ?? Math.Min(Math.Max(0, options.InlinePackMaxChars), MaxGoalChars - text.Length - 200);
         if (request.Pack.Length <= limit)
         {
             text.Append("--- context pack (hash ").Append(request.PackHash[..Math.Min(12, request.PackHash.Length)]).AppendLine(") ---")
