@@ -655,8 +655,8 @@ public sealed class WorktreeNoFollowDeleteTests
     // no-follow handles, share modes and receipt hash. The disposition seam refuses only the first disposition of the
     // held file with Win32 32 (group 141's scanner), after that walk hashed it; with rewrite the refusal first rewrites
     // the bytes through a writer the still-open delete handle admits. The refusal must leave the walk without a second
-    // disposition on that handle, and DeleteSettled's fresh walk must re-check drift and hash the entry again:
-    // unchanged bytes then go, rewritten bytes are kept. A same-handle retry deletes in the first walk (rewritten bytes
+    // disposition on that handle, and DeleteSettled's fresh walk must re-check drift and the receipt hashes:
+    // unchanged bytes are hashed again and go, rewritten bytes are refused by the drift check and kept. A same-handle retry deletes in the first walk (rewritten bytes
     // included) and never pauses.
     [Test]
     [Arguments(false)]
@@ -711,8 +711,12 @@ public sealed class WorktreeNoFollowDeleteTests
             pauses.ShouldBe([WorktreeRenames.SharingPause], "exactly one refused walk");
             if (rewrite)
             {
-                events.ShouldBe(["walk", "hash", "disposition", "pause", "walk", "hash"],
-                    "the refusal leaves the handle; the fresh walk re-hashes and refuses the changed bytes");
+                // Review efd29e5f round 3: the second walk's RejectDrift hashes the rewritten bytes and refuses before
+                // DeleteWindows reaches the entry, so no second per-entry hash or disposition is recorded.
+                events.Take(5).ShouldBe(["walk", "hash", "disposition", "pause", "walk"],
+                    "the refusal leaves the handle; DeleteSettled walks again");
+                events.Count(e => e is "disposition" or "classic").ShouldBe(1,
+                    "no disposition after the first refusal: " + string.Join(",", events));
                 error.ShouldBeOfType<ApprovedTreeRejectedException>(error?.ToString()).Reason.ShouldBe("set_aside_content_changed");
                 File.ReadAllText(file).ShouldBe("later-bytes", "bytes written after the first walk's hash are kept");
             }
