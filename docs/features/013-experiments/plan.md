@@ -257,6 +257,10 @@ baseline is the graph and settings the original run used ("as recorded") or toda
   change the graph. It is saved as a new variant; the live workflow is never touched;
 - two variants can be shown side by side with the differing steps and edges marked;
 - the graph is validated (the cycle rule, missing inputs) before the run can start.
+- **Help → Copy for agent** on the variant, the suite and the experiment gives the text an agent on
+  the person's own machine needs to do the same by API: customise the variant, validate it, save it
+  and run the suite. It is one use of the site-wide agent help
+  ([plan](../014-agent-help/plan.md)); the help files for this area are written with phase 4.
 
 Variants are saved and named ("opus reviewer", "two verify passes"), so the same one can be run
 against new cases. A variant records the exact resolved values each trial used.
