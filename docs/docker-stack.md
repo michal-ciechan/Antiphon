@@ -1122,11 +1122,13 @@ The `attention` rows record `key`, `slotId`, original `path`, `detail` and `at`;
 `quarantinedDirectories` records the retained path and whether it is still open
 (`closedAt: null`). [RunnerWorkspaceSlotPool.cs](../src/Antiphon.SessionRunner/RunnerWorkspaceSlotPool.cs)
 (`QuarantineDirectoryAsync`, `QuarantineAndRehomeAsync`) writes these rows and locks
-the old registration before creating a replacement. Nothing automatically cleans
-these old directories yet. `ReleaseQuarantineAsync` is the existing explicit audited
-release operation described above, not a periodic sweeper; warm/cold resets of the
-replacement do not remove the quarantined original. Account for retained disk use
-and inspect the ledger before drain or volume retirement.
+the old registration before creating a replacement. CARD-2061 rechecks lingering
+directories with a recorded terminal-task release during slot maintenance. A complete
+holder scan, fresh publication proof, a clean tree and retained task evidence allow
+the runner to close the entry with disposition `Pushed`. The runner logs refusal
+reasons and records the latest one in `outcome`. Use the operator release above for
+older quarantines without settlement evidence. Account for retained disk use and
+inspect the ledger before drain or volume retirement.
 
 ### Runner Linux compiler policy (CARD-1885/CARD-1906)
 

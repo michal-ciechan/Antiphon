@@ -212,6 +212,14 @@ public sealed class C0824WorkspaceSlotRehomeTests
         var dirtyOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
         File.Delete(Path.Combine(lease.Path, "dirty.txt"));
 
+        // The local origin refs already know the push, but a failed fresh fetch grants no authority.
+        scratch.Faults.Add(new GitFault((_, args) => args is ["-c", "core.longpaths=true", "fetch", "--atomic", ..],
+            "fatal: origin unavailable"));
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        Directory.Exists(lease.Path).ShouldBeTrue();
+        pool.Ledger().QuarantinedDirectories.Single().Outcome.ShouldBe("automatic: origin_unavailable");
+
         scratch.Clock.Advance(TimeSpan.FromMinutes(15));
         await pool.MaintainAsync(ct);
         var closed = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();

@@ -1114,6 +1114,10 @@ public sealed class RunnerWorkspaceSlotPool
             {
                 held = await CheckAndRemoveSettledQuarantineAsync(entry, ct);
             }
+            catch (PhoneHomeAdmissionException)
+            {
+                held = "git_unavailable";
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 held = "filesystem_unreadable";
@@ -1185,6 +1189,10 @@ public sealed class RunnerWorkspaceSlotPool
                 return "origin_unavailable";
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return "origin_unavailable";
+        }
+        catch (PhoneHomeAdmissionException)
         {
             return "origin_unavailable";
         }
