@@ -89,3 +89,41 @@ These are proposals for a card; this Debug changes none of them.
   `ReviewCheckParserTests`, whose `The_built_in_seed_set_parses` loads every embedded seed. After it the same
   scratch commit selects `kinds: [review-check-seeds]`, filter `/*/*/(ReviewCheckParserTests*)/*` on
   `tests/Antiphon.Tests`.
+
+## Resolution (2026-11-24)
+
+The branch landed on master as `3ef75e8a0..53ab561f3`. On that landed master `land-graph-audit --check`
+recomputed `39B06B3A948BF44BF1BAF758201BAC0D00D37A6DDB1A361A4075B9CF6EECD71A` / 80, and the pre-check refusal was
+gone. `scripts/antiphon land-graph-audit --update` then re-recorded the manifest and the evaluation record in its own
+commit, `8732a7c6b`: digest `5E0AD924...` to `39B06B3A...`, evaluation approved at pass 2, and the SDK line moved
+from 10.0.204 to 10.0.404. Earlier records alternate between those two SDKs by host; global.json pins 10.0.204 with
+`latestMinor`. The pins did not change. `land-graph-audit --check` exits 0 at that tip.
+
+### A stale master record is re-recorded automatically, never asked about (operator, 2026-11-24)
+
+The operator's ruling: "you should always automatically re-record master's line graph manifest and evaluation file.
+That should never be a question and be automatically done." So when master's own land-graph record does not match
+master's tree, whoever finds it re-records it (`land-graph-audit --update` on master, as its own commit, then
+`--check` to exit 0) and reports the old and new digest, count and pins. It is not a warning to carry and not a
+question.
+
+These places still say or enforce the opposite, so the operator can relax them:
+
+- `AGENTS.md` (Cards and tracker): "A bare `-Update` outside that land path stays forbidden."
+- `docs/orchestration-loop.md` rule 11 (`#land-graph-refresh`): an inherited mismatch is "a loud warning and continue
+  past it ... not a silent refresh", and "A bare `-Update` outside that land path stays forbidden." The same sentence
+  is repeated near line 2781.
+- `.claude/skills/antiphon-orchestrator/SKILL.md` and `.claude/skills/antiphon-rc-qualification/SKILL.md` repeat
+  that sentence.
+- `tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs`
+  `instructions_say_the_land_path_refreshes_and_bare_update_stays_forbidden` pins the exact sentence in rule 11. A
+  doc edit that drops it turns this test red, so change the test in the same commit.
+- `scripts/lib/Antiphon.Nightly/LandGraphLandRefresh.cs` (`land-graph-land-refresh`) is the mechanism that leaves
+  the record stale. When the base's rows do not match the record and the batch changed no record, it prints
+  `LAND-GRAPH-NOTICE action=warn reason=inherited-mismatch` and exits 0 without refreshing. Its header comment also
+  says "bare land-graph-audit --update stays forbidden".
+- `scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs` and `tools/Antiphon.LandGraphAudit.Core/LandGraphAuditGate.cs`
+  do not forbid it in code. `--update` refuses only while the pins differ from HEAD ("commit source and pins before
+  auditing"); with committed pins, a bare `--update` runs, as it did here.
+- The orchestrators' standing-authority text, which is not in this repository, carried "bare land-graph -Update is
+  forbidden". That text lives in the orchestrator instructions file (`ANTIPHON_ORCHESTRATOR_INSTRUCTIONS`).
