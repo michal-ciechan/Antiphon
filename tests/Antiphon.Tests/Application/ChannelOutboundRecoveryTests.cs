@@ -780,7 +780,7 @@ public sealed class ChannelOutboundRecoveryTests
                         + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}; "
                         + $"queuedTask={nativeTaskId:D}");
                 }
-                (await File.ReadAllTextAsync(workerGate + ".held"))
+                (await ReadNativeGateAsync(workerGate + ".held", nativeWatchdog.Token))
                     .ShouldBe(acceptedId.ToString("D"));
             }
             child.Id.ShouldBe(childPid);
@@ -1020,6 +1020,56 @@ public sealed class ChannelOutboundRecoveryTests
     [Test]
     public Task Running_converter_reconciles_after_dispatcher_death() =>
         Process_death_preserves_ownership_at_each_boundary("conversion-running");
+
+    [Test]
+    public async Task Native_gate_read_retries_a_sharing_violation(CancellationToken cancellationToken)
+    {
+        var root = Directory.CreateTempSubdirectory("antiphon-native-gate-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "native-gate.held");
+            var deliveryId = Guid.NewGuid().ToString("D");
+            await File.WriteAllTextAsync(path, deliveryId, cancellationToken);
+            using var writer = File.Open(path, FileMode.Open, FileAccess.Write, FileShare.None);
+            var attempts = 0;
+
+            var observed = await ReadNativeGateAsync(path, cancellationToken, (marker, share) =>
+            {
+                attempts++;
+                try
+                {
+                    return File.Open(marker, FileMode.Open, FileAccess.Read, share);
+                }
+                catch (IOException error) when (OperatingSystem.IsLinux() && error.HResult == 11)
+                {
+                    // The lock is real. Translate Linux EWOULDBLOCK to the Windows code for the reader.
+                    throw new IOException($"Linux flock EWOULDBLOCK (11) opening {marker}",
+                        unchecked((int)0x80070020));
+                }
+                finally
+                {
+                    writer.Dispose();
+                }
+            });
+
+            observed.ShouldBe(deliveryId);
+            attempts.ShouldBe(2);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    private static async Task<string> ReadNativeGateAsync(string path, CancellationToken cancellationToken,
+        Func<string, FileShare, Stream>? open = null)
+    {
+        if (open is null)
+            return await File.ReadAllTextAsync(path, cancellationToken);
+
+        using var reader = new StreamReader(open(path, FileShare.Read));
+        return await reader.ReadToEndAsync(cancellationToken);
+    }
 
     [Test]
     [Arguments("before-conversion-observation", ChannelOutboundDeliveryState.Published, 1)]
