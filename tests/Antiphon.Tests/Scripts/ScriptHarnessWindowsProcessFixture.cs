@@ -77,22 +77,8 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         File.WriteAllText(Path.Combine(DirectoryPath, "probe-input"),
             $"{Nonce} {job.DangerousGetHandle().ToInt64()} {unrelatedEvent?.DangerousGetHandle().ToInt64() ?? 0} {eventName ?? "-"}");
 
-    internal async Task<string[]> WaitProbeAsync(Task root)
-    {
-        var clock = Stopwatch.StartNew();
-        var path = Path.Combine(DirectoryPath, "probe-receipt");
-        while (!File.Exists(path))
-        {
-            if (root.IsCompleted) throw new InvalidOperationException("Root exited before handle probe.", await ScriptHarnessProcessFixture.CaptureAsync(root));
-            if (clock.Elapsed >= TimeSpan.FromSeconds(5)) throw new TimeoutException("Handle probe readiness deadline.");
-            await Task.Delay(20);
-        }
-        var fields = File.ReadAllText(path).Split(' ');
-        fields.Length.ShouldBe(7);
-        fields[0].ShouldBe(Nonce);
-        Root!.Executing().ShouldBeTrue();
-        return fields;
-    }
+    internal Task<string[]> WaitProbeAsync(Task root) =>
+        ScriptHarnessHandleProbe.WaitAsync(DirectoryPath, Nonce, root, Root!.Executing);
 
     internal static uint ReadHandleFlags(SafeFileHandle handle)
     {

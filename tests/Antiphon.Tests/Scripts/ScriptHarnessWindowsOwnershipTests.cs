@@ -218,10 +218,8 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         await ScriptHarnessWindowsProcessFixture.WithOwnerAsync("HandleProbe", hooks, async owned =>
         {
             var receipt = await owned.Windows.WaitProbeAsync(owned.RootExit);
-            bool.Parse(receipt[3]).ShouldBeFalse("Child cannot signal the unrelated inheritable event.");
-            ScriptHarnessWindowsProcessFixture.EventIsSignaled(unrelatedEvent).ShouldBeFalse();
-            var actualStandard = receipt.Skip(4).Select(value => new IntPtr(long.Parse(value))).ToArray();
-            actualStandard.ShouldBe(hooks.StartupHandles);
+            ScriptHarnessHandleProbe.AssertOnlyStandardHandles(receipt,
+                ScriptHarnessWindowsProcessFixture.EventIsSignaled(unrelatedEvent), hooks.StartupHandles);
             owned.Windows.Root!.Executing().ShouldBeTrue();
         }, configure: windows => hooks.BeforeResume = (job, _) =>
         {
