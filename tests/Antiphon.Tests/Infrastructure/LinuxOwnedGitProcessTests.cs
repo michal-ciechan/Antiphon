@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipes;
@@ -149,7 +148,7 @@ public sealed class LinuxOwnedGitProcessTests
 
         Process foreign;
         try { foreign = Process.Start(start) ?? throw new InvalidOperationException("Docker did not start"); }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 2)
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
             Skip.Test("Docker is required for the second-UID witness.");
             return;
