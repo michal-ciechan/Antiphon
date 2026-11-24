@@ -3,9 +3,10 @@
 .SYNOPSIS
     Fixture/shim tests for scripts/reap-zombie-agents.ps1 (CARD-0221 S2).
 
-    All live IO is injected (-ProcessesJson, -RunnerJson, -DbJson, -Now). This file
-    never enumerates Win32_Process, never talks to docker, and never passes -Execute
-    at a real API. -Execute is used only with -HttpShim, which records kill calls.
+    All live IO is injected (-ProcessesJson, -RunnerJson, -DbJson, -Now), or the
+    AppHost user-secrets store is replaced with an isolated test directory.
+    This file never enumerates Win32_Process, talks to a real database, or uses
+    -Execute at a real API. -Execute uses -HttpShim, which records kill calls.
 
     ASCII-only: parses under pwsh 7 and Windows PowerShell 5.1.
 #>
@@ -44,7 +45,7 @@ function Assert-True {
 }
 
 function New-TestDir {
-    $dir = Join-Path $env:TEMP ('zombie-agents-test-' + [guid]::NewGuid().ToString('N'))
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('zombie-agents-test-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     return $dir
 }
@@ -579,6 +580,38 @@ $u2 = Invoke-Reap @{
 }
 Assert-Eq $u2.ExitCode 2 'db unreachable exit 2'
 Assert-Eq @($u2.Rows).Count 0 'db unreachable no verdicts'
+
+function Test-MissingAppHostDatabase {
+    $fixture = New-TestDir
+    $dockerCalls = New-Object 'System.Collections.Generic.List[string]'
+    function docker {
+        $dockerCalls.Add(($args -join ' '))
+        $global:LASTEXITCODE = 1
+        'fixture: deliberately no desktop postgres container'
+    }
+
+    $savedAppData = $env:APPDATA
+    try {
+        $env:APPDATA = $fixture
+        $record = @(Invoke-Reap @{
+            ProcessesJson = $cFiles.Processes
+            RunnerJson    = $cFiles.Runner
+            Now           = $cFiles.Now
+            ReportPath    = $fixture
+            Execute       = $true
+            HttpShim      = { throw 'The reaper must not call the runner when the database is unavailable.' }
+        } *>&1)
+        $result = $record[-1]
+        Assert-Eq $result.ExitCode 2 'missing AppHost database exits 2'
+        Assert-Eq @($result.KillCalls).Count 0 'missing AppHost database prevents kills'
+        Assert-True (($record -join "`n") -match 'AppHost user secret ConnectionStrings:DefaultConnection') 'missing AppHost database names the configuration key'
+        Assert-Eq $dockerCalls.Count 0 'missing AppHost database never queries the old desktop container'
+    } finally {
+        $env:APPDATA = $savedAppData
+        Remove-Item -LiteralPath $fixture -Recurse -Force
+    }
+}
+Test-MissingAppHostDatabase
 
 # --- incident execute records server kill via HttpShim -------------------------------------
 $incXDir = New-TestDir
