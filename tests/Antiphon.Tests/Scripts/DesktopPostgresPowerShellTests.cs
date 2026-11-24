@@ -75,7 +75,7 @@ public sealed class DesktopPostgresPowerShellTests
         var qps = script == Qps;
         var user = local ? "fixture_user" : "observer";
         var database = local ? "fixture_database" : "operations";
-        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : "pwsh")
+        var start = new ProcessStartInfo(ResolvePowerShell())
         {
             WorkingDirectory = root,
         };
@@ -219,6 +219,12 @@ public sealed class DesktopPostgresPowerShellTests
         }
         return bin;
     }
+
+    private static string ResolvePowerShell() => OperatingSystem.IsWindows()
+        ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell()
+        : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(directory => Path.GetFullPath(Path.Combine(directory, "pwsh")))
+            .First(File.Exists);
 
     private sealed record DockerCall(string[] Arguments, string Stdin);
 }
