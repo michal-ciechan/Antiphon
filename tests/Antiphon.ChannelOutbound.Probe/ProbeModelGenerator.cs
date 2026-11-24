@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Design.Internal;
 
 // `--generate-model <dir>`: writes <dir>/<AssemblyName>.dll, AppDbContext's compiled model. It is scaffolded from the
 // model this process's own Antiphon.Server builds, by the scaffolder `dotnet ef dbcontext optimize` uses, and compiled
@@ -33,7 +34,9 @@ internal static class ProbeModelGenerator
             errorHandler: m => Console.Error.WriteLine("model error: " + m),
             warningHandler: m => Console.Error.WriteLine("model warning: " + m)));
         var server = typeof(AppDbContext).Assembly;
-        var services = new DesignTimeServicesBuilder(server, server, reporter, []).Build(db);
+        using var services = new DesignTimeServicesBuilder(server, server, reporter, []).CreateServiceCollection(db)
+            .AddSingleton<ICSharpRuntimeAnnotationCodeGenerator, PrimitiveCollectionCodeGenerator>()
+            .BuildServiceProvider();
         var files = services.GetRequiredService<ICompiledModelScaffolder>().ScaffoldModel(
             db.GetService<IDesignTimeModel>().Model, sources, new CompiledModelCodeGenerationOptions
             {
@@ -78,5 +81,36 @@ internal static class ProbeModelGenerator
         Console.WriteLine($"probe model generated files={trees.Count} scaffoldMs={scaffoldMs} compileMs={compileMs} "
             + $"totalMs={total.ElapsedMilliseconds}");
         return 0;
+    }
+
+    // EF 9 scaffolds the property without its primitive collection element metadata. Supply that metadata
+    // for conventional arrays using the element mapping from the same Npgsql mapping as the column.
+    private sealed class PrimitiveCollectionCodeGenerator(
+        CSharpRuntimeAnnotationCodeGeneratorDependencies dependencies,
+        RelationalCSharpRuntimeAnnotationCodeGeneratorDependencies relationalDependencies)
+        : NpgsqlCSharpRuntimeAnnotationCodeGenerator(dependencies, relationalDependencies)
+    {
+        public override void Generate(IProperty property, CSharpRuntimeAnnotationCodeGeneratorParameters parameters)
+        {
+            base.Generate(property, parameters);
+            if (parameters.IsRuntime || !property.IsPrimitiveCollection || property.GetElementType() is not { } element)
+                return;
+
+            var mapping = property.GetTypeMapping();
+            // Leave additional element configuration to the parity check, which refuses missing metadata.
+            if (element.GetAnnotations().Any() || mapping.ElementTypeMapping is null
+                || !ReferenceEquals(element.FindTypeMapping(), mapping.ElementTypeMapping))
+                return;
+
+            var code = Dependencies.CSharpHelper;
+            var target = parameters.TargetName;
+            parameters.MainBuilder.Append($"{target}.TypeMapping = ");
+            Create(mapping, parameters);
+            parameters.MainBuilder.AppendLine(";");
+            parameters.MainBuilder.AppendLine(
+                $"{target}.SetElementType({code.Literal(element.ClrType, fullName: true)}, "
+                + $"nullable: {code.Literal(element.IsNullable)}, "
+                + $"typeMapping: {target}.TypeMapping.ElementTypeMapping, primitiveCollection: true);");
+        }
     }
 }

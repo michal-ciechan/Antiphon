@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -13,18 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage;
 // pins that each kind of difference is found.
 internal static class ProbeModelComparison
 {
-    // EF 9's compiled model does not carry a primitive collection's element type (an Npgsql array such as
-    // SessionRuntimeAction.LateConfirmedChannelMessageIds): the runtime model prints it, a compiled one never does.
-    // Mappings compares what the provider uses for the elements instead: the array mapping's element mapping (its
-    // type, store type, converter and comparer) and the elements' nullability, which a compiled model can only match
-    // for elements that can never be null (ElementNullability).
-    private static readonly Regex ElementType =
-        new(@"^[ \t]*ElementType: [^\n]*\n| Element type: [^\n]*", RegexOptions.Multiline | RegexOptions.CultureInvariant);
-
     public static IReadOnlyList<string> Differences(IModel expected, IModel actual, int limit = 20)
     {
         var differences = new List<string>();
-        Compare("model", Metadata(expected), Metadata(actual), differences, limit);
+        Compare("model", Text(expected.ToDebugString(MetadataDebugStringOptions.LongDefault)),
+            Text(actual.ToDebugString(MetadataDebugStringOptions.LongDefault)), differences, limit);
         Compare("relational", Text(expected.GetRelationalModel().ToDebugString(MetadataDebugStringOptions.LongDefault)),
             Text(actual.GetRelationalModel().ToDebugString(MetadataDebugStringOptions.LongDefault)), differences, limit);
         Compare("mapping", Mappings(expected), Mappings(actual), differences, limit);
@@ -32,9 +24,6 @@ internal static class ProbeModelComparison
     }
 
     private static string Text(string debug) => debug.Replace("\r\n", "\n", StringComparison.Ordinal);
-
-    private static string Metadata(IModel model) =>
-        ElementType.Replace(Text(model.ToDebugString(MetadataDebugStringOptions.LongDefault)), "");
 
     private static string Mappings(IModel model)
     {
@@ -57,22 +46,14 @@ internal static class ProbeModelComparison
 
     private static string Element(IReadOnlyProperty property, CoreTypeMapping mapping)
     {
-        var element = mapping.ElementTypeMapping;
-        if (element is null && property.GetElementType() is null) return "";
-        return " element-mapping=" + element?.GetType().FullName
-            + " element-store=" + (element as RelationalTypeMapping)?.StoreType
-            + " element-converter=" + element?.Converter?.GetType().FullName
-            + " element-comparer=" + element?.Comparer.GetType().FullName
-            + " element-nullable=" + ElementNullability(property, element);
-    }
-
-    // "never" for elements of a non-nullable value type, whichever model; otherwise the configured nullability, and
-    // "unknown" in a model without the element type (a compiled one), so such a collection always differs.
-    private static string ElementNullability(IReadOnlyProperty property, CoreTypeMapping? element)
-    {
-        var type = property.GetElementType()?.ClrType ?? element?.ClrType;
-        if (type is { IsValueType: true } && Nullable.GetUnderlyingType(type) is null) return "never";
-        return property.GetElementType() is { } known ? known.IsNullable.ToString() : "unknown";
+        var element = property.GetElementType();
+        var elementMapping = mapping.ElementTypeMapping;
+        if (elementMapping is null && element is null) return "";
+        return " element-mapping=" + elementMapping?.GetType().FullName
+            + " element-store=" + (elementMapping as RelationalTypeMapping)?.StoreType
+            + " element-converter=" + elementMapping?.Converter?.GetType().FullName
+            + " element-comparer=" + elementMapping?.Comparer.GetType().FullName
+            + " element-nullable=" + (element?.IsNullable.ToString() ?? "unknown");
     }
 
     private static void Compare(string part, string expected, string actual, List<string> differences, int limit)
