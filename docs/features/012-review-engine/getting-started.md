@@ -448,10 +448,22 @@ For those keys it wins over `review.env`.
 `--build-arg INSTALL_CLAUDE_CODE=true` to include it. `docker-compose.yml` is the full Antiphon stack
 with a session runner, and it has no review settings.
 
-**What has been tested.** Tests cover the mirror against a local git origin, and `docker compose
-config` accepts the compose file with the env template. The image with the CLI has not yet been
-built and started end to end, and no full review has run in Docker against a real GitHub repo with a
-real Claude sign-in. Treat this section as a starting point until then.
+**One startup error is expected.** The log shows `The key ring does not contain a valid default
+protection key` once at startup. That is the server's own key ring, which protects stored agent API
+keys; a review-only server stores none, so it needs no certificate. Sign-in uses its own key ring
+(`/state/review-signin-keys`).
+
+**What has been tested.** On 2026-11-24 this compose file was built and started on a Linux host with
+placeholder settings. These checks passed:
+- `/health` and `/api/version` answer, the UI loads, and the review API answers;
+- the server runs as user 1654 with a writable home, `claude --version` reports the pinned version,
+  and `claude -p` without a sign-in says it is not logged in rather than failing;
+- with sign-in on, the API answers 401 without a session, login redirects to GitHub, a forged
+  callback is refused, and the sign-in key is written to the state volume;
+- with sign-in off, the API answers as the default viewer.
+
+Tests also cover the mirror against a local git origin. **Not tried yet:** a full review in Docker
+against a real GitHub repo with a real Claude sign-in, and a complete GitHub sign-in round trip.
 
 ### 6.4 Exposing the UI
 
