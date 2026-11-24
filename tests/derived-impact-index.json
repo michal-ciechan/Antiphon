@@ -2211,9 +2211,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 63,
+      "classes": 64,
       "reason": "cap",
-      "owed": 38,
+      "owed": 39,
       "first": [
         "RcFailureHistoryTests",
         "TestTimingsTwinTests",
