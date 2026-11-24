@@ -255,8 +255,15 @@ be run against new cases. A variant records the exact resolved values each trial
   run twice: its stored trial is reused (section 2). **Repeats are optional**, for one purpose: a
   model can answer differently to the same input, so a person who doubts a result can ask for more
   samples of that cell (**Run again**) or set repeats on the experiment.
-- **Before starting**, the page shows the trial count and an estimated cost from the cases' original
-  usage, and a budget cap. Starting needs an explicit confirmation of the spend.
+- **Spend** (decided 2026-11-24). The page shows the trial count and an estimated cost from the
+  cases' original usage. Starting an experiment asks for no confirmation.
+  - Each experiment has a **budget**: an amount, or **no budget**. The default comes from a setting
+    (instance default, overridden per suite), and any amount is allowed, including a high one.
+  - While spend is within the budget the run proceeds without asking.
+  - When the next trial would take spend past the budget, the run **pauses** and asks once: raise
+    the budget, remove it, or stop. Trials already running finish; nothing new starts until answered.
+  - An estimate above the budget is shown as a warning before the start, not a block.
+  - With no budget the run never pauses for spend. Host concurrency limits still apply.
 - **Per cell:** pass or fail, cost and time. A cell with several samples shows passes out of samples
   ("2/3"), and one that both passes and fails is marked flaky, not averaged away.
 - **Per variant:** cases passed, cases regressed against the baseline, recall on `finding-present`,
@@ -355,7 +362,7 @@ with new cases over time so candidates cannot slowly fit it.
 | Route | Shows |
 |---|---|
 | `/experiments` | History: every experiment with its scope, suite, variants, result line, cost, who ran it and when. Filters by stage, repo and model |
-| `/experiments/new` | Targets and per-step instructions (section 6a), cases or suite, variants, repeats, the cost estimate and the confirmation |
+| `/experiments/new` | Targets and per-step instructions (section 6a), cases or suite, variants, repeats, the cost estimate and the budget (an amount or none) |
 | `/experiments/:id` | The A/B view |
 | `/experiments/cases`, `/cases/:id` | Cases: context, origin, inputs, expectations, and every trial ever run on the case |
 | `/experiments/suites`, `/variants` | Saved suites and variants |
@@ -442,7 +449,7 @@ and `TrialId`.
 | `POST /api/eval/cases` (from a node, finding or human finding), `GET`, `PATCH`, `DELETE` | Cases |
 | `GET/POST /api/eval/suites`, `/variants` | Suites and variants |
 | `POST /api/eval/experiments/estimate` | Trial count and cost estimate |
-| `POST /api/eval/experiments` (with the accepted spend), `GET`, `POST …/{id}/cancel` | Experiments |
+| `POST /api/eval/experiments` (with a budget or none), `GET`, `POST …/{id}/cancel`, `POST …/{id}/budget` (raise, remove or stop after a pause) | Experiments |
 | `GET /api/eval/experiments/{id}/trials/{trialId}`, `…/compare?with=` | Trial detail and comparison |
 | `POST /api/eval/trials/{id}/judgements` | Mark a new finding |
 | `GET /api/eval/by-node?workflow=&node=` | The count and list for the graph badge |
@@ -470,7 +477,7 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 
 | Risk | Handling |
 |---|---|
-| Experiments spend real model budget | Estimate first, budget cap, explicit confirmation, trial reuse, host concurrency limits apply |
+| Experiments spend real model budget | Estimate shown first; a budget that pauses the run when breached (or no budget, by choice); trial reuse; host concurrency limits apply |
 | Outputs vary run to run | Repeats, counts shown as counts, flaky cells marked, meaning-based matching |
 | The judge is itself wrong | The judge setting is recorded on every trial; outputs are shown to it unlabelled; `prompt` results show their reason; people can overrule with a judgement, which is stored |
 | Fitting prompts to the suite | Held-out cases, refreshed over time; the generality check; a human approves every promotion |
@@ -483,8 +490,8 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 1. **Name and place:** decided 2026-11-24: a top-level "Experiments" area.
 2. **First stages:** this plan replays categorise, select and verify first (cheap, fast), then the
    reviewer. Reverse it if comparing reviewer models matters most.
-3. **Repeats:** decided 2026-11-24: one run per cell, repeats optional. Still open: whether an
-   experiment over a set budget needs a second approval.
+3. **Repeats:** decided 2026-11-24: one run per cell, repeats optional. Spend: decided 2026-11-24: an estimate and a
+   budget; no confirmation until the budget is breached; no budget or a high budget is allowed.
 4. **Scenario files location:** `.antiphon/review/scenarios/` as planned, or a separate repo so
    held-out cases are not visible to agents working in the repo.
 5. **Judge:** decided 2026-11-24: a setting, per suite with an instance default; a model fed by an
