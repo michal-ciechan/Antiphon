@@ -57,6 +57,64 @@ public sealed class LiveLaneGateScanTests
         }
     }
 
+    [Test]
+    public void DetectsHeadedLookupWhenTargetIsNamedFirst()
+    {
+        var scan = ScanHeadedGateCases($$"""
+            [Test]
+            public void RequiresFlag() =>
+                _ = Environment.GetEnvironmentVariable(target: EnvironmentVariableTarget.Process, variable: "{{HeadedFlag}}");
+
+            [Test]
+            public void SeedsChildEnvironment()
+            {
+                var childEnvironment = new Dictionary<string, string> { ["{{HeadedFlag}}"] = "1" };
+                _ = Environment.GetEnvironmentVariable(target: EnvironmentVariableTarget.Process, variable: "OTHER_FLAG");
+            }
+            """);
+
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlag"]);
+        scan.Gates.Single().Shapes.ShouldBe([HeadedFlag]);
+    }
+
+    [Test]
+    public void IgnoresPrintedLookupTextButDetectsExecutableLookup()
+    {
+        var scan = ScanHeadedGateCases($$"""
+            [Test]
+            public void PrintsLookupText() =>
+                Console.WriteLine("Environment.GetEnvironmentVariable(\"{{HeadedFlag}}\")");
+
+            [Test]
+            public void PrintsLookupResult() =>
+                Console.WriteLine($"{Environment.GetEnvironmentVariable("{{HeadedFlag}}")}");
+            """);
+
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["PrintsLookupResult"]);
+        scan.Gates.Single().Shapes.ShouldBe([HeadedFlag]);
+    }
+
+    // Split the name so that the repository scan does not inspect the fixture templates.
+    private const string HeadedFlag = "ANTIPHON_" + "HEADED_TESTS";
+
+    private static LiveLaneGateScanResult ScanHeadedGateCases(string methods)
+    {
+        using var fixture = NightlyFixture.Create("live-lane-headed-gates");
+        var source = fixture.PathOf("HeadedGateCases.cs");
+        File.WriteAllText(source, $$"""
+            namespace Scratch;
+            [Category("Unit")]
+            public class HeadedGateCases
+            {
+                {{methods}}
+            }
+            """);
+
+        var scan = LiveLaneGateScan.Scan(fixture.Root, source);
+        scan.Unresolved.ShouldBe(0);
+        return scan;
+    }
+
     private static string Key(JsonElement row) =>
         LiveLaneGateScan.IdentityKey(row.GetProperty("project").GetString(), row.GetProperty("namespace").GetString(),
             row.GetProperty("class").GetString(), row.GetProperty("method").GetString(),
