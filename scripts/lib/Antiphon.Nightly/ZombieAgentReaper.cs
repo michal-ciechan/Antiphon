@@ -1138,8 +1138,9 @@ namespace Antiphon.Nightly
 
         // Win32_Process's fields without WMI: the toolhelp snapshot (pid, parent, executable name), then per process the image
         // path, creation and CPU times (a limited-query handle; a process that refuses one keeps them empty, as WMI does), the
-        // command line (QualificationOs) and the working set (the system process list).
-        private static class Win32Processes
+        // command line (QualificationOs) and the working set (the system process list). PtyHostReaper and WatchedTestRun read the
+        // same table (unit 38).
+        internal static class Win32Processes
         {
             private const uint SnapProcess = 0x2;
             private const int QueryLimited = 0x1000;

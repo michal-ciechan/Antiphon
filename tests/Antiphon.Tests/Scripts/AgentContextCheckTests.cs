@@ -9,8 +9,8 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-0254: the check-agent-context command (AgentContextCheck.Run), in process on a MockFileSystem. It replaced
-/// scripts/check-agent-context.ps1 (unit 25 of the 2026-11-22 plan), which had no test of its own; scripts/bootstrap-check.ps1
-/// runs the command. The last case reads the real AGENTS.md, as bootstrap-check does.
+/// scripts/check-agent-context.ps1 (unit 25 of the 2026-11-22 plan), which had no test of its own; the bootstrap-check command
+/// (BootstrapCheck, unit 38) runs it in process. The last case reads the real AGENTS.md, as bootstrap-check does.
 /// </summary>
 [Category("Unit")]
 public sealed class AgentContextCheckTests
@@ -105,7 +105,8 @@ public sealed class AgentContextCheckTests
         exit.ShouldBe(0, error.ToString());
         File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "AgentContextCheck.cs")).Count(b => b > 127).ShouldBe(0, "ASCII only");
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "check-agent-context.ps1")).ShouldBeFalse("the check is a command");
-        File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "bootstrap-check.ps1"))
-            .ShouldContain("Invoke-AntiphonCli -Command 'check-agent-context' -Arguments @('--repo', $repoRoot)");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "bootstrap-check.ps1")).ShouldBeFalse("bootstrap-check is a command");
+        File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "BootstrapCheck.cs"))
+            .ShouldContain("AgentContextCheck.Run(new AgentContextCheckOptions { Repo = root }, host, files)");
     }
 }

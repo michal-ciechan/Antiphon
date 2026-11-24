@@ -108,7 +108,7 @@ Do not copy `appsettings.json.example` over the tracked
   on **17203**, and the session-runner is on **17204**. Postgres is the
   always-on `antiphon-postgres` container on **17280**. The Aspire dashboard
   is pinned at **http://localhost:17205**.
-- `pwsh -File scripts/bootstrap-check.ps1` exits 0.
+- `scripts\antiphon.cmd bootstrap-check` exits 0.
 - You can create an agent in the UI (or `POST /api/agents` then
   `POST /api/agents/{id}/start`) and it reaches **Running**.
 
@@ -319,12 +319,16 @@ checking the browser; use `--mode dev` when HMR is required.
 ### 8. Self-check
 
 ```
-pwsh -File scripts/bootstrap-check.ps1
+scripts\antiphon.cmd bootstrap-check
 ```
 
 Read-only. Exit code is the number of FAILs. This is the last automated
-step; do not skip it. (The script is slice 2 of CARD-0088; it wraps
-`verify-dev-stack --skip-browser` for the live half.)
+step; do not skip it. (It is slice 2 of CARD-0088; it runs
+`verify-dev-stack --skip-browser` in its own process for the live half.
+`--no-stack` checks Phase A only and probes `docker network create` instead.)
+It is a command of the `antiphon-scripts` CLI since 2026-11-24, so it needs the
+.NET SDK from step 1: without `dotnet` the launcher exits 9 before any check runs
+(the retired `scripts/bootstrap-check.ps1` could still report a missing `dotnet`).
 
 Full/default `verify-dev-stack` smoke is for the **Windows Aspire desktop**,
 including its named `antiphon-postgres` container. On non-Windows hosts it refuses
@@ -370,7 +374,7 @@ dotnet user-secrets set "Llm:Providers:openai:ApiKey" "<paste>" --id antiphon-se
 
 ## MCP (optional)
 
-Not required for "done". `scripts/bootstrap-check.ps1` does not probe MCP.
+Not required for "done". `bootstrap-check` does not probe MCP.
 This checkout's Claude project `mcpServers` is empty.
 
 Observed on this operator's machine, 2026-08-19 — not a required set:
@@ -404,7 +408,7 @@ Not the default. Use this only when you are deliberately not running Aspire.
 
 ---
 
-pwsh -File scripts/bootstrap-check.ps1
+scripts\antiphon.cmd bootstrap-check
 
 
 <!-- CARD-0254 preserved source begins -->

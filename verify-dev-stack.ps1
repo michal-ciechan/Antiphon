@@ -5,9 +5,9 @@
     health check of the local dev stack. Aspire mode (default, Windows: ports 1720x) or -SimpleMode (the compose stack: API
     17281, client 17282, runner 17204). Every check is reported before the verdict.
 
-    Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/deploy-local.ps1 and
-    scripts/bootstrap-check.ps1 run this file by path (restart-dev-stack, restart.ps1's command since unit 37, runs the check
-    in process). Agents run `scripts/antiphon verify-dev-stack`; Windows runbooks `scripts\antiphon.cmd verify-dev-stack`.
+    Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/deploy-local.ps1 runs this
+    file by path (restart-dev-stack, restart.ps1's command since unit 37, and bootstrap-check since unit 38 run the check in
+    process). Agents run `scripts/antiphon verify-dev-stack`; Windows runbooks `scripts\antiphon.cmd verify-dev-stack`.
 
     The parameters are the script's, passed when given: -SimpleMode, -SkipBrowser, -TimeoutSec, -ProbeListeningPorts. The
     command's exit code is returned (0 verified, 1 a core check failed); 9 when the CLI cannot be built or started (one

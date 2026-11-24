@@ -167,9 +167,11 @@ namespace Antiphon.Scripts
             // The session reapers answer every input themselves (unit 22). cleanup-claude-sessions: exit 0 done, 1 the list could not
             // be read, 2 no or stale credentials, 3 a truncated list, 4 over --max-per-run, 5 a mutation failed. reap-zombie-agents: 0
             // no positives or every kill verified, 1 a leaf still alive, 2 a prerequisite did not answer, 3 a dry run found
-            // positives. Usage is 2 for each.
+            // positives. reap-orphaned-pty-hosts (unit 38): 0 a dry run or every kill verified, 1 a kill request failed or a host
+            // still alive, 2 a prerequisite could not be read. Usage is 2 for each.
             [SessionReaperCommands.ClaudeSessions] = SessionReaperCommands.RunClaudeSessions,
             [SessionReaperCommands.ZombieAgents] = SessionReaperCommands.RunZombieAgents,
+            [SessionReaperCommands.OrphanedPtyHosts] = SessionReaperCommands.RunOrphanedPtyHosts,
             // The agent and operator helpers answer every input themselves (unit 25). check-agent-context: exit 0 within the
             // budget, 1 over it or unreadable. task-commit: 0 committed, 1 refused, pending inspection, no token or task id.
             // new-review-scratch and remove-review-scratch: 0 done, 1 refused. trx-failures: 0. watch-master: 0. watch-tasks: 0,
@@ -218,12 +220,13 @@ namespace Antiphon.Scripts
             // slow or unresolved row, 2 invalid input. mechanical-pc: 0 C479 ACCEPT, 2 C479 REFUSE <reason>, 1 an input that could
             // not be read. measure-session-state-cache: 0 captured or both gates passed, 1 a gate failed or refused.
             // verify-agent-tui-profile: 0 verified, 1 failed. check-os-witnesses (unit 35): 0 complete, 1 obligations, 2 invalid
-            // input. Usage is 2 for each.
+            // input. run-tests-watched (unit 38): the test executable's code, 124 stalled or timed out. Usage is 2 for each.
             [VerificationToolCommands.DurationTripwire] = VerificationToolCommands.RunDurationTripwire,
             [VerificationToolCommands.MechanicalPc] = VerificationToolCommands.RunMechanicalPc,
             [VerificationToolCommands.MeasureSessionStateCache] = VerificationToolCommands.RunMeasureSessionStateCache,
             [VerificationToolCommands.VerifyAgentTuiProfile] = VerificationToolCommands.RunVerifyAgentTuiProfile,
             [VerificationToolCommands.CheckOsWitnesses] = VerificationToolCommands.RunCheckOsWitnesses,
+            [VerificationToolCommands.RunTestsWatched] = VerificationToolCommands.RunRunTestsWatched,
             // The build slot commands answer every input themselves (unit 34). build-slot: the command's own code, 4 when no slot came
             // within the wait, 1 when the command cannot be resolved or started, 130 when interrupted. measure-linux-shared-compiler:
             // 0 accepted, 1 refused or not accepted. Usage is 2 for each.
@@ -255,7 +258,8 @@ namespace Antiphon.Scripts
             // worktree or a phone-home configuration; nothing touched). run-apphost: the AppHost build's code when it failed, else
             // the AppHost's. dev-start, dev-fresh, dev-backup (the zip's path last), dev-restore, dev-upgrade, restart-dev-stack,
             // restart-server and restart-client: 0 done (or an unconfirmed reset or restore, aborted), 1 failed. dev-stop and
-            // stop-server: 0. assert-dev-ports-clear: 0 clear, 1 a listener remains. Off Windows each is 1. Usage is 2 for each.
+            // stop-server: 0. assert-dev-ports-clear: 0 clear, 1 a listener remains. Off Windows each is 1. bootstrap-check (unit 38,
+            // read-only, any platform): the number of FAILs. Usage is 2 for each.
             [DevStackCommands.DevAspireName] = DevStackCommands.RunDevAspire,
             [DevStackCommands.RunAppHost] = DevStackCommands.RunRunAppHost,
             [DevStackCommands.DevStart] = DevStackCommands.RunDevStart,
@@ -269,6 +273,7 @@ namespace Antiphon.Scripts
             [DevStackCommands.RestartClient] = DevStackCommands.RunRestartClient,
             [DevStackCommands.StopServer] = DevStackCommands.RunStopServer,
             [DevStackCommands.AssertDevPortsClear] = DevStackCommands.RunAssertDevPortsClear,
+            [DevStackCommands.BootstrapCheckName] = DevStackCommands.RunBootstrapCheck,
         };
 
         public static int Main(string[] args)

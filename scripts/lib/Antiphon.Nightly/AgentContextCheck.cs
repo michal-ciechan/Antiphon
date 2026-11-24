@@ -1,7 +1,7 @@
 // CARD-0254: the universal agent context's byte budget. It replaced scripts/check-agent-context.ps1 (unit 25 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md); the CLI runs it as `antiphon-scripts check-agent-context`
-// (scripts/antiphon on sh, scripts\antiphon.cmd on Windows), and scripts/bootstrap-check.ps1 runs it as its agent context
-// check.
+// (scripts/antiphon on sh, scripts\antiphon.cmd on Windows), and the bootstrap-check command (BootstrapCheck, unit 38) runs it
+// in process as its agent context check.
 //
 //   check-agent-context [--repo <checkout>]
 //

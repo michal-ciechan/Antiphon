@@ -1,7 +1,7 @@
 // CARD-0543, CARD-1305, CARD-1323: the one-shot health check of the local dev stack (unit 31 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced the body of verify-dev-stack.ps1, which stays a thin
-// launcher at the repository root because scripts/deploy-local.ps1 and scripts/bootstrap-check.ps1 run it by path; the
-// restart-dev-stack command runs this class in process since unit 37).
+// launcher at the repository root because scripts/deploy-local.ps1 runs it by path; the restart-dev-stack command runs this
+// class in process since unit 37, and bootstrap-check (BootstrapCheck, --skip-browser) since unit 38).
 // The CLI runs it as
 //
 //   antiphon-scripts verify-dev-stack [--simple-mode] [--skip-browser] [--timeout-sec 10] [--probe-listening-ports]

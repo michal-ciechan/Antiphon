@@ -1024,8 +1024,8 @@ public sealed class AntiphonCliLauncherTests
     // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
     // (scripts/cutover-postgres-server2.ps1 and scripts/deploy-local.ps1 start them by path), scripts/watchdog-apphost.ps1,
     // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks the install-autostart command
-    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1 and bootstrap-check.ps1
-    // run it by path) ----
+    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1 runs it by path; the
+    // bootstrap-check command runs the check in process since unit 38) ----
 
     private static Dictionary<string, string> Echo(string command, string? exit = null)
     {

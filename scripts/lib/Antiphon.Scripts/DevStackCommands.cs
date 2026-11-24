@@ -6,7 +6,9 @@
 // DevStackOs (the build slot in this process, BuildSlotCommands.Runner; the confirmation prompt on this console); this file
 // binds them. restart-dev-stack runs restart-session-runner and verify-dev-stack in process. The checkout is the one this
 // executable was built in, else the current directory. Every command runs on Windows only (the desktop stack: its ports,
-// processes, Docker Desktop and terminals): elsewhere one stderr line and exit 1, after the flags are read. ASCII only.
+// processes, Docker Desktop and terminals): elsewhere one stderr line and exit 1, after the flags are read. The read-only
+// bootstrap-check (unit 38; it replaced scripts/bootstrap-check.ps1) runs anywhere: BootstrapCheck on BootstrapCheckOs, its
+// agent context and verify-dev-stack --skip-browser (on AppHostOs) in this process. ASCII only.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -31,11 +33,12 @@ namespace Antiphon.Scripts
         internal const string RestartClient = "restart-client";
         internal const string StopServer = "stop-server";
         internal const string AssertDevPortsClear = "assert-dev-ports-clear";
+        internal const string BootstrapCheckName = "bootstrap-check";
 
         internal const string Usage = DevAspireOptions.Usage + " | " + AppHostRunOptions.Usage + " | " + DevStartOptions.Usage + " | " + DevStopOptions.Usage
             + " | " + DevFreshOptions.Usage + " | " + DevBackupOptions.Usage + " | " + DevRestoreOptions.Usage + " | " + DevUpgradeOptions.Usage
             + " | " + DevRestartOptions.Usage + " | " + DevServerRestartOptions.ServerUsage + " | " + DevServerRestartOptions.ClientUsage
-            + " | " + DevServerRestartOptions.StopUsage + " | " + DevPortsOptions.Usage;
+            + " | " + DevServerRestartOptions.StopUsage + " | " + DevPortsOptions.Usage + " | " + BootstrapCheckOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -157,6 +160,17 @@ namespace Antiphon.Scripts
         {
             var options = DevPortsOptions.Parse(args.Skip(1).ToArray());
             return Simple(AssertDevPortsClear, Checkout, (host, platform) => DevRestart.AssertPortsClear(options, host, platform, Seams(host)));
+        }
+
+        // Exit the number of FAILs (0 when every check passed or only warned); usage 2.
+        internal static int RunBootstrapCheck(string[] args)
+        {
+            var options = BootstrapCheckOptions.Parse(args.Skip(1).ToArray(), Checkout);
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            var files = new FileSystem();
+            var platform = new BootstrapCheckOs(host, files, stackHost => DevStackVerify.Run(DevStackVerifyOptions.Parse(new[] { "--skip-browser" }, options.RepoRoot),
+                stackHost, new AppHostOs(stackHost, files, options.RepoRoot, OperatorCommands.OperatorTokenFile())));
+            return BootstrapCheck.Run(options, host, platform);
         }
 
         private static int Simple(string command, string root, Func<NightlyHost, AppHostOs, int> run)

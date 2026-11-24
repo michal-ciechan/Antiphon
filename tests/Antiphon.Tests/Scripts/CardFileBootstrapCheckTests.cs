@@ -1,13 +1,18 @@
-using System.Diagnostics;
-using System.Net;
+using System.IO.Abstractions.TestingHelpers;
 using System.Text;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
-using Antiphon.Tests.Application;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0408 V-30: bootstrap-check's card-file probe (Antiphon.Nightly BootstrapCheck.CardFiles; scripts/bootstrap-check.ps1 until
+/// unit 38 of the 2026-11-22 plan, when this class read the script's probe out of its AST and ran it in pwsh) reads the projects
+/// from a loopback stub, never the shared stack, through the production platform's HTTP read. It only GETs /api/projects and warns
+/// without repair: the checkout's ignore bytes stay as they were and no card folder appears.
+/// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class CardFileBootstrapCheckTests
@@ -18,38 +23,31 @@ public class CardFileBootstrapCheckTests
     [Arguments("[{\"cardFileWarnings\":[]}]", "PASS", "explicit opt-in")]
     public async Task Actual_bootstrap_privacy_probe_only_GETs_stub_and_warns_without_repair(string json, string level, string expected)
     {
-        var root = Directory.CreateTempSubdirectory("c408-bootstrap").FullName;
+        var root = OperatingSystem.IsWindows() ? @"C:\c408-bootstrap" : "/c408-bootstrap";
+        var ignore = Path.Combine(root, ".gitignore");
+        var files = new MockFileSystem();
+        files.AddFile(ignore, new MockFileData("# owner bytes\n"));
         var url = EphemeralHttpListener.BindLoopback(out var bound); using var listener = bound;
+        var requests = new List<string>();
         var pump = Task.Run(async () => {
             var request = await listener.GetContextAsync();
-            request.Request.HttpMethod.ShouldBe("GET"); request.Request.Url!.AbsolutePath.ShouldBe("/api/projects");
+            requests.Add(request.Request.HttpMethod + " " + request.Request.Url!.AbsolutePath);
             request.Response.ContentType = "application/json"; await request.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(json)); request.Response.Close();
         });
         try
         {
-            var script = Path.Combine(root, "probe.ps1"); var ignore = Path.Combine(root, ".gitignore");
-            await File.WriteAllTextAsync(ignore, "# owner bytes\n");
-            await File.WriteAllTextAsync(script, """
-                param([string]$Source)
-                $tokens=$null; $errors=$null
-                $ast=[System.Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
-                if ($errors.Count) { throw 'Parse failed' }
-                $probe=$ast.Find({ param($node) $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Extent.Text.Contains('$privacyProjects = Invoke-RestMethod') },$true)
-                if ($null -eq $probe) { throw 'Privacy probe missing' }
-                function Write-Check { param($Name,$Status,$Detail,$Remedial) Write-Output "$Name|$Status|$Detail|$Remedial" }
-                & ([scriptblock]::Create($probe.Extent.Text))
-                """);
-            var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Source", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/bootstrap-check.ps1") }) start.ArgumentList.Add(arg);
-            start.Environment["ANTIPHON_API"] = url.TrimEnd('/');
-            using var process = Process.Start(start)!; var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await process.WaitForExitAsync(deadline.Token); await pump.WaitAsync(deadline.Token); }
-            catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
-            process.ExitCode.ShouldBe(0, await error); var text = await output;
-            text.ShouldContain("card-files|"+level+"|"); text.ShouldContain(expected);
-            (await File.ReadAllTextAsync(ignore)).ShouldBe("# owner bytes\n"); Directory.Exists(Path.Combine(root, "docs/cards")).ShouldBeFalse();
+            var platform = new BootstrapCheckOs(NightlyHost.Production(TextWriter.Null, TextWriter.Null), files,
+                _ => throw new InvalidOperationException("the probe never runs the stack check"));
+            var line = await Task.Run(() => BootstrapCheck.CardFiles(url.TrimEnd('/'), platform)).WaitAsync(TimeSpan.FromSeconds(30));
+            await pump.WaitAsync(TimeSpan.FromSeconds(30));
+
+            requests.ShouldBe(["GET /api/projects"]);
+            line.Status.ShouldBe(level);
+            (line.Detail + "|" + line.Remedy).ShouldContain(expected);
+            files.File.ReadAllText(ignore).ShouldBe("# owner bytes\n");
+            files.AllFiles.ShouldBe([ignore]);
+            files.Directory.Exists(Path.Combine(root, "docs", "cards")).ShouldBeFalse();
         }
-        finally { listener.Close(); Directory.Delete(root, recursive: true); }
+        finally { listener.Close(); }
     }
 }

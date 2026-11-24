@@ -108,7 +108,7 @@ Follow [docs/bootstrap.md](../../../docs/bootstrap.md). Short form:
 3. Put LLM keys in `dotnet user-secrets` (`--id antiphon-server`) or the Settings UI after start. Do **not** copy `appsettings.json.example` over the tracked `server/appsettings.json`.
 4. `scripts/antiphon install-autostart`
 5. `scripts/antiphon restart-apphost` (or `scripts/antiphon dev-aspire` if nothing is listening)
-6. `pwsh -File scripts/bootstrap-check.ps1`
+6. `scripts/antiphon bootstrap-check` (read-only; exit code = number of FAILs)
 
 ### Every day
 1. Aspire is already always-on after `scripts/antiphon install-autostart`. If it is down: `scripts/antiphon restart-apphost`
