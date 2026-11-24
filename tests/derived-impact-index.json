@@ -2281,14 +2281,14 @@
       "reason": "cap",
       "owed": 45,
       "first": [
+        "CardThreadEndpointTests",
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
         "DiagnosisEndpointTests",
         "DiagnosticsBundleEndpointTests",
         "DispatcherSweepLifetimeRegistrationTests",
         "DistillationEndpointTests",
-        "FileSystemBrowseApiTests",
-        "HangfireStartupSafetyTests"
+        "FileSystemBrowseApiTests"
       ]
     },
     {
@@ -4784,9 +4784,21 @@
       ]
     },
     {
+      "path": "scripts/test-live-lane-evidence.ps1",
+      "classes": [
+        "CheckpointCallerBudgetTests"
+      ]
+    },
+    {
       "path": "scripts/test-live-lane-fingerprint.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/test-live-lane-isolation.ps1",
+      "classes": [
+        "CheckpointCallerBudgetTests"
       ]
     },
     {
@@ -13399,6 +13411,7 @@
       "classes": [
         "ClaudeCliLiveTests",
         "ClaudeCliTransportTests",
+        "ProductionRunnerIsolationTests",
         "ReviewMirrorCheckoutTests"
       ]
     },
@@ -21105,7 +21118,8 @@
     {
       "path": "src/Antiphon.SessionRunner/WindowsWorkspaceSlotProcessProbe.cs",
       "classes": [
-        "C0824WindowsSlotHolderTests"
+        "C0824WindowsSlotHolderTests",
+        "C0824WorkspaceSlotRoleGateTests"
       ]
     },
     {
@@ -21120,6 +21134,7 @@
         "C0824WindowsSlotHolderTests",
         "C0824WorkspaceSlotCustodyTests",
         "C0824WorkspaceSlotProcessScanTests",
+        "C0824WorkspaceSlotRoleGateTests",
         "C1677RetentionEngineTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepNativeTests",
@@ -25484,7 +25499,8 @@
     {
       "path": "tests/Antiphon.Tests/Infrastructure/FileUseWindowsTests.cs",
       "classes": [
-        "BlockedParkWireTests"
+        "BlockedParkWireTests",
+        "ProductionRunnerIsolationTests"
       ]
     },
     {
@@ -25638,6 +25654,12 @@
       "path": "tests/Antiphon.Tests/Review/ReviewLiveGitHubTests.cs",
       "classes": [
         "ReviewEngineScriptsTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Review/ReviewMirrorCheckoutTests.cs",
+      "classes": [
+        "TestFixtureCleanupGuardTests"
       ]
     },
     {
@@ -26658,10 +26680,10 @@
         "CardRelationshipApiTests",
         "CardReorderApiTests",
         "CardReorderIntegrationTests",
-        "CardThreadEndpointTests",
         "CardWorktreeMirrorCleanupTests",
         "ExpectationStatusTests",
         "HomeTaskServiceIntegrationTests",
+        "ProductionRunnerIsolationTests",
         "ProgramStartupConcurrencyTests",
         "RunnerSyncLeaseFairnessTests",
         "TestTimingChokePointTests"
