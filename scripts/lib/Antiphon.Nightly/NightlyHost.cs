@@ -113,6 +113,9 @@ namespace Antiphon.Nightly
         /// </summary>
         public Func<string, string> Variables { get; init; } = Environment.GetEnvironmentVariable;
 
+        /// <summary>Windows User environment as read by the dev stack checks; null for an unset variable or another OS.</summary>
+        public Func<string, string> UserVariables { get; init; } = _ => null;
+
         /// <summary>
         /// Waits between the polls of a watcher (the watch-qual command, 2026-11-23): blocks this thread for the time. Not
         /// required: a test advances its fake clock instead of waiting.
@@ -153,6 +156,7 @@ namespace Antiphon.Nightly
                 Error = error,
                 Trace = TextWriter.Null,
                 Qualification = new QualificationOs(),
+                UserVariables = name => OperatingSystem.IsWindows() ? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) : null,
             };
         }
 
