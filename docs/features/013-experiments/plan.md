@@ -173,7 +173,7 @@ A case records enough to replay cleanly and to understand later:
 | `field` | A field of the output satisfies a comparison: `categories contains security`, `blast.reach >= 2`, `selected contains SEED-0003`, `route == clean` |
 | `count` / `budget` | Finding count, cost, tokens or duration is within a bound |
 | `script` | A script gets the trial output and the case as JSON on stdin and exits 0. It prints an optional reason |
-| `prompt` | A judge model answers a rubric with pass or fail and a reason. The judge's model is fixed per suite and recorded |
+| `prompt` | The suite's judge (section 4a) answers a rubric with pass or fail and a reason |
 | `all` / `any` / `not` | Combinations of the above |
 
 - Matching "the same finding" is one shared matcher (location overlap first, then a cheap model for
@@ -182,6 +182,55 @@ A case records enough to replay cleanly and to understand later:
   view asks a person to mark it good or noise, and that answer becomes an expectation on the case.
 - Scripts come only from the instance layer or the base branch, and run on a runner, never in the
   server process.
+
+### 4a. The judge
+
+Decided 2026-11-24. The judge is a **setting**: an instance default, overridden per suite, and
+recorded on every trial it judged.
+
+**A step under test returns its normal output, unchanged.** A trial runs the step exactly as a live
+run would and stores the same output. Nothing about judging is added to the step's prompt or output.
+
+**Judging then happens in three parts:**
+
+1. **Both outputs.** The judge always receives the original output and the trial's output for each
+   targeted step, plus the case's context and expectations.
+2. **A gather script (optional).** A Python or C# script runs in the trial's container after the
+   step. It gets the case, both outputs and the workspace path, and prints extra data as JSON: a
+   build or test result, a diff of files changed, counts, whether a named line was touched, anything
+   the outputs alone do not show. Its exit code is not a verdict; a `script` expectation is the way
+   to pass or fail on code alone.
+3. **The suite's judge prompt.** One prompt defined on the suite says how to compare and what
+   matters. It is sent with both outputs and the script's data. The judge answers per expectation
+   with pass or fail, a reason, and which output is better or "no meaningful difference".
+
+**Who judges, set per suite:**
+
+| Judge | How | Good for |
+|---|---|---|
+| **Model** | One model call with the judge prompt, both outputs and the script's data. The provider and model are the setting | Fast, cheap comparisons of findings and decisions |
+| **Agent** | A separate read-only agent (kind and level are the setting) in its own container, with the rebuilt workspace, both outputs and the script's data. It can open files and run read-only commands before answering | Cases where the verdict needs the code: "is this finding true?", "did the change fix it?" |
+
+- The gather script's language is a choice per suite: `gather.py` or `gather.csx` / a C# file run
+  with `dotnet run`. The runner image carries both.
+- The judge never sees which variant produced which output; the two are labelled A and B in a
+  random order, so a model name cannot sway it.
+- A judge's verdict can be overruled by a person, and that judgement is stored (section 4).
+- Changing the judge setting does not rejudge old trials silently. **Rejudge** is an explicit action
+  that keeps the earlier verdicts in history.
+
+```yaml
+# .antiphon/review/scenarios/suite.yaml
+suite: demo-review
+judge:
+  kind: model                  # or: agent
+  provider: anthropic          # for agent: kind: ClaudeCode, level: High
+  model: claude-opus-5-5
+  gather: scenarios/gather.py  # optional; or gather.csx
+  prompt: >
+    Compare the two outputs for the same change. Prefer the one that finds the real defects
+    described in the case, with fewer findings a maintainer would ignore. Wording does not matter.
+```
 
 ### 5. Variants
 
@@ -393,7 +442,7 @@ Each phase lands on its own and is useful alone.
 | **2. Prompts as data** | The prompt registry with today's text as defaults; rendered prompt and hashes recorded; Prompt tab | A test that the default registry renders byte-identical text to today's strings |
 | **3. Replay one node** | `IStepInputs` live and replay; the sandbox run and code host; cases captured from a node; `unchanged` and `field` expectations; replay of decision and completion nodes (categorise, select, verify) | A test: capture a case from a scripted run, replay with the same scripted model, expect `unchanged`; replay with a changed answer, expect a fail; assert the sandbox sent nothing to the code host |
 | **4. Experiments and the A/B view** | Variants, experiments, estimate and budget, trial reuse; the history page, A/B grid and comparison; graph actions and badge; the workspace record, and reviewer (agent) trials in a rebuilt workspace, one container per trial (section 2a); `finding-present`, `finding-absent`, `budget`; the finding matcher | Matcher unit tests; an API test for a 2×2 experiment; a test that a rebuilt workspace has the recorded commit, tree hash and path, and that a mismatch fails the trial; a story and a test for the grid |
-| **5. Scenarios and ground truth** | Scenario files and the guide; `script`, `prompt` and combined expectations; suites with held-out; human comments read back, **Bot missed this**; demo-repo scenarios; the CLI | Parser tests; one live run of the demo suite on server2 comparing two reviewer models |
+| **5. Scenarios and ground truth** | Scenario files and the guide; `script`, `prompt` and combined expectations; the judge setting, gather scripts and the agent judge (section 4a); suites with held-out; human comments read back, **Bot missed this**; demo-repo scenarios; the CLI | Parser tests; one live run of the demo suite on server2 comparing two reviewer models |
 | **6. Self-improvement gate, and other workflows** | The learn loop's candidate gate (section 7) with the generality lint and judge; pipeline-stage cases | A test that a candidate naming a file from its target case is rejected; a test that a regression blocks a candidate |
 
 Phases 1 to 3 are about two to three Code tasks each; phase 4 is the largest and is mostly client
@@ -405,7 +454,7 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 |---|---|
 | Experiments spend real model budget | Estimate first, budget cap, explicit confirmation, trial reuse, host concurrency limits apply |
 | Outputs vary run to run | Repeats, counts shown as counts, flaky cells marked, meaning-based matching |
-| The judge model is itself wrong | The judge is fixed and recorded per suite; `prompt` results show their reason; people can overrule with a judgement, which is stored |
+| The judge is itself wrong | The judge setting is recorded on every trial; outputs are shown to it unlabelled; `prompt` results show their reason; people can overrule with a judgement, which is stored |
 | Fitting prompts to the suite | Held-out cases, refreshed over time; the generality check; a human approves every promotion |
 | Cases hold source code | Cases inherit the repo's access; blobs are kept only while a case references them; cases can be deleted |
 | Storage growth | Content addressing deduplicates diffs and packs; retention on unreferenced blobs |
@@ -420,4 +469,5 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
    experiment over a set budget needs a second approval.
 4. **Scenario files location:** `.antiphon/review/scenarios/` as planned, or a separate repo so
    held-out cases are not visible to agents working in the repo.
-5. **Judge model:** one fixed strong model for every `prompt` expectation, or a setting per suite.
+5. **Judge:** decided 2026-11-24: a setting, per suite with an instance default; a model fed by an
+   optional Python or C# gather script, or a separate agent (section 4a).
