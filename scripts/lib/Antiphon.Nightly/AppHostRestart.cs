@@ -1,8 +1,9 @@
 // CARD-0011, CARD-0075, CARD-0273, CARD-0310, CARD-0716, CARD-1527, CARD-1533, CARD-1680, CARD-1806: kill and restart the
 // whole desktop Aspire stack (AppHost, server, client, dashboard), then wait for it to come back healthy with the intended
 // build loaded (unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced the body of
-// scripts/restart-apphost.ps1, which stays a thin launcher because scripts/cutover-postgres-server2.ps1 and
-// scripts/deploy-local.ps1 start it by path). The CLI runs it as
+// scripts/restart-apphost.ps1, which stays a thin launcher because scripts/cutover-postgres-server2.ps1 starts it by path and
+// scripts/desktop-win-phase1-secrets.ps1 tells the operator to; the deploy-local command runs it in process since unit 49). The
+// CLI runs it as
 //
 //   antiphon-scripts restart-apphost [--no-build] [--timeout-sec 150] [--max-wait-sec 600] [--lock-max-age-minutes 15]
 //     [--allow-worktree] [--expected-server-sha <sha>] [--graceful-stop-timeout-sec 20] [--skip-graceful-stop] [--stop-only]

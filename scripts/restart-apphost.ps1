@@ -6,7 +6,8 @@
     to come back healthy with the intended server SHA loaded.
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/cutover-postgres-server2.ps1
-    and scripts/deploy-local.ps1 start this file by path. Delete it when they are ported (wave W8). Agents run
+    starts this file by path and scripts/desktop-win-phase1-secrets.ps1 tells the operator to run it. Delete it when they are
+    ported (wave W8); the deploy-local command (unit 49) runs restart-apphost in its process. Agents run
     `scripts/antiphon restart-apphost`; Windows runbooks `scripts\antiphon.cmd restart-apphost`.
 
     The parameters are the script's; only the ones given are passed (the command's defaults are the script's): -NoBuild,

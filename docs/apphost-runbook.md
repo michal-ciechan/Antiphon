@@ -151,7 +151,7 @@ for result JSON, logs and exit codes; these differ from AppHost's table below.
 
 ## Verify health and the code actually loaded
 
-Use `pwsh -File scripts/deploy-local.ps1 -Report` to compare the checkout's EF
+Use `scripts\antiphon.cmd deploy-local --report` to compare the checkout's EF
 migrations with production without restarting AppHost. Deploy-local, the two
 reapers, `pg-qps`, and `measure-session-state-cache` use the
 `antiphon-server2` SSH Docker context. They match the endpoint in the desktop
@@ -160,7 +160,7 @@ running PostgreSQL container's published address and port, then read through
 the verified container's local PostgreSQL socket.
 
 For an explicit local or test container in the current Docker context, use
-`-PgContainer` with deploy-local, `--pg-container` with `reap-zombie-agents` or
+`--pg-container` with `deploy-local`, `reap-zombie-agents` or
 `reap-orphaned-pty-hosts`, `--container` with `pg-qps`, or `--postgres-container`
 with `measure-session-state-cache`.
 

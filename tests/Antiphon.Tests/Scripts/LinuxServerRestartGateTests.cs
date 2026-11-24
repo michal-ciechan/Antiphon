@@ -20,7 +20,6 @@ public sealed class LinuxServerRestartGateTests
     private static readonly string[] DesktopPaths =
     [
         "scripts/restart-apphost.ps1",
-        "scripts/apphost-common.ps1",
         "scripts/autostart-apphost.ps1",
         "Antiphon.AppHost/Program.cs",
         // Unit 31 of 2026-11-22-remaining-ps1-to-csharp.md: the desktop restart, its library and the logon start are C#.
@@ -29,6 +28,8 @@ public sealed class LinuxServerRestartGateTests
         "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
         // Unit 37: dev-aspire is C# (unit 44 deleted its dev-aspire.ps1 launcher).
         "scripts/lib/Antiphon.Nightly/DevAspire.cs",
+        // Unit 49: the desktop deploy is C# (it deleted deploy-local.ps1 and the worktree guard's scripts/apphost-common.ps1).
+        "scripts/lib/Antiphon.Nightly/DeployLocal.cs",
     ];
 
     [Test]

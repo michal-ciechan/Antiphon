@@ -305,6 +305,10 @@ namespace Antiphon.Scripts
             [DockerVerifierCommands.TestDockerContainer] = DockerVerifierCommands.RunTestDockerContainer,
             [DockerVerifierCommands.VerifyDindRunner] = DockerVerifierCommands.RunVerifyDindRunner,
             [DockerVerifierCommands.VerifyCodexImage] = DockerVerifierCommands.RunVerifyCodexImage,
+            // The desktop deploy answers every input itself (unit 49). deploy-local: exit 0 DEPLOY VERDICT: ok, 1 failed (a step's
+            // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
+            // Usage is 2.
+            [DeployCommands.DeployLocalName] = DeployCommands.RunDeployLocal,
         };
 
         public static int Main(string[] args)
@@ -345,7 +349,7 @@ namespace Antiphon.Scripts
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
-                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage);
+                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage);
             return Usage;
         }
 

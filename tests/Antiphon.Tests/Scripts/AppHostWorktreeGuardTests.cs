@@ -11,8 +11,8 @@ namespace Antiphon.Tests.Scripts;
 /// local AppHost by default. The rows were scripts/test-apphost-main-worktree-guard.ps1's. Real git on a one-commit fixture
 /// repository and a linked worktree of it (the driver linked a worktree of this checkout, so it needed core.longpaths and the
 /// path arithmetic LongPathsCheckoutScriptTests checked; a fixture repository needs neither, so those LP rows are dropped).
-/// The restart and dev-aspire (unit 37) run in process on AppHostWorld with real git; deploy-local.ps1, which still runs the
-/// PowerShell guard (scripts/apphost-common.ps1), is checked by its source: no test launches a .ps1.
+/// The restart, dev-aspire (unit 37) and deploy-local (unit 49, which deleted deploy-local.ps1 and the PowerShell guard
+/// scripts/apphost-common.ps1) run in process on AppHostWorld with real git.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
@@ -134,25 +134,50 @@ public sealed class AppHostWorktreeGuardTests
         Directory.Exists(world.PathOf("worktrees")).ShouldBeFalse();
     }
 
-    // deploy-local.ps1 (W8, owner-gated) keeps the PowerShell guard: it dot-sources scripts/apphost-common.ps1 and refuses before
-    // the restart; the guard's messages are the C# guard's lines with the script's -AllowWorktree spelling. (dev-aspire is a C#
-    // command since unit 37 and unit 44 deleted its launcher: Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker.)
+    // deploy-local (DeployLocal; unit 49 replaced deploy-local.ps1 and its PowerShell guard, scripts/apphost-common.ps1): the
+    // verdict line carries the guard's lines, and nothing reaches Docker, the restart or the verification. The guard's messages
+    // name --allow-worktree, the command's flag (the script's -AllowWorktree). (dev-aspire is a C# command since unit 37 and unit
+    // 44 deleted its launcher: Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker.)
     [Test]
-    public void The_powershell_entries_guard_before_their_first_side_effect_with_the_same_messages()
+    public void Deploy_local_from_a_linked_worktree_refuses_before_postgres_or_the_restart()
     {
         var root = DelegateScriptRunner.RepoRoot;
-        File.Exists(Path.Combine(root, "dev-aspire.ps1")).ShouldBeFalse("unit 44 deleted the launcher");
+        foreach (var gone in new[] { "dev-aspire.ps1", Path.Combine("scripts", "deploy-local.ps1"), Path.Combine("scripts", "apphost-common.ps1") })
+            File.Exists(Path.Combine(root, gone)).ShouldBeFalse(gone);
 
-        var deploy = File.ReadAllText(Path.Combine(root, "scripts", "deploy-local.ps1"));
-        var deployGuard = deploy.IndexOf("Get-AppHostWorktreeClassification -SourceRoot $repoRoot", StringComparison.Ordinal);
-        deployGuard.ShouldBeGreaterThan(0);
-        deployGuard.ShouldBeLessThan(deploy.IndexOf("Invoke-ChildPowerShell -ScriptPath $restartScript", StringComparison.Ordinal));
-        deploy.ShouldContain("Write-Output \"DEPLOY VERDICT: refused $detail\"");
+        using var repos = new Repos();
+        using var world = new AppHostWorld();
+        var launcher = new Antiphon.Tests.Scripts.Nightly.RecordingLauncher();
+        var real = RealGit(world);
+        // No real user secret: APPDATA is unset, so a resolution that ran would fail instead of reading one.
+        var host = new NightlyHost
+        {
+            Clock = real.Clock, Git = real.Git, Launcher = launcher, Processes = real.Processes, Probe = real.Probe, Out = real.Out, Error = real.Error,
+            Trace = real.Trace, Sleep = real.Sleep, Variables = _ => null,
+        };
+        var steps = new List<string>();
+        var bound = new DeployLocalSteps
+        {
+            RestartAppHost = (_, _) => { steps.Add("restart"); return 0; },
+            VerifyDevStack = (_, _) => { steps.Add("verify"); return 0; },
+        };
 
-        var common = File.ReadAllText(Path.Combine(root, "scripts", "apphost-common.ps1"));
-        var sample = new AppHostWorktree { Verified = true, ScriptWorktreeRoot = "{0}", MainWorktreeRoot = "{0}", Failure = "{0}" };
-        foreach (var line in sample.GuardMessage(false, "-AllowWorktree").Concat(sample.GuardMessage(true, "-AllowWorktree"))
-                     .Concat(new AppHostWorktree { Failure = "{0}" }.GuardMessage(false, "-AllowWorktree")))
-            common.ShouldContain("'" + line + "'", Case.Sensitive, line);
+        var exit = DeployLocal.Run(DeployLocalOptions.Parse(["--no-build"], repos.Linked), host, world.Files, bound);
+        var text = world.Out.ToString();
+        exit.ShouldBe(DeployLocal.Refused, text);
+        var linked = AppHostWorktree.Classify(host, world.Files, repos.Linked);
+        text.ReplaceLineEndings("\n").ShouldBe("DEPLOY VERDICT: refused " + string.Join(" ", linked.GuardMessage(false)) + "\n");
+        text.ShouldContain("REFUSED: this AppHost command is rooted in a linked Git worktree.");
+        text.ShouldContain(linked.ScriptWorktreeRoot);
+        text.ShouldContain(linked.MainWorktreeRoot);
+        text.ShouldContain("re-run with --allow-worktree.");
+        launcher.Launches.ShouldBeEmpty("no Docker call before the guard");
+        steps.ShouldBeEmpty("no restart or verification before the guard");
+        File.Exists(Path.Combine(repos.Linked, "logs", "apphost.restart.lock")).ShouldBeFalse();
+
+        var before = world.Out.ToString().Length;
+        DeployLocal.Run(DeployLocalOptions.Parse([], repos.NotGit), host, world.Files, bound).ShouldBe(DeployLocal.Refused);
+        world.Out.ToString()[before..].ShouldStartWith("DEPLOY VERDICT: refused REFUSED: this AppHost command could not verify its Git worktree root.");
+        (launcher.Launches.Count, steps.Count).ShouldBe((0, 0));
     }
 }

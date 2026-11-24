@@ -1,7 +1,8 @@
 // CARD-0011, CARD-0075, CARD-0152, CARD-0273, CARD-0310, CARD-0543, CARD-0716, CARD-1527, CARD-1680, CARD-1806: the shared
 // pieces of the desktop AppHost commands (restart-apphost, watchdog-apphost and verify-dev-stack; unit 31 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). They replaced scripts/apphost-common.ps1's lock, probe, log
-// and launch functions (the file keeps only the worktree guard that deploy-local.ps1 still dot-sources).
+// and launch functions; unit 49 deleted the file, whose worktree guard deploy-local.ps1 was the last to dot-source (the
+// deploy-local command runs AppHostWorktree).
 //
 // LOCK FORMAT (CARD-0011, extended by CARD-0075): one line "<pid> <utc-iso-8601-roundtrip>", which is what dev-aspire
 // writes into logs/apphost.launch.lock. Two locks use it: logs/apphost.launch.lock (dev-aspire while it launches) and

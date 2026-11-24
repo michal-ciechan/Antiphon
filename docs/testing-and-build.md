@@ -961,8 +961,8 @@ exemptions instead of hiding matches.
 
 Check startup impact for either side of a rename/delete touching `DevAspire.cs` (the `dev-aspire`
 command since unit 37), `scripts/restart-apphost.ps1`, `scripts/build-slot.ps1`, `scripts/lib/**` (the AppHost commands are
-`scripts/lib/Antiphon.Nightly/AppHost*.cs`, dev-aspire and its `run-apphost` wrapper `DevAspire.cs`),
-`scripts/apphost-common.ps1`, `Antiphon.AppHost/**` or a reviewed dependency.
+`scripts/lib/Antiphon.Nightly/AppHost*.cs`, the worktree guard among them since unit 49 deleted `scripts/apphost-common.ps1`,
+dev-aspire and its `run-apphost` wrapper `DevAspire.cs`), `Antiphon.AppHost/**` or a reviewed dependency.
 Document/test-only changes can say not applicable with their actual census and
 reason. Other matched paths require a native obligation; pending is valid lint
 syntax, not permission for an rc pick. Follow the [native probe and restart

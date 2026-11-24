@@ -10,7 +10,8 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
-    // Keep the resolution contract in sync with scripts/lib/desktop-postgres.ps1.
+    // The desktop operator commands' read-only PostgreSQL access (pg-qps, postgres-jit-window, deploy-local). Its PowerShell twin,
+    // scripts/lib/desktop-postgres.ps1, went with deploy-local.ps1 (unit 49 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md).
     internal sealed class DesktopPostgres
     {
         private const string Server2Container = "antiphon-server2-postgres-postgres-1";

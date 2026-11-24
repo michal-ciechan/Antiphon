@@ -1011,10 +1011,10 @@ public sealed class AntiphonCliLauncherTests
     }
 
     // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
-    // (scripts/cutover-postgres-server2.ps1 and scripts/deploy-local.ps1 start them by path), scripts/watchdog-apphost.ps1,
+    // (scripts/cutover-postgres-server2.ps1 starts them by path), scripts/watchdog-apphost.ps1,
     // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks the install-autostart command
-    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1 runs it by path; the
-    // bootstrap-check command runs the check in process since unit 38) ----
+    // registers start them by path). Unit 49 deleted the repository root's verify-dev-stack.ps1 with scripts/deploy-local.ps1, its
+    // last by-path starter: the deploy-local command runs restart-apphost and verify-dev-stack in process (DeployLocalTests) ----
 
     private static Dictionary<string, string> Echo(string command, string? exit = null)
     {
@@ -1097,24 +1097,18 @@ public sealed class AntiphonCliLauncherTests
         AssertThinLauncher("autostart-apphost.ps1", "    [switch]$NoBuild,", "    [int]$HealthTimeoutSec = 180");
     }
 
+    // Unit 49: the deploy's two steps are the commands in process, with the flags the deleted launchers passed (deploy-local.ps1
+    // ran verify-dev-stack.ps1 -SkipBrowser -TimeoutSec 30, and restart-apphost.ps1 -TimeoutSec <n> [-NoBuild] [-AllowWorktree]).
     [Test]
-    public async Task Root_verify_dev_stack_launcher_passes_the_deploy_flags()
+    public void Deploy_local_and_its_root_verify_launcher_are_gone_and_the_steps_take_their_flags()
     {
-        using var fixture = Checkout();
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1"), fixture.PathOf("verify-dev-stack.ps1"));
-        var entry = fixture.PathOf("verify-dev-stack.ps1");
-        // scripts/deploy-local.ps1 runs verify-dev-stack.ps1 -SkipBrowser -TimeoutSec 30.
-        var deploy = await NightlyRunHops.LauncherEcho(entry, ["-SkipBrowser", "-TimeoutSec", "30"], fixture.Root, environment: Echo("verify-dev-stack", "1"));
-        deploy.ExitCode.ShouldBe(1, deploy.Stderr);
-        deploy.Arguments.ShouldBe(["--skip-browser", "--timeout-sec", "30"]);
-        (await NightlyRunHops.LauncherEcho(entry, ["-SimpleMode", "-ProbeListeningPorts"], fixture.Root, environment: Echo("verify-dev-stack"))).Arguments
-            .ShouldBe(["--simple-mode", "--probe-listening-ports"]);
-        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1")).Replace("\r\n", "\n");
-        text.ShouldStartWith("#requires -Version 5.1");
-        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray()
-            .ShouldBe([". (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')"]);
-        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1")).All(b => b < 128).ShouldBeTrue("ASCII only");
-        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "start-apphost.ps1")).ShouldBeFalse();
+        foreach (var gone in new[] { "verify-dev-stack.ps1", Path.Combine("scripts", "deploy-local.ps1"), Path.Combine("scripts", "apphost-common.ps1"),
+                     Path.Combine("scripts", "lib", "desktop-postgres.ps1"), Path.Combine("scripts", "start-apphost.ps1") })
+            File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, gone)).ShouldBeFalse(gone);
+        var verify = DevStackVerifyOptions.Parse(DeployLocal.VerifyArguments, "root");
+        (verify.SkipBrowser, verify.TimeoutSec, verify.SimpleMode, verify.ProbeListeningPorts).ShouldBe((true, 30, false, false));
+        var restart = AppHostRestartOptions.Parse(DeployLocal.RestartArguments(DeployLocalOptions.Parse(["--no-build", "--timeout-sec", "30", "--allow-worktree"], "root")), "root");
+        (restart.NoBuild, restart.TimeoutSec, restart.AllowWorktree, restart.MaxWaitSec).ShouldBe((true, 30, true, 600));
     }
 
     // ---- unit 37: the repository root's dev stack launchers. Unit 43 deleted dev-start.ps1, dev-stop.ps1, dev-fresh.ps1,
@@ -1148,7 +1142,7 @@ public sealed class AntiphonCliLauncherTests
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
         string[] files = ["scripts/run-daemon.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/lib/windows-phone-home-env.ps1",
             "scripts/restart-apphost.ps1", "scripts/set-apphost-maintenance.ps1",
-            "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1", "scripts/apphost-common.ps1", "verify-dev-stack.ps1"];
+            "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1"];
         foreach (var file in files)
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).All(b => b < 128).ShouldBeTrue(file + " is ASCII");
         var list = string.Join(",", files.Select(file => "'" + Path.Combine(DelegateScriptRunner.RepoRoot, file).Replace("'", "''") + "'"));

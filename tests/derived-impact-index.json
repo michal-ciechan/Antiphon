@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 361,
+      "classes": 360,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 133,
+      "classes": 134,
       "reason": "cap",
-      "owed": 108,
+      "owed": 109,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "AppHostWorktreeGuardTests",
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 146,
+      "classes": 145,
       "reason": "cap",
-      "owed": 121,
+      "owed": 120,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2179,34 +2179,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "PostgresJitWindowTests",
         "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseStatusTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
-        "ServerDockerInputsTests",
-        "TestDataPruneCommandTests"
+        "ServerDockerInputsTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
+        "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
         "ServerDockerInputsTests",
-        "StageValueReportTests",
-        "TestDataPruneCommandTests"
+        "StageValueReportTests"
       ]
     },
     {
@@ -2243,18 +2243,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 52,
+      "classes": 54,
       "reason": "cap",
-      "owed": 27,
+      "owed": 29,
       "first": [
+        "DesktopPostgresTests",
+        "ExpectedDurationSyncTests",
         "ImpactIndexRegenerationTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
-        "NightlyRunTests",
-        "NightlyScriptsTests",
-        "NightlyTestsParityTests"
+        "NightlyRunTests"
       ]
     },
     {
@@ -3597,15 +3597,6 @@
       ]
     },
     {
-      "path": "scripts/apphost-common.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "DesktopPostgresPowerShellTests",
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "scripts/apphost-watchdog-state-observer.ps1",
       "classes": [
         "AntiphonCliLauncherTests"
@@ -4089,6 +4080,13 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/DeployLocal.cs",
+      "classes": [
+        "LinuxServerRestartGateTests",
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/DevAspire.cs",
       "classes": [
         "LinuxServerRestartGateTests",
@@ -4526,7 +4524,6 @@
       "path": "scripts/lib/antiphon-cli.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
-        "DesktopPostgresPowerShellTests",
         "ReleaseImpactScriptTests",
         "RunnerLinuxCompilerPolicyTests"
       ]
@@ -4553,12 +4550,6 @@
         "CheckpointReadStallWitnessTests",
         "CheckpointReceiptStallBudgetTests",
         "EmbeddedCheckpointReaderTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/desktop-postgres.ps1",
-      "classes": [
-        "DesktopPostgresPowerShellTests"
       ]
     },
     {
@@ -24746,6 +24737,7 @@
       "classes": [
         "CheckpointExecutorLogTests",
         "CheckpointSlotContractTests",
+        "DeployLocalTests",
         "ExpectationLedgerTests",
         "InboundUnconsumedMonitorTests",
         "OwnedGitProcessContractTests",
@@ -25116,7 +25108,6 @@
         "CheckpointTerminalReceiptTests",
         "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
-        "DesktopPostgresPowerShellTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
         "PosixHarnessToolTests",
@@ -25605,6 +25596,7 @@
         "AppHostWatchdogStateObserverScriptTests",
         "AppHostWatchdogTests",
         "AppHostWorktreeGuardTests",
+        "DeployLocalTests",
         "DevAspireTests",
         "DevRestartTests",
         "DevStackTests",
@@ -25895,6 +25887,7 @@
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
+        "DeployLocalTests",
         "DesktopPostgresTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
@@ -25905,7 +25898,6 @@
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "PgQpsTests",
-        "PostgresJitWindowTests",
         "ReleaseGateLibraryTests",
         "StageValueReportTests",
         "VerifyDindRunnerScriptTests"
@@ -25924,6 +25916,7 @@
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
+        "DeployLocalTests",
         "DesktopPostgresTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
@@ -25937,8 +25930,7 @@
         "PgQpsTests",
         "PostgresJitWindowTests",
         "PtyHostReaperTests",
-        "QualificationEtaTests",
-        "RcRunEvidenceTests"
+        "QualificationEtaTests"
       ]
     },
     {
@@ -26103,6 +26095,7 @@
       "classes": [
         "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
+        "AppHostWorktreeGuardTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
@@ -26114,8 +26107,7 @@
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
-        "DesktopPostgresTests",
-        "ExpectedDurationSyncTests",
+        "DeployLocalTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "MeasureSessionStateCacheScriptTests",
@@ -26492,7 +26484,6 @@
         "AstraFixesBTests",
         "ClaudeAdapterEffortPromptTests",
         "ClaudeEffortFixtureTraceTests",
-        "DesktopPostgresPowerShellTests",
         "NightlyLockFormatTests",
         "PosixHarnessToolTests",
         "RunnerProbePowerShellFixtureTests",
@@ -27351,7 +27342,6 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/FixtureExecutable.cs",
       "classes": [
-        "DesktopPostgresPowerShellTests",
         "HostJqPrerequisiteScriptTests",
         "JqRunnerImageContractTests",
         "RollingVolumeRecycleCensusChurnTests",
@@ -29435,12 +29425,6 @@
         "TestSelectionDependencyTests",
         "TestSelectionExecutionTests",
         "TestSelectionTests"
-      ]
-    },
-    {
-      "path": "verify-dev-stack.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
       ]
     }
   ]

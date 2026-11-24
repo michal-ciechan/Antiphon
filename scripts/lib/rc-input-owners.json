@@ -63,7 +63,6 @@
     { "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "_bmad/_config/manifest.yaml", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "appsettings.json.example", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
-    { "path": "verify-dev-stack.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/derived-impact-index-known-os-gated.txt", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/expected-platform-skips.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/fixtures/card0490-linux/assets.lock.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },

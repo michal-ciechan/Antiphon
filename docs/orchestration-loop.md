@@ -2190,15 +2190,16 @@ self-reported and orchestrator-overridden stage rows for Review/Test/Merge/Deplo
 ## 6. Deploy
 
 Deploy remains an orchestrator decision: batch and order restarts around the landings. Execute the
-local deploy through one script:
+local deploy through one command, from the main checkout:
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-local.ps1
+scripts\antiphon.cmd deploy-local
 ```
 
 It restarts the AppHost, waits for health, runs the local stack verification without a browser
 smoke, and checks the live EF migration history against `server/Migrations/`. Its final line is
-the deploy result: `DEPLOY VERDICT: ok` or `DEPLOY VERDICT: failed <detail>`. Read that one line;
+the deploy result: `DEPLOY VERDICT: ok`, `DEPLOY VERDICT: failed <detail>`, or
+`DEPLOY VERDICT: refused <detail>` (exit 3: a linked or unverifiable worktree; nothing ran). Read that one line;
 do not reconstruct the former multi-command deploy sequence by hand.
 
 For a separately scoped `am-service` remote instance in the fixed

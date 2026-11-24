@@ -1,12 +1,13 @@
 // The desktop AppHost chain's commands (unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md):
 // restart-apphost, watchdog-apphost, set-apphost-maintenance, apphost-watchdog-state-observer, autostart-apphost and
 // verify-dev-stack. Each replaced the body of the script of the same name (scripts/<name>.ps1, verify-dev-stack.ps1 at the
-// repository root), which stays a thin launcher where a Scheduled Task or a kept script starts it by path. The behaviour is
-// Antiphon.Nightly's (AppHostRestart, AppHostWatchdog, AppHostMaintenance, AppHostWatchdogStateObserver, AppHostAutostart,
-// DevStackVerify) on the production host and AppHostOs; this file binds them. The checkout is the one this executable was
-// built in, else the current directory; the graceful stop's operator token file is ANTIPHON_OPERATOR_TOKEN_FILE, else the
-// server's default path (the token is never printed). autostart-apphost runs dev-aspire in its process (DevStackCommands,
-// unit 37). ASCII only.
+// repository root), which stays a thin launcher where a Scheduled Task or a kept script starts it by path (unit 49 deleted the
+// root verify-dev-stack.ps1 with deploy-local.ps1, its last by-path starter). The behaviour is Antiphon.Nightly's
+// (AppHostRestart, AppHostWatchdog, AppHostMaintenance, AppHostWatchdogStateObserver, AppHostAutostart, DevStackVerify) on the
+// production host and AppHostOs; this file binds them. The checkout is the one this executable was built in, else the current
+// directory; the graceful stop's operator token file is ANTIPHON_OPERATOR_TOKEN_FILE, else the server's default path (the
+// token is never printed). autostart-apphost runs dev-aspire in its process (DevStackCommands, unit 37); deploy-local runs
+// restart-apphost and verify-dev-stack in its process (RestartOn, VerifyOn; DeployCommands, unit 49). ASCII only.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -86,8 +87,16 @@ namespace Antiphon.Scripts
         {
             var options = DevStackVerifyOptions.Parse(args.Skip(1).ToArray(), Checkout);
             var (host, platform) = Production(options.RepoRoot);
-            return Guarded(VerifyDevStack, () => DevStackVerify.Run(options, host, platform));
+            return VerifyOn(options, host, platform);
         }
+
+        /// <summary>restart-apphost for an in-process caller (deploy-local), as the command answers: off Windows one stderr line and exit 1.</summary>
+        internal static int RestartOn(AppHostRestartOptions options, NightlyHost host, IAppHostPlatform platform) =>
+            WindowsOnly(RestartAppHost) ? AppHostRestart.Run(options, host, platform) : 1;
+
+        /// <summary>verify-dev-stack for an in-process caller (deploy-local), as the command answers: a failure outside its checks is one stderr line and exit 1.</summary>
+        internal static int VerifyOn(DevStackVerifyOptions options, NightlyHost host, IAppHostPlatform platform) =>
+            Guarded(VerifyDevStack, () => DevStackVerify.Run(options, host, platform));
 
         private static bool WindowsOnly(string command)
         {
