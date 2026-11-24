@@ -5,7 +5,7 @@
 // diagnostic), an owner and a reason; Matrix checks it (LiveLaneInventoryTests.EveryLiveGateHasDisposition) and
 // WriteCatalog rewrites it (antiphon-scripts live-lane-scan-gates).
 //
-// Each method decides what the PowerShell function it replaces decided, on the same inputs:
+// The file walk, case rules and catalog layout follow the PowerShell implementation:
 // - The file walk is Get-ChildItem -Recurse -File -Filter *.cs (PowerShell 7): a directory's files, then each
 //   subdirectory in turn, in the file system's order, hidden entries left out and links not followed; a path with a
 //   bin, obj or bin-* part (ignoring case) is left out.
@@ -22,8 +22,12 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Antiphon.Nightly
 {
@@ -142,6 +146,7 @@ namespace Antiphon.Nightly
     {
         // The scanned projects, in scan order.
         private static readonly string[] Projects = { "Antiphon.Tests", "Antiphon.Agents.Pty.Tests" };
+        private const string HeadedFlag = "ANTIPHON_HEADED_TESTS";
 
         // A file is read only when its raw text names a shape (-notmatch: ignoring case).
         private static readonly Regex Candidate = new Regex("Explicit|ANTIPHON_HEADED_TESTS|SkipIfNotEligible|RealCliStub|GateShape", RegexOptions.IgnoreCase);
@@ -151,7 +156,7 @@ namespace Antiphon.Nightly
         private static readonly Regex ExplicitAttr = new Regex(@"\[Explicit(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex TestAttr = new Regex(@"\[Test(\(|\]|,)", RegexOptions.IgnoreCase);
         private static readonly Regex GateShapeAttr = new Regex(@"\[GateShape\(", RegexOptions.IgnoreCase);
-        private static readonly Regex Headed = new Regex("ANTIPHON_HEADED_TESTS", RegexOptions.IgnoreCase);
+        private static readonly Regex Headed = new Regex(HeadedFlag, RegexOptions.IgnoreCase);
         private static readonly Regex SkipIf = new Regex("SkipIfNotEligible", RegexOptions.IgnoreCase);
         private static readonly Regex RealCli = new Regex("RealCliStub", RegexOptions.IgnoreCase);
         private static readonly Regex ArgumentsRx = new Regex(@"Arguments\(([^)]*)\)");
@@ -236,6 +241,7 @@ namespace Antiphon.Nightly
             var raw = File.ReadAllText(path);
             if (!Candidate.IsMatch(raw)) return;
             var text = LiveLaneSource.Strip(raw);
+            var headedText = HeadedLookupText(raw);
             var ns = "";
             var nsMatch = NamespaceRx.Match(text);
             if (nsMatch.Success) ns = nsMatch.Groups[1].Value;
@@ -283,10 +289,12 @@ namespace Antiphon.Nightly
                     var open = Find(local, "{", sigEnd);
                     var arrow = Find(local, "=>", sigEnd);
                     var body = "";
+                    var bodyAt = 0;
                     if (arrow >= 0 && (open < 0 || arrow < open))
                     {
                         var semi = Find(local, ";", arrow);
                         if (semi < 0) semi = local.Length;
+                        bodyAt = arrow;
                         body = local.Substring(arrow, semi - arrow);
                     }
                     else if (open >= 0)
@@ -297,11 +305,12 @@ namespace Antiphon.Nightly
                             reasons.Add(path + "\t" + className + "\t" + method + "\tbody-span");
                             continue;
                         }
+                        bodyAt = open;
                         body = bodySpan;
                     }
                     var shapes = new List<string>();
                     if (classExplicit || ExplicitAttr.IsMatch(attrs)) shapes.Add("Explicit");
-                    if (Headed.IsMatch(body)) shapes.Add("ANTIPHON_HEADED_TESTS");
+                    if (headedText != null && Headed.Match(headedText, braceAt + bodyAt, body.Length).Success) shapes.Add(HeadedFlag);
                     if (SkipIf.IsMatch(body) && !Same(method, "SkipIfNotEligible")) shapes.Add("SkipIfNotEligible");
                     if (RealCli.IsMatch(body)) shapes.Add("RealCliStub");
                     if (GateShapeAttr.IsMatch(attrs))
@@ -320,6 +329,35 @@ namespace Antiphon.Nightly
                         gates.Add(new LiveLaneGate(project, ns, className, method, QuotedArgs(am.Groups[1].Value), shapes.ToArray()));
                 }
             }
+        }
+
+        private static string HeadedLookupText(string source)
+        {
+            if (!Headed.IsMatch(source)) return null;
+
+            var lookupLiterals = new List<TextSpan>();
+            var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+            foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var method = invocation.Expression is MemberAccessExpressionSyntax member
+                    ? member.Name : invocation.Expression as SimpleNameSyntax;
+                if (method?.Identifier.ValueText != nameof(Environment.GetEnvironmentVariable)) continue;
+
+                var arguments = invocation.ArgumentList.Arguments;
+                var variable = arguments.FirstOrDefault(argument => argument.NameColon?.Name.Identifier.ValueText == "variable");
+                if (variable == null && arguments.Count > 0 && arguments[0].NameColon == null)
+                    variable = arguments[0];
+                if (variable?.Expression is LiteralExpressionSyntax literal
+                    && literal.Kind() == SyntaxKind.StringLiteralExpression
+                    && Same(literal.Token.ValueText, HeadedFlag))
+                    lookupLiterals.Add(literal.Span);
+            }
+
+            if (lookupLiterals.Count == 0) return null;
+            // Preserve offsets for the method spans found in the original stripped text.
+            var masked = Headed.Replace(source, match => lookupLiterals.Any(span => span.Contains(match.Index))
+                ? match.Value : new string('_', match.Length));
+            return LiveLaneSource.Strip(masked);
         }
 
         // $text.IndexOf('{', $start): String.IndexOf(string, int) compares with the current culture.

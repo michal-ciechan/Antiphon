@@ -13,6 +13,8 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The core also loads into PowerShell. Use APIs compatible with its bundled Roslyn. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.21" />
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="PowerShellStandard.Library" Version="5.1.1" IncludeAssets="compile" PrivateAssets="all" />
