@@ -328,6 +328,7 @@ namespace Antiphon.Nightly
             Error = writer,
             Trace = host.Trace,
             Variables = host.Variables,
+            UserVariables = host.UserVariables,
             Sleep = host.Sleep,
             Qualification = host.Qualification,
         };

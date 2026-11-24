@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
@@ -17,11 +18,14 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class VerifyDevStackSmokeTests
 {
-    private static string Row(string name, bool ok, string detail) => string.Format(System.Globalization.CultureInfo.InvariantCulture, "  {0,-28} {1,-5} {2}", name, ok ? "OK" : "FAIL", detail);
+    private static string Row(string name, bool? ok, string detail) => string.Format(System.Globalization.CultureInfo.InvariantCulture, "  {0,-28} {1,-5} {2}", name, ok switch { true => "OK", false => "FAIL", null => "SKIP" }, detail);
 
-    private static (int Exit, string Text) Verify(AppHostWorld world, params string[] arguments)
+    private static (int Exit, string Text) Verify(AppHostWorld world, params string[] arguments) =>
+        Verify(world, world.Host(), arguments);
+
+    private static (int Exit, string Text) Verify(AppHostWorld world, NightlyHost host, params string[] arguments)
     {
-        var exit = DevStackVerify.Run(DevStackVerifyOptions.Parse(arguments, world.Root), world.Host(), world);
+        var exit = DevStackVerify.Run(DevStackVerifyOptions.Parse(arguments, world.Root), host, world);
         return (exit, world.Out.ToString() + world.Error.ToString());
     }
 
@@ -105,5 +109,119 @@ public sealed class VerifyDevStackSmokeTests
         var s = Verify(stale, "--simple-mode", "--skip-browser");
         s.Exit.ShouldBe(0, s.Text);
         s.Text.ShouldContain(Row("Git index lock", false, "stale (60.0 min) at " + lockPath + " - Remove-Item '" + lockPath + "'"));
+    }
+
+    [Test]
+    public void C2064_Aspire_verifies_the_AppHost_secret_endpoint_without_inspecting_Postgres()
+    {
+        using var world = ReadyWithoutPostgres();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var variables = new Dictionary<string, string>
+        {
+            ["ANTIPHON_SKIP_DEV_POSTGRES"] = " 1 ",
+            ["APPDATA"] = world.PathOf("roaming"),
+        };
+        WriteConnection(world.PathOf("roaming", "Microsoft", "UserSecrets", "aspire-antiphon-apphost", "secrets.json"),
+            $"Host=127.0.0.1;Port={endpoint.Port};Password='fixture-password;Host=irrelevant'");
+        WriteConnection(world.PathOf("Antiphon.AppHost", "appsettings.Development.json"), "Host=invalid-dev-settings;Port=0");
+
+        var run = Verify(world, world.Host(variables.GetValueOrDefault), "--skip-browser");
+
+        run.Exit.ShouldBe(0, run.Text);
+        run.Text.ShouldContain(Row("Postgres container", null, "ANTIPHON_SKIP_DEV_POSTGRES=1"));
+        run.Text.ShouldContain(Row("Database endpoint", true, $"TCP {endpoint} open"));
+        world.Trace.ShouldNotContain(call => call.StartsWith("run docker ps"));
+        run.Text.ShouldNotContain("fixture-password");
+    }
+
+    [Test]
+    public void C2064_Simple_verify_skips_the_local_port_and_uses_the_process_override()
+    {
+        using var world = ReadyWithoutPostgres();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var variables = new Dictionary<string, string>
+        {
+            ["ANTIPHON_SKIP_DEV_POSTGRES"] = "1",
+            ["ConnectionStrings__DefaultConnection"] = $"Host=127.0.0.1;Port={endpoint.Port}",
+            ["ConnectionStrings:DefaultConnection"] = "Host=invalid-colon-setting;Port=0",
+            ["APPDATA"] = world.PathOf("roaming"),
+        };
+        WriteConnection(world.PathOf("roaming", "Microsoft", "UserSecrets", "antiphon-server", "secrets.json"),
+            "Host=invalid-server-secret;Port=0");
+
+        var run = Verify(world, world.Host(variables.GetValueOrDefault), "--simple-mode", "--skip-browser");
+
+        run.Exit.ShouldBe(0, run.Text);
+        run.Text.ShouldContain(Row("Port 17280", null, "ANTIPHON_SKIP_DEV_POSTGRES=1"));
+        run.Text.ShouldContain(Row("Database endpoint", true, $"TCP {endpoint} open"));
+        world.Trace.ShouldNotContain(call => call.StartsWith("run docker"));
+    }
+
+    [Test]
+    public void C2064_Verify_fails_closed_on_an_invalid_override_without_disclosing_it()
+    {
+        using var world = ReadyWithoutPostgres();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var variables = new Dictionary<string, string>
+        {
+            ["ANTIPHON_SKIP_DEV_POSTGRES"] = "1",
+            ["ConnectionStrings__DefaultConnection"] = "Password=fixture-invalid;Port=bad",
+            ["APPDATA"] = world.PathOf("roaming"),
+        };
+        WriteConnection(world.PathOf("Antiphon.AppHost", "appsettings.json"), $"Host=127.0.0.1;Port={endpoint.Port}");
+
+        var run = Verify(world, world.Host(variables.GetValueOrDefault), "--skip-browser");
+
+        run.Exit.ShouldBe(1, run.Text);
+        run.Text.ShouldContain(Row("Database endpoint", false, "ConnectionStrings:DefaultConnection has no usable TCP host and port"));
+        run.Text.ShouldContain("Stack NOT healthy - 1 check(s) failed:");
+        run.Text.ShouldNotContain($"TCP {endpoint} open");
+        run.Text.ShouldNotContain("fixture-invalid");
+        run.Text.ShouldNotContain("docker compose -f docker-compose.dev.yml up");
+        world.Trace.ShouldNotContain(call => call.StartsWith("run docker ps"));
+    }
+
+    [Test]
+    public void C2064_Aspire_verify_still_requires_the_local_container_when_unset()
+    {
+        using var world = ReadyWithoutPostgres();
+        var host = world.Host();
+        host.Variables("ANTIPHON_SKIP_DEV_POSTGRES").ShouldBeNull();
+        host.UserVariables("ANTIPHON_SKIP_DEV_POSTGRES").ShouldBeNull();
+
+        var run = Verify(world, host, "--skip-browser");
+
+        run.Exit.ShouldBe(1, run.Text);
+        run.Text.ShouldContain(Row("Postgres container", false, "not Up - check 'docker ps -a --filter name=antiphon-postgres'"));
+        run.Text.ShouldNotContain("Database endpoint");
+        world.Trace.ShouldContain(call => call.StartsWith("run docker ps"));
+    }
+
+    private static AppHostWorld ReadyWithoutPostgres()
+    {
+        var world = new AppHostWorld();
+        world.Commands = (_, args) => args[0] switch
+        {
+            "version" => new AppHostCommandResult(false, 0, "Server: Docker Desktop"),
+            "ps" => new AppHostCommandResult(false, 0, ""),
+            _ => new AppHostCommandResult(false, 0, ""),
+        };
+        world.Listening.AddRange([17200, 17202, 17203, 17204, 17205, 17206, 17281, 17282]);
+        return world;
+    }
+
+    private static void WriteConnection(string path, string connectionString)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["ConnectionStrings:DefaultConnection"] = connectionString,
+        }));
     }
 }

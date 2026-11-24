@@ -21,6 +21,7 @@ public sealed class BootstrapCheckTests
 {
     private static readonly string Root = OperatingSystem.IsWindows() ? @"C:\fixture\antiphon" : "/fixture/antiphon";
     private static readonly string Local = Path.Combine(Root, "..", "profile", "AppData", "Local");
+    private static readonly string Roaming = Path.Combine(Root, "..", "profile", "AppData", "Roaming");
     private static readonly string Profile = Path.Combine(Root, "..", "profile");
     private static readonly string Windir = Path.Combine(Root, "..", "Windows");
     private const string Secret = "sk-ant-never-printed";
@@ -64,6 +65,7 @@ public sealed class BootstrapCheckTests
         run.Output.ShouldNotContain("[WARN]");
         machine.Gets.ShouldBe(["http://stub.invalid:9/api/projects"]);
         machine.StackRuns.ShouldBe(1);
+        machine.TcpCalls.ShouldBe([("127.0.0.1", 17280, 2000)]);
         // Only reads: the version probes, docker's inspections, pg_isready, the user-secrets list and git's HEAD.
         machine.Runs.ShouldBe([
             "dotnet.exe --version @" + Root,
@@ -304,6 +306,80 @@ public sealed class BootstrapCheckTests
     }
 
     [Test]
+    public void C2064_Bootstrap_skips_local_Postgres_and_probes_AppHost_user_secrets()
+    {
+        var machine = ReadyWithoutLocalPostgres();
+        machine.Variables.ContainsKey("ANTIPHON_SKIP_DEV_POSTGRES").ShouldBeFalse();
+        machine.UserVariables["ANTIPHON_SKIP_DEV_POSTGRES"] = "1";
+        SetAppHostDatabaseSecret(machine);
+        machine.OpenRemoteTcpPort = 25432;
+
+        var run = Check(machine, "--no-stack");
+
+        run.Exit.ShouldBe(0, run.Output);
+        run.Lines.ShouldContain(L("SKIP", "docker / postgres", "ANTIPHON_SKIP_DEV_POSTGRES=1"));
+        run.Lines.ShouldContain(L("SKIP", "docker / volume", "ANTIPHON_SKIP_DEV_POSTGRES=1"));
+        run.Lines.ShouldContain(L("SKIP", "database / localhost:17280", "ANTIPHON_SKIP_DEV_POSTGRES=1"));
+        run.Lines.ShouldContain(L("PASS", "database", "TCP 127.0.0.1:25432 open"));
+        machine.TcpCalls.ShouldBe([("127.0.0.1", 25432, 2000)]);
+        machine.Runs.ShouldNotContain(call => call.StartsWith("docker.exe inspect") ||
+            call.StartsWith("docker.exe volume") || call.StartsWith("docker.exe compose"));
+        run.Output.ShouldNotContain("docker compose -f docker-compose.dev.yml up");
+        run.Output.ShouldNotContain("fixture-password");
+    }
+
+    [Test]
+    public void C2064_Bootstrap_fails_when_the_configured_database_is_unreachable()
+    {
+        var machine = ReadyWithoutLocalPostgres();
+        machine.Variables["ANTIPHON_SKIP_DEV_POSTGRES"] = "1";
+        SetAppHostDatabaseSecret(machine);
+
+        var run = Check(machine, "--no-stack");
+
+        run.Exit.ShouldBe(1, run.Output);
+        run.Lines.ShouldContain(L("FAIL", "database", "TCP 127.0.0.1:25432 closed or unreachable"));
+        machine.TcpCalls.ShouldBe([("127.0.0.1", 25432, 2000)]);
+        run.Output.ShouldNotContain("docker compose -f docker-compose.dev.yml up");
+        run.Output.ShouldNotContain("fixture-password");
+    }
+
+    [Test]
+    public void C2064_Bootstrap_still_checks_the_local_container_and_volume_when_unset()
+    {
+        var machine = ReadyWithoutLocalPostgres();
+        machine.Variables.ContainsKey("ANTIPHON_SKIP_DEV_POSTGRES").ShouldBeFalse();
+        machine.UserVariables.ContainsKey("ANTIPHON_SKIP_DEV_POSTGRES").ShouldBeFalse();
+
+        var run = Check(machine, "--no-stack");
+
+        run.Exit.ShouldBe(3, run.Output);
+        run.Lines.ShouldContain(L("FAIL", "docker / postgres", "antiphon-postgres not found"));
+        run.Lines.ShouldContain(L("FAIL", "docker / volume", "antiphon_pgdata volume not found"));
+        run.Lines.ShouldContain(L("FAIL", "database", "TCP localhost:17280 closed; pg_isready failed"));
+        machine.TcpCalls.ShouldBe([("127.0.0.1", 17280, 2000)]);
+        machine.Runs.ShouldContain(call => call.StartsWith("docker.exe compose") && call.Contains("pg_isready"));
+    }
+
+    private static Machine ReadyWithoutLocalPostgres()
+    {
+        var machine = Ready();
+        var absent = new BootstrapCommandResult(true, false, 1, "");
+        machine.Answers["docker.exe inspect"] = absent;
+        machine.Answers["docker.exe volume"] = absent;
+        machine.Answers["docker.exe compose"] = absent;
+        machine.Tcp = false;
+        return machine;
+    }
+
+    private static void SetAppHostDatabaseSecret(Machine machine)
+    {
+        machine.Variables["APPDATA"] = Roaming;
+        machine.Disk.AddFile(Path.Combine(Roaming, "Microsoft", "UserSecrets", "aspire-antiphon-apphost", "secrets.json"),
+            new MockFileData("""{ "ConnectionStrings:DefaultConnection": "Host=127.0.0.1;Port=25432;Password='fixture-password;Host=irrelevant'" }"""));
+    }
+
+    [Test]
     public void The_command_replaced_the_script_and_the_docs_name_it()
     {
         Should.Throw<NightlyUsageException>(() => BootstrapCheckOptions.Parse(["--NoStack"], Root));
@@ -336,6 +412,7 @@ public sealed class BootstrapCheckTests
             Error = output,
             Trace = TextWriter.Null,
             Variables = name => machine.Variables.TryGetValue(name, out var value) ? value : null,
+            UserVariables = name => machine.UserVariables.TryGetValue(name, out var value) ? value : null,
             Sleep = span => clock.Advance(span),
         };
         var exit = BootstrapCheck.Run(BootstrapCheckOptions.Parse(args, Root), host, machine);
@@ -392,10 +469,13 @@ public sealed class BootstrapCheckTests
         public IFileSystem Files => Disk;
         public HashSet<string> OnPath { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, string> Variables { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, string> UserVariables { get; } = new(StringComparer.Ordinal);
         /// <summary>The answers by "name arguments", else by the longest prefix of it that has one.</summary>
         public Dictionary<string, BootstrapCommandResult> Answers { get; } = new(StringComparer.Ordinal);
         public List<string> Runs { get; } = [];
         public bool Tcp { get; set; } = true;
+        public int? OpenRemoteTcpPort { get; set; }
+        public List<(string Host, int Port, int TimeoutMs)> TcpCalls { get; } = [];
         public HashSet<string> Tasks { get; } = [BootstrapCheck.AppHostTask, BootstrapCheck.RunnerTask];
         public NightlyReportHttpResponse Projects { get; set; } = new(200, "[{\"cardFileWarnings\":[]},{\"cardFileWarnings\":[]}]");
         public List<string> Gets { get; } = [];
@@ -419,8 +499,8 @@ public sealed class BootstrapCheckTests
 
         public bool TcpOpen(string host, int port, int timeoutMs)
         {
-            (host, port, timeoutMs).ShouldBe(("127.0.0.1", 17280, 2000));
-            return Tcp;
+            TcpCalls.Add((host, port, timeoutMs));
+            return host == "127.0.0.1" && (port == 17280 ? Tcp : port == OpenRemoteTcpPort);
         }
 
         public bool TaskRegistered(string name) => Tasks.Contains(name);
