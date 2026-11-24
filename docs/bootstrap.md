@@ -167,7 +167,7 @@ only in `claude-home` / the user profile. Named so the absence is visible:
   Do not inline `pg_dump`. `scripts\antiphon.cmd dev-fresh` is the nuclear reset (volume +
   `C:\Antiphon\worktrees`), not a bootstrap step. (The repo-root `.\dev-*.ps1`,
   `.\restart.ps1`, `.\restart-server.ps1` and `.\stop-server.ps1` launchers are gone; run
-  the commands. Only `.\dev-aspire.ps1` remains.)
+  the commands; `.\dev-aspire.ps1` went too, in unit 44.)
 
 ## Card files and private-note custody
 

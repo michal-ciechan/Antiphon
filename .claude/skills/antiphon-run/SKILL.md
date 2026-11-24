@@ -55,8 +55,8 @@ scripts/antiphon dev-aspire
 ```
 
 - The dev stack scripts are C# commands since 2026-11-24 (unit 37 of
-  docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). Unit 43 deleted the repo-root launchers except
-  `.\dev-aspire.ps1`; everyone runs the commands (`scripts\antiphon.cmd <command>` on Windows).
+  docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). Units 43 and 44 deleted the repo-root launchers;
+  everyone runs the commands (`scripts\antiphon.cmd <command>` on Windows).
 - The command exits once the dashboard is ready (90 s at most); the AppHost runs on in a detached wrapper
   (`run-apphost`: the stamped build, then the AppHost, output in `logs/apphost.log`). A shell whose Job Object kills its
   children at command end still takes the wrapper with it (docs/apphost-runbook.md).

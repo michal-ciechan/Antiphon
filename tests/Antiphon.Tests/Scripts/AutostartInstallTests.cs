@@ -155,7 +155,7 @@ public sealed class AutostartInstallTests
         var noAppHost = new World();
         noAppHost.Install("--no-apphost").ShouldBe(0);
         noAppHost.Tasks.Registered.Keys.ShouldBe(["Antiphon Session Runner"]);
-        noAppHost.Out.ToString().ShouldContain(@"Start the app by hand with:  .\dev-aspire.ps1");
+        noAppHost.Out.ToString().ShouldContain(@"Start the app by hand with:  scripts\antiphon.cmd dev-aspire");
         var noObserver = new World();
         noObserver.Install("--no-watchdog-state-observer").ShouldBe(0);
         noObserver.Tasks.Registered.Keys.ShouldNotContain("Antiphon AppHost Watchdog State Observer");

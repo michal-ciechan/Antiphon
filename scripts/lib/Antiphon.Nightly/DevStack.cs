@@ -410,7 +410,7 @@ namespace Antiphon.Nightly
             Say("");
             Say("  Logs  : " + logDir + files.Path.DirectorySeparatorChar);
             Say("  Backup: scripts\\antiphon.cmd dev-backup");
-            Say("  Aspire: .\\dev-aspire.ps1  (dashboard + daemon mode)");
+            Say("  Aspire: scripts\\antiphon.cmd dev-aspire  (dashboard + daemon mode)");
             if (!options.NoBrowser && !options.ServerOnly)
             {
                 host.Sleep(TimeSpan.FromSeconds(15));

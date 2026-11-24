@@ -135,13 +135,13 @@ public sealed class AppHostWorktreeGuardTests
     }
 
     // deploy-local.ps1 (W8, owner-gated) keeps the PowerShell guard: it dot-sources scripts/apphost-common.ps1 and refuses before
-    // the restart; the guard's messages are the C# guard's lines with the script's -AllowWorktree spelling. (dev-aspire.ps1 is a
-    // launcher of the dev-aspire command since unit 37: Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker.)
+    // the restart; the guard's messages are the C# guard's lines with the script's -AllowWorktree spelling. (dev-aspire is a C#
+    // command since unit 37 and unit 44 deleted its launcher: Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker.)
     [Test]
     public void The_powershell_entries_guard_before_their_first_side_effect_with_the_same_messages()
     {
         var root = DelegateScriptRunner.RepoRoot;
-        File.ReadAllText(Path.Combine(root, "dev-aspire.ps1")).ShouldNotContain("apphost-common.ps1");
+        File.Exists(Path.Combine(root, "dev-aspire.ps1")).ShouldBeFalse("unit 44 deleted the launcher");
 
         var deploy = File.ReadAllText(Path.Combine(root, "scripts", "deploy-local.ps1"));
         var deployGuard = deploy.IndexOf("Get-AppHostWorktreeClassification -SourceRoot $repoRoot", StringComparison.Ordinal);

@@ -1,6 +1,6 @@
 // CARD-0011, CARD-0273, CARD-1564, CARD-1680, CARD-1744, CARD-1806: start the desktop Aspire AppHost in dashboard mode (unit 37
 // of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced the body of the repository root's dev-aspire.ps1,
-// which stays a thin launcher so the runbooks' `.\dev-aspire.ps1` still works, and scripts/lib/dev-postgres-compose.ps1,
+// a thin launcher until unit 44 deleted it (nothing started it by path), and scripts/lib/dev-postgres-compose.ps1,
 // scripts/lib/live-startup-timing.ps1 and the launcher scripts/check-daemon-build.ps1, which only it loaded or ran). The CLI
 // runs it as
 //
@@ -41,7 +41,7 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
-    /// <summary>The dev-aspire command's options (dev-aspire.ps1 -NoBuild -NoBrowser -AllowWorktree).</summary>
+    /// <summary>The dev-aspire command's options (--no-build --no-browser --allow-worktree).</summary>
     public sealed class DevAspireOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -103,7 +103,7 @@ namespace Antiphon.Nightly
     /// <summary>Runs dev-aspire on a host (an in-process caller's seam: the logon auto-start).</summary>
     public delegate int DevAspireRunner(DevAspireOptions options, NightlyHost host);
 
-    /// <summary>The desktop AppHost start (dev-aspire.ps1's body) and its detached wrapper.</summary>
+    /// <summary>The desktop AppHost start (it replaced dev-aspire.ps1's body) and its detached wrapper.</summary>
     public static class DevAspire
     {
         /// <summary>How long the dashboard URL is looked for after the wrapper starts (its build included).</summary>

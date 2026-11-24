@@ -383,7 +383,7 @@ namespace Antiphon.Nightly
             else
             {
                 Step("Skipping AppHost logon task (--no-apphost).");
-                Note("Start the app by hand with:  .\\dev-aspire.ps1");
+                Note("Start the app by hand with:  scripts\\antiphon.cmd dev-aspire");
             }
 
             // 4. The watchdog (the logon AppHost task is a one-shot): logon + delay, repeating, and a repeating once trigger.
@@ -438,7 +438,7 @@ namespace Antiphon.Nightly
             }
             else
             {
-                Note("  The rest (server/client/dashboard): run  .\\dev-aspire.ps1");
+                Note("  The rest (server/client/dashboard): run  scripts\\antiphon.cmd dev-aspire");
             }
             output.WriteLine();
             Note("Start the session-runner now without logging out:  Start-ScheduledTask -TaskName \"" + options.TaskName + "\"");

@@ -88,7 +88,7 @@ First launch only, when nothing is listening:
 C:\src\antiphon\scripts\antiphon.cmd dev-aspire
 ```
 
-(`.\dev-aspire.ps1` at the repo root is its launcher.) The command will:
+(Windows: `scripts\antiphon.cmd dev-aspire`; the repo-root `.\dev-aspire.ps1` launcher is gone.) The command will:
 1. Restore + npm install (skipped with `--no-build` if already fresh)
 2. Start the AppHost wrapper detached (`run-apphost`: the stamped build, then the AppHost; `logs/apphost.pid`)
 3. Wait up to 90 s for the dashboard URL, open the browser (not with `--no-browser`) and exit

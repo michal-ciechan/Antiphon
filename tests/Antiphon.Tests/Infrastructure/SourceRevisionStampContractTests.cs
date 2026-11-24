@@ -130,7 +130,7 @@ public sealed class SourceRevisionStampContractTests
         common.ShouldContain("new AppHostLoadedIdentity(false, sha, \"malformed\")");
         common.ShouldContain("\"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$\"");
 
-        // Unit 37: dev-aspire is C# (DevAspire.cs; dev-aspire.ps1 is its launcher). Its detached wrapper builds the AppHost project
+        // Unit 37: dev-aspire is C# (DevAspire.cs; unit 44 deleted the dev-aspire.ps1 launcher). Its detached wrapper builds the AppHost project
         // in its own directory, stamped with the HEAD dev-aspire read; DevAspireTests pins the argv and the HEAD refusal.
         var aspire = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/DevAspire.cs");
         aspire.ShouldContain("Command = new[] { \"dotnet\", \"build\", \"-p:SourceRevisionId=\" + options.SourceRevision },");

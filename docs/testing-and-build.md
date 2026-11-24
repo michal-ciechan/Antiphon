@@ -959,7 +959,7 @@ LINUX/__linux__, OSX/MACOS/__APPLE__, `uname`, `$OSTYPE`, `process.platform` and
 can be missed. Keep candidate diagnostics and record reasoned non-behavior
 exemptions instead of hiding matches.
 
-Check startup impact for either side of a rename/delete touching `dev-aspire.ps1` (the launcher of the `dev-aspire`
+Check startup impact for either side of a rename/delete touching `DevAspire.cs` (the `dev-aspire`
 command since unit 37), `scripts/restart-apphost.ps1`, `scripts/build-slot.ps1`, `scripts/lib/**` (the AppHost commands are
 `scripts/lib/Antiphon.Nightly/AppHost*.cs`, dev-aspire and its `run-apphost` wrapper `DevAspire.cs`),
 `scripts/apphost-common.ps1`, `Antiphon.AppHost/**` or a reviewed dependency.

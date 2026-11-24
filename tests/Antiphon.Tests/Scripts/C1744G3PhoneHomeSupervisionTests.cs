@@ -341,17 +341,16 @@ public sealed class C1744G3PhoneHomeSupervisionTests
         var danger = restart.IndexOf("AppHostLocks.TakeRestart(", StringComparison.Ordinal);
         (work >= 0 && guard > work && danger > guard).ShouldBeTrue($"apphost-guard.restart-order work={work} guard={guard} lock={danger}");
 
-        // dev-aspire (DevAspire.cs since unit 37; dev-aspire.ps1 is its launcher): the worktree classification, then the
-        // refusal, then the launch lock write.
-        var aspireLauncher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "dev-aspire.ps1"));
-        aspireLauncher.ShouldContain("Invoke-AntiphonCli -Command 'dev-aspire'");
+        // dev-aspire (DevAspire.cs since unit 37; unit 44 deleted the dev-aspire.ps1 launcher): the worktree classification,
+        // then the refusal, then the launch lock write.
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "dev-aspire.ps1")).ShouldBeFalse("apphost-guard.aspire-launcher-gone");
         var aspire = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DevAspire.cs"));
         var aspireWork = aspire.IndexOf("AppHostWorktree.Classify(", StringComparison.Ordinal);
         var aspireGuard = aspire.IndexOf("WindowsPhoneHome.LaunchRefusal(", StringComparison.Ordinal);
         var aspireWrite = aspire.IndexOf("files.File.WriteAllText(launchLock", StringComparison.Ordinal);
         (aspireWork >= 0 && aspireGuard > aspireWork && aspireWrite > aspireGuard)
             .ShouldBeTrue($"apphost-guard.aspire-order work={aspireWork} guard={aspireGuard} write={aspireWrite}");
-        (launcher + aspireLauncher + aspire).ShouldNotContain("restart-linux-server", Case.Sensitive, "apphost-guard.no-linux-name");
+        (launcher + aspire).ShouldNotContain("restart-linux-server", Case.Sensitive, "apphost-guard.no-linux-name");
     }
 
     // ---- compat ----
@@ -359,7 +358,7 @@ public sealed class C1744G3PhoneHomeSupervisionTests
     [Test]
     public void Supervision_scripts_stay_ascii_and_51_compatible()
     {
-        string[] files = ["scripts/autostart-session-runner.ps1", "scripts/lib/windows-phone-home-env.ps1", "scripts/restart-apphost.ps1", "dev-aspire.ps1",
+        string[] files = ["scripts/autostart-session-runner.ps1", "scripts/lib/windows-phone-home-env.ps1", "scripts/restart-apphost.ps1",
             "scripts/lib/Antiphon.Nightly/WindowsPhoneHome.cs", "scripts/lib/Antiphon.Nightly/SessionRunnerAutostart.cs"];
         foreach (var file in files)
         {
