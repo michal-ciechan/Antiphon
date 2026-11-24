@@ -205,7 +205,7 @@ These directions override the cited standing rules in
 7. **Protect human-only boundaries.** Tags, publish and promote stay human-only.
    Never kill sessions, touch the live qualification supervisor/lock/files, or
    modify anything under `C:\Antiphon` outside explicitly assigned, owned work.
-   Do not use `-AllowWorktree`, `-KillSessions`, or `-Hard` in this workflow. Never
+   Do not use `-AllowWorktree`, `restart-session-runner --kill-sessions`, or `--hard` in this workflow. Never
    delete `antiphon_pgdata` or any state volume; never read
    `GET /api/cards/{id}/private-notes`; never print secrets. No unscoped recursive
    or batch deletion: delegates delete only verified exact literal owned paths.

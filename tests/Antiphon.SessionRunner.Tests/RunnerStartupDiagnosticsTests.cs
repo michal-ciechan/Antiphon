@@ -15,7 +15,7 @@ public class RunnerStartupDiagnosticsTests
     [Test]
     public async Task Empty_sweep_records_zero_work_phases()
     {
-        using var f = new RestartFixture(); var log = new MilestoneLogger();
+        using var f = new StartupLogRoot(); var log = new MilestoneLogger();
         await using var runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings { SessionLogPath = f.Root }), log);
         (await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None)).ShouldBe(0);
         log.Records.Select(r => r.GetProperty("event").GetString()).ShouldBe(new[] { "adoption-sweep-start", "claims-start", "claims-end", "herdr-start", "herdr-end", "pty-manifests-start", "pty-manifests-end", "adoption-sweep-end" });
@@ -26,7 +26,7 @@ public class RunnerStartupDiagnosticsTests
     [Test]
     public async Task Canceled_manifest_pass_preserves_cancellation()
     {
-        using var f = new RestartFixture(); var log = new MilestoneLogger(); var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
+        using var f = new StartupLogRoot(); var log = new MilestoneLogger(); var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
         SeedTerminal(settings);
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), log);
         await Should.ThrowAsync<OperationCanceledException>(() => runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), new CancellationToken(true)));
@@ -36,7 +36,7 @@ public class RunnerStartupDiagnosticsTests
     [Test]
     public async Task Diagnostic_sink_failure_does_not_change_adoption()
     {
-        using var f = new RestartFixture(); var log = new MilestoneLogger { Throw = true }; var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
+        using var f = new StartupLogRoot(); var log = new MilestoneLogger { Throw = true }; var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
         var id = SeedTerminal(settings);
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), log);
         (await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None)).ShouldBe(0);
@@ -47,7 +47,7 @@ public class RunnerStartupDiagnosticsTests
     [Test, Arguments(SessionBackends.PtyHost, 0), Arguments(SessionBackends.Herdr, 1)]
     public async Task Backend_count_does_not_build_a_dto_or_interrupt_the_remaining_sweep(string backend, int expectedCount)
     {
-        using var f = new RestartFixture(); var log = new MilestoneLogger(); var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
+        using var f = new StartupLogRoot(); var log = new MilestoneLogger(); var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
         var existingId = SeedTerminal(settings);
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), log);
         await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
@@ -80,6 +80,18 @@ public class RunnerStartupDiagnosticsTests
         public RunnerTranscriptDto Snapshot() => throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+    // A scratch session log root. Until unit 30 of the 2026-11-22 plan it was the root of RestartFixture, the PowerShell
+    // fixture of the deleted restart scripts; these cases only ever needed its directory.
+    private sealed class StartupLogRoot : IDisposable
+    {
+        public string Root { get; } = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "antiphon-c420-" + Guid.NewGuid().ToString("N"))).FullName;
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Root, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
     internal static Guid SeedTerminal(SessionRunnerSettings settings)
     {
         var id = Guid.NewGuid();

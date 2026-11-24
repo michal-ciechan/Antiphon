@@ -15,8 +15,11 @@ public sealed class DockerStackDocumentationTests
     {
         var restart = Section(Read(path), heading, nextHeading);
         restart.ShouldContain("The first desktop runner restart after SHA stamp activation must use", Case.Sensitive);
-        restart.ShouldContain("pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard", Case.Sensitive);
-        restart.ShouldContain("scripts/check-daemon-build.ps1", Case.Sensitive);
+        // Unit 30 of the 2026-11-22 plan: the restart and the build check are the restart-session-runner and
+        // check-daemon-build commands (scripts/restart-session-runner.ps1 is deleted).
+        restart.ShouldContain(@"scripts\antiphon.cmd restart-session-runner --hard", Case.Sensitive);
+        restart.ShouldContain(@"scripts\antiphon.cmd check-daemon-build", Case.Sensitive);
+        restart.ShouldNotContain("restart-session-runner.ps1", Case.Sensitive);
         restart.ShouldContain("build.commitSha", Case.Sensitive);
         restart.ShouldContain("checkout HEAD", Case.Sensitive);
     }

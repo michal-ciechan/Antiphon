@@ -41,6 +41,8 @@ public class PtyHostDeploymentGuardTests
         program.ShouldContain("BuildProjectDir:");
     }
 
+    // Unit 30 (2026-11-22 plan): scripts/run-daemon.ps1 is the launcher of the run-daemon command, whose supervisor
+    // (Antiphon.Nightly.DaemonSupervisor) builds before each launch; Antiphon.Tests DaemonSupervisorTests run it.
     [Test]
     public async Task Run_daemon_supports_build_before_launch()
     {
@@ -48,7 +50,12 @@ public class PtyHostDeploymentGuardTests
             Path.Combine(RepoRoot, "scripts", "run-daemon.ps1"));
 
         runDaemon.ShouldContain("$BuildProjectDir");
-        runDaemon.ShouldContain("dotnet build");
+        runDaemon.ShouldContain("'--build-project-dir', $BuildProjectDir");
+        var supervisor = await File.ReadAllTextAsync(
+            Path.Combine(RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DaemonSupervisor.cs"));
+        supervisor.ShouldContain("new List<string> { \"build\", _options.BuildProjectDir, \"-c\", \"Debug\", \"--nologo\" }");
+        supervisor.ShouldContain("\"--\", \"dotnet\"");
+        supervisor.ShouldNotContain("\"run\"");
     }
 
     private static string FindRepoRoot()

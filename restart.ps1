@@ -8,7 +8,7 @@ param(
 Write-Host "=== Restarting Antiphon ===" -ForegroundColor Cyan
 
 if ($RestartRunner) {
-    & "$PSScriptRoot\scripts\restart-session-runner.ps1"
+    & "$PSScriptRoot\restart-session-runner.ps1"
     if ($LASTEXITCODE -ne 0) {
         exit 1
     }

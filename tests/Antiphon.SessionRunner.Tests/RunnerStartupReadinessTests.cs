@@ -12,11 +12,21 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration"), NotInParallel("SessionLiveness"), ParallelLimiter<ProcessSpawnLimit>]
 public class RunnerStartupReadinessTests
 {
+    private static string Repo
+    {
+        get
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln"))) dir = dir.Parent;
+            return dir?.FullName ?? throw new DirectoryNotFoundException("Could not locate the repository root (Antiphon.sln).");
+        }
+    }
+
     [Test, Arguments(false), Arguments(true)]
     public async Task Adoption_blocks_http_until_the_complete_session_set_is_represented(bool drop)
     {
         var root = TestSessionLogRoot.Create("c420-barrier");
-        var evidence = Path.Combine(RestartFixture.Repo, ".antiphon", "c420-evidence", "barrier-" + Guid.NewGuid().ToString("N"));
+        var evidence = Path.Combine(Repo, ".antiphon", "c420-evidence", "barrier-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(evidence);
         var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostDir = Path.Combine(root, "hosts") };
         var terminalId = RunnerStartupDiagnosticsTests.SeedTerminal(settings);
@@ -94,8 +104,8 @@ public class RunnerStartupReadinessTests
             var producerStart = startup.RootElement.GetProperty("producerStartTimeUtc").GetDateTime().ToUniversalTime();
             Math.Abs((producerStart - runner.StartTime.ToUniversalTime()).TotalSeconds).ShouldBeLessThan(2,
                 "the producer record must identify the launched runner process");
-            using var decoder = new RestartFixture();
-            await decoder.DecodeCapturedMilestones(joined + "\n", runner.Id, producerStart.ToString("O"), "runner", "application-started");
+            // Unit 30 (2026-11-22 plan): the restart's decoder is C# (Antiphon.Nightly.RunnerMilestoneReader), which this assembly
+            // does not reference; Antiphon.Tests RunnerMilestoneReaderTests decodes RunnerStartupDiagnostics' records in process.
             succeeded = true;
         }
         finally

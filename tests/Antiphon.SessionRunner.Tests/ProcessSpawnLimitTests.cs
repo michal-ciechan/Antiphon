@@ -18,8 +18,9 @@ public class ProcessSpawnLimitTests
     {
         Type[] expected =
         [
-            typeof(DaemonLogRotationTests),
-            typeof(DaemonStartupDiagnosticsTests),
+            // Unit 30 (2026-11-22 plan): DaemonLogRotationTests, DaemonStartupDiagnosticsTests and the RunnerRestart* classes ran
+            // run-daemon.ps1 and the restart scripts; their cases run in process in Antiphon.Tests (DaemonSupervisorTests,
+            // RunnerRestartHealthTests, RunnerRestartOsTests).
             typeof(FirstWriteRaceTests),
             typeof(GrokRulesAdoptionTests),
             typeof(GrokRulesFileLaunchTests),
@@ -33,9 +34,6 @@ public class ProcessSpawnLimitTests
             typeof(PtyBackendSeamTests),
             typeof(C1022BackendLaunchTests),
             typeof(PtyHostAdoptionTests),
-            typeof(RunnerRestartHealthTests),
-            typeof(RunnerRestartScriptCompatibilityTests),
-            typeof(RunnerRestartPreflightSafetyTests),
             typeof(RunnerStartupReadinessTests),
             typeof(SessionBufferBoundsTests),
             typeof(SessionCpuWatchdogTests),

@@ -1918,7 +1918,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
     /// <summary>
     /// Kills every live session (and thereby its host, via the exit-&gt;Shutdown ack). The
-    /// scorched-earth path behind <c>restart-session-runner.ps1 -KillSessions</c> and
+    /// scorched-earth path behind <c>scripts/antiphon restart-session-runner --kill-sessions</c> and
     /// <c>POST /sessions/kill-all</c> - the ONLY sanctioned way to take hosts down in bulk.
     /// </summary>
     public async Task<IReadOnlyList<RunnerSessionDto>> KillAllAsync(TimeSpan timeout, CancellationToken ct)

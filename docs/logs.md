@@ -117,7 +117,7 @@ After the control plane is the Linux server, the server container is `antiphon-s
 
 | Phase | Supervisor stdout | Serilog file |
 |---|---|---|
-| Phase 1, autostart from `C:\Antiphon\runner\app` | `C:\Antiphon\runner\app\logs\session-runner.log`. `autostart-session-runner.ps1` puts `session-runner.log` under its own repo root, and `run-daemon.ps1` appends the service stdout there. | `C:\Antiphon\runner\state\logs\session-runner-.log` once the phone-home environment sets `Serilog__LogPath` to `C:/Antiphon/runner/state/logs` (`start-windows-phone-home-runner.ps1`, `Program.cs`). |
+| Phase 1, autostart from `C:\Antiphon\runner\app` | `C:\Antiphon\runner\app\logs\session-runner.log`. `autostart-session-runner.ps1` puts `session-runner.log` under its own repo root, and the `run-daemon` supervisor (through the `run-daemon.ps1` launcher) appends the service stdout there. | `C:\Antiphon\runner\state\logs\session-runner-.log` once the phone-home environment sets `Serilog__LogPath` to `C:/Antiphon/runner/state/logs` (`start-windows-phone-home-runner.ps1`, `Program.cs`). |
 | Phase 1, fallback starter | The terminal that launched `start-windows-phone-home-runner.ps1`. That script runs the executable in the foreground and writes no supervisor log. | Same `C:\Antiphon\runner\state\logs\session-runner-.log`. |
 | Phase 2, logon task on 17204 | `C:\src\Antiphon\logs\session-runner.log` when the task was registered from that checkout. | `C:\Antiphon\runner\state\logs\session-runner-.log` after the phase 2 environment is set. Until then the supervised direct runner stays on the `%TEMP%\antiphon-logs` row above. |
 

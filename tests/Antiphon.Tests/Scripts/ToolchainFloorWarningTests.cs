@@ -10,14 +10,16 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1698 slice 1, in-process. The Test-C1698_* cases of the deleted scripts/test-toolchain-floor.ps1 (plan
 /// 2026-11-22-remaining-ps1-to-csharp.md, unit 1) call ToolchainFloor.Warnings with an injected version source and
-/// ToolchainFloor.Run (the toolchain-floor command) on a fake host; the restart entry points' call is read as source
-/// text, because no test launches a .ps1. The nightly run and tests cases below it were already in-process.
+/// ToolchainFloor.Run (the toolchain-floor command) on a fake host; restart-server.ps1's call is read as source text,
+/// because no test launches a .ps1, and the runner restart (the restart-session-runner command since unit 30) runs the
+/// warnings in process. The nightly run and tests cases below it were already in-process.
 /// Not ported: the cases that ran restart-server.ps1 and restart-session-runner.ps1 with a fake git and dotnet
-/// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output
-/// and the call block's shape below), the library-load-failure cases (the library is gone; a CLI that cannot be built or
-/// started exits 9 with one stderr line, AntiphonCliLauncherTests, and the block only warns on a non-zero exit), and the
-/// pwsh-7-only syntax scan (PowerShell mechanics: RunnerRestartScriptCompatibilityTests parses the restart chain, the
-/// launcher and restart-server.ps1 with powershell.exe 5.1 and pwsh).
+/// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output,
+/// the call block's shape and the in-process restart below), the library-load-failure cases (the library is gone; a CLI
+/// that cannot be built or started exits 9 with one stderr line, AntiphonCliLauncherTests, and the block only warns on a
+/// non-zero exit), and the pwsh-7-only syntax scan (PowerShell mechanics:
+/// AntiphonCliLauncherTests.Kept_launchers_and_restart_entries_parse_and_are_ascii parses the launcher and
+/// restart-server.ps1 with powershell.exe 5.1 and pwsh).
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -155,15 +157,15 @@ public sealed class ToolchainFloorWarningTests
     }
 
     /// <summary>
-    /// restart-server.ps1 and session-runner-restart-health.ps1 (restart-session-runner.ps1's platform) run the command
-    /// through Invoke-AntiphonCli inside a try whose catch only warns, and a non-zero exit (9: the CLI could not be built or
-    /// started) is one more WARNING line, never an exit: the restart goes on as when the library only warned. The server
-    /// restart warns before it stops the server.
+    /// restart-server.ps1 runs the command through Invoke-AntiphonCli inside a try whose catch only warns, and a non-zero exit
+    /// (9: the CLI could not be built or started) is one more WARNING line, never an exit: the restart goes on as when the
+    /// library only warned. The server restart warns before it stops the server. (session-runner-restart-health.ps1 had the
+    /// same block; the runner restart is the restart-session-runner command since unit 30, C1698_RunnerRestartWarnsInProcess.)
     /// </summary>
     [Test]
     public void C1698_RestartEntriesRunTheCommandAndOnlyWarn()
     {
-        foreach (var (path, root, quote) in new[] { ("restart-server.ps1", "$RepoRoot", "\""), (Path.Combine("scripts", "session-runner-restart-health.ps1"), "$Root", "'") })
+        foreach (var (path, root, quote) in new[] { ("restart-server.ps1", "$RepoRoot", "\"") })
         {
             var text = File.ReadAllText(Path.Combine(Repo, path)).Replace("\r\n", "\n");
             text.ShouldNotContain("toolchain-floor.ps1", customMessage: path);
@@ -191,6 +193,24 @@ public sealed class ToolchainFloorWarningTests
         }
         File.Exists(Path.Combine(Repo, "scripts", "lib", "toolchain-floor.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(Repo, "scripts", "test-toolchain-floor.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(Repo, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Unit 30: the restart-session-runner command (RunnerRestart.Run) prints the floor warnings during its read-only setup,
+    /// before any control operation, and restarts anyway: a tool below its floor never refuses the restart.
+    /// </summary>
+    [Test]
+    public void C1698_RunnerRestartWarnsInProcess()
+    {
+        using var world = new RunnerRestartWorld();
+        world.Tools.Versions["git"] = "git version 2.42.0";
+        var run = world.Run();
+        run.Outcome.ShouldBe("healthy");
+        run.Mutations.ShouldBe(["write-state", "stop-service"]);
+        var lines = run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines[0].ShouldStartWith("WARNING: git 2.42.0 is below the minimum 2.43; lands will fail");
+        lines.Count(line => line.StartsWith("WARNING: git ", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     /// <summary>

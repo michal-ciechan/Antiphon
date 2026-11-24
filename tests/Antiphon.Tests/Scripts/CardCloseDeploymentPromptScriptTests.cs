@@ -31,7 +31,7 @@ public sealed class CardCloseDeploymentPromptScriptTests
         task.ShouldBeGreaterThan(tracker);
         prompt.ShouldBeGreaterThan(task);
         run.Output.ShouldContain("/api/version");
-        run.Output.ShouldContain("check-daemon-build.ps1");
+        run.Output.ShouldContain("scripts/antiphon check-daemon-build");
         run.Output.ShouldContain("GitHub      closed #1 (https://example.test/1)");
         api.PatchCount.ShouldBe(1);
     }

@@ -104,28 +104,29 @@ handoff requires a separate script change; this runbook does not implement it.
 ## Restart only the runner
 
 ```powershell
-pwsh -NoProfile -File scripts/restart-session-runner.ps1
+scripts\antiphon.cmd restart-session-runner
 ```
 
-The soft default stops the runner service; its live supervisor rebuilds through
-`run-daemon.ps1 -BuildProjectDir` and launches the built executable. Never substitute
+The soft default stops the runner service; its live supervisor (the `run-daemon` command
+behind the `scripts/run-daemon.ps1` launcher) rebuilds the `--build-project-dir` project and
+launches the built executable. Never substitute
 `dotnet run`: its Job Object can capture detached pty-hosts and kill them on
 restart. Detached sessions are re-adopted from
 `<SessionLogPath>/pty-hosts/manifests` and herdr sidecars. API, client, dashboard
 and Postgres stay up.
 
-Use `-Hard` for a planned supervisor refresh: it also stops the supervisor and
+Use `--hard` for a planned supervisor refresh: it also stops the supervisor and
 restarts ownership through the **Antiphon Session Runner** Scheduled Task.
 The first desktop runner restart after SHA stamp activation must use
-`pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard`.
+`scripts\antiphon.cmd restart-session-runner --hard`.
 A soft restart can keep the old supervisor's build command and produce an
-unstamped runner. After the restart, run `scripts/check-daemon-build.ps1` and
+unstamped runner. After the restart, run `scripts\antiphon.cmd check-daemon-build` and
 verify the full runner `build.commitSha` from `/capabilities` equals the checkout HEAD.
 
 Switching that runner between the direct mode and `desktop-win` is this kind of
-refresh. `scripts/run-daemon.ps1` starts the service with `UseShellExecute`
+refresh. The `run-daemon` supervisor starts the service with `UseShellExecute`
 false, so a soft restart keeps the supervisor's environment and does not
-re-read `C:\Antiphon\runner\phone-home.json`. The file write, the `-Hard`
+re-read `C:\Antiphon\runner\phone-home.json`. The file write, the `--hard`
 restart, and the rollback order are the
 [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
 S4 (`e1b42f895`, in serving rc `bd34a7ff6da9`) makes
@@ -134,13 +135,13 @@ If present, it reads and validates the config for phone-home on 17204. If
 absent, the default launch is direct on 17204. An unreadable or invalid config
 is refused. The explicit `-PhoneHomeConfigPath` selects the phase-1 file on
 the side clone and permits its configured port 17214.
-`-KillSessions` is the destructive exception: it kills sessions as part of the
+`--kill-sessions` is the destructive exception: it kills sessions as part of the
 restart. `POST http://localhost:17204/sessions/kill-all` kills sessions without
 being a runner restart. Neither belongs in routine restart recovery.
 
 The health observation budget defaults to 180 seconds. Runner exit 2 means the
 wait expired, not that startup stopped; continue with
-`pwsh -NoProfile -File scripts/restart-session-runner.ps1 -WaitOnly -TimeoutSec 180`.
+`scripts\antiphon.cmd restart-session-runner --wait-only --timeout-sec 180`.
 See [runner restart observation](bootstrap.md#runner-restart-observation-card-0420)
 for result JSON, logs and exit codes; these differ from AppHost's table below.
 
@@ -151,7 +152,7 @@ pwsh -File verify-dev-stack.ps1 -SkipBrowser
 Invoke-WebRequest 'http://localhost:17202/health'
 git rev-parse HEAD
 (Invoke-RestMethod 'http://localhost:17204/capabilities').build.commitSha
-pwsh -File scripts/check-daemon-build.ps1
+scripts\antiphon.cmd check-daemon-build
 pwsh -File scripts/client-mode.ps1 -Status
 ```
 
@@ -166,7 +167,7 @@ Restart builds the main checkout's files; it does not fetch or pull. After an
 out-of-band push to `origin/master`, update the main checkout with
 `git pull --rebase` before restarting, and verify the intended server code loaded
 with feature/build evidence. A runner SHA can legitimately predate unrelated
-commits; `check-daemon-build.ps1` compares its project source closure.
+commits; `check-daemon-build` compares its project source closure.
 
 Port 17203 serves `vite preview` plus `vite build --watch`. Wait for `-Status` to
 show a rebuild after the client change before checking the browser. Use
@@ -235,7 +236,7 @@ can succeed while the running service remains stale. Use the updated canonical
 checkout's intended landed commit (`HEAD` or `origin/master`), never a remote
 worktree's HEAD, to compare with `GET /api/version` and probe the changed feature.
 For runner or fake-gateway changes, run
-`pwsh -File scripts/check-daemon-build.ps1` from that canonical checkout, restart
+`scripts\antiphon.cmd check-daemon-build` from that canonical checkout, restart
 or redeploy only the affected service when indicated, and recheck its reported
 build. When that service is the standing server2 runner, the redeploy is the staged
 rolling rollout; keep dispatching under

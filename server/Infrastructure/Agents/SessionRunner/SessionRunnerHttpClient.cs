@@ -294,7 +294,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         var build = DescribeBuild(cached?.Build);
         return $"The session runner at :17204 cannot host a herdr session — it reports SessionBackends={supported}{build}. "
             + "Launching anyway would silently open a pty-host (CARD-0160 / CARD-0112). Rebuild and restart it: "
-            + "pwsh -File scripts/restart-session-runner.ps1.";
+            + "scripts/antiphon restart-session-runner.";
     }
 
     private async Task<string?> GetNamedTabPlacementCapabilityMismatchAsync(CancellationToken ct)
@@ -309,7 +309,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
         var build = DescribeBuild(cached?.Build);
         return $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}{build}. "
-            + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
+            + "Rebuild and restart it: scripts/antiphon restart-session-runner.";
     }
 
     private async Task<string?> GetSessionGenerationCapabilityMismatchAsync(CancellationToken ct)
@@ -324,7 +324,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
         var build = DescribeBuild(cached?.Build);
         return $"The session runner does not advertise {RunnerCapabilityFeatures.SessionGenerationV1}{build}. "
-            + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
+            + "Rebuild and restart it: scripts/antiphon restart-session-runner.";
     }
 
     private async Task EnsureCapabilitiesProbedAsync(CancellationToken ct)
@@ -564,7 +564,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             $"The session runner at :17204 cannot tail a '{format}' transcript — it reports support for {supported}{build}. "
             + "Launching anyway would bind no transcript, and the delivery watchdog would read that as \"never started\" "
             + "and kill a working session 10 minutes later (CARD-0112). Rebuild and restart it: "
-            + "pwsh -File scripts/restart-session-runner.ps1.");
+            + "scripts/antiphon restart-session-runner.");
     }
 
     private async Task ProbeCapabilitiesAsync()

@@ -356,7 +356,7 @@ function Invoke-ApphostGuard {
         Assert-C1744 $false 'apphost-guard.absent' 'helper absent'
     } else {
         $present = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent $true -ConfigPath 'C:\Antiphon\runner\phone-home.json'
-        $presentOk = ($null -ne $present) -and $present.Contains('REFUSED: phone-home-config-present') -and $present.Contains('If the Linux server is serving, this refusal is correct: do NOT delete the file.') -and $present.Contains('Only during ROLLBACK, after the Linux server is stopped and pg_stat_activity is clear:') -and $present.Contains('delete C:\Antiphon\runner\phone-home.json') -and $present.Contains('restart-session-runner.ps1 -Hard') -and $present.Contains('then retry.') -and (-not $present.Contains('restart-linux-server'))
+        $presentOk = ($null -ne $present) -and $present.Contains('REFUSED: phone-home-config-present') -and $present.Contains('If the Linux server is serving, this refusal is correct: do NOT delete the file.') -and $present.Contains('Only during ROLLBACK, after the Linux server is stopped and pg_stat_activity is clear:') -and $present.Contains('delete C:\Antiphon\runner\phone-home.json') -and $present.Contains('run scripts\antiphon.cmd restart-session-runner --hard, then retry.') -and $present.Contains('then retry.') -and (-not $present.Contains('restart-linux-server'))
         Assert-C1744 $presentOk 'apphost-guard.present' ([string]$present)
         $absent = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent $false -ConfigPath 'C:\Antiphon\runner\phone-home.json'
         Assert-C1744 ($null -eq $absent) 'apphost-guard.absent' ([string]$absent)

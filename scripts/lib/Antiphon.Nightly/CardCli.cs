@@ -1310,7 +1310,7 @@ namespace Antiphon.Nightly
             {
                 _host.Out.WriteLine("deployment not verified: card move and task settlement succeeded; service activation is still unverified.");
                 _host.Out.WriteLine("From the updated canonical checkout, compare the running GET /api/version SHA with the intended landed commit (canonical HEAD or origin/master), then probe the changed feature.");
-                _host.Out.WriteLine("For runner/fake-gateway changes, run pwsh -File scripts/check-daemon-build.ps1 there; restart or redeploy only the affected service using docs/apphost-runbook.md, then recheck its build.");
+                _host.Out.WriteLine("For runner/fake-gateway changes, run scripts/antiphon check-daemon-build there; restart or redeploy only the affected service using docs/apphost-runbook.md, then recheck its build.");
             }
 
             public void TrackerPush(JsonNode push)

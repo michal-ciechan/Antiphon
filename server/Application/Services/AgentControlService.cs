@@ -1158,7 +1158,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             || !features.Contains(RunnerCapabilityFeatures.HerdrNamedTabPlacement, StringComparer.OrdinalIgnoreCase))
         {
             throw new ConflictException(
-                $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.",
+                $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}. Rebuild and restart it: scripts/antiphon restart-session-runner.",
                 HerdrProblemTypes.Refused);
         }
 
@@ -1257,7 +1257,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             || !features.Contains(RunnerCapabilityFeatures.HerdrAttach, StringComparer.OrdinalIgnoreCase))
         {
             throw new ConflictException(
-                "The session runner does not advertise herdr-attach. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.",
+                "The session runner does not advertise herdr-attach. Rebuild and restart it: scripts/antiphon restart-session-runner.",
                 HerdrProblemTypes.Refused);
         }
 

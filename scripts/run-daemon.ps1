@@ -1,30 +1,19 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    Long-lived supervisor wrapper for one Antiphon service.
-    Started detached (UseShellExecute=true) by the AppHost - survives AppHost exit.
-    Tracks the service PID, auto-restarts on crash, respects desired-state file.
-.NOTES
-    ExeArgs is passed as a single space-joined string (PowerShell -File mode drops extra
-    values from [string[]] params, so we do the split ourselves).
-    Service stdout+stderr is appended to LogFile via cmd.exe shell redirection so the
-    Aspire log tailer can surface it in the dashboard console view.
+    Thin launcher for `antiphon-scripts run-daemon` (scripts/lib/Antiphon.Nightly/DaemonSupervisor.cs): the long-lived
+    supervisor of one Antiphon service (build before each launch, the built executable under cmd.exe with its output
+    appended to LogFile, restart on exit, the desired-state file, log rotation at relaunch).
 
-    BuildProjectDir: when set, 'dotnet build' runs before each (re)launch and the daemon
-    then runs the built EXE directly (Exe = the built exe path), NOT 'dotnet run'. This is
-    required for the session-runner: 'dotnet run' wraps the app in a kill-on-close Job
-    Object, and our detached pty-hosts (which deliberately break their parent chain) still
-    get captured by that job and die when the runner is torn down. Running the exe directly
-    removes that muxer job so pty-hosts survive a runner restart. Build-before-launch keeps
-    the "soft restart picks up new code" behaviour 'dotnet run' gave us for free. ASCII-only.
+    Unit 30 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because the AppHost starts this file by
+    path (Antiphon.AppHost/Supervisor/DaemonProcessService.cs, a detached pwsh -File) and the logon task's
+    scripts/autostart-session-runner.ps1 calls it. The parameters are the script's; ExeArgs stays one space-joined string
+    (PowerShell -File drops extra values from a [string[]]) and the command splits it.
 
-    Log rotation (CARD-0043): LogFile had NO retention - logs/fake-gateway.log reached 57 MB
-    unrolled. It is rotated HERE, at (re)launch, and nowhere else, because the service's
-    stdout is attached to it by a cmd.exe '>>' redirection that holds the handle open for the
-    whole service lifetime: the file can only be renamed while no service is running. Rolls
-    are pruned by age (LogRetainDays) and count (LogRetainCount), so worst case on disk is
-    LogMaxMb x (LogRetainCount + 1) per daemon. Cutting the WRITE RATE is the other half and
-    lives with each service (fake-gateway appsettings.json); rotation alone would still lose
-    a day of history to a noisy service.
+    This process is the supervisor the AppHost and the logon task record in logs/<name>.supervisor.pid, so it passes its
+    own PID as --supervisor-pid: the startup records and the session runner name it, and the command stops supervising
+    once it is gone. The command's exit code is returned; 9 when the CLI cannot be built or started (one stderr line).
+    ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param(
     [string]$Name,
@@ -41,173 +30,9 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-
-# Split the space-joined ExeArgs back into an array
-$exeArgList = if ($ExeArgs) { @($ExeArgs -split '\s+') } else { @() }
-
-function Write-Log([string]$msg) {
-    $line = "$(Get-Date -Format 'HH:mm:ss') [$Name] $msg"
-    $stream = $null
-    try {
-        # Explicit sharing keeps a milestone append from denying cmd's stdout open
-        # during launch. Diagnostics must never turn a healthy launch into exit 1.
-        $stream = [IO.File]::Open($LogFile, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-        $bytes = [Text.Encoding]::UTF8.GetBytes($line + [Environment]::NewLine)
-        $stream.Write($bytes, 0, $bytes.Length)
-    } catch {} finally { if ($stream) { $stream.Dispose() } }
-}
-
-# These records are optional diagnostics; they must not alter supervision.
-$startupProducerStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
-$startupAttempt = $null
-function Write-Startup([string]$Event, $DurationMs = $null, $ExitCode = $null, $Wrapper = $null) {
-    try {
-        $record = [ordered]@{ version = 1; event = $Event; utc = [DateTime]::UtcNow.ToString('o');
-            producer = 'supervisor'; producerPid = $PID; producerStartTimeUtc = $startupProducerStart;
-            attemptId = $startupAttempt; elapsedMs = $DurationMs; exitCode = $ExitCode;
-            wrapperPid = $null; wrapperStartTimeUtc = $null }
-        if ($Wrapper) { $record.wrapperPid = $Wrapper.Id; $record.wrapperStartTimeUtc = $Wrapper.StartTime.ToUniversalTime().ToString('o') }
-        Write-Log ('ANTIPHON_STARTUP ' + ($record | ConvertTo-Json -Compress))
-    } catch { }
-}
-
-# Ensure directories exist
-foreach ($f in @($LogFile, $ServicePidFile, $StateFile)) {
-    $d = Split-Path $f -Parent
-    if ($d -and -not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }
-}
-
-function Get-DesiredState {
-    try { (Get-Content -LiteralPath $StateFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower() } catch { 'running' }
-}
-
-# Roll $LogFile aside when it is over the cap, then prune old rolls. Only safe here, between
-# service runs: while a service is up, cmd.exe holds the log handle for the '>>' redirection.
-function Invoke-LogRotation {
-    if ($LogMaxMb -le 0) { return }
-    try {
-        $item = Get-Item -LiteralPath $LogFile -ErrorAction SilentlyContinue
-        if ($item -and $item.Length -gt ($LogMaxMb * 1MB)) {
-            $dir     = Split-Path $LogFile -Parent
-            $base    = [System.IO.Path]::GetFileNameWithoutExtension($LogFile)
-            $ext     = [System.IO.Path]::GetExtension($LogFile)
-            $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
-            $rolled  = Join-Path $dir "$base.$stamp$ext"
-            Move-Item -LiteralPath $LogFile -Destination $rolled -Force -ErrorAction Stop
-            Write-Log ("Rotated log at {0:N1} MB -> {1}" -f ($item.Length / 1MB), (Split-Path $rolled -Leaf))
-        }
-    } catch {
-        # A locked or vanished log must never stop the service from starting.
-        Write-Log "[WRN] Log rotation skipped: $_"
-        return
-    }
-
-    try {
-        $dir  = Split-Path $LogFile -Parent
-        $base = [System.IO.Path]::GetFileNameWithoutExtension($LogFile)
-        $ext  = [System.IO.Path]::GetExtension($LogFile)
-        $rolls = @(Get-ChildItem -LiteralPath $dir -Filter "$base.*$ext" -File -ErrorAction SilentlyContinue |
-                   Where-Object { $_.BaseName -match "^$([regex]::Escape($base))\.\d{8}-\d{6}$" } |
-                   Sort-Object LastWriteTime -Descending)
-        $cutoff = (Get-Date).AddDays(-$LogRetainDays)
-        for ($i = 0; $i -lt $rolls.Count; $i++) {
-            if ($i -ge $LogRetainCount -or $rolls[$i].LastWriteTime -lt $cutoff) {
-                Remove-Item -LiteralPath $rolls[$i].FullName -Force -ErrorAction SilentlyContinue
-            }
-        }
-    } catch {
-        Write-Log "[WRN] Log prune skipped: $_"
-    }
-}
-
-Write-Log "Supervisor started (PID $PID)"
-
-while ($true) {
-    $desired = Get-DesiredState
-    if ($desired -eq 'stopped') {
-        Write-Startup 'supervisor-stopping'
-        Write-Log "Desired state is stopped - exiting."
-        Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
-        exit 0
-    }
-
-    Invoke-LogRotation
-    $startupAttempt = [Guid]::NewGuid().ToString('N')
-
-    # Build before launch so a soft restart (kill the service; the loop relaunches) picks up
-    # new code, exactly as 'dotnet run' did - but we then launch the built exe directly so no
-    # kill-on-close muxer job captures the pty-hosts. The old service is already dead here, so
-    # its exe is unlocked and the build can overwrite it.
-    if ($BuildProjectDir) {
-        Write-Startup 'build-start'
-        $buildClock = [Diagnostics.Stopwatch]::StartNew()
-        Write-Log "Building $BuildProjectDir (Debug)..."
-        # A deployed daemon stamps HEAD; an unreadable HEAD builds unstamped ("unknown"), which
-        # check-daemon-build.ps1 and the runner status buildVersion then report.
-        $buildArgs = @('build', $BuildProjectDir, '-c', 'Debug', '--nologo')
-        $sourceRevision = ((& git -C $BuildProjectDir rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
-        if ($sourceRevision -match '^[0-9a-f]{40}$') { $buildArgs += "-p:SourceRevisionId=$sourceRevision" }
-        else { Write-Log "WARNING: git rev-parse HEAD failed in $BuildProjectDir; building unstamped." }
-        $buildOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-slot.ps1') -Label daemon-build -- dotnet @buildArgs 2>&1
-        $buildCode = $LASTEXITCODE
-        Write-Startup 'build-complete' $buildClock.Elapsed.TotalMilliseconds $buildCode
-        foreach ($l in $buildOut) {
-            Add-Content -LiteralPath $LogFile -Value $l -Encoding UTF8 -ErrorAction SilentlyContinue
-        }
-        if ($buildCode -ne 0) {
-            Write-Startup 'retry-scheduled' 5000 $buildCode
-            Write-Log "[ERR] Build failed (exit $buildCode). Retrying in 5 s..."
-            Start-Sleep 5
-            continue
-        }
-        Write-Log "Build succeeded."
-    }
-
-    Write-Log "Starting $Exe $($exeArgList -join ' ')"
-
-    # cmd.exe /s /c handles .cmd shims (npm, npx) and >> redirection in detached processes.
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName        = 'cmd.exe'
-    $psi.WorkingDirectory = $WorkDir
-    $psi.UseShellExecute  = $false
-    $psi.CreateNoWindow   = $true
-    if ($Name -eq 'session-runner') {
-        $psi.EnvironmentVariables['ANTIPHON_STARTUP_ATTEMPT'] = $startupAttempt
-        $psi.EnvironmentVariables['ANTIPHON_STARTUP_SUPERVISOR_PID'] = [string]$PID
-        $psi.EnvironmentVariables['ANTIPHON_STARTUP_SUPERVISOR_START'] = $startupProducerStart
-    }
-    # /s /c strips outer quotes and runs as a shell command, so >> redirection works.
-    # stdout+stderr are appended to the same log file the Aspire tailer reads.
-    $innerCmd = if ($exeArgList.Count -gt 0) { "$Exe $($exeArgList -join ' ')" } else { $Exe }
-    $psi.Arguments = "/s /c `"$innerCmd >> `"$LogFile`" 2>&1`""
-
-    try {
-        Write-Startup 'launch-requested'
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        if ($null -eq $proc) { throw "Process.Start returned null" }
-        Write-Startup 'wrapper-started' $null $null $proc
-        $proc.Id | Set-Content -LiteralPath $ServicePidFile -Encoding UTF8
-        Write-Log "Service PID $($proc.Id)"
-
-        $proc.WaitForExit()
-        $code = $proc.ExitCode
-        Write-Startup 'service-exit' $null $code
-        Write-Log "Exited (code $code)"
-    } catch {
-        Write-Startup 'launch-error' $null 1
-        Write-Log "[ERR] Failed to start: $_"
-    } finally {
-        Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
-    }
-
-    $desired = Get-DesiredState
-    if ($desired -ne 'running') {
-        Write-Startup 'supervisor-stopping'
-        Write-Log "Desired state is '$desired' - stopping."
-        exit 0
-    }
-
-    Write-Log "Restarting in 3 s..."
-    Write-Startup 'retry-scheduled' 3000
-    Start-Sleep 3
-}
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
+$arguments = @('--name', $Name, '--work-dir', $WorkDir, '--exe', $Exe, '--exe-args', $ExeArgs, '--log-file', $LogFile,
+    '--service-pid-file', $ServicePidFile, '--state-file', $StateFile, '--build-project-dir', $BuildProjectDir,
+    '--log-max-mb', [string]$LogMaxMb, '--log-retain-days', [string]$LogRetainDays, '--log-retain-count', [string]$LogRetainCount,
+    '--supervisor-pid', [string]$PID)
+exit (Invoke-AntiphonCli -Command 'run-daemon' -Arguments $arguments)

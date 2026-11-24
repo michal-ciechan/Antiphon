@@ -38,7 +38,7 @@ public class SessionRunnerCapabilityGateTests
             CancellationToken.None));
 
         error.Message.ShouldContain("cannot tail a 'codex' transcript");
-        error.Message.ShouldContain("restart-session-runner.ps1");
+        error.Message.ShouldContain("scripts/antiphon restart-session-runner");
         handler.Requests.Count.ShouldBe(1, "a refused launch must never POST /sessions");
     }
 

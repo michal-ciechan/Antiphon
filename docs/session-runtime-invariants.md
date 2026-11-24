@@ -1360,11 +1360,11 @@ isolates each item and reports errors after processing the remaining batch.
 
 ### Preserved Gotcha #22
 
-- **17204 is the canonical production session-runner port.** AppHost, the Scheduled Task daemon, `scripts/restart-session-runner.ps1`, and `server/appsettings.json` target `http://localhost:17204`. Storybook is **17209** (`db7696d`) — it used to squat 17283. The E2E fixture starts and owns a dedicated runner on a random loopback port, with manifests and logs under `tests/Antiphon.E2E/TestOutput/runner/`; session-dependent tests never use the always-on daemon. `AntiphonAppFixture` probes its child runner's `{BaseUrl}/sessions` at startup and `EnsureSessionRunnerReachable()` fails those tests immediately only if that child failed (URL + status or exception), instead of burning a 30–60s "did not reach Running status" timeout. Historical context: on 2026-08-08 a stray `node.exe` was squatting **17283** (the leftover simple-mode runner port the fixture then inherited from appsettings), so launches got **404** instead of connection-refused and failed 30–60s later with no hint as to why.
+- **17204 is the canonical production session-runner port.** AppHost, the Scheduled Task daemon, `scripts/antiphon restart-session-runner`, and `server/appsettings.json` target `http://localhost:17204`. Storybook is **17209** (`db7696d`) — it used to squat 17283. The E2E fixture starts and owns a dedicated runner on a random loopback port, with manifests and logs under `tests/Antiphon.E2E/TestOutput/runner/`; session-dependent tests never use the always-on daemon. `AntiphonAppFixture` probes its child runner's `{BaseUrl}/sessions` at startup and `EnsureSessionRunnerReachable()` fails those tests immediately only if that child failed (URL + status or exception), instead of burning a 30–60s "did not reach Running status" timeout. Historical context: on 2026-08-08 a stray `node.exe` was squatting **17283** (the leftover simple-mode runner port the fixture then inherited from appsettings), so launches got **404** instead of connection-refused and failed 30–60s later with no hint as to why.
 
 ### Preserved Gotcha #23
 
-- **Transcript-format runner mismatch:** a session-runner that predates a transcript-format change now refuses the launch instead of silently tailing the wrong file; the fix is `pwsh -File scripts/restart-session-runner.ps1`.
+- **Transcript-format runner mismatch:** a session-runner that predates a transcript-format change now refuses the launch instead of silently tailing the wrong file; the fix is `scripts/antiphon restart-session-runner`.
 
 ### Preserved Gotcha #25
 
@@ -1416,7 +1416,7 @@ isolates each item and reports errors after processing the remaining batch.
 
 ### Preserved Gotcha #29
 
-- **Sessions survive runner restarts (pty-host split)**: Since the pty-host split (spec: `docs/superpowers/specs/2026-07-19-pty-host-split.md`), each agent session's ConPTY child lives in a detached per-session `Antiphon.PtyHost` process, NOT in the session-runner. `restart-session-runner.ps1` no longer kills sessions — the restarted runner re-adopts live hosts from `<SessionLogPath>/pty-hosts/manifests/*.json`. Scorched earth: `-KillSessions` flag or `POST :17204/sessions/kill-all`. Hosts run from shadow-copied binaries under `pty-hosts/bin/<yyyyMMdd-HHmmss>-<sha8>/` (never from `bin/` — running exes there would break builds); unreferenced version dirs are pruned automatically.
+- **Sessions survive runner restarts (pty-host split)**: Since the pty-host split (spec: `docs/superpowers/specs/2026-07-19-pty-host-split.md`), each agent session's ConPTY child lives in a detached per-session `Antiphon.PtyHost` process, NOT in the session-runner. `scripts/antiphon restart-session-runner` no longer kills sessions — the restarted runner re-adopts live hosts from `<SessionLogPath>/pty-hosts/manifests/*.json`. Scorched earth: `--kill-sessions` flag or `POST :17204/sessions/kill-all`. Hosts run from shadow-copied binaries under `pty-hosts/bin/<yyyyMMdd-HHmmss>-<sha8>/` (never from `bin/` — running exes there would break builds); unreferenced version dirs are pruned automatically.
 
 ### Preserved Gotcha #32
 

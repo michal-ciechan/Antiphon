@@ -141,8 +141,8 @@ public sealed class StandingPipelinePolicyDocumentationTests
         loop.ShouldContain(policySentence);
         foreach (var sentence in new[]
         {
-            "For a desktop runner restart, use `pwsh -NoProfile -File scripts/restart-session-runner.ps1`; use `-Hard` only for a planned supervisor refresh under the AppHost runbook.",
-            "`-KillSessions` kills detached sessions and is human-only, never part of this autonomy grant.",
+            "For a desktop runner restart, use `scripts/antiphon restart-session-runner`; use `--hard` only for a planned supervisor refresh under the AppHost runbook.",
+            "`--kill-sessions` kills detached sessions and is human-only, never part of this autonomy grant.",
             "Before an AppHost or desktop runner restart, ensure `logs/apphost.restart.lock` and `logs/apphost.launch.lock` are clear; AppHost exit 3 refuses the restart, so inspect ownership and both locks before retrying.",
         })
         {
@@ -185,7 +185,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
     [Test]
     public void operational_autonomy_short_copies_pin_the_runner_restart_boundary()
     {
-        const string shortSentence = "For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` (`-Hard` only for a planned supervisor refresh; `-KillSessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.";
+        const string shortSentence = "For a desktop runner restart use `scripts/antiphon restart-session-runner` (`--hard` only for a planned supervisor refresh; `--kill-sessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.";
         foreach (var relative in new[] { "AGENTS.md", ".claude/skills/antiphon-orchestrator/SKILL.md" })
         {
             var text = Collapse(ReadRepoFile(relative));

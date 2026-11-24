@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 359,
+      "classes": 352,
       "reason": "allowlist"
     },
     {
@@ -2190,25 +2190,25 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 51,
+      "classes": 54,
       "reason": "cap",
-      "owed": 26,
+      "owed": 29,
       "first": [
+        "ToolchainFloorWarningTests",
         "AwayDigestSendTests",
         "C599SnapshotTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
         "TestSelectionExecutionTests",
         "TestTimingReportTests",
-        "LongPathsCheckoutScriptTests",
-        "NightlyLockFormatTests"
+        "DaemonSupervisorTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 52,
+      "classes": 53,
       "reason": "cap",
-      "owed": 27,
+      "owed": 28,
       "first": [
         "RcProjectSelectionTests",
         "ReleaseGateRegistrationTests",
@@ -2222,10 +2222,13 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 29,
+      "classes": 32,
       "reason": "cap",
-      "owed": 4,
+      "owed": 7,
       "first": [
+        "RcRunEvidenceTests",
+        "ReleaseGatePlatformTests",
+        "ReleaseStatusTests",
         "RepositoryChildRecoveryCommandTests",
         "StageValueReportTests",
         "ZombieAgentReaperTests",
@@ -3569,6 +3572,7 @@
     {
       "path": "restart-server.ps1",
       "classes": [
+        "AntiphonCliLauncherTests",
         "NightlyScriptsTests",
         "ToolchainFloorWarningTests"
       ]
@@ -3576,15 +3580,14 @@
     {
       "path": "restart-session-runner.ps1",
       "classes": [
-        "AgentTaskDeliveryWatchdogTests",
-        "DaemonStartupDiagnosticsTests",
-        "ProcessSpawnLimitTests",
-        "RunnerRestartHealthTests",
-        "RunnerRestartPreflightSafetyTests",
-        "RunnerRestartScriptCompatibilityTests",
-        "RunnerStartupDiagnosticsTests",
-        "RunnerStartupReadinessTests",
-        "SessionRunnerCapabilityGateTests"
+        "AntiphonCliLauncherTests",
+        "DockerStackDocumentationTests"
+      ]
+    },
+    {
+      "path": "restart.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -3600,6 +3603,12 @@
       "classes": [
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/autostart-session-runner.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -3762,7 +3771,7 @@
     {
       "path": "scripts/check-daemon-build.ps1",
       "classes": [
-        "DockerStackDocumentationTests"
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -4403,6 +4412,7 @@
     {
       "path": "scripts/lib/antiphon-cli.ps1",
       "classes": [
+        "AntiphonCliLauncherTests",
         "ReleaseImpactScriptTests"
       ]
     },
@@ -4549,6 +4559,12 @@
       "classes": [
         "CheckpointColdBuildTests",
         "CheckpointLargeStampScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/run-daemon.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -19535,7 +19551,7 @@
     {
       "path": "src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj",
       "classes": [
-        "RunnerCapabilitiesTests"
+        "DaemonBuildCheckTests"
       ]
     },
     {
@@ -20434,6 +20450,12 @@
       "classes": [
         "C1817RunnerRepositoryMaintenanceTests",
         "RunnerWorkspaceServiceTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerStartupDiagnostics.cs",
+      "classes": [
+        "RunnerMilestoneReaderTests"
       ]
     },
     {
@@ -22114,18 +22136,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.SessionRunner.Tests/DaemonLogRotationTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/DaemonStartupDiagnosticsTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.SessionRunner.Tests/FakeHerdrServer.cs",
       "classes": [
         "AgentAttachHerdrTests",
@@ -22177,24 +22187,6 @@
         "CodexCliVersionWindowsTests",
         "CodexLaunchRefusalTests",
         "RunnerCodexCliEvidenceTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/Fixtures/RunnerRestart/RestartFixture.cs",
-      "classes": [
-        "DaemonStartupDiagnosticsTests",
-        "RunnerRestartHealthTests",
-        "RunnerRestartPreflightSafetyTests",
-        "RunnerRestartScriptCompatibilityTests",
-        "RunnerStartupDiagnosticsTests",
-        "RunnerStartupReadinessTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/Fixtures/RunnerRestart/RestartPreflightCache.cs",
-      "classes": [
-        "RunnerRestartPreflightCacheTests",
-        "RunnerRestartPreflightSafetyTests"
       ]
     },
     {
@@ -22506,30 +22498,6 @@
       "path": "tests/Antiphon.SessionRunner.Tests/RunnerPlatformLaunchTests.cs",
       "classes": [
         "RunnerPlatformLaunchDiagnosticsTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/RunnerRestartDiagnosticTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/RunnerRestartHealthTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/RunnerRestartPreflightSafetyTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.SessionRunner.Tests/RunnerRestartScriptCompatibilityTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -25778,6 +25746,8 @@
       "classes": [
         "AntiphonLogsTests",
         "CardCommandTests",
+        "DaemonBuildCheckTests",
+        "DaemonSupervisorTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyRunTests",
@@ -25788,6 +25758,7 @@
         "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
         "ReleaseStatusTests",
+        "RunnerRestartOsTests",
         "StageValueReportTests",
         "ZombieAgentReaperTests"
       ]
@@ -25796,6 +25767,8 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
         "AntiphonLogsTests",
+        "DaemonBuildCheckTests",
+        "DaemonSupervisorTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
@@ -25812,6 +25785,7 @@
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
+        "RunnerRestartOsTests",
         "StageValueReportTests",
         "ToolchainFloorWarningTests",
         "ZombieAgentReaperTests"
@@ -25829,7 +25803,8 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "NightlyHealthTests",
-        "NightlyReportTests"
+        "NightlyReportTests",
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -25878,9 +25853,9 @@
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
+        "RunnerRestartOsTests",
         "TestTimingsTwinTests",
-        "TestTraceSummaryTests",
-        "ToolchainFloorWarningTests"
+        "TestTraceSummaryTests"
       ]
     },
     {
@@ -25979,6 +25954,8 @@
         "AntiphonLogsTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
+        "DaemonBuildCheckTests",
+        "DaemonSupervisorTests",
         "ExpectedDurationSyncTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
@@ -25997,10 +25974,8 @@
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
-        "RcRunEvidenceTests",
         "ReleaseGateLibraryTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseStatusTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -26076,7 +26051,8 @@
       "classes": [
         "QualificationStopTests",
         "QualificationSupervisorTests",
-        "RcQualificationStatusTests"
+        "RcQualificationStatusTests",
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -26309,6 +26285,15 @@
       "path": "tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RunnerRestartWorld.cs",
+      "classes": [
+        "DaemonSupervisorTests",
+        "RunnerMilestoneReaderTests",
+        "RunnerRestartHealthTests",
+        "ToolchainFloorWarningTests"
       ]
     },
     {

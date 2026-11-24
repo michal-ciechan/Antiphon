@@ -46,7 +46,7 @@ public partial class AgentTaskDeliveryWatchdogTests
         var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         failed.Status.ShouldBe(AgentTaskStatus.Failed);
         failed.FailureReason.ShouldContain("cannot tail a 'codex' transcript");
-        failed.FailureReason.ShouldContain("restart-session-runner.ps1");
+        failed.FailureReason.ShouldContain("scripts/antiphon restart-session-runner");
         stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value,
             "positive runner blindness is evidence to withhold the destructive half of the watchdog");
     }
@@ -3339,7 +3339,7 @@ public partial class AgentTaskDeliveryWatchdogTests
             TranscriptFormats.Codex,
             new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
                 [TranscriptFormats.Claude, TranscriptFormats.Grok]),
-            "The session runner at :17204 cannot tail a 'codex' transcript. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.");
+            "The session runner at :17204 cannot tail a 'codex' transcript. Rebuild and restart it: scripts/antiphon restart-session-runner.");
 
         public Task<RunnerCapabilityMismatch?> GetTranscriptCapabilityMismatchAsync(AgentKind kind, CancellationToken ct) =>
             Task.FromResult<RunnerCapabilityMismatch?>(kind == AgentKind.Codex ? Mismatch : null);

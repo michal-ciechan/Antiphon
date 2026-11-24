@@ -265,13 +265,13 @@ codex --version
 Require `codex-cli <new>` from the PATH shim the runner resolves (`codex.cmd`). Rollback is the
 same command with the previous version. A runner restart is not needed for new processes to use
 the new files; the version observation (`codex-cli-version-v1`) refreshes on its next probe. If a
-restart is wanted, use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` with
+restart is wanted, use `scripts\antiphon.cmd restart-session-runner` with
 `logs/apphost.restart.lock` and `logs/apphost.launch.lock` clear. Wait for Windows
-qualification to release the desktop before restarting. Leave `-KillSessions` off.
+qualification to release the desktop before restarting. Leave `--kill-sessions` off.
 
 The first desktop runner restart after the AppHost activates deploy-only SHA
-stamping requires `scripts/restart-session-runner.ps1 -Hard` to replace the
-resident supervisor. Run `scripts/check-daemon-build.ps1` and confirm the
+stamping requires `scripts\antiphon.cmd restart-session-runner --hard` to replace the
+resident supervisor. Run `scripts\antiphon.cmd check-daemon-build` and confirm the
 runner's `/capabilities` field `build.commitSha` equals checkout HEAD.
 
 ## Step 5. AppHost restart onto the rc tip

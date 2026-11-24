@@ -1,8 +1,8 @@
 // CARD-1698 host toolchain floors. Warn, never refuse (operator decision 2026-11-03). W2-nightly S03 ported
 // scripts/lib/toolchain-floor.ps1 here; the 2026-11-22 plan (2026-11-22-remaining-ps1-to-csharp.md, unit 1) deleted it.
-// The run core (NightlyRun.cs) and the tests run (NightlyTests.cs) call Warnings and Report in-process; the restart chain
-// (restart-server.ps1, session-runner-restart-health.ps1) runs `antiphon-scripts toolchain-floor` (Run) through
-// scripts/lib/antiphon-cli.ps1.
+// The run core (NightlyRun.cs) and the tests run (NightlyTests.cs) call Warnings and Report in-process, and so does the
+// runner restart (RunnerRestart.Run, the restart-session-runner command since unit 30); restart-server.ps1 runs
+// `antiphon-scripts toolchain-floor` (Run) through scripts/lib/antiphon-cli.ps1.
 //
 // The manifest names where each floor is declared; it restates no version number.
 // - git: docker/git-minimum-version.sh (GIT_MINIMUM_VERSION=, CARD-1260), the same file both images run at build time.

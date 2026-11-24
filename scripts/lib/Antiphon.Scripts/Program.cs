@@ -198,6 +198,12 @@ namespace Antiphon.Scripts
             [RoutingWorkspaceCommands.ComplexityChain] = RoutingWorkspaceCommands.RunComplexityChain,
             [RoutingWorkspaceCommands.MigrateStagePins] = RoutingWorkspaceCommands.RunMigrateStagePins,
             [RoutingWorkspaceCommands.OrchestratorWorkspace] = RoutingWorkspaceCommands.RunOrchestratorWorkspace,
+            // The SessionRunner restart chain answers every input itself (unit 30). restart-session-runner: exit 0 healthy,
+            // 2 wait-expired, 1 action-failed, wait-failed or not Windows (its result line last on stdout). run-daemon: 0 once
+            // supervision ends. check-daemon-build: 0, or 1 with --fail-on-stale when a daemon is stale. Usage is 2 for each.
+            [RunnerDaemonCommands.RestartSessionRunner] = RunnerDaemonCommands.RunRestartSessionRunner,
+            [RunnerDaemonCommands.RunDaemon] = RunnerDaemonCommands.RunRunDaemon,
+            [RunnerDaemonCommands.CheckDaemonBuild] = RunnerDaemonCommands.RunCheckDaemonBuild,
         };
 
         public static int Main(string[] args)
@@ -234,7 +240,8 @@ namespace Antiphon.Scripts
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
-                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage);
+                + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
+                + " | " + RunnerDaemonCommands.Usage);
             return Usage;
         }
 

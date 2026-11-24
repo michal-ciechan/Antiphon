@@ -32,20 +32,21 @@ it never live-mounts `~/.grok`. The first standing Grok start is `fresh: true`.
 
 ## Runner restart observation (CARD-0420)
 
-`pwsh -NoProfile -File scripts/restart-session-runner.ps1` preserves detached
+`scripts\antiphon.cmd restart-session-runner` (the `restart-session-runner` command;
+`scripts/antiphon restart-session-runner` from a POSIX shell) preserves detached
 sessions. Startup includes the supervisor delay, an incremental build, executable
 launch and the complete initial adoption sweep before HTTP. The default health
-wait is **180 seconds**, beginning after restart actions. `-TimeoutSec` accepts a
+wait is **180 seconds**, beginning after restart actions. `--timeout-sec` accepts a
 positive integer override. This is headroom based on two measured restarts, not a
 latency percentile, guaranteed bound or startup speed improvement.
 
 The first desktop runner restart after SHA stamp activation must use
-`pwsh -NoProfile -File scripts/restart-session-runner.ps1 -Hard` to load the
+`scripts\antiphon.cmd restart-session-runner --hard` to load the
 supervisor's updated build command. After the restart, run
-`scripts/check-daemon-build.ps1` and verify the runner's `build.commitSha` from
+`scripts\antiphon.cmd check-daemon-build` and verify the runner's `build.commitSha` from
 `/capabilities` equals the checkout HEAD. If the verified runner reports an
-unstamped build after a soft restart or a continued wait, the script prints
-the `-Hard` hint as a warning. The health result and exit code still reflect
+unstamped build after a soft restart or a continued wait, the command prints
+the `--hard` hint as a warning. The health result and exit code still reflect
 readiness.
 
 The final `RUNNER RESTART RESULT:` line contains compact JSON. Outcomes are
@@ -58,11 +59,11 @@ An expired wait stops observation only; supervision and adoption continue.
 Continue observing with no state writes, stops, PID deletion or Scheduled Task calls:
 
 ```powershell
-pwsh -NoProfile -File scripts/restart-session-runner.ps1 -WaitOnly -TimeoutSec 180
+scripts\antiphon.cmd restart-session-runner --wait-only --timeout-sec 180
 Get-Content logs\session-runner.log -Tail 30
 ```
 
-`-WaitOnly` cannot be combined with `-Hard` or `-KillSessions`. A mere wait expiry
+`--wait-only` cannot be combined with `--hard` or `--kill-sessions`. A mere wait expiry
 does not call for another ordinary or hard restart. Also inspect dated Serilog
 files at `%TEMP%\antiphon-logs\session-runner-*.log` (or configured `Serilog:LogPath`).
 
@@ -82,15 +83,15 @@ is labeled `http-200-late`; a genuinely unverified 200 is
 The restart stops the recorded service wrapper and runners at this checkout's
 `src\Antiphon.SessionRunner\bin\Debug\net9.0\Antiphon.SessionRunner.exe` path.
 Unlike the former port-blind kill, it leaves other port 17204 listeners alone,
-including worktree and Release builds, even with `-Hard`. Expiry output and the
+including worktree and Release builds, even with `--hard`. Expiry output and the
 JSON `portOwner` field identify the observed listener's PID and actual executable
 path when available, including when health returned a non-200 status. Establish
-that process's ownership before stopping it; retrying `-Hard` cannot clear a
+that process's ownership before stopping it; retrying `--hard` cannot clear a
 foreign executable simply because it owns the port.
 
 For deployment, verify the commit is in the canonical checkout, then schedule one
-supervisor refresh (`-Hard`) to load these script changes if the supervisor is old.
-Do not re-register the task, create another supervisor or use `-KillSessions`.
+supervisor refresh (`--hard`) to load these supervisor changes if the supervisor is old.
+Do not re-register the task, create another supervisor or use `--kill-sessions`.
 An old supervisor without milestones still supports health observation. Verify new
 supervisor records and the runner's `/capabilities` build identity after rollout;
 HTTP health alone does not prove the intended code loaded. Code-stage verification
@@ -501,7 +502,7 @@ Migrations run automatically on startup. The server also seeds initial data.
 |---|---|---|
 | `server/logs/antiphon-*.log` | server Serilog (`Serilog:LogPath`) | **5 days**, plus a 14 x 100 MB (1.4 GB) disk backstop |
 | `%TEMP%\antiphon-logs\session-runner-*.log` | session-runner Serilog — **not** under `logs/` | 14 days / 14 x 50 MB |
-| `logs/session-runner.log`, `logs/fake-gateway.log` | `scripts/run-daemon.ps1` stdout capture | rolled aside at daemon (re)launch above 20 MB; rolls pruned after 5 days / 10 files |
+| `logs/session-runner.log`, `logs/fake-gateway.log` | the `run-daemon` supervisor's stdout capture (`scripts/run-daemon.ps1` launches it) | rolled aside at daemon (re)launch above 20 MB; rolls pruned after 5 days / 10 files |
 | `C:\logs\antiphon\session-runner\*.ansi.log` | per-session raw PTY output | `AuditCleanupService` |
 
 **Retention is by TIME, and `retainedFileCountLimit` is only a disk backstop.** It counts FILES, not
@@ -588,7 +589,7 @@ Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antip
 So agents can run without launching the AppHost, four pieces auto-start at login (set up once via `scripts/install-autostart.ps1`; remove with `-Uninstall`):
 
 - **PostgreSQL** — standalone container `antiphon-postgres` (`docker-compose.dev.yml`, `restart: unless-stopped`) on host port **17280**. Returns on boot via that restart policy + Docker Desktop "AutoStart". It is **no longer Aspire-managed**: the AppHost references it with `AddConnectionString("DefaultConnection")` (value in `Antiphon.AppHost/appsettings.json` = the same `localhost:17280` string the server uses).
-- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` → `scripts/run-daemon.ps1`. It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (`run-daemon.ps1 -BuildProjectDir` rebuilds first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
+- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` → `scripts/run-daemon.ps1` (the launcher of the `run-daemon` command). It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (`run-daemon --build-project-dir` rebuilds first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
 
 - **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire.ps1 -NoBrowser`. It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire.ps1` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire.ps1`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart.ps1 -NoAppHost`.
 - **AppHost watchdog** — per-user Scheduled Task **"Antiphon AppHost Watchdog"**, every **2 minutes**. `scripts/watchdog-apphost.ps1` probes `http://localhost:17202/health` and `http://localhost:17203/` over HTTP (not TCP listen: Aspire's `dcpctrl` owns both published ports), confirms three **down** rounds ~15 s apart, then calls `scripts/restart-apphost.ps1` so the session-runner on 17204 is never touched. A probe of `client=200` plus `/health` HttpClient timeout is **not** a down round (loaded or coming-up, not a corpse; CARD-0310). Cooldown **15 min** (the same number as `LockMaxAgeMinutes`) / flap cap 3 restarts per 60 min; cooldown is **not** a substitute for the lock — it only tracks watchdog-stamped restarts, so a manual `restart-apphost.ps1` is invisible to it. Log `logs/watchdog-apphost.log` (includes restart-apphost's last ~40 lines and named exit: `0=healthy`, `1=timeout/build`, `3=refused`, `4=DCP timeout`, `5=server build unverified` — `exited N` alone is no longer the record). Health/outage observation precedes recovery guards. Recovery normally skips while **either** lock **stamp** is younger than 15 min, even if the holding PID has exited; the early restart-lock exception requires the [two-fire dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) (CARD-1527). It re-checks both **immediately before** restarting (the check at the top of a fire is up to ~60 s of probing old), and does not stamp a restart when `restart-apphost.ps1` exits 3 — a refusal killed nothing and must not spend flap budget (CARD-0075). Delayed 15 minutes after logon so it does not kill the logon launch. Each fire runs the current `scripts/watchdog-apphost.ps1` from the registering checkout; an AppHost restart does not reload it, and script-only updates need no task re-registration. The runbook also documents the independent Event Log/marker sinks and optional `ANTIPHON_WATCHDOG_ALERT_WEBHOOK` (HTTPS only, five-second bound, no redirects; URL and response body never logged). Opt out of registration with `install-autostart.ps1 -NoWatchdog`.
@@ -644,7 +645,7 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 - **A podman error in `apphost.log` means the DCP dependency check TIMED OUT — not that a container runtime is missing** (CARD-0075; same genre as the MSB3552 resx and HNS "Created" entries below — the message names the wrong thing). `dcp info` probes podman **first on every single invocation, healthy ones included** (measured 2026-08-20: podman at +0 ms, docker at +382 ms, result at +648 ms, `"runtime":"docker","installed":true,"running":true`), and Aspire splices that captured stderr into the exception text — `dependency check returned an error: {0}` where `{0}` is `"The operation has timed out. <dcp stderr>"`, one concatenated string. A timeout truncates that stderr **after** the runtime that answered instantly and **before** the one whose stall consumed the whole deadline, so the message accuses podman precisely because podman is *not* what failed. Podman is not installed here, is not needed, and this AppHost has **zero container resources** (`AddConnectionString` + `AddProject` + 2× `AddNpmApp`) — yet `EnsureDcpContainerRuntimeAsync` still sits on the critical path of every launch. Log-level filtering cannot help (`Aspire.Hosting.Dcp: Warning` is already set; this is exception content, not a log record), and *any* future dependency-check timeout prints the identical podman text regardless of cause. The real cause is almost always **two restarts racing** — a caller whose `restart-apphost.ps1` "failed" re-runs it and the re-run's `taskkill` lands on a DCP that is still coming up (a 44-run census found same-session re-runs at +145 s and +191 s, both inside the previous run's own launch window). `restart-apphost.ps1` now detects this shape itself and prints what `docker` actually said instead of leaving the podman text standing, exiting **4**. Check `docker ps`, then `logs/apphost.restart.lock`, `logs/apphost.launch.lock` and `logs/watchdog-apphost.log`, before changing any configuration. Do **not** raise `DcpPublisher:DependencyCheckTimeout` (it masks the collision) and do not chase `--container-runtime`/`DCP_CONTAINER_RUNTIME` (measured: unsupported in Aspire 9.3.0). ### Preserved Gotcha #14
 
-- **Stale daemon supervisors**: Each AppHost restart now kills the existing supervisor (read from `logs/<name>.supervisor.pid`) before launching a new one. If supervisors accumulate from manual kills or crashes, use: `Get-WmiObject Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -like '*run-daemon*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }` (supervisors run under pwsh 7; use `powershell.exe` in the filter if you ever fall back to 5.1). **Be precise** — filter by the specific project path or check `logs/*.supervisor.pid` first, or you risk killing the current session's supervisors. Note the session-runner supervisor is normally owned by the **"Antiphon Session Runner"** Scheduled Task, not the AppHost. ### Preserved Gotcha #15
+- **Stale daemon supervisors**: Each AppHost restart now kills the existing supervisor (read from `logs/<name>.supervisor.pid`) before launching a new one. If supervisors accumulate from manual kills or crashes, use: `Get-WmiObject Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -like '*run-daemon*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }` (supervisors run under pwsh 7; use `powershell.exe` in the filter if you ever fall back to 5.1). Each supervisor is that `run-daemon.ps1` launcher plus its `dotnet ... run-daemon` child; the child ends supervision once its launcher is gone and the service has exited, and `taskkill /T /F /PID <launcher pid>` ends the whole tree at once. **Be precise** — filter by the specific project path or check `logs/*.supervisor.pid` first, or you risk killing the current session's supervisors. Note the session-runner supervisor is normally owned by the **"Antiphon Session Runner"** Scheduled Task, not the AppHost. ### Preserved Gotcha #15
 
 - **appsettings.json paths on Windows**: Any file paths in `appsettings.json` (e.g. worktree directories) must use Windows-style backslashes. Linux-style forward slashes in path config break on Windows even though .NET sometimes tolerates them. ### Preserved Gotcha #16
 

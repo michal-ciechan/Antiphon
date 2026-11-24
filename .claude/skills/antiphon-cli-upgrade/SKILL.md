@@ -72,7 +72,7 @@ first real screen of the new CLI.
 
 ## Never
 
-- `-Phase all`, `-RecycleVolumes`, `-AllowWorktree`, `-KillSessions`, Docker prune.
+- `-Phase all`, `-RecycleVolumes`, `-AllowWorktree`, `restart-session-runner --kill-sessions`, Docker prune.
 - An AppHost restart before the runners carry the CLI the new ladder needs.
 - `git pull` in `C:\src\Antiphon` before an AppHost restart: hosts track the rc tip, not master.
 - Reading or printing `auth.json`, a token, or a secret. Session rollout files are readable; auth

@@ -330,11 +330,14 @@ public class LogRetentionTests
     public async Task Daemon_supervisor_rotates_and_prunes_its_capture_log()
     {
         // logs/fake-gateway.log and logs/session-runner.log are cmd.exe '>>' captures with no
-        // retention at all. run-daemon.ps1 rotates them at (re)launch - the only moment the handle
-        // is free - and prunes rolls by age and count.
+        // retention at all. The run-daemon supervisor (Antiphon.Nightly.DaemonSupervisor, behind the
+        // scripts/run-daemon.ps1 launcher since unit 30) rotates them at (re)launch - the only moment the
+        // handle is free - and prunes rolls by age and count; DaemonSupervisorTests run the rotation.
+        var defaults = new Antiphon.Nightly.DaemonSupervisorOptions();
+        (defaults.LogMaxMb, defaults.LogRetainDays, defaults.LogRetainCount).ShouldBe((20, 5, 10));
         var script = await File.ReadAllTextAsync(Path.Combine(RepoRoot, "scripts", "run-daemon.ps1"));
 
-        script.ShouldContain("Invoke-LogRotation");
+        script.ShouldContain("'--log-max-mb', [string]$LogMaxMb");
         script.ShouldContain("$LogRetainDays");
         script.ShouldContain("$LogRetainCount");
     }

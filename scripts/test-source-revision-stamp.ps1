@@ -52,19 +52,15 @@ function Test-StampedSplat($Ast, $Command, $Splat, [string]$Surface) {
     } | Select-Object -Last 1
     if ($null -eq $initial) { return $false }
 
-    # Each accepted append belongs to the call's block, or to the daemon's
-    # validated HEAD branch. A comment or unrelated branch has no authority here.
+    # Each accepted append belongs to the call's block. A comment or another
+    # branch has no authority here. (The daemon's validated HEAD branch is C#
+    # since unit 30: DaemonSupervisor.cs, pinned by DaemonSupervisorTests.)
     foreach ($append in $assignments) {
         if ($append.Operator -ne [TokenKind]::PlusEquals -or
             $append.Extent.StartOffset -lt $initial.Extent.EndOffset -or
             $append.Right -isnot [CommandExpressionAst] -or
             -not (Test-StampArgument $append.Right.Expression)) { continue }
-        $appendBlock = Get-StatementBlock $append
-        if ($appendBlock -eq $block) { return $true }
-        $guard = $appendBlock.Parent
-        if ($Surface -ceq 'scripts/run-daemon.ps1' -and $guard -is [IfStatementAst] -and
-            $guard.Parent -eq $block -and $guard.Clauses[0].Item2 -eq $appendBlock -and
-            $guard.Clauses[0].Item1.Extent.Text -ceq '$sourceRevision -match ''^[0-9a-f]{40}$''') { return $true }
+        if ((Get-StatementBlock $append) -eq $block) { return $true }
     }
     return $false
 }
@@ -166,11 +162,12 @@ if ($Case -eq 'audit') {
         'dev-start.ps1' = 1
         'dev-upgrade.ps1' = 2
         'restart-server.ps1' = 1
-        'scripts/run-daemon.ps1' = 1
         'scripts/start-windows-phone-home-runner.ps1' = 1
     }
     # The watchdog publish is C# since unit 10 of 2026-11-22-remaining-ps1-to-csharp.md (NightlyWatchdogDeploy.cs, which
     # refuses an unreadable HEAD); NightlyVerificationContractTests.C545_DeployCommandLines pins its stamped argv.
+    # The daemon build is C# since unit 30 (DaemonSupervisor.cs, which builds unstamped when HEAD is unreadable);
+    # DaemonSupervisorTests pins its stamped argv. scripts/run-daemon.ps1, its launcher, is still scanned for a build.
     $surfaces = @($expected.Keys | Where-Object { $_ -notlike 'scripts/*' })
     $surfaces += @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'scripts') -File -Filter '*.ps1' |
         Where-Object { $_.Name -match '^(restart|deploy|publish|release|promote)-|^run-daemon\.ps1$|^start-.*-runner\.ps1$' } |

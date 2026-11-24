@@ -854,4 +854,124 @@ public sealed class AntiphonCliLauncherTests
         using var document = JsonDocument.Parse(File.ReadAllText(report));
         (document.RootElement.GetProperty("candidateCount").GetInt32(), document.RootElement.GetProperty("exitCode").GetInt32()).ShouldBe((9, 0));
     }
+
+    // ---- unit 30: scripts/run-daemon.ps1, the launcher the AppHost (DaemonProcessService: a detached pwsh -File) and the
+    // logon task's autostart-session-runner.ps1 start by path; scripts/check-daemon-build.ps1, which restart-apphost.ps1 and
+    // dev-aspire.ps1 run by path; and the repository root's restart-session-runner.ps1 forwarder ----
+
+    [Test]
+    public async Task Run_daemon_launcher_passes_the_apphost_command_line_and_names_itself_the_supervisor()
+    {
+        using var fixture = CleanupCheckout("run-daemon.ps1");
+        var entry = fixture.PathOf("scripts", "run-daemon.ps1");
+        // DaemonProcessService.BuildArgs: ExeArgs is one value with a leading space, so -File never reads it as a parameter name.
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", entry,
+                     "-Name", "session-runner", "-WorkDir", @"C:\fixture root\runner", "-Exe", @"C:\fixture root\runner\bin\Antiphon.SessionRunner.exe",
+                     "-ExeArgs", " --urls http://localhost:17204", "-LogFile", @"C:\fixture root\logs\session-runner.log",
+                     "-ServicePidFile", @"C:\fixture root\logs\session-runner.service.pid", "-StateFile", @"C:\fixture root\logs\session-runner.state",
+                     "-BuildProjectDir", @"C:\fixture root\runner" })
+            start.ArgumentList.Add(argument);
+        start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedEcho;
+        start.Environment["CLI_ECHO_COMMAND"] = "run-daemon";
+        var process = Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start");
+        var launcher = process.Id;
+        var run = await Finish(process);
+        run.Exit.ShouldBe(0, run.Stderr);
+        var echo = run.Echo();
+        Arguments(echo).ShouldBe(["--name", "session-runner", "--work-dir", @"C:\fixture root\runner", "--exe", @"C:\fixture root\runner\bin\Antiphon.SessionRunner.exe",
+            "--exe-args", " --urls http://localhost:17204", "--log-file", @"C:\fixture root\logs\session-runner.log",
+            "--service-pid-file", @"C:\fixture root\logs\session-runner.service.pid", "--state-file", @"C:\fixture root\logs\session-runner.state",
+            "--build-project-dir", @"C:\fixture root\runner", "--log-max-mb", "20", "--log-retain-days", "5", "--log-retain-count", "10",
+            "--supervisor-pid", launcher.ToString()]);
+        echo.GetProperty("pid").GetInt32().ShouldNotBe(launcher, "the command runs in a child of the launcher, which stays the recorded supervisor");
+        var options = DaemonSupervisorOptions.Parse(Arguments(echo), "slot");
+        options.ExeArgList.ShouldBe(["--urls", "http://localhost:17204"]);
+        options.SupervisorPid.ShouldBe(launcher);
+
+        // A blank -BuildProjectDir (no build) leaves with its flag; the numbers pass as given.
+        var plain = await NightlyRunHops.LauncherEcho(entry, ["-Name", "fake-gateway", "-WorkDir", "w", "-Exe", "e", "-LogFile", "l", "-ServicePidFile", "p",
+            "-StateFile", "s", "-LogMaxMb", "0", "-LogRetainDays", "2", "-LogRetainCount", "3"], fixture.Root,
+            environment: new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "run-daemon" });
+        plain.ExitCode.ShouldBe(0, plain.Stderr);
+        var received = DaemonSupervisorOptions.Parse(plain.Arguments.ShouldNotBeNull(plain.Stdout + plain.Stderr), "slot");
+        (received.Name, received.BuildProjectDir, received.ExeArgs, received.LogMaxMb, received.LogRetainDays, received.LogRetainCount).ShouldBe(("fake-gateway", "", "", 0, 2, 3));
+
+        AssertThinLauncher("run-daemon.ps1", "    [string]$Name,", "    [string]$ExeArgs,", "    [string]$BuildProjectDir = '',", "    [int]$LogMaxMb = 20,",
+            "    [int]$LogRetainDays = 5,", "    [int]$LogRetainCount = 10");
+    }
+
+    [Test]
+    public async Task Run_daemon_launcher_that_cannot_start_the_cli_exits_9()
+    {
+        using var fixture = CleanupCheckout("run-daemon.ps1");
+        var run = await NightlyRunHops.LauncherEcho(fixture.PathOf("scripts", "run-daemon.ps1"), ["-Name", "n"], fixture.Root,
+            environment: new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        run.ExitCode.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+    }
+
+    [Test]
+    public async Task Check_daemon_build_launcher_passes_fail_on_stale()
+    {
+        using var fixture = CleanupCheckout("check-daemon-build.ps1");
+        var entry = fixture.PathOf("scripts", "check-daemon-build.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "check-daemon-build" };
+        var advisory = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        advisory.ExitCode.ShouldBe(0, advisory.Stderr);
+        advisory.Arguments.ShouldNotBeNull(advisory.Stdout).ShouldBeEmpty();
+        var strict = await NightlyRunHops.LauncherEcho(entry, ["-FailOnStale"], fixture.Root, environment: echo);
+        strict.Arguments.ShouldBe(["--fail-on-stale"]);
+        DaemonBuildCheckOptions.Parse(strict.Arguments!, "root").FailOnStale.ShouldBeTrue();
+        AssertThinLauncher("check-daemon-build.ps1", "param([switch]$FailOnStale)");
+    }
+
+    [Test]
+    public async Task Root_restart_session_runner_forwards_its_bound_parameters_to_the_command()
+    {
+        using var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "restart-session-runner.ps1"), fixture.PathOf("restart-session-runner.ps1"));
+        var entry = fixture.PathOf("restart-session-runner.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "restart-session-runner" };
+        var plain = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        plain.ExitCode.ShouldBe(0, plain.Stderr);
+        plain.Arguments.ShouldNotBeNull(plain.Stdout).ShouldBeEmpty("the command's 180 s default, not the forwarder's unbound 60");
+        var hard = await NightlyRunHops.LauncherEcho(entry, ["-Hard", "-KillSessions", "-TimeoutSec", "60"], fixture.Root, environment: echo);
+        hard.ExitCode.ShouldBe(0, hard.Stderr);
+        hard.Arguments.ShouldBe(["--hard", "--kill-sessions", "--timeout-sec", "60"]);
+        var options = RunnerRestartOptions.Parse(hard.Arguments!, "root");
+        (options.Hard, options.KillSessions, options.TimeoutSec).ShouldBe((true, true, 60));
+
+        var restart = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "restart.ps1"));
+        restart.ShouldContain("& \"$PSScriptRoot\\restart-session-runner.ps1\"");
+        restart.ShouldNotContain("scripts\\restart-session-runner.ps1");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "restart-session-runner.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();
+    }
+
+    // The 5.1 and pwsh parse of the kept launchers, the root restart entries and restart-server.ps1 (it was the deleted
+    // RunnerRestartScriptCompatibilityTests.Touched_scripts_parse_as_ascii_on_both_shells): -Command parses, nothing runs.
+    [Test]
+    [Arguments("powershell.exe")]
+    [Arguments("pwsh")]
+    public async Task Kept_launchers_and_restart_entries_parse_and_are_ascii(string shell)
+    {
+        if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
+        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
+            "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1"];
+        foreach (var file in files)
+            File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).All(b => b < 128).ShouldBeTrue(file + " is ASCII");
+        var list = string.Join(",", files.Select(file => "'" + Path.Combine(DelegateScriptRunner.RepoRoot, file).Replace("'", "''") + "'"));
+        var command = "$failed = 0; foreach ($f in @(" + list + ")) { $e = $null; $t = $null; "
+            + "$null = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$t, [ref]$e); "
+            + "if ($e.Count) { Write-Output $f; $e | ForEach-Object { Write-Output $_.ToString() }; $failed++ } }; exit $failed";
+        var start = new ProcessStartInfo(shell) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(argument);
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException(shell + " did not start"));
+        run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+    }
 }

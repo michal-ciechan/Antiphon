@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Xml.Linq;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -85,51 +84,7 @@ public class RunnerCapabilitiesTests
         await Task.CompletedTask;
     }
 
-    [Test]
-    public async Task Daemon_build_script_covers_the_runner_project_reference_closure()
-    {
-        var root = FindRepoRoot();
-        var script = await File.ReadAllTextAsync(Path.Combine(root, "scripts", "check-daemon-build.ps1"));
-        var closure = ProjectClosure(root, "src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj");
-
-        foreach (var project in closure)
-        {
-            var directory = Path.GetDirectoryName(project)!;
-            var relative = Path.GetRelativePath(root, directory).Replace('\\', '/');
-            script.ShouldContain(relative, customMessage: $"daemon check omits runner dependency {relative}");
-        }
-    }
-
-    private static IReadOnlyCollection<string> ProjectClosure(string root, string entryProject)
-    {
-        var pending = new Queue<string>();
-        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        pending.Enqueue(Path.GetFullPath(Path.Combine(root, entryProject)));
-        while (pending.TryDequeue(out var project))
-        {
-            if (!found.Add(project))
-                continue;
-
-            var document = XDocument.Load(project);
-            foreach (var reference in document.Descendants("ProjectReference"))
-            {
-                var include = reference.Attribute("Include")?.Value;
-                if (!string.IsNullOrWhiteSpace(include))
-                {
-                    var relative = include.Replace('\\', Path.DirectorySeparatorChar);
-                    pending.Enqueue(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(project)!, relative)));
-                }
-            }
-        }
-
-        return found;
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
-            dir = dir.Parent;
-        return dir?.FullName ?? throw new DirectoryNotFoundException("Could not locate repository root.");
-    }
+    // Unit 30 (2026-11-22 plan): Daemon_build_script_covers_the_runner_project_reference_closure read
+    // scripts/check-daemon-build.ps1's text; the daemon list is Antiphon.Nightly.DaemonBuildCheck.Daemons now, checked
+    // against the same closure in Antiphon.Tests (DaemonBuildCheckTests).
 }
