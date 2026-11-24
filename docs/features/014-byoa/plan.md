@@ -1,6 +1,13 @@
-# Agent help: "copy for your agent" on every page (plan)
+# BYOA (bring your own agent): "copy for your agent" on every page (plan)
 
 Status: plan, 2026-11-24. Nothing here is built yet.
+
+## The name
+
+**BYOA, "bring your own agent"** (decided 2026-11-24), is the name for this everywhere: the icon, the
+help drawer's tab ("BYOA: for your agent"), the keys ("BYOA keys"), the docs folder (`docs/byoa/`),
+the API (`/api/byoa`), and the "via BYOA" mark in history. The first use on any page or document
+spells it out once: "BYOA (bring your own agent)".
 
 ## Goal
 
@@ -16,14 +23,14 @@ them.
 
 ## What the person sees
 
-- **One icon means "help for your agent"**, the same everywhere: a small robot-with-question-mark
-  icon (`docs/agent-help/agent-help-icon.svg`, also the client's `AgentHelpIcon`). It has the
-  tooltip "Get a prompt for your AI agent", and it is never used for anything else.
+- **One icon means BYOA**, the same everywhere: a small robot-with-question-mark
+  icon (`docs/byoa/byoa-icon.svg`, also the client's `ByoaIcon`). It has the
+  tooltip "BYOA: get a prompt for your AI agent", and it is never used for anything else.
 - A **Help** button with that icon in the page header on every page, and on panels that have their own actions (a
   graph node panel, a variant in the workflow editor, a finding, a gate).
 - The help drawer has two tabs:
   - **For you:** how the page works, in plain words.
-  - **For your agent:** the text an agent needs, with the placeholders already filled for this
+  - **BYOA: for your agent:** the text an agent needs, with the placeholders already filled for this
     page, and a **Copy** button.
 - Options beside Copy:
   - **Include a key** (off by default). On: the site makes a short-lived key for this person, scoped
@@ -31,15 +38,15 @@ them.
     environment variable to set.
   - **Scope:** this item only (this variant, this run), or the whole area.
   - **Read only** or **may change things**.
-- A site-wide entry, **Help → Agent guide**, gives the general text: how to authenticate, the
+- A site-wide entry, **Help → BYOA guide**, gives the general text: how to authenticate, the
   conventions, and the list of areas with a link to each area's file.
 
 ## The help files
 
-One file per page or panel, under `docs/agent-help/`, served by the site and readable in the repo:
+One file per page or panel, under `docs/byoa/`, served by the site and readable in the repo:
 
 ```
-docs/agent-help/
+docs/byoa/
   README.md                     # for people: what this folder is, how to point an agent at it, how to add a file
   index.md                      # the top index: every area, and how to use this folder
   placeholders.md               # every placeholder: meaning, where its value comes from, an example
@@ -103,7 +110,7 @@ A variant is a graph setup: the workflow graph plus each step's model, prompt an
 **Indexes, so someone can point an agent at the folder**
 
 Decided 2026-11-24. The folder explains itself, so a person can give an agent just its address (the
-repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
+repo path, or `{{BASE_URL}}/api/byoa`) and the agent can find its own way:
 
 - `index.md` says what the folder is, how to read a help file, how to fill placeholders, and lists
   every area with one line each and a link to its index.
@@ -112,8 +119,8 @@ repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
 - `placeholders.md` is the reference for every placeholder: what it means, where a person or agent
   gets the value (which page shows it, which request returns it), its format, and an example.
 - `README.md` in the folder is the entry for people: what the folder is for, the one line to give
-  an agent ("read `docs/agent-help/index.md`", or the URL), and how to add or change a help file.
-- **The repository's main `README.md` links to it** in its own short section ("Working with
+  an agent ("read `docs/byoa/index.md`", or the URL), and how to add or change a help file.
+- **The repository's main `README.md` links to it** in its own short section ("BYOA: bring your own agent", working with
   Antiphon through an agent"), and `AGENTS.md` gets a row in its index table, so both people and
   agents arriving at the repo find it.
 - **Both READMEs show the icon** (decided 2026-11-24), as an image beside one sentence: "When you
@@ -123,13 +130,13 @@ repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
 - The indexes are **generated from the files' headers** and checked in, so they cannot drift; the
   lint test fails when they are out of date.
 - **They can be queried:**
-  - `GET /api/agent-help` returns the index as JSON or Markdown;
-  - `GET /api/agent-help?q=<words>` searches titles, actions and routes ("approve a gate", "run a
+  - `GET /api/byoa` returns the index as JSON or Markdown;
+  - `GET /api/byoa?q=<words>` searches titles, actions and routes ("approve a gate", "run a
     suite");
-  - `GET /api/agent-help?route=/experiments/variants/123` returns the files for a page address;
-  - `GET /api/agent-help?placeholder=VARIANT_ID` returns what the placeholder is and which files
+  - `GET /api/byoa?route=/experiments/variants/123` returns the files for a page address;
+  - `GET /api/byoa?placeholder=VARIANT_ID` returns what the placeholder is and which files
     use it;
-  - `GET /api/agent-help/placeholders` returns the placeholder reference.
+  - `GET /api/byoa/placeholders` returns the placeholder reference.
 - Reading the indexes and raw files needs no key. Filled text for a person's own items needs their
   sign-in or key.
 
@@ -147,9 +154,9 @@ repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
 - A file declares the placeholders it uses. A page that cannot fill one leaves it visible and lists
   it under "you still need to supply".
 - The same files are served raw, with placeholders unfilled, at
-  `GET /api/agent-help/{area}/{name}.md`, and filled at `GET /api/agent-help/{area}/{name}?…ids`.
+  `GET /api/byoa/{area}/{name}.md`, and filled at `GET /api/byoa/{area}/{name}?…ids`.
   An agent that already has a key can fetch other areas' help itself; `_common.md` tells it how.
-- `GET /api/agent-help` lists every file with its title, route and scopes.
+- `GET /api/byoa` lists every file with its title, route and scopes.
 
 ## Keys: acting on the person's behalf
 
@@ -162,14 +169,14 @@ keys**:
 - **Scoped** to areas and to read, write or run (`experiments.run`, `reviews.write`, …), and
   optionally to one item.
 - **Lifetime by default** (decided 2026-11-24): a key does not expire unless its owner revokes it.
-  The default lifetime is an instance setting (`AgentKeys:DefaultLifetime`: none, or a duration),
+  The default lifetime is an instance setting (`Byoa:Keys:DefaultLifetime`: none, or a duration),
   with an optional maximum an instance can enforce, and a person can pick a shorter one when making
   a key. Keys are listed, named and revocable on a Keys page in the user menu, with when each was
   last used. The key is shown once; only its hash is stored.
-- Every request made with a key is recorded with the key's name and marked "via agent" in history,
+- Every request made with a key is recorded with the key's name and marked "via BYOA" in history,
   audit and the PR attribution, next to the person's name.
 - **A key can approve** (decided 2026-11-24): gate decisions, approvals and dismissals are allowed
-  with the `….approve` scope, as the person. They are recorded "via agent".
+  with the `….approve` scope, as the person. They are recorded "via BYOA".
 - **The help text tells the agent not to approve on its own.** `_common.md` and every file with an
   approving action carry this rule: *do not approve, decide a gate, dismiss a blocker or merge
   unless the person asked for that action or gave you standing permission for it; when unsure, say
@@ -198,8 +205,8 @@ environment variable and never write it to a file, a commit or its output.
 
 | Phase | Delivers | Checked by |
 |---|---|---|
-| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the agent-help icon, the folder's `README.md` and the icon line in both READMEs, the generated indexes and `placeholders.md`, the links from the main `README.md` and `AGENTS.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
-| **2. Keys** | Personal agent keys: scopes, expiry, the Keys page, "via agent" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked key is refused, and an expired one when a lifetime is set; an approval needs the approve scope; the key is never returned after creation |
+| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the BYOA icon, the folder's `README.md` and the icon line in both READMEs, the generated indexes and `placeholders.md`, the links from the main `README.md` and `AGENTS.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
+| **2. Keys** | BYOA keys: scopes, expiry, the Keys page, "via BYOA" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked key is refused, and an expired one when a lifetime is set; an approval needs the approve scope; the key is never returned after creation |
 | **3. Experiments** | Help files for suite, variant, experiment and case, written with that feature (experiments plan, phase 4), including "customise a variant" and "run a suite" | The examples run against the scripted server |
 | **4. The rest of the site** | Files for boards and cards, agents and sessions, hosts and settings; the route-coverage test turned on | The coverage test |
 
@@ -208,5 +215,5 @@ environment variable and never write it to a file, a commit or its output.
 1. **Key lifetime:** decided 2026-11-24: lifetime by default, configurable in settings.
 2. **Approvals by an agent key:** decided 2026-11-24: allowed, with a rule in the help text not to
    approve unless asked or given permission.
-3. **Where the files live:** decided 2026-11-24: one place, `docs/agent-help/`, with its `README.md`
+3. **Where the files live:** decided 2026-11-24: one place, `docs/byoa/`, with its `README.md`
    and `index.md`, linked from the main `README.md` and from `AGENTS.md`.
