@@ -77,9 +77,6 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         File.WriteAllText(Path.Combine(DirectoryPath, "probe-input"),
             $"{Nonce} {job.DangerousGetHandle().ToInt64()} {unrelatedEvent?.DangerousGetHandle().ToInt64() ?? 0} {eventName ?? "-"}");
 
-    internal Task<string[]> WaitProbeAsync(Task root) =>
-        ScriptHarnessHandleProbe.WaitAsync(DirectoryPath, Nonce, root, Root!.Executing);
-
     internal static uint ReadHandleFlags(SafeFileHandle handle)
     {
         if (!GetHandleInformation(handle, out var flags)) throw NativeError("Independent handle flags");
@@ -126,6 +123,8 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
     internal sealed class DirectOwner : IAsyncDisposable
     {
         private readonly CancellationTokenSource _execution = new(TimeSpan.FromSeconds(5));
+        private readonly ScriptHarnessHandleProbe.OutputTail? _probeStdout;
+        private readonly ScriptHarnessHandleProbe.OutputTail? _probeStderr;
         private bool _disposed;
         internal ScriptHarnessWindowsProcessFixture Windows { get; }
         internal WindowsScriptHarnessProcess Owner { get; }
@@ -148,11 +147,20 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
             // This independent retained handle remains valid when W4 disposes
             // the adapter's process handle to exercise kill-on-close alone.
             RootExit = Windows.Root!.WaitForExitAsync(_execution.Token);
-            StdoutDrain = drainStreams ? DrainAsync(Owner.Stdout) : Task.CompletedTask;
-            StderrDrain = drainStreams ? DrainAsync(Owner.Stderr) : Task.CompletedTask;
+            if (caseName == "HandleProbe" && drainStreams)
+            {
+                _probeStdout = new(Owner.Stdout);
+                _probeStderr = new(Owner.Stderr);
+            }
+            StdoutDrain = _probeStdout?.Drain ?? (drainStreams ? ScriptHarnessHandleProbe.OutputTail.DrainAsync(Owner.Stdout) : Task.CompletedTask);
+            StderrDrain = _probeStderr?.Drain ?? (drainStreams ? ScriptHarnessHandleProbe.OutputTail.DrainAsync(Owner.Stderr) : Task.CompletedTask);
         }
 
         internal Task<ScriptHarnessProcessFixture.ObservedTree> WaitReadyAsync() => Windows.WaitReadyAsync(Request, RootExit);
+
+        internal Task<string[]> WaitProbeAsync() => ScriptHarnessHandleProbe.WaitAsync(Windows.DirectoryPath, Windows.Nonce,
+            Windows.Root!.ReadProbeExit, Owner.RootArguments,
+            _probeStdout ?? throw new InvalidOperationException("Handle probe output capture was not configured."), _probeStderr!);
 
         internal void DisposeOwner()
         {
@@ -198,12 +206,6 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
                 try { Windows.Dispose(TimeSpan.FromSeconds(5) - clock.Elapsed); }
                 finally { _execution.Dispose(); }
             }
-        }
-
-        private static async Task DrainAsync(StreamReader reader)
-        {
-            var buffer = new char[4096];
-            while (await reader.ReadAsync(buffer.AsMemory()) != 0) { }
         }
     }
 
@@ -388,9 +390,23 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         internal async Task<int> WaitForExitAsync(CancellationToken cancellationToken)
         {
             while (Executing()) await Task.Delay(20, cancellationToken);
+            return ReadExitCode();
+        }
+
+        internal ScriptHarnessHandleProbe.RootExit? ReadProbeExit()
+        {
+            // Wait-task cancellation does not tell us whether the retained process has exited.
+            if (Executing()) return null;
+            if (!GetProcessTimes(_handle, out _, out var exited, out _, out _)) throw NativeError("GetProcessTimes");
+            return new(Pid, ReadExitCode(), new DateTime(StartTicks, DateTimeKind.Utc), DateTime.FromFileTimeUtc(exited));
+        }
+
+        private int ReadExitCode()
+        {
             if (!GetExitCodeProcess(_handle, out var exitCode)) throw NativeError("Independent root exit code");
             return unchecked((int)exitCode);
         }
+
         internal void Terminate()
         {
             if (TerminateProcess(_handle, 99)) return;
