@@ -22,6 +22,10 @@ if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "git"
     return git.ExitCode;
 }
 
+// The fake `codex --version` child of the Codex CLI version probe tests (CodexVersionChild.cs, unit 40).
+if (args.Length >= 1 && args[0] == CodexVersionChild.Command)
+    return CodexVersionChild.Run(args);
+
 // Owned, unpaid native peer. Named events keep ancestry/exit cuts deterministic.
 if (!OperatingSystem.IsWindows() || args.Length != 3) return 2;
 var role = args[0];

@@ -119,39 +119,26 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
             && !Directory.EnumerateFileSystemEntries(actual.Environment["CODEX_HOME"]!).Any());
         var receipts = Path.Combine(Root, "receipts-" + Starts.Count);
         Directory.CreateDirectory(receipts);
-        var child = new ProcessStartInfo("pwsh")
+        var child = new ProcessStartInfo("dotnet")
         {
             UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true,
             RedirectStandardError = true, WorkingDirectory = actual.WorkingDirectory
         };
         child.Environment.Clear();
         foreach (var item in actual.Environment) child.Environment[item.Key] = item.Value;
-        var mode = ChildMode?.Invoke(actual) ?? Mode;
-        // Additional literal version records are independent harmless process-I/O fixtures.
-        if (mode == "version-old" || mode == "version-floor")
-        {
-            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-                         mode == "version-old" ? "[Console]::Out.WriteLine('codex-cli 0.156.1')"
-                             : "[Console]::Out.WriteLine('codex-cli 0.159.1')" }) child.ArgumentList.Add(arg);
-        }
-        else
-            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                         ChildScript(), "-Mode", mode, "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
+        // The owned child is the staged custody child's codex-version mode (unit 40; it was CodexVersionChild.ps1 under
+        // pwsh). version-old and version-floor are its literal older records.
+        foreach (var arg in new[] { ChildProgram, "codex-version", ChildMode?.Invoke(actual) ?? Mode, receipts })
+            child.ArgumentList.Add(arg);
         var process = Process.Start(child)!;
         // Keep an independent observation/rescue handle; the product owns and disposes its handle.
         Children.Add(Process.GetProcessById(process.Id));
         return process;
     }
 
-    private static string ChildScript()
-    {
-        for (var dir = new DirectoryInfo(Environment.CurrentDirectory); dir is not null; dir = dir.Parent)
-        {
-            var path = Path.Combine(dir.FullName, "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1");
-            if (File.Exists(path)) return path;
-        }
-        throw new InvalidOperationException("missing owned child fixture");
-    }
+    private static string ChildProgram =>
+        Path.Combine(AppContext.BaseDirectory, "custody-child", "Antiphon.CustodyTestChild.dll") is var path && File.Exists(path)
+            ? path : throw new InvalidOperationException("missing owned child fixture");
 
     private static bool MatchesReceipt(Process process, JsonElement receipt)
     {

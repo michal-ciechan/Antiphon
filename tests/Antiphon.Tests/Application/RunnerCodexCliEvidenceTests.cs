@@ -996,17 +996,15 @@ public sealed class RunnerCodexCliEvidenceTests
         private Process Start(ProcessStartInfo actual)
         {
             Starts.Add(actual);
-            var script = Path.Combine(Environment.CurrentDirectory, "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1");
-            for (var dir = new DirectoryInfo(Environment.CurrentDirectory); !File.Exists(script) && dir.Parent is not null; dir = dir.Parent)
-                script = Path.Combine(dir.Parent.FullName, "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1");
-            var child = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardInput = true,
+            // The staged custody child's codex-version mode, the fake codex of CodexCliVersionTestFixture (unit 40).
+            var program = Path.Combine(AppContext.BaseDirectory, "custody-child", "Antiphon.CustodyTestChild.dll");
+            var child = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardInput = true,
                 RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = actual.WorkingDirectory };
             child.Environment.Clear();
             foreach (var pair in actual.Environment) child.Environment[pair.Key] = pair.Value;
             var receipts = Path.Combine(Root, "receipts-" + Starts.Count);
             Directory.CreateDirectory(receipts);
-            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File", script,
-                         "-Mode", Mode, "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
+            foreach (var arg in new[] { program, "codex-version", Mode, receipts }) child.ArgumentList.Add(arg);
             var process = Process.Start(child)!;
             _children.Add(Process.GetProcessById(process.Id));
             return process;

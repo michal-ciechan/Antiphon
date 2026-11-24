@@ -222,7 +222,7 @@
     },
     {
       "group": "scan-23",
-      "paths": ["tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1"],
+      "paths": ["tests/Antiphon.CustodyTestChild/CodexVersionChild.cs"],
       "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     },
     {
