@@ -289,7 +289,7 @@ public sealed class ReviewSettings
     public bool DemoSeedEnabled { get; set; }
 
     /// <summary>
-    /// The review viewer until identity lands (api.md <c>GET /api/review-me</c>). Absent, the
+    /// The review viewer while sign-in is off (api.md <c>GET /api/review-me</c>). Absent, the
     /// current user's name is used. Mutations record this viewer as the actor.
     /// </summary>
     public string? DefaultViewerLogin { get; set; }
@@ -311,6 +311,9 @@ public sealed class ReviewSettings
 
     /// <summary>The Antiphon web root that commit statuses link to (<c>{root}/reviews/{runId}</c>); absent, no link.</summary>
     public string? PublicBaseUrl { get; set; }
+
+    /// <summary>Sign-in (<c>Review:Auth</c>); off by default.</summary>
+    public ReviewAuthSettings Auth { get; set; } = new();
 }
 
 public sealed class ReviewViewerSettings

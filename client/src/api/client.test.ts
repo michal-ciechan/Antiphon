@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { ApiError, getApiErrorMessage, getApiFieldErrors } from './client'
+import { describe, expect, it, vi } from 'vitest'
+import { ApiError, getApiErrorMessage, getApiFieldErrors, redirectToSignInIfRequired } from './client'
 
 /**
  * Validation on this API is **422 with a PascalCase-keyed `errors` dict**, not 400 with a flat
@@ -49,5 +49,22 @@ describe('getApiFieldErrors', () => {
     })
 
     expect(getApiFieldErrors(error)).toEqual({ Reason: 'Reason is required.' })
+  })
+})
+
+describe('redirectToSignInIfRequired', () => {
+  it('sends the browser to sign in, and back to this page, only on a 401 sign_in_required', async () => {
+    const navigate = vi.fn()
+    expect(await redirectToSignInIfRequired(new Response(JSON.stringify({ title: 'Forbidden' }), { status: 403 }), navigate)).toBe(false)
+    expect(await redirectToSignInIfRequired(new Response('not json', { status: 401 }), navigate)).toBe(false)
+    expect(navigate).not.toHaveBeenCalled()
+
+    const required = new Response(JSON.stringify({ error: 'sign_in_required' }), { status: 401 })
+    expect(await redirectToSignInIfRequired(required, navigate)).toBe(true)
+
+    const here = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    expect(navigate).toHaveBeenCalledExactlyOnceWith(`/api/review-auth/login?returnUrl=${encodeURIComponent(here)}`)
+    // The caller can still read the body.
+    expect(await required.json()).toEqual({ error: 'sign_in_required' })
   })
 })

@@ -88,12 +88,44 @@ function withClientSha(headers?: HeadersInit): Headers {
   return next
 }
 
+/** Where the browser goes to sign in, returning to `returnTo` (a path on this site) afterwards. */
+export function signInUrl(returnTo: string): string {
+  return `${BASE_URL}/review-auth/login?returnUrl=${encodeURIComponent(returnTo)}`
+}
+
+let signInRedirectStarted = false
+
+/**
+ * With sign-in on (`Review:Auth:Mode` GitHub) and no session, every `/api` call answers 401
+ * `{ error: 'sign_in_required' }`: send the browser to sign in, once, and back to this page.
+ * Returns true when it did.
+ */
+export async function redirectToSignInIfRequired(
+  response: Response,
+  navigate: (url: string) => void = (url) => window.location.assign(url),
+): Promise<boolean> {
+  if (response.status !== 401) return false
+  let body: unknown
+  try {
+    body = await response.clone().json()
+  } catch {
+    return false
+  }
+  if (!body || typeof body !== 'object' || (body as { error?: unknown }).error !== 'sign_in_required') return false
+  if (!signInRedirectStarted) {
+    signInRedirectStarted = true
+    navigate(signInUrl(`${window.location.pathname}${window.location.search}${window.location.hash}`))
+  }
+  return true
+}
+
 async function apiFetch(path: string, init: RequestInit): Promise<Response> {
   const started = Date.now()
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
     headers: withClientSha(init.headers),
   })
+  await redirectToSignInIfRequired(response)
   if (!response.ok) {
     pushConsoleEntry({
       level: 'fetch',

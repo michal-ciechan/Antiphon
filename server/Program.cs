@@ -167,7 +167,39 @@ try
     {
         s.DemoSeedEnabled = reviewSection.GetValue<bool?>(nameof(ReviewSettings.DemoSeedEnabled)) ?? builder.Environment.IsDevelopment();
         s.AllowViewerHeader = reviewSection.GetValue<bool?>(nameof(ReviewSettings.AllowViewerHeader)) ?? builder.Environment.IsDevelopment();
-    });
+        // Sign-in names its client secret by configuration key only; the value never reaches a log.
+        if (string.IsNullOrEmpty(s.Auth.ClientSecret) && !string.IsNullOrWhiteSpace(s.Auth.ClientSecretConfigKey))
+            s.Auth.ClientSecret = builder.Configuration[s.Auth.ClientSecretConfigKey];
+    }).Validate(s => s.Auth.Problem() is null, "Review:Auth is not valid: set Mode None, or GitHub with ClientId and the client secret (getting-started section 7.1).")
+        .ValidateOnStart();
+    // Sign-in (Review:Auth): a session cookie, read on every request. It only matters with Mode GitHub;
+    // with Mode None nothing issues the cookie and ReviewSignInGateMiddleware lets everything through.
+    builder.Services.AddAuthentication(ReviewViewer.AuthScheme)
+        .AddCookie(ReviewViewer.AuthScheme, o =>
+        {
+            o.Cookie.Name = "antiphon.review.session";
+            o.Cookie.HttpOnly = true;
+            o.Cookie.SameSite = SameSiteMode.Lax;
+            o.SlidingExpiration = true;
+            o.Events.OnRedirectToLogin = c =>
+            {
+                c.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            };
+            o.Events.OnRedirectToAccessDenied = c =>
+            {
+                c.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
+        });
+    builder.Services.AddOptions<Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationOptions>(ReviewViewer.AuthScheme)
+        .Configure<IOptions<ReviewSettings>>((o, review) =>
+        {
+            o.ExpireTimeSpan = TimeSpan.FromHours(Math.Max(1, review.Value.Auth.SessionHours));
+            o.Cookie.SecurePolicy = review.Value.PublicBaseUrl?.StartsWith("https://", StringComparison.OrdinalIgnoreCase) == true
+                ? Microsoft.AspNetCore.Http.CookieSecurePolicy.Always
+                : Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest;
+        });
     builder.Services.AddOptions<ReviewDecisionSettings>()
         .Bind(builder.Configuration.GetSection(ReviewDecisionSettings.SectionName))
         .PostConfigure(s =>
@@ -1008,10 +1040,19 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<IGitHubService, GitHubService>();
     // Review engine: runs, findings, gates, workflow graph and decision chains.
     builder.Services.AddSingleton<ReviewWorkflowService>();
-    builder.Services.AddScoped(sp => ReviewViewer.Resolve(
-        sp.GetRequiredService<IOptions<ReviewSettings>>().Value,
-        sp.GetRequiredService<IHttpContextAccessor>().HttpContext?.Request.Headers[ReviewViewer.HeaderName].ToString(),
-        sp.GetRequiredService<ICurrentUser>().UserName));
+    builder.Services.AddScoped(sp =>
+    {
+        var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext;
+        return ReviewViewer.Resolve(
+            sp.GetRequiredService<IOptions<ReviewSettings>>().Value,
+            http?.Request.Headers[ReviewViewer.HeaderName].ToString(),
+            sp.GetRequiredService<ICurrentUser>().UserName,
+            http?.User);
+    });
+    // Sign-in with GitHub (Review:Auth): the OAuth web flow, and each person's access to the reviewed repos.
+    builder.Services.AddHttpClient<IGitHubSignIn, GitHubSignInClient>();
+    builder.Services.AddScoped<IReviewRepoAccess, GitHubReviewRepoAccess>();
+    builder.Services.AddScoped<ReviewSignInService>();
     builder.Services.AddScoped<ReviewService>();
     builder.Services.AddScoped<ReviewDemoSeeder>();
     builder.Services.AddScoped<DecisionChain>();
@@ -1205,6 +1246,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.UseMiddleware<CorrelationIdMiddleware>();
     app.UseMiddleware<CurrentUserMiddleware>();
     app.UseMiddleware<ExceptionMiddleware>();
+    // Sign-in (Review:Auth): read the session cookie, then require it on /api and /hubs when Mode is GitHub.
+    app.UseAuthentication();
+    app.UseMiddleware<ReviewSignInGateMiddleware>();
     app.UseMiddleware<AuditMiddleware>();
     // SignalR includes long-lived streaming transports. Exclude the whole hub route, including
     // negotiate, rather than depending on its current content type to keep it unbuffered.
@@ -1427,6 +1471,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
     app.MapReviewRunEndpoints();
+    app.MapReviewAuthEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
@@ -1449,6 +1494,12 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.UseStaticFiles();
     app.MapFallbackToFile("index.html");
 
+    var reviewAuth = app.Services.GetRequiredService<IOptions<ReviewSettings>>().Value.Auth;
+    if (reviewAuth.IsGitHub)
+        Log.Information("Review sign-in: GitHub (client {ClientId}); {Permission} access to a reviewed repo, or one of {AllowedCount} allowed login(s)",
+            reviewAuth.ClientId, reviewAuth.RequiredRepoPermission, reviewAuth.AllowedLogins.Count);
+    else
+        Log.Information("Review sign-in: off; every request acts as the default viewer");
     Log.Information("Antiphon server starting");
 
     // Startup is done: the static logger is frozen, migrations are applied and the seed rows

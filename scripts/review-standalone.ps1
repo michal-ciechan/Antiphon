@@ -42,6 +42,10 @@ param(
     # (Review:Policy:GatesOff:merge-gate). -NoAutoMerge keeps the gate on, the product default: a person
     # confirms each merge in Antiphon or merges on GitHub.
     [switch]$NoAutoMerge,
+    # Sign-in with GitHub (Review:Auth, getting-started 7.1): the vault item also needs a 'Client secret'
+    # field (the App's Settings, Client secrets), and the App's callback URL must be
+    # <PublicBaseUrl>/api/review-auth/callback. -ViewerLogin becomes an allowed login.
+    [switch]$SignIn,
     [switch]$NoClient,
     # Leave GitHub polling off (a manual POST /api/review-polling/poll still runs a pass).
     [switch]$NoPolling,
@@ -164,6 +168,13 @@ $settings = [ordered]@{
     'Review__Polling__Enabled'                               = $(if ($NoPolling) { 'false' } else { 'true' })
     'Review__Polling__IntervalSeconds'                       = "$PollSeconds"
     'Review__Polling__Repos__0__Repo'                        = $Repo
+}
+if ($SignIn) {
+    if (-not $PublicBaseUrl) { throw '-SignIn needs -PublicBaseUrl: GitHub returns the browser to <PublicBaseUrl>/api/review-auth/callback.' }
+    $settings['Review__Auth__Mode'] = 'GitHub'
+    $settings['Review__Auth__ClientId'] = (Get-Field 'Client ID')
+    $settings['Review__Secrets__GitHubOAuthClientSecret'] = (Get-Field 'Client secret')
+    $settings['Review__Auth__AllowedLogins__0'] = $ViewerLogin
 }
 $item = $null
 foreach ($k in $settings.Keys) { [Environment]::SetEnvironmentVariable($k, $settings[$k], 'Process') }

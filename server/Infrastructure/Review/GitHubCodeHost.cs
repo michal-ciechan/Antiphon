@@ -645,6 +645,29 @@ public sealed class GitHubCodeHost(
         file.TryGetProperty("deletions", out var del) && del.TryGetInt32(out var d) ? d : 0,
         Text(file, "previous_filename"));
 
+    /// <summary>
+    /// <paramref name="login"/>'s access to the repo, for sign-in (<c>GET repos/{o}/{r}/collaborators/{login}/permission</c>,
+    /// which a GitHub App reads with Metadata: read): <c>admin</c>, <c>write</c>, <c>read</c> or <c>none</c>. A login
+    /// GitHub does not know as a collaborator (404) has <c>none</c>.
+    /// </summary>
+    public async Task<string> GetRepoPermissionAsync(CodeHostTarget target, string login, CancellationToken ct)
+    {
+        string body;
+        try
+        {
+            body = await GetAsync(target, $"{RepoPath(target)}/collaborators/{Uri.EscapeDataString(login)}/permission", JsonMediaType, ct);
+        }
+        catch (CodeHostException ex) when (ex.Kind == CodeHostFailureKind.NotFound)
+        {
+            return "none";
+        }
+
+        using var doc = Parse(body, "permission");
+        return doc.RootElement.ValueKind == JsonValueKind.Object && Text(doc.RootElement, "permission") is { Length: > 0 } permission
+            ? permission
+            : "none";
+    }
+
     /// <summary>One conditional GET. A 304 returns the cached body; any other non-2xx throws <see cref="CodeHostException"/>.</summary>
     private async Task<string> GetAsync(CodeHostTarget target, string path, string accept, CancellationToken ct)
     {

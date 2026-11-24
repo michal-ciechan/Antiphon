@@ -694,7 +694,7 @@ public sealed class ReviewService(
         var gates = await query.OrderBy(g => g.OpenedAt).ToListAsync(ct);
         var runIds = gates.Select(g => g.RunId).Distinct().ToList();
         var runs = await db.ReviewRuns.AsNoTracking().Include(r => r.Subject).Where(r => runIds.Contains(r.Id)).ToListAsync(ct);
-        var authors = runs.ToDictionary(r => r.Id, r => r.Subject.AuthorLogin);
+        var authors = runs.ToDictionary(r => r.Id, r => GateAuthor(r.Subject.Repo, r.Subject.AuthorLogin));
         var summaries = (await SummariesAsync(runs, ct)).ToDictionary(s => s.Id);
         var now = Now();
         var items = gates.Where(g => summaries.ContainsKey(g.RunId)).Select(g =>
@@ -879,15 +879,23 @@ public sealed class ReviewService(
     }
 
     /// <summary>Why the viewer may not decide this gate, or null (design 11.10: not the author).</summary>
-    /// <summary>The author a gate refuses: none where the policy lets the author decide (<see cref="ReviewPolicySettings.AuthorMayDecideRepos"/>).</summary>
-    private string GateAuthor(string repo, string authorLogin) => policy.Value.AuthorMayDecide(repo) ? "" : authorLogin;
+    /// <summary>
+    /// A gate's repo and the author it refuses: none where the policy lets the author decide
+    /// (<see cref="ReviewPolicySettings.AuthorMayDecideRepos"/>).
+    /// </summary>
+    public readonly record struct GateSubject(string Repo, string RefusedAuthor);
 
-    private string? CannotDecideReason(ReviewGate gate, string authorLogin)
+    private GateSubject GateAuthor(string repo, string authorLogin) => new(repo, policy.Value.AuthorMayDecide(repo) ? "" : authorLogin);
+
+    private string? CannotDecideReason(ReviewGate gate, GateSubject subject)
     {
         if (gate.Status == ReviewQueueItemStatus.Done)
             return "Already decided";
-        if (authorLogin.Length > 0 && string.Equals(viewer.Login, authorLogin, StringComparison.OrdinalIgnoreCase))
+        if (subject.RefusedAuthor.Length > 0 && string.Equals(viewer.Login, subject.RefusedAuthor, StringComparison.OrdinalIgnoreCase))
             return "You are the author";
+        if (!viewer.MayDecideOn(subject.Repo))
+            return $"You need {settings.Value.Auth.RequiredRepoPermission.Trim().ToLowerInvariant()} access to {subject.Repo} on GitHub to decide its gates " +
+                "(checked when you signed in: sign out and in again after your access changes)";
         // TODO(review-engine trust): deciders must also be at or above the gate's trust threshold (design 11.9, 11.10).
         return AllowedDecisions(gate).Count == 0 ? "This gate's decisions are not supported yet" : null;
     }
@@ -1038,9 +1046,9 @@ public sealed class ReviewService(
         n.OutputTokens, n.CostUsd, n.StartedAt, n.CompletedAt, n.Summary);
 
     /// <summary>A gate as the viewer sees it: which decisions it allows and whether the viewer may decide.</summary>
-    public ReviewGateDto ToDto(ReviewGate g, string authorLogin)
+    public ReviewGateDto ToDto(ReviewGate g, GateSubject subject)
     {
-        var cannot = CannotDecideReason(g, authorLogin);
+        var cannot = CannotDecideReason(g, subject);
         return new ReviewGateDto(
             g.Id, g.RunId, g.Kind, g.Status, g.TeamKey, g.AssigneeLogin, g.AssigneeDisplayName, g.OpenedAt, g.DecidedAt, g.DecidedBy,
             g.Decision, g.SteerPrompt, g.Reasons, AllowedDecisions(g), cannot is null, cannot,

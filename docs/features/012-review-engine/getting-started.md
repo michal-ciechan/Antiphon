@@ -27,7 +27,7 @@ Read this table before you plan a rollout for more than one person:
 |---|---|
 | Code hosts | GitHub: github.com, or GitHub Enterprise Server through `BaseUrl`. Not GitLab, Bitbucket or Azure DevOps. |
 | Triggers | Polling only. There is no webhook receiver. |
-| Users | **No sign-in.** Everyone who opens the UI acts as one viewer (`Review:DefaultViewerLogin`). Keep the UI on a private network. |
+| Users | Sign-in with GitHub (section 7.1), **off by default**. With it off, everyone who opens the UI acts as one viewer (`Review:DefaultViewerLogin`), so keep the UI on a private network. Turn it on only on a server that runs the review engine alone. |
 | Teams | Not read from CODEOWNERS or GitHub teams. On real PRs gates have no team, so the Teams queue is empty and "assign at random" refuses. |
 | Workflow | One built-in workflow, compiled into the server. A deployment or a repo cannot supply its own yet. |
 | Per-repo tuning | A repo can add its own checks (`.antiphon/review/checks/`). A repo `policy.yaml`, repo prompts and a repo workflow are designed but not read yet. |
@@ -79,6 +79,10 @@ approve PRs that you opened. A token approves as you, and GitHub does not let yo
    of the installation page's URL (`…/installations/<id>`). It is optional: when it is not set, the
    server looks it up for each repo.
 7. Optional: in branch protection, require the `antiphon/approval` status.
+8. Optional, for sign-in (section 7.1): in the App's settings, set **Callback URL** to
+   `<your Antiphon URL>/api/review-auth/callback`, and under Client secrets, **generate a new client
+   secret**. Sign-in needs no extra permission: it reads only the person's login, and it checks their
+   repo access with the App's own token (Metadata: read).
 
 **A token instead of an App:** create a fine-grained token with these permissions:
 - Pull requests: read and write
@@ -115,6 +119,7 @@ user-secrets or your platform's secret store.
 | `Review:Secrets:GitHubToken` | A personal access token, when you don't use an App |
 | `Review:Secrets:AnthropicApiKey` | Anthropic API key, used by the `anthropic` completions provider |
 | `Review:Secrets:JevApiKey` | Jev key (decisions). It is also the default key for the `litellm-chat` completions provider. |
+| `Review:Secrets:GitHubOAuthClientSecret` | The App's client secret, for sign-in (section 7.1) |
 
 ### 4.2 A working starting point
 
@@ -174,11 +179,23 @@ user-secrets, and are JSON arrays in appsettings.
 | Key | Meaning |
 |---|---|
 | `PublicBaseUrl` (none) | The UI's address. Commit statuses link to `{PublicBaseUrl}/reviews/{runId}`; without it they carry no link. |
-| `DefaultViewerLogin` (`admin`) | The GitHub login that the UI and API act as (section 7.1) |
+| `DefaultViewerLogin` (`admin`) | The GitHub login that the UI and API act as while sign-in is off (section 7.1) |
 | `Viewers:<login>:DisplayName`, `Viewers:<login>:Teams:<n>` | A viewer's display name and teams |
-| `AllowViewerHeader` (on in Development only) | Lets the `X-Review-Viewer` request header choose the viewer. Only for tests, or behind a proxy that sets the header. |
+| `AllowViewerHeader` (on in Development only) | Lets the `X-Review-Viewer` request header choose the viewer while sign-in is off. Only for tests, or behind a proxy that sets the header. |
 | `InstanceChecksPath` (none) | A folder of checks for every repo (section 9) |
 | `DemoSeedEnabled` (on in Development only) | Enables `POST /api/review-runs/demo`, which creates demo runs |
+
+**`Review:Auth`** (sign-in, section 7.1)
+
+| Key | Meaning |
+|---|---|
+| `Mode` (`None`) | `None`: no sign-in. `GitHub`: sign in with GitHub. Any other value, or `GitHub` without a client id and secret, stops the server at startup. |
+| `ClientId` | The App's Client ID (`Iv23…`), or an OAuth App's client id |
+| `ClientSecretConfigKey` (`Review:Secrets:GitHubOAuthClientSecret`) | The key that holds the client secret |
+| `AllowedLogins:<n>` (none) | Logins that may sign in and decide gates on every repo |
+| `RequiredRepoPermission` (`write`) | The least access to a reviewed repo that lets someone sign in and decide its gates: `read`, `write` or `admin`. `none` lets anyone with a GitHub account in. |
+| `SessionHours` (168) | How long a session lasts after its last use |
+| `WebBaseUrl` (`https://github.com`), `ApiBaseUrl` (derived) | For GitHub Enterprise Server: `https://<host>`; the API root then defaults to `https://<host>/api/v3` |
 
 **`Review:CodeHosts`**
 
@@ -352,6 +369,8 @@ pwsh -NoProfile -File scripts/review-standalone.ps1 -Stop
   `-Repo`, `-VaultItem`, `-ViewerLogin` and `-MirrorPath`.
 - **Merge gate:** the script switches it off for `-Repo`, so Antiphon merges approved PRs. Pass
   `-NoAutoMerge` to keep it on.
+- **Sign-in:** `-SignIn` turns on sign-in with GitHub (section 7.1), with `-ViewerLogin` as an
+  allowed login. It needs `-PublicBaseUrl`, and a `Client secret` field in the vault item.
 - **Other options:** `-NoPolling`, `-NoClient`, `-PollSeconds`, and port overrides.
 
 ### 6.2 Inside an existing Antiphon (AppHost)
@@ -435,28 +454,71 @@ real Claude sign-in. Treat this section as a starting point until then.
 
 ### 6.4 Exposing the UI
 
-Because there is no sign-in (section 7.1), put the UI behind a private network: a VPN, a tailnet, or
-a reverse proxy with its own authentication. Set `Review:PublicBaseUrl` to the address people use, so
-the links in GitHub statuses work.
+- **Sign-in off (the default):** anyone who can reach the UI acts as `DefaultViewerLogin`. Put it
+  behind a private network: a VPN, a tailnet, or a reverse proxy with its own authentication.
+- **Sign-in on (section 7.1):** the API needs a GitHub session, so the UI can be reached from the
+  internet. Serve it over HTTPS. The session cookie is marked Secure when `PublicBaseUrl` starts with
+  `https://`. The UI's own files stay public, but they hold no data.
+
+Either way, set `Review:PublicBaseUrl` to the address people use. The links in GitHub statuses use it,
+and so does the sign-in callback.
 
 ## 7. People, gates and merging
 
-### 7.1 Who is acting
+### 7.1 Signing in, and who is acting
 
-- **UI and API:** every request acts as `Review:DefaultViewerLogin`, or as `admin` when that is not
-  set. With `AllowViewerHeader` on, the `X-Review-Viewer` header can name a different viewer. The UI
-  does not send that header, so only a proxy or a test would.
-- **PR comment commands:** a command acts as the GitHub user who wrote the comment.
-- **The poller:** acts as `antiphon`, and everything is posted on GitHub as the App's bot.
+**With sign-in off (the default),** every UI and API request acts as `Review:DefaultViewerLogin`, or
+as `admin` when that is not set. With `AllowViewerHeader` on, the `X-Review-Viewer` header can name a
+different viewer. The UI does not send that header, so only a proxy or a test would.
+
+**To turn on sign-in with GitHub:**
+1. In the GitHub App's settings, set the callback URL and generate a client secret (section 3, step 8).
+2. Set these, the secret through your secret store:
+   ```
+   Review__Auth__Mode=GitHub
+   Review__Auth__ClientId=Iv23xxxxxxxxxxxxxxxx
+   Review__Secrets__GitHubOAuthClientSecret=<the client secret>
+   Review__PublicBaseUrl=https://review.example.com
+   ```
+3. Restart the server. Its log says `Review sign-in: GitHub (client …)`, and
+   `GET /api/review-auth/status` answers `"mode": "GitHub"`.
+
+What happens then:
+- **Every `/api` and `/hubs` request needs a session**, apart from `/api/review-auth/*` and
+  `/api/version`. Without one, the API answers 401 `sign_in_required`. The UI then sends the
+  browser to GitHub, and back to the same page afterwards. `/health` stays open.
+- **Who may sign in:**
+  - a login in `Review:Auth:AllowedLogins`;
+  - anyone with at least `RequiredRepoPermission` (default `write`) on one of the repos this
+    instance reviews. These are the repos in `Review:Polling:Repos`, `Review:Agents:Repos` and
+    `Review:CodeHosts:Repos`, plus every GitHub repo that has a review run.
+
+  Antiphon asks GitHub with the App's own token (`GET /repos/{repo}/collaborators/{login}/permission`).
+  Anyone else sees a "No access" page and gets no session.
+- **Who acts:** the signed-in login. The header shows it, with a **Sign out** item. The
+  `X-Review-Viewer` header is ignored.
+- **Sessions:** a cookie, `antiphon.review.session` (HttpOnly, SameSite=Lax). It lasts `SessionHours`
+  (a week by default) after its last use. Repo access is read once, at sign-in, so after someone's
+  access changes they sign out and in again. Sessions survive a restart only if the data-protection
+  key ring is kept (`AgentTui:KeyRingPath` on a volume); otherwise everyone signs in again.
+- **Turn it on only on a server that runs the review engine alone,** such as the standalone script
+  or the review compose file. On a full Antiphon, the session runner and the scripts call the API
+  without a session, so they would be locked out.
+
+In both modes:
+- **PR comment commands** act as the GitHub user who wrote the comment.
+- **The poller** acts as `antiphon`, and everything is posted on GitHub as the App's bot.
 
 ### 7.2 Who may decide a gate
 
 Anyone may decide a gate, except the PR's author, compared case-insensitively. A repo listed in
-`Review:Policy:AuthorMayDecideRepos` lets the author decide too. There are no team checks yet.
+`Review:Policy:AuthorMayDecideRepos` lets the author decide too. With sign-in on, a person also needs
+`RequiredRepoPermission` on the PR's repo, while a login in `AllowedLogins` may decide on every repo.
+There are no team checks yet.
 
-Because the UI acts as one login, set `DefaultViewerLogin` to your own login and add your repo to
-`AuthorMayDecideRepos` if you review your own PRs. Without that, you can't decide gates on your own
-PRs.
+With sign-in off, the UI acts as one login. So set `DefaultViewerLogin` to your own login, and add
+your repo to `AuthorMayDecideRepos` if you review your own PRs. Without that, you can't decide gates
+on your own PRs.
 
 ### 7.3 The gates
 
@@ -687,7 +749,8 @@ before connecting GitHub.
 
 These are in [design.md](design.md) but not in the code:
 - Webhooks; polling is the only trigger.
-- Sign-in and per-person identity, and checking who may decide a gate by team or trust.
+- Sign-in with anything but GitHub, and checking who may decide a gate by team or trust. Sign-in
+  checks repo access only.
 - Team sync from CODEOWNERS or GitHub teams; gate queues by team.
 - Repo-level `policy.yaml`, prompts, groups and workflow (`.antiphon/review/`); only `checks/` is read.
 - Saving workflow edits from the UI.

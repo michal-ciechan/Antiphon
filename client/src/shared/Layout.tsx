@@ -18,6 +18,7 @@ import { Outlet, useNavigate, NavLink } from 'react-router'
 import { useConnectionStore } from '../stores/connectionStore'
 import { ReportBugButton } from '../features/diagnostics/ReportBugButton'
 import { DecisionsBadge } from '../features/attention/DecisionsBadge'
+import { UserMenu } from './UserMenu'
 
 function RebelLogo({ size = 20 }: { size?: number }) {
   return (
@@ -180,11 +181,15 @@ export function Layout() {
           <Group gap="sm" wrap="nowrap">
             <ReportBugButton />
             <ConnectionIndicator />
-            <Tooltip label="May the Force be with you, Admin" withArrow position="bottom-end">
-              <Avatar radius="xl" size="sm" color="active" style={{ cursor: 'default' }}>
-                <RebelLogo size={18} />
-              </Avatar>
-            </Tooltip>
+            <UserMenu
+              fallback={
+                <Tooltip label="May the Force be with you, Admin" withArrow position="bottom-end">
+                  <Avatar radius="xl" size="sm" color="active" style={{ cursor: 'default' }}>
+                    <RebelLogo size={18} />
+                  </Avatar>
+                </Tooltip>
+              }
+            />
             <Burger
               opened={drawerOpened}
               onClick={toggleDrawer}

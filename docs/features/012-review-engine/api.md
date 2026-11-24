@@ -187,7 +187,13 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` |
 | GET | `/api/review-polling` | | `ReviewPollingDto` (design 8.5 Polling). |
 | POST | `/api/review-polling/poll` | | `ReviewPollingDto` after one pass over every configured repo, run now even when the timer is off. Waits for a pass already running instead of overlapping it; a pass cut short at 90 s records the repos it reached. A repo's failure is in its `error`, not the status code. |
-| GET | `/api/review-me` | | `ReviewViewerDto`. Until identity lands, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
+| GET | `/api/review-me` | | `ReviewViewerDto`. With sign-in on (`Review:Auth:Mode` GitHub), the signed-in GitHub login. With it off, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
+| GET | `/api/review-auth/status` | | `{ mode: 'None' \| 'GitHub', signedIn, login, displayName }`. Always open. |
+| GET | `/api/review-auth/login?returnUrl=` | | 302 to GitHub's authorize page, with a one-time state in a 10-minute cookie. 404 while sign-in is off. Always open. |
+| GET | `/api/review-auth/callback?code=&state=` | | Checks the state, reads the login, and sets the session cookie (302 to `returnUrl`, a path on this site). 400 for an expired or forged state, 403 (an HTML page) when the person may not sign in, 502 when GitHub fails. Always open. |
+| POST | `/api/review-auth/logout` | | Clears the session; answers with a "Signed out" page. |
+
+With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 'sign_in_required', signInUrl }` without a session; the client sends the browser to `signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks `Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it is a 403.
 
 ## SignalR
 
@@ -212,6 +218,8 @@ Polling has no SignalR event of its own: each run a pass starts or moves publish
 | v0.4 | Failure policy (design 3.4.1):<br>- node status `FailedContinued`<br>- node params `onFailure` (`continue` or `stop`) and `fallback`<br>- a refused commit status is a line in the step's `summary`, not a failure<br>- a failed run sets `antiphon/review` to `error`<br>- `Review:Policy:AuthorMayDecideRepos` lets a listed repo's PR author decide its own gates (`viewerCanDecide`) |
 
 | v0.5 | Polling and manual rounds:<br>- `POST /api/review-runs/{id}/rounds` and `ReviewRoundRequest`<br>- `GET /api/review-polling`, `POST /api/review-polling/poll` and `ReviewPollingDto`<br>- the `opened` trigger for a run polling started, and `comment:<id>` for one a PR comment command started or re-rounded |
+
+| v0.6 | Sign-in with GitHub (`Review:Auth`):<br>- `/api/review-auth/status`, `login`, `callback` and `logout`<br>- 401 `sign_in_required` on every other route while sign-in is on<br>- `viewerCanDecide` also needs repo access while sign-in is on |
 
 ## Not in this slice
 
