@@ -37,6 +37,7 @@ One file per page or panel, under `docs/agent-help/`, served by the site and rea
 
 ```
 docs/agent-help/
+  README.md                     # for people: what this folder is, how to point an agent at it, how to add a file
   index.md                      # the top index: every area, and how to use this folder
   placeholders.md               # every placeholder: meaning, where its value comes from, an example
   _common.md                    # authentication, conventions, errors; included by every file
@@ -107,6 +108,11 @@ repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
   needed, and the placeholders each file uses.
 - `placeholders.md` is the reference for every placeholder: what it means, where a person or agent
   gets the value (which page shows it, which request returns it), its format, and an example.
+- `README.md` in the folder is the entry for people: what the folder is for, the one line to give
+  an agent ("read `docs/agent-help/index.md`", or the URL), and how to add or change a help file.
+- **The repository's main `README.md` links to it** in its own short section ("Working with
+  Antiphon through an agent"), and `AGENTS.md` gets a row in its index table, so both people and
+  agents arriving at the repo find it.
 - The indexes are **generated from the files' headers** and checked in, so they cannot drift; the
   lint test fails when they are out of date.
 - **They can be queried:**
@@ -185,7 +191,7 @@ environment variable and never write it to a file, a commit or its output.
 
 | Phase | Delivers | Checked by |
 |---|---|---|
-| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the generated indexes and `placeholders.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
+| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the folder's `README.md`, the generated indexes and `placeholders.md`, the links from the main `README.md` and `AGENTS.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
 | **2. Keys** | Personal agent keys: scopes, expiry, the Keys page, "via agent" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked key is refused, and an expired one when a lifetime is set; an approval needs the approve scope; the key is never returned after creation |
 | **3. Experiments** | Help files for suite, variant, experiment and case, written with that feature (experiments plan, phase 4), including "customise a variant" and "run a suite" | The examples run against the scripted server |
 | **4. The rest of the site** | Files for boards and cards, agents and sessions, hosts and settings; the route-coverage test turned on | The coverage test |
@@ -195,5 +201,5 @@ environment variable and never write it to a file, a commit or its output.
 1. **Key lifetime:** decided 2026-11-24: lifetime by default, configurable in settings.
 2. **Approvals by an agent key:** decided 2026-11-24: allowed, with a rule in the help text not to
    approve unless asked or given permission.
-3. **Where the files live:** `docs/agent-help/` as planned (one place, easy to lint), or beside each
-   feature's client code?
+3. **Where the files live:** decided 2026-11-24: one place, `docs/agent-help/`, with its `README.md`
+   and `index.md`, linked from the main `README.md` and from `AGENTS.md`.
