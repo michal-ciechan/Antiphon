@@ -103,6 +103,7 @@ public sealed class TestFixtureCleanupGuardTests
         [(TestHelpers + "LandingFixtureGitInProcessTests.cs", "Path.Combine(gitDir, \"sequencer\")")] = (1, "Synthetic sequencer marker, removed to allow the next assertion."),
         [(TestHelpers + "OwnedTempLeakTests.cs", "root")] = (3, "Synthetic scratch and bridge cleanup witnesses without repositories."),
         [(TestHelpers + "ReportWorkspace.cs", "Path")] = (1, "Plain report scratch. The Git workspace has a separate disposer."),
+        [("tests/Antiphon.Tests/Review/ReviewMirrorCheckoutTests.cs", "root")] = (1, "The runner test's plain scratch root: a recording checkout stands in for git, so no repository is created. The real-git class in the same file cleans up through TryDelete."),
     };
 
     [Test]
