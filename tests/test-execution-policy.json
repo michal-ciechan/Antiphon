@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "cbcadd0754abc067eb39bc4a6043d9e584608eac616e8222153f291f7108bbb4",
+  "policyHash": "8f2bb7a5c5173d0a6d5daad544cb0b5d35659ff0367b26829cdad9a2b32207b6",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1991,18 +1991,6 @@
       "path": "scripts/test-deploy-am-service.ps1",
       "disposition": "unattended",
       "wildcard": false
-    },
-    {
-      "id": "test-duration-tripwire",
-      "path": "scripts/test-duration-tripwire.ps1",
-      "disposition": "argument-consumer",
-      "wildcard": false
-    },
-    {
-      "id": "test-hooks",
-      "path": "scripts/test-hooks.ps1",
-      "disposition": "unattended",
-      "wildcard": false
     }
   ],
   "watchdogs": {
@@ -2162,7 +2150,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "c69c9fdab6d43e3d00ef1b6712bb39e7363ff41018b7ec66be75953ea8b9be19",
+    "hash": "b86d98950ea5c82b7213caf030003103d2a82ca15c95c425b7d887472dfa5009",
     "path": "tests/test-selection-policy.json"
   }
 }

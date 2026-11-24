@@ -212,6 +212,14 @@ namespace Antiphon.Scripts
             [ClientCommands.LintClient] = ClientCommands.RunLintClient,
             [ClientCommands.TypecheckClient] = ClientCommands.RunTypecheckClient,
             [ClientCommands.TestClient] = ClientCommands.RunTestClient,
+            // The verification tools answer every input themselves (unit 33). test-duration-tripwire: exit 0 clean, 1 an unlisted
+            // slow or unresolved row, 2 invalid input. mechanical-pc: 0 C479 ACCEPT, 2 C479 REFUSE <reason>, 1 an input that could
+            // not be read. measure-session-state-cache: 0 captured or both gates passed, 1 a gate failed or refused.
+            // verify-agent-tui-profile: 0 verified, 1 failed. Usage is 2 for each.
+            [VerificationToolCommands.DurationTripwire] = VerificationToolCommands.RunDurationTripwire,
+            [VerificationToolCommands.MechanicalPc] = VerificationToolCommands.RunMechanicalPc,
+            [VerificationToolCommands.MeasureSessionStateCache] = VerificationToolCommands.RunMeasureSessionStateCache,
+            [VerificationToolCommands.VerifyAgentTuiProfile] = VerificationToolCommands.RunVerifyAgentTuiProfile,
         };
 
         public static int Main(string[] args)
@@ -249,7 +257,7 @@ namespace Antiphon.Scripts
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
-                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage);
+                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage);
             return Usage;
         }
 

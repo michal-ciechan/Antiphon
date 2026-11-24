@@ -1,18 +1,21 @@
-using System.Diagnostics;
+using System.Reflection;
 using Antiphon.Checkpoints;
 using Antiphon.Nightly;
 using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// The portable scripts-lane witnesses. The bin-* cleanup rows (opaque, owned, replaced) run the cleanup-build-junk command in
-/// process (Antiphon.Nightly.BuildJunkCleanup, unit 21 of the 2026-11-22 plan) with the real HostCleanup ledger as the producer's
-/// removal; origin and state still run scripts/test-scripts-lane-repairs.ps1 (the nightly origin reader and the native state
-/// move it compiles), which go with their own waves.
+/// The portable scripts-lane witnesses, all in process. The bin-* cleanup rows (opaque, owned, replaced) run the
+/// cleanup-build-junk command (Antiphon.Nightly.BuildJunkCleanup, unit 21 of the 2026-11-22 plan) with the real HostCleanup
+/// ledger as the producer's removal. Since unit 33 (scripts/test-scripts-lane-repairs.ps1 deleted) origin reads real git
+/// configs through NightlyRun.OriginUrl, the nightly's origin reader, and state compiles the exact product method
+/// CheckpointNativeIo.Move with Roslyn over a modeled File facade, as the driver's Add-Type did.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -26,14 +29,148 @@ public sealed class ScriptsLaneRepairTests
     [Arguments("replaced")]
     public void Portable_scripts_lane_witness(string scenario)
     {
-        if (scenario is "opaque" or "owned" or "replaced")
+        var pass = scenario switch
         {
-            InProcess(scenario).ShouldStartWith("PASS " + scenario + ":");
-            return;
+            "origin" => Origin(),
+            "state" => State(),
+            _ => InProcess(scenario),
+        };
+        pass.ShouldStartWith("PASS " + scenario + ":");
+    }
+
+    // The origin reader decodes git's quoting and escaping of these values exactly (a string witness even on Linux), and a
+    // clone without an origin reads as "".
+    private static string Origin()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "scripts-lane-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Git(root, "init", "--quiet", root);
+            foreach (var origin in new[] { @"C:\Antiphon\origin.git", "C:\\a space\\a\"quote\\origin.git", @"\\server\share\origin.git", "https://example.invalid/repo" })
+            {
+                Git(root, "config", "--local", "remote.origin.url", origin);
+                NightlyRun.OriginUrl(root).ShouldBe(origin, "origin mismatch");
+            }
+            Git(root, "config", "--local", "--unset", "remote.origin.url");
+            NightlyRun.OriginUrl(root).ShouldBe("", "missing origin was admitted");
+            return "PASS origin: 4 exact strings and missing origin";
         }
-        var result = RunWitness(scenario, path: null);
-        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
-        result.Stdout.ShouldContain("PASS " + scenario + ":");
+        finally
+        {
+            ReadOnlyDirectory.Delete(root);
+        }
+    }
+
+    private static void Git(string root, params string[] arguments)
+    {
+        var result = NightlyNativeGit.Run(root, arguments);
+        result.ExitCode.ShouldBe(0, "git " + string.Join(" ", arguments) + ": " + result.Output);
+    }
+
+    // The exact product method, with only the OS/native File facade modeled: an overwrite-move refuses an existing destination,
+    // and Replace sees one sharing violation. The old state stays whole and the temporary stays until the retried replacement
+    // lands; a new destination still publishes through Move (Replace needs an existing file).
+    private static string State()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "scripts-lane-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var witness = CompileNativeMove();
+            var mover = Activator.CreateInstance(witness.GetType("ScriptsLaneWitness.NativeMove")!)!;
+            var move = mover.GetType().GetMethod("Move")!;
+            var file = witness.GetType("ScriptsLaneWitness.File")!;
+            int Count(string field) => (int)file.GetField(field)!.GetValue(null)!;
+            void Move(string source, string destination)
+            {
+                try { move.Invoke(mover, [source, destination, true]); }
+                catch (TargetInvocationException e) when (e.InnerException is not null) { throw e.InnerException; }
+            }
+
+            var path = Path.Combine(root, "state.json");
+            var tmp = Path.Combine(root, "state.tmp");
+            File.WriteAllText(path, "complete old state");
+            File.WriteAllText(tmp, "complete new state");
+            var caught = 0;
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                try
+                {
+                    Move(tmp, path);
+                    break;
+                }
+                catch (Exception) when (attempt < 5)
+                {
+                    caught++;
+                    File.ReadAllText(path).ShouldBe("complete old state", "partial state during contention");
+                    File.Exists(tmp).ShouldBeTrue("temporary lost during contention");
+                }
+            }
+            (caught, Count("Replaces"), Count("Moves")).ShouldBe((1, 2, 0), "atomic replacement/retry path mismatch");
+            File.ReadAllText(path).ShouldBe("complete new state", "replacement incomplete");
+            File.Exists(tmp).ShouldBeFalse("replacement incomplete");
+
+            var fresh = Path.Combine(root, "fresh.json");
+            Move(path, fresh);
+            Count("Moves").ShouldBe(1, "initial publication failed");
+            File.Exists(path).ShouldBeFalse("initial publication failed");
+            return "PASS state: forced sharing violation, old state intact, atomic replacement retried, initial move";
+        }
+        finally
+        {
+            ReadOnlyDirectory.Delete(root);
+        }
+    }
+
+    // CheckpointNativeIo.Move's text, from "public void Move(" to "public void Unlink(", inside a class whose namespace also
+    // declares the modeled File and OperatingSystem (they shadow System.IO.File and System.OperatingSystem there).
+    private static System.Reflection.Assembly CompileNativeMove()
+    {
+        var source = File.ReadAllText(Path.Combine(CheckpointFixtures.RepoRoot, "src", "Antiphon.HostCleanup", "Checkpoints", "CheckpointNativeIo.cs"));
+        var start = source.IndexOf("    public void Move(", StringComparison.Ordinal);
+        var end = start < 0 ? -1 : source.IndexOf("    public void Unlink(", start, StringComparison.Ordinal);
+        (start >= 0 && end >= 0).ShouldBeTrue("native Move method not found");
+        var method = source[start..end];
+        var text = """
+            using System;
+            using System.IO;
+            namespace ScriptsLaneWitness {
+            public sealed class NativeMove {
+            """ + "\n" + method + "\n" + """
+            }
+            public static class OperatingSystem { public static bool IsWindows() => true; }
+            public static class File {
+                public static int Moves, Replaces;
+                public static bool Exists(string path) => System.IO.File.Exists(path);
+                public static void Move(string source, string destination, bool overwrite) {
+                    Moves++;
+                    if (Exists(destination)) throw new UnauthorizedAccessException("modeled Windows replacement contention");
+                    System.IO.File.Move(source, destination, overwrite);
+                }
+                public static void Delete(string path) => System.IO.File.Delete(path);
+                public static void Replace(string source, string destination, string backup) {
+                    Replaces++;
+                    if (System.IO.File.ReadAllText(destination) != "complete old state") throw new Exception("old state damaged");
+                    if (Replaces == 1) throw new IOException("forced sharing violation", unchecked((int)0x80070020));
+                    System.IO.File.Replace(source, destination, backup);
+                }
+            }
+            }
+            """;
+        var runtime = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Where(path => string.Equals(Path.GetDirectoryName(path), runtime, comparison))
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path));
+        var compilation = CSharpCompilation.Create("ScriptsLaneWitness" + Guid.NewGuid().ToString("N"),
+            [CSharpSyntaxTree.ParseText(text, new CSharpParseOptions(LanguageVersion.Latest))], references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var stream = new MemoryStream();
+        var emit = compilation.Emit(stream);
+        emit.Success.ShouldBeTrue(string.Join("\n", emit.Diagnostics));
+        return System.Reflection.Assembly.Load(stream.ToArray());
     }
 
     // The replaced case proves a foreign directory object survived cleanup. Its directory identity is
@@ -98,7 +235,7 @@ public sealed class ScriptsLaneRepairTests
         }
         finally
         {
-            Directory.Delete(root, true);
+            ReadOnlyDirectory.Delete(root);
         }
     }
 
@@ -137,32 +274,5 @@ public sealed class ScriptsLaneRepairTests
             Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
         foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
             File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)));
-    }
-
-    private static CheckpointFixtureProcess.Output RunWitness(string scenario, string? path)
-    {
-        var start = new ProcessStartInfo(OperatingSystem.IsWindows()
-            ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : ResolveTool("pwsh"));
-        foreach (var argument in new[] { "-NoProfile", "-File",
-                     Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "test-scripts-lane-repairs.ps1"), "-Case", scenario })
-            start.ArgumentList.Add(argument);
-        if (path is not null)
-            start.Environment["PATH"] = path;
-        // Provisional bound: observed portable script bodies take 1-4 seconds; allow startup
-        // and a bounded native Git preflight. No wall-clock sleeps or shared host fixture.
-        return CheckpointFixtureProcess.Run(start, 30_000);
-    }
-
-    private static string ResolveTool(string name)
-    {
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-                return Path.GetFullPath(candidate);
-        }
-
-        throw new FileNotFoundException(name);
     }
 }

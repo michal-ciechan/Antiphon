@@ -822,8 +822,8 @@ isolates each item and reports errors after processing the remaining batch.
   Diagnostics `efReadAttempts` and the `Antiphon.SessionState.Commands` meter count tagged EF
   read attempts (including retries), separately from durable rows and PostgreSQL statement calls.
   The binding counter remains zero until Round 2 tags/migrates that path. No SQL/parameters are retained.
-  Use `scripts/measure-session-state-cache.ps1 -Mode Capture -Phase Before|After -Round R1` on the
-  desktop with an immutable evidence root and sanitized `ContextPath`; the plan owns matched
+  Use `scripts\antiphon.cmd measure-session-state-cache --mode Capture --phase Before|After --round R1 --evidence-root <dir>`
+  on the desktop with an immutable evidence root and sanitized `--context-path`; the plan owns matched
   windows and final acceptance. Context includes `openClients`, `workloadKey`, `siblingShas`; a
   pre-feature baseline also needs `runtime` identity/live/unknown/version/pool observations.
   Compare works offline. CARD-0701 S0 writes schema-2 evidence with runtime/statistics/context

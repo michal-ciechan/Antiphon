@@ -1,5 +1,5 @@
 /**
- * CARD-0247 S2 live probe — not part of test-hooks.ps1 (not a *.test.mjs).
+ * CARD-0247 S2 live probe — not part of the hook suite OrchestratorInvestigationHookSuiteTests runs (not a *.test.mjs).
  *
  * Exercises the committed .claude/settings.json command string against a real
  * `claude -p` in a throwaway sandbox whose path contains `/Antiphon/server/`

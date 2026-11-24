@@ -1,15 +1,21 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
-using Antiphon.Tests.Application;
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0701: the session-state cache measurement (the measure-session-state-cache command, Antiphon.Nightly's
+/// SessionStateCacheMeasure), in process since unit 33 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md (it ran
+/// scripts/measure-session-state-cache.ps1 under pwsh). Compare runs offline on the evidence files; capture runs on a fake
+/// API, docker and git (the host's launcher) and a fake clock, never the real server, PostgreSQL or session runtime.
+/// </summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class MeasureSessionStateCacheScriptTests
 {
     [Test]
@@ -38,25 +44,20 @@ public sealed class MeasureSessionStateCacheScriptTests
             foreach (var window in before["windows"]!.AsArray()) window!.AsObject().Remove("samples");
             await InconclusiveAsync(before, after, "intermediate_observations_missing");
         }
-        // Old servers supply runtime observations in ContextPath. Exercise the production
-        // snapshot builder with external reads substituted, so startup facts cannot hide a dip.
+        // Old servers supply runtime observations in the context file. The production snapshot builder reads it again at
+        // every sample (the pre-feature 404 falls back to it), so startup facts cannot hide a dip.
         var path = Path.Combine(Path.GetTempPath(), "c701-context-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
             var context = Context();
-            context["runtime"] = new JsonObject { ["liveSessions"] = 9 };
+            context["runtime"] = new JsonObject { ["processId"] = 123, ["liveSessions"] = 9 };
             await File.WriteAllTextAsync(path, context.ToJsonString());
-            var result = await RunFunctionsAsync($$"""
-                $ContextPath = '{{PsQuote(path)}}'
-                function Read-Api { param([string]$Path) return @{ version = 'observed' } }
-                function Read-Runtime { param($Context) return $Context.runtime }
-                function Read-Statistics { return @{ statistics = @{} } }
-                $startup = @{ runtime = @{ liveSessions = 12 } }
-                New-Snapshot $startup | ConvertTo-Json -Depth 10 -Compress
-                """);
-            result.ExitCode.ShouldBe(0, result.Output);
-            JsonNode.Parse(result.Output)!["runtime"]!["liveSessions"]!.GetValue<int>().ShouldBe(9,
+            var world = new CaptureWorld();
+            world.Answers["/api/diagnostics/session-state"] = new NightlyReportHttpResponse(404, "");
+            var snapshot = SessionStateCacheMeasure.Snapshot(world.Options(path, phase: "Before"), "Before", world.Host(), new System.IO.Abstractions.FileSystem(), world.Seams());
+            snapshot["runtime"]!["liveSessions"]!.GetValue<int>().ShouldBe(9,
                 "each pre-feature observation must reload current context instead of retaining startup population");
+            snapshot["runtime"]!["processStartedAt"]!.GetValue<string>().ShouldBe("2026-10-03T00:00:00.0000000Z", "the live process refreshes the context runtime");
         }
         finally { File.Delete(path); }
     }
@@ -113,26 +114,29 @@ public sealed class MeasureSessionStateCacheScriptTests
         Directory.CreateDirectory(root);
         try
         {
-            var result = await RunAsync("-File", ScriptPath, "-Mode", "Acceptance", "-EvidenceRoot", root);
-            result.ExitCode.ShouldNotBe(0);
-            result.Output.ShouldContain("requires a previously saved baseline");
+            var world = new CaptureWorld();
+            var exit = SessionStateCacheMeasure.Run(new SessionStateCacheOptions { Mode = "Acceptance", EvidenceRoot = root }, world.Host(),
+                new System.IO.Abstractions.FileSystem(), world.Seams());
+            exit.ShouldNotBe(0);
+            world.Output.ToString().ShouldContain("requires a previously saved baseline");
             Directory.GetFiles(root, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+            world.Requests.ShouldBeEmpty("no evidence means no observation");
         }
         finally { Directory.Delete(root, true); }
     }
 
     [Test]
-    public async Task Baseline_files_are_immutable()
+    public void Baseline_files_are_immutable()
     {
         var path = Path.Combine(Path.GetTempPath(), "c701-immutable-" + Guid.NewGuid().ToString("N") + ".json");
+        var files = new System.IO.Abstractions.FileSystem();
         try
         {
-            var create = await RunFunctionsAsync($"Save-Immutable '{PsQuote(path)}' @{{ original = 701 }}");
-            create.ExitCode.ShouldBe(0, create.Output);
-            var original = await File.ReadAllBytesAsync(path);
-            var overwrite = await RunFunctionsAsync($"Save-Immutable '{PsQuote(path)}' @{{ replacement = 999 }}");
-            (await File.ReadAllBytesAsync(path)).ShouldBe(original);
-            overwrite.ExitCode.ShouldNotBe(0, "CreateNew must reject overwriting immutable evidence");
+            SessionStateCacheMeasure.SaveImmutable(files, path, new JsonObject { ["original"] = 701 });
+            var original = File.ReadAllBytes(path);
+            Should.Throw<IOException>(() => SessionStateCacheMeasure.SaveImmutable(files, path, new JsonObject { ["replacement"] = 999 }),
+                "CreateNew must reject overwriting immutable evidence");
+            File.ReadAllBytes(path).ShouldBe(original);
         }
         finally { File.Delete(path); }
     }
@@ -226,8 +230,6 @@ public sealed class MeasureSessionStateCacheScriptTests
     public async Task Tagged_binding_and_unknown_work_are_attributed()
     {
         // Execute the collector's exact production CASE, with only the input views shadowed.
-        var sqlResult = await RunFunctionsAsync("Get-StatisticsSql");
-        sqlResult.ExitCode.ShouldBe(0, sqlResult.Output);
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var connection = new Npgsql.NpgsqlConnection(schema.ConnectionString);
         await connection.OpenAsync();
@@ -241,7 +243,7 @@ public sealed class MeasureSessionStateCacheScriptTests
                 (2, 'SELECT "Content" FROM "TranscriptEntries"')) q(n, query)
             ), pg_stat_statements_info AS (SELECT '2026-10-03'::text stats_reset, 0::bigint dealloc)
             """;
-        await using var command = new Npgsql.NpgsqlCommand(inputs + sqlResult.Output, connection);
+        await using var command = new Npgsql.NpgsqlCommand(inputs + SessionStateCacheMeasure.StatisticsSql, connection);
         var stats = JsonNode.Parse((string)(await command.ExecuteScalarAsync())!)!;
         var rows = stats["statements"]!.AsArray();
         rows.Count.ShouldBe(2);
@@ -302,26 +304,190 @@ public sealed class MeasureSessionStateCacheScriptTests
         }
     }
 
+    // A Before capture on fakes: the warm-up and both windows wait on the host's clock, every sample is written once, the
+    // baseline is the capture, the statistics read is the production SQL through docker exec, and the token stays a header.
+    [Test]
+    public void Before_capture_records_two_sampled_windows_and_the_baseline()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c701-capture-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var contextPath = Path.Combine(root, "context.json");
+            File.WriteAllText(contextPath, Context().ToJsonString());
+            var world = new CaptureWorld();
+            var evidence = Path.Combine(root, "evidence");
+            var exit = SessionStateCacheMeasure.Run(world.Options(contextPath, phase: "Before", evidenceRoot: evidence), world.Host(), new System.IO.Abstractions.FileSystem(), world.Seams());
+            exit.ShouldBe(0, world.Output.ToString());
+            var destination = Directory.GetDirectories(evidence, "before-*").ShouldHaveSingleItem();
+            Directory.GetFiles(destination, "window-1-*.json").Length.ShouldBe(7, "a start and six 30 s samples");
+            Directory.GetFiles(destination, "window-2-*.json").Length.ShouldBe(7);
+            var capture = JsonNode.Parse(File.ReadAllText(Path.Combine(destination, "capture.json")))!;
+            JsonNode.Parse(File.ReadAllText(Path.Combine(evidence, "baseline.json")))!.ToJsonString().ShouldBe(capture.ToJsonString());
+            capture["phase"]!.GetValue<string>().ShouldBe("Before");
+            capture["canonicalSha"]!.GetValue<string>().ShouldBe(CaptureWorld.Head);
+            capture["windows"]!.AsArray().Count.ShouldBe(2);
+            capture["windows"]![0]!["samples"]!.AsArray().Count.ShouldBe(7);
+            var output = world.Output.ToString();
+            output.ShouldContain("Warm-up - 60 seconds remaining (read-only; use natural workload).");
+            output.ShouldContain("Observation window 2 - 30 seconds remaining");
+            output.ShouldContain("Capture saved: " + destination);
+            world.Clock.GetUtcNow().ShouldBe(CaptureWorld.Start.AddSeconds(60 + 180 + 180));
+            var psql = world.Launcher.Launches.Where(l => l.FileName == "docker" && l.Arguments.Contains("psql")).ToList();
+            psql.Count.ShouldBe(14);
+            psql.ShouldAllBe(l => l.Arguments.Last() == SessionStateCacheMeasure.StatisticsSql && l.CaptureOutput && l.TimeoutMilliseconds == 30000);
+            world.Requests.ShouldAllBe(r => r.Token == CaptureWorld.Token);
+            output.ShouldNotContain(CaptureWorld.Token);
+            Directory.GetFiles(evidence, "*", SearchOption.AllDirectories).ShouldAllBe(f => !File.ReadAllText(f).Contains(CaptureWorld.Token));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public void Capture_refusals_observe_nothing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c701-refusal-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var contextPath = Path.Combine(root, "context.json");
+            File.WriteAllText(contextPath, Context().ToJsonString());
+            (string, Action<CaptureWorld>, SessionStateCacheOptions)[] cases =
+            [
+                ("requires the canonical desktop lane", w => w.IsWindows = false, new CaptureWorld().Options(contextPath, evidenceRoot: Path.Combine(root, "a"))),
+                ("requires a sanitized context JSON", _ => { }, new CaptureWorld().Options(Path.Combine(root, "none.json"), evidenceRoot: Path.Combine(root, "b"))),
+                ("does not equal canonical checkout HEAD", w => w.Version = new string('c', 40), new CaptureWorld().Options(contextPath, phase: "After", evidenceRoot: Path.Combine(root, "c"))),
+            ];
+            foreach (var (message, arrange, options) in cases)
+            {
+                var world = new CaptureWorld();
+                arrange(world);
+                SessionStateCacheMeasure.Run(options, world.Host(), new System.IO.Abstractions.FileSystem(), world.Seams()).ShouldBe(1, message);
+                world.Output.ToString().ShouldContain(message);
+                Directory.GetFiles(options.EvidenceRoot, "*", SearchOption.AllDirectories).ShouldBeEmpty(message);
+                world.Launcher.Launches.ShouldNotContain(l => l.FileName == "docker", message);
+                world.Clock.GetUtcNow().ShouldBe(CaptureWorld.Start, "no warm-up for " + message);
+            }
+            Directory.CreateDirectory(Path.Combine(root, "d"));
+            File.WriteAllText(Path.Combine(root, "d", "baseline.json"), "{}");
+            var again = new CaptureWorld();
+            SessionStateCacheMeasure.Run(again.Options(contextPath, phase: "Before", evidenceRoot: Path.Combine(root, "d")), again.Host(),
+                new System.IO.Abstractions.FileSystem(), again.Seams()).ShouldBe(1);
+            again.Output.ToString().ShouldContain("Baseline already exists");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public void Usage_errors_are_the_command_line_only()
+    {
+        Should.Throw<NightlyUsageException>(() => SessionStateCacheOptions.Parse([], null, null, null)).Message.ShouldContain("--evidence-root");
+        Should.Throw<NightlyUsageException>(() => SessionStateCacheOptions.Parse(["--evidence-root", "e", "--mode", "Replay"], null, null, null));
+        Should.Throw<NightlyUsageException>(() => SessionStateCacheOptions.Parse(["--evidence-root", "e", "--warm-seconds", "59"], null, null, null));
+        Should.Throw<NightlyUsageException>(() => SessionStateCacheOptions.Parse(["--evidence-root", "e", "--window-seconds", "3601"], null, null, null));
+        var parsed = SessionStateCacheOptions.Parse(["--evidence-root", "e", "--mode", "compare", "--round", "r1"], "http://api.test/", "t", "repo");
+        (parsed.Mode, parsed.Round, parsed.Phase, parsed.Api, parsed.Baseline).ShouldBe(("Compare", "R1", "After", "http://api.test", Path.Combine("e", "baseline.json")));
+    }
+
+    // ---- fakes ---------------------------------------------------------------------------------------------------------------
+
+    /// <summary>A fake desktop: the API, docker and git answers, a process sample, and a host whose waits advance its clock.</summary>
+    private sealed class CaptureWorld
+    {
+        public const string Token = "c701-task-token";
+        public static readonly string Head = new('b', 40);
+        public static readonly DateTimeOffset Start = new(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
+
+        public FakeTimeProvider Clock { get; } = new(Start);
+        public StringWriter Output { get; } = new();
+        public RecordingLauncher Launcher { get; }
+        public List<(string Uri, string? Token)> Requests { get; } = [];
+        public Dictionary<string, NightlyReportHttpResponse> Answers { get; } = new(StringComparer.Ordinal);
+        public bool IsWindows { get; set; } = true;
+        public string Version { get; set; } = Head;
+
+        public CaptureWorld()
+        {
+            Launcher = new RecordingLauncher(launch =>
+            {
+                var args = string.Join(" ", launch.Arguments);
+                var stdout = launch.FileName == "git"
+                    ? (args.Contains("worktree list") ? "worktree C:/canonical\nHEAD " + Head + "\nbranch refs/heads/master\n" : Head + "\n")
+                    : args.Contains("psql") ? Statistics()
+                    : args.Contains("inspect") ? "container-one|2026-10-03\n"
+                    : "usage_usec " + (100_000_000 + (long)(Clock.GetUtcNow() - Start).TotalSeconds * 1000) + "\n";
+                return new NightlyLaunchResult { ExitCode = 0, StandardOutputText = stdout };
+            });
+        }
+
+        public NightlyHost Host() => new()
+        {
+            Clock = Clock,
+            Git = new FakeGit().Run,
+            Launcher = Launcher,
+            Processes = new FakeProcessTable(),
+            Probe = new FakeHostProbe(),
+            Out = Output,
+            Error = Output,
+            Trace = TextWriter.Null,
+            Sleep = Clock.Advance,
+        };
+
+        public SessionStateCacheSeams Seams() => new()
+        {
+            Http = (method, uri, headers, body) =>
+            {
+                Requests.Add((uri, headers.TryGetValue("X-Antiphon-Task-Token", out var token) ? token : null));
+                var path = new Uri(uri).AbsolutePath;
+                if (Answers.TryGetValue(path, out var answer)) return answer;
+                return path switch
+                {
+                    "/api/version" => new(200, new JsonObject { ["version"] = Version }.ToJsonString()),
+                    "/api/diagnostics/session-state" => new(200, Runtime().ToJsonString()),
+                    _ => new(404, ""),
+                };
+            },
+            Process = pid => new SessionStateProcessSample(42, new DateTime(2026, 10, 3, 0, 0, 0, DateTimeKind.Utc), 1024),
+            IsWindows = IsWindows,
+        };
+
+        public SessionStateCacheOptions Options(string contextPath, string phase = "Before", string? evidenceRoot = null) => new()
+        {
+            Mode = "Capture",
+            Phase = phase,
+            Round = "R1",
+            EvidenceRoot = evidenceRoot ?? Path.Combine(Path.GetTempPath(), "c701-unused-" + Guid.NewGuid().ToString("N")),
+            ContextPath = contextPath,
+            Api = "http://api.test",
+            TaskToken = Token,
+            RepoRoot = "C:/checkout",
+        };
+
+        private JsonObject Runtime() => new()
+        {
+            ["processId"] = 123, ["processStartedAt"] = "2026-10-03T00:00:00Z", ["cpuSeconds"] = 100 + (Clock.GetUtcNow() - Start).TotalSeconds * 0.5,
+            ["liveSessions"] = 12, ["unknownSessions"] = 0, ["driverVersion"] = "9.0.4", ["providerVersion"] = "9.0.4",
+            ["pool"] = new JsonObject { ["pooling"] = true, ["noResetOnClose"] = true, ["maxAutoPrepare"] = 0, ["multiplexing"] = false },
+        };
+
+        private static string Statistics() => new JsonObject
+        {
+            ["postmasterStartedAt"] = "2026-10-03T00:00:00Z", ["databaseOid"] = 1,
+            ["info"] = new JsonObject { ["stats_reset"] = "2026-10-03", ["dealloc"] = 0 },
+            ["statements"] = new JsonArray(new JsonObject
+            {
+                ["dbid"] = 1, ["userid"] = 1, ["queryid"] = "working", ["toplevel"] = true, ["calls"] = 100, ["rows"] = 100, ["total_exec_time"] = 100.0,
+                ["fingerprint"] = "working", ["shape"] = "working", ["transcript_select"] = true,
+            }),
+        }.ToJsonString();
+    }
+
+    // ---- evidence (the PowerShell tests' builders, unchanged) -----------------------------------------------------------------
+
     private static JsonNode End(JsonObject evidence) => evidence["windows"]![0]!["end"]!;
     private static JsonNode Middle(JsonObject evidence) => evidence["windows"]![0]!["samples"]![3]!;
     private static IEnumerable<JsonNode> AllPoints(JsonObject evidence) => evidence["windows"]!.AsArray()
         .SelectMany(w => new[] { w!["start"]!, w["end"]! }.Concat(w["samples"]!.AsArray().Select(p => p!)));
-    private static string ScriptPath => Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "measure-session-state-cache.ps1");
-    private static string PsQuote(string value) => value.Replace("'", "''");
-
-    private static Task<(int ExitCode, string Output)> RunFunctionsAsync(string body) => RunAsync("-Command", $$"""
-        $ErrorActionPreference = 'Stop'
-        Set-StrictMode -Version Latest
-        $tokens = $null; $errors = $null
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile('{{PsQuote(ScriptPath)}}', [ref]$tokens, [ref]$errors)
-        if ($errors.Count) { throw 'Collector parse failed' }
-        foreach ($definition in $ast.EndBlock.Statements) {
-            if ($definition -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-                . ([scriptblock]::Create($definition.Extent.Text))
-            }
-        }
-        {{body}}
-        """);
 
     private static async Task<JsonObject> InconclusiveAsync(JsonObject before, JsonObject after, string reason)
     {
@@ -412,6 +578,8 @@ public sealed class MeasureSessionStateCacheScriptTests
         };
     }
 
+    // Compare offline, in process: the baseline and after files are read, never changed, and a compare-*.json summary is
+    // written only when the evidence could be compared. The seams answer nothing: Compare observes nothing.
     private static async Task<(int ExitCode, string Output, JsonObject? Summary)> CompareAsync(JsonObject before, JsonObject after)
     {
         var root = Path.Combine(Path.GetTempPath(), "c701-collector-" + Guid.NewGuid().ToString("N"));
@@ -424,36 +592,21 @@ public sealed class MeasureSessionStateCacheScriptTests
             var afterText = after.ToJsonString();
             await File.WriteAllTextAsync(baseline, beforeText);
             await File.WriteAllTextAsync(afterPath, afterText);
-            var result = await RunAsync("-File", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "measure-session-state-cache.ps1"),
-                "-Mode", "Compare", "-Round", "R3", "-EvidenceRoot", root, "-BaselinePath", baseline, "-AfterPath", afterPath);
+            var world = new CaptureWorld();
+            var seams = new SessionStateCacheSeams
+            {
+                Http = (_, uri, _, _) => throw new InvalidOperationException("Compare made a request: " + uri),
+                Process = pid => throw new InvalidOperationException("Compare read a process"),
+                IsWindows = false,
+            };
+            var exit = SessionStateCacheMeasure.Run(new SessionStateCacheOptions { Mode = "Compare", Round = "R3", EvidenceRoot = root, BaselinePath = baseline, AfterPath = afterPath },
+                world.Host(), new System.IO.Abstractions.FileSystem(), seams);
             (await File.ReadAllTextAsync(baseline)).ShouldBe(beforeText, "comparison must preserve baseline bytes");
             (await File.ReadAllTextAsync(afterPath)).ShouldBe(afterText, "comparison must preserve after bytes");
+            world.Launcher.Launches.ShouldBeEmpty("Compare runs no tool");
             var summary = Directory.GetFiles(root, "compare-*.json").SingleOrDefault();
-            return (result.ExitCode, result.Output, summary is null ? null : JsonNode.Parse(await File.ReadAllTextAsync(summary))!.AsObject());
+            return (exit, world.Output.ToString(), summary is null ? null : JsonNode.Parse(await File.ReadAllTextAsync(summary))!.AsObject());
         }
         finally { Directory.Delete(root, recursive: true); }
-    }
-
-    private static async Task<(int ExitCode, string Output)> RunAsync(params string[] arguments)
-    {
-        var info = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
-        info.ArgumentList.Add("-NoProfile");
-        info.ArgumentList.Add("-NonInteractive");
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        // Offline Compare must not accidentally use inherited production credentials.
-        info.Environment.Remove("ANTIPHON_TASK_TOKEN");
-        info.Environment["ANTIPHON_API"] = "http://127.0.0.1:1";
-        using var process = Process.Start(info)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
-            throw new TimeoutException("Offline collector exceeded 30 seconds.");
-        }
-        return (process.ExitCode, await stdout + await stderr);
     }
 }

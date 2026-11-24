@@ -2,7 +2,7 @@
 
 Contract version: 1
 
-This document is the owner for a mechanical positive control. It is a repository instruction contract. It is not a service, a task role, a parser, or an admission API. The fenced snippets below are the checks a worker runs. Prose around them does not give the worker a choice.
+This document is the owner for a mechanical positive control. It is a repository instruction contract. It is not a service, a task role, a parser, or an admission API. The `mechanical-pc` command below runs the checks a worker runs. Prose around it does not give the worker a choice.
 
 A design recipe is not a bound execution pack. When the final bytes do not exist, the recipe says `binding required after Code`. A line number is a navigation hint, never patch authority. Code may check in candidate payloads under `docs/superpowers/mutations/<card-identifier>/`. Candidates stay unbound: they do not embed the commit SHA that contains them, and a candidate hash computed at reviewed C is not eligibility at landed L.
 
@@ -78,214 +78,21 @@ One variant at a time unless the binder supplied independence evidence. Every co
 5. Restored run. Forced rebuild of the affected graph, then the same cases in a fresh directory. Output identity must differ from the mutant phase (`buildSource=verified`).
 6. Settle. HEAD=L, clean index, preimage hashes, and owned outputs. Never commit, push, land, or deploy from the snapshot.
 
-## Snippet invocation
+## Command invocation
 
-Each fenced block is a standalone script. Its first line is the label. The harness writes the block to a temporary `.ps1` and invokes it with the named parameters. Refusal prints one `C479 REFUSE <reason>` line and exits 2. Success prints `C479 ACCEPT` and exits 0. Refusal does not leave a partial mutant in place, except `restore-mismatch`, which leaves the unexplained bytes and names the path.
+The checks are the `mechanical-pc` command, one verb per check: `scripts/antiphon mechanical-pc <verb>` (`scripts\antiphon.cmd mechanical-pc <verb>` on Windows). Refusal prints one `C479 REFUSE <reason>` line and exits 2. Success prints `C479 ACCEPT` and exits 0. Exit 1 means an input could not be read (a missing or malformed pack file, template or backup); it is not a verdict, so stop and report it. Refusal does not leave a partial mutant in place, except `restore-mismatch`, which leaves the unexplained bytes and names the path.
 
-`index.json` is `{ "members": [ { "path": "src/a.txt", "sha256": "<lower hex>" } ] }`. `index.sha256` is the detached SHA-256 of those exact index bytes. `apply.json` is `{ "allowedFiles": ["src/a.txt"], "closure": [{ "path": "fixtures/config.txt", "sha256": "<hex>" }], "edits": [{ "path": "src/a.txt", "preimageSha256": "<hex>", "mutantSha256": "<hex>", "context": "BEFORE", "replacement": "AFTER", "expectedMatches": 1 }] }`. `oracle.json` carries `driverExit`, `buildSource`, `mutantOutputHash`, `restoredOutputHash`, `skipped`, `resultsPreexisted`, `executed`, `failed`, `expectedExecuted`, and `expectedFailed`. `restore.json` lists `{ "path", "preimageSha256", "mutantSha256" }` and reads backups from `evidenceRoot/backup/<path>`. A restored phase also requires `evidenceRoot/forced-rebuild.marker`.
+`index.json` is `{ "members": [ { "path": "src/a.txt", "sha256": "<lower hex>" } ] }`. `index.sha256` is the detached SHA-256 of those exact index bytes. `apply.json` is `{ "allowedFiles": ["src/a.txt"], "closure": [{ "path": "fixtures/config.txt", "sha256": "<hex>" }], "edits": [{ "path": "src/a.txt", "preimageSha256": "<hex>", "mutantSha256": "<hex>", "context": "BEFORE", "replacement": "AFTER", "expectedMatches": 1 }] }`. `oracle.json` carries `driverExit`, `buildSource`, `mutantOutputHash`, `restoredOutputHash`, `skipped`, `resultsPreexisted`, `executed`, `failed`, `expectedExecuted`, and `expectedFailed`. `restore.json` lists `{ "path", "preimageSha256", "mutantSha256" }` and reads backups from `evidenceRoot/backup/<path>`. A restored phase also requires `evidenceRoot/forced-rebuild.marker`. Hashes are lower-case SHA-256 of the file bytes. Pack paths use `/` and resolve under the snapshot root.
 
-```powershell
-# mechanical-pc-contract v1: preflight
-param(
-  [Parameter(Mandatory = $true)][string]$SnapshotRoot,
-  [Parameter(Mandatory = $true)][string]$PackRoot,
-  [Parameter(Mandatory = $true)][string]$L
-)
-$ErrorActionPreference = 'Stop'
-function Refuse([string]$Reason) { Write-Output "C479 REFUSE $Reason"; exit 2 }
-$head = (& git -C $SnapshotRoot rev-parse HEAD).Trim()
-if ($head -ne $L) { Refuse 'source-mismatch' }
-$digestPath = Join-Path $PackRoot 'index.sha256'
-if (-not (Test-Path -LiteralPath $digestPath)) { Refuse 'binding-missing' }
-$indexPath = Join-Path $PackRoot 'index.json'
-$indexBytes = [System.IO.File]::ReadAllBytes($indexPath)
-$sha = [System.Security.Cryptography.SHA256]::Create()
-$actual = ([System.BitConverter]::ToString($sha.ComputeHash($indexBytes))).Replace('-', '').ToLowerInvariant()
-$expectedDigest = (Get-Content -LiteralPath $digestPath -Raw).Trim().ToLowerInvariant()
-if ($actual -ne $expectedDigest) { Refuse 'artifact-mismatch' }
-$index = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json
-foreach ($member in @($index.members)) {
-  $relative = ([string]$member.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-  $full = Join-Path $SnapshotRoot $relative
-  $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($hash -ne ([string]$member.sha256).ToLowerInvariant()) { Refuse 'artifact-mismatch' }
-}
-Write-Output 'C479 ACCEPT'
-exit 0
-```
+| Verb | Flags | Checks, in order |
+|---|---|---|
+| `preflight` | `--snapshot-root <dir> --pack-root <dir> --l <L>` | Snapshot HEAD is L, else `source-mismatch`. `index.sha256` exists, else `binding-missing`. It is the SHA-256 of the `index.json` bytes and every member's bytes match the index, else `artifact-mismatch`. |
+| `apply` | `--snapshot-root <dir> --pack-root <dir>` | Every closure file matches its hash before any write, else `artifact-mismatch`. For each edit, the live bytes are the preimage, the context occurs exactly `expectedMatches` times, and the written bytes are the predicted mutant. Then the changed files are exactly `allowedFiles`. A failed check is `patch-mismatch` (an empty context is `patch-unresolved`), after every saved preimage is written back. |
+| `oracle` | `--pack-root <dir>` | `resultsPreexisted`, `buildSource` `unknown`, or a restored output hash equal to the mutant's is `stale-output`. Driver exit 2 is `prerequisite-missing` and 3 is `selector-unresolved`. Skipped above zero, no executed row, a duplicate row, or an executed set other than `expectedExecuted` is `selector-drift`. A failed set other than `expectedFailed` is `unexpected-red`. |
+| `restore` | `--snapshot-root <dir> --evidence-root <dir> --pack-root <dir> [--phase restore\|restored]` | A path whose bytes are not the recorded mutant is `restore-mismatch path=<path>` and stays as it is. Otherwise the backup is copied back and must equal the preimage, else `restore-mismatch`. `--phase restored` also needs the marker, else `stale-output`. |
+| `instantiate` | `--snapshot-root <dir> --evidence-root <dir> --template-path <file> [--task-id <id>] [--run-id <id>] [--pc-id <id>] [--phase <name>] [--results-relative <path>]` | An empty results path is `empty-results`. A token outside the six is `unknown-token`. A used token with no value, or no PC id, phase or run id, is `missing-value`. `..` in the resolved text, the results path or the attempt names is `path-not-contained`. An existing attempt directory `<evidenceRoot>/<pcId>/<phase>/<runId>` is `existing-attempt`. Otherwise the command creates it and writes `resolved-manifest.txt` there. |
 
-```powershell
-# mechanical-pc-contract v1: apply
-param(
-  [Parameter(Mandatory = $true)][string]$SnapshotRoot,
-  [Parameter(Mandatory = $true)][string]$PackRoot
-)
-$ErrorActionPreference = 'Stop'
-function Refuse([string]$Reason) { Write-Output "C479 REFUSE $Reason"; exit 2 }
-function FullPath([string]$Relative) {
-  $rel = $Relative.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-  return (Join-Path $SnapshotRoot $rel)
-}
-$spec = Get-Content -LiteralPath (Join-Path $PackRoot 'apply.json') -Raw | ConvertFrom-Json
-$saved = @{}
-foreach ($item in @($spec.closure)) {
-  $full = FullPath ([string]$item.path)
-  $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($hash -ne ([string]$item.sha256).ToLowerInvariant()) { Refuse 'artifact-mismatch' }
-}
-foreach ($edit in @($spec.edits)) {
-  $full = FullPath ([string]$edit.path)
-  $live = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($live -ne ([string]$edit.preimageSha256).ToLowerInvariant()) {
-    foreach ($path in @($saved.Keys)) { [System.IO.File]::WriteAllBytes($path, $saved[$path]) }
-    Refuse 'patch-mismatch'
-  }
-  $text = [System.IO.File]::ReadAllText($full)
-  $expectedMatches = [int]$edit.expectedMatches
-  $found = ([regex]::Matches($text, [regex]::Escape([string]$edit.context))).Count
-  if ($found -ne $expectedMatches) {
-    foreach ($path in @($saved.Keys)) { [System.IO.File]::WriteAllBytes($path, $saved[$path]) }
-    Refuse 'patch-mismatch'
-  }
-  $saved[$full] = [System.IO.File]::ReadAllBytes($full)
-  $updated = $text.Replace([string]$edit.context, [string]$edit.replacement)
-  [System.IO.File]::WriteAllText($full, $updated)
-  $mutant = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($mutant -ne ([string]$edit.mutantSha256).ToLowerInvariant()) {
-    foreach ($path in @($saved.Keys)) { [System.IO.File]::WriteAllBytes($path, $saved[$path]) }
-    Refuse 'patch-mismatch'
-  }
-}
-$allowed = @($spec.allowedFiles | ForEach-Object { ([string]$_).Replace('\', '/') })
-$changed = @($saved.Keys | ForEach-Object {
-  $full = $_
-  $rel = $full.Substring($SnapshotRoot.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\', '/')
-  $rel
-})
-$cmp = Compare-Object @($changed) @($allowed)
-if ($null -ne $cmp) {
-  foreach ($path in @($saved.Keys)) { [System.IO.File]::WriteAllBytes($path, $saved[$path]) }
-  Refuse 'patch-mismatch'
-}
-Write-Output 'C479 ACCEPT'
-exit 0
-```
-
-```powershell
-# mechanical-pc-contract v1: oracle
-param(
-  [Parameter(Mandatory = $true)][string]$PackRoot
-)
-$ErrorActionPreference = 'Stop'
-function Refuse([string]$Reason) { Write-Output "C479 REFUSE $Reason"; exit 2 }
-function SameSet($Left, $Right) {
-  $l = @($Left)
-  $r = @($Right)
-  if ($l.Count -ne $r.Count) { return $false }
-  return $null -eq (Compare-Object $l $r)
-}
-$obs = Get-Content -LiteralPath (Join-Path $PackRoot 'oracle.json') -Raw | ConvertFrom-Json
-if ([bool]$obs.resultsPreexisted) { Refuse 'stale-output' }
-if ([string]$obs.buildSource -eq 'unknown') { Refuse 'stale-output' }
-$mutantOutputHash = [string]$obs.mutantOutputHash
-$restoredOutputHash = [string]$obs.restoredOutputHash
-# restoredOutputHash -ne mutantOutputHash
-if (-not ($restoredOutputHash -ne $mutantOutputHash)) { Refuse 'stale-output' }
-$driverExit = [int]$obs.driverExit
-if ($driverExit -eq 2) { Refuse 'prerequisite-missing' }
-if ($driverExit -eq 3) { Refuse 'selector-unresolved' }
-if ([int]$obs.skipped -gt 0) { Refuse 'selector-drift' }
-$executed = @($obs.executed)
-if ($executed.Count -eq 0) { Refuse 'selector-drift' }
-if ((@($executed | Select-Object -Unique)).Count -ne $executed.Count) { Refuse 'selector-drift' }
-if (-not (SameSet $executed @($obs.expectedExecuted))) { Refuse 'selector-drift' }
-$failed = @($obs.failed)
-if (-not (SameSet $failed @($obs.expectedFailed))) { Refuse 'unexpected-red' }
-Write-Output 'C479 ACCEPT'
-exit 0
-```
-
-```powershell
-# mechanical-pc-contract v1: restore
-param(
-  [Parameter(Mandatory = $true)][string]$SnapshotRoot,
-  [Parameter(Mandatory = $true)][string]$EvidenceRoot,
-  [Parameter(Mandatory = $true)][string]$PackRoot,
-  [string]$Phase = 'restore'
-)
-$ErrorActionPreference = 'Stop'
-function Refuse([string]$Reason) { Write-Output "C479 REFUSE $Reason"; exit 2 }
-$spec = Get-Content -LiteralPath (Join-Path $PackRoot 'restore.json') -Raw | ConvertFrom-Json
-foreach ($file in @($spec.files)) {
-  $relative = ([string]$file.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-  $full = Join-Path $SnapshotRoot $relative
-  $current = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  $recordedMutantHash = ([string]$file.mutantSha256).ToLowerInvariant()
-  if ($current -ne $recordedMutantHash) {
-    Write-Output "C479 REFUSE restore-mismatch path=$($file.path)"
-    exit 2
-  }
-  $backup = Join-Path (Join-Path $EvidenceRoot 'backup') $relative
-  [System.IO.File]::Copy($backup, $full, $true)
-  $restored = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($restored -ne ([string]$file.preimageSha256).ToLowerInvariant()) { Refuse 'restore-mismatch' }
-}
-if ($Phase -eq 'restored') {
-  $marker = Join-Path $EvidenceRoot 'forced-rebuild.marker'
-  if (-not (Test-Path -LiteralPath $marker)) { Refuse 'stale-output' }
-}
-Write-Output 'C479 ACCEPT'
-exit 0
-```
-
-```powershell
-# mechanical-pc-contract v1: instantiate
-param(
-  [Parameter(Mandatory = $true)][string]$SnapshotRoot,
-  [Parameter(Mandatory = $true)][string]$EvidenceRoot,
-  [Parameter(Mandatory = $true)][string]$TemplatePath,
-  [string]$TaskId,
-  [string]$RunId,
-  [string]$PcId,
-  [string]$Phase,
-  [string]$ResultsRelative
-)
-$ErrorActionPreference = 'Stop'
-function Refuse([string]$Reason) { Write-Output "C479 REFUSE $Reason"; exit 2 }
-if ([string]::IsNullOrWhiteSpace($ResultsRelative)) { Refuse 'empty-results' }
-$names = @('snapshotRoot', 'evidenceRoot', 'taskId', 'runId', 'pcId', 'phase')
-$values = @{
-  snapshotRoot = $SnapshotRoot
-  evidenceRoot = $EvidenceRoot
-  taskId = $TaskId
-  runId = $RunId
-  pcId = $PcId
-  phase = $Phase
-}
-$text = [System.IO.File]::ReadAllText($TemplatePath)
-$tokens = [regex]::Matches($text, '\{([A-Za-z0-9]+)\}')
-foreach ($token in @($tokens)) {
-  $name = [string]$token.Groups[1].Value
-  if (-not $names.Contains($name)) { Refuse 'unknown-token' }
-  if ([string]::IsNullOrWhiteSpace([string]$values[$name])) { Refuse 'missing-value' }
-}
-foreach ($name in @($values.Keys)) {
-  $text = $text.Replace('{' + $name + '}', [string]$values[$name])
-}
-if ($text -match '\{[A-Za-z0-9]+\}') { Refuse 'unknown-token' }
-if ($text.Contains('..') -or $ResultsRelative.Contains('..')) { Refuse 'path-not-contained' }
-$attempt = Join-Path $EvidenceRoot (Join-Path $PcId (Join-Path $Phase $RunId))
-try {
-  New-Item -ItemType Directory -Path $attempt -ErrorAction Stop | Out-Null
-} catch {
-  Refuse 'existing-attempt'
-}
-$resolved = Join-Path $attempt 'resolved-manifest.txt'
-[System.IO.File]::WriteAllText($resolved, $text)
-Write-Output 'C479 ACCEPT'
-exit 0
-```
-
+The command is `MechanicalPc` in `scripts/lib/Antiphon.Nightly/MechanicalPc.cs`; `MechanicalPcRehearsalTests` rehearses every verb on disposable Git fixtures.
 ## Worked examples
 
 The following examples are illustrative. They are not executed evidence for this card.

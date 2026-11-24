@@ -233,29 +233,30 @@ The full route map is [antiphon-api.md](antiphon-api.md).
 
 ## Smoke verification
 
-`verify-agent-tui-profile.ps1` defaults to `-BaseUrl http://localhost:17282` — the **simple-mode**
-Vite origin, which proxies `/api`. On the canonical Aspire stack pass
-`-BaseUrl http://localhost:17202` instead.
+`scripts\antiphon.cmd verify-agent-tui-profile` (the `antiphon-scripts` command; `scripts/antiphon` on sh) defaults to
+`--base-url http://localhost:17282` — the **simple-mode** Vite origin, which proxies `/api`. On the canonical Aspire stack pass
+`--base-url http://localhost:17202` instead. Without `--skip-live-message` it starts the agent fresh and spends one real model
+turn, so run it only on the operator's stack. Exit 0 is verified and 1 failed (one line naming the step).
 
 ```powershell
 # After stack is up:
-.\scripts\verify-agent-tui-profile.ps1 `
-  -BaseUrl http://localhost:17282 `
-  -AgentName Atlas-Orchestrator `
-  -ProfileName "OpenCode Gateway" `
-  -ExpectedReply "Atlas OpenCode default verified."
+scripts\antiphon.cmd verify-agent-tui-profile `
+  --base-url http://localhost:17282 `
+  --agent-name Atlas-Orchestrator `
+  --profile-name "OpenCode Gateway" `
+  --expected-reply "Atlas OpenCode default verified."
 
-.\scripts\verify-agent-tui-profile.ps1 `
-  -BaseUrl http://localhost:17282 `
-  -AgentName Atlas-Orchestrator `
-  -ProfileName "OpenCode Gateway" `
-  -ModelId "maven/grok-4.5" `
-  -ExpectedReply "Atlas OpenCode explicit model verified."
+scripts\antiphon.cmd verify-agent-tui-profile `
+  --base-url http://localhost:17282 `
+  --agent-name Atlas-Orchestrator `
+  --profile-name "OpenCode Gateway" `
+  --model-id "maven/grok-4.5" `
+  --expected-reply "Atlas OpenCode explicit model verified."
 
 .\verify-dev-stack.ps1 -SimpleMode
 ```
 
-The smoke script refuses to retain evidence containing a supplied canary secret.
+The smoke fails at once when a retained evidence file, or the metrics text, contains the `--canary` secret.
 
 ## Deployment scope
 

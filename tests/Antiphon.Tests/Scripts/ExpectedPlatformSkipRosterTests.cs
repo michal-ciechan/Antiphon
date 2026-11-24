@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
@@ -7,40 +8,222 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// The Windows coverage gate's committed expected-skip roster. The harness spawns pwsh; the report row runs in-process.
+// The Windows coverage gate's committed expected-skip roster. In process since unit 33 of
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md (it ran scripts/test-expected-platform-skips.ps1): the subject
+// was already C# (NightlyChunkVerdict, NightlyTrx, NightlyExpectedSkips, SuiteCompletionParts), so each EPS row calls it here.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ExpectedPlatformSkipRosterTests
 {
+    private const string S7 = "S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate.";
+    private const string Cleanup = "Antiphon.Tests.Application.C0824RefOnlyCleanupTests.Remote_cleanup_still_uses_its_binding_and_generation";
+    private const string Sync = "Antiphon.Tests.Application.C0824RefOnlySyncTests.Reported_tip_and_mirror_publication_keep_existing_contract";
+    private const string Missing = "Antiphon.Tests.Missing.NoSuchTests.MissingMethod";
+    private const string Trace = "Skipped: " + S7;
+
+    private static string Repo => NightlyPlanCases.Repo;
+
+    private static string RosterPath => Path.Combine(Repo, "tests", "expected-platform-skips.json");
+
+    private static PlainObject Row(string identity, string outcome, string debugTrace) =>
+        new(("Outcome", outcome), ("Identity", identity), ("DebugTrace", debugTrace));
+
+    private static PlainObject Entry(string platform, string test, string reasonPrefix, string? reasonClass = null) =>
+        reasonClass is null
+            ? new(("platform", platform), ("test", test), ("reasonPrefix", reasonPrefix))
+            : new(("platform", platform), ("test", test), ("reasonPrefix", reasonPrefix), ("reasonClass", reasonClass));
+
+    private static object[] TestRoster() =>
+    [
+        Entry("windows", Cleanup, S7),
+        Entry("windows", Sync, S7),
+        Entry("windows", Missing, "gone"),
+    ];
+
+    // Invoke-EpsVerdict: the verdict judges by the roster it is given (null: the committed one).
+    private static PlainObject Verdict(object[] rows, int processExit = 0, object[]? roster = null, string platform = "windows", string[]? known = null) =>
+        (PlainObject)NightlyChunkVerdict.CoverageVerdict(rows, processExit, "a", "a", "r", "r", "p", "p", [], [], false, platform,
+            roster ?? NightlyChunkVerdict.SkipRoster(RosterPath), known!);
+
+    private static bool Flag(PlainObject verdict, string name) => PsValue.IsTrue(verdict[name]);
+
+    private static string Joined(object? values) => string.Join(",", PsValue.AsArray(values!).Select(PsValue.Str));
+
     [Test]
-    public Task Verdict_accepts_only_rostered_skips() =>
-        ScriptHarness.RunHarnessCaseAsync(
-            "test-expected-platform-skips.ps1", "EPS", "Verdict", 23,
-            [
-                "EPS expected-skip-accepted",
-                "EPS prefix-extension-rejected",
-                "EPS skipped-without-space-rejected",
-                "EPS autoload-roster-accepted",
-                "EPS unexpected-skip-rejected",
-                "EPS reason-mismatch-rejected",
-                "EPS all-skip-exit-8-tolerated",
-                "EPS mixed-exit-8-rejected",
-                "EPS other-nonzero-still-fails",
-                "EPS ran-roster-entry-stays-complete",
-                "EPS passed-with-expected-skip-complete",
-                "EPS stale-roster-warns",
-                "EPS trx-debug-trace",
-                "EPS census-matches-source",
-                "EPS census-reports-missing",
-                "EPS reason-text-matches-source",
-                "EPS reason-text-reports-mismatch",
-                "EPS roster-drift-stable",
-                "EPS roster-drift-reports-mismatch",
-                "EPS live-context-any-platform",
-                "EPS live-context-labeled",
-                "EPS tolerated-list-and-digest",
-                "EPS discovery-known-identities"
-            ]);
+    public void Verdict_accepts_only_rostered_skips()
+    {
+        var rows = new NightlyCaseRows();
+        var roster = TestRoster();
+        var skip = Row(Cleanup, "NotExecuted", Trace);
+
+        var accepted = Verdict([skip], roster: roster);
+        var acceptedReasons = Joined(accepted["reasons"]);
+        rows.Check(Flag(accepted, "coverageComplete") && Flag(accepted, "testsPassed") && !acceptedReasons.Contains("unexecuted-outcome"),
+            "EPS expected-skip-accepted", acceptedReasons);
+
+        var longer = Verdict([Row(Cleanup, "NotExecuted", Trace + " extra detail")], roster: roster);
+        var longerReasons = Joined(longer["reasons"]);
+        rows.Check(!Flag(longer, "coverageComplete") && longerReasons.Contains("unexecuted-outcome"), "EPS prefix-extension-rejected", longerReasons);
+
+        var noSpace = Verdict([Row(Cleanup, "NotExecuted", "Skipped:" + S7)], roster: roster);
+        var noSpaceReasons = Joined(noSpace["reasons"]);
+        rows.Check(!Flag(noSpace, "coverageComplete") && noSpaceReasons.Contains("unexecuted-outcome"), "EPS skipped-without-space-rejected", noSpaceReasons);
+
+        var loaded = Verdict([skip]);
+        var loadedReasons = Joined(loaded["reasons"]);
+        rows.Check(Flag(loaded, "coverageComplete") && Flag(loaded, "testsPassed") && !loadedReasons.Contains("unexecuted-outcome"),
+            "EPS autoload-roster-accepted", loadedReasons);
+
+        var unexpected = Verdict([Row("Antiphon.Tests.Scripts.SampleTests.NotOnTheRoster", "NotExecuted", Trace)], roster: roster);
+        var unexpectedReasons = Joined(unexpected["reasons"]);
+        rows.Check(!Flag(unexpected, "coverageComplete") && Regex.IsMatch(unexpectedReasons, @"unexecuted-outcome:Antiphon\.Tests\.Scripts\.SampleTests\.NotOnTheRoster"),
+            "EPS unexpected-skip-rejected", unexpectedReasons);
+
+        var mismatch = Verdict([Row(Cleanup, "NotExecuted", "Skipped: a different reason")], 8, roster);
+        var mismatchReasons = Joined(mismatch["reasons"]);
+        rows.Check(!Flag(mismatch, "coverageComplete") && !Flag(mismatch, "testsPassed") && mismatchReasons.Contains("unexecuted-outcome")
+            && mismatchReasons.Contains("process-exit-8") && !Flag(mismatch, "processExitTolerated"), "EPS reason-mismatch-rejected", mismatchReasons);
+
+        var onlySkip = Verdict([skip], 8, roster);
+        var onlyReasons = Joined(onlySkip["reasons"]);
+        rows.Check(Flag(onlySkip, "coverageComplete") && Flag(onlySkip, "testsPassed") && Flag(onlySkip, "processExitTolerated")
+            && !onlyReasons.Contains("process-exit-8") && !onlyReasons.Contains("unexecuted-outcome"), "EPS all-skip-exit-8-tolerated", onlyReasons);
+
+        var mixed = Verdict([skip, Row("Antiphon.Tests.Scripts.SampleTests.Ran", "Passed", "")], 8, roster);
+        var mixedReasons = Joined(mixed["reasons"]);
+        rows.Check(!Flag(mixed, "testsPassed") && mixedReasons.Contains("process-exit-8") && !Flag(mixed, "processExitTolerated"),
+            "EPS mixed-exit-8-rejected", mixedReasons);
+
+        var exitOne = Verdict([skip], 1, roster);
+        var exitOneReasons = Joined(exitOne["reasons"]);
+        rows.Check(!Flag(exitOne, "testsPassed") && exitOneReasons.Contains("process-exit-1") && !Flag(exitOne, "processExitTolerated"),
+            "EPS other-nonzero-still-fails", exitOneReasons);
+
+        var ran = Verdict([Row(Cleanup, "Passed", "")], roster: roster);
+        var ranReasons = Joined(ran["reasons"]);
+        rows.Check(Flag(ran, "coverageComplete") && Flag(ran, "testsPassed") && !ranReasons.Contains("unexecuted-outcome"),
+            "EPS ran-roster-entry-stays-complete", ranReasons);
+
+        var group = Verdict([Row("Antiphon.Tests.Scripts.SampleTests.Ran", "Passed", ""), skip], roster: roster);
+        var groupReasons = Joined(group["reasons"]);
+        rows.Check(Flag(group, "coverageComplete") && Flag(group, "testsPassed") && !groupReasons.Contains("unexecuted-outcome"),
+            "EPS passed-with-expected-skip-complete", groupReasons);
+
+        var stale = Verdict([Row(Cleanup, "Passed", "")], roster: roster, known: [Cleanup, Sync]);
+        var staleText = Joined(stale["warnings"]);
+        var staleReasons = Joined(stale["reasons"]);
+        rows.Check(Flag(stale, "coverageComplete") && Flag(stale, "testsPassed") && staleText == "stale-roster:" + Missing
+            && !staleReasons.Contains("stale-roster") && !staleReasons.Contains("unexecuted-outcome"), "EPS stale-roster-warns", staleText + " | " + staleReasons);
+
+        TrxDebugTrace(rows);
+        Census(rows);
+        LiveContext(rows);
+
+        var digest = PsValue.Str(accepted["rosterDigest"]);
+        var tolerated = PsValue.AsArray(accepted["toleratedSkips"]);
+        var toleratedIds = tolerated.Select(t => PsValue.Str(PsValue.Prop(t, "identity"))).ToArray();
+        var toleratedClass = tolerated.Length == 1 ? PsValue.Str(PsValue.Prop(tolerated[0], "reasonClass")) : "";
+        var digestAgain = PsValue.Str(Verdict([skip], roster: roster)["rosterDigest"]);
+        rows.Check(digest.Length == 64 && digest == digestAgain && toleratedIds.Length == 1 && toleratedIds[0] == Cleanup && toleratedClass == "platform",
+            "EPS tolerated-list-and-digest", "digest=" + digest + " ids=" + string.Join(",", toleratedIds) + " class=" + toleratedClass);
+
+        // W2-nightly S13: suite completion (the stale-roster warnings) is Antiphon.Nightly/NightlySuiteRunner.cs.
+        var implText = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "Antiphon.Nightly", "NightlySuiteRunner.cs"));
+        var knownIds = SuiteCompletionParts.KnownIdentities([new PlainObject(("ClassName", "Antiphon.Tests.Application.C0824RefOnlyCleanupTests"),
+            ("Method", "Remote_cleanup_still_uses_its_binding_and_generation"))]);
+        var knownWarnings = NightlyChunkVerdict.StaleWarnings("windows", roster, knownIds);
+        var wired = implText.Contains("SuiteCompletionParts.KnownIdentities(", StringComparison.Ordinal);
+        rows.Check(knownIds.Contains(Cleanup) && knownWarnings.Contains("stale-roster:" + Sync) && !knownWarnings.Contains("stale-roster:" + Cleanup) && wired,
+            "EPS discovery-known-identities", "known=" + string.Join(",", knownIds) + " warnings=" + string.Join(",", knownWarnings) + " wired=" + wired);
+
+        rows.ShouldAllPass(23);
+    }
+
+    // EPS trx-debug-trace: the TRX reader keeps the skip's DebugTrace, and an all-skip exit 8 from it is tolerated.
+    private static void TrxDebugTrace(NightlyCaseRows rows)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "eps-trx-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var trx = Path.Combine(root, "expected-skip.trx");
+            File.WriteAllText(trx, """
+                <?xml version="1.0" encoding="utf-8"?>
+                <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+                  <TestDefinitions>
+                    <UnitTest id="t1" name="Antiphon.Tests.Application.C0824RefOnlyCleanupTests.Remote_cleanup_still_uses_its_binding_and_generation">
+                      <TestMethod className="Antiphon.Tests.Application.C0824RefOnlyCleanupTests" name="Remote_cleanup_still_uses_its_binding_and_generation" />
+                    </UnitTest>
+                  </TestDefinitions>
+                  <Results>
+                    <UnitTestResult testId="t1" testName="Antiphon.Tests.Application.C0824RefOnlyCleanupTests.Remote_cleanup_still_uses_its_binding_and_generation" outcome="NotExecuted">
+                      <Output><DebugTrace>Skipped: S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate.</DebugTrace></Output>
+                    </UnitTestResult>
+                  </Results>
+                </TestRun>
+                """);
+            var parsed = NightlyTrx.ReadIdentities(trx);
+            var parsedTrace = parsed.Length == 1 ? parsed[0].DebugTrace : "";
+            PlainObject? fromTrx = parsed.Length == 1 ? Verdict([parsed[0]], 8) : null;
+            var fromReasons = fromTrx is null ? "" : Joined(fromTrx["reasons"]);
+            rows.Check(parsed.Length == 1 && parsed[0].Outcome == "NotExecuted" && parsed[0].Identity == Cleanup && parsedTrace == Trace && fromTrx is not null
+                && Flag(fromTrx, "coverageComplete") && Flag(fromTrx, "testsPassed") && Flag(fromTrx, "processExitTolerated"),
+                "EPS trx-debug-trace", parsedTrace + " | " + fromReasons);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    // The committed roster against tests/: its Windows rows, their source and reason text, and WindowsUnitSkipRoster.cs.
+    private static void Census(NightlyCaseRows rows)
+    {
+        var committed = NightlyChunkVerdict.SkipRoster(RosterPath);
+        var windows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "platform")) == "windows").ToArray();
+        var unique = windows.Select(e => PsValue.Str(PsValue.Prop(e, "test"))).Distinct(StringComparer.Ordinal).Count();
+        var gaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", committed, null);
+        rows.Check(windows.Length == 33 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
+            "windows=" + windows.Length + " unique=" + unique + " gaps=" + string.Join(",", gaps));
+
+        var planted = committed.Append(Entry("windows", Missing, "gone")).ToArray();
+        var plantedGaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", planted, null);
+        rows.Check(plantedGaps.Length == 1 && plantedGaps[0] == Missing, "EPS census-reports-missing", string.Join(",", plantedGaps));
+
+        var reasonGaps = NightlyExpectedSkips.ReasonGaps(Repo, "windows", committed, null);
+        rows.Check(reasonGaps.Length == 0, "EPS reason-text-matches-source", string.Join(",", reasonGaps));
+
+        const string wrongId = "Antiphon.Tests.Scripts.RemoteScriptContractTests.C1105_Resume_extraction_is_closed";
+        var wrongReason = committed.Select(e => PsValue.Str(PsValue.Prop(e, "test")) == wrongId
+            ? Entry("windows", wrongId, "not-the-method-skip-text") : e).ToArray();
+        var wrongGaps = NightlyExpectedSkips.ReasonGaps(Repo, "windows", wrongReason, null);
+        rows.Check(wrongGaps.Contains(wrongId), "EPS reason-text-reports-mismatch", string.Join(",", wrongGaps));
+
+        var drift = NightlyExpectedSkips.RosterDrift(Repo, committed, null);
+        var overlap = PsValue.AsArray(PsValue.Prop(drift, "Overlap"));
+        var mismatches = PsValue.AsArray(PsValue.Prop(drift, "Mismatches")).Select(PsValue.Str).ToArray();
+        rows.Check(overlap.Length == 10 && mismatches.Length == 0, "EPS roster-drift-stable",
+            "overlap=" + overlap.Length + " mismatches=" + string.Join(",", mismatches));
+
+        var drifted = committed.Select(e => PsValue.Str(PsValue.Prop(e, "test")) == wrongId
+            ? Entry(PsValue.Str(PsValue.Prop(e, "platform")), wrongId, "drifted-reason", "platform") : e).ToArray();
+        var driftBad = PsValue.AsArray(PsValue.Prop(NightlyExpectedSkips.RosterDrift(Repo, drifted, null), "Mismatches")).Select(PsValue.Str).ToArray();
+        rows.Check(driftBad.Contains(wrongId), "EPS roster-drift-reports-mismatch", string.Join(",", driftBad));
+    }
+
+    // A live-context entry tolerates its skip on any platform; the committed C680 row is labelled live-context.
+    private static void LiveContext(NightlyCaseRows rows)
+    {
+        const string c680 = "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs";
+        var liveRoster = new object[] { Entry("windows", c680, "20 missing-context", "live-context") };
+        var liveLinux = Verdict([Row(c680, "NotExecuted", "Skipped: 20 missing-context")], roster: liveRoster, platform: "linux");
+        var liveReasons = Joined(liveLinux["reasons"]);
+        rows.Check(Flag(liveLinux, "coverageComplete") && Flag(liveLinux, "testsPassed") && !liveReasons.Contains("unexecuted-outcome"),
+            "EPS live-context-any-platform", liveReasons);
+
+        var c680Rows = NightlyChunkVerdict.SkipRoster(RosterPath).Where(e => PsValue.Str(PsValue.Prop(e, "test")) == c680).ToArray();
+        var c680Class = c680Rows.Length == 1 ? PsValue.Str(PsValue.Prop(c680Rows[0], "reasonClass")) : "";
+        rows.Check(c680Rows.Length == 1 && c680Class == "live-context", "EPS live-context-labeled", "count=" + c680Rows.Length + " class=" + c680Class);
+    }
 
     /// <summary>
     /// EPS title-omits-tolerated-exit (from Test-EpsVerdict; in-process since W2-nightly S06): a dry-run report of a run

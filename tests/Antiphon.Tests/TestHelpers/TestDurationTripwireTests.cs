@@ -1,12 +1,13 @@
-using System.Diagnostics;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
-/// <summary>CARD-0475 S6: the duration tripwire joins TRX identity by testId, not display name.</summary>
+/// <summary>CARD-0475 S6: the duration tripwire joins TRX identity by testId, not display name. In process since unit 33 of
+/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md (scripts/test-duration-tripwire.ps1 is the command
+/// test-duration-tripwire, Antiphon.Nightly.DurationTripwire).</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TestDurationTripwireTests
 {
     [Test]
@@ -227,49 +228,25 @@ public sealed class TestDurationTripwireTests
         return 0;
     }
 
+    // The tripwire in process (DurationTripwire.Run, the test-duration-tripwire command) on a temporary TRX and allowlist.
     private static async Task<(int ExitCode, string Output)> InvokeAsync(string trxXml, string allowlist)
     {
         var root = Path.Combine(Path.GetTempPath(), "c475-tripwire-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var trxPath = Path.Combine(root, "run.trx");
-        var allowPath = Path.Combine(root, "allow.txt");
-        await File.WriteAllTextAsync(trxPath, trxXml);
-        await File.WriteAllTextAsync(allowPath, allowlist);
-        var script = Path.Combine(RepoRoot, "scripts", "test-duration-tripwire.ps1");
-        var start = new ProcessStartInfo("pwsh")
+        try
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        start.ArgumentList.Add("-Trx");
-        start.ArgumentList.Add(trxPath);
-        start.ArgumentList.Add("-Allowlist");
-        start.ArgumentList.Add(allowPath);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        var output = await stdout + await stderr;
-        try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
-        return (process.ExitCode, output);
-    }
-
-    private static string RepoRoot
-    {
-        get
+            var trxPath = Path.Combine(root, "run.trx");
+            var allowPath = Path.Combine(root, "allow.txt");
+            await File.WriteAllTextAsync(trxPath, trxXml);
+            await File.WriteAllTextAsync(allowPath, allowlist);
+            var output = new StringWriter();
+            var exit = DurationTripwire.Run(new DurationTripwireOptions { Trx = trxPath, Allowlist = allowPath },
+                NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem());
+            return (exit, output.ToString());
+        }
+        finally
         {
-            var dir = new DirectoryInfo(AppContext.BaseDirectory);
-            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
-                dir = dir.Parent;
-            return dir?.FullName
-                ?? throw new DirectoryNotFoundException("Could not locate repo root (Antiphon.sln).");
+            Directory.Delete(root, recursive: true);
         }
     }
 }

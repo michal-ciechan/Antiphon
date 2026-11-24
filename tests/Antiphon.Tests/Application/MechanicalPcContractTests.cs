@@ -89,16 +89,14 @@ public sealed class MechanicalPcContractTests
         foreach (var exit in new[] { "exit 0", "exit 1", "exit 2", "exit 3" })
             doc.ShouldContain(exit);
 
-        var lines = doc.ReplaceLineEndings("\n").Split('\n');
-        var labels = new List<string>();
-        for (var i = 0; i < lines.Length; i++)
-        {
-            if (lines[i].Trim() == "```powershell" && i + 1 < lines.Length)
-                labels.Add(lines[i + 1]);
-        }
-        labels.Count.ShouldBe(5);
-        foreach (var name in new[] { "preflight", "instantiate", "apply", "oracle", "restore" })
-            labels.ShouldContain("# mechanical-pc-contract v1: " + name);
+        // The checks are the mechanical-pc command (unit 33 moved the five snippets into MechanicalPc): the doc names the
+        // command and has one table row per verb, and no PowerShell snippet is left to copy.
+        doc.ShouldContain("scripts/antiphon mechanical-pc <verb>");
+        doc.ShouldNotContain("```powershell");
+        Antiphon.Nightly.MechanicalPcOptions.Verbs.ShouldBe(new[] { "preflight", "apply", "oracle", "restore", "instantiate" });
+        var rows = doc.ReplaceLineEndings("\n").Split('\n').Where(line => line.StartsWith("| `", StringComparison.Ordinal)).ToList();
+        foreach (var verb in Antiphon.Nightly.MechanicalPcOptions.Verbs)
+            rows.Count(row => row.StartsWith("| `" + verb + "` |", StringComparison.Ordinal)).ShouldBe(1, verb);
     }
 
     [Test]

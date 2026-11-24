@@ -865,35 +865,16 @@ public sealed class TestClassificationPolicyTests
         }
     }
 
-    private static async Task<(int ExitCode, string Output)> InvokeTripwireAsyncPath(string trxPath, string allowPath)
+    // The tripwire in process (Antiphon.Nightly.DurationTripwire, the test-duration-tripwire command; unit 33 deleted the
+    // script). Without a readable allowlist it reads the checkout's, as the command does.
+    private static Task<(int ExitCode, string Output)> InvokeTripwireAsyncPath(string trxPath, string allowPath)
     {
-        var script = Path.Combine(RepoRoot, "scripts", "test-duration-tripwire.ps1");
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        start.ArgumentList.Add("-Trx");
-        start.ArgumentList.Add(trxPath);
-        if (!string.IsNullOrWhiteSpace(allowPath) && File.Exists(allowPath))
-        {
-            start.ArgumentList.Add("-Allowlist");
-            start.ArgumentList.Add(allowPath);
-        }
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var output = new StringWriter();
+        var allowlist = !string.IsNullOrWhiteSpace(allowPath) && File.Exists(allowPath) ? allowPath : Antiphon.Nightly.DurationTripwireOptions.DefaultAllowlist(RepoRoot);
+        var exit = Antiphon.Nightly.DurationTripwire.Run(new Antiphon.Nightly.DurationTripwireOptions { Trx = trxPath, Allowlist = allowlist },
+            Antiphon.Nightly.NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem());
+        return Task.FromResult((exit, output.ToString()));
     }
-
     internal sealed record ProbeResult(string Dir, string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
 
     private Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false, Action<string>? inspect = null)
