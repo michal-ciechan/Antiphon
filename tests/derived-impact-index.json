@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 352,
+      "classes": 349,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 143,
+      "classes": 142,
       "reason": "cap",
-      "owed": 118,
+      "owed": 117,
       "first": [
         "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
@@ -2115,11 +2115,10 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 28,
+      "classes": 27,
       "reason": "cap",
-      "owed": 3,
+      "owed": 2,
       "first": [
-        "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
@@ -2189,6 +2188,16 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
+      "classes": 27,
+      "reason": "cap",
+      "owed": 2,
+      "first": [
+        "NightlyTestHelpersTests",
+        "NightlyTestsParityTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": 55,
       "reason": "cap",
@@ -2206,34 +2215,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 53,
+      "classes": 55,
       "reason": "cap",
-      "owed": 28,
+      "owed": 30,
       "first": [
+        "RcFailedFirstPlannerTests",
         "RcProjectSelectionTests",
         "ReleaseGateRegistrationTests",
         "ChangeAwareReleaseTests",
         "LongPathsCheckoutScriptTests",
         "RcRosterRepairTests",
         "ReleaseGateLibraryTests",
-        "ToolchainFloorWarningTests",
-        "NightlyPrerequisiteTests"
+        "ToolchainFloorWarningTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 34,
+      "classes": 36,
       "reason": "cap",
-      "owed": 9,
+      "owed": 11,
       "first": [
+        "OrchestrationWatcherTests",
+        "OrchestratorWorkspaceCommandTests",
         "QualificationEtaTests",
         "QualificationSupervisorTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseStatusTests",
-        "RepositoryChildRecoveryCommandTests",
-        "StageValueReportTests",
-        "ZombieAgentReaperTests"
+        "RepositoryChildRecoveryCommandTests"
       ]
     },
     {
@@ -2322,9 +2331,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 137,
+      "classes": 138,
       "reason": "cap",
-      "owed": 112,
+      "owed": 113,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -2482,18 +2491,18 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 37,
+      "classes": 39,
       "reason": "cap",
-      "owed": 12,
+      "owed": 14,
       "first": [
+        "DindRunnerContractTests",
         "GitDiffSpikeTests",
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
+        "MechanicalPcRehearsalTests",
         "NightlyRunTests",
         "PhoneHomeMirrorJoinTests",
-        "ProjectReadinessTests",
-        "ProjectSetupServiceTests",
-        "RcHistoricalEvidenceTests"
+        "ProjectReadinessTests"
       ]
     },
     {
@@ -25004,11 +25013,11 @@
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
+        "CheckpointTypeCacheTests",
         "DirectoryLinkFixtureTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
-        "PosixHarnessToolTests",
-        "ScriptsLaneRepairTests"
+        "PosixHarnessToolTests"
       ]
     },
     {
@@ -25754,6 +25763,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
+        "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "CardCommandTests",
         "ClientChecksTests",
@@ -25762,6 +25772,7 @@
         "DaemonSupervisorTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
+        "MeasureSessionStateCacheScriptTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
@@ -25778,6 +25789,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
+        "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "ClientChecksTests",
         "ClientModeTests",
@@ -25787,11 +25799,10 @@
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
+        "MeasureSessionStateCacheScriptTests",
         "NightlyReclaimRaceTests",
         "NightlyRunTests",
         "NightlyScriptsTests",
-        "NightlyTestHelpersTests",
-        "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "QualificationEtaTests",
@@ -25885,6 +25896,7 @@
       "classes": [
         "C1514LandingSplitBudgetTests",
         "ClassCostMeasurementTests",
+        "ExpectedPlatformSkipRosterTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -25898,7 +25910,6 @@
         "QualificationTimingTests",
         "RcBoundaryPackTests",
         "RcFailedFirstExecutionTests",
-        "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateE2EEvidenceTests",
@@ -25965,6 +25976,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
+        "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
@@ -25977,6 +25989,7 @@
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
+        "MeasureSessionStateCacheScriptTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
         "NightlyRunTests",
@@ -25985,8 +25998,6 @@
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
         "NightlyVerificationContractTests",
-        "OrchestrationWatcherTests",
-        "OrchestratorWorkspaceCommandTests",
         "QualificationTimingTests",
         "ReleaseGateLibraryTests",
         "RunnerRestartOsTests"
@@ -26317,14 +26328,12 @@
         "C1744G3PhoneHomeSupervisionTests",
         "CheckpointOwnedOutputScriptTests",
         "ClaudeEffortFixtureTraceTests",
-        "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
         "LongPathsCheckoutScriptTests",
-        "MechanicalPcRehearsalTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
       ]
@@ -26370,8 +26379,7 @@
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
         "ScriptHarnessProcessTests",
-        "ScriptHarnessWindowsOwnershipTests",
-        "ScriptsLaneRepairTests"
+        "ScriptHarnessWindowsOwnershipTests"
       ]
     },
     {
@@ -26622,6 +26630,7 @@
         "NativeLinuxPolicyExecutionTests",
         "NightlyPolicyTests",
         "NightlyRunTests",
+        "OrchestratorInvestigationHookSuiteTests",
         "RcFullTimingContractTests",
         "RcFullWatchdogHarnessTests",
         "RcFullWatchdogTests",
@@ -29037,7 +29046,6 @@
         "CompletedCardWorkspaceRemovalTests",
         "ContractSnapshotTests",
         "DelegateCheckProbeTests",
-        "DindRunnerContractTests",
         "LandGraphAuditCleanupTests",
         "LandNonCodeSkipTests",
         "OutputCleanupTests",
@@ -29046,6 +29054,7 @@
         "ReportBudgetWorkspacePortabilityTests",
         "ReviewLoopTests",
         "RollingVolumeRecycleScriptTests",
+        "ScriptsLaneRepairTests",
         "TestTimingChokePointTests",
         "VolumeRetirementHostProofTests"
       ]
