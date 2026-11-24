@@ -1358,12 +1358,12 @@ public sealed partial class AgentTaskReplyService
                 + (sync.Reason == RemoteSettlementSyncReasons.MirrorDiverged
                     ? $"Runner '{task.RunnerId}' mirror {task.RemoteWorktreePath} is at {sync.MirrorSha}, "
                       + $"baseline {sync.BaselineSha}. This branch is fast-forward-only. Dispatch a fresh Code task "
-                      + $"on the same runner with -Runner {task.RunnerId} -StartRef <wanted-base>; cherry-pick "
+                      + $"on the same runner with --runner {task.RunnerId} --start-ref <wanted-base>; cherry-pick "
                       + $"the retained commits from local branch {task.WorktreeBranch} and push."
                     : sync.Reason == RemoteSettlementSyncReasons.Diverged
-                        ? $"Review the pushed tip {sync.RemoteSha} (Worktree Review with -StartRef {sync.RemoteSha}), "
-                          + $"then delegate.ps1 -Land <owner> -ExpectedSourceSha {sync.RemoteSha} "
-                          + "-ReviewEvidenceId <guid> -RecoverReviewedSource."
+                        ? $"Review the pushed tip {sync.RemoteSha} (Worktree Review with --start-ref {sync.RemoteSha}), "
+                          + $"then scripts/antiphon delegate land <owner> --expected-source-sha {sync.RemoteSha} "
+                          + "--review-evidence-id <guid> --recover-reviewed-source."
                         : "The report is retained and the desktop checkout was left as found; repair it, then reply "
                           + "to this task for a fresh completion report.");
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, remoteBlockWarning, now));

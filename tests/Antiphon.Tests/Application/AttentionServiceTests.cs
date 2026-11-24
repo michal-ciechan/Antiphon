@@ -183,7 +183,7 @@ public partial class AttentionServiceTests
         item.Evidence.ShouldContain("https://github.test/acme/app/issues/30");
         item.Evidence.ShouldContain("First line of the body.");
         item.Evidence.ShouldNotContain("Second line stays off the row.");
-        item.Evidence.ShouldContain("pwsh -File scripts/delegate.ps1 -Card CARD-0325 -Role Debug");
+        item.Evidence.ShouldContain("scripts/antiphon delegate create --card CARD-0325 --role Debug --goal-file");
         item.Evidence.ShouldContain("Triage GitHub issue #30 (raised by bob, not an operator)");
         item.Evidence.ShouldContain("Do NOT edit the card's");
         item.Evidence.ShouldContain("the rating is the human's act");

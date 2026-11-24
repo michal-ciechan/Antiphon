@@ -320,7 +320,7 @@ public sealed class BlockedTaskParkDeliveryTests
             var refused = await Should.ThrowAsync<ValidationException>(() => remote.Kit.Service(db).CreateAsync(
                 remote.Follow(), remote.Kit.Caller, CancellationToken.None));
             refused.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-170");
-            refused.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-170");
+            refused.Message.ShouldContain("without --on-agent", Case.Sensitive, "G-170");
             (await remote.CountAsync()).ShouldBe(before, "G-170");
         }
 
@@ -340,7 +340,7 @@ public sealed class BlockedTaskParkDeliveryTests
             refused.Message.ShouldContain(DelegationReportFormatter.Short(local.PriorId), Case.Sensitive, "G-169");
             refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, "G-169");
             refused.Message.ShouldContain("cannot be continued", Case.Sensitive, "G-169");
-            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, "G-169");
+            refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, "G-169");
             refused.Message.ShouldNotContain("cancel", Case.Insensitive, "G-169");
             refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, "G-169");
             (await local.CountAsync()).ShouldBe(before, "G-169");
@@ -359,7 +359,7 @@ public sealed class BlockedTaskParkDeliveryTests
             var blocked = detail.Blocked.ShouldNotBeNull();
             blocked.CanAnswer.ShouldBeTrue("G-169");
             blocked.Context.ShouldNotBeNull().ShouldContain("published seat was released", Case.Sensitive, "G-169");
-            blocked.Context.ShouldContain("delegate.ps1 -Reply", Case.Sensitive, "G-169");
+            blocked.Context.ShouldContain("scripts/antiphon delegate reply", Case.Sensitive, "G-169");
         }
 
         await f.AnswerAsync("same task reply");
@@ -412,17 +412,17 @@ public sealed class BlockedTaskParkDeliveryTests
         var named = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
         named.StatusCode.ShouldBe(422, "G-8");
         named.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
-        named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, "G-8");
+        named.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, "G-8");
         named.Message.ShouldContain(blockedShort, Case.Sensitive, "G-8");
-        named.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-8");
+        named.Message.ShouldContain("without --on-agent", Case.Sensitive, "G-8");
         (await CountTasksAsync(f)).ShouldBe(before, "G-8");
 
         await RemoveCurrentAttemptParkAsync(f);
         var silent = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
         silent.StatusCode.ShouldBe(422, "G-8");
         silent.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
-        silent.Message.ShouldNotContain("-Reply", Case.Sensitive, "G-8");
-        silent.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-8");
+        silent.Message.ShouldNotContain("delegate reply", Case.Sensitive, "G-8");
+        silent.Message.ShouldContain("without --on-agent", Case.Sensitive, "G-8");
     }
 
     [Test]
@@ -844,7 +844,7 @@ public sealed class BlockedTaskParkDeliveryTests
         refused.Message.ShouldContain($"parked on Blocked task {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
         refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
         refused.Message.ShouldContain("cannot be continued", Case.Sensitive, label);
-        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
         refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
         refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
         (await CountTasksAsync(f)).ShouldBe(tasks, label);

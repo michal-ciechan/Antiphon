@@ -1184,7 +1184,7 @@ public partial class AgentTaskReplyIntegrationTests
         parentNote.Body.ShouldContain("reason: question-line");
         parentNote.Body.ShouldContain("asks: Buzz throws on negatives — should Fizz match that?");
         parentNote.Body.ShouldContain($"authority: \"{authority}\"");
-        parentNote.Body.ShouldContain($"-Continue {DelegationReportFormatter.Short(task.Id)}");
+        parentNote.Body.ShouldContain($"scripts/antiphon delegate continue {DelegationReportFormatter.Short(task.Id)}");
     }
 
     [Test]
@@ -1275,7 +1275,7 @@ public partial class AgentTaskReplyIntegrationTests
         parentNote.Body.ShouldContain("reason: waiting-unmarked");
         parentNote.Body.ShouldContain($"asks: {narration}");
         parentNote.Body.ShouldContain($"authority: \"{authority}\"");
-        parentNote.Body.ShouldContain($"-Continue {shortId}");
+        parentNote.Body.ShouldContain($"scripts/antiphon delegate continue {shortId}");
     }
 
     [Test]
@@ -1299,7 +1299,7 @@ public partial class AgentTaskReplyIntegrationTests
         parentNote.Body.ShouldContain($"asks: {report}");
         parentNote.Body.ShouldContain("authority: none given at dispatch");
         parentNote.Body.ShouldContain("-Reply");
-        parentNote.Body.ShouldNotContain("-Continue");
+        parentNote.Body.ShouldNotContain("delegate continue");
     }
 
     [Test]

@@ -81,8 +81,8 @@ function HoldCard({ taskId, hold }: { taskId: string; hold: CeilingHoldDto }) {
         <Text size="sm">{phase}</Text>
         {final && (
           <Alert color="orange" title="Final hold at 720 minutes">
-            Continue and Extend refuse here. An operator can extend with delegate.ps1 -Reply {taskId}{' '}
-            -CeilingAction Extend -OperatorExtend -ExtendMinutes 1..240 -CeilingReason "...", or Cancel the
+            Continue and Extend refuse here. An operator can extend with scripts/antiphon delegate reply {taskId}{' '}
+            --ceiling-action Extend --operator-extend --extend-minutes 1..240 --ceiling-reason "...", or Cancel the
             task.
           </Alert>
         )}

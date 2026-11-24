@@ -31,7 +31,7 @@ internal static class BlockedContextBuilder
         if (confirmedPark && kind == BlockedKind.Question)
         {
             const string released =
-                "The published seat was released. Reply to continue this task (delegate.ps1 -Reply); do not cancel it to start a follow-up.";
+                "The published seat was released. Reply to continue this task (scripts/antiphon delegate reply); do not cancel it to start a follow-up.";
             context = string.IsNullOrWhiteSpace(context) ? released : context + "\n" + released;
         }
 

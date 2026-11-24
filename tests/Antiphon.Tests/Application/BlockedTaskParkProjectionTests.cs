@@ -205,10 +205,10 @@ public sealed class BlockedTaskParkProjectionTests
         admittedAt.ShouldBeGreaterThan(refuseAt, "c1154-evidence-order:source");
         mismatchAt.ShouldBeGreaterThan(admittedAt, "c1154-evidence-order:source");
         liveAt.ShouldBeGreaterThan(mismatchAt, "c1154-evidence-order:source");
-        Require(create[admittedAt..mismatchAt], "The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort}", "c1154-local-guidance:source");
+        Require(create[admittedAt..mismatchAt], "The published seat was released. Reply to continue that task (scripts/antiphon delegate reply {blockedShort}", "c1154-local-guidance:source");
         var mismatchArm = create[mismatchAt..liveAt];
         Require(mismatchArm, "does not match answer admission, so that parked answer cannot be continued.", "c1154-evidence-order:source");
-        mismatchArm.ShouldNotContain("-Reply", Case.Sensitive, "c1154-evidence-order:source");
+        mismatchArm.ShouldNotContain("delegate reply", Case.Sensitive, "c1154-evidence-order:source");
         mismatchArm.ShouldNotContain("cancel", Case.Insensitive, "c1154-evidence-order:source");
         // CARD-1154 repair 3 (Review f83b877d D4): the classifier's own summary states the
         // all-candidate precedence; a per-park "must not recommend Reply" is false beside an

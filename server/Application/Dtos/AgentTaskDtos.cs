@@ -172,7 +172,7 @@ public sealed partial record CreateAgentTaskRequest(
     Guid? RepairSourceTaskId = null,
     /// <summary>
     /// CARD-0527. Never, Always, or Agent. Null inherits from the project, then
-    /// <c>Delegation:CommitOnSettle</c>. Anything else is 422. <c>delegate.ps1 -NoCommit</c>
+    /// <c>Delegation:CommitOnSettle</c>. Anything else is 422. <c>scripts/antiphon delegate create --no-commit</c>
     /// sends Never; Always and Agent are API-only in this card.
     /// </summary>
     string? CommitOnSettle = null,
@@ -190,7 +190,7 @@ public sealed partial record CreateAgentTaskRequest(
     /// <summary>CARD-0544 D-3. Committed selection-table reference; validated against the authorized repository.</summary>
     VerificationSelectionReference? VerificationSelection = null,
     /// <summary>
-    /// CARD-0604 D-15. Run this task on a phone-home session runner (<c>delegate.ps1 -Runner</c>).
+    /// CARD-0604 D-15. Run this task on a phone-home session runner (<c>scripts/antiphon delegate create --runner</c>).
     /// Null is the desktop. Only the configured <c>PhoneHomeRunner:AllowedRunnerId</c> is admitted,
     /// and only for a Worktree workspace with a Grok kind and no pin, OnAgent, Shared, ReadOnly or
     /// SourceLanding: everything else has no remote shape yet, and a 422 at create is better than
@@ -199,14 +199,14 @@ public sealed partial record CreateAgentTaskRequest(
     /// <para>CARD-0659 D-1: three input states. Null/blank means automatic — a fresh
     /// runner-compatible Worktree task takes <c>Delegation:DefaultRunnerId</c> when that runner is
     /// dispatch-eligible, else the desktop with a recorded reason. The reserved <c>local</c>
-    /// (any case; <c>delegate.ps1 -Local</c>) is an explicit desktop request and is stored as null.
+    /// (any case; <c>scripts/antiphon delegate create --runner local</c>) is an explicit desktop request and is stored as null.
     /// Any other value is an explicit runner: never replaced by the default, never fallen back.
     /// At most 64 characters, no control characters.</para>
     /// </summary>
     string? RunnerId = null,
     /// <summary>
     /// CARD-0613 D-1. The commit-ish this task's OWN fresh worktree branch is cut at
-    /// (<c>delegate.ps1 -StartRef</c>). Continuing a sibling's work is a dispatch parameter, not
+    /// (<c>scripts/antiphon delegate create --start-ref</c>). Continuing a sibling's work is a dispatch parameter, not
     /// free-text <c>git checkout -B</c> prose in a goal. Requires an explicitly requested Worktree
     /// with no agent pin, follow-up, <see cref="RepairSourceTaskId"/> or
     /// <see cref="SourceLandingOperationId"/> — those already carry authoritative structured bases.
@@ -223,7 +223,7 @@ public sealed partial record CreateAgentTaskRequest(
     string? WorktreeBaseTask = null,
     bool FreshWorktree = false,
     /// <summary>
-    /// CARD-0824 S1 (<c>delegate.ps1 -ColdWorkspace</c>): the workspace slot lease also wipes native build output.
+    /// CARD-0824 S1 (<c>scripts/antiphon delegate create --cold-workspace</c>): the workspace slot lease also wipes native build output.
     /// Omitted when false so a default request serializes, and its handoff digest hashes, as before the field.
     /// </summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -645,7 +645,7 @@ public sealed partial record AgentTaskCreatedDto(
     /// <summary>The card this task bound to (CARD-0040), or null. Printed at dispatch so a
     /// mis-binding is caught by the caller who can still fix it, not on the board a week later.</summary>
     Guid? CardId = null,
-    /// <summary>The bound card's identifier — what <c>delegate.ps1</c> echoes as "bound to CARD-nnnn".</summary>
+    /// <summary>The bound card's identifier — what <c>scripts/antiphon delegate</c> echoes as "bound to CARD-nnnn".</summary>
     string? CardIdentifier = null,
     /// <summary>
     /// How a requested follow-up was dispatched: either on its still-live agent, or as a fresh
@@ -658,7 +658,7 @@ public sealed partial record AgentTaskCreatedDto(
     ComplexityRoutingDto? Routing = null,
     /// <summary>
     /// CARD-0352 S3. True when create stored the Goal-first-line fallback and handed the
-    /// task to antiphon-diagnose to replace the title. <c>delegate.ps1</c> prints
+    /// task to antiphon-diagnose to replace the title. <c>scripts/antiphon delegate</c> prints
     /// <c>title: pending</c>. Creation never waits on the seat.
     /// </summary>
     bool TitleDiagnosisQueued = false,

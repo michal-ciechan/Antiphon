@@ -22,7 +22,7 @@ public sealed partial record CreateAgentTaskRequest
 
 public sealed partial record AgentTaskCreatedDto
 {
-    /// <summary>The stored declared ceiling. <c>delegate.ps1</c> warns <c>ceiling_unconfirmed</c> when it is missing.</summary>
+    /// <summary>The stored declared ceiling. <c>scripts/antiphon delegate</c> warns <c>ceiling_unconfirmed</c> when it is missing.</summary>
     public int? RequestedCeilingMinutes { get; init; }
 }
 

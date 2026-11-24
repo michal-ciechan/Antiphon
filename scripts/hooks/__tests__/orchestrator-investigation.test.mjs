@@ -125,6 +125,39 @@ describe('classifyCall / isSourcePath', () => {
     }).isSourceRead, true);
   });
 
+  it('treats the delegate command as delegate.ps1 was treated: create, reply and refine dispatch, nothing reads', () => {
+    // The delegate command that replaced scripts/delegate.ps1 (unit 28 of the 2026-11-22 plan), in each form it is run.
+    for (const [tool, command] of [
+      ['Bash', 'scripts/antiphon delegate create --role Debug --title "x" --goal "look at server/Foo.cs"'],
+      ['Bash', 'ANTIPHON_TASK_TOKEN=t ./scripts/antiphon delegate reply 1234abcd "use server/Bar.cs"'],
+      ['PowerShell', 'scripts\\antiphon.cmd delegate refine 1234abcd --message-file C:\\tmp\\steer.md'],
+      ['PowerShell', "& 'C:\\src\\Antiphon\\scripts\\antiphon.cmd' delegate create --role Code --goal-file C:\\tmp\\brief.md"],
+      ['Bash', 'antiphon-scripts delegate create --role Docs --goal x'],
+    ]) {
+      const call = classifyCall({ tool_name: tool, tool_input: { command } });
+      assert.equal(call.isSourceRead, false, command);
+      assert.equal(call.kind, 'dispatch', command);
+    }
+    for (const [tool, command] of [
+      ['Bash', 'scripts/antiphon delegate status 1234abcd'],
+      ['Bash', 'sh scripts/antiphon delegate land 1234abcd --expected-source-sha aaaa'],
+      ['PowerShell', 'scripts\\antiphon.cmd delegate list-areas --areas-dir server'],
+    ]) {
+      const call = classifyCall({ tool_name: tool, tool_input: { command } });
+      assert.equal(call.isSourceRead, false, command);
+      assert.equal(call.kind, 'other-tool', command);
+    }
+    // A read in another segment still counts, and the pattern is the program, not a phrase a read names.
+    assert.equal(classifyCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'scripts/antiphon delegate status 1234abcd && cat server/Application/Services/AgentTaskService.cs' },
+    }).isSourceRead, true);
+    assert.equal(classifyCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'rg -n "antiphon delegate create" server/' },
+    }).isSourceRead, true);
+  });
+
   it('counts Read of a source file, including unparsed JSON that still names one', () => {
     assert.equal(classifyCall({
       tool_name: 'Read',
@@ -235,6 +268,18 @@ describe('verification vs investigation', () => {
     const { decisions } = replay(tail);
     assert.equal(decisions.at(-1).result.nudged, false);
     assert.equal(decisions.at(-1).result.reason, 'recent-report');
+  });
+
+  it('does not nudge on three source reads within N_dispatch of a delegate command launch', () => {
+    const tail = jsonl([
+      assistantBash('toolu_disp', 'scripts/antiphon delegate create --role Debug --title "look at Foo" --goal "why Foo fails"'),
+      assistantRead('toolu_d1', 'C:\\src\\Antiphon\\server\\Application\\Services\\UnrelatedAlpha.cs'),
+      assistantRead('toolu_d2', 'C:\\src\\Antiphon\\server\\Application\\Services\\UnrelatedBeta.cs'),
+      assistantRead('toolu_d3', 'C:\\src\\Antiphon\\server\\Application\\Services\\UnrelatedGamma.cs'),
+    ]);
+    const { decisions } = replay(tail);
+    assert.equal(decisions.at(-1).result.nudged, false);
+    assert.equal(decisions.at(-1).result.reason, 'recent-dispatch');
   });
 
   it('does not nudge on three source reads within N_dispatch of a delegate.ps1 launch', () => {

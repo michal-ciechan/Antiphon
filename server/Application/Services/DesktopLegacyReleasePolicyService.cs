@@ -555,7 +555,7 @@ public sealed class DesktopLegacyReleasePolicyService
         if (string.IsNullOrWhiteSpace(task.Result))
             return "report_missing";
         // G-20/G-21 (T-D-5): deleting the local branch could break a dependent's worktree creation. Review 1dcb8d90 D-1:
-        // a queued task names its base only in WorktreeBaseRequestedRef (delegate.ps1 -StartRef) or
+        // a queued task names its base only in WorktreeBaseRequestedRef (delegate --start-ref) or
         // RequestedWorktreeBaseTaskId until it is provisioned.
         // Review 4ed13efe A-3: both base fields go through the one normaliser, which holds on every reading git could give.
         var branch = BranchName(task.WorktreeBranch);

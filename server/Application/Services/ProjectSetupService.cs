@@ -691,7 +691,7 @@ public sealed class ProjectSetupService
         }
 
         return
-            $"A task created from this screen, or from `delegate.ps1` in a plain shell, must run under an allowed root, and '{directory}' is not under one. "
+            $"A task created from this screen, or from `scripts/antiphon delegate` in a plain shell, must run under an allowed root, and '{directory}' is not under one. "
             + "This is a security boundary (`Delegation:AllowedRoots` in `server/appsettings.json`), so it is not changed from here. "
             + "You do not need it for: a card moved into In Progress with Spawn (the session starts in the agent's own directory); "
             + "a task delegated from inside that agent's session (a session inherits its own directory as its root); "

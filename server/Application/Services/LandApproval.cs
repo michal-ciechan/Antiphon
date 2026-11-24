@@ -16,8 +16,8 @@ internal static class LandApproval
     public static string ReviewedOwnerRecoveryGuidance(Guid ownerId) =>
         $"If the original owner is Failed or Blocked, commission a Clean Final/Full Review of its current pushed tip " +
         $"with the owner {ownerId:D} as subjectTaskId, then run " +
-        $"pwsh -NoProfile -File scripts/delegate.ps1 -Land {ownerId:D} " +
-        "-ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource.";
+        $"scripts/antiphon delegate land {ownerId:D} " +
+        "--expected-source-sha <full-sha> --review-evidence-id <review-evidence-id> --recover-reviewed-source.";
 
     public static string RepairSourceOwnerRefusal(Guid ownerId) =>
         $"Repair tasks cannot be landed; commission Land on the original owner {ownerId:D}. " +

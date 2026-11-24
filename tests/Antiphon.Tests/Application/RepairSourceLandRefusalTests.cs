@@ -62,12 +62,12 @@ public class RepairSourceLandRefusalTests
         error.StatusCode.ShouldBe(409);
         error.Code.ShouldBe("repair_source_landing_owner_required");
         error.Message.ShouldContain(world.Owner.Id.ToString("D"));
-        error.Message.ShouldContain("-Land " + world.Owner.Id.ToString("D"));
+        error.Message.ShouldContain("scripts/antiphon delegate land " + world.Owner.Id.ToString("D"));
         error.Message.ShouldContain("subjectTaskId");
         error.Message.ShouldContain("Clean Final/Full Review");
-        error.Message.ShouldContain("-ExpectedSourceSha <full-sha>");
-        error.Message.ShouldContain("-ReviewEvidenceId <review-evidence-id>");
-        error.Message.ShouldContain("-RecoverReviewedSource");
+        error.Message.ShouldContain("--expected-source-sha <full-sha>");
+        error.Message.ShouldContain("--review-evidence-id <review-evidence-id>");
+        error.Message.ShouldContain("--recover-reviewed-source");
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
         (await db.AgentTaskEvents.CountAsync()).ShouldBe(eventsBefore);

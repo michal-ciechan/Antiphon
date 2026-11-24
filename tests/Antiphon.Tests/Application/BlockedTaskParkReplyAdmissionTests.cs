@@ -35,9 +35,9 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             var named = await Should.ThrowAsync<ValidationException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(admitted));
             named.StatusCode.ShouldBe(422, "G-8");
             named.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
-            named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, "G-8");
+            named.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, "G-8");
             named.Message.ShouldContain(blockedShort, Case.Sensitive, "G-8");
-            named.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-8");
+            named.Message.ShouldContain("without --on-agent", Case.Sensitive, "G-8");
             named.Message.ShouldNotContain("cannot be continued", Case.Sensitive, "G-8");
             (await CountAsync(admitted)).ShouldBe(before, "G-8");
 
@@ -61,11 +61,11 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             var refused = await Should.ThrowAsync<ValidationException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(stale));
             refused.StatusCode.ShouldBe(422, "R1");
             refused.Code.ShouldBe("follow_up_remote_pool_unsupported", "R1");
-            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, "R1");
+            refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, "R1");
             refused.Message.ShouldContain(blockedShort, Case.Sensitive, "R1");
             refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, "R1");
             refused.Message.ShouldContain("cannot be continued", Case.Sensitive, "R1");
-            refused.Message.ShouldContain("without -OnAgent", Case.Sensitive, "R1");
+            refused.Message.ShouldContain("without --on-agent", Case.Sensitive, "R1");
             (await CountAsync(stale)).ShouldBe(before, "R1");
         }
 
@@ -83,9 +83,9 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         var silent = await Should.ThrowAsync<ValidationException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(previous));
         silent.StatusCode.ShouldBe(422, "G-7");
         silent.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-7");
-        silent.Message.ShouldNotContain("-Reply", Case.Sensitive, "G-7");
+        silent.Message.ShouldNotContain("delegate reply", Case.Sensitive, "G-7");
         silent.Message.ShouldNotContain("cannot be continued", Case.Sensitive, "G-7");
-        silent.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-7");
+        silent.Message.ShouldContain("without --on-agent", Case.Sensitive, "G-7");
     }
 
     [Test]
@@ -129,7 +129,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             var named = await Should.ThrowAsync<ValidationException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(f));
             named.StatusCode.ShouldBe(422, label);
             named.Code.ShouldBe("follow_up_remote_pool_unsupported", label);
-            named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+            named.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, label);
             named.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
             (await CountAsync(f)).ShouldBe(before, label);
 
@@ -246,7 +246,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         await ShouldNotAdmitAsync(f, label);
         (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
         var refused = await RemoteFollowUpRefusedAsync(f, label);
-        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
         refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
         await ShouldVetoAnswerAsync(f, label);
 
@@ -309,7 +309,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         else
         {
             var refused = await RemoteFollowUpRefusedAsync(f, label);
-            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+            refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
             refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
         }
         await ShouldVetoAnswerAsync(f, label);
@@ -371,7 +371,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         if (confirmed)
         {
             guidance.ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
-            refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+            refused.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
             await ShouldContinueAsync(f, label);
         }
         else
@@ -379,7 +379,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             // Reserved/Unresolved keep their existing buffering contract; nothing here
             // requires an immediate attempt, and guidance never offers Reply.
             guidance.ShouldNotBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
-            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+            refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
         }
     }
 
@@ -427,12 +427,12 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         var refused = await RemoteFollowUpRefusedAsync(f, label);
         if (named)
         {
-            refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+            refused.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
             await ShouldContinueAsync(f, label);
         }
         else
         {
-            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+            refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
             refused.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
         }
     }
@@ -510,10 +510,10 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             // Public Create gives the same classification and inserts nothing.
             var refused = await RemoteFollowUpRefusedAsync(f, label);
             if (expected == AgentTaskService.RemotePoolParkReply.Admitted)
-                refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+                refused.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
             else
             {
-                refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
                 refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
             }
         }
@@ -561,7 +561,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         await ShouldNotAdmitAsync(f, label);
         (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
         var refused = await LocalFollowUpRefusedAsync(f, label);
-        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
         refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
         refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
         refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
@@ -677,7 +677,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
                 (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
                 var named = await LocalFollowUpRefusedAsync(f, label);
                 named.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
-                named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                named.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, label);
                 named.Message.ShouldNotContain("waiting for an answer", Case.Sensitive, label);
                 named.Message.ShouldNotContain("/cancel", Case.Sensitive, label);
                 await ShouldContinueAsync(f, label);
@@ -694,7 +694,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
                 (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.None, label);
                 var live = await LocalFollowUpRefusedAsync(f, label);
                 live.Message.ShouldContain("waiting for an answer", Case.Sensitive, label);
-                live.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                live.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, label);
                 live.Message.ShouldContain($"/api/agent-tasks/{blockedShort}/cancel", Case.Sensitive, label);
                 live.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
                 live.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
@@ -721,7 +721,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
                 dead.Message.ShouldContain("no longer live", Case.Sensitive, label);
                 dead.Message.ShouldContain($"/api/agent-tasks/{blockedShort}/cancel", Case.Sensitive, label);
                 dead.Message.ShouldContain("re-send", Case.Sensitive, label);
-                dead.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                dead.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
                 dead.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
                 dead.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
                 break;
@@ -734,7 +734,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             {
                 (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
                 var named = await RemoteFollowUpRefusedAsync(f, label);
-                named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                named.Message.ShouldContain($"delegate reply {blockedShort}", Case.Sensitive, label);
                 named.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
                 await ShouldContinueAsync(f, label);
                 break;
@@ -743,7 +743,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             {
                 (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
                 var refused = await RemoteFollowUpRefusedAsync(f, label);
-                refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
                 refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
                 refused.Message.ShouldContain("Create a fresh task", Case.Sensitive, label);
                 await ShouldVetoAnswerAsync(f, label);
@@ -836,11 +836,11 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             switch (expected)
             {
                 case AgentTaskService.RemotePoolParkReply.Admitted:
-                    refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+                    refused.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
                     refused.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
                     break;
                 case AgentTaskService.RemotePoolParkReply.ReleaseMismatch:
-                    refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                    refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
                     refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
                     break;
                 default:
@@ -951,7 +951,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         confirmed.Select(r => r.Id).ShouldBe(new[] { releaseId }, label);
         (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
         var named = await RemoteFollowUpRefusedAsync(f, label);
-        named.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+        named.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
         named.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
     }
 
@@ -970,7 +970,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         var refused = await Should.ThrowAsync<ValidationException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(f));
         refused.StatusCode.ShouldBe(422, label);
         refused.Code.ShouldBe("follow_up_remote_pool_unsupported", label);
-        refused.Message.ShouldContain("without -OnAgent", Case.Sensitive, label);
+        refused.Message.ShouldContain("without --on-agent", Case.Sensitive, label);
         (await CountAsync(f)).ShouldBe(before, label);
         return refused;
     }
@@ -985,7 +985,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
         var named = await LocalFollowUpRefusedAsync(f, label);
         named.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
-        named.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+        named.Message.ShouldContain($"delegate reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
         named.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
         named.Message.ShouldNotContain("/cancel", Case.Sensitive, label);
     }
@@ -1005,7 +1005,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         refused.Code.ShouldBe("follow_up_agent_blocked", label);
         refused.Message.ShouldContain(
             $"parked on Blocked task {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
-        refused.Message.ShouldNotContain("without -OnAgent", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("without --on-agent", Case.Sensitive, label);
 
         var after = await f.TaskAsync();
         after.Status.ShouldBe(before.Status, label);
@@ -1024,7 +1024,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
     private static async Task<ConflictException> LocalMismatchRefusedAsync(RunnerSeatReleaseFixture f, string label)
     {
         var refused = await LocalFollowUpRefusedAsync(f, label);
-        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("delegate reply", Case.Sensitive, label);
         refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
         refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
         refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);

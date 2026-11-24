@@ -37,11 +37,11 @@ const SOURCE_ROOT_TOKENS = new Set([
 ]);
 
 export const NUDGE_CONTEXT =
-  '[antiphon-orchestrator] This is the 3rd consecutive source read with no delegate dispatched and no report naming these files. Diagnosis is a Debug delegate, not an inline read: pwsh -NoProfile -File scripts/delegate.ps1 -Role Debug -Goal "…" — and take its answer. If you are verifying a delegate\'s named claim, carry on; this note will not repeat for this run.';
+  '[antiphon-orchestrator] This is the 3rd consecutive source read with no delegate dispatched and no report naming these files. Diagnosis is a Debug delegate, not an inline read: scripts/antiphon delegate create --role Debug --goal "…" — and take its answer. If you are verifying a delegate\'s named claim, carry on; this note will not repeat for this run.';
 
 /** SessionStart(compact) re-injection: the rule, without the "3rd consecutive read" trigger text. */
 export const COMPACT_CONTEXT =
-  '[antiphon-orchestrator] After compaction: diagnosis is a Debug delegate, not an inline read. Verification is a file or diff a report named; investigation is everything else — pwsh -NoProfile -File scripts/delegate.ps1 -Role Debug -Goal "…" — and take its answer. ANTIPHON_ORCHESTRATOR=0 silences the PreToolUse nudge.';
+  '[antiphon-orchestrator] After compaction: diagnosis is a Debug delegate, not an inline read. Verification is a file or diff a report named; investigation is everything else — scripts/antiphon delegate create --role Debug --goal "…" — and take its answer. ANTIPHON_ORCHESTRATOR=0 silences the PreToolUse nudge.';
 
 /**
  * @param {object} input hook stdin JSON (S0 contract)
@@ -256,8 +256,17 @@ function isDispatchTool(block) {
   return false;
 }
 
+// A dispatch: delegate.ps1 with -Goal, -GoalFile, -Reply, -Refine or -Title (transcripts written before the script was
+// deleted, unit 28 of the 2026-11-22 plan), or the delegate command that replaced it running create, reply or refine.
+// The twin of OrchestratorInvestigationDetector.IsDispatchCommand.
+const DELEGATE_DISPATCH_VERBS = new Set(['create', 'reply', 'refine']);
+
 function isDispatchCommand(command) {
   if (!command) return false;
+  if (splitShell(command).some((seg) => {
+    const args = antiphonCommandArguments(pipelineHead(seg), 'delegate');
+    return args !== null && args.length > 0 && DELEGATE_DISPATCH_VERBS.has(args[0].toLowerCase());
+  })) return true;
   if (!/delegate\.ps1/i.test(command)) return false;
   return /(?:^|[\s])-(?:Goal|GoalFile|Reply|Refine|Title)\b/.test(command);
 }
@@ -272,8 +281,8 @@ function isNeverReadCommand(command) {
     const bin = firstBin(head);
     if (!bin || bin === 'cd') continue;
     if (NEVER_READ_BINS.has(bin)) sawNever = true;
-    else if (isReadVerb(bin, head) || /delegate\.ps1/i.test(head) || isCardCommand(head)) {
-      if (/delegate\.ps1/i.test(head) || isCardCommand(head)) sawNever = true;
+    else if (isReadVerb(bin, head) || isDelegateCommand(head) || isCardCommand(head)) {
+      if (isDelegateCommand(head) || isCardCommand(head)) sawNever = true;
       else sawRead = true;
     }
   }
@@ -283,7 +292,8 @@ function isNeverReadCommand(command) {
 
 function isShellSourceRead(command) {
   if (!command) return false;
-  if ((/delegate\.ps1|card\.ps1/i.test(command) || splitShell(command).some((seg) => isCardCli(pipelineHead(seg))))
+  if ((/delegate\.ps1|card\.ps1/i.test(command)
+    || splitShell(command).some((seg) => isCardCli(pipelineHead(seg)) || isDelegateCli(pipelineHead(seg))))
     && !isReadVerbCommand(command)) return false;
   const segments = splitShell(command);
   for (const seg of segments) {
@@ -291,7 +301,7 @@ function isShellSourceRead(command) {
     const bin = firstBin(head);
     if (!bin || bin === 'cd') continue;
     if (NEVER_READ_BINS.has(bin)) continue;
-    if (/delegate\.ps1/i.test(head) || isCardCommand(head)) continue;
+    if (isDelegateCommand(head) || isCardCommand(head)) continue;
     if (!isReadVerb(bin, head)) continue;
     if (commandNamesSource(head) || isRecursiveGrepOnSourceRoot(head)) return true;
   }
@@ -305,17 +315,33 @@ function isCardCommand(segment) {
   return /card\.ps1/i.test(segment) || isCardCli(segment);
 }
 
+// The delegation CLI: scripts/delegate.ps1 (kept for transcripts written before it was deleted, unit 28) or the delegate
+// command that replaced it, scripts/antiphon delegate, scripts\antiphon.cmd delegate or antiphon-scripts delegate.
+// The twin of OrchestratorInvestigationDetector.IsDelegateCommand.
+function isDelegateCommand(segment) {
+  return /delegate\.ps1/i.test(segment) || isDelegateCli(segment);
+}
+
 const CARD_CLI_PREFIXES = new Set(['&', 'call', 'sh', 'bash']);
 
-// A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
-// assignments ahead of it) and whose first argument is the card command.
 function isCardCli(segment) {
+  return antiphonCommandArguments(segment, 'card') !== null;
+}
+
+function isDelegateCli(segment) {
+  return antiphonCommandArguments(segment, 'delegate') !== null;
+}
+
+// A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
+// assignments ahead of it) and whose first argument is the named command: the arguments after it, else null.
+function antiphonCommandArguments(segment, command) {
   const tokens = tokenize(segment).map(stripQuotes);
   let i = 0;
   while (i < tokens.length && (CARD_CLI_PREFIXES.has(tokens[i].toLowerCase()) || (tokens[i].includes('=') && !tokens[i].startsWith('-')))) i++;
-  if (i + 1 >= tokens.length || tokens[i + 1].toLowerCase() !== 'card') return false;
+  if (i + 1 >= tokens.length || tokens[i + 1].toLowerCase() !== command) return null;
   const bin = tokens[i].replace(/\\/g, '/').replace(/^.*\//, '').toLowerCase().replace(/\.exe$/, '');
-  return bin === 'antiphon' || bin === 'antiphon.cmd' || bin === 'antiphon-scripts';
+  if (bin !== 'antiphon' && bin !== 'antiphon.cmd' && bin !== 'antiphon-scripts') return null;
+  return tokens.slice(i + 2);
 }
 
 function isReadVerbCommand(command) {

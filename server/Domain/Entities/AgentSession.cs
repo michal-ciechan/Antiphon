@@ -127,7 +127,7 @@ public class AgentSession
 
     /// <summary>
     /// SHA-256 of the session-scoped delegation token injected into the session's environment at
-    /// launch (as ANTIPHON_TASK_TOKEN, the name delegate.ps1 already sends). Lets a standing agent
+    /// launch (as ANTIPHON_TASK_TOKEN, the name the delegate command already sends). Lets a standing agent
     /// session — an always-on orchestrator — authenticate to POST /api/agent-tasks as ITSELF, so
     /// its delegates inherit ITS working directory and report back into ITS session. Without this,
     /// a shell caller was treated as the manual UI path: it inherited the server process's cwd and

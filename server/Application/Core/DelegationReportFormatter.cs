@@ -794,7 +794,7 @@ public static class DelegationReportFormatter
     public static string FullReportPointer(AgentTask task, string? usablePath) =>
         !string.IsNullOrWhiteSpace(usablePath)
             ? $"Full report: {usablePath}"
-            : $"Full report: GET /api/agent-tasks/{task.Id}  (pwsh -File scripts/delegate.ps1 -Status {Short(task.Id)})";
+            : $"Full report: GET /api/agent-tasks/{task.Id}  (scripts/antiphon delegate status {Short(task.Id)})";
 
     public static string BuildDistilledNoteBody(string header, string distilled, AgentTask task, string? usablePath,
         IReadOnlyList<string> attachments)
@@ -812,7 +812,7 @@ public static class DelegationReportFormatter
     public static string BuildPolledNoteBody(string noteHeader, AgentTask task, int reportChars, DateTime polledAt) =>
         $"{noteHeader}\n\n" +
         $"Report withheld — you already read it: this task's result was returned to your status poll at {polledAt:O} ({reportChars:N0} chars).\n" +
-        $"Re-read it with: pwsh -File scripts/delegate.ps1 -Status {Short(task.Id)}";
+        $"Re-read it with: scripts/antiphon delegate status {Short(task.Id)}";
 
     /// <summary>
     /// Head + tail excerpt when a report exceeds the ceiling — never a plain truncation. A hard cut

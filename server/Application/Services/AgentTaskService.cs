@@ -617,7 +617,7 @@ public sealed class AgentTaskService
                     if (parkReply == RemotePoolParkReply.Admitted)
                     {
                         throw new ConflictException(
-                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (scripts/antiphon delegate reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
                             "follow_up_agent_blocked");
                     }
 
@@ -631,7 +631,7 @@ public sealed class AgentTaskService
                     if (sessionLive)
                     {
                         throw new ConflictException(
-                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} waiting for an answer; a follow-up would queue behind it indefinitely. Reply to it (delegate.ps1 -Reply {blockedShort} \"...\") or cancel it (POST /api/agent-tasks/{blockedShort}/cancel), then re-send.",
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} waiting for an answer; a follow-up would queue behind it indefinitely. Reply to it (scripts/antiphon delegate reply {blockedShort} \"...\") or cancel it (POST /api/agent-tasks/{blockedShort}/cancel), then re-send.",
                             "follow_up_agent_blocked");
                     }
 
@@ -2386,7 +2386,7 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// The process-env snapshot supplied by delegate.ps1 is truer than the server's stored caller
+    /// The process-env snapshot supplied by the delegate command is truer than the server's stored caller
     /// layers, but it remains constrained to the same allowlist. Unknown names are deliberately
     /// ignored: this is routing metadata, not a second arbitrary launch-env surface.
     /// </summary>
@@ -3901,13 +3901,13 @@ public sealed class AgentTaskService
             $"Task {DelegationReportFormatter.Short(priorId)} ran on a remote pool delegate "
             + $"on runner '{poolRunnerId}'. Remote pool continuations cannot reuse that process. "
             + "Publish the intended source, then create a fresh task with "
-            + "-Worktree -StartRef <published-sha> without -OnAgent.";
+            + "--worktree --start-ref <published-sha> without --on-agent.";
         if (parkReply == RemotePoolParkReply.Admitted && blockedTaskId is Guid blockedId)
         {
             var blockedShort = DelegationReportFormatter.Short(blockedId);
             message +=
                 $" Blocked task {blockedShort} has a confirmed published park for its current attempt; "
-                + $"reply to it (delegate.ps1 -Reply {blockedShort} \"...\") to continue that task instead "
+                + $"reply to it (scripts/antiphon delegate reply {blockedShort} \"...\") to continue that task instead "
                 + "of creating a fresh one.";
         }
         else if (parkReply == RemotePoolParkReply.ReleaseMismatch && blockedTaskId is Guid staleId)
@@ -4724,7 +4724,7 @@ public sealed class AgentTaskService
     /// <para>Two refusals, both loud. A kind outside <see cref="DelegatableKinds"/> is rejected with
     /// its reason — nothing has been exercised on OpenCode/Raw as a DELEGATE, and quietly
     /// substituting Claude for what the caller asked for is worse than failing. And an orchestrator
-    /// is ClaudeCode only: its contract (the PreToolUse deny hook, delegate.ps1 usage, the check
+    /// is ClaudeCode only: its contract (the PreToolUse deny hook, delegate command usage, the check
     /// interpreter) has only ever run on Claude, so Grok and Codex are WORKER kinds. Unlike the tier
     /// floor, which silently clamps, an EXPLICIT orchestrator kind is rejected rather than
     /// reinterpreted — a caller who typed it deserves to know it did not happen.</para>
@@ -4759,7 +4759,7 @@ public sealed class AgentTaskService
                 throw new ValidationException(
                     nameof(CreateAgentTaskRequest.AgentKind),
                     $"An orchestrator cannot run on {resolved}. Its contract — the PreToolUse deny "
-                    + "hook, delegate.ps1, the check interpreter — has only ever been exercised on "
+                    + "hook, the delegate command, the check interpreter — has only ever been exercised on "
                     + $"{AgentKind.ClaudeCode}, so {resolved} is a WORKER kind for now (CARD-0084). "
                     + "Delegate the workers on it and keep the orchestrator on Claude.");
             }

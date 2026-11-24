@@ -1027,7 +1027,7 @@ public partial class DelegationWorktreeTests
         "This session is an orchestrator: do not edit files yourself.";
 
     private const string WindowsDenyHookCommand =
-        "powershell -NoProfile -Command \"[Console]::Error.WriteLine('This session is an orchestrator: do not edit files yourself. Delegate the change with the antiphon-delegate skill (pwsh -NoProfile -File scripts/delegate.ps1 ...) and end your turn; the report will reach you.'); exit 2\"";
+        "powershell -NoProfile -Command \"[Console]::Error.WriteLine('This session is an orchestrator: do not edit files yourself. Delegate the change with the antiphon-delegate skill (scripts/antiphon delegate create ...) and end your turn; the report will reach you.'); exit 2\"";
 
     private static async Task<string> ArmAndReadDenyHookCommand(RequiredPlatform required, string? observed)
     {

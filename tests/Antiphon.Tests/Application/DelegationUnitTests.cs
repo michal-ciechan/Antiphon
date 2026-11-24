@@ -488,7 +488,7 @@ public class DelegationReportFormatterTests
         body.ShouldContain("Report withheld");
         body.ShouldContain("2026-08-22T14:03:11.0000000Z");
         body.ShouldContain("4,812 chars");
-        body.ShouldContain("pwsh -File scripts/delegate.ps1 -Status 7f3a2b91");
+        body.ShouldContain("scripts/antiphon delegate status 7f3a2b91");
     }
 
     [Test]
@@ -553,7 +553,7 @@ public class DelegationReportFormatterTests
         note.Header.ShouldContain("reason: waiting-unmarked");
         note.Header.ShouldContain($"asks: {ask}");
         note.Header.ShouldContain("authority: \"start the remaining Coesite downloader epics one after another\"");
-        note.Header.ShouldContain("-Continue 7f3a2b91");
+        note.Header.ShouldContain("scripts/antiphon delegate continue 7f3a2b91");
         note.Body.ShouldStartWith(note.Header);
         note.Body.ShouldContain("THIS REPORT IS AN EXCERPT");
         var excerptAt = note.Body.IndexOf("THIS REPORT IS AN EXCERPT", StringComparison.Ordinal);
@@ -573,7 +573,7 @@ public class DelegationReportFormatterTests
         bits.ShouldContain("asks: Should I accept negatives?");
         bits.ShouldContain("authority: none given at dispatch");
         bits.ShouldContain("-Reply 7f3a2b91");
-        bits.ShouldNotContain("-Continue");
+        bits.ShouldNotContain("delegate continue");
     }
 
     [Test]

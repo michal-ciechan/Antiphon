@@ -128,8 +128,8 @@ internal static class BlockedNote
                     the chat now — do not answer this note with NO_REPLY
               """
             : $"""
-              next: pwsh -File scripts/delegate.ps1 -Continue {shortId}  — replays the authority as the answer
-                    or -Reply {shortId} "<answer>" · or relay `asks:` to your chat now and end your turn
+              next: scripts/antiphon delegate continue {shortId}  — replays the authority as the answer
+                    or reply {shortId} "<answer>" · or relay `asks:` to your chat now and end your turn
               """;
 
         return string.Join('\n',

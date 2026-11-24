@@ -127,6 +127,48 @@ public class OrchestratorInvestigationDetectorTests
     }
 
     [Test]
+    public async Task Treats_the_delegate_command_as_delegate_ps1_was_treated()
+    {
+        await Task.CompletedTask;
+        // The delegate command that replaced scripts/delegate.ps1 (unit 28 of the 2026-11-22 plan), in each form it is run:
+        // create, reply and refine dispatch (as -Goal, -Title, -Reply and -Refine did), and nothing it runs is a read.
+        foreach (var (tool, command) in new[]
+                 {
+                     ("Bash", "scripts/antiphon delegate create --role Debug --title \"x\" --goal \"look at server/Foo.cs\""),
+                     ("Bash", "ANTIPHON_TASK_TOKEN=t ./scripts/antiphon delegate reply 1234abcd \"use server/Bar.cs\""),
+                     ("PowerShell", @"scripts\antiphon.cmd delegate refine 1234abcd --message-file C:\tmp\steer.md"),
+                     ("PowerShell", @"& 'C:\src\Antiphon\scripts\antiphon.cmd' delegate create --role Code --goal-file C:\tmp\brief.md"),
+                     ("Bash", "antiphon-scripts delegate create --role Docs --goal x"),
+                 })
+        {
+            var call = OrchestratorInvestigationDetector.ClassifyCall(tool, System.Text.Json.JsonSerializer.Serialize(new { command }));
+            call.IsSourceRead.ShouldBeFalse(command);
+            call.Kind.ShouldBe(OrchestratorInvestigationDetector.EventKind.Dispatch, command);
+        }
+        foreach (var (tool, command) in new[]
+                 {
+                     ("Bash", "scripts/antiphon delegate status 1234abcd"),
+                     ("Bash", "sh scripts/antiphon delegate land 1234abcd --expected-source-sha aaaa"),
+                     ("PowerShell", @"scripts\antiphon.cmd delegate list-areas --areas-dir server"),
+                 })
+        {
+            var call = OrchestratorInvestigationDetector.ClassifyCall(tool, System.Text.Json.JsonSerializer.Serialize(new { command }));
+            call.IsSourceRead.ShouldBeFalse(command);
+            call.Kind.ShouldBe(OrchestratorInvestigationDetector.EventKind.OtherTool, command);
+        }
+
+        // A read in another segment still counts, and the pattern is the program, not a phrase a read names.
+        OrchestratorInvestigationDetector.ClassifyCall(
+            "Bash",
+            """{"command":"scripts/antiphon delegate status 1234abcd && cat server/Application/Services/AgentTaskService.cs"}""")
+            .IsSourceRead.ShouldBeTrue();
+        OrchestratorInvestigationDetector.ClassifyCall(
+            "Bash",
+            """{"command":"rg -n \"antiphon delegate create\" server/"}""")
+            .IsSourceRead.ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Counts_Read_of_a_source_file_including_unparsed_JSON()
     {
         await Task.CompletedTask;

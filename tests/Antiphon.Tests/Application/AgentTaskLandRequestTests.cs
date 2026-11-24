@@ -61,14 +61,14 @@ public class AgentTaskLandRequestTests
             if (scenario.Guided)
             {
                 error.Message.ShouldContain("must have succeeded before it can land");
-                error.Message.ShouldContain("-Land " + owner.Id.ToString("D"));
+                error.Message.ShouldContain("scripts/antiphon delegate land " + owner.Id.ToString("D"));
                 error.Message.ShouldContain("subjectTaskId");
                 error.Message.ShouldContain("Clean Final/Full Review");
-                error.Message.ShouldContain("-ExpectedSourceSha <full-sha>");
-                error.Message.ShouldContain("-ReviewEvidenceId <review-evidence-id>");
-                error.Message.ShouldContain("-RecoverReviewedSource");
+                error.Message.ShouldContain("--expected-source-sha <full-sha>");
+                error.Message.ShouldContain("--review-evidence-id <review-evidence-id>");
+                error.Message.ShouldContain("--recover-reviewed-source");
             }
-            else error.Message.ShouldNotContain("-RecoverReviewedSource");
+            else error.Message.ShouldNotContain("--recover-reviewed-source");
             (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
             (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
             (await db.AgentTaskEvents.CountAsync()).ShouldBe(beforeEvents);

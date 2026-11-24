@@ -769,13 +769,12 @@ public sealed partial class AttentionService
     {
         var firstLine = FirstLine(card.Description);
         var command = $"""
-            pwsh -File scripts/delegate.ps1 -Card {card.Identifier} -Role Debug -Goal @'
+            scripts/antiphon delegate create --card {card.Identifier} --role Debug --goal-file <brief.md>, where <brief.md> holds:
             Triage GitHub issue {issueRef.ExternalKey} (raised by {author}, not an operator). Answer, in under 300 words:
             (1) is it real — reproduce or cite the code path; (2) is it feasible — name the owner file(s)
             and rough size (S/M/L); (3) suggested importance (Low|Normal|High) and why. Post the answer
             with POST /api/cards/{card.Identifier}/discussion (author "triage-delegate"). Do NOT edit the card's
             importance — the rating is the human's act and is what clears the review marker.
-            '@
             """;
 
         var bits = new List<string>();

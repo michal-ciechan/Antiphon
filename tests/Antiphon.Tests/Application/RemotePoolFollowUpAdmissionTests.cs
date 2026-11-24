@@ -120,7 +120,7 @@ public sealed class RemotePoolFollowUpAdmissionTests
         foreach (var token in new[]
                  {
                      DelegationReportFormatter.Short(seed.PriorId), expectedRunner,
-                     "-Worktree", "-StartRef", "without -OnAgent",
+                     "--worktree", "--start-ref", "without --on-agent",
                  })
             text.ShouldContain(token, Case.Sensitive, row);
         (await seed.CountsAsync()).ShouldBe(before, row + ": fresh stored task/event/session counts");

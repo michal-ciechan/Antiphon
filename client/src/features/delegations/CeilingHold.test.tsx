@@ -187,7 +187,7 @@ describe('CeilingHoldCard', () => {
 
     expect(within(card).getByRole('button', { name: 'Continue' })).toBeDisabled()
     expect(within(card).getByRole('button', { name: 'Extend' })).toBeDisabled()
-    expect(card).toHaveTextContent('-OperatorExtend')
+    expect(card).toHaveTextContent('--operator-extend')
     expect(card).toHaveTextContent(/Cancel/)
     expect(within(card).queryByRole('button', { name: /operator/i })).not.toBeInTheDocument()
     expect(within(card).queryByRole('textbox', { name: /operator/i })).not.toBeInTheDocument()

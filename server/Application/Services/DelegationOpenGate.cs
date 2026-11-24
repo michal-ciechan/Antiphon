@@ -167,7 +167,7 @@ public sealed class DelegationOpenGate
 
     /// <summary>
     /// CARD-0147 S3: uncleared <c>WorktreeHealthFinding</c> rows for the occupants.
-    /// Create must not talk to git — the sweep (or <c>delegate.ps1 -WorktreeHealth</c>) writes
+    /// Create must not talk to git — the sweep (or <c>scripts/antiphon delegate worktree-health</c>) writes
     /// the rows; this only reads them.
     /// </summary>
     private async Task<IReadOnlyDictionary<Guid, string>> LoadStuckLabelsAsync(

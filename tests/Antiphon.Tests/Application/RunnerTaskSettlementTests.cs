@@ -66,7 +66,7 @@ public sealed class RunnerTaskSettlementTests
         note.ShouldContain(world.Git.Task.RemoteWorktreePath!);
         note.ShouldContain(tip);
         note.ShouldContain(world.Git.Baseline);
-        note.ShouldContain("-StartRef");
+        note.ShouldContain("--start-ref");
     }
 
     [Test]
@@ -89,7 +89,7 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.Diverged);
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         var note = (await world.NoteAsync())!.Body;
-        note.ShouldContain("-RecoverReviewedSource");
+        note.ShouldContain("--recover-reviewed-source");
         note.ShouldContain(tip);
     }
 

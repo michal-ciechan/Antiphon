@@ -92,7 +92,7 @@ public class AgentTask
     ///
     /// <para>Only <c>ClaudeCode</c> and <c>Grok</c> are delegatable today (CARD-0084 S2's
     /// allowlist), and only a Worker may be Grok: an orchestrator's contract — the deny hook,
-    /// delegate.ps1 usage, the check interpreter — has only ever been exercised on Claude.</para>
+    /// delegate command usage, the check interpreter — has only ever been exercised on Claude.</para>
     /// </summary>
     public AgentKind AgentKind { get; set; } = AgentKind.ClaudeCode;
 
@@ -291,7 +291,7 @@ public class AgentTask
     /// <summary>CARD-0824 S1. When the server reconciler's release of the slot succeeded. Null while owed.</summary>
     public DateTime? RemoteWorkspaceSlotReleasedAt { get; set; }
 
-    /// <summary>CARD-0824 S1 §3.12 (<c>delegate.ps1 -ColdWorkspace</c>). The slot lease also wipes native build output.</summary>
+    /// <summary>CARD-0824 S1 §3.12 (<c>scripts/antiphon delegate create --cold-workspace</c>). The slot lease also wipes native build output.</summary>
     public bool WorkspaceColdReset { get; set; }
 
     /// <summary>Branch a Worktree task merges into. Defaults to the parent's branch; null leaves it for a human.</summary>
@@ -299,7 +299,7 @@ public class AgentTask
 
     /// <summary>
     /// CARD-0508. The base the caller asked for. Written at create, never by the server.
-    /// CARD-0613 filled the missing path: <c>delegate.ps1 -StartRef</c> ->
+    /// CARD-0613 filled the missing path: <c>delegate --start-ref</c> ->
     /// <c>CreateAgentTaskRequest.WorktreeBaseRequestedRef</c> -> here, validated at create and
     /// resolved once at provisioning. Null means the ordinary MergeTarget/default precedence.
     /// </summary>

@@ -39,7 +39,7 @@ public sealed class ReviewAgentSettings
     public AgentTaskRole Role { get; set; } = AgentTaskRole.Review;
 
     /// <summary>
-    /// The session runner id (<c>delegate.ps1 -Runner</c>). Absent is automatic: the delegation default
+    /// The session runner id (<c>scripts/antiphon delegate create --runner</c>). Absent is automatic: the delegation default
     /// runner when it is eligible, else the desktop. <c>local</c> pins the desktop.
     /// </summary>
     public string? Runner { get; set; }

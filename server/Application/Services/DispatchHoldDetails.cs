@@ -67,7 +67,7 @@ public static class DispatchHoldDetails
         if (parkedStatus == AgentTaskStatus.Blocked)
         {
             text +=
-                $" That task is waiting for an answer: reply to it (delegate.ps1 -Reply {parkedShort} \"...\") or cancel it (POST /api/agent-tasks/{parkedShort}/cancel); this follow-up dispatches when the agent is released to the pool.";
+                $" That task is waiting for an answer: reply to it (scripts/antiphon delegate reply {parkedShort} \"...\") or cancel it (POST /api/agent-tasks/{parkedShort}/cancel); this follow-up dispatches when the agent is released to the pool.";
         }
 
         return text;

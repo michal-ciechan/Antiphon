@@ -1726,7 +1726,7 @@ public class AgentTaskServiceIntegrationTests
         ex.Code.ShouldBe("follow_up_agent_blocked");
         ex.Message.ShouldContain(DelegationReportFormatter.Short(blocked.Id));
         ex.Message.ShouldContain(agentName);
-        ex.Message.ShouldContain("-Reply");
+        ex.Message.ShouldContain("delegate reply");
         (await createDb.AgentTasks.CountAsync()).ShouldBe(before);
     }
 
@@ -1764,7 +1764,7 @@ public class AgentTaskServiceIntegrationTests
         ex.Code.ShouldBe("follow_up_agent_blocked");
         ex.Message.ShouldContain("/cancel");
         ex.Message.ShouldContain("inherited context");
-        ex.Message.ShouldNotContain("-Reply");
+        ex.Message.ShouldNotContain("delegate reply");
     }
 
     [Test]
@@ -1797,7 +1797,7 @@ public class AgentTaskServiceIntegrationTests
                 CancellationToken.None));
         ex.Code.ShouldBe("follow_up_agent_blocked");
         ex.Message.ShouldContain(DelegationReportFormatter.Short(prior.Id));
-        ex.Message.ShouldContain("-Reply");
+        ex.Message.ShouldContain("delegate reply");
     }
 
     [Test]

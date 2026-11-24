@@ -400,10 +400,17 @@ public static class OrchestratorInvestigationDetector
         string.Equals(name, "Read", StringComparison.Ordinal)
         || string.Equals(name, "read_file", StringComparison.OrdinalIgnoreCase);
 
+    // A dispatch: delegate.ps1 with -Goal, -GoalFile, -Reply, -Refine or -Title (transcripts written before the script was
+    // deleted, unit 28 of the 2026-11-22 plan), or the delegate command that replaced it running create, reply or refine.
+    private static readonly HashSet<string> DelegateDispatchVerbs = new(StringComparer.OrdinalIgnoreCase) { "create", "reply", "refine" };
+
     private static bool IsDispatchCommand(string command)
     {
         if (string.IsNullOrEmpty(command))
             return false;
+        if (SplitShell(command).Any(seg => AntiphonCommandArguments(PipelineHead(seg), "delegate") is { Count: > 0 } args
+                && DelegateDispatchVerbs.Contains(args[0])))
+            return true;
         if (command.IndexOf("delegate.ps1", StringComparison.OrdinalIgnoreCase) < 0)
             return false;
         return DispatchFlagRegex.IsMatch(command);
@@ -424,9 +431,9 @@ public static class OrchestratorInvestigationDetector
                 continue;
             if (NeverReadBins.Contains(bin))
                 sawNever = true;
-            else if (IsReadVerb(bin, head) || ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
+            else if (IsReadVerb(bin, head) || IsDelegateCommand(head) || IsCardCommand(head))
             {
-                if (ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
+                if (IsDelegateCommand(head) || IsCardCommand(head))
                     sawNever = true;
                 else
                     sawRead = true;
@@ -442,7 +449,8 @@ public static class OrchestratorInvestigationDetector
     {
         if (string.IsNullOrEmpty(command))
             return false;
-        if ((ContainsScript(command, "delegate.ps1") || ContainsScript(command, "card.ps1") || SplitShell(command).Any(seg => IsCardCli(PipelineHead(seg))))
+        if ((ContainsScript(command, "delegate.ps1") || ContainsScript(command, "card.ps1")
+                || SplitShell(command).Any(seg => IsCardCli(PipelineHead(seg)) || IsDelegateCli(PipelineHead(seg))))
             && !IsReadVerbCommand(command))
             return false;
         foreach (var seg in SplitShell(command))
@@ -453,7 +461,7 @@ public static class OrchestratorInvestigationDetector
                 continue;
             if (NeverReadBins.Contains(bin))
                 continue;
-            if (ContainsScript(head, "delegate.ps1") || IsCardCommand(head))
+            if (IsDelegateCommand(head) || IsCardCommand(head))
                 continue;
             if (!IsReadVerb(bin, head))
                 continue;
@@ -726,22 +734,30 @@ public static class OrchestratorInvestigationDetector
     // plan) or the card command that replaced it, scripts/antiphon card, scripts\antiphon.cmd card or antiphon-scripts card.
     private static bool IsCardCommand(string segment) => ContainsScript(segment, "card.ps1") || IsCardCli(segment);
 
-    // A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
-    // assignments ahead of it) and whose first argument is the card command.
+    // The delegation CLI: scripts/delegate.ps1 (kept for transcripts written before it was deleted, unit 28) or the delegate
+    // command that replaced it, scripts/antiphon delegate, scripts\antiphon.cmd delegate or antiphon-scripts delegate.
+    private static bool IsDelegateCommand(string segment) => ContainsScript(segment, "delegate.ps1") || IsDelegateCli(segment);
+
     private static readonly HashSet<string> CardCliPrefixes = new(StringComparer.OrdinalIgnoreCase) { "&", "call", "sh", "bash" };
 
-    private static bool IsCardCli(string segment)
+    private static bool IsCardCli(string segment) => AntiphonCommandArguments(segment, "card") is not null;
+
+    private static bool IsDelegateCli(string segment) => AntiphonCommandArguments(segment, "delegate") is not null;
+
+    // A segment whose program is the antiphon CLI (by any path; "&", "call", "sh" or "bash" before it, environment
+    // assignments ahead of it) and whose first argument is the named command: the arguments after it, else null.
+    private static List<string>? AntiphonCommandArguments(string segment, string command)
     {
         var tokens = Tokenize(segment).Select(StripQuotes)
             .SkipWhile(token => CardCliPrefixes.Contains(token) || (token.Contains('=') && !token.StartsWith('-')))
-            .Take(2).ToList();
-        if (tokens.Count < 2 || !tokens[1].Equals("card", StringComparison.OrdinalIgnoreCase))
-            return false;
+            .ToList();
+        if (tokens.Count < 2 || !tokens[1].Equals(command, StringComparison.OrdinalIgnoreCase))
+            return null;
         var bin = tokens[0].Replace('\\', '/');
         bin = bin[(bin.LastIndexOf('/') + 1)..].ToLowerInvariant();
         if (bin.EndsWith(".exe", StringComparison.Ordinal))
             bin = bin[..^4];
-        return bin is "antiphon" or "antiphon.cmd" or "antiphon-scripts";
+        return bin is "antiphon" or "antiphon.cmd" or "antiphon-scripts" ? tokens.Skip(2).ToList() : null;
     }
 
     private static void CollectFiles(HashSet<string> files, IReadOnlyList<string> identifiers)

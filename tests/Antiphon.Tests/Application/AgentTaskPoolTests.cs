@@ -445,7 +445,7 @@ public class AgentTaskPoolTests
         held[0].Detail.ShouldContain(seeded.AgentName);
         held[0].Detail.ShouldContain(DelegationReportFormatter.Short(seeded.Blocked.Id));
         held[0].Detail.ShouldContain("Blocked");
-        held[0].Detail.ShouldContain("-Reply");
+        held[0].Detail.ShouldContain("delegate reply");
         held[0].Detail.ShouldBe(DispatchHoldDetails.PinnedAgentParkedOn(
             seeded.AgentName, DelegationReportFormatter.Short(seeded.Blocked.Id), AgentTaskStatus.Blocked));
     }

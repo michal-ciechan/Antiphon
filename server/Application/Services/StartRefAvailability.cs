@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0666. A caller start ref (<c>delegate.ps1 -StartRef</c>) is made available at task CREATE,
+/// CARD-0666. A caller start ref (<c>scripts/antiphon delegate create --start-ref</c>) is made available at task CREATE,
 /// before the row exists: a full commit SHA pushed from another checkout (the server2 runner, a
 /// sibling task) is fetched from origin here, once, bounded. Dispatch never fetches; it only checks
 /// the commit is local, so no network call ever runs in the dispatch claim or under a task row lock.

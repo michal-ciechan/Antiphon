@@ -17,7 +17,7 @@ public sealed class AgentTaskGetPollMetrics
     /// <summary>
     /// CARD-2004. The only client-supplied <see cref="CallerHeader"/> values that are stored.
     /// Match is trim then lowercase. The raw header is never copied into a label, a log, or an error.
-    /// Scripts: delegate.ps1, checkpoint-task.ps1, board-watch, and the status-snapshot and card commands
+    /// Scripts: checkpoint-task.ps1, board-watch, and the status-snapshot, card and delegate commands
     /// (scripts/antiphon), which keep the labels status-snapshot.ps1 and card.ps1 of the scripts they replaced.
     /// Client: useAgentTask, stored as useagenttask.
     /// </summary>
