@@ -878,7 +878,7 @@ public sealed class NightlyCoreGoldenTests
             File.SetAttributes(Path.Combine(dir, "readonly.json"), FileAttributes.ReadOnly);
             var names = new[] { "", "missing.json", "sub", "small.json", "empty.json", "big.bin", "exact.bin", "hidden.json", "readonly.json", "nope/x.json" };
             var paths = names.Select(n => n.Length == 0 ? "" : Path.Combine(dir, n.Replace('/', Path.DirectorySeparatorChar))).ToArray();
-            // Get-TestPhasePathIdentity against its PowerShell body (core-golden/pathIdentity.json).
+            // Compare TestPhaseFiles.PathIdentity results with the checked-in core-golden/pathIdentity.json fixture.
             var identity = PsJson.Pipeline(paths.Select(p =>
             {
                 var i = TestPhaseFiles.PathIdentity(p);
