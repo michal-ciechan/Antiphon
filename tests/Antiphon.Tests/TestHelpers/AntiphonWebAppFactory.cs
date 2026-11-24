@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -95,6 +96,11 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
+            // rc run acca11ba: the factory boots Program in Development, whose host defaults add the
+            // server assembly's dotnet user-secrets store (antiphon-server). That store is the
+            // operator's machine state - scripts/review-github-setup.ps1 writes the GitHub App and
+            // Review:Agents:Runner=local there - so a desktop run read it and server2 did not.
+            RemoveUserSecrets(config);
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = ConnectionString,
@@ -161,6 +167,16 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
 
             ApplyTestOverrides(services);
         });
+    }
+
+    /// <summary>Drops every <c>dotnet user-secrets</c> source, so no machine's store configures a test host.</summary>
+    private static void RemoveUserSecrets(IConfigurationBuilder config)
+    {
+        for (var i = config.Sources.Count - 1; i >= 0; i--)
+        {
+            if (config.Sources[i] is JsonConfigurationSource { Path: UserSecretsFileName })
+                config.Sources.RemoveAt(i);
+        }
     }
 
     /// <summary>Override to replace real dependencies with fakes. Runs after the base service config.</summary>
