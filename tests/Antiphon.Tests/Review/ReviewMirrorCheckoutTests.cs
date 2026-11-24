@@ -44,27 +44,33 @@ public class ReviewMirrorCheckoutTests
     public async Task The_runner_asks_for_a_mirror_only_for_a_mirror_path()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-review-mirror-tests", Guid.NewGuid().ToString("N"));
-        var checkout = new RecordingCheckout();
-        var settings = new ReviewAgentSettings
+        try
         {
-            MirrorRoot = Path.Combine(root, "mirrors"),
-            Repos = [new ReviewAgentRepo { Repo = "acme/clone", LocalPath = @"C:\clones\clone" }],
-        };
-        using var runner = new CliReviewAgentRunner(new AnsweringCli(), checkout, Options.Create(settings), TimeProvider.System,
-            NullLogger<CliReviewAgentRunner>.Instance, Path.Combine(root, "work"));
+            var checkout = new RecordingCheckout();
+            var settings = new ReviewAgentSettings
+            {
+                MirrorRoot = Path.Combine(root, "mirrors"),
+                Repos = [new ReviewAgentRepo { Repo = "acme/clone", LocalPath = @"C:\clones\clone" }],
+            };
+            using var runner = new CliReviewAgentRunner(new AnsweringCli(), checkout, Options.Create(settings), TimeProvider.System,
+                NullLogger<CliReviewAgentRunner>.Instance, Path.Combine(root, "work"));
 
-        foreach (var repo in new[] { "acme/widgets", "acme/clone" })
-        {
-            var started = await runner.RunAsync(Request(repo), CancellationToken.None);
-            await runner.Completion(started.Handle!)!.WaitAsync(TimeSpan.FromSeconds(30));
+            foreach (var repo in new[] { "acme/widgets", "acme/clone" })
+            {
+                var started = await runner.RunAsync(Request(repo), CancellationToken.None);
+                await runner.Completion(started.Handle!)!.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+
+            checkout.Adds.ShouldBe([
+                (Path.Combine(root, "mirrors", "acme", "widgets.git"), new ReviewCheckoutRemote("acme/widgets", CreateMirror: true)),
+                (@"C:\clones\clone", new ReviewCheckoutRemote("acme/clone", CreateMirror: false)),
+            ]);
         }
-
-        checkout.Adds.ShouldBe([
-            (Path.Combine(root, "mirrors", "acme", "widgets.git"), new ReviewCheckoutRemote("acme/widgets", CreateMirror: true)),
-            (@"C:\clones\clone", new ReviewCheckoutRemote("acme/clone", CreateMirror: false)),
-        ]);
-        if (Directory.Exists(root))
-            Directory.Delete(root, recursive: true);
+        finally
+        {
+            if (Directory.Exists(root))
+                ReadOnlyDirectory.Delete(root);
+        }
     }
 
     [Test]
