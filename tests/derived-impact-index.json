@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 158,
+      "classes": 157,
       "reason": "cap",
-      "owed": 133,
+      "owed": 132,
       "first": [
         "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 355,
+      "classes": 356,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 34,
+      "classes": 33,
       "reason": "allowlist"
     },
     {
@@ -1587,9 +1587,9 @@
     },
     {
       "path": "server/Domain/Entities/Project.cs",
-      "classes": 188,
+      "classes": 189,
       "reason": "cap",
-      "owed": 163,
+      "owed": 164,
       "first": [
         "ApiKeyStoreTests",
         "BoardProjectArchiveApiTests",
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 143,
       "reason": "cap",
-      "owed": 117,
+      "owed": 118,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2114,60 +2114,51 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 26,
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
+      "classes": 83,
       "reason": "cap",
-      "owed": 1,
+      "owed": 58,
       "first": [
-        "ReportBudgetWorkspacePortabilityTests"
+        "CheckpointReceiptSafetyTests",
+        "CheckpointReceiptStallBudgetTests",
+        "CheckpointRecoveryFixtureTests",
+        "CheckpointRecoveryLinuxTests",
+        "CheckpointRecoveryWindowsTests",
+        "CheckpointRepeatBuildIsolationTests",
+        "CheckpointRepeatConfigurationTests",
+        "CheckpointRepeatDocumentationTests"
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 88,
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
+      "classes": 86,
       "reason": "cap",
-      "owed": 63,
+      "owed": 61,
       "first": [
         "CheckpointManifestTests",
-        "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
-        "CheckpointReceiptStallBudgetTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 91,
-      "reason": "cap",
-      "owed": 66,
-      "first": [
-        "CheckpointIndexPathsTests",
-        "CheckpointInheritedFileTests",
-        "CheckpointLargeStampScriptTests",
-        "CheckpointLargeStampTests",
-        "CheckpointLaunchCleanupTests",
-        "CheckpointManifestTests",
-        "CheckpointNamespaceCensusUsageTests",
-        "CheckpointOrFilterTests"
+        "CheckpointReceiptStallBudgetTests",
+        "CheckpointRecoveryFixtureTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 73,
+      "classes": 63,
       "reason": "cap",
-      "owed": 48,
+      "owed": 38,
       "first": [
+        "CheckpointRecoveryWindowsTests",
+        "PlanCoverageCommandTests",
+        "RowStreamingTests",
+        "RunCheckpointSourceScriptTests",
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
         "CheckpointToolCopyCleanupTests",
-        "CheckpointTempUsageTests",
-        "WaitCommandTests",
-        "CheckpointManifestTests",
-        "PlanCoverageBindingTests",
-        "CheckpointTrackedBaselineTests"
+        "WaitCommandTests"
       ]
     },
     {
@@ -2188,10 +2179,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 30,
+      "classes": 31,
       "reason": "cap",
-      "owed": 5,
+      "owed": 6,
       "first": [
+        "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
         "TestDataPruneCommandTests",
         "WatchedTestRunTests",
@@ -2201,34 +2193,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
         "StageValueReportTests",
         "TestDataPruneCommandTests",
         "ToolchainFloorWarningTests",
         "VerifyPhoneHomeGrokScriptTests",
         "WatchedTestRunTests",
-        "ZombieAgentReaperTests",
-        "LandGraphCommandTests"
+        "ZombieAgentReaperTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 61,
+      "classes": 63,
       "reason": "cap",
-      "owed": 36,
+      "owed": 38,
       "first": [
+        "RcFailureHistoryTests",
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests",
         "AwayDigestSendTests",
         "C1744G3PhoneHomeSupervisionTests",
         "C599SnapshotTests",
-        "NightlyTestsPlanTests",
-        "ReleaseGateE2EEvidenceTests"
+        "NightlyTestsPlanTests"
       ]
     },
     {
@@ -2249,18 +2241,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 46,
+      "classes": 47,
       "reason": "cap",
-      "owed": 21,
+      "owed": 22,
       "first": [
+        "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
         "NightlyRunTests",
         "NightlyScriptsTests",
         "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
-        "OrchestratorWorkspaceCommandTests",
-        "PtyHostReaperTests"
+        "OrchestratorWorkspaceCommandTests"
       ]
     },
     {
@@ -2309,18 +2301,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 51,
+      "classes": 42,
       "reason": "cap",
-      "owed": 26,
+      "owed": 17,
       "first": [
-        "CheckpointRecoveryLinuxTests",
-        "CheckpointRecoveryWindowsTests",
-        "CheckpointScriptReaderDeadlineTests",
-        "CheckpointSelectedOutputTests",
-        "CheckpointShadowCustodyTests",
-        "CheckpointShapeConflictTests",
-        "CheckpointSlotExecutorTests",
-        "CheckpointSourceGitBoundsTests"
+        "CheckpointSourceGitBoundsTests",
+        "CheckpointSourceStateTests",
+        "CheckpointStampSafetyTests",
+        "CheckpointStepDeadlineTests",
+        "CheckpointTempLifecycleTests",
+        "CheckpointTempUsageTests",
+        "CheckpointTrackedBaselineTests",
+        "CheckpointTypeCacheTests"
       ]
     },
     {
@@ -4514,6 +4506,30 @@
       ]
     },
     {
+      "path": "scripts/lib/BuildDriverEnvironment.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/CheckpointProcessRunner.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/LeaseTempDirectory.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/PhaseJournalDiagnostic.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
+      ]
+    },
+    {
       "path": "scripts/lib/antiphon-cli.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4529,14 +4545,6 @@
       ]
     },
     {
-      "path": "scripts/lib/build-slot.ps1",
-      "classes": [
-        "BuildSlotScriptTests",
-        "ProcessSpawnLimitTests",
-        "StableBuildOutputDocumentationTests"
-      ]
-    },
-    {
       "path": "scripts/lib/c487-harness.ps1",
       "classes": [
         "C1677TempFamilyRegistryTests",
@@ -4548,9 +4556,9 @@
     {
       "path": "scripts/lib/checkpoint-file-reader.ps1",
       "classes": [
-        "CheckpointLargeStampScriptTests",
         "CheckpointReadStallWitnessTests",
-        "CheckpointReceiptStallBudgetTests"
+        "CheckpointReceiptStallBudgetTests",
+        "EmbeddedCheckpointReaderTests"
       ]
     },
     {
@@ -4675,8 +4683,7 @@
     {
       "path": "scripts/run-checkpoint.ps1",
       "classes": [
-        "CheckpointColdBuildTests",
-        "CheckpointLargeStampScriptTests"
+        "EmbeddedCheckpointReaderTests"
       ]
     },
     {
@@ -4711,48 +4718,6 @@
       "path": "scripts/test-checkpoint-bounded-readers.mjs",
       "classes": [
         "CheckpointBoundedReaderTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-compiled-facade.ps1",
-      "classes": [
-        "CheckpointFreshOutputSealTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-git-encoding.ps1",
-      "classes": [
-        "CheckpointGitEncodingScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-large-stamp.ps1",
-      "classes": [
-        "CheckpointLargeStampScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-output-inventory.ps1",
-      "classes": [
-        "CheckpointFreshOutputSealTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-owned-output.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-reader-deadline.ps1",
-      "classes": [
-        "CheckpointScriptReaderDeadlineTests"
-      ]
-    },
-    {
-      "path": "scripts/test-checkpoint-stamp.ps1",
-      "classes": [
-        "CheckpointStampSafetyTests"
       ]
     },
     {
@@ -4802,9 +4767,9 @@
       ]
     },
     {
-      "path": "scripts/validate-checkpoint-receipt.ps1",
+      "path": "scripts/test-live-lane-outcome.ps1",
       "classes": [
-        "CheckpointTerminalReceiptTests"
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -17962,6 +17927,7 @@
     {
       "path": "src/Antiphon.GitInProcess/Antiphon.GitInProcess.csproj",
       "classes": [
+        "CheckpointToolCommandTests",
         "CheckpointToolProjectContractTests"
       ]
     },
@@ -18034,6 +18000,7 @@
     {
       "path": "src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj",
       "classes": [
+        "CheckpointToolCommandTests",
         "CheckpointToolProjectContractTests",
         "HostCleanupCheckpointExtractionTests"
       ]
@@ -18061,6 +18028,7 @@
         "AnchoredPathDeleteWitnessTests",
         "CheckpointAdmissionContractTests",
         "CheckpointExecutorLogTests",
+        "CheckpointOwnedOutputTests",
         "CheckpointStatePublicationTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
@@ -18129,7 +18097,6 @@
         "CheckpointRecoveryWindowsTests",
         "CheckpointRunOwnershipTests",
         "CheckpointTempRootSweepTests",
-        "CheckpointTempUsageTests",
         "CheckpointToolCopyCleanupTests",
         "HostCleanupCheckpointCompatibilityTests",
         "HostCleanupCheckpointExtractionTests",
@@ -18141,6 +18108,7 @@
     {
       "path": "src/Antiphon.HostCleanup/Checkpoints/ExclusiveDirectory.cs",
       "classes": [
+        "CheckpointOwnedOutputTests",
         "HostCleanupCheckpointCustodyTests",
         "HostCleanupCheckpointExtractionTests"
       ]
@@ -18202,7 +18170,6 @@
         "CheckpointTaskOwnershipTests",
         "CheckpointTempRootSweepTests",
         "CheckpointTempScopeTests",
-        "CheckpointTempUsageTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointToolCopyCleanupTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
@@ -18296,7 +18263,6 @@
         "CheckpointSelectedOutputTests",
         "CheckpointTempRootSweepTests",
         "CheckpointTempScopeTests",
-        "CheckpointTempUsageTests",
         "CheckpointToolCopyCleanupTests",
         "HostCleanupCheckpointAuthorityTests",
         "HostCleanupCheckpointCompatibilityTests",
@@ -18389,6 +18355,12 @@
       "path": "src/Antiphon.HostCleanup/Diagnostics/WindowsFileUseProvider.cs",
       "classes": [
         "FileUseWindowsTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Hosting/PwshPrivateCache.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
       ]
     },
     {
@@ -24518,12 +24490,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Application/LandAuditToolResolverTests.cs",
-      "classes": [
-        "C1744G3PhoneHomeSupervisionTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Application/LandGraphCanaryToleranceTests.cs",
       "classes": [
         "LandGraphEvaluationTests"
@@ -25121,10 +25087,7 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointBoundedProbe.cs",
       "classes": [
-        "CheckpointFixtureRoutingTests",
-        "CheckpointInheritedFileTests",
-        "CheckpointSourceGitBoundsTests",
-        "CheckpointVerifierBoundsTests"
+        "CheckpointSourceGitBoundsTests"
       ]
     },
     {
@@ -25147,25 +25110,23 @@
         "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
-        "CheckpointIndexPathsTests",
         "CheckpointLargeStampTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
-        "CheckpointShapeConflictTests",
         "CheckpointSourceExecutionTests",
         "CheckpointSourceGitBoundsTests",
         "CheckpointStatePublicationTests",
         "CheckpointStepDeadlineTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
-        "CheckpointTrackedBaselineTests",
         "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
-        "PosixHarnessToolTests"
+        "PosixHarnessToolTests",
+        "ReportBudgetWorkspacePortabilityTests"
       ]
     },
     {
@@ -25191,12 +25152,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointOutputConfinementTests.cs",
-      "classes": [
-        "CheckpointFixtureRoutingTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointReceiptStallBudgetTests.cs",
       "classes": [
         "RcCoverageAdmissionTests"
@@ -25213,13 +25168,13 @@
       "classes": [
         "CheckpointRepeatBuildIsolationTests",
         "CheckpointSourceExecutionTests",
+        "RowVerbTests",
         "RunCheckpointRepeatScriptTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointRoster.Compiled.cs",
       "classes": [
-        "CheckpointNamespaceCensusUsageTests",
         "CheckpointTempUsageTests",
         "ReleaseGatePlatformTests"
       ]
@@ -25227,7 +25182,6 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointShapeConflictTests.cs",
       "classes": [
-        "CheckpointFixtureRoutingTests",
         "ReleaseGatePlatformTests"
       ]
     },
@@ -25252,7 +25206,6 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempRootSweep.cs",
       "classes": [
-        "CheckpointNamespaceCensusUsageTests",
         "CheckpointTempUsageTests",
         "HostCleanupCheckpointExtractionTests",
         "ReleaseGatePlatformTests"
@@ -25261,7 +25214,6 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
       "classes": [
-        "CheckpointRecoveryWindowsTests",
         "PlanCoverageBindingTests"
       ]
     },
@@ -25283,15 +25235,15 @@
         "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
-        "CheckpointFixtureRoutingTests",
-        "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
-        "CheckpointIndexPathsTests",
-        "CheckpointInheritedFileTests",
-        "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
+        "CheckpointManifestTests",
+        "CheckpointOrFilterTests",
+        "CheckpointOutputConfinementTests",
+        "CheckpointOwnedOutputTests",
+        "CheckpointProcessIdentityTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -25313,10 +25265,10 @@
         "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
-        "CheckpointFixtureRoutingTests",
-        "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
+        "CheckpointLargeStampTests",
+        "CheckpointLaunchCleanupTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -25336,7 +25288,7 @@
         "CheckpointExecutorLogTests",
         "CheckpointImportTests",
         "CheckpointOrFilterTests",
-        "CheckpointRecoveryWindowsTests",
+        "CheckpointRepeatBuildIsolationTests",
         "CheckpointSelectedOutputTests",
         "CheckpointSlotContractTests",
         "CheckpointSlotExecutorTests",
@@ -25346,9 +25298,9 @@
         "CheckpointTerminalReceiptTests",
         "OutputCleanupTests",
         "PhaseJournalKillDiagnosticTests",
-        "PlanCoverageCommandTests",
         "RerunPolicyTests",
         "RowRunnerTests",
+        "RowVerbTests",
         "RunSchedulerTests",
         "TestSetTimingTests",
         "TimeoutTests",
@@ -25367,12 +25319,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTrackedBaselineTests.cs",
-      "classes": [
-        "CheckpointFixtureRoutingTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Checkpoints/DirectoryLinkHelper.cs",
       "classes": [
         "CheckpointRecoveryWindowsTests",
@@ -25382,7 +25328,8 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/EmbeddedCheckpointReader.cs",
       "classes": [
-        "CheckpointReceiptStallBudgetTests"
+        "CheckpointReceiptStallBudgetTests",
+        "EmbeddedCheckpointReaderTests"
       ]
     },
     {
@@ -25855,7 +25802,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/LinuxScriptHarnessProcess.cs",
       "classes": [
-        "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
       ]
@@ -25948,6 +25894,7 @@
         "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
         "CardCommandTests",
+        "CheckpointToolCommandTests",
         "ClientChecksTests",
         "ClientModeTests",
         "DaemonBuildCheckTests",
@@ -25965,7 +25912,6 @@
         "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
         "ReleaseStatusTests",
-        "ReviewEngineScriptsTests",
         "StageValueReportTests"
       ]
     },
@@ -25977,6 +25923,7 @@
         "AutostartInstallTests",
         "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
+        "CheckpointToolCommandTests",
         "ClientChecksTests",
         "ClientModeTests",
         "DaemonBuildCheckTests",
@@ -25995,8 +25942,7 @@
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
-        "RepositoryChildRecoveryCommandTests",
-        "ReviewEngineScriptsTests"
+        "RepositoryChildRecoveryCommandTests"
       ]
     },
     {
@@ -26041,6 +25987,7 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "BuildSlotScriptTests",
+        "CheckpointToolCommandTests",
         "ClassCostMeasurementTests",
         "ClientChecksTests",
         "LandAuditToolResolverTests",
@@ -26056,7 +26003,6 @@
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
         "RcFailedFirstExecutionTests",
-        "RcFailureHistoryTests",
         "ReleaseCandidateGitTests",
         "ReleaseCandidateTests",
         "ReleaseGatePlatformTests",
@@ -26165,6 +26111,7 @@
         "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
         "Card0490BootDiskTests",
+        "CheckpointToolCommandTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
@@ -26178,7 +26125,6 @@
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "MeasureSessionStateCacheScriptTests",
-        "NightlyDiscoveryParserTests",
         "NightlyTestHelpersTests",
         "NightlyTestsRunTests",
         "QualificationTimingTests",
@@ -26491,12 +26437,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Scripts/RunCheckpointScriptTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -26514,13 +26454,11 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
       "classes": [
-        "CheckpointOwnedOutputScriptTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
       ]
     },
@@ -26547,7 +26485,6 @@
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
         "ProcessSpawnLimitTests",
-        "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
         "ScriptHarnessWindowsOwnershipTests"
@@ -26563,7 +26500,6 @@
         "PosixHarnessToolTests",
         "RunnerProbePowerShellFixtureTests",
         "RunnerProcessProbeTests",
-        "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
         "ScriptHarnessProcessTests",
@@ -26638,7 +26574,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/WindowsScriptHarnessProcess.cs",
       "classes": [
-        "ScriptHarnessCancellationTests",
         "ScriptHarnessWindowsOwnershipTests"
       ]
     },
@@ -27035,19 +26970,19 @@
         "CheckpointFixtureGitEncodingTests",
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
-        "CheckpointFixtureRoutingTests",
-        "CheckpointFreshOutputSealTests",
         "CheckpointGitEncodingScriptTests",
-        "CheckpointIndexPathsTests",
-        "CheckpointInheritedFileTests",
-        "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
-        "CheckpointNamespaceCensusUsageTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests"
+        "CheckpointRecoveryFixtureTests",
+        "CheckpointRecoveryLinuxTests",
+        "CheckpointRecoveryWindowsTests",
+        "CheckpointSelectedOutputTests",
+        "CheckpointShadowCustodyTests",
+        "CheckpointShapeConflictTests",
+        "CheckpointSlotExecutorTests"
       ]
     },
     {
@@ -29444,6 +29379,7 @@
     {
       "path": "tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj",
       "classes": [
+        "CheckpointToolCommandTests",
         "CheckpointToolProjectContractTests",
         "HostCleanupCheckpointExtractionTests"
       ]
@@ -29452,6 +29388,18 @@
       "path": "tools/Antiphon.Checkpoints/Execution/BuildStep.cs",
       "classes": [
         "SourceRevisionStampContractTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.Checkpoints/Execution/RowCommand.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.Checkpoints/Program.cs",
+      "classes": [
+        "CheckpointToolCommandTests"
       ]
     },
     {
@@ -29464,7 +29412,6 @@
     {
       "path": "tools/Antiphon.LandGraphAudit/Antiphon.LandGraphAudit.csproj",
       "classes": [
-        "C1744G3PhoneHomeSupervisionTests",
         "LandAuditToolResolverTests",
         "LandGraphAuditProjectInstanceTests"
       ]
@@ -29472,7 +29419,6 @@
     {
       "path": "tools/Antiphon.LandGraphAudit/Program.cs",
       "classes": [
-        "C1744G3PhoneHomeSupervisionTests",
         "LandAuditToolResolverTests"
       ]
     },
