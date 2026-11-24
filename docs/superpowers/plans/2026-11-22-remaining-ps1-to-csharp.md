@@ -29,6 +29,27 @@ Two of the drivers are in-process twins of C# that already exists: `ToolchainFlo
 `TestTimingsTwinTests` compare `lib/toolchain-floor.ps1` and `lib/test-timings.ps1` with `ToolchainFloor.cs` and
 `TestTimings.cs`. Those two libraries are the first to go.
 
+## What is left (2026-11-24, after unit 39)
+
+Snapshot: `wip/next` at `218cb8d02`, after units 1-39. There are **143 tracked `.ps1` files**, from 356 on 2026-11-22.
+Nearly everything left either is a thin launcher on purpose or waits on an owner decision. Unit 40 (the SessionRunner
+`CodexVersionChild.ps1` fixture) is the last port that needs no decision.
+
+| Group | Files | Why it is still PowerShell |
+|---|---:|---|
+| Thin launchers | 32 | Kept on purpose: a Scheduled Task, the AppHost/server, Windmill, a gated script or the owner's hands start them by path. Each only calls `Invoke-AntiphonCli`. |
+| W8 deploy, Postgres and infrastructure | 35 | Outward-facing; each changed deploy path needs the owner's confirmation. |
+| W5 checkpoint | 22 | Waits on the unit 20 decision (retire `run-checkpoint.ps1` for the `Antiphon.Checkpoints` row verb). |
+| W10 server2 harnesses and evidence | 24 | c590/c1609/c1008/c849 host proofs and their fixtures (c727, c889, c913, c589, cache-bridge, c997), `restart-linux-server` and its driver, `verify-card0849-caches`: they drive server2 and go with W8. Plus five investigation evidence scripts (card-1477, c959): keep or delete is the owner's call. |
+| W2 live lane | 14 | Owner-gated (S21): the contract, receipts and pin. |
+| W1 nightly libraries | 5 | `nightly-common`, `nightly-core`, `c487-harness`, `c487-nightly-tests`, `nightly-owned-process`: only the W2/W5/W8/W10 PowerShell above still loads them. |
+| W6 small libraries | 6 | Kept for gated callers: `apphost-common` (worktree guard, `deploy-local`), `lib/build-slot` and `lib/build-driver-environment` (`run-checkpoint`), `lib/windows-phone-home-env` (`desktop-win-phase1-secrets`), `lib/runner-operator-token` (W8), and `retire-runner-volumes` (server2 volumes, with c1609). |
+| `review-github-setup`, `review-live-github`, `review-standalone` | 3 | Not in the 2026-11-22 inventory; the review engine is active owner work, so left alone. |
+| `regenerate-derived-impact-index.ps1` | 1 | Kept by unit 38: its builder needs Roslyn and `Antiphon.TestSupport`, which the CLI does not reference, and the server's land regeneration starts it by path with `-NoBuild` on a 180 s budget. |
+| `windmill/job-status.ps1` | 1 | Goes with the W8 Postgres snapshot work. |
+
+Owner decisions that unblock the rest: unit 20 (W5), S21 (W2), each W8 deploy path (and with it W10's server2
+harnesses, the W1 libraries and the small W6 libraries), the five evidence scripts, and the `review-*` scripts.
 ## End state
 
 1. **One library and one CLI.**
