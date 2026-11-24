@@ -135,8 +135,7 @@ public sealed class ScriptsLaneRepairTests
         var text = """
             using System;
             using System.IO;
-            namespace ScriptsLaneWitness {
-            public sealed class NativeMove {
+            namespace ScriptsLaneWitness { public sealed class NativeMove {
             """ + "\n" + method + "\n" + """
             }
             public static class OperatingSystem { public static bool IsWindows() => true; }

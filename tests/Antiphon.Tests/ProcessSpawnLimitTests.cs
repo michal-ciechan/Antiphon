@@ -71,7 +71,7 @@ public class ProcessSpawnLimitTests
         typeof(ClaudeRealCliStubProxyCanaryTests),
         typeof(GrokRealCliStubProxyCanaryTests),
         typeof(CodexRealCliStubProxyCanaryTests),
-        typeof(TestDurationTripwireTests),
+        // Unit 33: TestDurationTripwireTests runs the tripwire in process (no pwsh child) and left this floor.
         typeof(SessionQueueReceiptPlumbingTests),
         typeof(TaskSupervisionReceiptTests),
         typeof(TestClassificationPolicyTests),

@@ -28627,12 +28627,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/TestHelpers/TestDurationTripwireTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs",
       "classes": [
         "PlanCoverageBindingTests"
