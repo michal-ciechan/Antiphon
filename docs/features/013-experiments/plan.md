@@ -25,7 +25,7 @@ run page, with evidence:
 | **Expectation** | A pass criterion on a trial's output. A case has one or more |
 | **Variant** | A named set of overrides: model or chain, prompt text, checks, policy values, agent kind and level |
 | **Suite** | A named list of cases, with a tuning part and a held-out part |
-| **Experiment** | Cases × variants × repeats, for one stage or a chain of stages |
+| **Experiment** | Cases × variants, for any selection of steps |
 | **Trial** | One execution of one case under one variant. It stores the output, cost, time and each expectation's result |
 | **Baseline** | The variant "as recorded" (the original run) or "current settings". Every experiment has one |
 
@@ -154,12 +154,15 @@ be run against new cases. A variant records the exact resolved values each trial
 
 ### 6. Experiments and scoring
 
-- An experiment is: targets (section 6a), cases or a suite, variants including a baseline, and
-  repeats per cell (default 3, because outputs vary).
+- An experiment is: targets (section 6a), cases or a suite, variants including a baseline. Each
+  cell runs **once** by default (decided 2026-11-24). The same case with the same settings is never
+  run twice: its stored trial is reused (section 2). **Repeats are optional**, for one purpose: a
+  model can answer differently to the same input, so a person who doubts a result can ask for more
+  samples of that cell (**Run again**) or set repeats on the experiment.
 - **Before starting**, the page shows the trial count and an estimated cost from the cases' original
   usage, and a budget cap. Starting needs an explicit confirmation of the spend.
-- **Per cell:** passes out of repeats ("2/3"), cost and time. A cell that both passes and fails is
-  marked flaky, not averaged away.
+- **Per cell:** pass or fail, cost and time. A cell with several samples shows passes out of samples
+  ("2/3"), and one that both passes and fails is marked flaky, not averaged away.
 - **Per variant:** cases passed, cases regressed against the baseline, recall on `finding-present`,
   noise (unjudged new findings and `finding-absent` failures), cost and time. Counts are shown as
   counts; a percentage appears only with its sample size.
@@ -211,7 +214,7 @@ its gate:
 1. A miss or a wrong finding becomes a **target case**.
 2. The loop drafts a candidate change as a variant.
 3. The candidate must pass, in order:
-   - the target case, in a majority of repeats;
+   - the target case (once by default; the proposal says how many samples it was run with);
    - the **regression suite** for that stage: no case that passed under the baseline fails;
    - the **held-out** part of the suite, which the drafting agent never sees;
    - a **generality check**: the changed text names no file, identifier, PR or repo from the target
@@ -368,7 +371,8 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 1. **Name and place:** decided 2026-11-24: a top-level "Experiments" area.
 2. **First stages:** this plan replays categorise, select and verify first (cheap, fast), then the
    reviewer. Reverse it if comparing reviewer models matters most.
-3. **Default repeats** (3) and whether an experiment over a set budget needs a second approval.
+3. **Repeats:** decided 2026-11-24: one run per cell, repeats optional. Still open: whether an
+   experiment over a set budget needs a second approval.
 4. **Scenario files location:** `.antiphon/review/scenarios/` as planned, or a separate repo so
    held-out cases are not visible to agents working in the repo.
 5. **Judge model:** one fixed strong model for every `prompt` expectation, or a setting per suite.
