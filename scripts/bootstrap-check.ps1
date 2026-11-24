@@ -16,6 +16,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'lib/dev-postgres-check.ps1')
 
 $script:FailCount = 0
 $script:WarnCount = 0
@@ -24,7 +25,7 @@ $script:PassCount = 0
 function Write-Check {
     param(
         [string]$Name,
-        [ValidateSet('PASS', 'WARN', 'FAIL')]
+        [ValidateSet('PASS', 'WARN', 'FAIL', 'SKIP')]
         [string]$Status,
         [string]$Detail,
         [string]$Remedial = ''
@@ -33,6 +34,7 @@ function Write-Check {
         'PASS' { $script:PassCount++; $color = 'Green' }
         'WARN' { $script:WarnCount++; $color = 'Yellow' }
         'FAIL' { $script:FailCount++; $color = 'Red' }
+        'SKIP' { $color = 'DarkGray' }
     }
     $line = ('  [{0}] {1,-28} {2}' -f $Status, $Name, $Detail)
     Write-Host $line -ForegroundColor $color
@@ -132,27 +134,6 @@ function Test-LlmProviderKeyInUserSecretsText {
     if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
     # Match a non-empty value after '=' without capturing it for output.
     return [bool]($Text -match '(?im)^Llm:Providers:(anthropic|openai):ApiKey\s*=\s*\S')
-}
-
-function Test-TcpPort {
-    param(
-        [string]$HostName,
-        [int]$Port,
-        [int]$TimeoutMs = 2000
-    )
-    $client = $null
-    try {
-        $client = New-Object System.Net.Sockets.TcpClient
-        $iar = $client.BeginConnect($HostName, $Port, $null, $null)
-        $waited = $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
-        if (-not $waited) { return $false }
-        $client.EndConnect($iar)
-        return $client.Connected
-    } catch {
-        return $false
-    } finally {
-        if ($client) { $client.Close() }
-    }
 }
 
 function Invoke-TimedJob {
@@ -381,8 +362,13 @@ foreach ($dir in $conventionDirs) {
 # ---------------------------------------------------------------------------
 
 $composeFile = Join-Path $repoRoot 'docker-compose.dev.yml'
+$skipDevPostgres = Test-DevPostgresSkipped (Get-DevPostgresSkipValue -IncludeUser)
+$skipReason = 'ANTIPHON_SKIP_DEV_POSTGRES=1'
 
-if (-not $dockerUp) {
+if ($skipDevPostgres) {
+    Write-Check 'docker / postgres' 'SKIP' $skipReason
+    Write-Check 'docker / volume' 'SKIP' $skipReason
+} elseif (-not $dockerUp) {
     Write-Check 'docker / postgres' 'FAIL' 'cannot inspect antiphon-postgres (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
     Write-Check 'docker / volume' 'FAIL' 'cannot inspect antiphon_pgdata (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
 } else {
@@ -430,25 +416,35 @@ if ($NoStack) {
 # 4. Database TCP (+ optional pg_isready)
 # ---------------------------------------------------------------------------
 
-$tcpOk = Test-TcpPort -HostName '127.0.0.1' -Port 17280
-$readyDetail = ''
-if ($dockerUp -and (Test-Path -LiteralPath $composeFile)) {
-    $readyRun = Get-NativeOutput -File $dockerPath -Arguments @(
-        'compose', '-f', $composeFile, 'exec', '-T', 'postgres', 'pg_isready', '-U', 'antiphon', '-d', 'antiphon'
-    )
-    if ($readyRun.Succeeded) {
-        $readyDetail = '; pg_isready ok'
-    } elseif (Test-NonEmptyText $readyRun.Text) {
-        $readyDetail = ('; pg_isready: {0}' -f ($readyRun.Text -replace '\s+', ' '))
+if ($skipDevPostgres) {
+    Write-Check 'database / localhost:17280' 'SKIP' $skipReason
+    $database = Test-ConfiguredDevPostgres -RepoRoot $repoRoot
+    if ($database.Ok) {
+        Write-Check 'database' 'PASS' $database.Detail
     } else {
-        $readyDetail = '; pg_isready failed'
+        Write-Check 'database' 'FAIL' $database.Detail 'Check the AppHost DefaultConnection setting and network access to the configured database.'
     }
-}
-
-if ($tcpOk) {
-    Write-Check 'database' 'PASS' ('TCP localhost:17280 open{0}' -f $readyDetail)
 } else {
-    Write-Check 'database' 'FAIL' ('TCP localhost:17280 closed{0}' -f $readyDetail) 'docker compose -f docker-compose.dev.yml up -d  (postgres publishes 17280)'
+    $tcpOk = Test-TcpPort -HostName '127.0.0.1' -Port 17280
+    $readyDetail = ''
+    if ($dockerUp -and (Test-Path -LiteralPath $composeFile)) {
+        $readyRun = Get-NativeOutput -File $dockerPath -Arguments @(
+            'compose', '-f', $composeFile, 'exec', '-T', 'postgres', 'pg_isready', '-U', 'antiphon', '-d', 'antiphon'
+        )
+        if ($readyRun.Succeeded) {
+            $readyDetail = '; pg_isready ok'
+        } elseif (Test-NonEmptyText $readyRun.Text) {
+            $readyDetail = ('; pg_isready: {0}' -f ($readyRun.Text -replace '\s+', ' '))
+        } else {
+            $readyDetail = '; pg_isready failed'
+        }
+    }
+
+    if ($tcpOk) {
+        Write-Check 'database' 'PASS' ('TCP localhost:17280 open{0}' -f $readyDetail)
+    } else {
+        Write-Check 'database' 'FAIL' ('TCP localhost:17280 closed{0}' -f $readyDetail) 'docker compose -f docker-compose.dev.yml up -d  (postgres publishes 17280)'
+    }
 }
 
 # ---------------------------------------------------------------------------

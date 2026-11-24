@@ -3,6 +3,7 @@
 $ErrorActionPreference = 'Stop'
 
 function Get-Command {
+    [CmdletBinding()]
     param([string]$Name)
     if ($Name -in @('docker', 'dotnet', 'git', 'node', 'npm')) {
         return @{ Source = $Name }
@@ -65,7 +66,11 @@ foreach ($name in @('ANTIPHON_SKIP_DEV_POSTGRES', 'ConnectionStrings__DefaultCon
 
 try {
     New-Item -ItemType Directory -Path "$fixture/scripts/lib", "$fixture/.claude/skills", "$fixture/Antiphon.AppHost", "$fixture/server" -Force | Out-Null
-    foreach ($file in @('verify-dev-stack.ps1', 'docker-compose.dev.yml', 'scripts/bootstrap-check.ps1', 'scripts/apphost-common.ps1') + @(Get-ChildItem "$source/scripts/lib/dev-postgres-*.ps1" | ForEach-Object { "scripts/lib/$($_.Name)" })) {
+    $files = @(
+        'verify-dev-stack.ps1', 'docker-compose.dev.yml', 'scripts/bootstrap-check.ps1',
+        'scripts/apphost-common.ps1', 'scripts/lib/dev-postgres-compose.ps1', 'scripts/lib/dev-postgres-check.ps1'
+    )
+    foreach ($file in $files) {
         Copy-Item -LiteralPath (Join-Path $source $file) -Destination (Join-Path $fixture $file)
     }
     Set-Content "$fixture/scripts/check-agent-context.ps1" 'exit 0'
@@ -109,6 +114,13 @@ try {
     Assert-Check 'explicit invalid database configuration fails without disclosing the string or falling back' (
         $invalid.Code -eq 1 -and $invalid.Text -match 'Database endpoint\s+FAIL' -and
         $invalid.Text -notmatch 'Password=invalid|docker compose .* up' -and -not $invalid.Text.Contains("TCP $endpoint open")) $invalid
+
+    $listener.Stop()
+    $env:ConnectionStrings__DefaultConnection = $null
+    $closed = Invoke-CheckScript "$fixture/scripts/bootstrap-check.ps1" @{ NoStack = $true }
+    Assert-Check 'bootstrap fails when the configured endpoint is unreachable' (
+        $closed.Code -eq 1 -and $closed.Text.Contains("TCP $endpoint closed or unreachable") -and
+        $closed.Text -notmatch 'docker compose .* up|dummy;Host=') $closed
 
     # Do not alter the real User setting when running on a desktop.
     $env:ANTIPHON_SKIP_DEV_POSTGRES = $null

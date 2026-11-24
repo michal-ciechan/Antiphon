@@ -4,12 +4,12 @@
     manually probing ports / reading logs every time you want to know if the
     stack is up.
 
-    Defaults to Windows Aspire AppHost mode (dev-aspire.ps1 — ports 1720x).
-    Use -SimpleMode for the docker-compose stack (dev-start.ps1 — API 17281 / client 17282;
+    Defaults to Windows Aspire AppHost mode (dev-aspire.ps1 - ports 1720x).
+    Use -SimpleMode for the docker-compose stack (dev-start.ps1 - API 17281 / client 17282;
     session-runner is the always-on daemon on 17204).
 
     Reports a full status table and only throws at the end if something core
-    is down — so you get the whole picture in one run, not a death on the
+    is down - so you get the whole picture in one run, not a death on the
     first failure.
 .PARAMETER SimpleMode   Check the docker-compose stack (API 17281 / client 17282; runner 17204) instead of Aspire.
 .PARAMETER SkipBrowser  Skip the Playwright browser smoke test.
@@ -55,14 +55,17 @@ if ($ProbeListeningPorts) {
     return
 }
 
-if (-not $SimpleMode -and -not $IsWindows) {
+if (-not $SimpleMode -and -not $IsWindows -and $PSVersionTable.PSEdition -ne 'Desktop') {
     throw 'desktop-platform-required: Full Aspire dev-stack smoke requires Windows. Use -ProbeListeningPorts for a portable listener-only probe, or explicit -SimpleMode for the compose stack.'
 }
 
 $RepoRoot = $PSScriptRoot
 . (Join-Path $RepoRoot 'scripts\apphost-common.ps1')
+. (Join-Path $RepoRoot 'scripts/lib/dev-postgres-check.ps1')
+$skipDevPostgres = Test-DevPostgresSkipped (Get-DevPostgresSkipValue -IncludeUser)
+$skipReason = 'ANTIPHON_SKIP_DEV_POSTGRES=1'
 
-# ── Port / URL scheme ──────────────────────────────────────────────────────
+# -- Port / URL scheme ------------------------------------------------------
 if ($SimpleMode) {
     $BackendUrl  = "http://localhost:17281"
     $FrontendUrl = "http://localhost:17282"
@@ -78,21 +81,33 @@ if ($SimpleMode) {
 }
 
 $results = [System.Collections.Generic.List[object]]::new()
-function Add-Result { param($Name, $Ok, $Detail)
-    $results.Add([pscustomobject]@{ Check = $Name; Status = ($Ok ? 'OK' : 'FAIL'); Detail = $Detail })
-    $color = $Ok ? 'Green' : 'Red'
-    Write-Host ("  {0,-28} {1,-5} {2}" -f $Name, ($Ok ? 'OK' : 'FAIL'), $Detail) -ForegroundColor $color
+function Add-Result {
+    param($Name, $Ok, $Detail, [switch]$Skip)
+
+    if ($Skip) {
+        $status = 'SKIP'
+        $color = 'DarkGray'
+    } elseif ($Ok) {
+        $status = 'OK'
+        $color = 'Green'
+    } else {
+        $status = 'FAIL'
+        $color = 'Red'
+    }
+    $results.Add([pscustomobject]@{ Check = $Name; Status = $status; Detail = $Detail })
+    Write-Host ("  {0,-28} {1,-5} {2}" -f $Name, $status, $Detail) -ForegroundColor $color
 }
 
-Write-Host "`n=== Verifying Antiphon dev stack ($($SimpleMode ? 'simple/compose' : 'Aspire')) ===" -ForegroundColor Cyan
+$mode = if ($SimpleMode) { 'simple/compose' } else { 'Aspire' }
+Write-Host "`n=== Verifying Antiphon dev stack ($mode) ===" -ForegroundColor Cyan
 
-# ── 1. Docker daemon + network health (Aspire only — it needs containers) ──
+# -- 1. Docker daemon + network health (Aspire only - it needs containers) --
 if (-not $SimpleMode) {
     $j = Start-Job { docker version 2>&1 | Select-String 'Server:' }
     $done = $j | Wait-Job -Timeout 12
     $dockerUp = $done -and (Receive-Job $j)
     Remove-Job $j -Force
-    Add-Result "Docker daemon" ([bool]$dockerUp) ($dockerUp ? "reachable" : "unreachable — run docker-desktop skill / restart.cmd")
+    Add-Result "Docker daemon" ([bool]$dockerUp) $(if ($dockerUp) { 'reachable' } else { 'unreachable - run docker-desktop skill / restart.cmd' })
 
     if ($dockerUp) {
         # HNS health: docker network create must not hang
@@ -102,24 +117,37 @@ if (-not $SimpleMode) {
         $hnsOk = $netDone -and $netDone.State -eq 'Completed'
         Remove-Job $nj -Force -ErrorAction SilentlyContinue
         if ($hnsOk) { docker network rm $testNet 2>&1 | Out-Null }
-        Add-Result "Docker network (HNS)" $hnsOk ($hnsOk ? "create OK" : "HANGS — restart Docker Desktop (Windows HNS broken)")
+        Add-Result "Docker network (HNS)" $hnsOk $(if ($hnsOk) { 'create OK' } else { 'HANGS - restart Docker Desktop (Windows HNS broken)' })
+    }
 
-        # Postgres container up — always-on external container 'antiphon-postgres'
+    if ($skipDevPostgres) {
+        Add-Result 'Postgres container' $null $skipReason -Skip
+    } elseif ($dockerUp) {
+        # Postgres container up - always-on external container 'antiphon-postgres'
         # (docker-compose.dev.yml, restart: unless-stopped). It is NOT the old
         # Aspire-managed 'DefaultConnection' container, which no longer exists.
         $pg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
-        Add-Result "Postgres container" ([bool]$pg) ($pg ? "$pg" : "not Up — check 'docker ps -a --filter name=antiphon-postgres'")
+        Add-Result "Postgres container" ([bool]$pg) $(if ($pg) { "$pg" } else { "not Up - check 'docker ps -a --filter name=antiphon-postgres'" })
     }
 }
 
-# ── 2. Listening ports ──────────────────────────────────────────────────────
-$listening = @(Get-DevStackListeningPorts)
-foreach ($p in $corePorts) {
-    $open = $listening -contains $p
-    Add-Result "Port $p" $open ($open ? "listening" : "closed")
+if ($skipDevPostgres) {
+    $database = Test-ConfiguredDevPostgres -RepoRoot $RepoRoot -SimpleMode:$SimpleMode
+    Add-Result 'Database endpoint' $database.Ok $database.Detail
 }
 
-# ── 3. HTTP health endpoints ────────────────────────────────────────────────
+# -- 2. Listening ports ------------------------------------------------------
+$listening = @(Get-DevStackListeningPorts)
+foreach ($p in $corePorts) {
+    if ($skipDevPostgres -and $p -eq 17280) {
+        Add-Result "Port $p" $null $skipReason -Skip
+        continue
+    }
+    $open = $listening -contains $p
+    Add-Result "Port $p" $open $(if ($open) { 'listening' } else { 'closed' })
+}
+
+# -- 3. HTTP health endpoints ------------------------------------------------
 function Test-Endpoint { param($Name, $Uri, $Method = 'GET', $Expect = '')
     try {
         $req = @{ Uri = $Uri; Method = $Method; UseBasicParsing = $true; TimeoutSec = $TimeoutSec }
@@ -138,7 +166,7 @@ Test-Endpoint "Frontend API proxy"    "$($FrontendUrl.TrimEnd('/'))/api/projects
 Test-Endpoint "Frontend SignalR"      "$($FrontendUrl.TrimEnd('/'))/hubs/antiphon/negotiate?negotiateVersion=1" 'POST'
 if ($dashboardUrl) { Test-Endpoint "Aspire dashboard" $dashboardUrl }
 
-# ── 4. Optional browser smoke ───────────────────────────────────────────────
+# -- 4. Optional browser smoke -----------------------------------------------
 if (-not $SkipBrowser) {
     try {
         $debugScript = Join-Path $RepoRoot "tests\Antiphon.E2E\bin\Debug\net9.0\playwright.ps1"
@@ -150,7 +178,7 @@ if (-not $SkipBrowser) {
             New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
             $shot = Join-Path $shotDir "dev-stack-smoke.png"
             & $debugScript screenshot $FrontendUrl.TrimEnd('/') $shot --wait-for-selector "text=Workflows" --wait-for-timeout 5000 --viewport-size "1280,720"
-            Add-Result "Browser smoke" ($LASTEXITCODE -eq 0) ($LASTEXITCODE -eq 0 ? $shot : "playwright exit $LASTEXITCODE")
+            Add-Result "Browser smoke" ($LASTEXITCODE -eq 0) $(if ($LASTEXITCODE -eq 0) { $shot } else { "playwright exit $LASTEXITCODE" })
         } else {
             Add-Result "Browser smoke" $false "playwright.ps1 not found"
         }
@@ -162,19 +190,19 @@ $gitIndexLock = Get-AppHostGitIndexLock -SourceRoot $RepoRoot
 if ($null -eq $gitIndexLock) {
     Add-Result "Git index lock" $true "absent"
 } elseif ($gitIndexLock.Stale) {
-    Add-Result "Git index lock" $false ("stale ({0:n1} min) at {1} — Remove-Item '{1}'" -f $gitIndexLock.AgeMinutes, $gitIndexLock.Path)
+    Add-Result "Git index lock" $false ("stale ({0:n1} min) at {1} - Remove-Item '{1}'" -f $gitIndexLock.AgeMinutes, $gitIndexLock.Path)
 } else {
     Add-Result "Git index lock" $true ("fresh ({0:n1} min)" -f $gitIndexLock.AgeMinutes)
 }
 
-# ── Summary ─────────────────────────────────────────────────────────────────
+# -- Summary -----------------------------------------------------------------
 $failed = $results | Where-Object { $_.Status -eq 'FAIL' -and $_.Check -ne 'Git index lock' }
 Write-Host ""
 if ($failed) {
-    Write-Host "Stack NOT healthy — $($failed.Count) check(s) failed:" -ForegroundColor Red
+    Write-Host "Stack NOT healthy - $($failed.Count) check(s) failed:" -ForegroundColor Red
     $failed | ForEach-Object { Write-Host "  - $($_.Check): $($_.Detail)" -ForegroundColor Red }
     exit 1
 } else {
-    Write-Host "Antiphon dev stack verified — all checks passed." -ForegroundColor Green
+    Write-Host "Antiphon dev stack verified - all checks passed." -ForegroundColor Green
     exit 0
 }

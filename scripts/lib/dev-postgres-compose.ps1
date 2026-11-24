@@ -17,7 +17,13 @@ $script:DevPostgresSkipVariable = 'ANTIPHON_SKIP_DEV_POSTGRES'
 $script:DevPostgresService = 'postgres'
 
 function Get-DevPostgresSkipValue {
-    return [Environment]::GetEnvironmentVariable($script:DevPostgresSkipVariable)
+    param([switch]$IncludeUser)
+
+    $value = [Environment]::GetEnvironmentVariable($script:DevPostgresSkipVariable)
+    if ($null -eq $value -and $IncludeUser) {
+        return [Environment]::GetEnvironmentVariable($script:DevPostgresSkipVariable, 'User')
+    }
+    return $value
 }
 
 function Test-DevPostgresSkipped {
