@@ -130,15 +130,14 @@ public sealed class OrchestratorWorkspaceWarningService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
+        var workingDirectory = agent.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(workingDirectory))
             return null;
-        var normalized = DelegationWorkspaceResolver.NormalizeSeparators(agent.WorkingDirectory)
-            .ToLowerInvariant();
-        return await _db.Projects.AsNoTracking()
-            .FirstOrDefaultAsync(
-                p => p.LocalRepositoryPath != null
-                    && p.LocalRepositoryPath.Replace("/", "\\").ToLower() == normalized,
-                ct);
+
+        var candidates = await _db.Projects.AsNoTracking()
+            .Where(WorkingDirectoryIdentity.CandidateFilter<Project>(p => p.LocalRepositoryPath, workingDirectory))
+            .ToListAsync(ct);
+        return candidates.FirstOrDefault(p => WorkingDirectoryIdentity.Same(p.LocalRepositoryPath, workingDirectory));
     }
 
     private static string Truncate(string value, int max) =>
