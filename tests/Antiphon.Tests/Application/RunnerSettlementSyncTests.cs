@@ -1188,17 +1188,18 @@ public sealed class RunnerSettlementSyncTests
             {
                 if (extraMasterCommit || withSubmodule || initialFiles is { Count: > 0 })
                     throw new InvalidOperationException("Immutable seed clones require the unmodified base fixture.");
-                await world.RunAsync(world.Root, "clone", "--bare", immutableSeedOrigin, world.Origin);
-                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c).
-                await world.RunAsync(world.Origin, "config", "receive.autogc", "false");
+                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c): the clone
+                // writes receive.autogc=false into its own config, no extra git process.
+                await world.RunAsync(world.Root, "clone", "--bare", "-c", "receive.autogc=false", immutableSeedOrigin, world.Origin);
                 await world.RunAsync(world.Root, "clone", world.Origin, world.Desktop);
                 await world.ConfigureAsync(world.Desktop);
             }
             else
             {
                 await world.RunAsync(world.Root, "init", "--bare", "-b", "master", world.Origin);
-                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c).
-                await world.RunAsync(world.Origin, "config", "receive.autogc", "false");
+                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c), written
+                // straight into the new repository's config rather than with another git process.
+                await File.AppendAllTextAsync(Path.Combine(world.Origin, "config"), "[receive]\n\tautogc = false\n");
                 Directory.CreateDirectory(world.Desktop);
                 await world.RunAsync(world.Desktop, "init", "-b", "master");
                 await world.ConfigureAsync(world.Desktop);
