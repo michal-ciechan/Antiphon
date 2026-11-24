@@ -12,7 +12,7 @@ function Get-Command {
 }
 
 function docker {
-    $script:dockerCalls.Add(($args -join ' '))
+    $dockerCalls.Add(($args -join ' '))
     if ($args[0] -eq 'network') { $global:LASTEXITCODE = 0; return }
     $global:LASTEXITCODE = 1
 }
