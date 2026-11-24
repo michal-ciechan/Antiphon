@@ -220,7 +220,8 @@ namespace Antiphon.Scripts
             // slow or unresolved row, 2 invalid input. mechanical-pc: 0 C479 ACCEPT, 2 C479 REFUSE <reason>, 1 an input that could
             // not be read. measure-session-state-cache: 0 captured or both gates passed, 1 a gate failed or refused.
             // verify-agent-tui-profile: 0 verified, 1 failed. check-os-witnesses (unit 35): 0 complete, 1 obligations, 2 invalid
-            // input. run-tests-watched (unit 38): the test executable's code, 124 stalled or timed out. Usage is 2 for each.
+            // input. run-tests-watched (unit 38): the test executable's code, 124 stalled or timed out, 1 it did not start. Usage is 2
+            // for each.
             [VerificationToolCommands.DurationTripwire] = VerificationToolCommands.RunDurationTripwire,
             [VerificationToolCommands.MechanicalPc] = VerificationToolCommands.RunMechanicalPc,
             [VerificationToolCommands.MeasureSessionStateCache] = VerificationToolCommands.RunMeasureSessionStateCache,

@@ -102,6 +102,14 @@ public sealed class WatchedTestRunTests
         machine.Disk.RemoveFile(Exe);
         Should.Throw<NightlyUsageException>(() => Watch(machine)).Message.ShouldContain("--exe names no file");
         machine.Started.ShouldBeNull();
+
+        // An exe that will not start is one progress line and exit 1, not a loop until the hard timeout.
+        var refused = new Machine { StartFailure = new System.ComponentModel.Win32Exception(193, "not a valid Win32 application") };
+        var run = Watch(refused);
+        run.Exit.ShouldBe(WatchedTestRun.NotStartedExitCode, run.Output);
+        refused.Disk.File.ReadAllText(Path.Combine(Out, "run.progress")).ReplaceLineEndings("\n").ShouldBe("[run] did not start: not a valid Win32 application\n");
+        refused.Commands.ShouldBeEmpty();
+        refused.Kills.ShouldBeEmpty();
     }
 
     [Test]
@@ -162,6 +170,7 @@ public sealed class WatchedTestRunTests
         public double CpuPerSecond { get; init; }
         public int ExitAfterSeconds { get; init; }
         public int ExitCode { get; init; }
+        public Exception? StartFailure { get; init; }
         public WatchedChildStart? Started { get; private set; }
         public List<string> Commands { get; } = [];
         public List<int> Kills { get; } = [];
@@ -178,6 +187,7 @@ public sealed class WatchedTestRunTests
 
         public IWatchedChild Start(WatchedChildStart start)
         {
+            if (StartFailure != null) throw StartFailure;
             Started = start;
             _start = Clock.GetUtcNow();
             Disk.AddFile(start.StandardOutputPath, new MockFileData(""));

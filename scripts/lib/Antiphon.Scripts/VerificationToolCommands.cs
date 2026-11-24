@@ -71,7 +71,8 @@ namespace Antiphon.Scripts
         internal static int RunCheckOsWitnesses(string[] args) =>
             OsWitnessCheck.Run(OsWitnessCheckOptions.Parse(args.Skip(1).ToArray()), Host(), new FileSystem(), OsWitnessCheck.NativeGit);
 
-        // CARD-0165/0222: the test executable's own exit code; 124 stalled or timed out (after the dump and the kill); usage 2.
+        // CARD-0165/0222: the test executable's own exit code; 124 stalled or timed out (after the dump and the kill); 1 it did not
+        // start; usage 2.
         internal static int RunRunTestsWatched(string[] args) =>
             WatchedTestRun.Run(WatchedTestRunOptions.Parse(args.Skip(1).ToArray(), Checkout, Environment.CurrentDirectory), Host(), new FileSystem(),
                 new WatchedTestRunOs(start => new Antiphon.Build.BuildDriverEnvironment().Apply(start)));

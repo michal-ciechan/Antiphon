@@ -25,7 +25,7 @@
 //
 // The child's environment is this process's, then --env-vars (each noted as "[env] NAME=VALUE"), then the build-driver policy's
 // variables (CARD-1506 BuildDriverEnvironment, which the CLI binds to the start). Exit: the exe's own code; 124 when it stalled or
-// hit --hard-timeout-sec. Usage errors (a missing --exe, an exe that is not a file, an --env-vars entry that is not NAME=VALUE)
+// hit --hard-timeout-sec; 1 when it did not start (the script looped until its hard timeout then). Usage errors (a missing --exe, an exe that is not a file, an --env-vars entry that is not NAME=VALUE)
 // are NightlyUsageException (the CLI's exit 2). The child, its samples, the process table, the diagnostic commands and the kill
 // are IWatchedTestRunSeams (production WatchedTestRunOs); files are IFileSystem; the clock and the waits are the host's. Plain C#:
 // no PowerShell types. ASCII only.
@@ -171,6 +171,9 @@ namespace Antiphon.Nightly
         /// <summary>The exit code of a stall or a hard timeout.</summary>
         public const int StalledExitCode = 124;
 
+        /// <summary>The exit code when the test executable does not start (one progress line says why).</summary>
+        public const int NotStartedExitCode = 1;
+
         private const string PostgresImage = "ancestor=postgres:16-alpine";
         private const string TestcontainersLabel = "label=org.testcontainers";
 
@@ -206,7 +209,17 @@ namespace Antiphon.Nightly
             var arguments = new List<string> { "--treenode-filter", options.Filter, "--no-progress", "--no-ansi" };
             if (options.Detailed) arguments.AddRange(new[] { "--output", "Detailed" });
             var start = host.UtcNow;
-            using var child = seams.Start(new WatchedChildStart(options.Exe, files.Path.GetDirectoryName(options.Exe), arguments, options.EnvVars, log, err));
+            IWatchedChild started;
+            try
+            {
+                started = seams.Start(new WatchedChildStart(options.Exe, files.Path.GetDirectoryName(options.Exe), arguments, options.EnvVars, log, err));
+            }
+            catch (Exception e) when (e is Win32Exception || e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException)
+            {
+                Note("[" + tag + "] did not start: " + e.Message);
+                return NotStartedExitCode;
+            }
+            using var child = started;
             Note("[" + tag + "] started pid=" + Num(child.Id) + " at " + Local(host, start) + " exe=" + options.Exe + " filter=" + options.Filter);
 
             long? lastSize = -1;
