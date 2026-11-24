@@ -56,6 +56,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private bool _terminated;
     public StreamReader Stdout => _stdout;
     public StreamReader Stderr => _stderr;
+    internal IReadOnlyList<string> RootArguments { get; }
 
     internal WindowsScriptHarnessProcess(ScriptProcessRequest request, WindowsScriptHarnessHooks? hooks = null)
     {
@@ -136,6 +137,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 argv.AddRange(ScriptHarnessProcess.RootArguments(request.Script));
                 argv.AddRange(["-Case", request.CaseName, "-ResultsDirectory", request.ResultsDirectory]);
                 if (request.AdditionalArguments is not null) argv.AddRange(request.AdditionalArguments);
+                RootArguments = argv.Skip(1).ToArray();
                 var command = new StringBuilder(string.Join(" ", argv.Select(QuoteArgument)));
                 var flags = CreateSuspended | ExtendedStartupInfoPresent;
                 _hooks.CreateFlags = flags;

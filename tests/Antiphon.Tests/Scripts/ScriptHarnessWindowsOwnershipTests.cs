@@ -195,7 +195,7 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         var hooks = new WindowsScriptHarnessHooks();
         return ScriptHarnessWindowsProcessFixture.WithOwnerAsync("HandleProbe", hooks, async owned =>
         {
-            var receipt = await owned.Windows.WaitProbeAsync(owned.RootExit);
+            var receipt = await owned.WaitProbeAsync();
             bool.Parse(receipt[1]).ShouldBeFalse("Child cannot query the transported private-job handle.");
             bool.Parse(receipt[2]).ShouldBeFalse("Child cannot retain the transported private job.");
             owned.Windows.Root!.Executing().ShouldBeTrue();
@@ -217,9 +217,11 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         (ScriptHarnessWindowsProcessFixture.ReadHandleFlags(unrelatedEvent) & 1).ShouldBe(1u);
         await ScriptHarnessWindowsProcessFixture.WithOwnerAsync("HandleProbe", hooks, async owned =>
         {
-            var receipt = await owned.Windows.WaitProbeAsync(owned.RootExit);
-            ScriptHarnessHandleProbe.AssertOnlyStandardHandles(receipt,
-                ScriptHarnessWindowsProcessFixture.EventIsSignaled(unrelatedEvent), hooks.StartupHandles);
+            var receipt = await owned.WaitProbeAsync();
+            ScriptHarnessHandleProbe.AssertUnrelatedEventWasNotInherited(receipt);
+            ScriptHarnessWindowsProcessFixture.EventIsSignaled(unrelatedEvent).ShouldBeFalse();
+            var actualStandard = receipt.Skip(4).Select(value => new IntPtr(long.Parse(value))).ToArray();
+            actualStandard.ShouldBe(hooks.StartupHandles);
             owned.Windows.Root!.Executing().ShouldBeTrue();
         }, configure: windows => hooks.BeforeResume = (job, _) =>
         {
