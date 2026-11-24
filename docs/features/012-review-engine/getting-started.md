@@ -462,8 +462,21 @@ placeholder settings. These checks passed:
   callback is refused, and the sign-in key is written to the state volume;
 - with sign-in off, the API answers as the default viewer.
 
-Tests also cover the mirror against a local git origin. **Not tried yet:** a full review in Docker
-against a real GitHub repo with a real Claude sign-in, and a complete GitHub sign-in round trip.
+Tests also cover the mirror against a local git origin.
+
+**End to end, also on 2026-11-24.** The same compose file ran against a real GitHub App and a Claude
+subscription token (`CLAUDE_CODE_OAUTH_TOKEN`), behind HTTPS, polling a small private demo repo with
+three open PRs. In about two minutes all three ran from intake to their next wait:
+- **A docs-only PR:** categorised `docs`, needed no reviewers, was approved by the App's bot with
+  both `antiphon/*` statuses green, and waited at the merge gate.
+- **A feature PR:** three Opus reviewer groups ran, verification passed, and the bot posted a review
+  with an inline finding. The `antiphon/review` status linked to the run page.
+- **A PR with two planted defects:** both were found as major findings. A status change that skipped
+  the board's rules was caught by one of the repo's own checks (section 9). A date comparison with
+  its operands swapped was caught by the built-in correctness check.
+
+The server created the mirror itself, and a full GitHub sign-in in a browser worked: the UI was sent
+to GitHub, came back signed in, and showed the login with a Sign out item.
 
 ### 6.4 Exposing the UI
 
@@ -475,6 +488,11 @@ against a real GitHub repo with a real Claude sign-in, and a complete GitHub sig
 
 Either way, set `Review:PublicBaseUrl` to the address people use. The links in GitHub statuses use it,
 and so does the sign-in callback.
+
+Serve it over HTTPS even on a private network. Browsers set to always use secure connections refuse
+a plain `http://` address with an error page; Chrome did so for a tailnet address in testing. If you
+change from `http://` to `https://`, update the App's callback URL too (section 3), and redirect the
+old address so the links already posted on PRs keep working.
 
 ## 7. People, gates and merging
 
