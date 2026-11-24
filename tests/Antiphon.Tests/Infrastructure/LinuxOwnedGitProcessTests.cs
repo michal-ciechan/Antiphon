@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using Antiphon.Server.Infrastructure.Git;
@@ -121,6 +123,87 @@ public sealed class LinuxOwnedGitProcessTests
         foreach (var stranger in fixture.Strangers) stranger.HasExited.ShouldBeFalse();
         (await owner.StandardOutput.ReadToEndAsync(ct)).ShouldBeEmpty();
         (await owner.StandardError.ReadToEndAsync(ct)).ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(45_000)]
+    [NativeLinuxOnly("A foreign-UID Git process must be visible in the Linux census.")]
+    public async Task Unrelated_foreign_uid_git_does_not_prevent_join(CancellationToken ct)
+    {
+        using var fixture = new OwnedProcessContainmentFixture();
+        await using var owner = new OwnedGitProcess(new LinuxOwnedGitProcess());
+        using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn"))
+            owner.Start(fixture.StartInfo(closed: true)).State.ShouldBe(OwnedGitLaunchState.Started);
+        await fixture.ReadyAsync(ct);
+        var rootTicks = owner.Root.ShouldNotBeNull().LinuxStartTicks.ShouldNotBeNull();
+
+        var start = new ProcessStartInfo("docker")
+        {
+            UseShellExecute = false, RedirectStandardInput = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        string[] arguments = ["run", "--rm", "-i", "--pull=never", "--user", "999:999", "--pid=host",
+            "--network", "none", "--cap-drop", "ALL", "--entrypoint", "/usr/bin/timeout", "node:22-bookworm",
+            "30", "/bin/sh", "-c", "printf '%s %s\\n' \"$$\" \"$(readlink /proc/self/ns/pid)\"; exec git hash-object --stdin"];
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+
+        Process foreign;
+        try { foreign = Process.Start(start) ?? throw new InvalidOperationException("Docker did not start"); }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 2)
+        {
+            Skip.Test("Docker is required for the second-UID witness.");
+            return;
+        }
+        using var docker = foreign;
+        try
+        {
+            var ready = await foreign.StandardOutput.ReadLineAsync(ct);
+            if (ready is null)
+            {
+                var error = await foreign.StandardError.ReadToEndAsync(ct);
+                if (error.Contains("No such image", StringComparison.Ordinal)
+                    || error.Contains("Cannot connect to the Docker daemon", StringComparison.Ordinal))
+                {
+                    Skip.Test("The second-UID witness needs local Docker with node:22-bookworm cached.");
+                    return;
+                }
+                throw new InvalidOperationException("The foreign Git fixture exited before reporting its PID.");
+            }
+
+            var fields = ready.Split(' ');
+            fields.Length.ShouldBe(2);
+            if (fields[1] != new FileInfo("/proc/self/ns/pid").LinkTarget)
+            {
+                Skip.Test("The Docker daemon must share the test runner's PID namespace.");
+                return;
+            }
+            var pid = int.Parse(fields[0], CultureInfo.InvariantCulture);
+            using (var readiness = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                readiness.CancelAfter(TimeSpan.FromSeconds(5));
+                while ((await File.ReadAllTextAsync($"/proc/{pid}/comm", readiness.Token)).Trim() != "git")
+                    await Task.Delay(10, readiness.Token);
+            }
+            File.ReadLines($"/proc/{pid}/status").Single(line => line.StartsWith("Uid:", StringComparison.Ordinal))
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ShouldBe(["Uid:", "999", "999", "999", "999"]);
+            LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull().StartTicks.ShouldBeGreaterThanOrEqualTo(rootTicks);
+            Should.Throw<UnauthorizedAccessException>(() => { using var stream = File.OpenRead($"/proc/{pid}/environ"); });
+
+            owner.StandardInput.Close();
+            (await owner.WaitForRootExitAsync(ct)).ShouldBeTrue();
+            OwnedGitCleanup result;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "cleanup"))
+                result = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(6));
+            OwnedProcessContainmentFixture.IsAlive(fixture.SurvivorPid).ShouldBeFalse("before fixture rescue");
+            OwnedProcessContainmentFixture.IsAlive(pid).ShouldBeTrue("the unrelated Git process must remain alive");
+            result.Joined.ShouldBeTrue($"rootExited={result.RootExited} members={result.Members.State}/{result.Members.Survivors} " +
+                $"reason={result.Reason} signals={result.SignalsAttempted} duration={result.Duration}");
+        }
+        finally
+        {
+            foreign.StandardInput.Close();
+            await foreign.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(35));
+        }
     }
 
     [Test]
