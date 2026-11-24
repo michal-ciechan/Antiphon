@@ -93,8 +93,9 @@ public class ProcessSpawnLimitTests
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
         typeof(AgentTaskLandIndexLockTests),
-        // CARD-1421 repair (Review b529639c D-1): these three call DirectoryLink.TryCreate, which runs
-        // Scripts/Fixtures/directory-link.ps1 through ScriptHarnessProcess on Windows, so they start pwsh.
+        // CARD-1421 repair (Review b529639c D-1): these three call DirectoryLink.TryCreate, which ran
+        // Scripts/Fixtures/directory-link.ps1 through ScriptHarnessProcess on Windows and so started pwsh. Since
+        // unit 35 of the 2026-11-22 plan the junction is made in process; they stay strict (a lane move is its own change).
         typeof(Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests),
         typeof(AgentTaskLandHalfResetWindowsTests),
         typeof(AgentTaskLandHoldVisibilityTests),
@@ -867,14 +868,14 @@ public class ProcessSpawnLimitTests
         }
     }
 
-    // CARD-1421 repair (Review b529639c D-1): DirectoryLink runs Scripts/Fixtures/directory-link.ps1 through
-    // ScriptHarnessProcess on Windows, so a class that reaches it starts pwsh and is not git-only. The scan
-    // reflects over the compiled type: partial-class siblings, async state machines, lambdas and local
-    // functions all compile into the class or its nested types, so none of them can hide a reference.
+    // CARD-1421 repair (Review b529639c D-1): ScriptHarnessProcess starts a pwsh (or C# harness) root, so a class that
+    // reaches it is not git-only. DirectoryLink and DirectoryLinkCommand were listed while the Windows junction ran
+    // Scripts/Fixtures/directory-link.ps1 through it; since unit 35 of the 2026-11-22 plan DirectoryLink makes the junction
+    // in process and DirectoryLinkCommand is gone. The scan reflects over the compiled type: partial-class siblings, async
+    // state machines, lambdas and local functions all compile into the class or its nested types, so none of them can
+    // hide a reference.
     private static readonly Type[] PwshBackedHelpers =
     [
-        typeof(DirectoryLink),
-        typeof(DirectoryLinkCommand),
         typeof(ScriptHarnessProcess),
     ];
 

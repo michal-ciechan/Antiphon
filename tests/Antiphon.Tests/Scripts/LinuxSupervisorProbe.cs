@@ -33,7 +33,7 @@ internal sealed class LinuxSupervisorProbe : IAsyncDisposable
             UseShellExecute = false, WorkingDirectory = Directory.GetCurrentDirectory()
         };
         foreach (var arg in new[] { ScriptHarnessProcessFixture.HelperPath, "linux-owner", socketPath, Nonce,
-                     ScriptHarnessProcess.ResolvePowerShell(), ScriptHarnessProcessFixture.ScriptPath, caseName,
+                     ScriptHarnessProcessFixture.ResolveDotnet(), ScriptHarnessProcessFixture.ScriptPath, caseName,
                      ResultsDirectory, failsafeMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
                      "v1", "-HelperPath", ScriptHarnessProcessFixture.HelperPath })
             start.ArgumentList.Add(arg);

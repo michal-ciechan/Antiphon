@@ -255,7 +255,7 @@ search may scan the scoped cards; no text index is claimed. Use
 >
 > `GET /api/boards` and `GET /api/projects` hide archived rows unless `?includeArchived=true`
 > (the same query name the board-detail endpoint already uses for archived cards). Archive is
-> reversible hide, not delete; `scripts/prune-test-data.ps1` is the bulk front door.
+> reversible hide, not delete; `scripts/antiphon prune-test-data` (dry run unless `--execute`) is the bulk front door.
 
 Shared pipeline definitions are named, versioned orders of stage roles. The board pointer
 overrides the project default, which falls back to the code-owned Standard pipeline. The
@@ -372,7 +372,7 @@ GET    /api/agent-tasks                      list envelope `{ scope, items, excl
                                              production list callers are the web client
                                              (`client/src/api/agentTasks.ts`),
                                              `scripts/antiphon checkpoint-task` (Working/Dispatched
-                                             occupancy) and `scripts/prune-test-data.ps1`
+                                             occupancy) and `scripts/antiphon prune-test-data`
                                              (open-task safety); `scripts/antiphon delegate` does not list.
                                              Status names are case-insensitive
                                              (`working` == `Working`); an unrecognised value,

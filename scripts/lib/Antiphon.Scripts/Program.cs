@@ -133,7 +133,8 @@ namespace Antiphon.Scripts
             // answered (release: removed), 1 a call failed (release: refused or removal_failed), 2 an unreadable token file.
             // herdr-pane: 0 answered or dry run, 1 the request failed. worktree-residue: 0 done, 1 a request or batch item failed.
             // runner-slots (unit 23): 0 answered, 1 failed or no token file. keep-six (unit 23): 0 answered, 1 a refused value, no
-            // task token or a failed request. Usage is 2 for each.
+            // task token or a failed request. prune-test-data (unit 35): 0 reported or archived, 1 a read or an archive failed.
+            // Usage is 2 for each.
             [OperatorCommands.HostLoad] = OperatorCommands.RunHostLoad,
             [OperatorCommands.RunnerDrain] = OperatorCommands.RunRunnerDrain,
             [OperatorCommands.WorkspaceSlots] = OperatorCommands.RunWorkspaceSlots,
@@ -141,6 +142,7 @@ namespace Antiphon.Scripts
             [OperatorCommands.WorktreeResidue] = OperatorCommands.RunWorktreeResidue,
             [OperatorCommands.RunnerSlots] = OperatorCommands.RunRunnerSlots,
             [OperatorCommands.KeepSix] = OperatorCommands.RunKeepSix,
+            [OperatorCommands.PruneTestData] = OperatorCommands.RunPruneTestData,
             // The board API commands answer every input themselves (unit 24): exit 0 done, 1 a refused value or a failed request
             // (one stderr line; capability: also an unknown or ambiguous name, an answer without a token, or issue/rotate off
             // Windows; schedule: also an unacknowledged spend; card (unit 27): also a missing file), 2 usage. delegate (unit 28):
@@ -215,11 +217,13 @@ namespace Antiphon.Scripts
             // The verification tools answer every input themselves (unit 33). test-duration-tripwire: exit 0 clean, 1 an unlisted
             // slow or unresolved row, 2 invalid input. mechanical-pc: 0 C479 ACCEPT, 2 C479 REFUSE <reason>, 1 an input that could
             // not be read. measure-session-state-cache: 0 captured or both gates passed, 1 a gate failed or refused.
-            // verify-agent-tui-profile: 0 verified, 1 failed. Usage is 2 for each.
+            // verify-agent-tui-profile: 0 verified, 1 failed. check-os-witnesses (unit 35): 0 complete, 1 obligations, 2 invalid
+            // input. Usage is 2 for each.
             [VerificationToolCommands.DurationTripwire] = VerificationToolCommands.RunDurationTripwire,
             [VerificationToolCommands.MechanicalPc] = VerificationToolCommands.RunMechanicalPc,
             [VerificationToolCommands.MeasureSessionStateCache] = VerificationToolCommands.RunMeasureSessionStateCache,
             [VerificationToolCommands.VerifyAgentTuiProfile] = VerificationToolCommands.RunVerifyAgentTuiProfile,
+            [VerificationToolCommands.CheckOsWitnesses] = VerificationToolCommands.RunCheckOsWitnesses,
             // The build slot commands answer every input themselves (unit 34). build-slot: the command's own code, 4 when no slot came
             // within the wait, 1 when the command cannot be resolved or started, 130 when interrupted. measure-linux-shared-compiler:
             // 0 accepted, 1 refused or not accepted. Usage is 2 for each.

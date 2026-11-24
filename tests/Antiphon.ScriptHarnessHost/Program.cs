@@ -8,6 +8,16 @@ var cacheProbe = Environment.GetEnvironmentVariable(Antiphon.Hosting.PwshPrivate
 if (!string.IsNullOrWhiteSpace(cacheProbe))
     return Antiphon.Hosting.PwshPrivateCache.CompleteProbe(cacheProbe);
 
+// Unit 35 of the 2026-11-22 plan: the C806 harness root (HarnessRoot.cs) and the CARD-0449/1516 effort dialog peer
+// (ClaudeEffortDialog.cs), which replaced the PowerShell fixtures script-harness-process.ps1 and claude-effort-*.ps1.
+if (HarnessRoot.Matches(args))
+    return await HarnessRoot.RunAsync(args);
+if (args.Length >= 1 && args[0] == "claude-effort-dialog")
+    return ClaudeEffortDialog.Run();
+if (args.Length == 2 && args[0] == "claude-effort-deaf")
+    return ClaudeEffortDialog.RunDeaf(args[1]);
+if (args.Length == 1 && args[0] == "claude-effort-trace-contract")
+    return ClaudeEffortDialog.RunTraceContract();
 if (args.Length >= 1 && args[0] == "cli-echo")
     return CliEcho(args);
 // W2-nightly S17: a named command echoed as cli-echo is (CLI_ECHO_COMMAND, e.g. nightly-tests), so a launcher test sees the argv a production hop hands the CLI.
@@ -61,10 +71,13 @@ try
     if (authorization != "START " + nonce) return 4;
 
     var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Directory.GetCurrentDirectory() };
-    foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Case", caseName, "-ResultsDirectory", results })
+    // A .ps1 runs under pwsh -File; a .dll is a C# root the executable (dotnet) runs (ScriptHarnessProcess.RootArguments).
+    var rootArguments = script.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+        ? new[] { script } : new[] { "-NoProfile", "-NonInteractive", "-File", script };
+    foreach (var arg in rootArguments.Concat(new[] { "-Case", caseName, "-ResultsDirectory", results }))
         psi.ArgumentList.Add(arg);
     foreach (var arg in args.Skip(9)) psi.ArgumentList.Add(arg);
-    using var root = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start.");
+    using var root = Process.Start(psi) ?? throw new InvalidOperationException("The script root did not start.");
     var rootStart = ReadStart(root.Id);
     await WriteFrame(stream, $"ROOT {nonce} {root.Id} {rootStart}", failsafe.Token);
     // The child inherited both writers. Keeping copies here would make EOF depend
@@ -400,8 +413,8 @@ static void PublishIdentity(string directory, string name)
 [DllImport("libc", SetLastError = true)] static extern int close(int fd);
 [DllImport("libc", SetLastError = true)] static extern nint readlink(string path, byte[] buffer, nuint size);
 
-// Loaded by the real PowerShell root so the probe sees that process's inherited
-// handle table, rather than the different table of another helper subprocess.
+// Called by the harness root itself (HarnessRoot's HandleProbe case) so the probe sees that process's
+// inherited handle table, rather than the different table of another helper subprocess.
 public static class WindowsScriptHandleProbe
 {
     public static void WriteReceipt(string directory, string nonce)

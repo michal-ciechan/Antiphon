@@ -87,7 +87,7 @@ public sealed class ChannelReplyAttachmentReaderWindowsTests
             }
             finally
             {
-                if (scratch.CleanupConfirmed && renamed)
+                if (renamed)
                 {
                     link?.Dispose();
                     scratch.RemoveCreatedLink(parent);

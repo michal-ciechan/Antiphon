@@ -179,9 +179,12 @@ public sealed class ScriptHarnessProcessContractTests
             var clock = new FakeTimeProvider();
             var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var owner = new FakeOwner(rootComplete: false, holdStdout: stdout, holdStderr: !stdout);
-            // Use the native junction test's actual options without launching a native process.
-            var options = DirectoryLinkFixtureWindowsTests.PipeHolderOptions with
+            // The options the native junction pipe-holder row used (until unit 35 of the 2026-11-22 plan): the fixture's, with
+            // the post-exit drain as long as the execution budget. No native process is launched.
+            var fixture = ScriptHarnessProcessFixture.Options();
+            var options = fixture with
             {
+                PostExitDrainBudget = fixture.ExecutionBudget,
                 ExecutablePath = "fake", OwnerFactory = _ => owner, Clock = clock,
                 OnPostExitDrainArmed = () => armed.TrySetResult()
             };
@@ -487,7 +490,9 @@ public sealed class ScriptHarnessProcessContractTests
         typeof(ScriptHarnessProcessContractTests).GetCustomAttributesData().Any(attribute =>
             attribute.AttributeType.Name == "CategoryAttribute" &&
             attribute.ConstructorArguments.Any(argument => argument.Value?.ToString() == "Unit")).ShouldBeTrue();
-        File.ReadAllText(ScriptHarnessProcessFixture.ScriptPath).All(character => character <= 127).ShouldBeTrue();
+        // The fixture root's source (the script it replaced in unit 35 of the 2026-11-22 plan was ASCII too).
+        File.ReadAllText(Path.Combine(Antiphon.Tests.Application.DelegateScriptRunner.RepoRoot, "tests", "Antiphon.ScriptHarnessHost", "HarnessRoot.cs"))
+            .All(character => character <= 127).ShouldBeTrue();
     }
 
     [Test]

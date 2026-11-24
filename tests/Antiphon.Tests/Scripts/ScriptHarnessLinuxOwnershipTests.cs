@@ -561,7 +561,7 @@ public sealed class ScriptHarnessLinuxOwnershipTests
     private static ScriptProcessRequest Request(string caseName)
     {
         var id = Guid.NewGuid().ToString("N");
-        return new ScriptProcessRequest(ScriptHarnessProcess.ResolvePowerShell(), ScriptHarnessProcessFixture.ScriptPath, caseName,
+        return new ScriptProcessRequest(ScriptHarnessProcessFixture.ResolveDotnet(), ScriptHarnessProcessFixture.ScriptPath, caseName,
             Path.Combine(Path.GetTempPath(), "c806-direct-results-" + id),
             Path.Combine(Path.GetTempPath(), "c806-direct-control-" + id),
             TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2),

@@ -1,8 +1,8 @@
-// The operator API commands (units 21 and 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): host-load,
-// runner-drain, workspace-slots, herdr-pane, worktree-residue, runner-slots and keep-six. Each replaced the scripts/<name>.ps1
-// of the same name (deleted 2026-11-23), with the same flags in kebab case and the verb first where the script took it first.
-// The behaviour is Antiphon.Nightly's (HostLoad, RunnerDrain, WorkspaceSlots, HerdrPane, WorktreeResidue, RunnerSlots,
-// KeepSix) on the production host and an HTTP transport; this file reads the environment and passes it in: ANTIPHON_API
+// The operator API commands (units 21, 23 and 35 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): host-load,
+// runner-drain, workspace-slots, herdr-pane, worktree-residue, runner-slots, keep-six and prune-test-data. Each replaced the
+// scripts/<name>.ps1 of the same name (deleted 2026-11-23, prune-test-data 2026-11-24), with the same flags in kebab case and
+// the verb first where the script took it first. The behaviour is Antiphon.Nightly's (HostLoad, RunnerDrain, WorkspaceSlots,
+// HerdrPane, WorktreeResidue, RunnerSlots, KeepSix, TestDataPrune) on the production host and an HTTP transport; this file reads the environment and passes it in: ANTIPHON_API
 // (default http://localhost:17202), ANTIPHON_TASK_TOKEN, ANTIPHON_TASK_ID (the workspace-slots requester) and
 // ANTIPHON_OPERATOR_TOKEN_FILE (else the server's default operator token path). Tokens are sent as headers and never printed.
 // ASCII only.
@@ -23,9 +23,10 @@ namespace Antiphon.Scripts
         internal const string WorktreeResidue = "worktree-residue";
         internal const string RunnerSlots = "runner-slots";
         internal const string KeepSix = "keep-six";
+        internal const string PruneTestData = "prune-test-data";
 
         internal const string Usage = HostLoadOptions.Usage + " | " + RunnerDrainOptions.Usage + " | " + WorkspaceSlotsOptions.Usage + " | " + HerdrPaneOptions.Usage
-            + " | " + WorktreeResidueOptions.Usage + " | " + RunnerSlotsOptions.Usage + " | " + KeepSixOptions.Usage;
+            + " | " + WorktreeResidueOptions.Usage + " | " + RunnerSlotsOptions.Usage + " | " + KeepSixOptions.Usage + " | " + TestDataPruneOptions.Usage;
 
         private static string Api => Environment.GetEnvironmentVariable("ANTIPHON_API");
 
@@ -67,6 +68,11 @@ namespace Antiphon.Scripts
         internal static int RunKeepSix(string[] args) =>
             Antiphon.Nightly.KeepSix.Run(KeepSixOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken), NightlyHost.Production(Console.Out, Console.Error),
                 NightlyReport.HttpTransport(timeout: Antiphon.Nightly.KeepSix.Deadline));
+
+        // CARD-0217 S9: exit 0 reported (dry run) or archived; 1 a read failed or an archive failed; 2 usage. Dry run unless --execute.
+        internal static int RunPruneTestData(string[] args) =>
+            TestDataPrune.Run(TestDataPruneOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken), NightlyHost.Production(Console.Out, Console.Error),
+                NightlyReport.HttpTransport(timeout: TestDataPrune.Deadline));
 
         // ANTIPHON_OPERATOR_TOKEN_FILE, else where the server creates the token (OperatorTokenFile.DefaultPath): on Windows
         // %LOCALAPPDATA%\Antiphon\operator-token, elsewhere $XDG_DATA_HOME (default ~/.local/share)/antiphon/operator-token.

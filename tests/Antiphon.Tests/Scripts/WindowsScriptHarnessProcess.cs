@@ -132,8 +132,9 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                         StdError = stderrWrite.DangerousGetHandle()
                     }, AttributeList = attributes
                 };
-                var argv = new List<string> { request.Executable, "-NoProfile", "-NonInteractive", "-File", request.Script,
-                    "-Case", request.CaseName, "-ResultsDirectory", request.ResultsDirectory };
+                var argv = new List<string> { request.Executable };
+                argv.AddRange(ScriptHarnessProcess.RootArguments(request.Script));
+                argv.AddRange(["-Case", request.CaseName, "-ResultsDirectory", request.ResultsDirectory]);
                 if (request.AdditionalArguments is not null) argv.AddRange(request.AdditionalArguments);
                 var command = new StringBuilder(string.Join(" ", argv.Select(QuoteArgument)));
                 var flags = CreateSuspended | ExtendedStartupInfoPresent;

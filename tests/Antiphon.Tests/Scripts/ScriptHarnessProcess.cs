@@ -47,6 +47,14 @@ internal interface IOwnedScriptProcess : IDisposable
 
 internal static class ScriptHarnessProcess
 {
+    /// <summary>
+    /// The root's arguments before -Case: a .ps1 runs as pwsh -NoProfile -NonInteractive -File script; a .dll is a C# root that
+    /// the executable (dotnet) runs (the C806 fixture root, Antiphon.ScriptHarnessHost's HarnessRoot, since unit 35 of the
+    /// 2026-11-22 plan). The Linux owner's helper applies the same rule.
+    /// </summary>
+    internal static IReadOnlyList<string> RootArguments(string script) =>
+        script.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? [script] : ["-NoProfile", "-NonInteractive", "-File", script];
+
     internal static async Task<ScriptHarnessResult> RunAsync(string harness, string prefix, string caseName,
         string script, ScriptHarnessOptions options, CancellationToken callerToken,
         Action<ScriptHarnessResult>? validate = null)

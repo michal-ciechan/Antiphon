@@ -1,19 +1,19 @@
 using System.Diagnostics;
-using Antiphon.Tests.Application;
 using Shouldly;
 
 namespace Antiphon.Tests.Scripts;
 
 internal static class ScriptHarnessProcessFixture
 {
-    internal static string ScriptPath => Path.Combine(DelegateScriptRunner.RepoRoot, "tests", "Antiphon.Tests",
-        "Scripts", "Fixtures", "script-harness-process.ps1");
+    // The C806 fixture root is the staged script harness host's C# root (HarnessRoot), run by dotnet: ScriptHarnessProcess
+    // runs a .dll script as `dotnet <dll> -Case ...`. Until unit 35 of the 2026-11-22 plan it was
+    // tests/Antiphon.Tests/Scripts/Fixtures/script-harness-process.ps1 under pwsh.
+    internal static string ScriptPath => HelperPath;
     internal static string HelperPath => Path.Combine(AppContext.BaseDirectory, "script-harness-host",
         "Antiphon.ScriptHarnessHost.dll");
 
     internal static ScriptHarnessOptions Options(string? payload = null, Action<ScriptProcessRequest>? observe = null) =>
-        new(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2), ScriptPath,
-            OperatingSystem.IsWindows() ? ResolveInstalledPowerShell() : null,
+        new(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2), ScriptPath, ResolveDotnet(),
             payload is null ? ["-HelperPath", HelperPath] : ["-HelperPath", HelperPath, "-Payload", payload],
             request =>
             {
@@ -21,6 +21,24 @@ internal static class ScriptHarnessProcessFixture
                 return OperatingSystem.IsWindows() ? new WindowsScriptHarnessProcess(request) :
                     new LinuxScriptHarnessProcess(request);
             });
+
+    /// <summary>
+    /// The dotnet host on PATH, fully qualified: on Windows a regular dotnet.exe (the Windows owner refuses an App Execution
+    /// Alias or another reparse point), elsewhere dotnet.
+    /// </summary>
+    internal static string ResolveDotnet()
+    {
+        var name = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.GetFullPath(Path.Combine(directory, name));
+            if (!File.Exists(candidate)) continue;
+            if (OperatingSystem.IsWindows() && (IsWindowsAppExecutionAlias(candidate) || (File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0))
+                continue;
+            return candidate;
+        }
+        throw new FileNotFoundException("The script harness fixture root needs " + name + " on PATH.");
+    }
 
     internal static string ResolveInstalledPowerShell() =>
         ResolveInstalledPowerShell(Environment.GetEnvironmentVariable("PATH"));

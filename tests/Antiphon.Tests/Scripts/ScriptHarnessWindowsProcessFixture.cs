@@ -153,7 +153,7 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         {
             Windows = new ScriptHarnessWindowsProcessFixture(hooks);
             configure?.Invoke(Windows);
-            Request = new ScriptProcessRequest(ScriptHarnessProcessFixture.ResolveInstalledPowerShell(),
+            Request = new ScriptProcessRequest(ScriptHarnessProcessFixture.ResolveDotnet(),
                 ScriptHarnessProcessFixture.ScriptPath, caseName,
                 Path.Combine(Windows.DirectoryPath, "results"), Path.Combine(Windows.DirectoryPath, "control"),
                 TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2), Windows.Arguments());

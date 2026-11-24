@@ -3,6 +3,7 @@ using Antiphon.Agents.Pty;
 using Antiphon.Agents.Pty.Tests;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -10,6 +11,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Agents;
 
+// The console peer is the staged script harness host's C# effort dialog (claude-effort-dialog and claude-effort-deaf), run by
+// dotnet in the PTY. Until unit 35 of the 2026-11-22 plan it was Agents/Fixtures/claude-effort-dialog.ps1 (and a generated
+// deaf.ps1) under pwsh.
 [Category("Integration"), NotInParallel, ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeAdapterEffortPromptTests
 {
@@ -17,16 +21,14 @@ public class ClaudeAdapterEffortPromptTests
     public async Task Local_probe_failure_logs_token_elapsed_and_writes()
     {
         var scratch = Directory.CreateTempSubdirectory("c449-deaf-").FullName;
-        var script = Path.Combine(scratch, "deaf.ps1");
-        await File.WriteAllTextAsync(script,
-            "[Console]::Write('" + EffortFixtureComposer.Screen("").ReplaceLineEndings("\r\n").Replace("'", "''") + "')\n"
-            + "while ($true) { [void][Console]::ReadKey($true) }\n");
+        var screen = Path.Combine(scratch, "screen.txt");
+        await File.WriteAllTextAsync(screen, EffortFixtureComposer.Screen("").ReplaceLineEndings("\r\n"));
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings(1000);
         settings.ClaudeInputProbeRetypeIntervalMs = 100;
         var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
         await using var adapter = new ClaudeAdapter(Options.Create(settings), logger);
         var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
-        { Exe = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh", Cwd = scratch, Args = ["-NoProfile", "-File", script] };
+        { Exe = ScriptHarnessProcessFixture.ResolveDotnet(), Cwd = scratch, Args = [ScriptHarnessProcessFixture.HelperPath, "claude-effort-deaf", screen] };
         try
         {
             await adapter.StartAsync(spec, CancellationToken.None);
@@ -104,14 +106,14 @@ public class ClaudeAdapterEffortPromptTests
         }));
         Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", "modern");
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings();
-        // D-6: this real PowerShell fixture owns its clearance allowance. Runner fakes retain 500 ms.
+        // D-6: this real console fixture owns its clearance allowance. Runner fakes retain 500 ms.
         settings.ClaudeInputProbeClearTimeoutMs = 3000;
         var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
         var adapter = new ClaudeAdapter(Options.Create(settings), logger);
         var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
         {
-            Exe = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh", Cwd = scratch,
-            Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
+            Exe = ScriptHarnessProcessFixture.ResolveDotnet(), Cwd = scratch,
+            Args = [ScriptHarnessProcessFixture.HelperPath, "claude-effort-dialog", "--effort", requested],
             Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested,
                 ["C1516_CLEAR_DELAY_MS"] = Environment.GetEnvironmentVariable("C1516_CLEAR_DELAY_MS") ?? "0", ["C1516_NEVER_CLEAR"] = neverClear ? "1" : "0" }
         };

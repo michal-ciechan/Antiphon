@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -5,6 +6,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Agents;
 
+// CARD-1516 D-5: the effort dialog peer publishes only coherent semantic snapshots. The scripted-key driver is the staged
+// script harness host's claude-effort-trace-contract (ClaudeEffortDialog), a dotnet child; until unit 35 of the 2026-11-22
+// plan it was Agents/Fixtures/claude-effort-trace-contract.ps1 under the script harness, with the same four rows.
 [Category("Integration"), ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeEffortFixtureTraceTests
 {
@@ -14,10 +18,14 @@ public class ClaudeEffortFixtureTraceTests
         var failures = new List<Exception>();
         try
         {
-            await ScriptHarness.RunHarnessCaseAsync("claude-effort-trace-contract.ps1", "C1516", "trace", 4,
-                ["C1516 ordinary", "C1516 enter", "C1516 token", "C1516 clear"],
-                ScriptHarnessOptions.Default with { ScriptPath = Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-trace-contract.ps1") },
-                CancellationToken.None);
+            var (exit, output) = await RunContractAsync();
+            exit.ShouldBe(0, output);
+            var lines = output.ReplaceLineEndings("\n").Split('\n');
+            lines.Where(line => line.StartsWith("PASS C1516 ", StringComparison.Ordinal)).ShouldBe(
+                ["PASS C1516 ordinary", "PASS C1516 enter", "PASS C1516 token", "PASS C1516 clear"], output);
+            lines.ShouldNotContain(line => line.StartsWith("FAIL ", StringComparison.Ordinal), output);
+            lines.ShouldContain("C487: 4 passed, 0 failed, 4 rows", output);
+            lines.ShouldContain("C487 HARNESS EXIT CODE: 0", output);
         }
         catch (Exception ex) { failures.Add(ex); }
         try
@@ -38,5 +46,23 @@ public class ClaudeEffortFixtureTraceTests
         }
         catch (Exception ex) { failures.Add(ex); }
         if (failures.Count != 0) throw new AggregateException(failures);
+    }
+
+    // dotnet <host> claude-effort-trace-contract, both streams read, 60 s bound (the tree is killed past it).
+    private static async Task<(int Exit, string Output)> RunContractAsync()
+    {
+        File.Exists(ScriptHarnessProcessFixture.HelperPath).ShouldBeTrue("the script harness host must be staged by the build");
+        var start = new ProcessStartInfo(ScriptHarnessProcessFixture.ResolveDotnet())
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+        };
+        foreach (var argument in new[] { ScriptHarnessProcessFixture.HelperPath, "claude-effort-trace-contract" }) start.ArgumentList.Add(argument);
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("The trace contract child did not start.");
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try { await child.WaitForExitAsync(bound.Token); }
+        catch (OperationCanceledException) { child.Kill(true); await child.WaitForExitAsync(); throw new TimeoutException("trace contract child exceeded 60 s"); }
+        return (child.ExitCode, await stdout + await stderr);
     }
 }
