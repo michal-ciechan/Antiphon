@@ -44,7 +44,8 @@ and keys its cache by build assembly identities. The [generator](../../tests/Ant
 uses the EF scaffolder behind `dotnet ef dbcontext optimize`, compiles with Roslyn, and publishes the DLL
 only after `ProbeModelComparison` accepts it. The failing build generated fresh source. EF 9's scaffolder
 omitted `RuntimeProperty.SetElementType` metadata. The probe now emits it during scaffolding for
-conventional arrays and compares the resulting element metadata directly. EF 10's scaffolder emits
+conventional arrays, uses Npgsql's mapping source to preserve the provider's comparers, and compares
+the resulting element metadata directly. EF 10's scaffolder emits
 element metadata itself. See the [pinned EF 9 property generator](https://github.com/dotnet/efcore/blob/v9.0.20/src/EFCore.Design/Scaffolding/Internal/CSharpRuntimeModelCodeGenerator.cs#L959)
 and the [EF 10 element generator](https://github.com/dotnet/efcore/blob/v10.0.0/src/EFCore.Design/Scaffolding/Internal/CSharpRuntimeModelCodeGenerator.cs#L1173).
 
@@ -80,4 +81,4 @@ None.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | fix | `tests/Antiphon.Tests -> bin-g102/` | model-parity | `/*/*/(ChannelOutboundProbeModelTests*)\|(ProbeModelComparisonTests*)\|(AppDbContextModelTests*)\|(ReviewEngineMigrationTests*)/*` | generated model parity, comparison witnesses and migration snapshot | 24 passed, 0 failed/skipped | 24 | 4 | true |
+| CP-1 | fix | `tests/Antiphon.Tests -> bin-g102b/` | model-parity | `/*/*/(ChannelOutboundProbeModelTests*)\|(ProbeModelComparisonTests*)\|(AppDbContextModelTests*)\|(ReviewEngineMigrationTests*)/*` | generated model parity, comparison witnesses and migration snapshot | 24 passed, 0 failed/skipped | 24 | 4 | true |
