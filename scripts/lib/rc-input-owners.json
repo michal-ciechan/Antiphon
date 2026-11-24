@@ -70,6 +70,7 @@
     { "path": "verify-dev-stack.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/derived-impact-index-known-os-gated.txt", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/expected-platform-skips.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/fixtures/card0490-linux/assets.lock.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/fixtures/card0490-linux/card0490-live.example.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/fixtures/incremental-selection-soundness.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/fixtures/live-lanes/full-discovery-before.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
