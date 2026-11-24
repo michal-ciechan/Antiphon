@@ -11,9 +11,10 @@ namespace Antiphon.Tests.Scripts;
 /// Write-C716Seams) and the stubs of the watchdog drivers. A temporary checkout root (real files: the locks need their share
 /// semantics), a fake clock that Sleep advances, a FakeGit that names the root as the main worktree with HEAD Head, and every
 /// IAppHostPlatform member recorded in Trace ("port 17204", "stop-tree 111", "graceful", "launch ...") and answered from the
-/// settings below. Nothing reaches a real port, process, task, event log or token.
+/// settings below. Unit 37: it is also the dev stack commands' IDevStackSeams ("tool ...", "slot ...", "browser ...", "tab ...",
+/// "prompt ...", "describe ..."). Nothing reaches a real port, process, task, event log, token, terminal or browser.
 /// </summary>
-internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
+internal sealed class AppHostWorld : IAppHostPlatform, IDevStackSeams, IDisposable
 {
     public const string Head = "0123456789abcdef0123456789abcdef01234567";
 
@@ -135,7 +136,32 @@ internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
 
     public bool WebhookOk { get; set; } = true;
 
-    public List<(string File, string[] Arguments, string Log)> Appended { get; } = [];
+    /// <summary>A dev stack child's answer (null: exit 0, no output); each run is traced "tool &lt;command text&gt;".</summary>
+    public Func<DevStackLaunch, Action<string>, int>? Tools { get; set; }
+
+    /// <summary>The dev stack children so far.</summary>
+    public List<DevStackLaunch> Launches { get; } = [];
+
+    /// <summary>A build slot's answer (null: exit 0); each slot is traced "slot &lt;label&gt; &lt;command&gt;".</summary>
+    public Func<BuildSlotOptions, TextWriter, int>? Slot { get; set; }
+
+    /// <summary>The build slots so far.</summary>
+    public List<BuildSlotOptions> Slots { get; } = [];
+
+    /// <summary>The URLs opened.</summary>
+    public List<string> Browsed { get; } = [];
+
+    /// <summary>The terminal tabs opened: title, directory, command.</summary>
+    public List<(string Title, string Directory, string[] Command)> Tabs { get; } = [];
+
+    /// <summary>The prompt's answers in order; empty: the end of the input (null).</summary>
+    public Queue<string?> Answers { get; } = new();
+
+    /// <summary>Describe answers by pid; a pid not listed has exited.</summary>
+    public Dictionary<int, DevStackProcess> Described { get; } = new();
+
+    /// <summary>The detached CLI starts so far (the arguments after the CLI).</summary>
+    public List<string[]> CliStarts { get; } = [];
 
     // ---- the host ----
 
@@ -199,13 +225,22 @@ internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
 
     public IReadOnlyCollection<int> OwnProcessChain() => OwnChain;
 
-    public void StopProcess(int pid) => Record("stop-id " + pid);
+    /// <summary>A stopped process's listeners go with it (the owner leaves Owners); default: the listeners stay.</summary>
+    public bool StopFreesPorts { get; set; }
+
+    public void StopProcess(int pid)
+    {
+        Record("stop-id " + pid);
+        if (!StopFreesPorts) return;
+        foreach (var port in Owners.Keys.ToArray()) Owners[port] = Owners[port].Where(owner => owner != pid).ToArray();
+    }
 
     public void StopTree(int pid) => Record("stop-tree " + pid);
 
-    public IAppHostChild StartDetached(string file, IReadOnlyList<string> arguments, string output, string error)
+    public IAppHostChild StartCli(IReadOnlyList<string> arguments, string output, string error)
     {
-        Record("launch " + file + " " + string.Join(" ", arguments));
+        Record("launch " + string.Join(" ", arguments));
+        CliStarts.Add(arguments.ToArray());
         File.WriteAllText(output, "");
         File.WriteAllText(error, "");
         OnLaunch?.Invoke(this);
@@ -258,13 +293,6 @@ internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
         return Commands?.Invoke(file, arguments) ?? new AppHostCommandResult(false, 0, "");
     }
 
-    public int RunAppending(string file, IReadOnlyList<string> arguments, string logPath)
-    {
-        Record("append " + file + " " + string.Join(" ", arguments));
-        Appended.Add((file, arguments.ToArray(), logPath));
-        return 0;
-    }
-
     public AppHostTaskInfo Task(string name)
     {
         Record("task " + name);
@@ -293,6 +321,46 @@ internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
 
     public void CheckDaemonBuild(NightlyHost host) => Record("check-daemon-build");
 
+    // ---- IDevStackSeams ----
+
+    public int Run(DevStackLaunch launch, Action<string> line)
+    {
+        Record("tool " + launch.CommandText);
+        lock (_gate) Launches.Add(launch);
+        return Tools?.Invoke(launch, line) ?? 0;
+    }
+
+    public int BuildSlot(BuildSlotOptions options, TextWriter capture)
+    {
+        Record("slot " + options.Label + " " + string.Join(" ", options.Command));
+        lock (_gate) Slots.Add(options);
+        return Slot?.Invoke(options, capture) ?? 0;
+    }
+
+    public void OpenBrowser(string url)
+    {
+        Record("browser " + url);
+        Browsed.Add(url);
+    }
+
+    public void OpenTab(string title, string workingDirectory, IReadOnlyList<string> command)
+    {
+        Record("tab " + title);
+        Tabs.Add((title, workingDirectory, command.ToArray()));
+    }
+
+    public string? Prompt(string text)
+    {
+        Record("prompt " + text);
+        return Answers.Count > 0 ? Answers.Dequeue() : null;
+    }
+
+    public DevStackProcess? Describe(int pid)
+    {
+        Record("describe " + pid);
+        return Described.TryGetValue(pid, out var process) ? process : null;
+    }
+
     /// <summary>A restart-lock or launch-lock line "pid stamp" written as the PowerShell did (no newline).</summary>
     public string WriteLock(string name, int pid, DateTime stampUtc)
     {
@@ -305,7 +373,7 @@ internal sealed class AppHostWorld : IAppHostPlatform, IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    /// <summary>The launched dev-aspire.ps1: running until ExitWith is set.</summary>
+    /// <summary>The launched CLI child (dev-aspire, run-apphost): running until Exit is set.</summary>
     internal sealed class FakeChild(AppHostWorld world) : IAppHostChild
     {
         public int Pid => 99999;

@@ -21,7 +21,7 @@ Start-ScheduledTask -TaskName 'Antiphon AppHost'
 ```
 
 The registered action is `scripts/autostart-apphost.ps1` (a thin launcher of `scripts\antiphon.cmd autostart-apphost`), which waits for Docker
-and Postgres, then invokes `dev-aspire.ps1 -NoBrowser`. Task Scheduler starts it
+and Postgres, then runs `dev-aspire --no-browser` in its own process. Task Scheduler starts it
 outside the shell that requested the start. If the task is missing, register it
 with `scripts\antiphon.cmd install-autostart --apphost-only` under an account
 permitted to register tasks; do not improvise a tool-session launch.
@@ -41,14 +41,14 @@ dashboard and other owned resources, then relaunches and waits for health
 source-root HEAD, never the caller's cwd. `-NoBuild` does not skip the identity
 check. SHA equality is committed-build provenance, not dirty-file attestation.
 Postgres, the runner on 17204, and live detached pty-host / herdr sessions survive.
-Never run a second bare `dev-aspire.ps1`: the old process can keep the ports and
+Never run a second bare `dev-aspire`: the old process can keep the ports and
 the new code never goes live. Linked worktrees refuse by default (exit 3);
 return to the main checkout. `--allow-worktree` deliberately overrides that guard
 and controls the shared stack.
 
 `--stop-only` uses that same graceful stop, the same AppHost port free, and the
 same locks (`logs/apphost.restart.lock` and `logs/apphost.launch.lock`). It then
-exits before `dev-aspire.ps1` and releases the restart lock, because no launch
+exits before `dev-aspire` and releases the restart lock, because no launch
 child is left behind. Exit 3 stays a refusal and kills nothing. `--stop-only
 --what-if` prints the stop and does not POST, take the restart lock, or launch.
 Postgres on 17280 and the session runner on 17204 stay up. The cutover script
@@ -92,12 +92,15 @@ containing spaces in the recorded incident.
 
 **Checkout limitation (CARD-0381):** the intended restart handoff is
 `restart-apphost` → `Start-ScheduledTask 'Antiphon AppHost'`, with a task-only
-`dev-aspire.ps1 -Direct -NoBrowser` action. The scripts in this checkout do **not**
-implement that handoff: restart still starts `pwsh` with `dev-aspire.ps1`
-has no `-Direct` parameter, and `scripts/task-apphost-start.ps1` is absent.
+`dev-aspire --direct --no-browser` action. The commands in this checkout do **not**
+implement that handoff: restart still starts the `dev-aspire` command detached (this
+CLI's run copy under `bin-launcher`), `dev-aspire` has no direct-launch flag, and
+`scripts/task-apphost-start.ps1` is absent. `dev-aspire` in turn starts the
+long-lived `run-apphost` wrapper detached (the stamped AppHost build, then the AppHost;
+its pid is `logs/apphost.pid`, its own output `logs/apphost-run.out` and `.err`).
 Run the current restart command from an independent operator PowerShell session,
 outside an agent's kill-on-close job. Do not assume an agent-triggered restart is
-Job Object safe, that bare `dev-aspire.ps1` delegates to Task Scheduler, or that
+Job Object safe, that bare `dev-aspire` delegates to Task Scheduler, or that
 a missing AppHost task currently produces restart exit 3. The Scheduled Task
 handoff requires a separate script change; this runbook does not implement it.
 
@@ -178,16 +181,16 @@ show a rebuild after the client change before checking the browser. Use
 
 | Exit | Meaning | Operator action |
 |---|---|---|
-| 0 | Dashboard found (the `logs/apphost-dashboard-url.txt` that `dev-aspire.ps1` writes, or an HTTP answer on 17205), API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
+| 0 | Dashboard found (the `logs/apphost-dashboard-url.txt` that `dev-aspire` writes, or an HTTP answer on 17205), API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
 | 1 | Build failed; the launcher exited nonzero or this launch's AppHost exited with nothing on 17202 (both end the wait at once); or the health wait ran out: no launch progress for `-TimeoutSec` (default 150 seconds) or the `-MaxWaitSec` hard cap (default 600 seconds) was reached. The output names the limit that ended the wait and the last progress signal with its age. | Read logs (earlier launches are kept as `logs/apphost.log.1` to `.10`); after a timeout the child may still be launching. Do not immediately rerun. |
-| 3 | Refused on worktree guard, SHA admission (`--expected-server-sha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock. Nothing is killed. S4 (`e1b42f895`) also makes `restart-apphost` and `dev-aspire.ps1` emit `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. `--stop-only` stays allowed. | Inspect ownership and both locks. Update the canonical checkout if the expected SHA is wrong, or wait for the existing launch. While Linux is the writer, leave the phase-2 file in place and stop. For an approved rollback, follow the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3) and wait for the Linux project to stop and `pg_stat_activity` to show no production-compose client before retrying AppHost. |
+| 3 | Refused on worktree guard, SHA admission (`--expected-server-sha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock. Nothing is killed. S4 (`e1b42f895`) also makes `restart-apphost` and `dev-aspire` emit `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. `--stop-only` stays allowed. | Inspect ownership and both locks. Update the canonical checkout if the expected SHA is wrong, or wait for the existing launch. While Linux is the writer, leave the phase-2 file in place and stop. For an approved rollback, follow the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3) and wait for the Linux project to stop and `pg_stat_activity` to show no production-compose client before retrying AppHost. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
 | 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
 
 | Lock | Lifetime |
 |---|---|
 | `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it. Exit 1 also removes this restart's stamp when, before backend health was confirmed, the launcher exited nonzero or this launch's AppHost exited with nothing listening on 17202; a no-progress or hard-cap timeout, exit 4, and exit 5 (unverified server build) retain it. |
-| `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. |
+| `logs/apphost.launch.lock` | Written by `dev-aspire` during launch and removed on script exit, including a successful dashboard start. |
 
 A present lock with a stamp younger than 15 minutes is active by default **even
 if its holder PID is gone**: the child may still be launching (CARD-0310). The
@@ -203,8 +206,8 @@ non-200 `/health` answer restarts the `-TimeoutSec` window, up to `-MaxWaitSec`
 from launch (never below `-TimeoutSec`). Once `/health` answers 200 no further
 progress is credited: the `/api/version` SHA check has the rest of the current
 window, then exits 5. `apphost.pid` names this launch's AppHost only after
-`dev-aspire.ps1` rewrites it; a pid file left from before the launch never counts.
-`dev-aspire.ps1` stops looking for the dashboard URL 90 seconds after launch, build
+`dev-aspire` rewrites it; a pid file left from before the launch never counts.
+`dev-aspire` stops looking for the dashboard URL 90 seconds after launch, build
 included, so a cold build leaves no URL file; the restart then finds the dashboard
 by asking 17205 itself (CARD-1806). Each restart rotates `apphost.log` to `apphost.log.1` to `.10` instead of emptying
 it; if a move fails, rotation stops and `apphost.log` is emptied in place, so the
@@ -305,7 +308,7 @@ Once the CARD-1744 window has completed, maintenance on the desktop is the end s
 1. AppHost launched inside an agent Job Object was healthy, then vanished when
    the tool job ended: use Scheduled Task ownership and respect the checkout
    limitation above.
-2. A second `dev-aspire.ps1` left the old process holding ports: the merge did not
+2. A second `dev-aspire` left the old process holding ports: the merge did not
    become live. Use the canonical restart command.
 3. An AppHost-only bounce left the runner on its pre-merge SHA (CARD-0360): soft
    restart the runner too when its source changed.

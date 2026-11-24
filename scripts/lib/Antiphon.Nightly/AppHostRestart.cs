@@ -8,10 +8,11 @@
 //     [--allow-worktree] [--expected-server-sha <sha>] [--graceful-stop-timeout-sec 20] [--skip-graceful-stop] [--stop-only]
 //     [--what-if]
 //
-// dev-aspire.ps1 launches a new AppHost but does not stop an old one, so this command tears down first and then starts
-// dev-aspire.ps1 detached. The session runner on 17204 is preserved (it survives AppHost restarts; the new AppHost adopts it).
-// It is the only actor that kills: it takes logs/apphost.restart.lock for the whole run and refuses (exit 3, nothing killed)
-// while that lock or logs/apphost.launch.lock is held (CARD-0075). A no-progress timeout (exit 1) or a DCP timeout (exit 4)
+// dev-aspire launches a new AppHost but does not stop an old one, so this command tears down first and then starts the
+// dev-aspire command detached (this CLI's run copy; unit 37 ported dev-aspire.ps1). The session runner on 17204 is preserved
+// (it survives AppHost restarts; the new AppHost adopts it). It is the only actor that kills: it takes
+// logs/apphost.restart.lock for the whole run and refuses (exit 3, nothing killed) while that lock or logs/apphost.launch.lock
+// is held (CARD-0075). A no-progress timeout (exit 1) or a DCP timeout (exit 4)
 // leaves the restart lock on disk for LockMaxAgeMinutes, because the spawned launch may still be coming up (CARD-0310);
 // exit 0, a failed build and a dead launch remove it.
 //
@@ -43,7 +44,7 @@ namespace Antiphon.Nightly
         private static readonly string[] Valued = { "--timeout-sec", "--max-wait-sec", "--lock-max-age-minutes", "--expected-server-sha", "--graceful-stop-timeout-sec" };
         private static readonly string[] Switches = { "--no-build", "--allow-worktree", "--skip-graceful-stop", "--stop-only", "--what-if" };
 
-        /// <summary>Pass -NoBuild to dev-aspire.ps1 (skip restore and npm).</summary>
+        /// <summary>Pass --no-build to dev-aspire (skip restore and npm).</summary>
         public bool NoBuild { get; init; }
 
         /// <summary>The no-progress window of the health wait, in seconds (CARD-1680).</summary>
@@ -67,13 +68,13 @@ namespace Antiphon.Nightly
         /// <summary>Skip the graceful POST and go straight to the force-kill.</summary>
         public bool SkipGracefulStop { get; init; }
 
-        /// <summary>Stop and free the AppHost ports, then exit before dev-aspire.ps1 (Postgres and 17204 untouched).</summary>
+        /// <summary>Stop and free the AppHost ports, then exit before dev-aspire (Postgres and 17204 untouched).</summary>
         public bool StopOnly { get; init; }
 
         /// <summary>With StopOnly: print the stop and change nothing. Without it: refuse.</summary>
         public bool WhatIf { get; init; }
 
-        /// <summary>The checkout whose stack restarts (its logs, dev-aspire.ps1 and HEAD).</summary>
+        /// <summary>The checkout whose stack restarts (its logs, its AppHost and HEAD).</summary>
         public string RepoRoot { get; init; } = "";
 
         /// <summary>The flags after the command name; the checkout comes from the CLI.</summary>
@@ -133,7 +134,6 @@ namespace Antiphon.Nightly
             var pidFile = files.Path.Combine(logDir, "apphost.pid");
             var urlFile = files.Path.Combine(logDir, "apphost-dashboard-url.txt");
             var logFile = files.Path.Combine(logDir, "apphost.log");
-            var devScript = files.Path.Combine(root, "dev-aspire.ps1");
             var launchLock = files.Path.Combine(logDir, "apphost.launch.lock");
             var restartLock = files.Path.Combine(logDir, "apphost.restart.lock");
             var watchdogLog = files.Path.Combine(logDir, "watchdog-apphost.log");
@@ -159,7 +159,7 @@ namespace Antiphon.Nightly
                     Say("  Nothing was killed.");
                     return 3;
                 }
-                Say("STOP-ONLY WHATIF: would POST /api/operator/shutdown, free AppHost ports, and exit before dev-aspire.ps1.");
+                Say("STOP-ONLY WHATIF: would POST /api/operator/shutdown, free AppHost ports, and exit before dev-aspire.");
                 Say("  ports: " + portList);
                 Say("  preserving session-runner port " + AppHost.SessionRunnerPort.ToString(CultureInfo.InvariantCulture) + " and antiphon-postgres.");
                 Say("  Nothing was stopped. Nothing was launched.");
@@ -173,7 +173,7 @@ namespace Antiphon.Nightly
             if (launchInFlight != null)
             {
                 Say("REFUSED: a launch is in flight - " + launchInFlight);
-                Say("  dev-aspire.ps1 is still bringing the stack up. Killing it now would time out its");
+                Say("  dev-aspire is still bringing the stack up. Killing it now would time out its");
                 Say("  DCP dependency check (CARD-0075). Wait for it, then re-run if it did not come up.");
                 Say("  Nothing was killed.");
                 return 3;
@@ -198,7 +198,7 @@ namespace Antiphon.Nightly
             var state = new RestartState();
             try
             {
-                return Restart(options, host, platform, state, new RestartPaths(root, logDir, pidFile, urlFile, logFile, devScript, launchLock, restartLock, watchdogLog), restartBegan);
+                return Restart(options, host, platform, state, new RestartPaths(root, logDir, pidFile, urlFile, logFile, launchLock, restartLock, watchdogLog), restartBegan);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidOperationException || e is System.ComponentModel.Win32Exception
                 || e is PlatformNotSupportedException || e is ArgumentException)
@@ -217,7 +217,7 @@ namespace Antiphon.Nightly
             public bool KeepLock;
         }
 
-        private sealed record RestartPaths(string Root, string LogDir, string PidFile, string UrlFile, string LogFile, string DevScript, string LaunchLock,
+        private sealed record RestartPaths(string Root, string LogDir, string PidFile, string UrlFile, string LogFile, string LaunchLock,
             string RestartLock, string WatchdogLog);
 
         private static int Restart(AppHostRestartOptions options, NightlyHost host, IAppHostPlatform platform, RestartState state, RestartPaths paths, DateTime restartBegan)
@@ -330,16 +330,16 @@ namespace Antiphon.Nightly
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
             AppHostLaunchLog.Rotate(files, paths.LogFile);
 
-            // 5) Relaunch detached; dev-aspire.ps1 backgrounds the AppHost.
-            Say("  launching dev-aspire.ps1" + (options.NoBuild ? " -NoBuild" : "") + "...");
-            var devArguments = new List<string> { "-NoLogo", "-File", paths.DevScript };
-            if (options.NoBuild) devArguments.Add("-NoBuild");
-            if (options.AllowWorktree) devArguments.Add("-AllowWorktree");
+            // 5) Relaunch detached; dev-aspire backgrounds the AppHost.
+            Say("  launching dev-aspire" + (options.NoBuild ? " --no-build" : "") + "...");
+            var devArguments = new List<string> { "dev-aspire" };
+            if (options.NoBuild) devArguments.Add("--no-build");
+            if (options.AllowWorktree) devArguments.Add("--allow-worktree");
             var tag = Guid.NewGuid().ToString("N");
             var launcherOut = files.Path.Combine(paths.LogDir, "apphost-launcher-" + tag + ".out");
             var launcherErr = files.Path.Combine(paths.LogDir, "apphost-launcher-" + tag + ".err");
             DateTime? stalePidStamp = files.File.Exists(paths.PidFile) ? files.File.GetLastWriteTimeUtc(paths.PidFile) : null;
-            var child = platform.StartDetached("pwsh", devArguments, launcherOut, launcherErr);
+            var child = platform.StartCli(devArguments, launcherOut, launcherErr);
             state.KeepLock = true;
 
             return Wait(options, host, platform, state, paths, child, expectedSha, launcherOut, launcherErr, stalePidStamp);
@@ -385,7 +385,7 @@ namespace Antiphon.Nightly
                         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
                         if (text != null && Url.IsMatch(text)) dashUrl = text;
                     }
-                    // CARD-1806: dev-aspire.ps1 gives up on the URL file 90 s after the launch, build included; ask the pinned port.
+                    // CARD-1806: dev-aspire gives up on the URL file 90 s after the launch, build included; ask the pinned port.
                     string dashFound = null;
                     if (dashUrl == null)
                     {
@@ -506,7 +506,7 @@ namespace Antiphon.Nightly
             }
             Say("AppHost did not come up within " + waited.ToString(CultureInfo.InvariantCulture) + "s - check '" + paths.LogFile + "'.");
             Say(summary);
-            Say("  NOTE: the dev-aspire.ps1 this command spawned may STILL be launching (its own");
+            Say("  NOTE: the dev-aspire this command spawned may STILL be launching (its own");
             Say("  budget is longer than " + waited.ToString(CultureInfo.InvariantCulture) + "s). Do not re-run blind - re-running kills a");
             Say("  DCP that is still coming up (CARD-0075). Check " + paths.LaunchLock + " first.");
             Say("  Leaving " + paths.RestartLock + " for LockMaxAgeMinutes. Do not delete it to force a retry.");
@@ -535,7 +535,7 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Get-AppHostLaunchedPid (CARD-1680): the AppHost wrapper pid dev-aspire.ps1 wrote for this launch. A pid file still
+        /// Get-AppHostLaunchedPid (CARD-1680): the AppHost wrapper pid dev-aspire wrote for this launch. A pid file still
         /// carrying the write time it had before the launch belongs to the AppHost the restart killed.
         /// </summary>
         public static int? LaunchedPid(System.IO.Abstractions.IFileSystem files, string pidFile, DateTime? staleStampUtc)

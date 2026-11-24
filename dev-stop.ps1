@@ -1,36 +1,19 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    Stop the Antiphon dev server and client. Postgres stays up by default.
-.PARAMETER IncludePostgres
-    Also stop the postgres container (docker compose down).
+    Thin launcher for `antiphon-scripts dev-stop` (scripts/lib/Antiphon.Nightly/DevStack.cs): stop the simple-mode server
+    (17281) and client (17282). Postgres stays up unless -IncludePostgres (docker compose down).
+
+    Unit 37 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept so the runbooks' `.\dev-stop.ps1` still
+    works. Agents run `scripts/antiphon dev-stop`; Windows runbooks `scripts\antiphon.cmd dev-stop`.
+
+    -IncludePostgres is --include-postgres. The command's exit code is returned (0); 9 when the CLI cannot be built or
+    started (one stderr line). ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param([switch]$IncludePostgres)
 
-$ErrorActionPreference = 'SilentlyContinue'
-
-function Stop-OnPort([int]$Port, [string]$Label) {
-    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if ($conn) {
-        $pid_ = $conn.OwningProcess
-        Stop-Process -Id $pid_ -Force -ErrorAction SilentlyContinue
-        Write-Host "  Stopped $Label (PID $pid_)" -ForegroundColor Green
-    } else {
-        Write-Host "  $Label not listening on :$Port" -ForegroundColor DarkGray
-    }
-}
-
-Write-Host "`nStopping Antiphon services..." -ForegroundColor Cyan
-Stop-OnPort 17281 '.NET server'
-Stop-OnPort 17282 'React client'
-
-if ($IncludePostgres) {
-    $root        = $PSScriptRoot
-    $composeFile = "$root\docker-compose.dev.yml"
-    Write-Host "  Stopping PostgreSQL..." -ForegroundColor Cyan
-    docker compose -f $composeFile down 2>&1 | Out-Null
-    Write-Host "  PostgreSQL stopped." -ForegroundColor Green
-} else {
-    Write-Host "  PostgreSQL left running (pass -IncludePostgres to stop it)." -ForegroundColor DarkGray
-}
-
-Write-Host ""
+$ErrorActionPreference = 'Continue'
+. (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')
+$arguments = @()
+if ($IncludePostgres) { $arguments += '--include-postgres' }
+exit (Invoke-AntiphonCli -Command 'dev-stop' -Arguments $arguments)

@@ -159,13 +159,15 @@ only in `claude-home` / the user profile. Named so the absence is visible:
 
 - **Fresh:** seeder-only DB is correct. Create the first agent as step 9.
   Do not invent seed data.
-- **Migration:** on the old box run `.\dev-backup.ps1` (defaults to
+- **Migration:** on the old box run `scripts\antiphon.cmd dev-backup` (defaults to
   `<repo>/backups/`). On the new box run
-  `.\dev-restore.ps1 -BackupFile <path-to.zip>`. Also restore the Data
+  `scripts\antiphon.cmd dev-restore --backup-file <path-to.zip>`. Also restore the Data
   Protection ring (`%LOCALAPPDATA%\Antiphon\DataProtection-Keys`) *with*
   that dump — see [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md).
-  Do not inline `pg_dump`. `.\dev-fresh.ps1` is the nuclear reset (volume +
-  `C:\Antiphon\worktrees`), not a bootstrap step.
+  Do not inline `pg_dump`. `scripts\antiphon.cmd dev-fresh` is the nuclear reset (volume +
+  `C:\Antiphon\worktrees`), not a bootstrap step. (The repo-root `.\dev-*.ps1`,
+  `.\restart.ps1`, `.\restart-server.ps1` and `.\stop-server.ps1` are thin launchers of these
+  commands since 2026-11-24, with their PowerShell parameter names.)
 
 ## Card files and private-note custody
 
@@ -308,7 +310,7 @@ For first start with no listener or launch in flight, use
 `Start-ScheduledTask -TaskName 'Antiphon AppHost'`. For an existing stack, use
 `scripts\antiphon.cmd restart-apphost` from an independent operator
 shell; read the runbook's current-checkout Job Object limitation first.
-Never launch a second bare `dev-aspire.ps1`.
+Never launch a second bare `dev-aspire`.
 
 Port 17203 serves the built bundle by default (CARD-0216). Wait for
 `scripts\antiphon.cmd client-mode --status` to show the latest rebuild before
@@ -389,16 +391,16 @@ Not the default. Use this only when you are deliberately not running Aspire.
 
 | | Aspire (default) | Simple mode |
 |---|---|---|
-| Start | `dev-aspire.ps1` / `scripts\antiphon.cmd restart-apphost` | `.\dev-start.ps1` |
-| Restart | `scripts\antiphon.cmd restart-apphost` | `.\restart.ps1` |
+| Start | `scripts\antiphon.cmd dev-aspire` / `scripts\antiphon.cmd restart-apphost` | `scripts\antiphon.cmd dev-start` |
+| Restart | `scripts\antiphon.cmd restart-apphost` | `scripts\antiphon.cmd restart-dev-stack` |
 | API | 17202 | 17281 |
 | Client | 17203 | 17282 |
 | Session-runner | 17204 | 17204 |
 | Postgres | 17280 (`antiphon-postgres`) | 17280 (same container) |
 | Health | `scripts\antiphon.cmd verify-dev-stack --skip-browser` | `scripts\antiphon.cmd verify-dev-stack --simple-mode` |
 
-`.\dev-stop.ps1` stops server + client; Postgres stays up. Add
-`-IncludePostgres` to stop the container too.
+`scripts\antiphon.cmd dev-stop` stops server + client; Postgres stays up. Add
+`--include-postgres` to stop the container too.
 
 ---
 
@@ -436,7 +438,7 @@ Aspire is the default. If an AppHost may already be running:
 scripts\antiphon.cmd restart-apphost
 ```
 
-Never launch a second bare `dev-aspire.ps1` — it collides with the old process
+Never launch a second bare `dev-aspire` — it collides with the old process
 and the new code never goes live. Smoke: `http://localhost:17202/health`,
 client at `http://localhost:17203`, session-runner at `http://localhost:17204`,
 dashboard pinned at `http://localhost:17205`.
@@ -460,7 +462,7 @@ set the idle and divergence ages. `Attention:InventoryTimeoutMs` (3000) bounds
 each runner inventory call. The sampler only records; it does not stop, kill or
 release a session. Read the series at `GET /api/hosts/{hostId}/occupancy-samples`.
 
-Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
+Simple-mode fallback (no Aspire): `scripts\antiphon.cmd dev-start` / `scripts\antiphon.cmd restart-dev-stack`, ports
 17281 (API) / 17282 (Vite) / 17204 (session-runner, the always-on daemon). Postgres is still 17280.
 `scripts\antiphon.cmd verify-dev-stack --simple-mode`.
 
@@ -476,7 +478,7 @@ live page; **dev** runs plain `vite` — HMR, `/@vite/client`, source maps — e
 dev` did before this card. Switch or inspect it with `scripts\antiphon.cmd client-mode --mode
 dev|built` or `--status` (also `--rebuild` to force a clean rebuild in built mode without a mode
 switch); the choice persists across AppHost restarts. `ANTIPHON_CLIENT_WATCH=0` turns the watcher
-off. Simple mode (`dev-start.ps1`, port 17282) is unaffected — it always runs `npm run dev`
+off. Simple mode (`dev-start`, port 17282) is unaffected — it always runs `npm run dev`
 directly and has no mode concept.
 
 ### Manual backend fallback (ASP.NET Core — port 17281)
@@ -492,9 +494,9 @@ Migrations run automatically on startup. The server also seeds initial data.
 
 **Always stop the server before creating a migration** — the running Aspire process holds file locks.
 
-1. Stop: `.\stop-server.ps1`
+1. Stop: `scripts\antiphon.cmd stop-server`
 2. Create migration: `dotnet tool restore` (repo-pinned dotnet-ef, CARD-0677), then `dotnet ef migrations add <MigrationName> --project server`
-3. Restart & verify: `.\restart-server.ps1`
+3. Restart & verify: `scripts\antiphon.cmd restart-server`
 4. Check `C:\MavLog\Antiphon\antiphon-YYYYMMDD.log` — confirm migration applied with no `[ERR]`/`[FTL]` entries
 
 ### Logs: where they are, how long they last, how to turn a source back up
@@ -568,7 +570,7 @@ The Vite dev server proxies `/api` and `/hubs` to `http://localhost:17281`, so t
 
 Open **http://localhost:17282** in your browser.
 
-## Dev Port Map (Aspire AppHost mode — `dev-aspire.ps1`)
+## Dev Port Map (Aspire AppHost mode — `dev-aspire`)
 
 | Port    | Service                   |
 |---------|---------------------------|
@@ -583,16 +585,16 @@ Open **http://localhost:17282** in your browser.
 | 17208   | Fake messaging gateway (dev/test Kafka tool — real gateway is NOT run locally) |
 | 17209   | Storybook (component workshop, AppHost-managed npm app) |
 
-Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antiphon.AppHost/Properties/launchSettings.json`. `dev-aspire.ps1` discovers it and saves to `logs/apphost-dashboard-url.txt`; it stops looking 90 s after launch, build included, so `restart-apphost` also asks 17205 directly when the file is missing (CARD-1806).
+Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antiphon.AppHost/Properties/launchSettings.json`. `dev-aspire` discovers it and saves to `logs/apphost-dashboard-url.txt`; it stops looking 90 s after launch, build included, so `restart-apphost` also asks 17205 directly when the file is missing (CARD-1806).
 
 ## Always-on backend (auto-start)
 
 So agents can run without launching the AppHost, four pieces auto-start at login (set up once via `scripts\antiphon.cmd install-autostart`; remove with `--uninstall`):
 
 - **PostgreSQL** — standalone container `antiphon-postgres` (`docker-compose.dev.yml`, `restart: unless-stopped`) on host port **17280**. Returns on boot via that restart policy + Docker Desktop "AutoStart". It is **no longer Aspire-managed**: the AppHost references it with `AddConnectionString("DefaultConnection")` (value in `Antiphon.AppHost/appsettings.json` = the same `localhost:17280` string the server uses).
-- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` (the launcher of the `autostart-session-runner` command, which runs the `run-daemon` supervisor in process and records the launcher as the supervisor). It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (the supervisor rebuilds the project first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
+- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` (the launcher of the `autostart-session-runner` command, which runs the `run-daemon` supervisor in process and records the launcher as the supervisor). It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (the supervisor rebuilds the project first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
 
-- **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire.ps1 -NoBrowser`. It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire.ps1` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire.ps1`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart --no-apphost`.
+- **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire --no-browser` (in its own process). It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart --no-apphost`.
 - **AppHost watchdog** — per-user Scheduled Task **"Antiphon AppHost Watchdog"**, every **2 minutes**. `scripts/watchdog-apphost.ps1` probes `http://localhost:17202/health` and `http://localhost:17203/` over HTTP (not TCP listen: Aspire's `dcpctrl` owns both published ports), confirms three **down** rounds ~15 s apart, then calls `scripts\antiphon.cmd restart-apphost` so the session-runner on 17204 is never touched. A probe of `client=200` plus `/health` HttpClient timeout is **not** a down round (loaded or coming-up, not a corpse; CARD-0310). Cooldown **15 min** (the same number as `LockMaxAgeMinutes`) / flap cap 3 restarts per 60 min; cooldown is **not** a substitute for the lock — it only tracks watchdog-stamped restarts, so a manual `restart-apphost` is invisible to it. Log `logs/watchdog-apphost.log` (includes restart-apphost's last ~40 lines and named exit: `0=healthy`, `1=timeout/build`, `3=refused`, `4=DCP timeout`, `5=server build unverified` — `exited N` alone is no longer the record). Health/outage observation precedes recovery guards. Recovery normally skips while **either** lock **stamp** is younger than 15 min, even if the holding PID has exited; the early restart-lock exception requires the [two-fire dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) (CARD-1527). It re-checks both **immediately before** restarting (the check at the top of a fire is up to ~60 s of probing old), and does not stamp a restart when `restart-apphost` exits 3 — a refusal killed nothing and must not spend flap budget (CARD-0075). Delayed 15 minutes after logon so it does not kill the logon launch. Each fire runs the current `scripts/watchdog-apphost.ps1` from the registering checkout; an AppHost restart does not reload it, and script-only updates need no task re-registration. The runbook also documents the independent Event Log/marker sinks and optional `ANTIPHON_WATCHDOG_ALERT_WEBHOOK` (HTTPS only, five-second bound, no redirects; URL and response body never logged). Opt out of registration with `install-autostart --no-watchdog`.
 - **Watchdog-state observer** (CARD-0245) — per-user Scheduled Task **"Antiphon AppHost Watchdog State Observer"**, every **2 minutes**, independent of the watchdog. `scripts/apphost-watchdog-state-observer.ps1` samples whether that watchdog task is Disabled / Missing / unreadable and writes `logs/apphost-watchdog-state.json`. Detection only: it never restarts, re-enables, or writes the database. `--no-watchdog` does not remove it; skip with `--no-watchdog-state-observer`. Skip only with `--no-apphost`. Leave the stack down on purpose with `scripts\antiphon.cmd set-apphost-maintenance` (creates `logs/apphost.down-on-purpose` **before** disabling the watchdog; `--clear` re-enables then removes the marker). Direct `Disable-ScheduledTask` / Task Scheduler / `schtasks.exe` edits still work and are exactly what the observer detects.
 
@@ -632,7 +634,7 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 - **Dev compose file**: Always use `docker compose -f docker-compose.dev.yml up -d` — the default `docker-compose.yml` is not the dev stack. ### Preserved Gotcha #6
 
-- **Startup order**: Postgres must be healthy before the .NET server starts. Postgres is now an always-on external container (auto-started at login), so it is already up by the time you run `dev-aspire.ps1`. The AppHost references it via `AddConnectionString` (no `WaitFor` — connection-string resources don't support it); `dev-aspire.ps1` also `docker compose up -d`'s it as a safety net. ### Preserved Gotcha #7
+- **Startup order**: Postgres must be healthy before the .NET server starts. Postgres is now an always-on external container (auto-started at login), so it is already up by the time you run `dev-aspire`. The AppHost references it via `AddConnectionString` (no `WaitFor` — connection-string resources don't support it); `dev-aspire` also `docker compose up -d`'s it as a safety net. ### Preserved Gotcha #7
 
 - **npm install first**: `client/node_modules` may not exist — run `npm install` before `npm run dev` or `npm run storybook`. ### Preserved Gotcha #8
 
@@ -642,7 +644,7 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 - **Starting the AppHost**: Use `Start-ScheduledTask -TaskName 'Antiphon AppHost'` when no listener or launch is present. See the [canonical local restart runbook](apphost-runbook.md#first-start-and-apphost-restart) for task registration and the current restart handoff limitation. Do not start AppHost from an agent's kill-on-close Job Object. ### Preserved Gotcha #11
 
-- **RESTARTING the AppHost**: `dev-aspire.ps1` does NOT stop a running AppHost — re-running it launches a second one that collides with the old (old server keeps its ports, code changes never go live). Use `scripts\antiphon.cmd restart-apphost` instead: it kills the old tree, frees the ports, relaunches, and waits for health, preserving the session-runner. Restarts and `deploy-local.ps1` normally originate from the main checkout: linked worktrees refuse by default (CARD-0273 — a delegate running these from its own task worktree once silently stole the canonical stack's root); `-AllowWorktree` deliberately controls the shared stack and is only for an explicit test. **A non-zero exit does not mean it stopped launching**: it spawns `dev-aspire.ps1` detached and waits for health while the launch shows progress: `TimeoutSec` (150 s) is a no-progress window that log or launcher output growth, the dashboard URL file, the server port opening or closing, or a non-200 `/health` answer restarts, up to the `MaxWaitSec` hard cap (600 s; CARD-1680). The child's own budget (8 s network preflight + `dotnet restore`/`npm install` + 90 s dashboard wait + 45 s Postgres wait) can still outlast a no-progress exit. A nonzero launcher exit, or this launch's AppHost exiting with nothing on 17202, exits 1 at once; a pid file left from before the launch never counts as this launch's AppHost, and `apphost.log` is rotated to `apphost.log.1`..`.10`, not emptied (a failed move empties it in place instead). **Exit 3 means REFUSED — another restart or launch is in flight and nothing was killed** (CARD-0075): it takes `logs/apphost.restart.lock` for the whole run and also honours `dev-aspire.ps1`'s `logs/apphost.launch.lock`. A lock **stamp** younger than 15 min is normally still in-flight even if the holding PID has exited (CARD-0310); only the [guarded dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) permits early restart-lock reclamation. A no-progress or hard-cap timeout (exit 1, child may still be launching) **leaves** `apphost.restart.lock`; a nonzero launcher exit or a vanished AppHost before backend health was confirmed removes only this restart's stamp and still exits 1. DCP timeout (exit 4) and unverified server build (exit 5) retain it. Exit 0 and a detected build failure still remove it. The deletion hints describe a manual override, not proof that retry is safe; see [lock inspection guidance](apphost-runbook.md#apphost-locks-and-exits). A successful `dev-aspire.ps1` still deletes `apphost.launch.lock` as soon as the dashboard is ready — that lock is not held for 15 min after a healthy start. Do not re-run on a plain failure without checking those two files first. ### Preserved Gotcha #12
+- **RESTARTING the AppHost**: `dev-aspire` does NOT stop a running AppHost — re-running it launches a second one that collides with the old (old server keeps its ports, code changes never go live). Use `scripts\antiphon.cmd restart-apphost` instead: it kills the old tree, frees the ports, relaunches, and waits for health, preserving the session-runner. Restarts and `deploy-local.ps1` normally originate from the main checkout: linked worktrees refuse by default (CARD-0273 — a delegate running these from its own task worktree once silently stole the canonical stack's root); `-AllowWorktree` deliberately controls the shared stack and is only for an explicit test. **A non-zero exit does not mean it stopped launching**: it spawns `dev-aspire` detached and waits for health while the launch shows progress: `TimeoutSec` (150 s) is a no-progress window that log or launcher output growth, the dashboard URL file, the server port opening or closing, or a non-200 `/health` answer restarts, up to the `MaxWaitSec` hard cap (600 s; CARD-1680). The child's own budget (8 s network preflight + `dotnet restore`/`npm install` + 90 s dashboard wait + 45 s Postgres wait) can still outlast a no-progress exit. A nonzero launcher exit, or this launch's AppHost exiting with nothing on 17202, exits 1 at once; a pid file left from before the launch never counts as this launch's AppHost, and `apphost.log` is rotated to `apphost.log.1`..`.10`, not emptied (a failed move empties it in place instead). **Exit 3 means REFUSED — another restart or launch is in flight and nothing was killed** (CARD-0075): it takes `logs/apphost.restart.lock` for the whole run and also honours `dev-aspire`'s `logs/apphost.launch.lock`. A lock **stamp** younger than 15 min is normally still in-flight even if the holding PID has exited (CARD-0310); only the [guarded dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) permits early restart-lock reclamation. A no-progress or hard-cap timeout (exit 1, child may still be launching) **leaves** `apphost.restart.lock`; a nonzero launcher exit or a vanished AppHost before backend health was confirmed removes only this restart's stamp and still exits 1. DCP timeout (exit 4) and unverified server build (exit 5) retain it. Exit 0 and a detected build failure still remove it. The deletion hints describe a manual override, not proof that retry is safe; see [lock inspection guidance](apphost-runbook.md#apphost-locks-and-exits). A successful `dev-aspire` still deletes `apphost.launch.lock` as soon as the dashboard is ready — that lock is not held for 15 min after a healthy start. Do not re-run on a plain failure without checking those two files first. ### Preserved Gotcha #12
 
 - **A podman error in `apphost.log` means the DCP dependency check TIMED OUT — not that a container runtime is missing** (CARD-0075; same genre as the MSB3552 resx and HNS "Created" entries below — the message names the wrong thing). `dcp info` probes podman **first on every single invocation, healthy ones included** (measured 2026-08-20: podman at +0 ms, docker at +382 ms, result at +648 ms, `"runtime":"docker","installed":true,"running":true`), and Aspire splices that captured stderr into the exception text — `dependency check returned an error: {0}` where `{0}` is `"The operation has timed out. <dcp stderr>"`, one concatenated string. A timeout truncates that stderr **after** the runtime that answered instantly and **before** the one whose stall consumed the whole deadline, so the message accuses podman precisely because podman is *not* what failed. Podman is not installed here, is not needed, and this AppHost has **zero container resources** (`AddConnectionString` + `AddProject` + 2× `AddNpmApp`) — yet `EnsureDcpContainerRuntimeAsync` still sits on the critical path of every launch. Log-level filtering cannot help (`Aspire.Hosting.Dcp: Warning` is already set; this is exception content, not a log record), and *any* future dependency-check timeout prints the identical podman text regardless of cause. The real cause is almost always **two restarts racing** — a caller whose `restart-apphost` "failed" re-runs it and the re-run's `taskkill` lands on a DCP that is still coming up (a 44-run census found same-session re-runs at +145 s and +191 s, both inside the previous run's own launch window). `restart-apphost` now detects this shape itself and prints what `docker` actually said instead of leaving the podman text standing, exiting **4**. Check `docker ps`, then `logs/apphost.restart.lock`, `logs/apphost.launch.lock` and `logs/watchdog-apphost.log`, before changing any configuration. Do **not** raise `DcpPublisher:DependencyCheckTimeout` (it masks the collision) and do not chase `--container-runtime`/`DCP_CONTAINER_RUNTIME` (measured: unsupported in Aspire 9.3.0). ### Preserved Gotcha #14
 
@@ -652,7 +654,7 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 - **Postgres credentials/volume**: The always-on `antiphon-postgres` container uses db/user/password `antiphon` / `antiphon` / `antiphon_dev` (fixed in `docker-compose.dev.yml`), data in the `antiphon_pgdata` Docker volume. Don't delete the volume without recreating it. (The old Aspire-managed `pg-password` parameter and `antiphon-pgdata` volume are gone.) ### Preserved Gotcha #17
 
-- **Postgres stuck in "Created" state**: Windows HNS (Host Network Service) can enter a bad state where `docker network create` hangs indefinitely. Symptom: `docker ps -a --filter name=antiphon-postgres` shows "Created" forever. Fix: restart Docker Desktop, then `docker compose -f docker-compose.dev.yml up -d`. Detection: `$j = Start-Job { docker network create test-net 2>&1 }; $j | Wait-Job -Timeout 5; if ($j.State -eq 'Running') { "HNS broken" }`. `dev-aspire.ps1` still pre-tests this and warns.
+- **Postgres stuck in "Created" state**: Windows HNS (Host Network Service) can enter a bad state where `docker network create` hangs indefinitely. Symptom: `docker ps -a --filter name=antiphon-postgres` shows "Created" forever. Fix: restart Docker Desktop, then `docker compose -f docker-compose.dev.yml up -d`. Detection: `$j = Start-Job { docker network create test-net 2>&1 }; $j | Wait-Job -Timeout 5; if ($j.State -eq 'Running') { "HNS broken" }`. `dev-aspire` still pre-tests this and warns.
 
 - **A `git push origin <sha>:master` from a worktree does NOT move the main checkout's local `master` branch — the very next `restart-apphost` silently rebuilds and serves the OLD code, reporting "healthy"** (CARD-0358, 2026-09-04). `restart-apphost` builds from whatever `C:\src\Antiphon`'s working tree currently has on disk; it does not fetch or pull. Pushing a commit straight to `origin/master` from elsewhere (a worktree, a different clone) advances GitHub's ref but leaves the main checkout's own `master` pointer untouched — pushing to a remote ref never updates your local branch, regardless of which directory the push ran from. A health check after the restart proves the process came up, not that it is running the code you think it is: a stale-but-internally-consistent build passes `/health` exactly like a fresh one. This is also the actual cause behind most instances of `land` refusing with `"origin/master moved ahead of local master"` — that refusal is usually correct (the main checkout genuinely is behind), and re-running `land` blindly, or working around it with another out-of-band push, compounds the staleness instead of fixing it. **The fix**: after ANY push to `origin/master` that did not go through the normal `land` pipeline (which lands into the main checkout itself), run `git pull --rebase` in `C:\src\Antiphon` *before* restarting — check `git rev-parse HEAD` vs `git rev-parse origin/master` in the main checkout specifically, not a worktree, since worktrees share objects but not branch pointers. After a restart whose code matters, don't just trust "healthy" — `restart-apphost` now requires `GET /api/version` to equal source-root HEAD (exit 5 and a retained restart lock on mismatch; CARD-0495) and `scripts/antiphon delegate land` refuses unless that body advertises exact `land-v2`. Spot-check the required feature as well when the checkout has tracked edits. More generally: any assumption about what state the running system is in (checkout HEAD, whether a restart picked up a change, whether a service is authenticated) should be checked directly and immediately, not inferred from a downstream signal like a passing health check or an absence of errors. The API-level signature of this skew is a 400 `The JSON value could not be converted to …CreateAgentTaskRequest. Path: $.<field>` for a value the script's `ValidateSet` accepts; `scripts/antiphon delegate` now prints a `diagnosis:` line relating the served SHA to HEAD (CARD-0493, 2026-09-12).
 <!-- CARD-0254 preserved source ends -->

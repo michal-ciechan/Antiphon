@@ -249,6 +249,24 @@ namespace Antiphon.Scripts
             [PhoneHomeCommands.VerifyPhoneHomeGrok] = PhoneHomeCommands.RunVerifyPhoneHomeGrok,
             [PhoneHomeCommands.InstallAutostart] = PhoneHomeCommands.RunInstallAutostart,
             [PhoneHomeCommands.InstallCleanupTask] = PhoneHomeCommands.RunInstallCleanupTask,
+            // The desktop dev stack answers every input itself (unit 37). dev-aspire: exit 0 launched, 1 failed, 3 refused (a linked
+            // worktree or a phone-home configuration; nothing touched). run-apphost: the AppHost build's code when it failed, else
+            // the AppHost's. dev-start, dev-fresh, dev-backup (the zip's path last), dev-restore, dev-upgrade, restart-dev-stack,
+            // restart-server and restart-client: 0 done (or an unconfirmed reset or restore, aborted), 1 failed. dev-stop and
+            // stop-server: 0. assert-dev-ports-clear: 0 clear, 1 a listener remains. Off Windows each is 1. Usage is 2 for each.
+            [DevStackCommands.DevAspireName] = DevStackCommands.RunDevAspire,
+            [DevStackCommands.RunAppHost] = DevStackCommands.RunRunAppHost,
+            [DevStackCommands.DevStart] = DevStackCommands.RunDevStart,
+            [DevStackCommands.DevStop] = DevStackCommands.RunDevStop,
+            [DevStackCommands.DevFresh] = DevStackCommands.RunDevFresh,
+            [DevStackCommands.DevBackup] = DevStackCommands.RunDevBackup,
+            [DevStackCommands.DevRestore] = DevStackCommands.RunDevRestore,
+            [DevStackCommands.DevUpgrade] = DevStackCommands.RunDevUpgrade,
+            [DevStackCommands.RestartDevStack] = DevStackCommands.RunRestartDevStack,
+            [DevStackCommands.RestartServer] = DevStackCommands.RunRestartServer,
+            [DevStackCommands.RestartClient] = DevStackCommands.RunRestartClient,
+            [DevStackCommands.StopServer] = DevStackCommands.RunStopServer,
+            [DevStackCommands.AssertDevPortsClear] = DevStackCommands.RunAssertDevPortsClear,
         };
 
         public static int Main(string[] args)
@@ -287,7 +305,7 @@ namespace Antiphon.Scripts
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
-                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage);
+                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage);
             return Usage;
         }
 

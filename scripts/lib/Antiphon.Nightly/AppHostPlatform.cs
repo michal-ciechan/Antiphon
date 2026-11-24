@@ -7,7 +7,8 @@
 //
 // AppHostOs: the listeners are GetExtendedTcpTable's owner-pid listener rows (IPv4 and IPv6), a process census the toolhelp
 // snapshot with each process's creation time and command line (QualificationOs), a tree stop the host's qualification seam
-// (taskkill /PID /T /F), a detached child the host's QualificationOs.Start (its own hidden console, output in its files), the
+// (taskkill /PID /T /F), a detached child this CLI's run copy (AppHostCli.RunCopy, unit 37) started by the host's
+// QualificationOs.Start (its own hidden console, output in its files), the
 // Scheduled Tasks the Task Scheduler's COM service (root folder), the Event Log advapi32's ReportEvent under the
 // Antiphon-Watchdog source. Tests bind a fake (tests/Antiphon.Tests/Scripts/AppHostWorld.cs). Plain C#: no PowerShell types.
 // ASCII only.
@@ -46,7 +47,7 @@ namespace Antiphon.Nightly
         public bool Registered => State == "Enabled" || State == "Disabled";
     }
 
-    /// <summary>A started child (the dev-aspire.ps1 launch): its id, whether it has exited, its exit code, and a forced stop.</summary>
+    /// <summary>A started child (the dev-aspire launch, the AppHost wrapper): its id, whether it has exited, its exit code, and a forced stop.</summary>
     public interface IAppHostChild
     {
         /// <summary>The child's process id.</summary>
@@ -101,8 +102,11 @@ namespace Antiphon.Nightly
         /// <summary>taskkill /T /F /PID (best effort).</summary>
         void StopTree(int pid);
 
-        /// <summary>Starts a detached child whose stdout and stderr are the two files. Throws when it cannot start.</summary>
-        IAppHostChild StartDetached(string file, IReadOnlyList<string> arguments, string output, string error);
+        /// <summary>
+        /// Starts this CLI detached with the arguments (the command first; dev-aspire, run-apphost), from its run copy under the
+        /// checkout's bin-launcher, its stdout and stderr the two files. Throws when it cannot start.
+        /// </summary>
+        IAppHostChild StartCli(IReadOnlyList<string> arguments, string output, string error);
 
         /// <summary>One GET within the timeout.</summary>
         AppHostHttpAnswer Get(string url, int timeoutSec);
@@ -118,9 +122,6 @@ namespace Antiphon.Nightly
 
         /// <summary>Runs a command and waits at most timeoutSec (0: no limit); a command that cannot start answers exit -1 with the reason.</summary>
         AppHostCommandResult Run(string file, IReadOnlyList<string> arguments, int timeoutSec);
-
-        /// <summary>Runs a command to its exit with its output appended to the log file; the exit code (-1 when it cannot start).</summary>
-        int RunAppending(string file, IReadOnlyList<string> arguments, string logPath);
 
         /// <summary>Get-ScheduledTask -TaskName: the task's state.</summary>
         AppHostTaskInfo Task(string name);
@@ -249,10 +250,13 @@ namespace Antiphon.Nightly
         }
 
         /// <inheritdoc />
-        public IAppHostChild StartDetached(string file, IReadOnlyList<string> arguments, string output, string error)
+        public IAppHostChild StartCli(IReadOnlyList<string> arguments, string output, string error)
         {
             var qualification = _host.Qualification ?? throw new InvalidOperationException("this host binds no detached start");
-            return new DetachedChild(qualification.Start(new QualificationStart(file, arguments, output, error)));
+            var cli = AppHostCli.RunCopy(_root, qualification.Cli);
+            var argv = new List<string>(cli.Skip(1));
+            argv.AddRange(arguments ?? Array.Empty<string>());
+            return new DetachedChild(qualification.Start(new QualificationStart(cli[0], argv, output, error)));
         }
 
         /// <inheritdoc />
@@ -307,33 +311,6 @@ namespace Antiphon.Nightly
                 process.WaitForExit();
                 lock (gate) return new AppHostCommandResult(false, process.ExitCode, output.ToString());
             }
-        }
-
-        /// <inheritdoc />
-        public int RunAppending(string file, IReadOnlyList<string> arguments, string logPath)
-        {
-            var info = new ProcessStartInfo(file) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-            foreach (var argument in arguments) info.ArgumentList.Add(argument);
-            Process process;
-            try { process = Process.Start(info); }
-            catch (Exception e) when (e is Win32Exception || e is InvalidOperationException || e is IOException) { Append(logPath, e.Message); return -1; }
-            if (process == null) return -1;
-            using (process)
-            {
-                var gate = new object();
-                process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (gate) Append(logPath, e.Data); };
-                process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (gate) Append(logPath, e.Data); };
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
-                return process.ExitCode;
-            }
-        }
-
-        private void Append(string path, string line)
-        {
-            try { Files.File.AppendAllText(path, line + Environment.NewLine, new UTF8Encoding(false)); }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
         }
 
         /// <inheritdoc />

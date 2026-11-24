@@ -856,8 +856,8 @@ public sealed class AntiphonCliLauncherTests
     }
 
     // ---- unit 30: scripts/run-daemon.ps1, the launcher the AppHost (DaemonProcessService: a detached pwsh -File) and the
-    // logon task's autostart-session-runner.ps1 start by path; scripts/check-daemon-build.ps1, which restart-apphost.ps1 and
-    // dev-aspire.ps1 run by path; and the repository root's restart-session-runner.ps1 forwarder ----
+    // logon task's autostart-session-runner.ps1 start by path, and the repository root's restart-session-runner.ps1 forwarder
+    // (scripts/check-daemon-build.ps1, which dev-aspire.ps1 ran by path, went when unit 37 ported dev-aspire.ps1) ----
 
     [Test]
     public async Task Run_daemon_launcher_passes_the_apphost_command_line_and_names_itself_the_supervisor()
@@ -957,21 +957,6 @@ public sealed class AntiphonCliLauncherTests
         run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
     }
 
-    [Test]
-    public async Task Check_daemon_build_launcher_passes_fail_on_stale()
-    {
-        using var fixture = CleanupCheckout("check-daemon-build.ps1");
-        var entry = fixture.PathOf("scripts", "check-daemon-build.ps1");
-        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "check-daemon-build" };
-        var advisory = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
-        advisory.ExitCode.ShouldBe(0, advisory.Stderr);
-        advisory.Arguments.ShouldNotBeNull(advisory.Stdout).ShouldBeEmpty();
-        var strict = await NightlyRunHops.LauncherEcho(entry, ["-FailOnStale"], fixture.Root, environment: echo);
-        strict.Arguments.ShouldBe(["--fail-on-stale"]);
-        DaemonBuildCheckOptions.Parse(strict.Arguments!, "root").FailOnStale.ShouldBeTrue();
-        AssertThinLauncher("check-daemon-build.ps1", "param([switch]$FailOnStale)");
-    }
-
     // ---- unit 32: scripts/test-client.ps1, which scripts/c590-remote.sh (the CARD-0590 nested-lane client case) runs by path ----
 
     [Test]
@@ -1028,9 +1013,10 @@ public sealed class AntiphonCliLauncherTests
         var options = RunnerRestartOptions.Parse(hard.Arguments!, "root");
         (options.Hard, options.KillSessions, options.TimeoutSec).ShouldBe((true, true, 60));
 
+        // Unit 37: restart.ps1 is the restart-dev-stack launcher; --restart-runner runs the runner restart in that process.
         var restart = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "restart.ps1"));
-        restart.ShouldContain("& \"$PSScriptRoot\\restart-session-runner.ps1\"");
-        restart.ShouldNotContain("scripts\\restart-session-runner.ps1");
+        restart.ShouldContain("exit (Invoke-AntiphonCli -Command 'restart-dev-stack' -Arguments $arguments)");
+        restart.ShouldNotContain("restart-session-runner.ps1");
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "restart-session-runner.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();
     }
@@ -1038,8 +1024,8 @@ public sealed class AntiphonCliLauncherTests
     // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
     // (scripts/cutover-postgres-server2.ps1 and scripts/deploy-local.ps1 start them by path), scripts/watchdog-apphost.ps1,
     // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks the install-autostart command
-    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1, restart.ps1 and
-    // bootstrap-check.ps1 run it by path) ----
+    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1 and bootstrap-check.ps1
+    // run it by path) ----
 
     private static Dictionary<string, string> Echo(string command, string? exit = null)
     {
@@ -1142,6 +1128,74 @@ public sealed class AntiphonCliLauncherTests
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "start-apphost.ps1")).ShouldBeFalse();
     }
 
+    // ---- unit 37: the repository root's dev stack launchers (the runbooks' .\dev-aspire.ps1, .\dev-start.ps1, .\dev-stop.ps1,
+    // .\dev-fresh.ps1, .\dev-backup.ps1, .\dev-restore.ps1, .\dev-upgrade.ps1, .\restart.ps1, .\restart-server.ps1 and
+    // .\stop-server.ps1) ----
+
+    private static readonly (string Script, string Command, string[] Parameters, string[] Arguments)[] DevLaunchers =
+    [
+        ("dev-aspire.ps1", "dev-aspire", [], []),
+        ("dev-aspire.ps1", "dev-aspire", ["-NoBuild", "-NoBrowser", "-AllowWorktree"], ["--no-build", "--no-browser", "--allow-worktree"]),
+        ("dev-start.ps1", "dev-start", ["-NoClient", "-NoBrowser", "-ServerOnly"], ["--no-client", "--no-browser", "--server-only"]),
+        ("dev-stop.ps1", "dev-stop", ["-IncludePostgres"], ["--include-postgres"]),
+        ("dev-fresh.ps1", "dev-fresh", ["-Yes"], ["--yes"]),
+        ("dev-backup.ps1", "dev-backup", [], []),
+        ("dev-backup.ps1", "dev-backup", ["-BackupDir", @"C:\fixture root\backups", "-Retain", "3"], ["--backup-dir", @"C:\fixture root\backups", "--retain", "3"]),
+        ("dev-restore.ps1", "dev-restore", ["-BackupFile", "antiphon-1.sql.zip", "-Yes"], ["--backup-file", "antiphon-1.sql.zip", "--yes"]),
+        ("dev-upgrade.ps1", "dev-upgrade", ["-NoBrowser"], ["--no-browser"]),
+        ("restart.ps1", "restart-dev-stack", [], []),
+        ("restart.ps1", "restart-dev-stack", ["-Endpoint", "https://localhost:9", "-StopPortOwners", "-RestartRunner", "-SkipVerify"],
+            ["--endpoint", "https://localhost:9", "--stop-port-owners", "--restart-runner", "--skip-verify"]),
+        ("restart-server.ps1", "restart-server", ["-StopPortOwners"], ["--stop-port-owners"]),
+        ("stop-server.ps1", "stop-server", ["-Endpoint", "https://localhost:9"], ["--endpoint", "https://localhost:9"]),
+    ];
+
+    [Test]
+    public async Task Root_dev_stack_launchers_pass_only_the_parameters_given_and_return_the_exit()
+    {
+        using var fixture = Checkout();
+        foreach (var script in DevLaunchers.Select(row => row.Script).Distinct())
+            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, script), fixture.PathOf(script));
+        foreach (var (script, command, parameters, arguments) in DevLaunchers)
+        {
+            var run = await NightlyRunHops.LauncherEcho(fixture.PathOf(script), parameters, fixture.Root, environment: Echo(command, "1"));
+            run.ExitCode.ShouldBe(1, script + ": the command's exit is the launcher's: " + run.Stderr);
+            run.Arguments.ShouldNotBeNull(script + ": " + run.Stdout + run.Stderr).ShouldBe(arguments, script + " " + string.Join(" ", parameters));
+        }
+        // The flags the launchers pass are the commands' own.
+        var aspire = DevAspireOptions.Parse(["--no-build", "--no-browser", "--allow-worktree"], "root");
+        (aspire.NoBuild, aspire.NoBrowser, aspire.AllowWorktree).ShouldBe((true, true, true));
+        DevBackupOptions.Parse(["--backup-dir", "b", "--retain", "3"], "root").Retain.ShouldBe(3);
+        DevRestartOptions.Parse(["--endpoint", "e", "--stop-port-owners", "--restart-runner", "--skip-verify"], "root").RestartRunner.ShouldBeTrue();
+        foreach (var script in DevLaunchers.Select(row => row.Script).Distinct()) AssertRootLauncher(script);
+        foreach (var gone in new[] { "restart-client.ps1", "assert-dev-ports-clear.ps1", Path.Combine("scripts", "check-daemon-build.ps1"),
+                     Path.Combine("scripts", "lib", "dev-postgres-compose.ps1"), Path.Combine("scripts", "lib", "live-startup-timing.ps1"), Path.Combine("scripts", "test-live-startup-timing.ps1") })
+            File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, gone)).ShouldBeFalse(gone);
+    }
+
+    [Test]
+    public async Task Root_dev_stack_launcher_that_cannot_start_the_cli_exits_9()
+    {
+        using var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "dev-aspire.ps1"), fixture.PathOf("dev-aspire.ps1"));
+        var run = await NightlyRunHops.LauncherEcho(fixture.PathOf("dev-aspire.ps1"), ["-NoBuild"], fixture.Root,
+            environment: new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        run.ExitCode.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+    }
+
+    // A root launcher: 5.1, the one dot-source of the CLI launcher, no loaded core, ASCII.
+    private static void AssertRootLauncher(string entry)
+    {
+        var path = Path.Combine(DelegateScriptRunner.RepoRoot, entry);
+        var text = File.ReadAllText(path).Replace("\r\n", "\n");
+        text.ShouldStartWith("#requires -Version 5.1", customMessage: entry);
+        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray()
+            .ShouldBe([". (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')"], entry);
+        text.ShouldNotContain("[Antiphon.", customMessage: entry);
+        File.ReadAllBytes(path).All(b => b < 128).ShouldBeTrue(entry + " is ASCII");
+    }
+
     // The 5.1 and pwsh parse of the kept launchers, the root restart entries and restart-server.ps1 (it was the deleted
     // RunnerRestartScriptCompatibilityTests.Touched_scripts_parse_as_ascii_on_both_shells): -Command parses, nothing runs.
     [Test]
@@ -1151,9 +1205,10 @@ public sealed class AntiphonCliLauncherTests
     {
         if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
-        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/lib/windows-phone-home-env.ps1",
+        string[] files = ["scripts/run-daemon.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/lib/windows-phone-home-env.ps1",
             "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1", "scripts/restart-apphost.ps1", "scripts/set-apphost-maintenance.ps1",
-            "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1", "scripts/apphost-common.ps1", "verify-dev-stack.ps1"];
+            "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1", "scripts/apphost-common.ps1", "verify-dev-stack.ps1",
+            "dev-aspire.ps1", "dev-start.ps1", "dev-stop.ps1", "dev-fresh.ps1", "dev-backup.ps1", "dev-restore.ps1", "dev-upgrade.ps1", "stop-server.ps1"];
         foreach (var file in files)
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).All(b => b < 128).ShouldBeTrue(file + " is ASCII");
         var list = string.Join(",", files.Select(file => "'" + Path.Combine(DelegateScriptRunner.RepoRoot, file).Replace("'", "''") + "'"));

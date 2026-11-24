@@ -1,7 +1,7 @@
 // CARD-0604: warn when an adopted daemon was built before a source change in its project closure (unit 30 of
-// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). It replaced the body of scripts/check-daemon-build.ps1,
-// which stays as a thin launcher because dev-aspire.ps1 runs it by path (restart-apphost runs this class in process since unit 31).
-// The CLI runs it as
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). It replaced the body of scripts/check-daemon-build.ps1, whose
+// launcher was deleted when unit 37 ported dev-aspire.ps1 (restart-apphost and dev-aspire run this class in process). The CLI
+// runs it as
 //
 //   antiphon-scripts check-daemon-build [--fail-on-stale]
 //
@@ -27,7 +27,7 @@ namespace Antiphon.Nightly
     /// <summary>One daemon the check reads: its name, port, project closure (repository-relative) and the fix it names.</summary>
     public sealed record DaemonBuildTarget(string Name, int Port, IReadOnlyList<string> Paths, string Fix);
 
-    /// <summary>The check-daemon-build command's options (check-daemon-build.ps1 -FailOnStale).</summary>
+    /// <summary>The check-daemon-build command's options (--fail-on-stale).</summary>
     public sealed class DaemonBuildCheckOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -47,7 +47,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The daemon build staleness check (check-daemon-build.ps1).</summary>
+    /// <summary>The daemon build staleness check (the check-daemon-build command).</summary>
     public static class DaemonBuildCheck
     {
         /// <summary>Each /capabilities read's deadline.</summary>

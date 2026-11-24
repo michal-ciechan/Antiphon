@@ -1,244 +1,26 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    Start Antiphon via the Aspire AppHost (dashboard mode).
-    - Postgres: Aspire-managed container (persistent named volume)
-    - Server + Client: live and die with the AppHost; logs under <repo>/logs/
-    - Dashboard: URL parsed from log (Aspire assigns it; opens automatically)
-    - OTLP:      http://localhost:17206  (fixed)
-    - Control API: http://localhost:17207/control/{name}/start|stop|restart
-    - Script exits after dashboard is ready (AppHost continues in background).
-.PARAMETER NoBuild    Skip dotnet restore/build before starting.
-.PARAMETER NoBrowser  Do not open the dashboard in a browser (used by the logon auto-start).
-.PARAMETER AllowWorktree  Intentionally allow a linked worktree to control the shared local stack.
+    Thin launcher for `antiphon-scripts dev-aspire` (scripts/lib/Antiphon.Nightly/DevAspire.cs): start the desktop Aspire
+    AppHost (dashboard mode) in the background. It refuses a linked worktree (CARD-0273) and a phone-home configuration,
+    holds logs/apphost.launch.lock, checks Docker, brings up the dev compose services, restores and npm-installs (not with
+    -NoBuild), then builds the AppHost stamped with HEAD and runs it detached (output in logs/apphost.log), waits up to 90 s
+    for the dashboard (logs/apphost-dashboard-url.txt) and opens it (not with -NoBrowser). It does not stop a running
+    AppHost: restart one with `scripts\antiphon.cmd restart-apphost`.
+
+    Unit 37 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept so the runbooks' `.\dev-aspire.ps1` still
+    works. Agents run `scripts/antiphon dev-aspire`; Windows runbooks `scripts\antiphon.cmd dev-aspire`.
+
+    -NoBuild, -NoBrowser and -AllowWorktree are --no-build, --no-browser and --allow-worktree. The command's exit code
+    is returned (0 launched, 1 failed, 3 refused); 9 when the CLI cannot be built or started (one stderr line).
+    ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree)
 
-$ErrorActionPreference = 'Stop'
-$root         = $PSScriptRoot
-. (Join-Path $root 'scripts\apphost-common.ps1')
-. (Join-Path $root 'scripts\lib\live-startup-timing.ps1')
-. (Join-Path $root 'scripts\lib\dev-postgres-compose.ps1')
-
-$worktree = Get-AppHostWorktreeClassification -SourceRoot $root
-if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-    exit 3
-}
-if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-}
-
-. (Join-Path $root 'scripts\lib\windows-phone-home-env.ps1')
-$phoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'
-$phoneHomeRefusal = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent (Test-Path -LiteralPath $phoneHomeConfigPath) -ConfigPath $phoneHomeConfigPath
-if ($null -ne $phoneHomeRefusal) {
-    Write-Host $phoneHomeRefusal
-    exit 3
-}
-
-$appHostDir   = "$root\Antiphon.AppHost"
-$settingsFile = "$root\server\appsettings.json"
-
-# CARD-0011: tell the watchdog a launch is in flight so a 2-minute fire does not
-# call restart-apphost.ps1 over the top of us. Removed in finally even on Write-Error
-# ($ErrorActionPreference Stop) -- a trailing Remove-Item would be skipped.
-$launchLock = Join-Path $root 'logs\apphost.launch.lock'
-New-Item -ItemType Directory -Force (Split-Path $launchLock) | Out-Null
-('{0} {1}' -f $PID, [datetime]::UtcNow.ToString('o')) | Set-Content -LiteralPath $launchLock
-try {
-
-if (-not (Test-Path $settingsFile)) {
-    Write-Error "server\appsettings.json not found. Copy appsettings.json.example first."
-}
-
-$dockerTiming = Start-LiveStartupPhase -Operation docker-info
-try { docker info 2>&1 | Out-Null }
-finally { Stop-LiveStartupPhase -Phase $dockerTiming -Succeeded ($LASTEXITCODE -eq 0) }
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Docker Desktop is not running. Start it, wait for the tray icon, then re-run."
-}
-
-# -- Pre-flight: test Docker network creation --
-Write-Host "`n> Testing Docker network health..." -ForegroundColor Cyan
-$dockerNetworkHealthy = $false
-$networkTiming = Start-LiveStartupPhase -Operation docker-network
-try {
-$testNetName = "aspire-preflight-$(Get-Random)"
-$netJob = Start-Job { param($n) & docker network create $n 2>&1; $LASTEXITCODE } -ArgumentList $testNetName
-$netCompleted = $netJob | Wait-Job -Timeout 8
-if ($netCompleted -and $netCompleted.State -eq 'Completed') {
-    $dockerNetworkHealthy = $true
-    $rmJob = Start-Job { param($n) & docker network rm $n 2>&1 } -ArgumentList $testNetName
-    $rmJob | Wait-Job -Timeout 5 | Out-Null; Remove-Job $rmJob -Force
-    Remove-Job $netJob -Force
-    Write-Host "  Docker networking: OK" -ForegroundColor DarkGray
-} else {
-    Remove-Job $netJob -Force -ErrorAction SilentlyContinue
-    Write-Host "" -ForegroundColor Yellow
-    Write-Host "  WARNING: Docker network creation is unresponsive (>8s)." -ForegroundColor Yellow
-    Write-Host "  Postgres will NOT start. Restart Docker Desktop, then re-run this script." -ForegroundColor Red
-    Write-Host ""
-}
-
-} finally { Stop-LiveStartupPhase -Phase $networkTiming -Succeeded $dockerNetworkHealthy }
-
-# -- Pre-flight: ensure the always-on Postgres container is up --
-# Postgres is an EXTERNAL standalone container (docker-compose.dev.yml, restart:
-# unless-stopped) - not Aspire-managed. The AppHost references it via
-# AddConnectionString. Bring it up here in case it isn't already (idempotent).
-# Runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 (database moved to server2) brings up
-# the other compose services only, so a restart never revives the desktop copy.
-$devPostgresSkipped = Test-DevPostgresSkipped (Get-DevPostgresSkipValue)
-if ($devPostgresSkipped) {
-    Write-Host "`n> Ensuring dev compose services except Postgres are up..." -ForegroundColor Cyan
-} else {
-    Write-Host "`n> Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
-}
-$containerTiming = Start-LiveStartupPhase -Operation container-start
-$composeUp = $null
-try { $composeUp = Invoke-DevComposeUp -ComposeFile "$root\docker-compose.dev.yml" }
-finally { Stop-LiveStartupPhase -Phase $containerTiming -Succeeded ($null -ne $composeUp -and $composeUp.Exit -eq 0) }
-if ($devPostgresSkipped) { Write-Host "  $($composeUp.Message)" -ForegroundColor Yellow }
-if ($composeUp.Exit -ne 0) {
-    Write-Host "  WARNING: could not start the dev compose services via docker compose." -ForegroundColor Yellow
-} elseif (-not $devPostgresSkipped) {
-    Write-Host "  Postgres container ensured" -ForegroundColor DarkGray
-}
-
-# Advisory only: AppHost adoption preserves long-lived daemons, so surface a relevant source-build
-# difference without disrupting their live pty-host pipes.
-& "$root\scripts\check-daemon-build.ps1"
-
-# -- Pre-flight: clean up old Aspire DCP temp state dirs --
-$aspireDirs = Get-ChildItem 'C:\Users\lndco\AppData\Local\Temp' -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like 'aspire.*' -and $_.LastWriteTime -lt (Get-Date).AddHours(-2) }
-if ($aspireDirs) {
-    foreach ($d in $aspireDirs) {
-        Remove-Item $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    Write-Host "  Cleaned $($aspireDirs.Count) old DCP temp dir(s)" -ForegroundColor DarkGray
-}
-
-foreach ($d in @("$root\logs", "$root\server\logs", "$root\server\logs\sessions", "$root\backups")) {
-    if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }
-}
-
-$worktreeDir = 'C:\Antiphon\worktrees'
-if (-not (Test-Path $worktreeDir)) { New-Item -ItemType Directory -Force $worktreeDir | Out-Null }
-
-if (-not $NoBuild) {
-    Write-Host "`n> Restoring AppHost dependencies..." -ForegroundColor Cyan
-    $restoreTiming = Start-LiveStartupPhase -Operation restore
-    try { & "$root\scripts\build-slot.ps1" -Label apphost-restore -- dotnet restore $appHostDir }
-    finally { Stop-LiveStartupPhase -Phase $restoreTiming -Succeeded ($LASTEXITCODE -eq 0) }
-    if ($LASTEXITCODE -ne 0) { Write-Error "dotnet restore failed." }
-
-    Write-Host "`n> Installing client npm packages..." -ForegroundColor Cyan
-    Push-Location "$root\client"
-    $dependencyTiming = Start-LiveStartupPhase -Operation dependencies
-    try { npm install }
-    finally { Stop-LiveStartupPhase -Phase $dependencyTiming -Succeeded ($LASTEXITCODE -eq 0) }
-    if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
-    Pop-Location
-}
-
-$logFile = "$root\logs\apphost.log"
-$pidFile = "$root\logs\apphost.pid"
-
-Write-Host "`n> Starting Aspire AppHost (background)..." -ForegroundColor Cyan
-Write-Host "  OTLP    : http://localhost:17206" -ForegroundColor DarkGray
-Write-Host "  Log     : $logFile" -ForegroundColor DarkGray
-Write-Host ""
-
-# Truncate old log so we don't match stale lines
-'' | Set-Content $logFile
-
-# Only a deployed build stamps the SHA (Directory.Build.props keeps "unknown" for every other
-# build). restart-apphost.ps1 compares /api/version to this HEAD and exits 5 on "unknown".
-$sourceRevision = ((& git -C $root rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
-if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { Write-Error "git rev-parse HEAD failed in $root; refusing an unstamped AppHost build." }
-
-# Launch AppHost detached in a hidden window so this script can exit cleanly
-$encodedCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-    "Set-Location '$appHostDir'; . '$root\scripts\lib\live-startup-timing.ps1'; `$buildTiming = Start-LiveStartupPhase -Operation build; try { & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build `"-p:SourceRevisionId=$sourceRevision`" 2>&1 | Tee-Object -FilePath '$logFile' } finally { Stop-LiveStartupPhase -Phase `$buildTiming -Succeeded (`$LASTEXITCODE -eq 0) 6>&1 | Tee-Object -FilePath '$logFile' -Append }; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
-))
-$appHostProc = Start-Process pwsh -ArgumentList @(
-    '-NonInteractive', '-NoLogo', '-EncodedCommand', $encodedCmd
-) -WindowStyle Hidden -PassThru
-
-$appHostProc.Id | Set-Content $pidFile
-Write-Host "  AppHost PID : $($appHostProc.Id)" -ForegroundColor DarkGray
-Write-Host "  Waiting for dashboard URL in log (up to 90s)..." -ForegroundColor DarkGray
-Write-Host ""
-
-# Parse dashboard URL from log - Aspire prints:
-#   "Login to the dashboard at http://..." or "Now listening on: http://..."
-# The dashboard process writes its URL back into the AppHost log.
-$timeout = 90; $elapsed = 0; $dashboardUrl = $null
-while ($elapsed -lt $timeout) {
-    Start-Sleep 3; $elapsed += 3
-
-    if (Test-Path $logFile) {
-        $lines = Get-Content $logFile -ErrorAction SilentlyContinue
-        # Look for dashboard login URL line
-        $match = $lines | Select-String 'Login to the dashboard at (https?://\S+)' | Select-Object -First 1
-        if ($match) {
-            $dashboardUrl = $match.Matches[0].Groups[1].Value -replace '/login.*',''
-            break
-        }
-        # Fallback: find the dashboard process and get its HTTP port
-        $dash = Get-Process 'Aspire.Dashboard' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($dash) {
-            $otlpPort = 17206
-            $uiPort = Get-NetTCPConnection -State Listen -OwningProcess $dash.Id -ErrorAction SilentlyContinue |
-                Where-Object { $_.LocalPort -ne $otlpPort } |
-                Select-Object -ExpandProperty LocalPort -First 1
-            if ($uiPort) {
-                $dashboardUrl = "http://localhost:$uiPort"
-                break
-            }
-        }
-    }
-    Write-Host "  ...($elapsed s)" -ForegroundColor DarkGray
-}
-
-if ($dashboardUrl) {
-    Write-Host ""
-    Write-Host "  Dashboard : $dashboardUrl" -ForegroundColor Green
-    $dashboardUrl | Set-Content "$root\logs\apphost-dashboard-url.txt"
-    if (-not $NoBrowser) { Start-Process $dashboardUrl }
-} else {
-    Write-Host ""
-    Write-Host "  Dashboard URL not found after ${timeout}s." -ForegroundColor Yellow
-    Write-Host "  Check log: Get-Content '$logFile' -Tail 30" -ForegroundColor DarkGray
-}
-
-# -- Post-launch: verify Postgres is up --
-Write-Host "`n> Checking Postgres..." -ForegroundColor Cyan
-$pgDeadline = (Get-Date).AddSeconds(45)
-$pgOK = $false
-if ($devPostgresSkipped) {
-    # The desktop container stays stopped on purpose; the AppHost secret names the server2 database.
-    $pgDeadline = Get-Date
-    $pgOK = $true
-    Write-Host "  Postgres: desktop container not checked (ANTIPHON_SKIP_DEV_POSTGRES=1)" -ForegroundColor DarkGray
-}
-while ((Get-Date) -lt $pgDeadline) {
-    Start-Sleep 5
-    $runningPg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
-    if ($runningPg) { $pgOK = $true; Write-Host "  Postgres: Up" -ForegroundColor Green; break }
-}
-if (-not $pgOK) {
-    Write-Host ""
-    Write-Host "  WARNING: Postgres ('antiphon-postgres') is not up after 45s." -ForegroundColor Yellow
-    $state = docker ps -a --filter name=antiphon-postgres --format "{{.Names}}`t{{.Status}}" 2>&1
-    if ($state) { Write-Host "  Container state: $state" -ForegroundColor DarkGray }
-    Write-Host "  Fix: docker compose -f docker-compose.dev.yml up -d   (restart Docker Desktop if it hangs)." -ForegroundColor Yellow
-}
-
-Write-Host ""
-Write-Host "AppHost running in background (PID $($appHostProc.Id))." -ForegroundColor Green
-Start-Sleep 3
-} finally {
-    Remove-Item -LiteralPath $launchLock -ErrorAction SilentlyContinue
-}
+$ErrorActionPreference = 'Continue'
+. (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')
+$arguments = @()
+if ($NoBuild) { $arguments += '--no-build' }
+if ($NoBrowser) { $arguments += '--no-browser' }
+if ($AllowWorktree) { $arguments += '--allow-worktree' }
+exit (Invoke-AntiphonCli -Command 'dev-aspire' -Arguments $arguments)

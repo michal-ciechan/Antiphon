@@ -5,7 +5,8 @@
 // Antiphon.Nightly's (AppHostRestart, AppHostWatchdog, AppHostMaintenance, AppHostWatchdogStateObserver, AppHostAutostart,
 // DevStackVerify) on the production host and AppHostOs; this file binds them. The checkout is the one this executable was
 // built in, else the current directory; the graceful stop's operator token file is ANTIPHON_OPERATOR_TOKEN_FILE, else the
-// server's default path (the token is never printed). ASCII only.
+// server's default path (the token is never printed). autostart-apphost runs dev-aspire in its process (DevStackCommands,
+// unit 37). ASCII only.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -77,7 +78,7 @@ namespace Antiphon.Scripts
             var options = AppHostAutostartOptions.Parse(args.Skip(1).ToArray(), Checkout);
             if (!WindowsOnly(AutostartAppHost)) return 1;
             var (host, platform) = Production(options.RepoRoot);
-            return Guarded(AutostartAppHost, () => AppHostAutostart.Run(options, host, platform));
+            return Guarded(AutostartAppHost, () => AppHostAutostart.Run(options, host, platform, DevStackCommands.DevAspireOn(platform)));
         }
 
         // Exit 0 verified (or the port list printed), 1 a core check failed or full Aspire mode off Windows; usage 2.

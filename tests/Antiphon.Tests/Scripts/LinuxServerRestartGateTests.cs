@@ -28,6 +28,8 @@ public sealed class LinuxServerRestartGateTests
         "scripts/lib/Antiphon.Nightly/AppHostRestart.cs",
         "scripts/lib/Antiphon.Nightly/AppHostCommon.cs",
         "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
+        // Unit 37: dev-aspire is C# (dev-aspire.ps1 is its launcher).
+        "scripts/lib/Antiphon.Nightly/DevAspire.cs",
     ];
 
     [Test]

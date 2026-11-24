@@ -368,7 +368,9 @@ public sealed class AppHostRestartTests
         r.Text.ShouldContain("NOTE: source checkout has tracked edits");
         world.Trace.ShouldNotContain("stop-id 7204");
         world.Trace.ShouldContain("check-daemon-build");
-        world.Trace.ShouldContain(row => row.StartsWith("launch pwsh -NoLogo -File " + Path.Combine(world.Root, "dev-aspire.ps1"), StringComparison.Ordinal));
+        // Unit 37: the relaunch is the dev-aspire command, this CLI's run copy started detached (no dev-aspire.ps1, no pwsh).
+        world.Trace.ShouldContain("launch dev-aspire");
+        world.CliStarts.ShouldHaveSingleItem().ShouldBe(["dev-aspire"]);
     }
 
     [Test]
@@ -379,8 +381,8 @@ public sealed class AppHostRestartTests
         File.WriteAllText(world.LogPath("apphost.log.1"), "older launch\n");
         var r = Run(world, "--no-build", "--allow-worktree", "--timeout-sec", "8");
         r.Exit.ShouldBe(0, r.Text);
-        r.Text.ShouldContain("  launching dev-aspire.ps1 -NoBuild...");
-        world.Trace.ShouldContain(row => row.EndsWith("dev-aspire.ps1 -NoBuild -AllowWorktree", StringComparison.Ordinal));
+        r.Text.ShouldContain("  launching dev-aspire --no-build...");
+        world.CliStarts.ShouldHaveSingleItem().ShouldBe(["dev-aspire", "--no-build", "--allow-worktree"]);
         File.ReadAllText(world.LogPath("apphost.log.1")).ShouldBe("previous launch\n");
         File.ReadAllText(world.LogPath("apphost.log.2")).ShouldBe("older launch\n");
     }
@@ -420,7 +422,8 @@ public sealed class AppHostRestartTests
         var path = world.WriteLock("apphost.restart.lock", 777, stamp);
         File.WriteAllText(world.LogPath("apphost-watchdog.state"), "{\"deadLaunch\":{\"Identity\":\"777 " + stamp.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
             + "\",\"Count\":2,\"FireId\":\"f\",\"ObservedUtc\":\"" + world.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture) + "\"}}");
-        world.CensusRows.Add(new AppHostProcessRow(31337, "pwsh.exe", "pwsh -NoLogo -File " + Path.Combine(world.Root, "dev-aspire.ps1"), null));
+        // A dev-aspire launch from this checkout's run copy (dotnet exec bin-launcher/run-<hash>/Antiphon.Scripts.dll dev-aspire).
+        world.CensusRows.Add(new AppHostProcessRow(31337, "dotnet.exe", "dotnet exec " + Path.Combine(world.Root, "bin-launcher", "run-0123", "Antiphon.Scripts.dll") + " dev-aspire", null));
         var held = AppHostLocks.TakeRestart(world, world.Host(), path, world.Root, 15);
         held.Acquired.ShouldBeFalse();
         held.Release(false);

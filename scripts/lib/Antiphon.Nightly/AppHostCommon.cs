@@ -1,10 +1,10 @@
 // CARD-0011, CARD-0075, CARD-0152, CARD-0273, CARD-0310, CARD-0543, CARD-0716, CARD-1527, CARD-1680, CARD-1806: the shared
 // pieces of the desktop AppHost commands (restart-apphost, watchdog-apphost and verify-dev-stack; unit 31 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). They replaced scripts/apphost-common.ps1's lock, probe, log
-// and launch functions (the file keeps only the worktree guard that dev-aspire.ps1 and deploy-local.ps1 still dot-source).
+// and launch functions (the file keeps only the worktree guard that deploy-local.ps1 still dot-sources).
 //
-// LOCK FORMAT (CARD-0011, extended by CARD-0075): one line "<pid> <utc-iso-8601-roundtrip>", which is what dev-aspire.ps1
-// writes into logs/apphost.launch.lock. Two locks use it: logs/apphost.launch.lock (dev-aspire.ps1 while it launches) and
+// LOCK FORMAT (CARD-0011, extended by CARD-0075): one line "<pid> <utc-iso-8601-roundtrip>", which is what dev-aspire
+// writes into logs/apphost.launch.lock. Two locks use it: logs/apphost.launch.lock (dev-aspire while it launches) and
 // logs/apphost.restart.lock (restart-apphost while it tears the stack down and waits for health). A lock is ignored (stale)
 // when its stamp is older than LockMaxAgeMinutes (15, one number shared with the watchdog cooldown). A dead holder with a
 // stamp still inside that window is in flight: the writer exited and the child it spawned may still be launching
@@ -1045,8 +1045,8 @@ namespace Antiphon.Nightly
     }
 
     /// <summary>
-    /// scripts/lib/live-startup-timing.ps1's line for the phases the C# commands time (CARD-1564): "LIVE_TIMING " and one
-    /// compact JSON row with fixed labels only (no payload, no exception text).
+    /// The startup timing line of the phases the C# commands time (CARD-1564; it replaced scripts/lib/live-startup-timing.ps1,
+    /// unit 37): "LIVE_TIMING " and one compact JSON row with fixed labels only (no payload, no exception text).
     /// </summary>
     public sealed class LiveStartupPhase
     {

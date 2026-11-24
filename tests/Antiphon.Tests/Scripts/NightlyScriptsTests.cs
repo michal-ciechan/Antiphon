@@ -238,14 +238,15 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "Antiphon.Scripts", "TestSelectionCommand.cs"),
                      // Unit 30 of 2026-11-22-remaining-ps1-to-csharp.md: the runner restart (it runs the toolchain floor warnings
                      // in process; restart-session-runner.ps1 and session-runner-restart-health.ps1 are deleted), the daemon
-                     // supervisor and the build check, their commands and the two kept launchers.
+                     // supervisor and the build check, their commands and the kept launcher (check-daemon-build.ps1 went in unit 37).
                      Path.Combine("lib", "Antiphon.Nightly", "RunnerRestart.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "RunnerRestartOs.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "DaemonSupervisor.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "DaemonBuildCheck.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "RunnerDaemonCommands.cs"),
                      "run-daemon.ps1",
-                     "check-daemon-build.ps1",
+                     // Unit 37: the dev stack (the server restart runs the floor warnings in process) and its kept launcher.
+                     Path.Combine("lib", "Antiphon.Nightly", "DevRestart.cs"),
                      Path.Combine("..", "restart-server.ps1"),
                  })
         {

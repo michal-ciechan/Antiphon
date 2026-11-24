@@ -24,7 +24,7 @@ Dashboard is pinned at **http://localhost:17205**.
 | 17206   | OTLP telemetry           |
 | 17207   | Control API              |
 
-`dev-aspire.ps1` also writes the URL to `logs/apphost-dashboard-url.txt`. Log
+`dev-aspire` also writes the URL to `logs/apphost-dashboard-url.txt`. Log
 file: `logs/apphost.log`.
 
 ---
@@ -85,16 +85,13 @@ C:\src\antiphon\scripts\antiphon.cmd restart-apphost
 First launch only, when nothing is listening:
 
 ```powershell
-Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
+C:\src\antiphon\scripts\antiphon.cmd dev-aspire
 ```
 
-**Do NOT use `wt new-tab`** — fails with `0x80070002` when title contains a space.
-**Do NOT use `-NoNewWindow`** — kills AppHost when the tool session ends.
-
-The script will:
-1. Restore + npm install (skipped with `-NoBuild` if already fresh)
-2. Spawn the AppHost in a hidden background process (`logs/apphost.pid`)
-3. Poll port 17205 up to 60s, then open the browser and exit
+(`.\dev-aspire.ps1` at the repo root is its launcher.) The command will:
+1. Restore + npm install (skipped with `--no-build` if already fresh)
+2. Start the AppHost wrapper detached (`run-apphost`: the stamped build, then the AppHost; `logs/apphost.pid`)
+3. Wait up to 90 s for the dashboard URL, open the browser (not with `--no-browser`) and exit
 
 ---
 
@@ -173,9 +170,9 @@ if ($j.State -eq 'Running') { "HNS broken — network create is hanging" }
 Remove-Job $j -Force; docker network rm test-hns-check 2>&1 | Out-Null
 ```
 
-**Fix**: Restart Docker Desktop. After it restarts, re-run `dev-aspire.ps1`.
+**Fix**: Restart Docker Desktop. After it restarts, re-run `dev-aspire`.
 
-**Note**: `dev-aspire.ps1` now auto-detects this and warns you. If you see the warning, restart Docker Desktop before retrying.
+**Note**: `dev-aspire` auto-detects this and warns you. If you see the warning, restart Docker Desktop before retrying.
 
 ### Stale supervisor processes (session-runner rapid-restart loop)
 ```powershell
@@ -197,13 +194,11 @@ Stop-Process -Id $proc -Force
 
 ### AppHost window closed before dashboard was ready / no log output
 Check the log: `Get-Content C:\src\antiphon\logs\apphost.log -Tail 40`
-If empty, the hidden pwsh wrapper failed to start. Re-run with a visible window to see the error:
-```powershell
-Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
-```
+If empty, the detached `run-apphost` wrapper failed to start: read `logs\apphost-run.out` and `logs\apphost-run.err`,
+then re-run `C:\src\antiphon\scripts\antiphon.cmd dev-aspire` and read its output.
 
 ### client/node_modules missing (npm error on build)
 ```powershell
 Push-Location C:\src\antiphon\client; npm install; Pop-Location
-# Then re-run dev-aspire.ps1
+# Then re-run scripts\antiphon.cmd dev-aspire
 ```

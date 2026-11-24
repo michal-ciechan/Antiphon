@@ -11,8 +11,8 @@ namespace Antiphon.Tests.Scripts;
 /// local AppHost by default. The rows were scripts/test-apphost-main-worktree-guard.ps1's. Real git on a one-commit fixture
 /// repository and a linked worktree of it (the driver linked a worktree of this checkout, so it needed core.longpaths and the
 /// path arithmetic LongPathsCheckoutScriptTests checked; a fixture repository needs neither, so those LP rows are dropped).
-/// The restart runs in process on AppHostWorld with real git; dev-aspire.ps1 and deploy-local.ps1, which still run the
-/// PowerShell guard (scripts/apphost-common.ps1), are checked by their source: no test launches a .ps1.
+/// The restart and dev-aspire (unit 37) run in process on AppHostWorld with real git; deploy-local.ps1, which still runs the
+/// PowerShell guard (scripts/apphost-common.ps1), is checked by its source: no test launches a .ps1.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
@@ -117,19 +117,31 @@ public sealed class AppHostWorktreeGuardTests
         warning.ShouldContain("--allow-worktree explicitly permits this worktree to affect the shared stack.");
     }
 
-    // dev-aspire.ps1 (W9) and deploy-local.ps1 (W8, owner-gated) keep the PowerShell guard: they dot-source
-    // scripts/apphost-common.ps1 and refuse with exit 3 before any launch lock, Docker call or restart; its messages are the C#
-    // guard's lines with the scripts' -AllowWorktree spelling.
+    [Test]
+    public void Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker()
+    {
+        using var repos = new Repos();
+        using var world = new AppHostWorld();
+        var host = RealGit(world);
+        var exit = DevAspire.Run(new DevAspireOptions { RepoRoot = repos.Linked, WorktreeRoot = world.PathOf("worktrees") }, host, world, world);
+        var text = world.Out.ToString();
+        exit.ShouldBe(3, text);
+        text.ShouldContain("REFUSED: this AppHost command is rooted in a linked Git worktree.");
+        text.ShouldContain("re-run with --allow-worktree.");
+        File.Exists(Path.Combine(repos.Linked, "logs", "apphost.launch.lock")).ShouldBeFalse();
+        world.Trace.ShouldNotContain(row => row.StartsWith("run docker", StringComparison.Ordinal));
+        (world.Count("launch"), world.Count("slot"), world.Count("tool")).ShouldBe((0, 0, 0));
+        Directory.Exists(world.PathOf("worktrees")).ShouldBeFalse();
+    }
+
+    // deploy-local.ps1 (W8, owner-gated) keeps the PowerShell guard: it dot-sources scripts/apphost-common.ps1 and refuses before
+    // the restart; the guard's messages are the C# guard's lines with the script's -AllowWorktree spelling. (dev-aspire.ps1 is a
+    // launcher of the dev-aspire command since unit 37: Dev_aspire_from_a_linked_worktree_refuses_before_any_lock_or_docker.)
     [Test]
     public void The_powershell_entries_guard_before_their_first_side_effect_with_the_same_messages()
     {
         var root = DelegateScriptRunner.RepoRoot;
-        var dev = File.ReadAllText(Path.Combine(root, "dev-aspire.ps1"));
-        var guard = dev.IndexOf("Get-AppHostWorktreeClassification -SourceRoot $root", StringComparison.Ordinal);
-        guard.ShouldBeGreaterThan(dev.IndexOf(". (Join-Path $root 'scripts\\apphost-common.ps1')", StringComparison.Ordinal));
-        guard.ShouldBeLessThan(dev.IndexOf("apphost.launch.lock", StringComparison.Ordinal));
-        guard.ShouldBeLessThan(dev.IndexOf("docker info", StringComparison.Ordinal));
-        dev.IndexOf("exit 3", guard, StringComparison.Ordinal).ShouldBeLessThan(dev.IndexOf("apphost.launch.lock", StringComparison.Ordinal));
+        File.ReadAllText(Path.Combine(root, "dev-aspire.ps1")).ShouldNotContain("apphost-common.ps1");
 
         var deploy = File.ReadAllText(Path.Combine(root, "scripts", "deploy-local.ps1"));
         var deployGuard = deploy.IndexOf("Get-AppHostWorktreeClassification -SourceRoot $repoRoot", StringComparison.Ordinal);

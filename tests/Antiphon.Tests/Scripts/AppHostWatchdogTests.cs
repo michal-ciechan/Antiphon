@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Scripts;
 /// Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: watchdog-apphost (AppHostWatchdog) and
 /// autostart-apphost (AppHostAutostart, DevCompose) in process on AppHostWorld. scripts/watchdog-apphost.ps1 and
 /// scripts/autostart-apphost.ps1 had no driver (the watchdog's -RestartScript stub existed for one); these rows pin the fire's
-/// order (CARD-0075, CARD-0310, CARD-1527), the outage sinks and the logon start.
+/// order (CARD-0075, CARD-0310, CARD-1527), the outage sinks and the logon start (dev-aspire in its process since unit 37).
 /// </summary>
 [Category("Unit")]
 public sealed class AppHostWatchdogTests
@@ -289,9 +289,17 @@ public sealed class AppHostWatchdogTests
 
     // ---- the logon auto-start ----
 
-    private static (int Exit, string Text) Autostart(AppHostWorld world, Func<string, string?>? variables = null, params string[] arguments)
+    private static (int Exit, string Text) Autostart(AppHostWorld world, Func<string, string?>? variables = null, params string[] arguments) =>
+        Autostart(world, (options, host) =>
+        {
+            world.Record("dev-aspire" + (options.NoBrowser ? " --no-browser" : "") + (options.NoBuild ? " --no-build" : ""));
+            host.Out.WriteLine("dev-aspire output line");
+            return 0;
+        }, variables, arguments);
+
+    private static (int Exit, string Text) Autostart(AppHostWorld world, DevAspireRunner devAspire, Func<string, string?>? variables = null, params string[] arguments)
     {
-        var exit = AppHostAutostart.Run(AppHostAutostartOptions.Parse(arguments, world.Root), world.Host(variables), world);
+        var exit = AppHostAutostart.Run(AppHostAutostartOptions.Parse(arguments, world.Root), world.Host(variables), world, devAspire);
         return (exit, world.Out.ToString() + world.Error.ToString());
     }
 
@@ -329,9 +337,12 @@ public sealed class AppHostWatchdogTests
         r.Exit.ShouldBe(0, r.Text);
         r.Text.ShouldContain("Postgres container ensured.");
         r.Text.ShouldContain("Postgres status: Up 2 minutes (healthy)");
-        r.Text.ShouldContain("launching dev-aspire.ps1 -NoBrowser -NoBuild...");
-        world.Appended.ShouldHaveSingleItem().Arguments.ShouldBe(["-NonInteractive", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(world.Root, "dev-aspire.ps1"), "-NoBrowser", "-NoBuild"]);
-        world.Appended[0].Log.ShouldBe(world.LogPath("autostart-apphost.log"));
+        r.Text.ShouldContain("launching dev-aspire --no-browser --no-build...");
+        // Unit 37: dev-aspire runs in this process, its output in the log (not on the console), as the child's was.
+        world.Count("dev-aspire --no-browser --no-build").ShouldBe(1);
+        world.IndexOf("dev-aspire").ShouldBeGreaterThan(world.IndexOf("run docker compose"));
+        File.ReadAllText(world.LogPath("autostart-apphost.log")).ShouldContain("dev-aspire output line");
+        r.Text.ShouldNotContain("dev-aspire output line");
         r.Text.ShouldContain("OK - backend healthy on :17202, dashboard http://localhost:17205");
         world.Trace.ShouldContain("run docker compose -f " + Path.Combine(world.Root, "docker-compose.dev.yml") + " up -d");
     }

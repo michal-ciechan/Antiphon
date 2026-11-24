@@ -1,50 +1,25 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    Back up the Antiphon postgres database to <repo>/backups/.
-    Keeps the last 14 backups; older ones are pruned automatically.
-.PARAMETER BackupDir  Override backup directory (default: <repo>/backups/).
-.PARAMETER Retain     Number of backups to keep. Default: 14.
-.OUTPUTS  Path to the created .sql.zip file.
+    Thin launcher for `antiphon-scripts dev-backup` (scripts/lib/Antiphon.Nightly/DevStack.cs): a pg_dump of the antiphon
+    database zipped into <repo>/backups/antiphon-<yyyyMMdd-HHmmss>.sql.zip (or -BackupDir), keeping the newest 14 (-Retain).
+    The zip's path is the last line of output.
+
+    Unit 37 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept so the runbooks' `.\dev-backup.ps1` still
+    works. Agents run `scripts/antiphon dev-backup`; Windows runbooks `scripts\antiphon.cmd dev-backup`.
+
+    -BackupDir and -Retain are --backup-dir and --retain, passed when given. The command's exit code is returned (0
+    backed up, 1 failed); 9 when the CLI cannot be built or started (one stderr line). ASCII-only: parseable under
+    Windows PowerShell 5.1.
 #>
 param(
     [string]$BackupDir = (Join-Path $PSScriptRoot 'backups'),
     [int]$Retain = 14
 )
 
-$ErrorActionPreference = 'Stop'
-$root        = $PSScriptRoot
-$composeFile = "$root\docker-compose.dev.yml"
-
-if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null }
-
-docker compose -f $composeFile exec -T postgres pg_isready -U antiphon -d antiphon 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Postgres is not running. Start it first: docker compose -f docker-compose.dev.yml up -d"
-}
-
-$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$dumpFile  = Join-Path $BackupDir "antiphon-$timestamp.sql"
-$zipFile   = "$dumpFile.zip"
-
-Write-Host "Backing up → $zipFile ..." -ForegroundColor Cyan
-docker compose -f $composeFile exec -T postgres `
-    pg_dump -U antiphon -d antiphon --no-owner --no-acl > $dumpFile
-if ($LASTEXITCODE -ne 0) {
-    Remove-Item $dumpFile -ErrorAction SilentlyContinue
-    Write-Error "pg_dump failed (exit $LASTEXITCODE)."
-}
-
-Compress-Archive -Path $dumpFile -DestinationPath $zipFile -Force
-Remove-Item $dumpFile
-
-$size = [math]::Round((Get-Item $zipFile).Length / 1KB, 1)
-Write-Host "  Created: $zipFile  ($size KB)" -ForegroundColor Green
-
-$all = Get-ChildItem $BackupDir -Filter '*.sql.zip' | Sort-Object LastWriteTime -Descending
-if ($all.Count -gt $Retain) {
-    $prune = $all | Select-Object -Skip $Retain
-    $prune | Remove-Item -Force
-    Write-Host "  Pruned $($prune.Count) old backup(s), kept $Retain." -ForegroundColor DarkGray
-}
-
-return $zipFile
+$ErrorActionPreference = 'Continue'
+. (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')
+$arguments = @()
+if ($PSBoundParameters.ContainsKey('BackupDir')) { $arguments += @('--backup-dir', $BackupDir) }
+if ($PSBoundParameters.ContainsKey('Retain')) { $arguments += @('--retain', [string]$Retain) }
+exit (Invoke-AntiphonCli -Command 'dev-backup' -Arguments $arguments)

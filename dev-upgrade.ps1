@@ -1,50 +1,19 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    Upgrade Antiphon: backup → git pull → dotnet build → npm install → restart.
-.PARAMETER NoBrowserOpen
-    Pass through to dev-start.ps1.
+    Thin launcher for `antiphon-scripts dev-upgrade` (scripts/lib/Antiphon.Nightly/DevStack.cs): backup, stop, git pull, a
+    stamped Release build of the server, npm install, then dev-start.
+
+    Unit 37 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept so the runbooks' `.\dev-upgrade.ps1` still
+    works. Agents run `scripts/antiphon dev-upgrade`; Windows runbooks `scripts\antiphon.cmd dev-upgrade`.
+
+    -NoBrowser is --no-browser (passed to dev-start). The command's exit code is returned (0 upgraded, 1 failed); 9 when
+    the CLI cannot be built or started (one stderr line). ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param([switch]$NoBrowser)
 
-$ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
-
-Write-Host "`nAntiphon upgrade" -ForegroundColor Cyan
-
-# 1. Backup first
-Write-Host "`n▶ Backing up database..." -ForegroundColor Cyan
-& "$root\dev-backup.ps1"
-
-# 2. Stop server + client (keep postgres)
-Write-Host "`n▶ Stopping server and client..." -ForegroundColor Cyan
-& "$root\dev-stop.ps1"
-
-# 3. Pull latest code
-Write-Host "`n▶ git pull..." -ForegroundColor Cyan
-git -C $root pull
-if ($LASTEXITCODE -ne 0) { Write-Error "git pull failed — resolve conflicts and retry." }
-
-# 4. Build .NET server
-Write-Host "`n▶ Building .NET server..." -ForegroundColor Cyan
-$sourceRevision = ((& git -C $root rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
-if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'dev-upgrade: git rev-parse HEAD failed; refusing an unstamped server build.' }
-dotnet build "$root\server" "-p:SourceRevisionId=$sourceRevision" --configuration Release --no-restore
-if ($LASTEXITCODE -ne 0) {
-    dotnet build "$root\server" "-p:SourceRevisionId=$sourceRevision" --configuration Release
-    if ($LASTEXITCODE -ne 0) { Write-Error "dotnet build failed." }
-}
-
-# 5. Install npm deps
-Write-Host "`n▶ npm install..." -ForegroundColor Cyan
-Push-Location "$root\client"
-npm install
-Pop-Location
-if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
-
-# 6. Restart
-Write-Host "`n▶ Starting services..." -ForegroundColor Cyan
-$startArgs = @()
-if ($NoBrowser) { $startArgs += '-NoBrowser' }
-& "$root\dev-start.ps1" @startArgs
-
-Write-Host "`nUpgrade complete." -ForegroundColor Green
+$ErrorActionPreference = 'Continue'
+. (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')
+$arguments = @()
+if ($NoBrowser) { $arguments += '--no-browser' }
+exit (Invoke-AntiphonCli -Command 'dev-upgrade' -Arguments $arguments)

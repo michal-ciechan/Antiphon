@@ -80,7 +80,7 @@ public sealed class SourceRevisionStampContractTests
         // Unit 31 of 2026-11-22-remaining-ps1-to-csharp.md: the restart is the restart-apphost command (scripts/restart-apphost.ps1
         // is its launcher); AppHostRestartTests.A_different_loaded_sha_is_exit_5_with_the_lock_kept_and_the_child_left_running runs it.
         var restart = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/AppHostRestart.cs");
-        restart.ShouldContain("dev-aspire.ps1");
+        restart.ShouldContain("var devArguments = new List<string> { \"dev-aspire\" };");
         restart.ShouldContain("return 5;");
         restart.ShouldContain("server build unverified");
         var verified = restart.IndexOf("if (dashUrl != null && backendOk && verified)", StringComparison.Ordinal);
@@ -93,8 +93,12 @@ public sealed class SourceRevisionStampContractTests
         common.ShouldContain("new AppHostLoadedIdentity(false, sha, \"malformed\")");
         common.ShouldContain("\"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$\"");
 
-        var aspire = DockerStackDocuments.Read("dev-aspire.ps1");
-        aspire.ShouldContain("Set-Location '$appHostDir'");
+        // Unit 37: dev-aspire is C# (DevAspire.cs; dev-aspire.ps1 is its launcher). Its detached wrapper builds the AppHost project
+        // in its own directory, stamped with the HEAD dev-aspire read; DevAspireTests pins the argv and the HEAD refusal.
+        var aspire = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/DevAspire.cs");
+        aspire.ShouldContain("Command = new[] { \"dotnet\", \"build\", \"-p:SourceRevisionId=\" + options.SourceRevision },");
+        aspire.ShouldContain("WorkingDirectory = appHostDir,");
+        aspire.ShouldContain("refusing an unstamped AppHost build.");
         var appHost = DockerStackDocuments.Read("Antiphon.AppHost/Antiphon.AppHost.csproj");
         appHost.ShouldContain("ProjectReference");
         appHost.ShouldContain("Antiphon.Server.csproj");

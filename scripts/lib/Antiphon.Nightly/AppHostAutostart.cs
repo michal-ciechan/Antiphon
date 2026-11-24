@@ -5,11 +5,12 @@
 //
 //   antiphon-scripts autostart-apphost [--no-build] [--docker-timeout-sec 300] [--health-timeout-sec 180]
 //
-// Unlike running dev-aspire.ps1 at logon, it waits for Docker Desktop (still starting at logon; dev-aspire.ps1 hard-errors
-// without it), no-ops when port 17202 already listens (a manual dev-aspire.ps1 is never clobbered), brings up the dev compose
-// services (runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 leaves the desktop Postgres stopped), passes -NoBrowser, and logs to
-// logs/autostart-apphost.log (dev-aspire.ps1's own output too). The AppHost is launched detached by dev-aspire.ps1 and
-// survives this command. Exit 0 once /health answers 200 (or already up); 1 when Docker or health did not come up.
+// Unlike running dev-aspire at logon, it waits for Docker Desktop (still starting at logon; dev-aspire hard-errors without
+// it), no-ops when port 17202 already listens (a manual dev-aspire is never clobbered), brings up the dev compose services
+// (runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 leaves the desktop Postgres stopped), runs dev-aspire --no-browser in this
+// process (unit 37; DevAspireRunner) and logs to logs/autostart-apphost.log (dev-aspire's own output too, not on the
+// console). The AppHost is launched detached by dev-aspire and survives this command. Exit 0 once /health answers 200 (or
+// already up); 1 when Docker or health did not come up.
 // Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
@@ -29,7 +30,7 @@ namespace Antiphon.Nightly
         /// <summary>The CLI's usage line.</summary>
         public const string Usage = "autostart-apphost [--no-build] [--docker-timeout-sec 300] [--health-timeout-sec 180]";
 
-        /// <summary>Skip dotnet restore and npm install (dev-aspire.ps1 -NoBuild).</summary>
+        /// <summary>Skip dotnet restore and npm install (dev-aspire --no-build).</summary>
         public bool NoBuild { get; init; }
 
         /// <summary>How long to wait for Docker Desktop.</summary>
@@ -62,9 +63,10 @@ namespace Antiphon.Nightly
         private static readonly Regex Up = new Regex("^Up", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
         private static readonly Regex Health = new Regex("health", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-        /// <summary>Brings the stack up at logon; exit 0 healthy or already up, 1 otherwise.</summary>
-        public static int Run(AppHostAutostartOptions options, NightlyHost host, IAppHostPlatform platform)
+        /// <summary>Brings the stack up at logon (devAspire runs dev-aspire in process); exit 0 healthy or already up, 1 otherwise.</summary>
+        public static int Run(AppHostAutostartOptions options, NightlyHost host, IAppHostPlatform platform, DevAspireRunner devAspire)
         {
+            if (devAspire == null) throw new ArgumentNullException(nameof(devAspire));
             var files = platform.Files;
             var root = options.RepoRoot;
             var logDir = AppHost.LogDir(files, root);
@@ -80,7 +82,7 @@ namespace Antiphon.Nightly
             var port = AppHost.ServerPort.ToString(CultureInfo.InvariantCulture);
 
             Log("logon auto-start beginning (PID " + platform.CurrentPid.ToString(CultureInfo.InvariantCulture) + ")");
-            // 1. Already running: never clobber a manual dev-aspire.ps1.
+            // 1. Already running: never clobber a manual dev-aspire.
             if (platform.PortOwners(AppHost.ServerPort).Count > 0)
             {
                 Log("port " + port + " already listening - AppHost is up, nothing to do.");
@@ -107,7 +109,7 @@ namespace Antiphon.Nightly
             if (!dockerOk)
             {
                 Log("ERROR: Docker Desktop did not become responsive within " + options.DockerTimeoutSec.ToString(CultureInfo.InvariantCulture) + "s - aborting.");
-                Log("Fix: start Docker Desktop, then run dev-aspire.ps1 (or Start-ScheduledTask -TaskName 'Antiphon AppHost').");
+                Log("Fix: start Docker Desktop, then run dev-aspire (or Start-ScheduledTask -TaskName 'Antiphon AppHost').");
                 return 1;
             }
             Log("Docker is responsive.");
@@ -136,11 +138,20 @@ namespace Antiphon.Nightly
                 Log("Postgres status: " + PostgresStatus(platform));
             }
 
-            // 4. The stack: dev-aspire.ps1 backgrounds the AppHost and exits once the dashboard is up.
-            var devArguments = new List<string> { "-NonInteractive", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", files.Path.Combine(root, "dev-aspire.ps1"), "-NoBrowser" };
-            if (options.NoBuild) devArguments.Add("-NoBuild");
-            Log("launching dev-aspire.ps1 -NoBrowser" + (options.NoBuild ? " -NoBuild" : "") + "...");
-            platform.RunAppending("pwsh", devArguments, logFile);
+            // 4. The stack: dev-aspire backgrounds the AppHost and returns once the dashboard is up. Its exit code is not the
+            // verdict (health is); a failure of its own is logged and the health wait still runs.
+            Log("launching dev-aspire --no-browser" + (options.NoBuild ? " --no-build" : "") + "...");
+            using (var devLog = new DevStackLogWriter(files, logFile))
+            {
+                try
+                {
+                    devAspire(new DevAspireOptions { RepoRoot = root, NoBrowser = true, NoBuild = options.NoBuild }, DevStack.WithOutput(host, devLog));
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidOperationException || e is System.ComponentModel.Win32Exception)
+                {
+                    devLog.WriteLine("dev-aspire failed: " + e.Message);
+                }
+            }
 
             // 5. Health.
             var healthDeadline = host.UtcNow.AddSeconds(options.HealthTimeoutSec);
@@ -169,7 +180,7 @@ namespace Antiphon.Nightly
     public sealed record DevComposeUp(int Exit, bool SkipPostgres, bool Ran, IReadOnlyList<string> Arguments, string Message);
 
     /// <summary>
-    /// Runbook G-1: the docker-compose.dev.yml bring-up (scripts/lib/dev-postgres-compose.ps1, which dev-aspire.ps1 still loads).
+    /// Runbook G-1: the docker-compose.dev.yml bring-up of autostart-apphost and dev-aspire (it replaced scripts/lib/dev-postgres-compose.ps1).
     /// ANTIPHON_SKIP_DEV_POSTGRES=1 (the database moved to server2) brings up every other service with --no-deps and never
     /// the postgres service, so a restart cannot revive the stopped desktop copy.
     /// </summary>

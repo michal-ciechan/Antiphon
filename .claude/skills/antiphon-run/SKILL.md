@@ -13,7 +13,7 @@ First-time setup is [docs/bootstrap.md](../../../docs/bootstrap.md). Aspire is
 the default. Postgres is the always-on `antiphon-postgres` container on **17280**
 (not Aspire-managed). Dashboard is pinned at **http://localhost:17205**.
 
-### Aspire AppHost mode (`dev-aspire.ps1`) — preferred
+### Aspire AppHost mode (`scripts/antiphon dev-aspire`) — preferred
 
 | Port  | Service                   | Notes                        |
 |-------|---------------------------|------------------------------|
@@ -28,7 +28,7 @@ the default. Postgres is the always-on `antiphon-postgres` container on **17280*
 | 17208 | Fake messaging gateway    | Dev/test Kafka tool          |
 | 17209 | Storybook                 | AppHost-managed npm app      |
 
-### Simple Docker Compose mode (`dev-start.ps1`) — fallback
+### Simple Docker Compose mode (`scripts/antiphon dev-start`) — fallback
 
 | Port  | Service              | Process            |
 |-------|----------------------|--------------------|
@@ -50,33 +50,38 @@ scripts/antiphon restart-apphost
 
 First launch only, when nothing is listening:
 
-```powershell
-Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
+```sh
+scripts/antiphon dev-aspire
 ```
 
-- Do NOT use `wt new-tab` — fails with `0x80070002` when title has a space
-- Do NOT use `-NoNewWindow` — kills AppHost when the tool session ends
-- Script exits ~60s after dashboard is ready; AppHost runs in background
+- The dev stack scripts are C# commands since 2026-11-24 (unit 37 of
+  docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). The repo-root `.\dev-*.ps1`, `.\restart.ps1`,
+  `.\restart-server.ps1` and `.\stop-server.ps1` stay as thin launchers for operators; agents run the commands.
+- The command exits once the dashboard is ready (90 s at most); the AppHost runs on in a detached wrapper
+  (`run-apphost`: the stamped build, then the AppHost, output in `logs/apphost.log`). A shell whose Job Object kills its
+  children at command end still takes the wrapper with it (docs/apphost-runbook.md).
 - Dashboard is pinned at http://localhost:17205
 - PID saved to `logs/apphost.pid`, logs to `logs/apphost.log`
 
 ---
 
-## Scripts — when to use each
+## Commands — when to use each
 
-| Script               | When                                              |
+| Command (`scripts/antiphon <command>`) | When |
 |----------------------|---------------------------------------------------|
-| `scripts/antiphon restart-apphost` | Canonical Aspire restart. Use whenever an AppHost may already exist. |
-| `.\dev-aspire.ps1`   | First Aspire launch only if nothing is listening. Never a second copy. |
-| `.\dev-start.ps1`    | Simple-mode fallback (API 17281 / client 17282; runner 17204). |
-| `.\dev-stop.ps1`     | Stop server + client; postgres stays up.          |
-| `.\dev-stop.ps1 -IncludePostgres` | Stop everything.                   |
-| `.\dev-fresh.ps1`    | Nuclear reset (all data lost). Prompts to confirm.|
-| `.\dev-upgrade.ps1`  | git pull + build + npm install + restart.         |
-| `.\dev-backup.ps1`   | Create a pg_dump backup in `<repo>/backups/` (override with `-BackupDir`). |
-| `.\dev-restore.ps1`  | Restore DB from latest (or specified) backup.     |
+| `restart-apphost`    | Canonical Aspire restart. Use whenever an AppHost may already exist. |
+| `dev-aspire`         | First Aspire launch only if nothing is listening. Never a second copy. |
+| `dev-start`          | Simple-mode fallback (API 17281 / client 17282; runner 17204). |
+| `dev-stop`           | Stop server + client; postgres stays up.          |
+| `dev-stop --include-postgres` | Stop everything.                         |
+| `dev-fresh`          | Nuclear reset (all data lost). Prompts to confirm (`--yes` skips it). |
+| `dev-upgrade`        | backup + git pull + build + npm install + restart. |
+| `dev-backup`         | Create a pg_dump backup in `<repo>/backups/` (override with `--backup-dir`). |
+| `dev-restore`        | Restore DB from latest (or `--backup-file`) backup. Prompts to confirm. |
+| `restart-dev-stack`, `restart-server`, `stop-server` | Restart through the external Aspire control endpoint (Mikey.AspireCommand, `--endpoint`). |
 
-All scripts live at the repo root.
+Operators may run the repo-root launchers instead (`.\dev-start.ps1 -NoClient`, `.\dev-backup.ps1 -BackupDir ...`): same
+behaviour, PowerShell parameter names.
 
 ---
 
@@ -85,7 +90,7 @@ All scripts live at the repo root.
 | What               | Where                                     | Notes                                   |
 |--------------------|-------------------------------------------|-----------------------------------------|
 | Database           | Docker named volume `antiphon_pgdata`     | Survives container restarts; lost with `down -v` |
-| Backups            | `<repo>/backups/`                         | `.sql.zip` files, 14-backup retention; `.\dev-backup.ps1` default |
+| Backups            | `<repo>/backups/`                         | `.sql.zip` files, 14-backup retention; `dev-backup` default |
 | Git worktrees      | `C:\Antiphon\worktrees\`                  | Created by agent sessions               |
 | App logs           | `C:\MavLog\Antiphon\`                     | Serilog daily rolling files             |
 | PTY session logs   | `C:\MavLog\Antiphon\sessions\`            | Full ANSI audit per session             |
@@ -102,35 +107,36 @@ Follow [docs/bootstrap.md](../../../docs/bootstrap.md). Short form:
 2. `docker compose -f docker-compose.dev.yml up -d` (Postgres on 17280)
 3. Put LLM keys in `dotnet user-secrets` (`--id antiphon-server`) or the Settings UI after start. Do **not** copy `appsettings.json.example` over the tracked `server/appsettings.json`.
 4. `scripts/antiphon install-autostart`
-5. `scripts/antiphon restart-apphost` (or `Start-Process pwsh … dev-aspire.ps1 -WindowStyle Normal` if nothing is listening)
+5. `scripts/antiphon restart-apphost` (or `scripts/antiphon dev-aspire` if nothing is listening)
 6. `pwsh -File scripts/bootstrap-check.ps1`
 
 ### Every day
 1. Aspire is already always-on after `scripts/antiphon install-autostart`. If it is down: `scripts/antiphon restart-apphost`
 2. Work in the browser at http://localhost:17203 (dashboard http://localhost:17205)
-3. Postgres stays up. Do not run a second `dev-aspire.ps1`.
+3. Postgres stays up. Do not run a second `dev-aspire`.
 
 ### After git pull / code changes
 ```
-.\dev-upgrade.ps1
+scripts/antiphon dev-upgrade
 ```
 Backs up first, then pulls, builds, npm installs, restarts.
 
 ### Manual backup
 ```
-.\dev-backup.ps1
+scripts/antiphon dev-backup
 ```
-Creates `<repo>/backups/antiphon-YYYYMMDD-HHmmss.sql.zip`. Prunes to last 14. Override with `-BackupDir`.
+Creates `<repo>/backups/antiphon-YYYYMMDD-HHmmss.sql.zip` (its path is the last line). Prunes to last 14 (`--retain`).
+Override with `--backup-dir`.
 
 ### Restore from backup
 ```
-.\dev-restore.ps1                          # latest backup
-.\dev-restore.ps1 -BackupFile path\to.zip  # specific backup
+scripts/antiphon dev-restore                              # latest backup
+scripts/antiphon dev-restore --backup-file path/to.zip    # specific backup
 ```
 
 ### Nuclear reset (wipe all data)
 ```
-.\dev-fresh.ps1
+scripts/antiphon dev-fresh
 ```
 Prompts for confirmation. Drops volume, wipes worktrees, starts fresh.
 
@@ -172,7 +178,7 @@ Get-ChildItem C:\MavLog\Antiphon -Filter '*.log' | Sort-Object LastWriteTime -De
 
 ### Docker not running
 Start Docker Desktop. Watch the system tray; wait until "Docker Desktop is running".
-Then `scripts/antiphon restart-apphost` (Aspire) or `.\dev-start.ps1` (simple-mode fallback).
+Then `scripts/antiphon restart-apphost` (Aspire) or `scripts/antiphon dev-start` (simple-mode fallback).
 
 ### Port conflict (stale Aspire dcp.exe)
 Check for a stale `dcpctrl.exe` or `dcp.exe` holding a port in the 17200–17207 range:
@@ -184,10 +190,10 @@ Stop-Process -Id <pid> -Force
 
 ### Migrations fail on startup
 Stop the server, create the migration, restart:
-```powershell
-.\dev-stop.ps1
+```sh
+scripts/antiphon dev-stop
 dotnet ef migrations add <Name> --project server
-.\dev-start.ps1
+scripts/antiphon dev-start
 ```
 
 ### First `dotnet run` is slow
@@ -197,12 +203,12 @@ It's compiling. Takes 20-30 seconds on first run; subsequent runs are fast.
 
 ## Backup planning
 
-Current approach: **manual** with `.\dev-backup.ps1`.
+Current approach: **manual** with `scripts/antiphon dev-backup`.
 
 To automate daily backups, use `/schedule` to set up a Claude Code routine, or register a Windows Task:
 ```powershell
-$action  = New-ScheduledTaskAction -Execute 'pwsh.exe' -Argument '-NonInteractive -File C:\src\antiphon\dev-backup.ps1'
+$action  = New-ScheduledTaskAction -Execute 'C:\src\antiphon\scripts\antiphon.cmd' -Argument 'dev-backup'
 $trigger = New-ScheduledTaskTrigger -Daily -At '02:00'
 Register-ScheduledTask -TaskName 'Antiphon-Daily-Backup' -Action $action -Trigger $trigger -RunLevel Highest
 ```
-`.\dev-backup.ps1` defaults to `<repo>/backups/` with 14-file retention.
+`dev-backup` defaults to `<repo>/backups/` with 14-file retention.

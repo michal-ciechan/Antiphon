@@ -40,8 +40,8 @@
     },
     {
       "group": "live-startup-timing",
-      "paths": ["scripts/test-live-startup-timing.ps1"],
-      "suites": ["tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj"]
+      "paths": ["scripts/lib/Antiphon.Nightly/AppHostCommon.cs", "scripts/lib/Antiphon.Nightly/DevAspire.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     },
     {
       "group": "live-lane-manifest",

@@ -109,10 +109,6 @@ function Get-PowerShellBuilds($Ast, [string]$Surface) {
                 $stamp = Test-StampedSplat $Ast $command $verb $Surface
             } elseif ($verb.Value -in @('build', 'pack', 'publish', 'run')) {
                 if ($verb.Value -eq 'run' -and $arguments.Extent.Text -contains '--no-build') { continue }
-                # These two invocations operate the external Aspire CLI via HTTP.
-                if ($Surface -ceq 'restart-server.ps1' -and $verb.Value -eq 'run' -and
-                    $arguments.Count -ge 2 -and $arguments[0].Extent.Text -ceq '--project' -and
-                    $arguments[1].Extent.Text -ceq '$AspireCommand') { continue }
                 $stamp = @($arguments | Where-Object { Test-StampArgument $_ }).Count -eq 1
             } else { continue }
             [pscustomobject]@{ Stamped = $stamp; Invocation = $command.Extent.Text }
@@ -134,21 +130,6 @@ function Get-PowerShellBuilds($Ast, [string]$Surface) {
             }
         }
     }
-
-    if ($Surface -ceq 'dev-aspire.ps1') {
-        # The encoded PowerShell child command is stored in the GetBytes argument.
-        $encoded = $Ast.FindAll({
-            param($node)
-            $node -is [InvokeMemberExpressionAst] -and -not (Test-DeadBranch $node) -and
-                $node.Member.Value -eq 'GetBytes' -and
-                $node.Parent -is [InvokeMemberExpressionAst] -and $node.Parent.Member.Value -eq 'ToBase64String'
-        }, $true)
-        foreach ($encoding in $encoded) {
-            if ($encoding.Arguments.Count -eq 1 -and $encoding.Arguments[0] -is [ExpandableStringExpressionAst]) {
-                Get-PowerShellBuilds (Read-StampAst $encoding.Arguments[0].Value $Surface) $Surface
-            }
-        }
-    }
 }
 
 function Get-UnstampedPowerShellBuild([string]$Text) {
@@ -158,11 +139,9 @@ function Get-UnstampedPowerShellBuild([string]$Text) {
 
 if ($Case -eq 'audit') {
     $expected = [ordered]@{
-        'dev-aspire.ps1' = 1
-        'dev-start.ps1' = 1
-        'dev-upgrade.ps1' = 2
-        'restart-server.ps1' = 1
     }
+    # The dev stack's builds are C# since unit 37 (dev-aspire.ps1, dev-start.ps1, dev-upgrade.ps1 and restart-server.ps1 are
+    # launchers): DevAspireTests, DevStackTests and DevRestartTests pin their stamped argv and the unreadable-HEAD refusals.
     # The watchdog publish is C# since unit 10 of 2026-11-22-remaining-ps1-to-csharp.md (NightlyWatchdogDeploy.cs, which
     # refuses an unreadable HEAD); NightlyVerificationContractTests.C545_DeployCommandLines pins its stamped argv.
     # The daemon build is C# since unit 30 (DaemonSupervisor.cs, which builds unstamped when HEAD is unreadable);

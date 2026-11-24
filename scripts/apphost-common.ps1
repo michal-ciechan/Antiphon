@@ -1,13 +1,14 @@
 <#
 .SYNOPSIS
-    The desktop AppHost worktree guard (CARD-0273) for the two PowerShell entries that still run it themselves:
-    dev-aspire.ps1 (wave W9) and scripts/deploy-local.ps1 (wave W8, owner-gated). Dot-source only.
+    The desktop AppHost worktree guard (CARD-0273) for the one PowerShell entry that still runs it itself:
+    scripts/deploy-local.ps1 (wave W8, owner-gated). Dot-source only.
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md moved everything else this file held (the launch
     and restart locks, the probes, the graceful stop, the log verdicts, the watchdog's outage and dead-launch functions) to
-    scripts/lib/Antiphon.Nightly (AppHostCommon.cs, AppHostRestart.cs, AppHostWatchdog.cs). The C# twin of these three
-    functions is AppHostWorktree (Classify, Canonical, GuardMessage), which restart-apphost runs; this copy goes when its
-    two callers are ported. The messages name -AllowWorktree, the callers' parameter.
+    scripts/lib/Antiphon.Nightly (AppHostCommon.cs, AppHostRestart.cs, AppHostWatchdog.cs); unit 37 ported its other caller,
+    dev-aspire.ps1 (the dev-aspire command, DevAspire.cs). The C# twin of these three functions is AppHostWorktree
+    (Classify, Canonical, GuardMessage), which restart-apphost and dev-aspire run; this copy goes when deploy-local.ps1 is
+    ported. The messages name -AllowWorktree, deploy-local.ps1's parameter.
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads no-BOM .ps1 as CP1252 and mangles
     non-ASCII characters into parse errors.

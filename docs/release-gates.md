@@ -509,7 +509,7 @@ reviewed rc integration procedure; they do not grant merge/publication authority
    not stop AppHost, run npm, create another launcher or waive the canonical
    checkout guard. `restart-apphost --stop-only --what-if` only previews stop;
    it cannot satisfy rehearsal. Bare `--what-if` is refused. Do not run
-   `dev-aspire.ps1` just to rehearse its restore substep.
+   `dev-aspire` just to rehearse its restore substep.
 4. Activate only after rehearsal passes, from an independent owning shell under
    the [restart runbook](apphost-runbook.md#first-start-and-apphost-restart), both
    locks and the Job Object caveat. Require restart exit 0, health and

@@ -10,16 +10,15 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1698 slice 1, in-process. The Test-C1698_* cases of the deleted scripts/test-toolchain-floor.ps1 (plan
 /// 2026-11-22-remaining-ps1-to-csharp.md, unit 1) call ToolchainFloor.Warnings with an injected version source and
-/// ToolchainFloor.Run (the toolchain-floor command) on a fake host; restart-server.ps1's call is read as source text,
-/// because no test launches a .ps1, and the runner restart (the restart-session-runner command since unit 30) runs the
-/// warnings in process. The nightly run and tests cases below it were already in-process.
+/// ToolchainFloor.Run (the toolchain-floor command) on a fake host; the runner restart (the restart-session-runner command
+/// since unit 30) and the server restart (the restart-server command since unit 37; restart-server.ps1 is its launcher) run
+/// the warnings in process. The nightly run and tests cases below it were already in-process.
 /// Not ported: the cases that ran restart-server.ps1 and restart-session-runner.ps1 with a fake git and dotnet
-/// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output,
-/// the call block's shape and the in-process restart below), the library-load-failure cases (the library is gone; a CLI
-/// that cannot be built or started exits 9 with one stderr line, AntiphonCliLauncherTests, and the block only warns on a
-/// non-zero exit), and the pwsh-7-only syntax scan (PowerShell mechanics:
-/// AntiphonCliLauncherTests.Kept_launchers_and_restart_entries_parse_and_are_ascii parses the launcher and
-/// restart-server.ps1 with powershell.exe 5.1 and pwsh).
+/// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output
+/// and the in-process restarts below), the library-load-failure cases (the library is gone; a CLI that cannot be built or
+/// started exits 9 with one stderr line, AntiphonCliLauncherTests), and the pwsh-7-only syntax scan (PowerShell mechanics:
+/// AntiphonCliLauncherTests.Kept_launchers_and_restart_entries_parse_and_are_ascii parses the launchers with powershell.exe
+/// 5.1 and pwsh).
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -157,40 +156,24 @@ public sealed class ToolchainFloorWarningTests
     }
 
     /// <summary>
-    /// restart-server.ps1 runs the command through Invoke-AntiphonCli inside a try whose catch only warns, and a non-zero exit
-    /// (9: the CLI could not be built or started) is one more WARNING line, never an exit: the restart goes on as when the
-    /// library only warned. The server restart warns before it stops the server. (session-runner-restart-health.ps1 had the
-    /// same block; the runner restart is the restart-session-runner command since unit 30, C1698_RunnerRestartWarnsInProcess.)
+    /// Unit 37: the restart-server command (DevRestart.RestartServer; restart-server.ps1 is its launcher) prints the floor
+    /// warnings in process before it stops the server, and restarts anyway: a tool below its floor never refuses the restart
+    /// or changes its exit code. (restart-server.ps1 ran the toolchain-floor command through Invoke-AntiphonCli in a block that
+    /// only warned; session-runner-restart-health.ps1 had the same block, C1698_RunnerRestartWarnsInProcess.)
     /// </summary>
     [Test]
     public void C1698_RestartEntriesRunTheCommandAndOnlyWarn()
     {
-        foreach (var (path, root, quote) in new[] { ("restart-server.ps1", "$RepoRoot", "\"") })
-        {
-            var text = File.ReadAllText(Path.Combine(Repo, path)).Replace("\r\n", "\n");
-            text.ShouldNotContain("toolchain-floor.ps1", customMessage: path);
-            text.ShouldNotContain("Write-ToolchainFloorWarnings", customMessage: path);
-            var call = "$floorExit = Invoke-AntiphonCli -Command 'toolchain-floor' -Arguments @('--repo-root', " + root + ")";
-            var load = ". (Join-Path " + root + " (Join-Path " + quote + "scripts" + quote + " (Join-Path " + quote + "lib" + quote + " " + quote + "antiphon-cli.ps1" + quote + ")))";
-            var at = text.IndexOf(call, StringComparison.Ordinal);
-            at.ShouldBeGreaterThan(0, path + " runs the command");
-            var open = text.LastIndexOf("try {\n", at, StringComparison.Ordinal);
-            var close = text.IndexOf("} catch {\n", at, StringComparison.Ordinal);
-            open.ShouldBeGreaterThan(0, path);
-            close.ShouldBeGreaterThan(at, path);
-            var block = text[open..close];
-            block.ShouldContain(load, customMessage: path + " loads the launcher from the checkout root");
-            block.IndexOf(load, StringComparison.Ordinal).ShouldBeLessThan(block.IndexOf(call, StringComparison.Ordinal), path);
-            block.ShouldContain("if ($floorExit -ne 0) { Write-Host (" + quote + "WARNING: the toolchain floor check failed: antiphon-scripts toolchain-floor exited " + quote
-                + " + $floorExit) -ForegroundColor Yellow }", customMessage: path + " warns on a non-zero exit");
-            var leaves = new Regex(@"(?<![\w$-])(exit|throw|return)(?!\w)");
-            leaves.IsMatch(block).ShouldBeFalse(path + ": the block never exits, throws or returns");
-            var handler = text[close..text.IndexOf("}\n", close + "} catch {\n".Length, StringComparison.Ordinal)];
-            handler.ShouldContain("Write-Host (" + quote + "WARNING: the toolchain floor check failed: " + quote + " + $_.Exception.Message) -ForegroundColor Yellow",
-                customMessage: path + " catches a launcher that throws and warns");
-            leaves.IsMatch(handler).ShouldBeFalse(path + ": the handler only warns");
-            if (path == "restart-server.ps1") at.ShouldBeLessThan(text.IndexOf("Write-Host \"Stopping server...\"", StringComparison.Ordinal), "the warning precedes the stop");
-        }
+        using var world = new AppHostWorld();
+        var exit = DevRestart.RestartServer(new DevServerRestartOptions { RepoRoot = Repo }, world.Host(), world, world);
+        exit.ShouldBe(0, world.Out.ToString());
+        var text = world.Out.ToString();
+        var warning = text.IndexOf("WARNING: git 2.42.0 is below the minimum 2.43; lands will fail", StringComparison.Ordinal);
+        warning.ShouldBeGreaterThanOrEqualTo(0, text);
+        warning.ShouldBeLessThan(text.IndexOf("Stopping server...", StringComparison.Ordinal), "the warning precedes the stop");
+        text.ShouldContain("Server restarted.");
+        world.Launches.Count.ShouldBe(3, "stop, build and start all ran");
+        File.ReadAllText(Path.Combine(Repo, "restart-server.ps1")).ShouldNotContain("toolchain-floor");
         File.Exists(Path.Combine(Repo, "scripts", "lib", "toolchain-floor.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(Repo, "scripts", "test-toolchain-floor.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(Repo, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();
