@@ -139,14 +139,14 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 
 | Header | Stored label |
 |---|---|
-| `scripts/antiphon delegate` | `scripts/antiphon delegate` |
+| `delegate.ps1` | `delegate.ps1` |
 | `status-snapshot.ps1` | `status-snapshot.ps1` |
 | `checkpoint-task.ps1` | `checkpoint-task.ps1` |
 | `card.ps1` | `card.ps1` |
 | `board-watch` | `board-watch` |
 | `useAgentTask` | `useagenttask` |
 
-`scripts/antiphon delegate`, `scripts/checkpoint-task.ps1` and the `card` and `status-snapshot` commands (`scripts/antiphon card` and `scripts/antiphon status-snapshot`, which kept the `card.ps1` and `status-snapshot.ps1` labels of the scripts they replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
+The `delegate`, `status-snapshot`, `checkpoint-task` and `card` commands (`scripts/antiphon delegate`, `scripts/antiphon status-snapshot`, `scripts/antiphon checkpoint-task` and `scripts/antiphon card`, which kept the `delegate.ps1`, `status-snapshot.ps1`, `checkpoint-task.ps1` and `card.ps1` labels of the scripts they replaced) send their row on every server call. `Antiphon.Nightly.AntiphonCaller` refuses any other value and does not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
 
 | Need | Method | Path |
 |---|---|---|
@@ -194,7 +194,7 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | Move a card | PATCH | `/api/cards/{id}` `{ boardColumnId, concurrencyToken, reason?, spawn? }`. A move into a terminal column returns `taskSettlement` (`canceled` and `leftOpen` short ids) when it settled or left a bound task; the property is omitted when there was nothing to settle (CARD-0738). `scripts/antiphon card move` / `close` print `tasks canceled` and `tasks still working` lines from it. |
 | Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `scripts/antiphon card diagnose CARD-nnnn` (`--no-wait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
 | Diagnoses ledger / stats | GET | `/api/diagnoses?cardId=` (newest first), `/api/diagnoses/stats?since=` |
-| Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/distiller.ps1 -Stats` / `-List [-Flagged]` |
+| Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/antiphon distiller --stats` / `--list [--flagged]` (`--since 7d`) |
 | Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `scripts/antiphon delegate flag <id> --verdict Lost\|Noisy\|Good [--note]` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
 | What needs a human (fleet-global) | GET | `/api/attention` — fleet-global across every board; there is no board filter. Optional `?minSeverity=` (CARD-1085) is omitted for the unfiltered feed. Info, Warning, Error, and Critical match case-insensitively and return only rows at or above that floor. Empty, whitespace, numeric, and unknown values are 400 problem+json (`bad_request`). `kindCounts` counts every kind before the floor. `LandOutcomeUnconfirmed` is the newest unconfirmed receipt per task, evidence prefixed `receipts=N` (an unconfirmed receipt stays until it confirms). `LandLegacyUnverified` is one row per task. A historical receipt (`Landed`, `AlreadyPresent`, `LandedWithResidue`, or `LandingCleanup`, no land request) is omitted when that newest event's notification is confirmed, when `ReplyTo` is None, or when the task is Succeeded or Canceled and that newest receipt event's `At` is at least 24h before the read (`At` is the event time, not `CompletedAt`). An unresolved `LandRefused` never ages out, at any task status. `ReplyTo` None omits it. The row's representative is the refusal when both groups are eligible, and it is the `LandRefused` event when the refusal is the only eligible group. When both groups are eligible, the other events are evidence lines: the receipts sentence, then up to three newest other events, then `N more` when more remain. The refusal is resolved when its own notification is confirmed, a later outcome receipt for that task is confirmed, or a later event records publication Landed or AlreadyPresent. `RecentCriticalIncident` stays one row per agent and kind; evidence shows up to three newest messages, then `N more` when more remain. `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. Its `evidence` ends with the per-class wait ledger for the current queue stint, summed from the task's `Held` rows (CARD-0672 D-3): `leaseWait=Ns; prepWait=Ns; runnerWait=Ns; capWait=Ns; otherWait=Ns; class=<dominant>`, and `holdClass` is that dominant class (`lease`, `remoteprep`, `runner`, `cap`, `scope`, `agent`, `landing`, `routing`, `other`), so land-lease starvation reads apart from runner capacity. The dispatcher's `HeldAged` rows carry the same fields after `occupants=`. `CompactionContinuationStalled` (CARD-0079) is one open Check compaction episode; `ConditionKey` `compaction-continuation:{id:N}`. |
@@ -475,9 +475,9 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   `Object[]`, and the table prints a header plus one blank row for ANY array, empty or not. Every
   "`?status=Working` returned nothing" observation on CARD-0546 was this idiom; curl and the
   parenthesised form showed the rows on the same server. Put parentheses around the call before
-  piping, or assign it to a variable first (`scripts/checkpoint-task.ps1` assigns, then wraps the
-  variable in `@()`). Inline `@(Invoke-RestMethod ...)` does NOT fix it: it wraps the single
-  `Object[]` it received and prints the same blank row. Read occupancy from
+  piping, or assign it to a variable first and then wrap the variable in `@()`. Inline
+  `@(Invoke-RestMethod ...)` does NOT fix it: it wraps the single `Object[]` it received and prints
+  the same blank row. Read occupancy from
   `GET /api/agent-tasks/pipeline` rather than a hand-filtered list. The status filter itself is
   correct and pinned (`AgentTaskListStatusFilterTests`, `AgentTaskListEndpointTests`).
 

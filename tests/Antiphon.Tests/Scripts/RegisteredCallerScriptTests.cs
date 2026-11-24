@@ -1,7 +1,5 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
@@ -11,10 +9,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-2004. The registered scripts send their own <c>X-Antiphon-Caller</c> label.
-/// <c>scripts/lib/antiphon-caller.ps1</c> (and its compiled reading, <c>Antiphon.Nightly.AntiphonCaller</c>, used by the
-/// status-snapshot, card and delegate commands) refuses any other value and does not copy it into the header or the error. The server
-/// list is <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
+/// CARD-2004. The registered callers send their own <c>X-Antiphon-Caller</c> label: the delegate, status-snapshot, card and
+/// checkpoint-task commands keep the labels of the scripts they replaced. <c>Antiphon.Nightly.AntiphonCaller</c> (which replaced
+/// <c>scripts/lib/antiphon-caller.ps1</c>, deleted with its last loader in unit 29 of the 2026-11-22 plan) refuses any other value
+/// and does not copy it into the header or the error. The server list is <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -68,6 +66,7 @@ public sealed class RegisteredCallerScriptTests
         Antiphon.Nightly.AntiphonCaller.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ShouldBe(
             AgentTaskGetPollMetrics.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ToArray());
         Antiphon.Nightly.AntiphonCaller.Label("  Status-Snapshot.ps1  ").ShouldBe("status-snapshot.ps1");
+        Antiphon.Nightly.AntiphonCaller.Label("  Delegate.ps1  ").ShouldBe("delegate.ps1");
         foreach (var label in new[] { "runner-drain.ps1", "phone-home", "", "status-snapshot" })
         {
             var refused = Should.Throw<InvalidOperationException>(() => Antiphon.Nightly.AntiphonCaller.Label(label));
@@ -76,15 +75,19 @@ public sealed class RegisteredCallerScriptTests
     }
 
     [Test]
-    public async Task Checkpoint_task_sends_its_registered_caller_label()
+    public void Checkpoint_task_sends_its_registered_caller_label()
     {
-        using var stub = new HeaderStub(_ => new(200,
+        // The checkpoint-task command (in-process since unit 29) keeps the registered label of the script it replaced.
+        var http = new RecordingOperatorHttp(_ => new(200,
             """{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","summary":{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"caller","workingDirectory":"/no/such/caller-dir","workspace":"Shared"}}"""));
-        var run = await RunAsync(stub, "checkpoint-task.ps1", "-TaskId", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        AssertRegisteredCaller(stub, "checkpoint-task.ps1");
-        stub.Calls.ShouldContain(c => c.Path == "/api/agent-tasks/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        run.ExitCode.ShouldBe(2, run.Stderr);
-        run.Stderr.ShouldContain("no usable working directory");
+        var run = BoardCommandRun.Run(host => Antiphon.Nightly.CheckpointTask.Run(Antiphon.Nightly.CheckpointTaskOptions.Parse(
+            ["--task-id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"], BoardCommandRun.Api, "synthetic-task-token"), host, new System.IO.Abstractions.FileSystem(), http.Transport));
+        Antiphon.Nightly.CheckpointTask.CallerLabel.ShouldBe("checkpoint-task.ps1");
+        AgentTaskGetPollMetrics.RegisteredLabels.Contains(Antiphon.Nightly.CheckpointTask.CallerLabel).ShouldBeTrue();
+        http.Calls.Select(c => c.Method + " " + c.Path).ShouldBe(["GET /api/agent-tasks/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]);
+        http.Calls.ShouldAllBe(call => call.Headers["X-Antiphon-Caller"] == "checkpoint-task.ps1");
+        run.Exit.ShouldBe(2, run.All);
+        run.Error.Trim().ShouldBe("Task aaaaaaaa has no usable working directory.");
     }
 
     [Test]
@@ -107,98 +110,11 @@ public sealed class RegisteredCallerScriptTests
         http.Calls.ShouldAllBe(call => call.Headers["X-Antiphon-Caller"] == "card.ps1");
     }
 
-    [Test]
-    public async Task Unregistered_caller_label_is_refused_and_not_echoed()
-    {
-        var helper = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "antiphon-caller.ps1");
-        File.Exists(helper).ShouldBeTrue(
-            "scripts/lib/antiphon-caller.ps1 must refuse an unregistered X-Antiphon-Caller");
-        var text = await File.ReadAllTextAsync(helper);
-        var block = Regex.Match(text, @"\$script:AntiphonRegisteredCallers = @\((.*?)\)", RegexOptions.Singleline);
-        block.Success.ShouldBeTrue("the helper must publish AntiphonRegisteredCallers");
-        var listed = Regex.Matches(block.Groups[1].Value, @"'([^']*)'")
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
-        listed.OrderBy(label => label, StringComparer.Ordinal).ShouldBe(
-            AgentTaskGetPollMetrics.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ToArray());
-
-        var probe = await RunPwshAsync(
-            "$ErrorActionPreference = 'Stop'; " +
-            ". $env:CALLER_HELPER; " +
-            "$ok = @{}; Add-AntiphonCallerHeader -Headers $ok -Label '  Delegate.ps1  '; " +
-            "if ($ok['X-Antiphon-Caller'] -ne 'delegate.ps1') { throw 'registered-label-not-normalized' }; " +
-            "foreach ($label in @('runner-drain.ps1','phone-home','')) { " +
-            "  $bad = @{}; $refused = $false; $echoed = $false; " +
-            "  try { Add-AntiphonCallerHeader -Headers $bad -Label $label } catch { " +
-            "    $refused = $true; " +
-            "    if (-not [string]::IsNullOrWhiteSpace($label) -and [string]$_.Exception.Message -like ('*' + $label + '*')) { $echoed = $true } " +
-            "  }; " +
-            "  if (-not $refused) { throw 'unregistered-was-accepted' }; " +
-            "  if ($echoed) { throw 'unregistered-label-was-echoed' }; " +
-            "  if ($bad.ContainsKey('X-Antiphon-Caller')) { throw 'unregistered-header-was-set' } " +
-            "}; Write-Output 'REFUSED'",
-            ("CALLER_HELPER", helper));
-        probe.ExitCode.ShouldBe(0, probe.Stderr);
-        probe.Stdout.Trim().ShouldBe("REFUSED");
-        probe.Stderr.ShouldNotContain("runner-drain.ps1");
-        probe.Stderr.ShouldNotContain("phone-home");
-    }
-
     private static void AssertRegisteredCaller(HeaderStub stub, string label)
     {
         AgentTaskGetPollMetrics.RegisteredLabels.Contains(label).ShouldBeTrue();
         stub.Calls.ShouldNotBeEmpty();
         stub.Calls.ShouldAllBe(call => call.Caller == label);
-    }
-
-    private static Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(
-        HeaderStub stub, string script, params string[] args)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-NonInteractive", "-File",
-                     Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script),
-                 }.Concat(args))
-            start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
-        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-        return RunProcessAsync(start);
-    }
-
-    private static Task<(int ExitCode, string Stdout, string Stderr)> RunPwshAsync(
-        string command, params (string Name, string Value)[] environment)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(command);
-        foreach (var (name, value) in environment) start.Environment[name] = value;
-        return RunProcessAsync(start);
-    }
-
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(ProcessStartInfo start)
-    {
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch
-        {
-            process.Kill(entireProcessTree: true);
-            throw;
-        }
-        return (process.ExitCode, await stdout, await stderr);
     }
 
     private sealed class HeaderStub : IDisposable

@@ -88,7 +88,6 @@ public sealed class TestFixtureCleanupGuardTests
         [(Infrastructure + "WorktreeManagerTests.cs", "missing.Path")] = (1, "Removes linked checkouts or interrupted worktree directories as the stimulus."),
         [(Infrastructure + "WorktreeManagerTests.cs", "interrupted.Path")] = (1, "Removes linked checkouts or interrupted worktree directories as the stimulus."),
         [(Infrastructure + "WorktreeManagerTests.cs", "worktree.Path")] = (1, "Removes linked checkouts or interrupted worktree directories as the stimulus."),
-        [(Scripts + "CheckpointTaskScriptTests.cs", "dir")] = (1, "Plain directory for the non-Git refusal."),
         [(Scripts + "HostJqPrerequisiteScriptTests.cs", "Linked")] = (1, "Linked checkout lives outside the repository root and has only a Git pointer."),
         [(Scripts + "NightlyCoreGoldenTests.cs", "timing")] = (1, "Timing journal temporary directory."),
         [(Scripts + "PostLandEarlyWarningTests.cs", "root")] = (1, "Process coordination marker directory."),

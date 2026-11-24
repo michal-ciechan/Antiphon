@@ -1,10 +1,11 @@
 // The agent and operator helpers (unit 25 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, wave W7):
 // check-agent-context, task-commit, new-review-scratch, remove-review-scratch, trx-failures, watch-master, watch-tasks,
-// stage-value-report, logs, hangfire-dashboard and github-sync. Each replaced the scripts/<name>.ps1 of the same name (the
-// three watchers were scripts/orchestration/*.ps1; deleted 2026-11-23, except scripts/github-sync.ps1, which stays as the
-// thin launcher Windmill's u/lndcobra/antiphon_github_sync starts by path), with the same parameters in kebab case. The
-// behaviour is Antiphon.Nightly's (AgentContextCheck, TaskCommit, ReviewScratch, TrxFailures, WatchMaster, WatchTasks,
-// StageValueReport, AntiphonLogs, HangfireDashboard, GithubSync) on the production host, the real file system and an HTTP
+// stage-value-report, logs, hangfire-dashboard and github-sync, then checkpoint-task and distiller (unit 29). Each replaced the
+// scripts/<name>.ps1 of the same name (the three watchers were scripts/orchestration/*.ps1; deleted 2026-11-23, the unit 29
+// pair 2026-11-24, except scripts/github-sync.ps1, which stays as the thin launcher Windmill's u/lndcobra/antiphon_github_sync
+// starts by path), with the same parameters in kebab case. The behaviour is Antiphon.Nightly's (AgentContextCheck,
+// TaskCommit, ReviewScratch, TrxFailures, WatchMaster, WatchTasks, StageValueReport, AntiphonLogs, HangfireDashboard,
+// GithubSync, CheckpointTask, DistillerLedger) on the production host, the real file system and an HTTP
 // transport. This file reads the environment and passes it in: ANTIPHON_API (default http://localhost:17202),
 // ANTIPHON_TASK_TOKEN, ANTIPHON_TASK_ID (task-commit), ANTIPHON_OPERATOR_TOKEN_FILE (else the server's default path), the
 // system temp path, the working directory and the checkout the CLI was built in. It binds the browser seam of
@@ -31,10 +32,13 @@ namespace Antiphon.Scripts
         internal const string Logs = "logs";
         internal const string HangfireDashboard = "hangfire-dashboard";
         internal const string GithubSync = "github-sync";
+        internal const string CheckpointTask = "checkpoint-task";
+        internal const string Distiller = "distiller";
 
         internal const string Usage = AgentContextCheckOptions.Usage + " | " + TaskCommitOptions.Usage + " | " + NewReviewScratchOptions.Usage
             + " | " + RemoveReviewScratchOptions.Usage + " | " + Antiphon.Nightly.TrxFailures.Usage + " | " + WatchMasterOptions.Usage + " | " + WatchTasksOptions.Usage
-            + " | " + StageValueReportOptions.Usage + " | " + AntiphonLogsOptions.Usage + " | " + HangfireDashboardOptions.Usage + " | " + GithubSyncOptions.Usage;
+            + " | " + StageValueReportOptions.Usage + " | " + AntiphonLogsOptions.Usage + " | " + HangfireDashboardOptions.Usage + " | " + GithubSyncOptions.Usage
+            + " | " + CheckpointTaskOptions.Usage + " | " + DistillerLedgerOptions.Usage;
 
         private static string Api => Environment.GetEnvironmentVariable("ANTIPHON_API");
 
@@ -94,6 +98,16 @@ namespace Antiphon.Scripts
         // CARD-0171: exit 0 every board synced cleanly; 1 the request failed or a board reported an error.
         internal static int RunGithubSync(string[] args) =>
             Antiphon.Nightly.GithubSync.Run(GithubSyncOptions.Parse(args.Skip(1).ToArray()), Host(), NightlyReport.HttpTransport(timeout: Antiphon.Nightly.GithubSync.Deadline));
+
+        // CARD-0153: exit 0 committed or nothing to checkpoint; 2 the task cannot be resolved, has no usable working directory
+        // or is not in a git repository; 3 a shared checkout of another active worker; 1 a git step failed.
+        internal static int RunCheckpointTask(string[] args) =>
+            Antiphon.Nightly.CheckpointTask.Run(CheckpointTaskOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken), Host(), new FileSystem(),
+                NightlyReport.HttpTransport(timeout: BoardCli.Deadline));
+
+        // CARD-0330: exit 0 printed; 1 a failed request or a day count out of range.
+        internal static int RunDistiller(string[] args) =>
+            DistillerLedger.Run(DistillerLedgerOptions.Parse(args.Skip(1).ToArray(), Api), Host(), NightlyReport.HttpTransport(timeout: BoardCli.Deadline));
 
         // The shell opens the address in the default browser (Start-Process on a URL).
         private static void OpenDefaultBrowser(string address)

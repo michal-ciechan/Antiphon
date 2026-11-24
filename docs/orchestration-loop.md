@@ -2376,7 +2376,7 @@ this loop.
 **Shadow → Apply.** `Delegation:OutputDistillerMode` ships as **Shadow**: every eligible
 report is distilled, a ledger row is written, `DistilledResult` is stored on the task, and the
 queued `[task … done]` note is left untouched. Flip to **Apply** only after a week of ledger
-(`scripts/distiller.ps1 -Stats`). In Apply the held note's body is replaced with header +
+(`scripts/antiphon distiller --stats`). In Apply the held note's body is replaced with header +
 distilled bullets + a pointer to the full report; `NoteHeader` and `ContentDigest` stay the
 raw report's. `OutputDistillerEnabled=false` returns today's note with no other change.
 

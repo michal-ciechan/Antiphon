@@ -371,7 +371,7 @@ GET    /api/agent-tasks                      list envelope `{ scope, items, excl
                                              board (`scope` is null, `excluded` is zeros). In-repo
                                              production list callers are the web client
                                              (`client/src/api/agentTasks.ts`),
-                                             `scripts/checkpoint-task.ps1` (Working/Dispatched
+                                             `scripts/antiphon checkpoint-task` (Working/Dispatched
                                              occupancy) and `scripts/prune-test-data.ps1`
                                              (open-task safety); `scripts/antiphon delegate` does not list.
                                              Status names are case-insensitive
@@ -461,7 +461,7 @@ GET    /api/distillations                    CARD-0330 ledger. Query: since, out
                                              Joins raw and distilled texts from the task.
 GET    /api/distillations/stats              CARD-0330 counts by outcome/feedback/stamp,
                                              ratio quantiles, top missing-anchor classes,
-                                             FullReadAt rate. `scripts/distiller.ps1 -Stats`.
+                                             FullReadAt rate. `scripts/antiphon distiller --stats`.
 POST   /api/agent-tasks/{id}/handoff-actions  record an explicit caller observation (200).
 GET    /api/agent-tasks/{id}/handoff-actions  read action snapshots and observation history (200).
 POST   /api/agent-tasks/{id}/handoff-actions/{actionId}/child  keyed child request/recovery (200).
@@ -1374,7 +1374,7 @@ concurrency tokens and PowerShell's quoting hazards.
 | `scripts/antiphon schedule` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `--prompt-file`. Prints preview before create. |
 | `scripts/antiphon delegate` | create / `status` / `reply` / `refine` a delegated task |
 | `scripts/antiphon github-sync` | a bidirectional tracker push (`--board-id`, `--notify`) |
-| `scripts/checkpoint-task.ps1` | WIP-commit a stalled task's work without killing it |
+| `scripts/antiphon checkpoint-task` | WIP-commit a stalled task's work without killing it (`--task-id <id> [--push] [--dry-run]`) |
 | `verify-dev-stack.ps1` | health check across the whole stack |
 
 Both the card command and `scripts/antiphon delegate` read `ANTIPHON_API`, defaulting to

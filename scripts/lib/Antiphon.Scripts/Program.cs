@@ -173,7 +173,10 @@ namespace Antiphon.Scripts
             // new-review-scratch and remove-review-scratch: 0 done, 1 refused. trx-failures: 0. watch-master: 0. watch-tasks: 0,
             // 1 an unusable state file. stage-value-report: 0 printed, 1 a failed request. logs: 0 printed, 1 a missing log, no
             // live session, a failed request or ssh. hangfire-dashboard: 0 opened, 1 refused or failed, 2 not Windows.
-            // github-sync: 0 clean, 1 the request failed or a board reported an error. Usage is 2 for each.
+            // github-sync: 0 clean, 1 the request failed or a board reported an error. checkpoint-task (unit 29): 0 committed or
+            // nothing to checkpoint, 2 the task cannot be resolved, has no usable working directory or is not in a git repository,
+            // 3 a shared checkout of another active worker, 1 a git step failed. distiller (unit 29): 0 printed, 1 a failed
+            // request. Usage is 2 for each.
             [AgentHelperCommands.CheckAgentContext] = AgentHelperCommands.RunCheckAgentContext,
             [AgentHelperCommands.TaskCommit] = AgentHelperCommands.RunTaskCommit,
             [AgentHelperCommands.NewReviewScratch] = AgentHelperCommands.RunNewReviewScratch,
@@ -185,6 +188,8 @@ namespace Antiphon.Scripts
             [AgentHelperCommands.Logs] = AgentHelperCommands.RunLogs,
             [AgentHelperCommands.HangfireDashboard] = AgentHelperCommands.RunHangfireDashboard,
             [AgentHelperCommands.GithubSync] = AgentHelperCommands.RunGithubSync,
+            [AgentHelperCommands.CheckpointTask] = AgentHelperCommands.RunCheckpointTask,
+            [AgentHelperCommands.Distiller] = AgentHelperCommands.RunDistiller,
             // The routing matrix and orchestrator workspace commands answer every input themselves (unit 26). complexity-chain:
             // exit 0 done, 1 a refused value, a missing reason file or a failed request (a partial All: its status line on
             // stdout). migrate-stage-pins-to-cells: 0 previewed, applied or restored, 1 refused or a failed request.

@@ -3,7 +3,7 @@
 // `antiphon-scripts status-snapshot` (.claude/skills/antiphon-status-update/SKILL.md).
 //
 // Every request is a GET to the API (the CLI passes ANTIPHON_API, default http://localhost:17202) with the task token header
-// when ANTIPHON_TASK_TOKEN is set and the registered caller label (AntiphonCaller, the C# reading of
+// when ANTIPHON_TASK_TOKEN is set and the registered caller label (AntiphonCaller, which replaced
 // scripts/lib/antiphon-caller.ps1: the label stays "status-snapshot.ps1", the server's registered metric key). No fetch,
 // refresh, dispatch, slot release, state writer or output file is invoked. --project-id scopes the task counts; without it a
 // unique project is discovered from the pipeline, and ambiguity is an incomplete observation, never fleet counts presented
@@ -26,7 +26,10 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
-    /// <summary>The registered X-Antiphon-Caller labels (CARD-2004), as scripts/lib/antiphon-caller.ps1 and the server list them.</summary>
+    /// <summary>
+    /// The registered X-Antiphon-Caller labels (CARD-2004), as the server lists them. It replaced scripts/lib/antiphon-caller.ps1,
+    /// deleted with its last loader, scripts/checkpoint-task.ps1 (unit 29 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md).
+    /// </summary>
     public static class AntiphonCaller
     {
         /// <summary>The header name.</summary>

@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 358,
+      "classes": 359,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 145,
+      "classes": 144,
       "reason": "cap",
-      "owed": 120,
+      "owed": 119,
       "first": [
         "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
@@ -2174,9 +2174,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 45,
+      "classes": 47,
       "reason": "cap",
-      "owed": 20,
+      "owed": 22,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
@@ -2230,6 +2230,16 @@
         "StageValueReportTests",
         "ZombieAgentReaperTests",
         "NightlyChunkRunnerTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
+      "classes": 27,
+      "reason": "cap",
+      "owed": 2,
+      "first": [
+        "DelegateScriptInterruptSwitchTests",
+        "DelegateScriptRunnerSwitchTests"
       ]
     },
     {
@@ -2307,9 +2317,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 136,
+      "classes": 137,
       "reason": "cap",
-      "owed": 111,
+      "owed": 112,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -2439,12 +2449,12 @@
       "reason": "cap",
       "owed": 60,
       "first": [
+        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskServiceIntegrationTests",
         "CardFileGitFailureAcceptanceTests",
         "RepositoryMutationLeaseOwnerTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "WorktreeDefaultCallerTests",
-        "CheckpointTaskScriptTests",
         "CodexCliObservationTests",
         "GatedCommitServiceTests"
       ]
@@ -2467,18 +2477,18 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "GitDiffSpikeTests",
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
         "NightlyRunTests",
         "PhoneHomeMirrorJoinTests",
         "ProjectReadinessTests",
         "ProjectSetupServiceTests",
-        "RcHistoricalEvidenceTests",
-        "RemoteScriptContractTests"
+        "RcHistoricalEvidenceTests"
       ]
     },
     {
@@ -25508,9 +25518,11 @@
       "path": "tests/Antiphon.Tests/Scripts/BoardCommandRun.cs",
       "classes": [
         "CapabilityScriptTests",
+        "CheckpointTaskScriptTests",
         "CommitOnSettleScriptTests",
         "ComplexityChainScriptTests",
         "DispatchConcurrencyScriptTests",
+        "DistillerCommandTests",
         "GithubSyncScriptTests",
         "MigrateStagePinsScriptTests",
         "ModelAvailabilityScriptTests",
@@ -25518,6 +25530,7 @@
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
         "ProjectScriptWorkspaceTests",
+        "RegisteredCallerScriptTests",
         "RoutingPinScriptTests",
         "ScheduleCommandTests",
         "SpecialistRoutingScriptTests"
@@ -25594,6 +25607,7 @@
         "CardFilePrivacyScriptTests",
         "CardListSearchScriptTests",
         "CardRelationshipScriptTests",
+        "DistillerCommandTests",
         "RegisteredCallerScriptTests"
       ]
     },
@@ -26149,11 +26163,11 @@
         "C1960WorkspaceSlotsScriptTests",
         "CapabilityScriptTests",
         "CardCommandTests",
+        "CheckpointTaskScriptTests",
         "CommitOnSettleScriptTests",
         "DelegateCommandTests",
-        "DelegateScriptInterruptSwitchTests",
-        "DelegateScriptRunnerSwitchTests",
         "DispatchConcurrencyScriptTests",
+        "DistillerCommandTests",
         "GithubSyncScriptTests",
         "HangfireDashboardCommandTests",
         "KeepSixCommandTests",
@@ -27131,7 +27145,6 @@
       "classes": [
         "C1960WorkspaceSlotsScriptTests",
         "CardFileBootstrapCheckTests",
-        "CheckpointTaskScriptTests",
         "DelegateScriptBindDiagnosisTests",
         "DelegateScriptCapabilityTests",
         "DelegateScriptKindTests",
@@ -28257,7 +28270,6 @@
         "AgentTaskCardBindingTests",
         "AgentTaskCommitEndpointTests",
         "AgentTaskConcurrencyLimitTests",
-        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskLandStageOutcomeTests",
         "AgentTaskReplyIntegrationTests",
@@ -28266,6 +28278,7 @@
         "AgentTaskWorktreeBaseSyncDebtTests",
         "AgentTaskWorktreeContinuityTests",
         "CardFilePrivacyGitTests",
+        "CheckpointTaskScriptTests",
         "DelegationWorktreeTests",
         "DispatchBaseNotificationTests",
         "DispatchSiblingInspectionTests",
@@ -29020,12 +29033,12 @@
         "C1818GcOwnerRobustnessTests",
         "CardCliE2ETests",
         "CardReviewServiceIntegrationTests",
+        "CheckpointTaskScriptTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CompletedCardWorkspaceRemovalTests",
         "ContractSnapshotTests",
         "DelegateCheckProbeTests",
         "DindRunnerContractTests",
-        "GitDiffSpikeTests",
         "LandGraphAuditCleanupTests",
         "LandNonCodeSkipTests",
         "OutputCleanupTests",
