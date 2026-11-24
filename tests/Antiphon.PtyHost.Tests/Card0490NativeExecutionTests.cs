@@ -60,6 +60,48 @@ public class Card0490NativeExecutionTests
         await Task.CompletedTask;
     }
 
+    // Unit 39 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: scripts/test-card0490-native.ps1's contract
+    // (mandatory values, the PC and phase sets, BindingFile unless ordinary) is the harness's own admission now.
+    private static readonly string[] OrdinaryInvocation =
+        ["-Pc", "PC-28", "-Phase", "baseline", "-SnapshotRoot", "snap", "-AssetProfile", "assets.lock.json", "-EvidenceRoot", "evidence", "-Ordinary"];
+
+    [Test]
+    public async Task Invocation_contract_admits_one_ordinary_or_sourced_pc_and_phase()
+    {
+        NativeInputPolicy.Admit(OrdinaryInvocation).ShouldBeNull();
+        NativeInputPolicy.Admit([.. OrdinaryInvocation[..^1], "-BindingFile", "binding.json"]).ShouldBeNull();
+        NativeInputPolicy.Admit(["-pc", "pc-31", "-phase", "GREEN", .. OrdinaryInvocation[4..]]).ShouldBeNull();
+        NativeInputPolicy.Admit([.. OrdinaryInvocation, "-BindingFile", "binding.json"])!.ExitCode.ShouldBe(3);
+        NativeInputPolicy.Admit([])!.ExitCode.ShouldBe(2);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    [Arguments("-SnapshotRoot")]
+    [Arguments("-AssetProfile")]
+    [Arguments("-Pc")]
+    [Arguments("-Phase")]
+    [Arguments("-EvidenceRoot")]
+    public async Task Invocation_contract_requires_each_value(string name)
+    {
+        var at = Array.IndexOf(OrdinaryInvocation, name);
+        var missing = OrdinaryInvocation.Where((_, i) => i != at && i != at + 1).ToArray();
+        NativeInputPolicy.Admit(missing).ShouldBe(new NativeRefusal(2, name + " requires a value."));
+        var dangling = OrdinaryInvocation.Select((arg, i) => i == at + 1 ? "-Ordinary" : arg).ToArray();
+        NativeInputPolicy.Admit(dangling)!.ExitCode.ShouldBe(2);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Invocation_contract_refuses_an_unlisted_pc_phase_or_mode()
+    {
+        NativeInputPolicy.Admit(OrdinaryInvocation.Select(arg => arg == "PC-28" ? "PC-27" : arg).ToArray())!.Message.ShouldStartWith("-Pc must be one of");
+        NativeInputPolicy.Admit(OrdinaryInvocation.Select(arg => arg == "baseline" ? "mutation" : arg).ToArray())!.Message.ShouldStartWith("-Phase must be one of");
+        NativeInputPolicy.Admit(OrdinaryInvocation[..^1]).ShouldBe(new NativeRefusal(2, "Sourced execution requires BindingFile."));
+        NativeInputPolicy.Admit([.. OrdinaryInvocation[..^1], "-BindingFile"]).ShouldBe(new NativeRefusal(2, "-BindingFile requires a value."));
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task Source_escape_is_rejected_before_read()
     {

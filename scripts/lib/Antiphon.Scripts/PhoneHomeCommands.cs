@@ -2,9 +2,11 @@
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): autostart-session-runner (the body of
 // scripts/autostart-session-runner.ps1, which the logon task "Antiphon Session Runner" still starts by path: a thin launcher),
 // start-windows-phone-home-runner, verify-phone-home-grok, install-autostart and install-cleanup-task (their scripts are
-// deleted). The behaviour is Antiphon.Nightly's (SessionRunnerAutostart, PhoneHomeRunnerStart, PhoneHomeGrokVerify,
-// AutostartInstall on the Task Scheduler's ScheduledTaskRegistry) on the production host; this file binds them. Each
-// command's checkout is the one this executable was built in, else the current directory. ASCII only.
+// deleted), and (unit 39) build-card0490-bootdisk (scripts/build-card0490-bootdisk.ps1, the CARD-0490 native lane's boot disk;
+// the CLI passes CARD0490_QEMU_DIR in). The behaviour is Antiphon.Nightly's (SessionRunnerAutostart, PhoneHomeRunnerStart,
+// PhoneHomeGrokVerify, AutostartInstall on the Task Scheduler's ScheduledTaskRegistry, Card0490BootDisk) on the production
+// host; this file binds them. Each command's checkout is the one this executable was built in, else the current directory.
+// ASCII only.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,9 +23,10 @@ namespace Antiphon.Scripts
         internal const string VerifyPhoneHomeGrok = "verify-phone-home-grok";
         internal const string InstallAutostart = "install-autostart";
         internal const string InstallCleanupTask = "install-cleanup-task";
+        internal const string BuildCard0490BootDisk = "build-card0490-bootdisk";
 
         internal const string Usage = SessionRunnerAutostartOptions.Usage + " | " + PhoneHomeRunnerStartOptions.Usage + " | " + PhoneHomeGrokVerifyOptions.Usage
-            + " | " + AutostartInstallOptions.Usage + " | " + CleanupTaskInstallOptions.Usage;
+            + " | " + AutostartInstallOptions.Usage + " | " + CleanupTaskInstallOptions.Usage + " | " + Card0490BootDiskOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -69,6 +72,11 @@ namespace Antiphon.Scripts
             if (!WindowsOnly(InstallCleanupTask)) return 1;
             return AutostartInstall.RunCleanupTask(options, NightlyHost.Production(Console.Out, Console.Error), Machine());
         }
+
+        // Exit 0 done; 1 refused or failed (one stderr line); usage 2. --smoke boots the disk in QEMU.
+        internal static int RunBuildCard0490BootDisk(string[] args) =>
+            Card0490BootDisk.Run(Card0490BootDiskOptions.Parse(args.Skip(1).ToArray(), Environment.GetEnvironmentVariable("CARD0490_QEMU_DIR"), Checkout),
+                NightlyHost.Production(Console.Out, Console.Error), new FileSystem(), new Card0490BootDiskSeams());
 
         private static AutostartInstallMachine Machine()
         {

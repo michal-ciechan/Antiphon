@@ -14,7 +14,7 @@
   "bootDisk": {
     "version": "1",
     "sha256": "3ba7499bf171b82773f528690041396d64524aad03214e904a97348b1b526c17",
-    "source": "scripts/build-card0490-bootdisk.ps1",
+    "source": "scripts/antiphon build-card0490-bootdisk",
     "file": "card0490-bootdisk.qcow2",
     "format": "qcow2",
     "virtualSizeMiB": 64

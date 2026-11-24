@@ -1,23 +1,24 @@
 namespace Antiphon.Card0490.NativeHarness;
 
+/// <summary>
+/// The CARD-0490 D-12 native host, one PC and phase per invocation:
+/// dotnet run --project tests/Antiphon.Card0490.NativeHarness -- -Pc PC-28 -Phase baseline -SnapshotRoot &lt;dir&gt;
+/// -AssetProfile &lt;assets.lock.json&gt; -EvidenceRoot &lt;dir&gt; (-Ordinary | -BindingFile &lt;file&gt;).
+/// scripts/test-card0490-native.ps1 wrapped this until unit 39 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md;
+/// its checks are <see cref="NativeInputPolicy.Admit"/>.
+/// </summary>
 public static class Program
 {
     public static int Main(string[] args)
     {
-        if (args.Length == 0)
+        var refusal = NativeInputPolicy.Admit(args);
+        if (refusal is not null)
         {
-            Console.Error.WriteLine("Antiphon.Card0490.NativeHarness: pass -Ordinary or sourced arguments via scripts/test-card0490-native.ps1.");
-            return 2;
+            Console.Error.WriteLine(refusal.Message);
+            return refusal.ExitCode;
         }
 
-        if (NativeInputPolicy.OrdinaryAndBindingConflict(args))
-        {
-            Console.Error.WriteLine("Sourced refusal never downgrades to ordinary.");
-            return 3;
-        }
-
-        var lockFile = args.SkipWhile(a => !string.Equals(a, "-AssetProfile", StringComparison.OrdinalIgnoreCase))
-            .Skip(1).FirstOrDefault();
+        var lockFile = NativeInputPolicy.Value(args, "-AssetProfile");
         if (lockFile is not null && File.Exists(lockFile))
         {
             var text = File.ReadAllText(lockFile);

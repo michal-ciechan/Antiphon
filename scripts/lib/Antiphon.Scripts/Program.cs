@@ -243,12 +243,14 @@ namespace Antiphon.Scripts
             // The phone-home runner and the autostart installers answer every input themselves (unit 36). autostart-session-runner:
             // exit 2 a refused or unreadable phone-home configuration (one line in logs/session-runner.log), else 0 once supervision
             // ends. start-windows-phone-home-runner: the runner's exit code, 1 refused. verify-phone-home-grok: 0 done, 2 blockers
-            // remain, 1 a failure. install-autostart and install-cleanup-task: 0 done, 1 a failure or not Windows. Usage is 2 for each.
+            // remain, 1 a failure. install-autostart and install-cleanup-task: 0 done, 1 a failure or not Windows. build-card0490-bootdisk
+            // (unit 39): 0 done, 1 refused or failed. Usage is 2 for each.
             [PhoneHomeCommands.AutostartSessionRunner] = PhoneHomeCommands.RunAutostartSessionRunner,
             [PhoneHomeCommands.StartWindowsPhoneHomeRunner] = PhoneHomeCommands.RunStartWindowsPhoneHomeRunner,
             [PhoneHomeCommands.VerifyPhoneHomeGrok] = PhoneHomeCommands.RunVerifyPhoneHomeGrok,
             [PhoneHomeCommands.InstallAutostart] = PhoneHomeCommands.RunInstallAutostart,
             [PhoneHomeCommands.InstallCleanupTask] = PhoneHomeCommands.RunInstallCleanupTask,
+            [PhoneHomeCommands.BuildCard0490BootDisk] = PhoneHomeCommands.RunBuildCard0490BootDisk,
             // The desktop dev stack answers every input itself (unit 37). dev-aspire: exit 0 launched, 1 failed, 3 refused (a linked
             // worktree or a phone-home configuration; nothing touched). run-apphost: the AppHost build's code when it failed, else
             // the AppHost's. dev-start, dev-fresh, dev-backup (the zip's path last), dev-restore, dev-upgrade, restart-dev-stack,
