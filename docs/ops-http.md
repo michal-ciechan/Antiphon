@@ -226,7 +226,7 @@ The `delegate`, `status-snapshot`, `checkpoint-task` and `card` commands (`scrip
 
 | Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `scripts/antiphon delegate finding <id> --stage … --found "…"` / `--clean`. |
 | Per-stage hit rate vs. cost (CARD-0272) | GET | `/api/stage-outcomes` (`since`, `until`, `stage`, `cardId`, `latestOnly` default true) — rows plus a per-stage summary (runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per finding, server seconds). `scripts/antiphon stage-value-report` prints it as a table. |
-| Host build slots (CARD-0589) | GET | `:17204/build-slots` (desktop; server2: `http://127.0.0.1:8080/build-slots` inside the runner container): budget, occupancy, live memory vs floor, leases with `holderAlive`, FIFO waiters. `GET .../build-slots/metrics` (CARD-1489): read-only 3-hour grant/release/reap/refusal counts and wait/held statistics; on server2 poll `ANTIPHON_BUILD_SLOTS_URL` (the shared broker). `POST`/`DELETE :17204/build-slots[/{leaseId}]` are for `scripts/run-checkpoint.ps1`, `scripts/build-slot.ps1` and the land verifier, never by hand; a `BUILD SLOT unleased` line in a report means the runner did not answer. Owner: [testing-and-build.md](testing-and-build.md) Build slots |
+| Host build slots (CARD-0589) | GET | `:17204/build-slots` (desktop; server2: `http://127.0.0.1:8080/build-slots` inside the runner container): budget, occupancy, live memory vs floor, leases with `holderAlive`, FIFO waiters. `GET .../build-slots/metrics` (CARD-1489): read-only 3-hour grant/release/reap/refusal counts and wait/held statistics; on server2 poll `ANTIPHON_BUILD_SLOTS_URL` (the shared broker). `POST`/`DELETE :17204/build-slots[/{leaseId}]` are for `scripts/run-checkpoint.ps1` (its row verb), `scripts/build-slot.ps1` and the land verifier, never by hand; a `BUILD SLOT unleased` line in a report means the runner did not answer. Owner: [testing-and-build.md](testing-and-build.md) Build slots |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` (CARD-0514: snapshot may include `acceptedStartedAt`; automatic RC uses `POST :17204/sessions/{id}/conditional-input` when `/capabilities` lists `conditionalMaintenanceInputV1`, never raw `/input`) |
 
 Runner workspace phone-home (CARD-0779): operation `WorkspacePublish = 32` is sent only when
@@ -834,7 +834,7 @@ stage outcomes expose `verificationProfileVersion`, `commissionedRound` and `ord
 Review evidence and stage-outcome reads also expose nullable `reviewedSourceClean`. A clean
 Review finding may supply it explicitly with `scripts/antiphon delegate finding --reviewed-source-clean`; omission
 stays null. Evidence-backed land refuses false/null with `review_evidence_source_not_clean`,
-including unpublished resume. Check checkpoint `source.json` or schema-2 `report.json` with
+including unpublished resume. Check checkpoint `report.json` (or a `source.json` written before unit 20) with
 `scripts/validate-checkpoint-receipt.ps1` before Review declares true.
 
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
