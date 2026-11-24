@@ -16,7 +16,10 @@ them.
 
 ## What the person sees
 
-- A **Help** button in the page header on every page, and on panels that have their own actions (a
+- **One icon means "help for your agent"**, the same everywhere: a small robot-with-question-mark
+  icon (`docs/agent-help/agent-help-icon.svg`, also the client's `AgentHelpIcon`). It has the
+  tooltip "Get a prompt for your AI agent", and it is never used for anything else.
+- A **Help** button with that icon in the page header on every page, and on panels that have their own actions (a
   graph node panel, a variant in the workflow editor, a finding, a gate).
 - The help drawer has two tabs:
   - **For you:** how the page works, in plain words.
@@ -113,6 +116,10 @@ repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
 - **The repository's main `README.md` links to it** in its own short section ("Working with
   Antiphon through an agent"), and `AGENTS.md` gets a row in its index table, so both people and
   agents arriving at the repo find it.
+- **Both READMEs show the icon** (decided 2026-11-24), as an image beside one sentence: "When you
+  see this icon in Antiphon, click it to get a prompt to give to your AI agent, so your local agent
+  can work with Antiphon for you." A short screenshot of the drawer follows it in the folder's
+  README.
 - The indexes are **generated from the files' headers** and checked in, so they cannot drift; the
   lint test fails when they are out of date.
 - **They can be queried:**
@@ -191,7 +198,7 @@ environment variable and never write it to a file, a commit or its output.
 
 | Phase | Delivers | Checked by |
 |---|---|---|
-| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the folder's `README.md`, the generated indexes and `placeholders.md`, the links from the main `README.md` and `AGENTS.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
+| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the agent-help icon, the folder's `README.md` and the icon line in both READMEs, the generated indexes and `placeholders.md`, the links from the main `README.md` and `AGENTS.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
 | **2. Keys** | Personal agent keys: scopes, expiry, the Keys page, "via agent" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked key is refused, and an expired one when a lifetime is set; an approval needs the approve scope; the key is never returned after creation |
 | **3. Experiments** | Help files for suite, variant, experiment and case, written with that feature (experiments plan, phase 4), including "customise a variant" and "run a suite" | The examples run against the scripted server |
 | **4. The rest of the site** | Files for boards and cards, agents and sessions, hosts and settings; the route-coverage test turned on | The coverage test |
