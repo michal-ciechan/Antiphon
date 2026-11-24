@@ -40,7 +40,6 @@ public sealed class VerifyDevStackSmokeTests
     }
 
     [Test]
-    [Category("Integration")]
     public void Linux_listener_probe_lists_ports_without_GetNetTCPConnection()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
