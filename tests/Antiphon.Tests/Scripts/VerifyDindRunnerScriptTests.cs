@@ -1,32 +1,82 @@
+using System.IO.Abstractions.TestingHelpers;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Scripts.Nightly;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// CARD-0604 S5, R-3. The harness talks to a real Docker daemon, so only its argument and naming
-// boundaries are guarded here; the observations themselves are CP-4.
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+/// <summary>
+/// CARD-0604 S5, R-3: the Docker Desktop harness (the verify-card0604-dind-runner command, Antiphon.Nightly.DindRunnerHarness, which
+/// replaced scripts/verify-card0604-dind-runner.ps1 in unit 47 of the 2026-11-22 plan) in process: docker, ssh-keygen and git are a
+/// recording launcher that answers as a healthy image would (or as a test's fault says), the runner's HTTP a fake, the clock fake and
+/// the files a mock file system. Nothing starts; the real observations are CP-4.
+/// </summary>
+[Category("Unit")]
 public sealed class VerifyDindRunnerScriptTests
 {
+    private const string Image = "antiphon-session-testing:test";
+    private const string Container = "c604-20261124T090000Z";
+    private const string Volume = "c604-20261124T090000Z-dind";
+
     [Test]
-    public async Task Production_port_is_refused()
+    [Arguments(17202)]
+    [Arguments(17203)]
+    [Arguments(17204)]
+    [Arguments(17205)]
+    public void Production_port_is_refused(int port)
     {
-        var result = await RunAsync("-Image", "antiphon-session-testing:test", "-Port", "17204");
-        result.ExitCode.ShouldBe(2);
-        result.Output.ShouldContain("refusing production port 17204");
-        result.Output.ShouldContain("C604 HARNESS EXIT CODE: 2");
-        result.Output.ShouldNotContain("docker build");
+        var world = new World();
+        var run = world.Run("--port", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        run.Exit.ShouldBe(2);
+        run.Lines.ShouldBe(["C604 HARNESS NOTE: refusing production port " + port + " (17202-17205 are the local stack).", "C604 HARNESS EXIT CODE: 2"]);
+        world.Events.ShouldBeEmpty();
+        world.Files.AllDirectories.ShouldNotContain(path => path.Contains("c604-harness", StringComparison.Ordinal));
+        DindRunnerHarness.ForbiddenPorts.ShouldBe([17202, 17203, 17204, 17205]);
     }
 
     [Test]
-    public async Task Image_is_required()
+    public void Image_is_required()
     {
-        var result = await RunAsync("-Port", "18298");
-        result.ExitCode.ShouldNotBe(0);
-        result.Output.ShouldNotContain("C604 HARNESS EXIT CODE: 0");
+        Should.Throw<NightlyUsageException>(() => DindRunnerOptions.Parse(["--port", "18298"], "")).Message.ShouldBe("missing --image");
+        DindRunnerOptions.Parse(["--image", Image], "").Port.ShouldBe(18298);
+    }
+
+    [Test]
+    public void A_healthy_image_grades_every_observation_ok()
+    {
+        var world = new World();
+        var run = world.Run();
+        run.Exit.ShouldBe(0, run.Output);
+        run.Lines.ShouldBe([
+            "C604 HARNESS: image=" + Image + " nested=yes egress=yes loopback=200 launchMs=1200 key=ok restart=ok refusal=ok containment=skipped claude=2.1.327 claudeAuth=logged-out",
+            "C604 HARNESS EXIT CODE: 0"]);
+        world.Evidence("graded.txt").ShouldBe(
+            "claude=True\nclaudeAuth=True\negress=True\nkey=True\nlaunch=True\nloopback=True\nnested=True\nrefusal=True\nrestart=True\n");
+        world.Evidence("post-sessions.txt").ShouldStartWith("status=201 elapsedMs=1200\n");
+        world.Evidence("restart-summary.txt").ShouldBe("restarted=True backHealthy=True imagesRetained=True\nbefore=aaa,bbb\nafter=aaa,bbb\n");
+        world.Evidence("docker-version.txt").ShouldBe("docker version --format {{.Server.Version}}\n--- exit 0 ---\n27.5.1\n\n");
+        foreach (var name in new[] { "throwaway_key", "throwaway_key.pub", "throwaway_secret", "throwaway_gitconfig" })
+            world.Files.FileExists(Path.Combine(world.EvidenceDir, name)).ShouldBeFalse(name + " is deleted at the end");
+    }
+
+    [Test]
+    public void Harness_names_only_its_own_container()
+    {
+        var world = new World();
+        world.Run().Exit.ShouldBe(0);
+        var docker = world.Launches.Where(launch => launch.FileName == "docker").Select(launch => launch.Arguments.ToArray()).ToArray();
+        docker.ShouldNotContain(arguments => arguments.Contains("prune") || arguments.Contains("down"));
+        var removals = docker.Where(arguments => arguments.Contains("rm") && !arguments.Contains("--rm")).ToArray();
+        removals.Select(arguments => string.Join(" ", arguments)).ShouldBe(["rm -f " + Container, "volume rm -f " + Volume]);
+        var start = docker.Single(arguments => arguments[0] == "run" && arguments[1] == "-d");
+        start.ShouldContain("--name");
+        start[Array.IndexOf(start, "--name") + 1].ShouldBe(Container);
+        start.ShouldContain("18298:8080");
+        start.ShouldContain(Volume + ":/var/lib/docker");
+        docker.First(arguments => arguments[0] == "volume").ShouldBe(["volume", "create", Volume]);
     }
 
     [Test]
@@ -46,60 +96,42 @@ public sealed class VerifyDindRunnerScriptTests
             .ShouldBeFalse("the private key half is never baked into the image");
         dockerfile.ShouldNotContain("BEGIN OPENSSH PRIVATE KEY");
 
-        var script = Read("scripts/verify-card0604-dind-runner.ps1");
-        script.ShouldContain("throwaway_key");
-        script.ShouldNotContain("antiphon-server2/secrets");
-        script.ShouldNotContain("/home/mc/antiphon-server2");
+        // The harness mounts its own throwaway key and never a server2 secret.
+        var world = new World();
+        world.Run().Exit.ShouldBe(0);
+        var start = world.Launches.Single(launch => launch.FileName == "docker" && launch.Arguments[0] == "run" && launch.Arguments[1] == "-d").Arguments;
+        start.ShouldContain(Path.Combine(world.EvidenceDir, "throwaway_key") + ":/run/secrets/antiphon-deploy-key:ro");
+        start.ShouldContain(Path.Combine(world.EvidenceDir, "throwaway_secret") + ":/run/secrets/phone-home:ro");
+        world.Launches.SelectMany(launch => launch.Arguments).ShouldAllBe(argument => !argument.Contains("/home/mc/antiphon-server2", StringComparison.Ordinal)
+            && !argument.Contains("antiphon-server2/secrets", StringComparison.Ordinal));
+        var keygen = world.Launches.Single(launch => launch.FileName == "ssh-keygen").Arguments;
+        keygen.ShouldBe(["-t", "ed25519", "-N", "", "-C", "c604-harness-throwaway", "-f", Path.Combine(world.EvidenceDir, "throwaway_key")]);
     }
 
-    [Test]
-    public void Harness_names_only_its_own_container()
-    {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1");
-        script.ShouldContain("$containerName = \"c604-$stamp\"");
-        script.ShouldContain("$volumeName = \"c604-$stamp-dind\"");
-        // Removal acts on this run's own names only: never a project sweep, never a prune.
-        foreach (var line in script.Replace("\r\n", "\n").Split('\n'))
-        {
-            var trimmed = line.Trim();
-            if (!trimmed.Contains("'rm'", StringComparison.Ordinal)
-                && !trimmed.Contains("'prune'", StringComparison.Ordinal)
-                && !trimmed.Contains("'down'", StringComparison.Ordinal))
-                continue;
-            trimmed.Contains("'prune'", StringComparison.Ordinal).ShouldBeFalse("harness never prunes: " + trimmed);
-            (trimmed.Contains("$containerName", StringComparison.Ordinal)
-                || trimmed.Contains("$volumeName", StringComparison.Ordinal)
-                || trimmed.Contains("$throwaway", StringComparison.Ordinal))
-                .ShouldBeTrue("removal names this run's own resource: " + trimmed);
-        }
-
-        foreach (var port in new[] { "17202", "17203", "17205" })
-            script.ShouldContain(port);
-        script.ShouldContain("$forbiddenPorts = 17202, 17203, 17204, 17205");
-        script.ShouldContain("[int] $Port = 18298");
-    }
-
-    // CARD-0604 S9 / V-28 (cgroup v2 half). -Containment is no longer a no-op: it runs the same
-    // in-image probe the server2 case runs on v1, as uid 1654, and it is GRADED -- an
-    // unmeasured containment must fail the harness, not quietly pass it.
+    // CARD-0604 S9 / V-28 (cgroup v2 half). --containment runs the same in-image probe the server2 case runs on v1, as uid 1654,
+    // and it is GRADED: an unmeasured containment fails the harness.
     [Test]
     public void Containment_switch_grades_the_v2_measurements()
     {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1");
+        var world = new World();
+        var run = world.Run("--containment");
+        run.Exit.ShouldBe(0, run.Output);
+        run.Lines[0].ShouldContain(" containment=ok ");
+        world.Evidence("graded.txt").ShouldContain("containment=True\n");
+        world.Evidence("containment.txt").ShouldBe("advertised=True\nownership=True\ngrant=True\nprobe=True\nresidue=True\n");
+        var probes = world.Launches.Where(launch => launch.Arguments.Contains("--user")).Select(launch => launch.Arguments.ToArray()).ToArray();
+        probes.Length.ShouldBe(4);
+        probes.ShouldAllBe(arguments => arguments[1] == "--user" && arguments[2] == "1654:1654" && arguments[3] == Container);
+        probes[0][4..].ShouldBe(["curl", "-fsS", "http://127.0.0.1:8080/capabilities"]);
+        probes[1][4..].ShouldBe(["/bin/sh", "-c", DindRunnerHarness.CustodyScript]);
+        probes[2][4..].ShouldBe(["/usr/local/bin/antiphon-custody-containment-probe"]);
+        probes[3][4..].ShouldBe(["bash", "-c", DindRunnerHarness.ResidueScript]);
 
-        script.ShouldContain("[switch] $Containment");
-        script.ShouldContain("antiphon-custody-containment-probe");
-        script.ShouldContain("'--user', '1654:1654'");
-        script.ShouldContain("$graded['containment'] = $containmentState -eq 'ok'");
-        script.ShouldContain("containment-probe.txt");
-        script.ShouldContain("containment-residue.txt");
-        script.ShouldContain("linux-cgroup-v1");
-        script.ShouldContain("windows-job-v1");
-
-        // The Cut A placeholder is gone; leaving it would grade an unimplemented measurement.
-        script.Contains("is not implemented in this cut", StringComparison.Ordinal)
-            .ShouldBeFalse("the -Containment no-op placeholder is superseded by Cut B");
-        script.Contains("$containmentState = 'unsupported'", StringComparison.Ordinal).ShouldBeFalse();
+        var windows = new World { Capabilities = "{\"backends\":[\"linux-cgroup-v1\",\"windows-job-v1\"]}" };
+        var refused = windows.Run("--containment");
+        refused.Exit.ShouldBe(1);
+        refused.Lines[0].ShouldBe("C604 HARNESS NOTE: observations not ok: containment");
+        windows.Evidence("containment.txt").ShouldStartWith("advertised=False\n");
     }
 
     [Test]
@@ -107,155 +139,231 @@ public sealed class VerifyDindRunnerScriptTests
     [Arguments("\r\n")]
     public void Containment_residue_counts_subdirectories_only(string lineEnding)
     {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1").ReplaceLineEndings(lineEnding);
         // CARD-1614 counts executions inside namespaces, on v2 or both v1 controllers.
+        var script = DindRunnerHarness.ResidueScript;
         script.ShouldContain("source /usr/local/lib/antiphon-custody-common.sh || exit 1");
         script.ShouldContain("ns=$(custody_read_namespace) || exit 1");
-        foreach (var root in new[]
-        {
-            "/sys/fs/cgroup/antiphon-custody",
-            "/sys/fs/cgroup/pids/antiphon-custody",
-            "/sys/fs/cgroup/freezer/antiphon-custody",
-        })
+        foreach (var root in new[] { "/sys/fs/cgroup/antiphon-custody", "/sys/fs/cgroup/pids/antiphon-custody", "/sys/fs/cgroup/freezer/antiphon-custody" })
             script.ShouldContain("custody_count_execution_trees " + root + " \"$ns\" || exit 1");
+        script.ShouldNotContain("ls -1 /sys/fs/cgroup/antiphon-custody");
 
         var common = Read("docker/session-runner-grok/antiphon-custody-common.sh").ReplaceLineEndings(lineEnding);
         var counter = common[common.IndexOf("custody_count_execution_trees()", StringComparison.Ordinal)..];
         counter.ShouldContain("[ -L \"$ns_path\" ] || [ ! -d \"$ns_path\" ]");
         counter.ShouldContain("[ -L \"$exec_path\" ] || [ ! -d \"$exec_path\" ]");
         counter.ShouldContain("procs=\"$exec_path/tree/cgroup.procs\"");
-        script.ShouldContain("$residue.ExitCode -eq 0");
-        script.ShouldContain("$residue.Output -match '(?m)^status=ok$'");
-        script.ShouldContain("$residue.Output -match '(?m)^current=0$'");
-        foreach (var kind in new[] { "current", "foreign", "legacy" })
-            script.ShouldContain("$residue.Output -notmatch '(?m)^" + kind + "=[1-9]'");
-        script.ShouldContain("$residue.Output -notmatch '(?m)^status=read-error$'");
-        script.ShouldNotContain("ls -1 /sys/fs/cgroup/antiphon-custody");
+
+        // The grade: status=ok and current=0 on lines of their own, and no current, foreign or legacy count above zero. The
+        // launcher hands output over as "\n"-ended lines (the script's Out-String joined them with CRLF on Windows, where these
+        // (?m)...$ checks could never match).
+        foreach (var (residue, ok) in new[]
+        {
+            ("status=ok\ncurrent=0\n", true),
+            ("status=ok\ncurrent=0\ncontroller=freezer\nstatus=ok\ncurrent=0\n", true),
+            ("status=ok\ncurrent=0\nforeign=2\n", false),
+            ("status=ok\ncurrent=0\nlegacy=1\n", false),
+            ("status=ok\ncurrent=3\n", false),
+            ("status=read-error\ncurrent=0\n", false),
+        })
+        {
+            var world = new World { Residue = residue };
+            world.Run("--containment").Exit.ShouldBe(ok ? 0 : 1, residue);
+        }
     }
 
-    // CARD-0628 G-4: step 7b probes the pinned claude as the app uid against a fresh store it
-    // created, grades the signed-out verdict, and hands the CLI no credential of any kind.
+    // CARD-0628 G-4: step 7b probes the pinned claude as the app uid against a fresh store it created, grades the signed-out
+    // verdict, and hands the CLI no credential of any kind.
     [Test]
     public void Harness_probes_claude_as_the_app_uid_and_expects_logged_out()
     {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1");
-        script.ShouldContain("'-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude'");
-        script.ShouldContain("'-e', 'PhoneHome__ClaudeHome=/tmp/state/claude'");
-        script.ShouldContain("mkdir -p /tmp/state/claude && chown 1654:1654 /tmp/state/claude");
-        script.ShouldContain("$claudeEnv = @('-u', '1654:1654', '-e', 'HOME=/home/app', '-e', 'CLAUDE_CONFIG_DIR=/tmp/state/claude'");
-        script.ShouldContain("@($containerName, 'claude', '--version')");
-        script.ShouldContain("@($containerName, 'claude', 'auth', 'status', '--json')");
-        script.ShouldContain("$claudeStatus.ExitCode -eq 1 -and $claudeStatus.Output -match '\"loggedIn\"\\s*:\\s*false'");
-        script.ShouldContain("claude   = $claudeVersion -eq '2.1.327'");
-        script.ShouldContain("claudeAuth = $claudeAuth -eq 'logged-out'");
-        script.ShouldContain("claude={9} claudeAuth={10}");
+        var world = new World();
+        world.Run().Exit.ShouldBe(0);
+        var start = world.Launches.Single(launch => launch.FileName == "docker" && launch.Arguments[0] == "run" && launch.Arguments[1] == "-d").Arguments;
+        start.ShouldContain("CLAUDE_CONFIG_DIR=/tmp/state/claude");
+        start.ShouldContain("PhoneHome__ClaudeHome=/tmp/state/claude");
+        string[] claudeEnv = ["exec", "-u", "1654:1654", "-e", "HOME=/home/app", "-e", "CLAUDE_CONFIG_DIR=/tmp/state/claude", "-e", "DISABLE_AUTOUPDATER=1", Container];
+        world.Commands.ShouldContain("docker exec " + Container + " sh -c mkdir -p /tmp/state/claude && chown 1654:1654 /tmp/state/claude");
+        world.Commands.ShouldContain("docker " + string.Join(" ", claudeEnv) + " claude --version");
+        world.Commands.ShouldContain("docker " + string.Join(" ", claudeEnv) + " claude auth status --json");
+        DindRunnerHarness.ClaudeVersion.ShouldBe("2.1.327");
         foreach (var name in new[] { "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "credentials.json" })
-            script.Contains(name, StringComparison.Ordinal).ShouldBeFalse("the harness never passes " + name);
+            world.Launches.SelectMany(launch => launch.Arguments).ShouldAllBe(argument => !argument.Contains(name, StringComparison.Ordinal), "the harness never passes " + name);
+
+        var signedIn = new World { ClaudeAuthExit = 0 };
+        var refused = signedIn.Run();
+        refused.Exit.ShouldBe(1);
+        refused.Lines[1].ShouldContain(" claude=2.1.327 claudeAuth=unexpected");
+        var older = new World { ClaudeVersionText = "2.1.300 (Claude Code)\n" };
+        older.Run().Lines[0].ShouldBe("C604 HARNESS NOTE: observations not ok: claude");
     }
 
-    // CARD-1178. A fast HTTP 500 used to grade launch=True because the predicate was only
-    // elapsed milliseconds. The grade is the status; /tmp/state must be uid 1654 before the POST.
+    // CARD-1178. A fast HTTP 500 used to grade launch=True because the predicate was elapsed milliseconds. The grade is the
+    // status; /tmp/state must be uid 1654's before the POST.
     [Test]
-    public async Task Fast_http_500_does_not_grade_launch_true()
+    public void Fast_http_500_does_not_grade_launch_true()
     {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1").Replace("\r\n", "\n");
-        var expression = LaunchGradeExpression(script);
+        var fastError = new World { LaunchStatus = 500, LaunchBody = "UnauthorizedAccessException", LaunchElapsed = TimeSpan.FromMilliseconds(100) };
+        var failed = fastError.Run();
+        failed.Exit.ShouldBe(1);
+        failed.Lines[0].ShouldBe("C604 HARNESS NOTE: observations not ok: launch");
+        fastError.Evidence("post-sessions.txt").ShouldBe("status=500 elapsedMs=100\nUnauthorizedAccessException\n");
 
-        var fastError = await GradeLaunchAsync(expression, status: 500, body: "UnauthorizedAccessException", launchMs: 100);
-        fastError.ShouldBeFalse("HTTP 500 is not a launch, including when it returns in under 5000ms");
+        new World { LaunchStatus = 200, LaunchElapsed = TimeSpan.FromSeconds(9) }.Run().Exit.ShouldBe(0, "a 2xx launch is accepted even when it is slower than 5000ms");
+        new World { LaunchStatus = 300, LaunchElapsed = TimeSpan.FromMilliseconds(10) }.Run().Exit.ShouldBe(1, "only a 2xx status grades launch");
 
-        expression.Contains("$launchMs", StringComparison.Ordinal).ShouldBeFalse(
-            "elapsed milliseconds do not grade launch");
-
-        var accepted = await GradeLaunchAsync(expression, status: 200, body: "{\"ok\":true}", launchMs: 9000);
-        accepted.ShouldBeTrue("a 2xx launch is accepted even when it is slower than 5000ms");
-
-        var notTwoHundred = await GradeLaunchAsync(expression, status: 300, body: "redirect", launchMs: 10);
-        notTwoHundred.ShouldBeFalse("only a 2xx status grades launch");
-
-        var prep = script.IndexOf("mkdir -p /tmp/state && chown 1654:1654 /tmp/state", StringComparison.Ordinal);
-        var post = script.IndexOf("http://127.0.0.1:$Port/sessions", StringComparison.Ordinal);
+        var ordered = new World();
+        ordered.Run();
+        var prep = ordered.Events.IndexOf("EXEC docker exec " + Container + " sh -c mkdir -p /tmp/state && chown 1654:1654 /tmp/state");
+        var post = ordered.Events.IndexOf("HTTP POST http://127.0.0.1:18298/sessions");
         prep.ShouldBeGreaterThanOrEqualTo(0, "the harness pre-creates /tmp/state for uid 1654");
         post.ShouldBeGreaterThan(prep, "/tmp/state is owned by uid 1654 before POST /sessions");
     }
 
-    private static string LaunchGradeExpression(string script)
+    [Test]
+    public void A_setup_failure_after_the_start_still_refuses_and_cleans_up()
     {
-        var graded = System.Text.RegularExpressions.Regex.Match(
-            script, @"(?m)^[ \t]*launch[ \t]*=[ \t]*(.+)$");
-        graded.Success.ShouldBeTrue("the harness grades a launch observation");
-        var rhs = graded.Groups[1].Value.Trim();
-        if (rhs != "$launchOk")
-            return rhs;
+        var unhealthy = new World { Health = 503 };
+        var run = unhealthy.Run();
+        run.Exit.ShouldBe(2);
+        run.Lines.ShouldBe([
+            "C604 HARNESS NOTE: container never became healthy within 90s; see " + unhealthy.EvidenceDir + "/container-logs-unhealthy.txt",
+            "C604 HARNESS: image=" + Image + " nested=unknown egress=unknown loopback=unknown launchMs=-1 key=unknown restart=unknown refusal=unknown containment=skipped claude=unknown claudeAuth=unknown",
+            "C604 HARNESS EXIT CODE: 2"]);
+        unhealthy.Commands.ShouldContain("docker logs " + Container);
+        unhealthy.Commands.Count(command => command.StartsWith("docker run --rm", StringComparison.Ordinal)).ShouldBe(3, "the three refusals still run");
+        unhealthy.Commands.ShouldContain("docker rm -f " + Container);
+        unhealthy.Commands[^1].ShouldBe("docker volume rm -f " + Volume);
+        unhealthy.Files.FileExists(Path.Combine(unhealthy.EvidenceDir, "throwaway_key")).ShouldBeFalse();
 
-        var defined = System.Text.RegularExpressions.Regex.Match(
-            script, @"(?m)^\$launchOk\s*=\s*(.+)$");
-        defined.Success.ShouldBeTrue("launch = $launchOk names the HTTP outcome predicate");
-        return defined.Groups[1].Value.Trim();
+        var notStarted = new World { RunExit = 125 };
+        notStarted.Run().Exit.ShouldBe(2);
+        notStarted.Commands.ShouldNotContain("docker rm -f " + Container);
+        notStarted.Commands.ShouldContain("docker volume rm -f " + Volume);
     }
 
-    private static async Task<bool> GradeLaunchAsync(string expression, int status, string body, int launchMs)
+    [Test]
+    public void No_docker_daemon_stops_before_anything_else()
     {
-        expression.ShouldNotContain(";");
-        expression.ShouldNotContain("\n");
-        var command =
-            "$ErrorActionPreference='Stop'; " +
-            "$launchStatus=[int]$env:C1178_STATUS; " +
-            "$launchBody=$env:C1178_BODY; " +
-            "$launchMs=[int]$env:C1178_MS; " +
-            "$value = " + expression + "; " +
-            "if ($value) { 'True' } else { 'False' }";
-        var start = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "pwsh",
-            WorkingDirectory = DelegateScriptRunner.RepoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(command);
-        start.Environment["C1178_STATUS"] = status.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        start.Environment["C1178_BODY"] = body;
-        start.Environment["C1178_MS"] = launchMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var world = new World { DockerVersionExit = 1 };
+        var run = world.Run();
+        run.Exit.ShouldBe(2);
+        run.Lines[0].ShouldBe("C604 HARNESS NOTE: Docker daemon is not reachable. Start Docker Desktop and retry.");
+        world.Commands.ShouldBe(["docker version --format {{.Server.Version}}"]);
+    }
 
-        using var process = System.Diagnostics.Process.Start(start)!;
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        process.ExitCode.ShouldBe(0, stderr);
-        var line = stdout.Trim();
-        (line is "True" or "False").ShouldBeTrue("grade printed " + line + " " + stderr);
-        return line == "True";
+    [Test]
+    public void Build_uses_the_checkout_head_in_the_foreground()
+    {
+        var world = new World();
+        var run = world.Run("--build");
+        run.Exit.ShouldBe(0, run.Output);
+        run.Lines[0].ShouldBe("C604 HARNESS: building " + Image + " (session-testing) from " + FakeGit.DefaultSha);
+        var build = world.Launches.Single(launch => launch.Arguments[0] == "build");
+        build.Arguments.ShouldBe(["build", "-f", DindRunnerHarness.Dockerfile, "--target", "session-testing", "--build-arg", "SOURCE_REVISION=" + FakeGit.DefaultSha,
+            "-t", Image, World.Checkout]);
+        build.WorkingDirectory.ShouldBe(World.Checkout);
     }
 
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(params string[] args)
+    // A Docker Desktop that answers as a healthy session-testing image does, unless a field says otherwise.
+    private sealed class World
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0604-dind-runner.ps1");
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "pwsh",
-            WorkingDirectory = DelegateScriptRunner.RepoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-NonInteractive");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(script);
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
+        public static readonly string Checkout = OperatingSystem.IsWindows() ? @"C:\c604" : "/c604";
+        private int _inspects;
 
-        using var process = System.Diagnostics.Process.Start(psi)!;
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        return (process.ExitCode, stdout + stderr);
+        public int DockerVersionExit { get; init; }
+        public int RunExit { get; init; }
+        public int Health { get; init; } = 200;
+        public int LaunchStatus { get; init; } = 201;
+        public string LaunchBody { get; init; } = "{\"sessionId\":\"s\"}";
+        public TimeSpan LaunchElapsed { get; init; } = TimeSpan.FromMilliseconds(1200);
+        public int ClaudeAuthExit { get; init; } = 1;
+        public string ClaudeVersionText { get; init; } = "2.1.327 (Claude Code)\n";
+        public string Capabilities { get; init; } = "{\"backends\":[\"linux-cgroup-v1\"]}";
+        public string Residue { get; init; } = "status=ok\ncurrent=0\n";
+
+        public FakeTimeProvider Clock { get; } = new(DateTimeOffset.Parse("2026-11-24T09:00:00Z"));
+        public MockFileSystem Files { get; } = new();
+        public List<string> Events { get; } = [];
+        public List<NightlyLaunch> Launches { get; } = [];
+        public string EvidenceDir => Path.Combine(Path.Combine(Checkout, ".antiphon/c604-harness"), "20261124T090000Z");
+        public IReadOnlyList<string> Commands => Launches.Where(launch => launch.FileName == "docker").Select(launch => launch.CommandText).ToArray();
+
+        public string Evidence(string name) => Files.File.ReadAllText(Path.Combine(EvidenceDir, name));
+
+        public (int Exit, string Output, string[] Lines) Run(params string[] extra)
+        {
+            using var output = new StringWriter();
+            var host = new NightlyHost
+            {
+                Clock = Clock,
+                Git = new FakeGit().Run,
+                Launcher = new RecordingLauncher(Answer),
+                Processes = new FakeProcessTable(),
+                Probe = new FakeHostProbe(),
+                Out = output,
+                Error = output,
+                Trace = TextWriter.Null,
+                Variables = _ => null,
+                Sleep = Clock.Advance,
+            };
+            var seams = new DindRunnerSeams { Http = Http, Secret = () => new byte[32], SessionId = () => "c604-session" };
+            var exit = DindRunnerHarness.Run(DindRunnerOptions.Parse(["--image", Image, .. extra], Checkout), host, Files, seams);
+            var text = output.ToString().ReplaceLineEndings("\n");
+            return (exit, text, text.TrimEnd('\n').Split('\n'));
+        }
+
+        private DindHttpAnswer Http(string method, string url, string? body, TimeSpan timeout)
+        {
+            Events.Add("HTTP " + method + " " + url);
+            if (method == "GET") return new DindHttpAnswer(Health, "");
+            Clock.Advance(LaunchElapsed);
+            return new DindHttpAnswer(LaunchStatus, LaunchBody);
+        }
+
+        private NightlyLaunchResult Answer(NightlyLaunch launch)
+        {
+            Launches.Add(launch);
+            Events.Add("EXEC " + launch.CommandText);
+            if (launch.FileName == "ssh-keygen")
+            {
+                var key = launch.Arguments[^1];
+                Files.File.WriteAllText(key, "private");
+                Files.File.WriteAllText(key + ".pub", "public");
+                return Ok("");
+            }
+            var a = launch.Arguments;
+            var line = string.Join(" ", a);
+            if (a[0] == "version") return new NightlyLaunchResult { ExitCode = DockerVersionExit, LogText = "27.5.1\n" };
+            if (a[0] == "run" && a[1] == "-d") return new NightlyLaunchResult { ExitCode = RunExit, LogText = "container-id\n" };
+            if (a[0] == "run" && a[1] == "--rm")
+            {
+                var reason = !line.Contains("antiphon-deploy-key:ro", StringComparison.Ordinal) ? "DeployKeyMissing"
+                    : !line.Contains("phone-home:ro", StringComparison.Ordinal) ? "PhoneHomeSecretMissing" : "NotPrivileged";
+                return new NightlyLaunchResult { ExitCode = 3, LogText = "refused: " + reason + "\n" };
+            }
+            if (a[0] == "inspect") return Ok(_inspects++ == 0 ? "0\n" : "1\n");
+            if (a[0] != "exec") return Ok("");
+            if (line.Contains("docker info", StringComparison.Ordinal)) return Ok("c604host overlay2 2\n");
+            if (line.EndsWith(" hostname", StringComparison.Ordinal)) return Ok("c604host\n");
+            if (line.Contains("api.github.com/zen", StringComparison.Ordinal)) return Ok("Keep it logically awesome.\n");
+            if (line.Contains("nginx:alpine", StringComparison.Ordinal)) return Ok("200\n");
+            if (line.Contains("claude --version", StringComparison.Ordinal)) return Ok(ClaudeVersionText);
+            if (line.Contains("claude auth status", StringComparison.Ordinal))
+                return new NightlyLaunchResult { ExitCode = ClaudeAuthExit, LogText = "{\n  \"loggedIn\": " + (ClaudeAuthExit == 1 ? "false" : "true") + "\n}\n" };
+            if (line.Contains("stat -c %u %a", StringComparison.Ordinal)) return Ok("1654 400\n");
+            if (line.Contains("ssh -F", StringComparison.Ordinal)) return Ok("user app\nhostname ssh.github.com\nport 443\nidentitiesonly yes\nidentityfile /run/antiphon/deploy-key\n");
+            if (line.Contains("docker images -q", StringComparison.Ordinal)) return Ok("bbb\naaa\n");
+            if (line.Contains("/capabilities", StringComparison.Ordinal)) return Ok(Capabilities + "\n");
+            if (line.Contains("sudo -n -l", StringComparison.Ordinal))
+                return Ok("root:root:755\nroot:root:755\nroot:root:440\n(root) NOPASSWD: /usr/local/bin/antiphon-custody-enter, /usr/local/bin/antiphon-custody-kill\n");
+            if (line.Contains("containment-probe", StringComparison.Ordinal)) return Ok("containment=ok\n");
+            if (line.Contains("custody_count_execution_trees", StringComparison.Ordinal)) return Ok(Residue);
+            return Ok("");
+        }
+
+        private static NightlyLaunchResult Ok(string text) => new() { ExitCode = 0, LogText = text };
     }
 }

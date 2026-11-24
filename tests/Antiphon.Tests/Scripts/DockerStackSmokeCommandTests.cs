@@ -1,130 +1,133 @@
 using System.Text.Json;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+/// <summary>
+/// CARD-0590/0604 stack smoke guards: the verify-docker-stack command (scripts/lib/Antiphon.Nightly/DockerStackVerify.cs, the stub
+/// boundaries scripts/verify-docker-stack.ps1 hands over since unit 47 of the 2026-11-22 plan) in process through C590Harness, with
+/// the stub set: the same rows the pwsh runs of the script checked.
+/// </summary>
+[Category("Unit")]
 public sealed class DockerStackSmokeCommandTests
 {
     [Test]
-    public async Task Wrong_live_revision_is_refused()
+    public void Wrong_live_revision_is_refused()
     {
-        var run = await Run("version-check", new() { ["observedRevision"] = "wrong", ["sourceSha"] = "abc" });
+        var run = Run("version-check", new() { ["observedRevision"] = "wrong", ["sourceSha"] = "abc" });
         run.ExitCode.ShouldNotBe(0);
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Foreign_state_owner_refuses()
+    public void Foreign_state_owner_refuses()
     {
-        var run = await Run("foreign-state", new() { ["foreignOwner"] = true });
+        var run = Run("foreign-state", new() { ["foreignOwner"] = true });
         string.Join('\n', run.Commands).ShouldNotContain("chown");
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Auto_keyring_without_protector_is_unavailable()
+    public void Auto_keyring_without_protector_is_unavailable()
     {
-        var run = await Run("managed-secrets", new() { ["keyProtection"] = "Auto", ["keyDirectoryExists"] = true, ["certificatePresent"] = false });
+        var run = Run("managed-secrets", new() { ["keyProtection"] = "Auto", ["keyDirectoryExists"] = true, ["certificatePresent"] = false });
         JsonDocument.Parse(run.ResultJson).RootElement.GetProperty("managedSecretReady").GetBoolean().ShouldBeFalse();
     }
 
     [Test]
-    public async Task Parent_as_child_is_refused()
+    public void Parent_as_child_is_refused()
     {
-        var run = await Run("parent-child", new() { ["childProject"] = "same", ["parentProject"] = "same" });
+        var run = Run("parent-child", new() { ["childProject"] = "same", ["parentProject"] = "same" });
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Manifest_precedes_create()
+    public void Manifest_precedes_create()
     {
-        var run = await Run("manifest-order", new());
+        var run = Run("manifest-order", new());
         var text = string.Join('\n', run.Commands);
         text.IndexOf("write-manifest", StringComparison.Ordinal).ShouldBeLessThan(text.IndexOf("create", StringComparison.Ordinal));
     }
 
     [Test]
-    public async Task Wrong_context_source_is_refused()
+    public void Wrong_context_source_is_refused()
     {
-        var run = await Run("source-sha", new() { ["contextSha"] = "other", ["sourceSha"] = "abc" });
+        var run = Run("source-sha", new() { ["contextSha"] = "other", ["sourceSha"] = "abc" });
         Diagnosis(run).ShouldBe("SourceMismatch");
         string.Join('\n', run.Commands).ShouldNotContain("build");
     }
 
     [Test]
-    public async Task Runner_local_bind_source_is_refused()
+    public void Runner_local_bind_source_is_refused()
     {
-        var run = await Run("bind-source", new() { ["bindSource"] = "/work/test-evidence" });
+        var run = Run("bind-source", new() { ["bindSource"] = "/work/test-evidence" });
         string.Join('\n', run.Commands).ShouldNotContain("/work/test-evidence");
     }
 
     [Test]
-    public async Task Foreign_resource_id_is_refused()
+    public void Foreign_resource_id_is_refused()
     {
-        var run = await Run("foreign-id", new() { ["inspectedId"] = "other", ["ownedId"] = "owned" });
+        var run = Run("foreign-id", new() { ["inspectedId"] = "other", ["ownedId"] = "owned" });
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Foreign_resource_label_is_refused()
+    public void Foreign_resource_label_is_refused()
     {
-        var run = await Run("foreign-label", new() { ["inspectedLabel"] = "other", ["ownedLabel"] = "owned", ["ownedId"] = "owned" });
+        var run = Run("foreign-label", new() { ["inspectedLabel"] = "other", ["ownedLabel"] = "owned", ["ownedId"] = "owned" });
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Normal_down_retains_volumes()
+    public void Normal_down_retains_volumes()
     {
-        var run = await Run("normal-down", new());
+        var run = Run("normal-down", new());
         var text = string.Join('\n', run.Commands);
         text.ShouldNotContain("--volumes");
         text.ShouldNotContain("\"-v\"");
     }
 
     [Test]
-    public async Task Global_cleanup_is_forbidden()
+    public void Global_cleanup_is_forbidden()
     {
-        var run = await Run("global-cleanup", new());
+        var run = Run("global-cleanup", new());
         string.Join('\n', run.Commands).ShouldNotContain("prune");
     }
 
     [Test]
-    public async Task Raw_challenge_is_required()
+    public void Raw_challenge_is_required()
     {
-        var run = await Run("raw-challenge", new() { ["rawMarker"] = false });
+        var run = Run("raw-challenge", new() { ["rawMarker"] = false });
         Diagnosis(run).ShouldBe("RawChallengeMissing");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Raw_exit_is_required()
+    public void Raw_exit_is_required()
     {
-        var run = await Run("raw-exit", new() { ["rawMarker"] = true, ["rawExit"] = false });
+        var run = Run("raw-exit", new() { ["rawMarker"] = true, ["rawExit"] = false });
         Diagnosis(run).ShouldBe("RawExitMissing");
     }
 
     [Test]
-    public async Task Session_created_run_is_required()
+    public void Session_created_run_is_required()
     {
-        var run = await Run("session-origin", new() { ["sessionId"] = "" });
+        var run = Run("session-origin", new() { ["sessionId"] = "" });
         Diagnosis(run).ShouldBe("SessionOriginMissing");
     }
 
     [Test]
-    public async Task Child_probe_cannot_launch_parent()
+    public void Child_probe_cannot_launch_parent()
     {
-        var run = await Run("child-probe", new());
+        var run = Run("child-probe", new());
         string.Join('\n', run.Commands).ShouldNotContain("parent-launch");
     }
 
     [Test]
-    public async Task Linux_custody_advertisement_is_refused()
+    public void Linux_custody_advertisement_is_refused()
     {
-        var run = await Run("linux-custody", new() { ["capabilities"] = "VerificationCustodyV1" });
+        var run = Run("linux-custody", new() { ["capabilities"] = "VerificationCustodyV1" });
         Diagnosis(run).ShouldBe("UnsupportedCustodyAdvertised");
         Accepted(run).ShouldBeFalse();
     }
@@ -132,78 +135,78 @@ public sealed class DockerStackSmokeCommandTests
     // --- CARD-0604 S4. Every server2 row refuses before it changes standing state. ---
 
     [Test]
-    public async Task Missing_deploy_key_refuses_deploy()
+    public void Missing_deploy_key_refuses_deploy()
     {
-        var run = await Run("deploy-parent", Deploy(d => d["deployKeyPresent"] = false));
+        var run = Run("deploy-parent", Deploy(d => d["deployKeyPresent"] = false));
         Diagnosis(run).ShouldBe("DeployKeyMissing");
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Missing_phone_home_secret_refuses_deploy()
+    public void Missing_phone_home_secret_refuses_deploy()
     {
-        var run = await Run("deploy-parent", Deploy(d => d["phoneHomeSecretPresent"] = false));
+        var run = Run("deploy-parent", Deploy(d => d["phoneHomeSecretPresent"] = false));
         Diagnosis(run).ShouldBe("PhoneHomeSecretMissing");
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Non_persistent_policy_refuses_deploy()
+    public void Non_persistent_policy_refuses_deploy()
     {
-        var run = await Run("deploy-parent", Deploy(d => d["restartPolicy"] = "no"));
+        var run = Run("deploy-parent", Deploy(d => d["restartPolicy"] = "no"));
         Diagnosis(run).ShouldBe("NotPersistent");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Sibling_daemon_refuses_deploy()
+    public void Sibling_daemon_refuses_deploy()
     {
-        var run = await Run("deploy-parent", Deploy(d => d["daemonName"] = "server2"));
+        var run = Run("deploy-parent", Deploy(d => d["daemonName"] = "server2"));
         Diagnosis(run).ShouldBe("SiblingDaemonRefused");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Not_dispatch_eligible_refuses_nested_stack_case()
+    public void Not_dispatch_eligible_refuses_nested_stack_case()
     {
-        var run = await Run("session-nested-stack", Nested(d => d["dispatchEligible"] = false));
+        var run = Run("session-nested-stack", Nested(d => d["dispatchEligible"] = false));
         Diagnosis(run).ShouldBe("RunnerNotDispatchEligible");
         run.Commands.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task Session_origin_is_required_for_nested_stack()
+    public void Session_origin_is_required_for_nested_stack()
     {
-        var run = await Run("session-nested-stack", Nested(d => d["sessionOrigin"] = ""));
+        var run = Run("session-nested-stack", Nested(d => d["sessionOrigin"] = ""));
         Diagnosis(run).ShouldBe("SessionOriginMissing");
     }
 
     [Test]
-    public async Task Host_residue_refuses_nested_stack_case()
+    public void Host_residue_refuses_nested_stack_case()
     {
-        var run = await Run("session-nested-stack", Nested(d => d["hostResidue"] = "c604abc-child"));
+        var run = Run("session-nested-stack", Nested(d => d["hostResidue"] = "c604abc-child"));
         Diagnosis(run).ShouldBe("HostResidue");
     }
 
     [Test]
-    public async Task Nested_residue_refuses_nested_stack_case()
+    public void Nested_residue_refuses_nested_stack_case()
     {
-        var run = await Run("session-nested-stack", Nested(d => d["nestedResidue"] = "c604abc_pgdata"));
+        var run = Run("session-nested-stack", Nested(d => d["nestedResidue"] = "c604abc_pgdata"));
         Diagnosis(run).ShouldBe("NestedResidue");
     }
 
     [Test]
-    public async Task Still_running_session_is_not_a_result()
+    public void Still_running_session_is_not_a_result()
     {
-        var run = await Run("await-nested-stack", Await(d => d["sessionState"] = "Working"));
+        var run = Run("await-nested-stack", Await(d => d["sessionState"] = "Working"));
         Diagnosis(run).ShouldBe("SessionStillRunning");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Dead_session_without_marker_is_incomplete()
+    public void Dead_session_without_marker_is_incomplete()
     {
-        var run = await Run("await-nested-stack", Await(d =>
+        var run = Run("await-nested-stack", Await(d =>
         {
             d["sessionState"] = "Idle";
             d["markerSeen"] = false;
@@ -212,9 +215,9 @@ public sealed class DockerStackSmokeCommandTests
     }
 
     [Test]
-    public async Task Subordinate_failure_refuses_acceptance()
+    public void Subordinate_failure_refuses_acceptance()
     {
-        var run = await Run("await-nested-stack", Await(d => d["subordinates"] = new[]
+        var run = Run("await-nested-stack", Await(d => d["subordinates"] = new[]
         {
             new Dictionary<string, object?> { ["name"] = "deployment-state", ["accepted"] = true },
             new Dictionary<string, object?> { ["name"] = "dotnet-filter", ["accepted"] = false },
@@ -224,24 +227,24 @@ public sealed class DockerStackSmokeCommandTests
     }
 
     [Test]
-    public async Task Lost_nested_store_refuses_restart_case()
+    public void Lost_nested_store_refuses_restart_case()
     {
-        var run = await Run("persistent-restart", Restart(d => d["storeIdBefore"] = ""));
+        var run = Run("persistent-restart", Restart(d => d["storeIdBefore"] = ""));
         Diagnosis(run).ShouldBe("LostNestedStore");
     }
 
     [Test]
-    public async Task Changed_store_id_refuses_restart_case()
+    public void Changed_store_id_refuses_restart_case()
     {
-        var run = await Run("persistent-restart", Restart(d => d["storeIdAfter"] = "a-different-store"));
+        var run = Run("persistent-restart", Restart(d => d["storeIdAfter"] = "a-different-store"));
         Diagnosis(run).ShouldBe("ChangedStoreId");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Undeleted_smoke_branch_is_refused()
+    public void Undeleted_smoke_branch_is_refused()
     {
-        var run = await Run("session-git-smoke", new()
+        var run = Run("session-git-smoke", new()
         {
             ["pushedSha"] = new string('a', 40),
             ["branchDeleted"] = false,
@@ -254,17 +257,17 @@ public sealed class DockerStackSmokeCommandTests
     // ordered boundary, not the default arm's "RealCasePending". ---
 
     [Test]
-    public async Task Containment_refuses_a_runner_that_does_not_advertise_the_linux_backend()
+    public void Containment_refuses_a_runner_that_does_not_advertise_the_linux_backend()
     {
-        var run = await Run("custody-containment", Containment(c => c["verificationCustodyBackend"] = "windows-job-v1"));
+        var run = Run("custody-containment", Containment(c => c["verificationCustodyBackend"] = "windows-job-v1"));
         Diagnosis(run).ShouldBe("CustodyNotAdvertised");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Containment_refuses_helpers_that_are_not_root_owned()
+    public void Containment_refuses_helpers_that_are_not_root_owned()
     {
-        var run = await Run("custody-containment", Containment(c => c["custodyHelpersRootOwned"] = false));
+        var run = Run("custody-containment", Containment(c => c["custodyHelpersRootOwned"] = false));
         Diagnosis(run).ShouldBe("CustodyHelpersNotRootOwned");
         Accepted(run).ShouldBeFalse();
     }
@@ -272,25 +275,25 @@ public sealed class DockerStackSmokeCommandTests
     // The whole point of running this on server2 rather than only on Docker Desktop is the v1
     // freezer path. A v2 reading accepted here would leave that half unmeasured for ever.
     [Test]
-    public async Task Containment_refuses_a_v2_reading_on_the_server2_row()
+    public void Containment_refuses_a_v2_reading_on_the_server2_row()
     {
-        var run = await Run("custody-containment", Containment(c => c["cgroupVersion"] = "v2"));
+        var run = Run("custody-containment", Containment(c => c["cgroupVersion"] = "v2"));
         Diagnosis(run).ShouldBe("ExpectedCgroupV1");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Containment_refuses_a_surviving_cgroup()
+    public void Containment_refuses_a_surviving_cgroup()
     {
-        var run = await Run("custody-containment", Containment(c => c["custodyResidue"] = 2));
+        var run = Run("custody-containment", Containment(c => c["custodyResidue"] = 2));
         Diagnosis(run).ShouldBe("CustodyResidue");
         Accepted(run).ShouldBeFalse();
     }
 
     [Test]
-    public async Task Containment_accepts_a_measured_v1_run()
+    public void Containment_accepts_a_measured_v1_run()
     {
-        var run = await Run("custody-containment", Containment(_ => { }));
+        var run = Run("custody-containment", Containment(_ => { }));
         Accepted(run).ShouldBeTrue();
         // A routed case never reaches the default arm, which is what CP-15 would otherwise report.
         Diagnosis(run).ShouldNotContain("RealCasePending");
@@ -363,12 +366,12 @@ public sealed class DockerStackSmokeCommandTests
         return extra;
     }
 
-    private static Task<C590Run> Run(string caseName, Dictionary<string, object?> extra)
+    private static C590Run Run(string caseName, Dictionary<string, object?> extra)
     {
         var manifest = C590Harness.Happy();
         foreach (var pair in extra)
             manifest[pair.Key] = pair.Value;
-        return C590Harness.RunAsync("verify-docker-stack.ps1", manifest, args: ["-Case", caseName]);
+        return C590Harness.Run("verify-docker-stack", manifest, args: ["--case", caseName]);
     }
 
     private static string Diagnosis(C590Run run) =>

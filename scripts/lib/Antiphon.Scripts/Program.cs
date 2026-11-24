@@ -295,6 +295,14 @@ namespace Antiphon.Scripts
             [InfrastructureToolCommands.CheckServerDockerInputs] = InfrastructureToolCommands.RunCheckServerDockerInputs,
             [InfrastructureToolCommands.PgQpsName] = InfrastructureToolCommands.RunPgQps,
             [InfrastructureToolCommands.PostgresJitWindowName] = InfrastructureToolCommands.RunPostgresJitWindow,
+            // The W8 verifiers answer every input themselves (unit 47). verify-docker-stack and test-docker: exit 0 accepted, 2 refused
+            // (the c590 result written), 1 the manifest unreadable; failure-summary exits its runExit, test-docker the child's exit or,
+            // with --throwaway-stack, c590-remote.sh's. test-docker-container: 0 roster-ok or launched, 2 roster errors.
+            // verify-card0604-dind-runner: 0 every observation ok, 1 not, 2 setup failed. Usage is 2 for each.
+            [DockerVerifierCommands.VerifyDockerStack] = DockerVerifierCommands.RunVerifyDockerStack,
+            [DockerVerifierCommands.TestDocker] = DockerVerifierCommands.RunTestDocker,
+            [DockerVerifierCommands.TestDockerContainer] = DockerVerifierCommands.RunTestDockerContainer,
+            [DockerVerifierCommands.VerifyDindRunner] = DockerVerifierCommands.RunVerifyDindRunner,
         };
 
         public static int Main(string[] args)
@@ -335,7 +343,7 @@ namespace Antiphon.Scripts
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
-                + " | " + InfrastructureToolCommands.Usage);
+                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage);
             return Usage;
         }
 

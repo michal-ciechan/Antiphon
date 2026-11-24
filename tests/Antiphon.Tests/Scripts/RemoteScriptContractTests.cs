@@ -5459,18 +5459,20 @@ public sealed class RemoteScriptContractTests
     // CP-15 dispatches `verify-docker-stack.ps1 -Case custody-containment`, which reaches the
     // remote ONLY if the case is in c590-real.ps1's live roster. Omitted, it falls through to the
     // default arm and reports "RealCasePending" -- a red checkpoint for a routing reason, with
-    // the v1 freezer path never measured and nothing on server2 touched.
+    // the v1 freezer path never measured and nothing on server2 touched. Since unit 47 of the
+    // 2026-11-22 plan the stub boundaries past the bridge are the verify-docker-stack command
+    // (scripts/lib/Antiphon.Nightly/DockerStackVerify.cs).
     [Test]
     public void Custody_containment_is_routed_to_the_remote_and_not_left_pending()
     {
         var live = System.IO.File.ReadAllText(System.IO.Path.Combine(
             Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "c590-real.ps1"));
         var stack = System.IO.File.ReadAllText(System.IO.Path.Combine(
-            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "verify-docker-stack.ps1"));
+            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DockerStackVerify.cs"));
 
         live.ShouldContain("'custody-containment'");
         // The stub boundary exists too, and refuses the same things the remote refuses first.
-        stack.ShouldContain("'custody-containment' {");
+        stack.ShouldContain("case \"custody-containment\":");
         stack.ShouldContain("ExpectedCgroupV1");
         stack.ShouldContain("CustodyHelpersNotRootOwned");
         stack.ShouldContain("CustodyResidue");
@@ -5488,13 +5490,13 @@ public sealed class RemoteScriptContractTests
     public void Linux_custody_case_requires_the_linux_backend()
     {
         var text = System.IO.File.ReadAllText(System.IO.Path.Combine(
-            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "verify-docker-stack.ps1"));
+            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DockerStackVerify.cs"));
 
-        text.ShouldContain("'linux-custody'");
+        text.ShouldContain("case \"linux-custody\":");
         text.ShouldContain("CustodyNotAdvertised");
         text.ShouldContain("WindowsBackendAdvertisedOnLinux");
         text.ShouldContain("RunnerStoreIdMissing");
-        text.ShouldContain("-ne 'linux-cgroup-v1'");
+        text.ShouldContain("if (Ne(S(\"verificationCustodyBackend\"), \"linux-cgroup-v1\")) return Refuse(\"UnsupportedCustodyAdvertised\");");
     }
 
     [Test]

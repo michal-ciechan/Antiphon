@@ -1,59 +1,93 @@
-using System.Diagnostics;
+using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
+using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Antiphon.Tests.Scripts;
 
-internal sealed record C590Run(int ExitCode, string Output, string ResultJson, IReadOnlyList<string> Commands);
+internal sealed record C590Run(int ExitCode, string Output, string ResultJson, IReadOnlyList<string> Commands, IReadOnlyList<NightlyLaunch> Launches);
 
+/// <summary>
+/// The CARD-0590 entries in process (unit 47 of the 2026-11-22 plan: the commands verify-docker-stack, test-docker and
+/// test-docker-container that replaced scripts/test-docker.ps1, scripts/test-docker-container.ps1 and the switch of
+/// scripts/verify-docker-stack.ps1). The manifest, the evidence root and the sink live in a mock file system; the launcher records
+/// and starts nothing; ANTIPHON_C590_STUB is "1" and ANTIPHON_C590_SINK the sink unless a test's environment says otherwise (a
+/// null value removes the variable). A usage error is exit 2 with its line in the output, as the CLI answers it.
+/// </summary>
 internal static class C590Harness
 {
     public static string RepoRoot => DockerStackRoot();
 
-    public static async Task<C590Run> RunAsync(
-        string scriptName,
-        IDictionary<string, object?> manifest,
-        IDictionary<string, string>? environment = null,
-        params string[] args)
-    {
-        var root = Path.Combine(Path.GetTempPath(), "c590-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        var evidence = Path.Combine(root, "evidence");
-        Directory.CreateDirectory(evidence);
-        manifest["evidenceRoot"] = evidence;
-        var manifestPath = Path.Combine(root, "manifest.json");
-        await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest));
-        var sink = Path.Combine(root, "sink.jsonl");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "pwsh",
-            WorkingDirectory = RepoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.Environment["ANTIPHON_C590_SINK"] = sink;
-        psi.Environment["ANTIPHON_C590_STUB"] = "1";
-        if (environment is not null)
-        {
-            foreach (var pair in environment)
-                psi.Environment[pair.Key] = pair.Value;
-        }
+    /// <summary>The mock file system's fixture root: the manifest, evidence/ and sink.jsonl live here.</summary>
+    public static string FixtureRoot => OperatingSystem.IsWindows() ? @"C:\c590" : "/c590";
 
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(Path.Combine(RepoRoot, "scripts", scriptName));
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-        psi.ArgumentList.Add("-Manifest");
-        psi.ArgumentList.Add(manifestPath);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var commands = File.Exists(sink) ? await File.ReadAllLinesAsync(sink) : [];
-        var resultPath = Path.Combine(evidence, "c590-result.json");
-        var result = File.Exists(resultPath) ? await File.ReadAllTextAsync(resultPath) : "";
-        return new C590Run(process.ExitCode, stdout + stderr, result, commands);
+    public static string Evidence => Path.Combine(FixtureRoot, "evidence");
+
+    public static string ManifestPath => Path.Combine(FixtureRoot, "manifest.json");
+
+    public static string Sink => Path.Combine(FixtureRoot, "sink.jsonl");
+
+    /// <summary>
+    /// Runs command (verify-docker-stack, test-docker or test-docker-container) with args and then --manifest; the manifest's
+    /// evidenceRoot is the fixture's. files seeds the mock file system; answer answers each launch (null: exit 0).
+    /// </summary>
+    public static C590Run Run(string command, IDictionary<string, object?> manifest, IDictionary<string, string?>? environment = null,
+        IDictionary<string, string>? files = null, Func<NightlyLaunch, NightlyLaunchResult>? answer = null, params string[] args)
+    {
+        var fs = new MockFileSystem();
+        fs.Directory.CreateDirectory(Evidence);
+        manifest["evidenceRoot"] = Evidence;
+        fs.File.WriteAllText(ManifestPath, JsonSerializer.Serialize(manifest));
+        foreach (var pair in files ?? new Dictionary<string, string>())
+        {
+            fs.Directory.CreateDirectory(Path.GetDirectoryName(pair.Key)!);
+            fs.File.WriteAllText(pair.Key, pair.Value);
+        }
+        var variables = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [C590Boundary.StubVariable] = "1",
+            [C590Boundary.SinkVariable] = Sink,
+        };
+        foreach (var pair in environment ?? new Dictionary<string, string?>()) variables[pair.Key] = pair.Value;
+        var inherited = variables.Where(pair => pair.Value != null).ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.Ordinal);
+
+        using var output = new StringWriter();
+        var launcher = new RecordingLauncher(launch => answer?.Invoke(launch) ?? new NightlyLaunchResult { ExitCode = 0 });
+        var host = new NightlyHost
+        {
+            Clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-11-24T09:00:00Z")),
+            Git = new FakeGit().Run,
+            Launcher = launcher,
+            Processes = new FakeProcessTable(),
+            Probe = new FakeHostProbe(),
+            Out = output,
+            Error = output,
+            Trace = TextWriter.Null,
+            Variables = name => inherited.TryGetValue(name, out var value) ? value : null,
+            Sleep = _ => { },
+        };
+        string[] argv = [.. args, "--manifest", ManifestPath];
+        int exit;
+        try
+        {
+            exit = command switch
+            {
+                "verify-docker-stack" => DockerStackVerify.Run(DockerStackVerifyOptions.Parse(argv, RepoRoot), host, fs),
+                "test-docker" => DockerTestEntry.Run(DockerTestOptions.Parse(argv, RepoRoot, inherited), host, fs),
+                "test-docker-container" => DockerTestContainer.Run(DockerTestContainerOptions.Parse(argv), host, fs),
+                _ => throw new ArgumentException("not a CARD-0590 command: " + command, nameof(command)),
+            };
+        }
+        catch (NightlyUsageException e)
+        {
+            output.WriteLine("usage: antiphon-scripts " + command + ": " + e.Message);
+            exit = 2;
+        }
+        var resultPath = Path.Combine(Evidence, C590Boundary.ResultFileName);
+        var result = fs.File.Exists(resultPath) ? fs.File.ReadAllText(resultPath) : "";
+        var commands = fs.File.Exists(Sink) ? fs.File.ReadAllLines(Sink) : [];
+        return new C590Run(exit, output.ToString(), result, commands, launcher.Launches);
     }
 
     public static Dictionary<string, object?> Happy() => new()

@@ -291,7 +291,7 @@ at the final Linux-tested SHA; a Linux pass does not prove the Windows named-pip
 
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
-CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation. Since CARD-0604 the server2 runner owns a **nested** Docker daemon of its own, so Testcontainers works there unmodified (the mapped port and the test process share one network namespace); `scripts/verify-card0604-dind-runner.ps1` is the local harness that proves that image on Docker Desktop before server2 ever sees it.
+CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation. Since CARD-0604 the server2 runner owns a **nested** Docker daemon of its own, so Testcontainers works there unmodified (the mapped port and the test process share one network namespace); `scripts/antiphon verify-card0604-dind-runner --image <tag>` (Windows: `scripts\antiphon.cmd verify-card0604-dind-runner`) is the local harness that proves that image on Docker Desktop before server2 ever sees it.
 
 CARD-0700's 2026-09-25 server2 run reproduced 20 card-file integration failures on
 unchanged production code (baseline parent `fbdc3c6e66c7e35d01260cb64f49a404809b55a6`).

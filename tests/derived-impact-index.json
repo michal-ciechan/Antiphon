@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 359,
+      "classes": 361,
       "reason": "allowlist"
     },
     {
@@ -2110,7 +2110,7 @@
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "RunnerLinuxCompilerPolicyTests",
-        "VerifyDindRunnerScriptTests"
+        "VolumeRetirementApplyGateTests"
       ]
     },
     {
@@ -2179,25 +2179,25 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
+        "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseStatusTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
         "ServerDockerInputsTests",
-        "TestDataPruneCommandTests",
-        "WatchedTestRunTests"
+        "TestDataPruneCommandTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -2243,9 +2243,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 51,
+      "classes": 52,
       "reason": "cap",
-      "owed": 26,
+      "owed": 27,
       "first": [
         "ImpactIndexRegenerationTests",
         "KeepSixCommandTests",
@@ -4769,12 +4769,6 @@
       "path": "scripts/test-live-lane-outcome.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/verify-card0604-dind-runner.ps1",
-      "classes": [
-        "VerifyDindRunnerScriptTests"
       ]
     },
     {
@@ -24764,6 +24758,7 @@
         "OwnedGitProcessContractTests",
         "SessionRunnerEventPumpTests",
         "UnixPtyArgvTests",
+        "VerifyDindRunnerScriptTests",
         "WatchedTestRunTests"
       ]
     },
@@ -25681,7 +25676,9 @@
         "ClaudeTokenRefreshOptInTests",
         "DockerDeliveryRecoveryCommandTests",
         "DockerStackSmokeCommandTests",
+        "DockerStackVerifyTests",
         "DockerTestCommandTests",
+        "LinuxTestRosterTests",
         "RetireTempRunnerTimestampTests"
       ]
     },
@@ -25916,9 +25913,9 @@
         "OrchestrationWatcherTests",
         "PgQpsTests",
         "PostgresJitWindowTests",
-        "PtyHostReaperTests",
         "ReleaseGateLibraryTests",
-        "StageValueReportTests"
+        "StageValueReportTests",
+        "VerifyDindRunnerScriptTests"
       ]
     },
     {
