@@ -82,8 +82,8 @@ explainable.
   listed with real runs, never polled.
 - The sandbox code host serves reads from the case and **captures writes** (review, comments,
   statuses, approvals) as trial output without sending them.
-- Replay scope is a node or a chain: "from `categorise` to `verify`". Stages before the first node
-  are served from the case. Stages after the last are not run. `publish` in a sandbox produces "what
+- **Scope is any selection of steps, from the whole workflow down to one step** (section 6a). Steps
+  outside the selection are served from the case or left out. `publish` in a sandbox produces "what
   would have been posted".
 - Run state a step reads (categories, blast radius, open findings, steer, round number) is part of
   the case, and a sandbox run starts with a copy of it.
@@ -154,7 +154,7 @@ be run against new cases. A variant records the exact resolved values each trial
 
 ### 6. Experiments and scoring
 
-- An experiment is: scope (node or chain), cases or a suite, variants including a baseline, and
+- An experiment is: targets (section 6a), cases or a suite, variants including a baseline, and
   repeats per cell (default 3, because outputs vary).
 - **Before starting**, the page shows the trial count and an estimated cost from the cases' original
   usage, and a budget cap. Starting needs an explicit confirmation of the spend.
@@ -165,6 +165,43 @@ be run against new cases. A variant records the exact resolved values each trial
   counts; a percentage appears only with its sample size.
 - A variant "wins" only as a statement of what was measured: "passes 14/16, baseline 11/16, no
   regressions, cost +20%". No single score hides the trade-off.
+
+### 6a. Targeting steps and per-run instructions
+
+**Targets: from many steps to one.** An experiment names the steps it exercises:
+
+| Target | Example | What runs |
+|---|---|---|
+| The whole workflow | intake → route | Every step, in the sandbox |
+| A section | "Review" | Its steps; earlier outputs come from the case |
+| A chain | `categorise` → `verify` | Those steps in order, each fed by the one before |
+| Several separate steps | `categorise` and `verify` | Each replayed alone from its recorded inputs |
+| One step | `verify` | That step only |
+| One item of a fan-out | reviewer group `correctness` | That reviewer only |
+
+- Steps are picked on the graph (click, shift-click, or a section header), or listed in a scenario
+  file as `targets:`.
+- For each step not targeted, the run says what happens to it: **recorded** (serve the original
+  output, the default for steps before a target), **rerun** (run it with current settings, the
+  default for steps between two targets of a chain), or **skip** (the default for steps after the
+  last target).
+- Expectations attach to a step (`at: verify`) or to the end of the run. Results and the comparison
+  view are per step, so a chain shows where two variants first diverge.
+
+**Instructions per run.** Every run of an experiment carries instructions, recorded with it:
+
+- **Per step settings:** the variant's overrides are given per targeted step (this model for
+  `categorise`, this prompt for `reviewer`, that threshold for `verify`).
+- **Per step instruction text:** optional plain words added to that step's prompt for this run only,
+  like a gate's steer ("pay particular attention to concurrency"). It is stored as part of the
+  variant, so it shows in the prompt diff and counts in the generality check.
+- **Run note:** what this run is for and what to look at ("does Haiku still catch the swapped
+  operands when the pack is half the size?"). It is shown on the history page and the A/B view, and
+  is never sent to a model.
+- **Stop rule:** run to the end of the targets, stop at the first failed expectation, or stop at a
+  cost bound.
+
+The same experiment can be run again with different instructions; each run is its own history row.
 
 ### 7. Self-improvement without overfitting
 
@@ -203,7 +240,7 @@ with new cases over time so candidates cannot slowly fit it.
 | Route | Shows |
 |---|---|
 | `/experiments` | History: every experiment with its scope, suite, variants, result line, cost, who ran it and when. Filters by stage, repo and model |
-| `/experiments/new` | Scope, cases or suite, variants, repeats, the cost estimate and the confirmation |
+| `/experiments/new` | Targets and per-step instructions (section 6a), cases or suite, variants, repeats, the cost estimate and the confirmation |
 | `/experiments/:id` | The A/B view |
 | `/experiments/cases`, `/cases/:id` | Cases: context, origin, inputs, expectations, and every trial ever run on the case |
 | `/experiments/suites`, `/variants` | Saved suites and variants |
@@ -236,7 +273,7 @@ why: >
   PR #2 added a /done endpoint that sets the status directly and skips Board.Move, so the
   timestamps and the allowed-transition rule are bypassed. A reviewer must catch this.
 source: { repo: michal-ciechan/antiphon-demo, base: e737fb3, head: b511da6 }
-scope: { from: categorise, to: verify }
+targets: [categorise, select, group, packs, review, collate, verify]   # or one step, or `all`
 expect:
   all:
     - finding-present:
@@ -328,7 +365,7 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 
 ## Decisions for the operator
 
-1. **Name and place:** a top-level "Experiments" area, as planned here, or a tab inside Reviews?
+1. **Name and place:** decided 2026-11-24: a top-level "Experiments" area.
 2. **First stages:** this plan replays categorise, select and verify first (cheap, fast), then the
    reviewer. Reverse it if comparing reviewer models matters most.
 3. **Default repeats** (3) and whether an experiment over a set budget needs a second approval.
