@@ -195,6 +195,7 @@ user-secrets, and are JSON arrays in appsettings.
 | `AllowedLogins:<n>` (none) | Logins that may sign in and decide gates on every repo |
 | `RequiredRepoPermission` (`write`) | The least access to a reviewed repo that lets someone sign in and decide its gates: `read`, `write` or `admin`. `none` lets anyone with a GitHub account in. |
 | `SessionHours` (168) | How long a session lasts after its last use |
+| `KeyRingPath` (none) | A folder for the keys that protect the sign-in cookies. Absent: the server's own data-protection key ring, which in a Linux container makes no keys without a certificate. Set it in Docker; the review compose file does. |
 | `WebBaseUrl` (`https://github.com`), `ApiBaseUrl` (derived) | For GitHub Enterprise Server: `https://<host>`; the API root then defaults to `https://<host>/api/v3` |
 
 **`Review:CodeHosts`**
@@ -436,7 +437,7 @@ PR's head into the mirror with the App's token. The token reaches git only throu
 environment: it is not in its arguments and is never written to the mirror.
 
 **Where things are kept.** The `review-state` volume holds the mirrors, the logs (`/state/logs`) and
-the keys that protect sign-in cookies (`/state/keyring`). The `review-pgdata` volume holds the runs.
+the keys that protect sign-in cookies (`/state/review-signin-keys`). The `review-pgdata` volume holds the runs.
 `docker compose -f docker-compose.review.yml down` keeps both volumes; adding `-v` deletes them.
 
 **Which settings win.** `docker-compose.review.yml` sets the fixed review-only settings: the
@@ -499,8 +500,10 @@ What happens then:
   `X-Review-Viewer` header is ignored.
 - **Sessions:** a cookie, `antiphon.review.session` (HttpOnly, SameSite=Lax). It lasts `SessionHours`
   (a week by default) after its last use. Repo access is read once, at sign-in, so after someone's
-  access changes they sign out and in again. Sessions survive a restart only if the data-protection
-  key ring is kept (`AgentTui:KeyRingPath` on a volume); otherwise everyone signs in again.
+  access changes they sign out and in again. The cookie's keys are in `Review:Auth:KeyRingPath` when
+  it is set, else in the server's own key ring. Keep that folder across restarts, or everyone signs in
+  again. In a Linux container, set it (the review compose file uses `/state/review-signin-keys`):
+  there, the server's own key ring makes no keys without a certificate, and sign-in fails.
 - **Turn it on only on a server that runs the review engine alone,** such as the standalone script
   or the review compose file. On a full Antiphon, the session runner and the scripts call the API
   without a session, so they would be locked out.

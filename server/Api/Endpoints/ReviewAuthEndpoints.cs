@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
+using Antiphon.Server.Infrastructure.Review;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -40,13 +41,13 @@ public static class ReviewAuthEndpoints
         });
 
         auth.MapGet("/login", (string? returnUrl, HttpContext http, IOptions<ReviewSettings> settings, IGitHubSignIn gitHub,
-            IDataProtectionProvider protection) =>
+            ReviewSignInProtection protection) =>
         {
             if (!settings.Value.Auth.IsGitHub)
                 return Page(HttpStatusCode.NotFound, "Sign-in is off", "This Antiphon has no sign-in (Review:Auth:Mode is None).", null);
             var state = Base64Url(RandomNumberGenerator.GetBytes(32));
             var target = LocalReturnUrl(returnUrl);
-            var sealedState = protection.CreateProtector(StatePurpose).ToTimeLimitedDataProtector()
+            var sealedState = protection.Provider.CreateProtector(StatePurpose).ToTimeLimitedDataProtector()
                 .Protect($"{state}\n{target}", StateLifetime);
             http.Response.Cookies.Append(StateCookie, sealedState, new CookieOptions
             {
@@ -60,7 +61,7 @@ public static class ReviewAuthEndpoints
         });
 
         auth.MapGet("/callback", async (string? code, string? state, string? error, HttpContext http, IOptions<ReviewSettings> settings,
-            IGitHubSignIn gitHub, ReviewSignInService signIn, IDataProtectionProvider protection, ILoggerFactory loggers,
+            IGitHubSignIn gitHub, ReviewSignInService signIn, ReviewSignInProtection protection, ILoggerFactory loggers,
             CancellationToken ct) =>
         {
             var logger = loggers.CreateLogger(typeof(ReviewAuthEndpoints).FullName!);
@@ -76,7 +77,7 @@ public static class ReviewAuthEndpoints
             {
                 var opened = string.IsNullOrEmpty(sealedState)
                     ? null
-                    : protection.CreateProtector(StatePurpose).ToTimeLimitedDataProtector().Unprotect(sealedState);
+                    : protection.Provider.CreateProtector(StatePurpose).ToTimeLimitedDataProtector().Unprotect(sealedState);
                 var parts = opened?.Split('\n', 2);
                 if (parts is [var expected, var target] && state is not null
                     && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(state)))

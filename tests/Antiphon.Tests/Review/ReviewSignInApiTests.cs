@@ -123,6 +123,8 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
         (await client.PostAsync("/api/review-auth/logout", null)).StatusCode.ShouldBe(HttpStatusCode.OK);
 
         (await client.GetAsync("/api/review-me")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        // The cookies were protected with sign-in's own key ring (Review:Auth:KeyRingPath), not the server's.
+        Directory.EnumerateFiles(factory.SignInKeys, "key-*.xml").ShouldNotBeEmpty();
     }
 
     [Test]
@@ -196,6 +198,21 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
     {
         public FakeGitHubSignIn GitHub { get; } = new();
 
+        /// <summary>Sign-in's own key ring, as docker-compose.review.yml sets it.</summary>
+        public string SignInKeys { get; } = Path.Combine(Path.GetTempPath(), "antiphon-signin-keys-" + Guid.NewGuid().ToString("N"));
+
+        public override async ValueTask DisposeAsync()
+        {
+            await base.DisposeAsync();
+            try
+            {
+                Directory.Delete(SignInKeys, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+
         protected override void ApplyTestOverrides(IServiceCollection services)
         {
             services.RemoveAll<IGitHubSignIn>();
@@ -212,6 +229,7 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
                 s.Auth.ClientId = "Iv23test";
                 s.Auth.ClientSecret = "test-secret";
                 s.Auth.AllowedLogins = ["boss"];
+                s.Auth.KeyRingPath = SignInKeys;
             });
             services.PostConfigure<ReviewPollingSettings>(s =>
             {

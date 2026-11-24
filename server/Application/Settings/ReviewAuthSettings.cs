@@ -54,6 +54,13 @@ public sealed class ReviewAuthSettings
     /// </summary>
     public string RequiredRepoPermission { get; set; } = "write";
 
+    /// <summary>
+    /// A folder for the keys that protect the sign-in cookies, kept across restarts. Absent: the server's own
+    /// data-protection key ring (<c>AgentTui:KeyRingPath</c>), which in a Linux container makes no keys without a
+    /// certificate (<c>AgentTui:KeyProtection</c>). docker-compose.review.yml sets <c>/state/review-signin-keys</c>.
+    /// </summary>
+    public string? KeyRingPath { get; set; }
+
     /// <summary>How long a session lasts without use (sliding), in hours. Default 168 (a week).</summary>
     public int SessionHours { get; set; } = 168;
 

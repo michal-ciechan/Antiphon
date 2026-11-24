@@ -66,6 +66,8 @@ services:
       Git__WorktreeBasePath: /state/work/worktrees
       Serilog__LogPath: /state/logs
       AgentTui__KeyRingPath: /state/keyring
+      # Sign-in cookies get their own key ring: the server's needs a certificate on Linux.
+      Review__Auth__KeyRingPath: /state/review-signin-keys
       # Reviewers: claude -p in this container, on the server's own mirrors.
       Review__Agents__Transport: cli
       Review__Agents__MirrorRoot: /state/mirrors
@@ -100,6 +102,8 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    # The server's database diagnostics read pg_stat_statements.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_DB: antiphon
       POSTGRES_USER: antiphon

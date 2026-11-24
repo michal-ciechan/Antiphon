@@ -192,9 +192,11 @@ try
                 return Task.CompletedTask;
             };
         });
+    builder.Services.AddSingleton<ReviewSignInProtection>();
     builder.Services.AddOptions<Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationOptions>(ReviewViewer.AuthScheme)
-        .Configure<IOptions<ReviewSettings>>((o, review) =>
+        .Configure<IOptions<ReviewSettings>, ReviewSignInProtection>((o, review, protection) =>
         {
+            o.DataProtectionProvider = protection.Provider;
             o.ExpireTimeSpan = TimeSpan.FromHours(Math.Max(1, review.Value.Auth.SessionHours));
             o.Cookie.SecurePolicy = review.Value.PublicBaseUrl?.StartsWith("https://", StringComparison.OrdinalIgnoreCase) == true
                 ? Microsoft.AspNetCore.Http.CookieSecurePolicy.Always
