@@ -58,7 +58,7 @@ namespace Antiphon.Nightly
         /// <summary>The CLI's usage line.</summary>
         public const string Usage = "reap-orphaned-pty-hosts [--execute] [--limit 0] [--runner-url http://localhost:17204]"
             + " [--session-log-path C:\\logs\\antiphon\\session-runner] [--check-interpreter-dir C:\\logs\\antiphon\\check-interpreter]"
-            + " [--diagnose-dir C:\\logs\\antiphon\\diagnose] [--output-distiller-dir C:\\logs\\antiphon\\output-distiller] [--pg-container antiphon-postgres]"
+            + " [--diagnose-dir C:\\logs\\antiphon\\diagnose] [--output-distiller-dir C:\\logs\\antiphon\\output-distiller] [--pg-container <name>]"
             + " [--pg-user antiphon] [--pg-database antiphon] [--min-age-minutes 30] [--pid-reuse-tolerance-sec 5] [--max-banner-only-ansi-bytes 512]"
             + " [--kill-verify-seconds 20]";
 
@@ -80,8 +80,8 @@ namespace Antiphon.Nightly
         /// <summary>The output distiller's working directory (test-raw-output-distiller).</summary>
         public string OutputDistillerDir { get; init; } = @"C:\logs\antiphon\output-distiller";
 
-        /// <summary>The Postgres container the query runs in.</summary>
-        public string PgContainer { get; init; } = "antiphon-postgres";
+        /// <summary>An explicit container override. Empty resolves the AppHost database on server2.</summary>
+        public string PgContainer { get; init; } = "";
 
         /// <summary>The Postgres user.</summary>
         public string PgUser { get; init; } = "antiphon";
@@ -124,7 +124,7 @@ namespace Antiphon.Nightly
                 CheckInterpreterDir = Text("--check-interpreter-dir", @"C:\logs\antiphon\check-interpreter"),
                 DiagnoseDir = Text("--diagnose-dir", @"C:\logs\antiphon\diagnose"),
                 OutputDistillerDir = Text("--output-distiller-dir", @"C:\logs\antiphon\output-distiller"),
-                PgContainer = Text("--pg-container", "antiphon-postgres"),
+                PgContainer = flags.Value("--pg-container", ""),
                 PgUser = Text("--pg-user", "antiphon"),
                 PgDatabase = Text("--pg-database", "antiphon"),
                 MinAgeMinutes = flags.Int("--min-age-minutes", 30),
@@ -145,7 +145,7 @@ namespace Antiphon.Nightly
         /// <summary>One request without a body (GET the runner's sessions, POST a kill): the answer; throws when nothing answers in time.</summary>
         NightlyReportHttpResponse Http(string method, string uri, TimeSpan timeout);
 
-        /// <summary>docker exec &lt;container&gt; psql -U &lt;user&gt; -d &lt;database&gt; -At -c &lt;sql&gt;; throws when docker cannot start.</summary>
+        /// <summary>Read-only PostgreSQL query. An empty container selects the AppHost database.</summary>
         ZombieDatabaseAnswer Query(string container, string user, string database, string sql);
 
         /// <summary>Every process; throws when the table cannot be read.</summary>
@@ -275,7 +275,6 @@ namespace Antiphon.Nightly
 
             // Each id is a GUID (Manifest.Read refuses anything else), so the list is safe to quote.
             var sql = "select \"Id\" from \"AgentSessions\" where \"Id\" in (" + string.Join(",", manifests.Select(m => "'" + m.SessionId + "'")) + ");";
-            var command = "docker exec " + options.PgContainer + " psql ...";
             ZombieDatabaseAnswer rows;
             try
             {
@@ -283,13 +282,12 @@ namespace Antiphon.Nightly
             }
             catch (Exception e) when (e is Win32Exception || e is System.IO.IOException || e is InvalidOperationException)
             {
-                output.WriteLine("ABORT: the database did not answer (" + command + "): " + e.Message);
+                output.WriteLine("ABORT: the database did not answer: " + e.Message);
                 return Abort();
             }
             if (rows == null || rows.ExitCode != 0)
             {
-                output.WriteLine("ABORT: the database did not answer (" + command + " exit " + Num(rows?.ExitCode ?? 1) + "):");
-                output.WriteLine((rows?.Output ?? "").TrimEnd());
+                output.WriteLine("ABORT: the database did not answer (exit " + Num(rows?.ExitCode ?? 1) + ").");
                 return Abort();
             }
             var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -585,8 +583,8 @@ namespace Antiphon.Nightly
 
             public ZombieDatabaseAnswer Query(string container, string user, string database, string sql)
             {
-                var run = _host.Launch(new NightlyLaunch("docker", new[] { "exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql }, "", CaptureOutput: true));
-                return new ZombieDatabaseAnswer(run.ExitCode, run.ExitCode == 0 ? run.StandardOutputText : run.LogText);
+                var target = DesktopPostgres.Resolve(_host, container, user, database);
+                return new ZombieDatabaseAnswer(0, target.Query(sql));
             }
 
             public IReadOnlyList<PtyHostProcess> Processes()

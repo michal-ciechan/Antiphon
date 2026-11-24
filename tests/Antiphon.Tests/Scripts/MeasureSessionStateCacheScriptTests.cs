@@ -460,6 +460,7 @@ public sealed class MeasureSessionStateCacheScriptTests
             ContextPath = contextPath,
             Api = "http://api.test",
             TaskToken = Token,
+            PostgresContainer = "fixture-postgres",
             RepoRoot = "C:/checkout",
         };
 

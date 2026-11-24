@@ -28,10 +28,10 @@ SQL parameters and credentials out of shared incident notes.
 
 ## Desktop Postgres query statistics
 
-`docker-compose.dev.yml` preloads `pg_stat_statements` for the desktop's
-`antiphon-postgres` only. The server migration creates the extension in the
-`antiphon` database. From the canonical desktop checkout, list the top 20
-normalized queries by cumulative execution time:
+`docker-compose.dev.yml` preloads `pg_stat_statements` in the optional local
+development container `antiphon-postgres`. The server migration creates the
+extension in the `antiphon` database. With that local container running, list
+the top 20 normalized queries by cumulative execution time:
 
 ```powershell
 docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT query, calls, round(total_exec_time::numeric, 2) AS total_exec_ms, round(mean_exec_time::numeric, 2) AS mean_exec_ms FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;'
@@ -45,11 +45,15 @@ when you intend to discard the existing measurements:
 docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT pg_stat_statements_reset();'
 ```
 
-To read the rate without resetting, run `pwsh -File scripts/pg-qps.ps1 -Seconds 60`
-from the checkout. Pass `-Container <name>` or `-ConnectionEnv <VAR>` (the
-variable holds an Npgsql or libpq connection string). The script never prints
-that string. `-Json` writes one object. The same snapshot is sampled in
-process once a minute and served at `GET /api/diagnostics/db-rate`.
+To read the production rate without resetting, run
+`pwsh -File scripts/pg-qps.ps1 -Seconds 60` from the desktop checkout.
+It uses the `antiphon-server2` SSH Docker context after matching the running
+container's published endpoint to the AppHost `ConnectionStrings:DefaultConnection`
+user secret. Pass `-Container <name>` for a local test container or
+`-ConnectionEnv <VAR>` for a direct `psql` connection using the Npgsql or
+libpq connection string in the named environment variable. `-Json` writes one
+object. The server samples the same statistics once a minute and serves them
+at `GET /api/diagnostics/db-rate`.
 
 ## Agent-task detail pollers (CARD-1972)
 

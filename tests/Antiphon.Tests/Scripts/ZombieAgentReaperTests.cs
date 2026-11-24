@@ -212,11 +212,21 @@ public sealed class ZombieAgentReaperTests
 
         var dbDown = Census();
         dbDown.DbDown = true;
-        var u2 = Run(work, dbDown, "2026-08-28T22:00:00Z");
+        var u2 = Run(work, dbDown, "2026-08-28T22:00:00Z", "--execute");
         u2.Result.ExitCode.ShouldBe(2, "db unreachable exit 2");
         u2.Result.Rows.Count.ShouldBe(0, "db unreachable no verdicts");
-        u2.Output.ShouldContain("ABORT: the database did not answer (docker exec antiphon-postgres psql ... exit 1):");
-        u2.Output.ShouldContain("Error response from daemon: No such container: antiphon-postgres");
+        u2.Output.ShouldContain("ABORT: the database did not answer (exit 1).");
+        u2.Output.ShouldNotContain("Error response from daemon");
+        dbDown.Posts.ShouldBeEmpty();
+        dbDown.TreeKills.ShouldBeEmpty();
+
+        var endpointMismatch = Census();
+        endpointMismatch.DatabaseFailure = new InvalidOperationException("The running server2 PostgreSQL container must publish the endpoint");
+        var refused = Run(work, endpointMismatch, "2026-08-28T22:00:00Z", "--execute");
+        refused.Result.ExitCode.ShouldBe(2);
+        refused.Output.ShouldContain("ABORT: the database did not answer: The running server2 PostgreSQL container must publish the endpoint");
+        endpointMismatch.Posts.ShouldBeEmpty();
+        endpointMismatch.TreeKills.ShouldBeEmpty();
 
         var dbGarbage = Census();
         dbGarbage.DbText = "psql: warning";
@@ -365,7 +375,7 @@ public sealed class ZombieAgentReaperTests
 
         var defaults = ZombieAgentReaperOptions.Parse([], @"C:\profile", @"C:\repo");
         (defaults.Execute, defaults.RunnerUrl, defaults.ServerUrl, defaults.SessionLogPath, defaults.PgContainer, defaults.PgUser, defaults.PgDatabase)
-            .ShouldBe((false, "http://localhost:17204", "http://localhost:17202", @"C:\logs\antiphon\session-runner", "antiphon-postgres", "antiphon", "antiphon"));
+            .ShouldBe((false, "http://localhost:17204", "http://localhost:17202", @"C:\logs\antiphon\session-runner", "", "antiphon", "antiphon"));
         (defaults.Class, defaults.QuietHours, defaults.MinDoneMinutes, defaults.MinWorkingSetGB, defaults.PidReuseToleranceSec, defaults.KillVerifySeconds, defaults.Limit)
             .ShouldBe(("PoolExpired", 6, 120, 0.0, 5, 20, 0));
         defaults.ReportPath.ShouldBe(Path.Combine(@"C:\repo", "logs", "zombie-agents"));
@@ -483,6 +493,7 @@ public sealed class ZombieAgentReaperTests
         public bool RunnerDown { get; set; }
         public NightlyReportHttpResponse? RunnerAnswer { get; set; }
         public bool DbDown { get; set; }
+        public InvalidOperationException? DatabaseFailure { get; set; }
         public string? DbText { get; set; }
         public Exception? TableFailure { get; set; }
         public Func<string, NightlyReportHttpResponse?>? KillAnswer { get; init; }
@@ -533,8 +544,9 @@ public sealed class ZombieAgentReaperTests
         public ZombieDatabaseAnswer Query(string container, string user, string database, string sql)
         {
             Queries++;
-            (container, user, database).ShouldBe(("antiphon-postgres", "antiphon", "antiphon"));
+            (container, user, database).ShouldBe(("", "antiphon", "antiphon"));
             sql.ShouldContain("FROM \"AgentSessions\"");
+            if (DatabaseFailure != null) throw DatabaseFailure;
             if (DbDown) return new ZombieDatabaseAnswer(1, "Error response from daemon: No such container: antiphon-postgres\n");
             return new ZombieDatabaseAnswer(0, DbText ?? Db.ToJsonString() + "\n");
         }

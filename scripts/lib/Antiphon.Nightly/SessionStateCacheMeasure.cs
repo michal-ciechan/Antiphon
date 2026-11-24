@@ -76,7 +76,7 @@ namespace Antiphon.Nightly
 
         /// <summary>The task token sent as X-Antiphon-Task-Token (empty: none).</summary>
         public string TaskToken { get; init; } = "";
-        public string PostgresContainer { get; init; } = "antiphon-postgres";
+        public string PostgresContainer { get; init; } = "";
         public string Database { get; init; } = "antiphon";
         public string DatabaseUser { get; init; } = "antiphon";
         public int WarmSeconds { get; init; } = 60;
@@ -119,7 +119,7 @@ namespace Antiphon.Nightly
                 ContextPath = flags.Value("--context-path", ""),
                 Api = OperatorApi.Base(Text("--api", api)),
                 TaskToken = taskToken ?? "",
-                PostgresContainer = Text("--postgres-container", "antiphon-postgres"),
+                PostgresContainer = flags.Value("--postgres-container", ""),
                 Database = Text("--database", "antiphon"),
                 DatabaseUser = Text("--database-user", "antiphon"),
                 WarmSeconds = Range("--warm-seconds", 60, 60, 3600),
@@ -188,8 +188,8 @@ namespace Antiphon.Nightly
  ) x), '[]'::json))::text;
 ";
 
-        /// <summary>Each docker or git observation's bound.</summary>
-        public const int ToolTimeoutMilliseconds = 30000;
+        /// <summary>Each Docker or git observation's bound.</summary>
+        public const int ToolTimeoutMilliseconds = DesktopPostgres.TimeoutMilliseconds;
 
         private static readonly string[] Siblings = { "CARD-0696", "CARD-0698", "CARD-0699", "CARD-0700" };
         private static readonly Regex Sha = new Regex("^(?:[0-9a-f]{40}|[0-9a-f]{64})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -698,11 +698,11 @@ namespace Antiphon.Nightly
 
         private static JsonObject ReadStatistics(SessionStateCacheOptions o, NightlyHost host)
         {
-            var raw = Bounded(host, "docker", "exec", o.PostgresContainer, "psql", "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-U", o.DatabaseUser, "-d", o.Database, "-c", StatisticsSql);
+            var target = DesktopPostgres.Resolve(host, o.PostgresContainer, o.DatabaseUser, o.Database);
+            var raw = target.Query(StatisticsSql);
             var statistics = JsonNode.Parse(raw, IgnoreCase);
-            var identity = Bounded(host, "docker", "inspect", "--format", "{{.Id}}|{{.State.StartedAt}}", o.PostgresContainer);
-            var cpu = Bounded(host, "docker", "exec", o.PostgresContainer, "sh", "-c",
-                "if [ -r /sys/fs/cgroup/cpu.stat ]; then cat /sys/fs/cgroup/cpu.stat; else cat /sys/fs/cgroup/cpuacct/cpuacct.usage; fi");
+            var identity = target.InspectIdentity();
+            var cpu = target.ReadCpuAccounting();
             double cpuSeconds;
             var usage = Regex.Match(cpu, @"(?m)^usage_usec\s+(\d+)");
             if (usage.Success) cpuSeconds = double.Parse(usage.Groups[1].Value, CultureInfo.InvariantCulture) / 1e6;

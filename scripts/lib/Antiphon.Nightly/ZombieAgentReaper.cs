@@ -62,7 +62,7 @@ namespace Antiphon.Nightly
     {
         /// <summary>The CLI's usage line.</summary>
         public const string Usage = "reap-zombie-agents [--execute] [--class PoolExpired[,EndedButAlive]] [--limit 0] [--runner-url http://localhost:17204]"
-            + " [--server-url http://localhost:17202] [--session-log-path C:\\logs\\antiphon\\session-runner] [--pg-container antiphon-postgres] [--pg-user antiphon]"
+            + " [--server-url http://localhost:17202] [--session-log-path C:\\logs\\antiphon\\session-runner] [--pg-container <name>] [--pg-user antiphon]"
             + " [--pg-database antiphon] [--quiet-hours 6] [--min-done-minutes 120] [--min-working-set-gb 0] [--pid-reuse-tolerance-sec 5]"
             + " [--kill-verify-seconds 20] [--report-path <dir>]";
 
@@ -78,8 +78,8 @@ namespace Antiphon.Nightly
         /// <summary>The session runner's log root (ansi logs, pty-host manifests).</summary>
         public string SessionLogPath { get; init; } = @"C:\logs\antiphon\session-runner";
 
-        /// <summary>The Postgres container the census query runs in.</summary>
-        public string PgContainer { get; init; } = "antiphon-postgres";
+        /// <summary>An explicit container override. Empty resolves the AppHost database on server2.</summary>
+        public string PgContainer { get; init; } = "";
 
         /// <summary>The Postgres user.</summary>
         public string PgUser { get; init; } = "antiphon";
@@ -140,7 +140,7 @@ namespace Antiphon.Nightly
                 RunnerUrl = Text("--runner-url", "http://localhost:17204").TrimEnd('/'),
                 ServerUrl = Text("--server-url", "http://localhost:17202").TrimEnd('/'),
                 SessionLogPath = Text("--session-log-path", @"C:\logs\antiphon\session-runner"),
-                PgContainer = Text("--pg-container", "antiphon-postgres"),
+                PgContainer = flags.Value("--pg-container", ""),
                 PgUser = Text("--pg-user", "antiphon"),
                 PgDatabase = Text("--pg-database", "antiphon"),
                 Class = Text("--class", "PoolExpired"),
@@ -175,7 +175,7 @@ namespace Antiphon.Nightly
         /// <summary>One request without a body (GET the runner's sessions, POST a kill): the answer; throws when nothing answers in time.</summary>
         NightlyReportHttpResponse Http(string method, string uri, TimeSpan timeout);
 
-        /// <summary>docker exec &lt;container&gt; psql -U &lt;user&gt; -d &lt;database&gt; -At -c &lt;sql&gt;; throws when docker cannot start.</summary>
+        /// <summary>Read-only PostgreSQL query. An empty container selects the AppHost database.</summary>
         ZombieDatabaseAnswer Query(string container, string user, string database, string sql);
 
         /// <summary>Every process, each with its CPU over a five-second sample; throws when the table cannot be read.</summary>
@@ -602,7 +602,6 @@ namespace Antiphon.Nightly
             // The census query: the sessions, agents and tasks. Null when it answered; else the abort line.
             private string ReadDatabase()
             {
-                var command = "docker exec " + _options.PgContainer + " psql ...";
                 ZombieDatabaseAnswer answer;
                 try
                 {
@@ -610,13 +609,11 @@ namespace Antiphon.Nightly
                 }
                 catch (Exception e) when (e is Win32Exception || e is System.IO.IOException || e is InvalidOperationException)
                 {
-                    return "ABORT: the database did not answer (" + command + "): " + e.Message;
+                    return "ABORT: the database did not answer: " + e.Message;
                 }
                 if (answer == null || answer.ExitCode != 0)
                 {
-                    _host.Out.WriteLine("ABORT: the database did not answer (" + command + " exit " + (answer?.ExitCode ?? 1).ToString(CultureInfo.InvariantCulture) + "):");
-                    _host.Out.WriteLine((answer?.Output ?? "").TrimEnd());
-                    return "";
+                    return "ABORT: the database did not answer (exit " + (answer?.ExitCode ?? 1).ToString(CultureInfo.InvariantCulture) + ").";
                 }
                 JsonNode db;
                 try
@@ -1109,8 +1106,8 @@ namespace Antiphon.Nightly
 
             public ZombieDatabaseAnswer Query(string container, string user, string database, string sql)
             {
-                var run = _host.Launch(new NightlyLaunch("docker", new[] { "exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql }, "", CaptureOutput: true));
-                return new ZombieDatabaseAnswer(run.ExitCode, run.ExitCode == 0 ? run.StandardOutputText : run.LogText);
+                var target = DesktopPostgres.Resolve(_host, container, user, database);
+                return new ZombieDatabaseAnswer(0, target.Query(sql));
             }
 
             public IReadOnlyList<ZombieProcess> Processes()

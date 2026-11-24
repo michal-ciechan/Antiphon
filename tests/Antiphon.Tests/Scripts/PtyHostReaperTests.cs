@@ -169,7 +169,8 @@ public sealed class PtyHostReaperTests
 
     [Test]
     [Arguments("runner", "ABORT: session-runner at http://localhost:17204 did not answer GET /sessions: HTTP 503 starting")]
-    [Arguments("database", "ABORT: the database did not answer (docker exec antiphon-postgres psql ... exit 2):")]
+    [Arguments("database", "ABORT: the database did not answer (exit 2).")]
+    [Arguments("endpoint", "ABORT: the database did not answer: The running server2 PostgreSQL container must publish the endpoint")]
     [Arguments("table", "ABORT: the process table could not be read: no table here")]
     [Arguments("manifest", "ABORT: the manifest ")]
     [Arguments("directory", "ABORT: the manifest directory ")]
@@ -181,6 +182,7 @@ public sealed class PtyHostReaperTests
         {
             case "runner": machine.RunnerAnswer = new NightlyReportHttpResponse(503, "starting"); break;
             case "database": machine.DbExit = 2; break;
+            case "endpoint": machine.DatabaseFailure = new InvalidOperationException("The running server2 PostgreSQL container must publish the endpoint"); break;
             case "table": machine.TableFailure = new PlatformNotSupportedException("no table here"); break;
             case "manifest": machine.Disk.AddFile(Path.Combine(Manifests, "bad.json"), new MockFileData("{\"sessionId\":\"not-a-guid\",\"hostPid\":1}")); break;
             case "directory": machine.Disk.Directory.Delete(Manifests, recursive: true); break;
@@ -189,6 +191,7 @@ public sealed class PtyHostReaperTests
 
         run.Result.ExitCode.ShouldBe(2, run.Output);
         run.Output.ShouldContain(line);
+        run.Output.ShouldNotContain("psql: error: connection refused");
         machine.Posts.ShouldBeEmpty();
         run.Result.Verdicts.ShouldBeEmpty();
     }
@@ -209,7 +212,7 @@ public sealed class PtyHostReaperTests
         var defaults = PtyHostReaperOptions.Parse([]);
         (defaults.Execute, defaults.RunnerUrl, defaults.SessionLogPath, defaults.CheckInterpreterDir, defaults.DiagnoseDir, defaults.OutputDistillerDir, defaults.PgContainer,
             defaults.MinAgeMinutes, defaults.PidReuseToleranceSec, defaults.MaxBannerOnlyAnsiBytes, defaults.KillVerifySeconds, defaults.Limit)
-            .ShouldBe((false, Runner, @"C:\logs\antiphon\session-runner", CheckInterpreter, Diagnose, Distiller, "antiphon-postgres", 30, 5, 512, 20, 0));
+            .ShouldBe((false, Runner, @"C:\logs\antiphon\session-runner", CheckInterpreter, Diagnose, Distiller, "", 30, 5, 512, 20, 0));
         var given = PtyHostReaperOptions.Parse(["--runner-url", "http://127.0.0.1:9/", "--min-age-minutes", "5", "--max-banner-only-ansi-bytes", "300", "--execute"]);
         (given.RunnerUrl, given.MinAgeMinutes, given.MaxBannerOnlyAnsiBytes, given.Execute).ShouldBe(("http://127.0.0.1:9", 5, 300, true));
         Should.Throw<NightlyUsageException>(() => PtyHostReaperOptions.Parse(["-Execute"]));
@@ -253,6 +256,7 @@ public sealed class PtyHostReaperTests
         public NightlyReportHttpResponse? RunnerAnswer { get; set; }
         public List<string> Rows { get; } = [];
         public int DbExit { get; set; }
+        public InvalidOperationException? DatabaseFailure { get; set; }
         public List<string> Queries { get; } = [];
         public List<PtyHostProcess> Table { get; } = [];
         public Exception? TableFailure { get; set; }
@@ -317,8 +321,9 @@ public sealed class PtyHostReaperTests
 
         public ZombieDatabaseAnswer Query(string container, string user, string database, string sql)
         {
-            (container, user, database).ShouldBe(("antiphon-postgres", "antiphon", "antiphon"));
+            (container, user, database).ShouldBe(("", "antiphon", "antiphon"));
             Queries.Add(sql);
+            if (DatabaseFailure != null) throw DatabaseFailure;
             return DbExit != 0 ? new ZombieDatabaseAnswer(DbExit, "psql: error: connection refused") : new ZombieDatabaseAnswer(0, string.Join("\n", Rows) + "\n");
         }
 
