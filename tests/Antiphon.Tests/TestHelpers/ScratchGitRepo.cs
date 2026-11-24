@@ -13,6 +13,12 @@ public sealed class ScratchGitRepo : IDisposable
     public string Path { get; }
     public string WorktreeRoot { get; }
     private string? _bareOrigin;
+    // The folder a seeded template copy lives in (repo and origin under it); deleted on dispose.
+    private readonly string? _cloneRoot;
+
+    /// <summary>The bare origin added by <see cref="AddBareOriginAsync"/> or <see cref="CreateSeededWithOriginAsync"/>,
+    /// spelled as <c>git remote get-url origin</c> prints it; null before one is added.</summary>
+    public string? BareOrigin => _bareOrigin;
 
     public ScratchGitRepo(string prefix = "antiphon-deleg-wt")
     {
@@ -21,6 +27,72 @@ public sealed class ScratchGitRepo : IDisposable
         WorktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
         if (TryCloneTemplate(Path)) return;
         InitAsync(Path).GetAwaiter().GetResult();
+    }
+
+    private ScratchGitRepo(string path, string worktreeRoot, string bareOrigin, string cloneRoot)
+    {
+        Path = path;
+        WorktreeRoot = worktreeRoot;
+        _bareOrigin = bareOrigin;
+        _cloneRoot = cloneRoot;
+    }
+
+    /// <summary>
+    /// The same repository as <c>new ScratchGitRepo(prefix)</c> followed by
+    /// <see cref="CommitFileAsync"/>(<paramref name="relativePath"/>, <paramref name="content"/>) and
+    /// <see cref="AddBareOriginAsync"/>: one commit on master, pushed with <c>-u</c> to a bare origin with
+    /// <c>receive.autogc=false</c>. It is copied from a <see cref="GitTreeTemplate"/> built once per process (per file
+    /// and content) by those same steps, which saves their seven git processes per repository. The copy has the
+    /// template's commit id (same author, committer, times and message), and its origin remote names the copy's own
+    /// bare origin (the template rewrites its root path). The repository is <c>&lt;temp&gt;/&lt;prefix&gt;-seeded-*/repo</c>
+    /// with the origin beside it at <c>origin</c>. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or a template that cannot be
+    /// built or cloned, runs the git steps for this repository instead.
+    /// </summary>
+    public static async Task<ScratchGitRepo> CreateSeededWithOriginAsync(string prefix, string relativePath, string content)
+    {
+        if (GitTreeTemplate.Enabled)
+        {
+            string? cloneRoot = null;
+            try
+            {
+                var template = await GitTreeTemplate.BuildOnceAsync($"scratch-git-repo-seeded-origin|{relativePath}|{content}", [],
+                    async (root, _) =>
+                    {
+                        var repo = System.IO.Path.Combine(root, "repo");
+                        var origin = System.IO.Path.Combine(root, "origin");
+                        Directory.CreateDirectory(repo);
+                        Directory.CreateDirectory(origin);
+                        await InitAsync(repo);
+                        await CommitFileInAsync(repo, relativePath, content);
+                        await AddBareOriginInAsync(repo, origin);
+                        return [];
+                    });
+                using var span = TestTrace.Span("git-repo create seeded");
+                cloneRoot = Directory.CreateTempSubdirectory($"{prefix}-seeded-").FullName;
+                template.CloneTo(cloneRoot);
+                var worktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
+                return new ScratchGitRepo(System.IO.Path.Combine(cloneRoot, "repo"), worktreeRoot,
+                    System.IO.Path.Combine(cloneRoot, "origin"), cloneRoot);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException
+                or UnauthorizedAccessException or ShouldAssertException)
+            {
+                Console.Error.WriteLine($"git-template disabled for this seeded scratch repo: {ex.GetType().Name}: {ex.Message}");
+                if (cloneRoot is not null) GitTreeTemplate.DeleteTree(cloneRoot);
+            }
+        }
+        var git = new ScratchGitRepo(prefix);
+        try
+        {
+            await git.CommitFileAsync(relativePath, content);
+            await git.AddBareOriginAsync();
+            return git;
+        }
+        catch
+        {
+            git.Dispose();
+            throw;
+        }
     }
 
     /// <summary>The starting repository: <c>git init -b master</c> plus the test identity.</summary>
@@ -62,11 +134,13 @@ public sealed class ScratchGitRepo : IDisposable
         return true;
     }
 
-    public async Task CommitFileAsync(string relativePath, string content)
+    public Task CommitFileAsync(string relativePath, string content) => CommitFileInAsync(Path, relativePath, content);
+
+    private static async Task CommitFileInAsync(string repo, string relativePath, string content)
     {
-        await File.WriteAllTextAsync(System.IO.Path.Combine(Path, relativePath), content);
-        await GitAsync("add", ".");
-        await GitAsync("commit", "-m", $"edit {relativePath}");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repo, relativePath), content);
+        foreach (var args in new[] { new[] { "add", "." }, ["commit", "-m", $"edit {relativePath}"] })
+            (await GitInAsync(repo, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
     }
 
     public async Task GitAsync(params string[] args) =>
@@ -137,11 +211,16 @@ public sealed class ScratchGitRepo : IDisposable
     public async Task AddBareOriginAsync()
     {
         _bareOrigin = Directory.CreateTempSubdirectory("c527-origin").FullName;
-        (await GitInAsync(_bareOrigin, "init", "--bare")).Ok.ShouldBeTrue();
+        await AddBareOriginInAsync(Path, _bareOrigin);
+    }
+
+    private static async Task AddBareOriginInAsync(string repo, string origin)
+    {
+        (await GitInAsync(origin, "init", "--bare")).Ok.ShouldBeTrue();
         // A push into the fixture's origin starts no gc there (receive-pack's own, as LandingGitFixture's remote).
-        (await GitInAsync(_bareOrigin, "config", "receive.autogc", "false")).Ok.ShouldBeTrue();
-        await GitAsync("remote", "add", "origin", _bareOrigin);
-        await GitAsync("push", "-u", "origin", "master");
+        (await GitInAsync(origin, "config", "receive.autogc", "false")).Ok.ShouldBeTrue();
+        foreach (var args in new[] { new[] { "remote", "add", "origin", origin }, ["push", "-u", "origin", "master"] })
+            (await GitInAsync(repo, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
     }
 
     public async Task InstallFailingPreCommitHookAsync(string message)
@@ -172,7 +251,8 @@ public sealed class ScratchGitRepo : IDisposable
     public void Dispose()
     {
         using var span = TestTrace.Span("git-repo delete");
-        foreach (var dir in new[] { WorktreeRoot, Path, _bareOrigin })
+        // A seeded copy's repo and origin are both under its clone root.
+        foreach (var dir in _cloneRoot is null ? new[] { WorktreeRoot, Path, _bareOrigin } : [WorktreeRoot, _cloneRoot])
         {
             if (dir is null) continue;
             try

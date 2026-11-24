@@ -51,15 +51,17 @@ internal static partial class CodexCliRemoteDeliveryFixture
             AgentKind kind = AgentKind.Codex, bool remote = true)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var git = new ScratchGitRepo("c1029-world");
+            // The seed commit pushed to a bare origin comes from a per-process template copy (no fixture git per world);
+            // the runner's first clone, fetch and worktree and the server's worktree and push stay real.
+            ScratchGitRepo git;
+            try { git = await ScratchGitRepo.CreateSeededWithOriginAsync("c1029-world", "seed.txt", "C1029 retained recipient\n"); }
+            catch { await schema.DisposeAsync(); throw; }
             var root = System.IO.Directory.CreateTempSubdirectory("c1029-recipient-").FullName;
             var world = new World { Schema = schema, Git = git, Root = root, Busy = busy, Kind = kind,
                 Remote = remote, Recipient = new(sample) { Kind = kind }, Freeze = new(schema.ConnectionString) };
             world.Recipient.Clock = world.Clock;
             try
             {
-                await git.CommitFileAsync("seed.txt", "C1029 retained recipient\n");
-                await git.AddBareOriginAsync();
                 await world.OpenGraphAsync();
                 return world;
             }
@@ -75,7 +77,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             {
                 StoreIdPath = storePath,
                 AllowedCwd = Root, RunnerRepository = Path.Combine(Root, "repo"),
-                RunnerCloneSource = (await Git.GitReadAsync("remote", "get-url", "origin")).Trim(),
+                RunnerCloneSource = Git.BareOrigin ?? (await Git.GitReadAsync("remote", "get-url", "origin")).Trim(),
                 CapacityStatePath = Path.Combine(Root, "capacity"),
                 LaunchGenerationsPath = Path.Combine(Root, "generations"),
             }, new SignedInProbe());
