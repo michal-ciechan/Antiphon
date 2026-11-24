@@ -888,7 +888,7 @@ public sealed class AntiphonCliLauncherTests
             "--build-project-dir", @"C:\fixture root\runner", "--log-max-mb", "20", "--log-retain-days", "5", "--log-retain-count", "10",
             "--supervisor-pid", launcher.ToString()]);
         echo.GetProperty("pid").GetInt32().ShouldNotBe(launcher, "the command runs in a child of the launcher, which stays the recorded supervisor");
-        var options = DaemonSupervisorOptions.Parse(Arguments(echo), "slot");
+        var options = DaemonSupervisorOptions.Parse(Arguments(echo));
         options.ExeArgList.ShouldBe(["--urls", "http://localhost:17204"]);
         options.SupervisorPid.ShouldBe(launcher);
 
@@ -897,7 +897,7 @@ public sealed class AntiphonCliLauncherTests
             "-StateFile", "s", "-LogMaxMb", "0", "-LogRetainDays", "2", "-LogRetainCount", "3"], fixture.Root,
             environment: new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "run-daemon" });
         plain.ExitCode.ShouldBe(0, plain.Stderr);
-        var received = DaemonSupervisorOptions.Parse(plain.Arguments.ShouldNotBeNull(plain.Stdout + plain.Stderr), "slot");
+        var received = DaemonSupervisorOptions.Parse(plain.Arguments.ShouldNotBeNull(plain.Stdout + plain.Stderr));
         (received.Name, received.BuildProjectDir, received.ExeArgs, received.LogMaxMb, received.LogRetainDays, received.LogRetainCount).ShouldBe(("fake-gateway", "", "", 0, 2, 3));
 
         AssertThinLauncher("run-daemon.ps1", "    [string]$Name,", "    [string]$ExeArgs,", "    [string]$BuildProjectDir = '',", "    [int]$LogMaxMb = 20,",

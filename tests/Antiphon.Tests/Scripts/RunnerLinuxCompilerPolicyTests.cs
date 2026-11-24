@@ -78,12 +78,15 @@ public sealed class RunnerLinuxCompilerPolicyTests
         var observation = Path.Combine(root, "observed.txt");
         await File.WriteAllTextAsync(probe,
             "param([string]$ResultPath)\n$env:ANTIPHON_LINUX_COMPILER_POLICY | Set-Content -LiteralPath $ResultPath\n");
+        // The real launcher, copied with its CLI loader so its run copy stays under this root, on the staged CLI (no msbuild),
+        // and -NoSlot: inheritance is the question, not the lease, and nothing may reach a runner.
+        Directory.CreateDirectory(Path.Combine(root, "scripts", "lib"));
+        foreach (var file in new[] { "scripts/build-slot.ps1", "scripts/lib/antiphon-cli.ps1" })
+            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, file), Path.Combine(root, file));
         var overrides = new Dictionary<string, string>
         {
-            ["C589_SLOT_SHIM"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c589-slot-shim.ps1"),
-            ["C589_SLOT_SCRIPT"] = "granted",
-            ["C589_SLOT_LOG"] = Path.Combine(root, "slot.log"),
-            ["C589_COMMAND_SHIM"] = ""
+            ["ANTIPHON_SCRIPTS_DLL"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll"),
+            ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
         };
         overrides.ContainsKey("ANTIPHON_LINUX_COMPILER_POLICY").ShouldBeFalse("the session must inherit its runner's setting");
         await using var session = new PtyAgentRunner("inbox");
@@ -93,8 +96,8 @@ public sealed class RunnerLinuxCompilerPolicyTests
             Environment.SetEnvironmentVariable("ANTIPHON_LINUX_COMPILER_POLICY", policy);
             await session.StartAsync("pwsh", new[]
             {
-                "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/build-slot.ps1"),
-                "-Label", "c1906-inheritance-fixture", "--", "pwsh", "-NoProfile", "-File", probe,
+                "-NoProfile", "-File", Path.Combine(root, "scripts/build-slot.ps1"),
+                "-Label", "c1906-inheritance-fixture", "-NoSlot", "--", "pwsh", "-NoProfile", "-File", probe,
                 "-ResultPath", observation
             }, DelegateScriptRunner.RepoRoot, overrides);
         }

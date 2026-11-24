@@ -411,7 +411,7 @@ namespace Antiphon.Nightly
         /// <summary>The idle budget of a chunk with no planned cost, 1 to 600 minutes (observe only).</summary>
         public double HangMinutes { get; init; } = 20;
 
-        /// <summary>The PowerShell 7 that runs scripts/build-slot.ps1 and scripts/nightly-run.ps1 for the launch.</summary>
+        /// <summary>The PowerShell 7 that runs scripts/nightly-run.ps1 for the launch (under the launch's build slot).</summary>
         public string PowerShellPath { get; init; } = "pwsh";
 
         internal static readonly string[] SharedValued =

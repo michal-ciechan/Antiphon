@@ -387,7 +387,8 @@ public sealed class QualificationSupervisorTests
     private static (int Code, string Text) Launch(QualificationWorld world, string config, string bound)
     {
         world.ClearOutput();
-        var code = QualificationLaunch.Run(QualificationLaunchOptions.Parse(["--config", config], bound, "pwsh-fake"), world.Host(), world.Files);
+        var code = QualificationLaunch.Run(QualificationLaunchOptions.Parse(["--config", config], bound, "pwsh-fake"), world.Host(), world.Files,
+            (_, _) => throw new InvalidOperationException("a refused launch takes no build slot"));
         return (code, world.Out);
     }
 
@@ -432,8 +433,8 @@ public sealed class QualificationSupervisorTests
         rows.ShouldAllPass(4);
     }
 
-    // The launch with HEAD and core.longpaths in order runs build-slot -> nightly-run through the host's watched launcher with
-    // the record's arguments, and exits with its code.
+    // The launch with HEAD and core.longpaths in order runs nightly-run with the record's arguments under a build slot this
+    // process holds (no build-slot.ps1 child; the slot itself is BuildSlotScriptTests'), on its console, and exits with its code.
     [Test]
     public void Launch_runs_build_slot_then_nightly_run_and_exits_with_its_code()
     {
@@ -449,14 +450,20 @@ public sealed class QualificationSupervisorTests
             Error = world.Fixture.Error, Trace = world.Fixture.Trace, Qualification = world.Seams,
         };
         var config = LaunchRecord(world, "go", checkout, "-NoSync", "-RunId", Run, "-StateRoot", state);
-        var code = QualificationLaunch.Run(QualificationLaunchOptions.Parse(["--config", config], Run, "C:/pwsh/pwsh.exe"), host, world.Files);
+        var slots = new List<(BuildSlotOptions Options, TextWriter? Capture)>();
+        var code = QualificationLaunch.Run(QualificationLaunchOptions.Parse(["--config", config], Run, "C:/pwsh/pwsh.exe"), host, world.Files,
+            (options, capture) =>
+            {
+                slots.Add((options, capture));
+                return 7;
+            });
         code.ShouldBe(7, world.Out);
-        var launch = launcher.Launches.ShouldHaveSingleItem();
-        launch.Custody.ShouldBe(NightlyCustody.Watched);
-        launch.FileName.ShouldBe("C:/pwsh/pwsh.exe");
-        launch.Arguments.ShouldBe(new[]
+        launcher.Launches.ShouldBeEmpty("no build-slot.ps1 child");
+        var slot = slots.ShouldHaveSingleItem();
+        (slot.Options.Label, slot.Options.NoSlot, slot.Options.HolderPid, slot.Capture).ShouldBe(("rc-qualification", false, (int?)null, (TextWriter?)null),
+            "the lease is this process's and the run shares its console");
+        slot.Options.Command.ShouldBe(new[]
         {
-            "-NoProfile", "-File", Path.Combine(checkout, "scripts", "build-slot.ps1"), "-Label", "rc-qualification", "--",
             "C:/pwsh/pwsh.exe", "-NoProfile", "-File", Path.Combine(checkout, "scripts", "nightly-run.ps1"), "-NoSync", "-RunId", Run, "-StateRoot", state,
         });
         world.Out.ShouldContain("build-slot -> nightly-run -NoSync -RunId " + Run);

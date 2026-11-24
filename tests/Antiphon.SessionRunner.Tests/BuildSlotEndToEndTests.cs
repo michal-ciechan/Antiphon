@@ -14,7 +14,9 @@ namespace Antiphon.SessionRunner.Tests;
 /// share one broker (<see cref="BuildSlotTestHost"/>, budget 1, pointed at by
 /// <c>ANTIPHON_BUILD_SLOTS_URL</c>): the second prints <c>BUILD SLOT waiting</c> and runs only after
 /// the first released, and a wrapper killed mid-hold has its lease reaped by pid death so the waiter
-/// is granted. Nothing here reaches a production runner.
+/// is granted. Nothing here reaches a production runner. Since unit 34 of the 2026-11-22 plan the
+/// wrapper is a thin launcher of the build-slot command (it names its own process as the holder), so
+/// the class first lets the launcher build that command once, outside the timed cases.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -22,6 +24,23 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class BuildSlotEndToEndTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(90);
+
+    // The launcher builds antiphon-scripts on first use (a no-op once built). With no command the CLI answers its usage
+    // error (exit 2) and nothing else runs; 9 would mean the CLI could not be built or started.
+    [Before(Class)]
+    public static async Task BuildTheLauncherCliOnce()
+    {
+        var info = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = RepoRoot };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(RepoRoot, "scripts", "build-slot.ps1"), "-Label", "warm" })
+            info.ArgumentList.Add(arg);
+        info.Environment["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots";
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("pwsh did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        await process.WaitForExitAsync(timeout.Token);
+        process.ExitCode.ShouldBe(2, await stdout + await stderr);
+    }
 
     [Test]
     public async Task V5_Real_wrapper_identity_survives_ttl_and_is_reaped_at_absolute_bound()

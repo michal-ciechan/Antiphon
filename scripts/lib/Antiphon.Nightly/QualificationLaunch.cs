@@ -12,10 +12,10 @@
 // or a start more than a second from the record's) is left to nightly-run's stale-lock rule. This is a point-in-time
 // check: a run that starts while this launch waits for a build slot still makes nightly-run refuse it (exit 3). It refuses
 // (exit 2) unless the checkout HEAD equals expectedSha and local core.longpaths is true (reason longpaths-not-enabled; fix:
-// git -C <checkout> config --local core.longpaths true), then runs, through the host's launcher (a watched hop on this
-// process's console and streams),
-//   <pwsh> -NoProfile -File <checkout>/scripts/build-slot.ps1 -Label <label> -- <pwsh> -NoProfile -File <checkout>/scripts/nightly-run.ps1 <nightlyArguments>
-// and exits with its exit code. git runs through the host. Plain C#: no PowerShell types. ASCII only.
+// git -C <checkout> config --local core.longpaths true), then runs, under a build slot in this process (BuildSlotRunner,
+// label <label>; the lease belongs to this process, and the command shares its console and streams),
+//   <pwsh> -NoProfile -File <checkout>/scripts/nightly-run.ps1 <nightlyArguments>
+// and exits with its exit code (4 when no slot came). git runs through the host. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -53,7 +53,7 @@ namespace Antiphon.Nightly
         /// <summary>The launch record.</summary>
         public string Config { get; init; } = "";
 
-        /// <summary>The PowerShell 7 that runs build-slot.ps1 and nightly-run.ps1.</summary>
+        /// <summary>The PowerShell 7 that runs nightly-run.ps1.</summary>
         public string PowerShellPath { get; init; } = "pwsh";
 
         /// <summary>The supervisor's bound run id (ANTIPHON_QUALIFICATION_RUN_ID, read by the CLI); empty outside a supervisor.</summary>
@@ -128,12 +128,13 @@ namespace Antiphon.Nightly
             return null;
         }
 
-        /// <summary>The launch (see the file header). Exit 1 an unreadable record, 2 refused, 3 a live run.lock, else build-slot's exit code.</summary>
-        public static int Run(QualificationLaunchOptions options, NightlyHost host, IFileSystem files)
+        /// <summary>The launch (see the file header). Exit 1 an unreadable record, 2 refused, 3 a live run.lock, else the build slot's exit code.</summary>
+        public static int Run(QualificationLaunchOptions options, NightlyHost host, IFileSystem files, BuildSlotRunner buildSlot)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
+            if (buildSlot == null) throw new ArgumentNullException(nameof(buildSlot));
             JsonElement record;
             try
             {
@@ -173,14 +174,9 @@ namespace Antiphon.Nightly
             var label = RcQualificationRecords.Text(RcQualificationRecords.Member(record, "buildSlotLabel"));
             if (string.IsNullOrWhiteSpace(label)) label = "rc-qualification";
             host.Out.WriteLine(Prefix + host.UtcNow.ToString("o", CultureInfo.InvariantCulture) + " build-slot -> nightly-run " + string.Join(" ", nightlyArguments));
-            var pwsh = options.PowerShellPath;
-            var arguments = new List<string>
-            {
-                "-NoProfile", "-File", System.IO.Path.Combine(checkout, "scripts", "build-slot.ps1"), "-Label", label, "--",
-                pwsh, "-NoProfile", "-File", System.IO.Path.Combine(checkout, "scripts", "nightly-run.ps1"),
-            };
-            arguments.AddRange(nightlyArguments);
-            var code = host.Launch(new NightlyLaunch(pwsh, arguments, "")).ExitCode;
+            var command = new List<string> { options.PowerShellPath, "-NoProfile", "-File", System.IO.Path.Combine(checkout, "scripts", "nightly-run.ps1") };
+            command.AddRange(nightlyArguments);
+            var code = buildSlot(new BuildSlotOptions { Label = label, Command = command }, null);
             host.Out.WriteLine(Prefix + host.UtcNow.ToString("o", CultureInfo.InvariantCulture) + " exit " + code.ToString(CultureInfo.InvariantCulture));
             return code;
         }

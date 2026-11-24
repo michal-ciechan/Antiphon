@@ -2,9 +2,9 @@
 // qualification run (CARD-1667; Antiphon.Nightly.QualificationLaunch.Run on the production host); qualification-supervise
 // starts it as its launch child. It replaced scripts/qualification/launch-rc.ps1 (deleted 2026-11-23, unit 7 of
 // 2026-11-22-remaining-ps1-to-csharp.md). The bound run id is ANTIPHON_QUALIFICATION_RUN_ID (the supervisor sets it); the
-// default PowerShell is pwsh on PATH. It runs scripts/build-slot.ps1 -- scripts/nightly-run.ps1 of the record's checkout on
-// this process's console and streams. Exit 1 an unreadable record; 2 refused or usage; 3 a live run.lock; else
-// build-slot's exit code. ASCII only.
+// default PowerShell is pwsh on PATH. It runs scripts/nightly-run.ps1 of the record's checkout under a build slot held by this
+// process (BuildSlotCommands.Runner), on this process's console and streams. Exit 1 an unreadable record; 2 refused or usage;
+// 3 a live run.lock; else the build slot's exit code (4 when no slot came, else nightly-run's). ASCII only.
 using System;
 using System.IO.Abstractions;
 using System.Linq;
@@ -22,7 +22,7 @@ namespace Antiphon.Scripts
         {
             var options = QualificationLaunchOptions.Parse(args.Skip(1).ToArray(), Environment.GetEnvironmentVariable(QualificationSupervise.RunIdVariable),
                 OwnedLauncher.FindApplication("pwsh") ?? "pwsh");
-            return QualificationLaunch.Run(options, NightlyHost.Production(Console.Out, Console.Error), new FileSystem());
+            return QualificationLaunch.Run(options, NightlyHost.Production(Console.Out, Console.Error), new FileSystem(), BuildSlotCommands.Runner());
         }
     }
 }

@@ -16,8 +16,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../CheckpointProcessRunner.cs" Link="CheckpointProcessRunner.cs" />
-    <!-- The nightly-tests command prepares its owned children as Set-AntiphonBuildDriverEnvironment does (CARD-1506). -->
+    <!-- The nightly-tests and build-slot commands prepare their children as Set-AntiphonBuildDriverEnvironment did (CARD-1506). -->
     <Compile Include="../BuildDriverEnvironment.cs" Link="BuildDriverEnvironment.cs" />
+    <!-- build-slot gives a dotnet command on Linux a private TMPDIR for its lease, as build-slot.ps1 did (CARD-1981). -->
+    <Compile Include="../LeaseTempDirectory.cs" Link="LeaseTempDirectory.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The rc commands call the compiled core's plain C# (ledger, admission, plans); PowerShell is never loaded. -->

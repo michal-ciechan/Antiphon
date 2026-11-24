@@ -220,6 +220,11 @@ namespace Antiphon.Scripts
             [VerificationToolCommands.MechanicalPc] = VerificationToolCommands.RunMechanicalPc,
             [VerificationToolCommands.MeasureSessionStateCache] = VerificationToolCommands.RunMeasureSessionStateCache,
             [VerificationToolCommands.VerifyAgentTuiProfile] = VerificationToolCommands.RunVerifyAgentTuiProfile,
+            // The build slot commands answer every input themselves (unit 34). build-slot: the command's own code, 4 when no slot came
+            // within the wait, 1 when the command cannot be resolved or started, 130 when interrupted. measure-linux-shared-compiler:
+            // 0 accepted, 1 refused or not accepted. Usage is 2 for each.
+            [BuildSlotCommands.BuildSlotName] = BuildSlotCommands.RunBuildSlot,
+            [BuildSlotCommands.MeasureLinuxSharedCompiler] = BuildSlotCommands.RunMeasureLinuxSharedCompiler,
         };
 
         public static int Main(string[] args)
@@ -257,7 +262,7 @@ namespace Antiphon.Scripts
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
-                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage);
+                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage);
             return Usage;
         }
 

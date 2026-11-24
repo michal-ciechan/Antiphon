@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-0043, CARD-0420: the run-daemon supervisor (Antiphon.Nightly.DaemonSupervisor, the body of scripts/run-daemon.ps1
 /// since unit 30 of the 2026-11-22 plan; the script is the AppHost's thin launcher). In process on a temporary root, with
-/// the build answered by a RecordingLauncher, HEAD by a FakeGit, the clock and the waits by a FakeTimeProvider, and the
+/// the build answered by a recording build slot (BuildSlotRunner; the slot itself is BuildSlotScriptTests'), HEAD by a FakeGit, the clock and the waits by a FakeTimeProvider, and the
 /// service by a fake starter that writes what the cmd.exe service did. The rows are those of the deleted
 /// Antiphon.SessionRunner.Tests classes DaemonStartupDiagnosticsTests (which ran run-daemon.ps1 under pwsh and
 /// powershell.exe with c589 build-slot shims) and DaemonLogRotationTests (which ran it with a .cmd service); one Windows row
@@ -46,11 +46,14 @@ public sealed class DaemonSupervisorTests
         {
             Clock = new FakeTimeProvider(now ?? RecordClock);
             Processes.Start(Supervisor, SupervisorStart);
-            Launcher = new RecordingLauncher(_ =>
+            Launcher = new RecordingLauncher(_ => throw new InvalidOperationException("the build runs under the build slot, not the launcher"));
+            Slot = (options, capture) =>
             {
                 _builds++;
-                return new NightlyLaunchResult { ExitCode = BuildExit(_builds), LogText = "synthetic build output\n" };
-            });
+                Slots.Add((options, capture));
+                capture.WriteLine("synthetic build output");
+                return BuildExit(_builds);
+            };
         }
 
         public NightlyFixture Fixture { get; } = NightlyFixture.Create("run-daemon");
@@ -58,6 +61,8 @@ public sealed class DaemonSupervisorTests
         public FakeProcessTable Processes { get; } = new();
         public FakeGit Git { get; set; } = new();
         public RecordingLauncher Launcher { get; }
+        public BuildSlotRunner Slot { get; }
+        public List<(BuildSlotOptions Options, TextWriter Capture)> Slots { get; } = [];
         public Func<int, int> BuildExit { get; set; } = _ => 0;
         public List<DaemonServiceStart> Starts { get; } = [];
         public Func<DaemonServiceStart, int, int> Service { get; set; } = (_, _) => 0;
@@ -77,7 +82,7 @@ public sealed class DaemonSupervisorTests
                 Clock = Clock, Git = Git.Run, Launcher = Launcher, Processes = Processes, Probe = new FakeHostProbe(), Out = Fixture.Out, Error = Fixture.Error,
                 Trace = TextWriter.Null, Sleep = Clock.Advance,
             };
-            return DaemonSupervisor.Run(DaemonSupervisorOptions.Parse(arguments, Fixture.PathOf("build-slot.ps1")), host, new FileSystem(), Starter ?? new DaemonServiceStarter(Start));
+            return DaemonSupervisor.Run(DaemonSupervisorOptions.Parse(arguments), host, new FileSystem(), Starter ?? new DaemonServiceStarter(Start), Slot);
         }
 
         private IDaemonService Start(DaemonServiceStart start)
@@ -125,7 +130,7 @@ public sealed class DaemonSupervisorTests
         w.Run(build ? "session-runner" : "generic", build).ShouldBe(0);
 
         var records = w.Records;
-        w.Launcher.Launches.Count.ShouldBe(build ? runs + (failFirst ? 1 : 0) : 0, "every relaunch must build");
+        w.Slots.Count.ShouldBe(build ? runs + (failFirst ? 1 : 0) : 0, "every relaunch must build");
         w.Starts.Count.ShouldBe(runs);
         var launches = records.Where(r => Event(r) == "wrapper-started").ToArray();
         launches.Length.ShouldBe(runs);
@@ -156,7 +161,7 @@ public sealed class DaemonSupervisorTests
             w.Lines.ShouldContain(l => l.EndsWith("[session-runner] [ERR] Build failed (exit 17). Retrying in 5 s...", StringComparison.Ordinal));
         }
         if (runs == 2) records.Single(r => Event(r) == "retry-scheduled").GetProperty("elapsedMs").GetDouble().ShouldBe(3000);
-        if (build) w.Lines.Count(l => l == "synthetic build output").ShouldBe(w.Launcher.Launches.Count, "each build's output is appended to the log");
+        if (build) w.Lines.Count(l => l == "synthetic build output").ShouldBe(w.Slots.Count, "each build's output is appended to the log");
         Event(records[^1]).ShouldBe("supervisor-stopping");
         File.Exists(w.Pid).ShouldBeFalse("the service PID file is removed once the service exits");
 
@@ -174,9 +179,11 @@ public sealed class DaemonSupervisorTests
         using var stamped = new World { Git = new FakeGit("ABCDEF0123456789ABCDEF0123456789ABCDEF01\n") };
         stamped.Service = (_, _) => { File.WriteAllText(stamped.State, "stopped"); return 0; };
         stamped.Run("session-runner", true).ShouldBe(0);
-        var launch = stamped.Launcher.Launches.ShouldHaveSingleItem();
-        (launch.FileName, launch.WorkingDirectory, launch.CaptureOutput, launch.Custody).ShouldBe(("pwsh", "", true, NightlyCustody.Watched));
-        launch.Arguments.ShouldBe(["-NoProfile", "-File", stamped.Fixture.PathOf("build-slot.ps1"), "-Label", "daemon-build", "--", "dotnet", "build", "fixture-only",
+        var slot = stamped.Slots.ShouldHaveSingleItem();
+        (slot.Options.Label, slot.Options.NoSlot, slot.Options.WorkingDirectory, slot.Options.HolderPid, slot.Capture == null)
+            .ShouldBe(("daemon-build", false, "", (int?)null, false), "the build runs under a slot this process holds, its output captured for the log");
+        stamped.Launcher.Launches.ShouldBeEmpty();
+        slot.Options.Command.ShouldBe(["dotnet", "build", "fixture-only",
             "-c", "Debug", "--nologo", "-p:SourceRevisionId=abcdef0123456789abcdef0123456789abcdef01"]);
         var head = stamped.Git.Calls.ShouldHaveSingleItem();
         (head.WorkingDirectory, string.Join(" ", head.Arguments)).ShouldBe(("fixture-only", "rev-parse HEAD"));
@@ -184,7 +191,7 @@ public sealed class DaemonSupervisorTests
         using var unstamped = new World { Git = new FakeGit("fatal: not a git repository", 128) };
         unstamped.Service = (_, _) => { File.WriteAllText(unstamped.State, "stopped"); return 0; };
         unstamped.Run("session-runner", true).ShouldBe(0);
-        unstamped.Launcher.Launches.ShouldHaveSingleItem().Arguments[^1].ShouldBe("--nologo");
+        unstamped.Slots.ShouldHaveSingleItem().Options.Command[^1].ShouldBe("--nologo");
         unstamped.Lines.ShouldContain(l => l.EndsWith("WARNING: git rev-parse HEAD failed in fixture-only; building unstamped.", StringComparison.Ordinal));
     }
 
@@ -284,20 +291,20 @@ public sealed class DaemonSupervisorTests
     public void The_options_require_the_service_files_and_split_the_arguments()
     {
         string[] every = ["--name", "n", "--work-dir", "w", "--exe", "e", "--log-file", "l", "--service-pid-file", "p", "--state-file", "s"];
-        var options = DaemonSupervisorOptions.Parse(every, "slot.ps1");
-        (options.LogMaxMb, options.LogRetainDays, options.LogRetainCount, options.SupervisorPid, options.BuildProjectDir, options.BuildSlotScript)
-            .ShouldBe((20, 5, 10, (int?)null, "", "slot.ps1"));
+        var options = DaemonSupervisorOptions.Parse(every);
+        (options.LogMaxMb, options.LogRetainDays, options.LogRetainCount, options.SupervisorPid, options.BuildProjectDir)
+            .ShouldBe((20, 5, 10, (int?)null, ""));
         options.ExeArgList.ShouldBeEmpty();
-        DaemonSupervisorOptions.Parse([.. every, "--exe-args", " --urls\thttp://localhost:17204 "], "slot.ps1").ExeArgList.ShouldBe(["--urls", "http://localhost:17204"]);
+        DaemonSupervisorOptions.Parse([.. every, "--exe-args", " --urls\thttp://localhost:17204 "]).ExeArgList.ShouldBe(["--urls", "http://localhost:17204"]);
         foreach (var flag in new[] { "--name", "--work-dir", "--exe", "--log-file", "--service-pid-file", "--state-file" })
         {
             var without = every.ToList();
             without.RemoveRange(without.IndexOf(flag), 2);
-            Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse(without, "slot.ps1")).Message.ShouldBe("missing " + flag);
+            Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse(without)).Message.ShouldBe("missing " + flag);
         }
-        Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse([.. every, "--supervisor-pid", "0"], "slot.ps1"))
+        Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse([.. every, "--supervisor-pid", "0"]))
             .Message.ShouldBe("--supervisor-pid expects a process id above 0");
-        Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse([.. every, "--log-max-mb", "big"], "slot.ps1"))
+        Should.Throw<NightlyUsageException>(() => DaemonSupervisorOptions.Parse([.. every, "--log-max-mb", "big"]))
             .Message.ShouldBe("--log-max-mb expects an integer, not 'big'");
     }
 

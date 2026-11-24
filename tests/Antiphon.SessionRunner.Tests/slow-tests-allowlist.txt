@@ -1,7 +1,7 @@
 # CARD-0487: Slow classes in Antiphon.SessionRunner.Tests. FQN entries with reasons.
 # CARD-0487: real tailer/tree adoption safety; retain serialization and all current rows.
 Antiphon.SessionRunner.Tests.TranscriptAdoptionSafetyTests
-# CARD-0589 V-9: two real pwsh build-slot wrappers hold a 5 s lease each against a loopback broker.
+# CARD-0589 V-9: two real build-slot launchers (pwsh, then the CLI) hold a 5 s lease each against a loopback broker; the class builds the CLI once first.
 Antiphon.SessionRunner.Tests.BuildSlotEndToEndTests
 # CARD-1032 S3: real Git, retained child ownership, runtime adoption and deterministic admission barriers.
 Antiphon.SessionRunner.Tests.CompletedCardWorkspaceRemovalTests

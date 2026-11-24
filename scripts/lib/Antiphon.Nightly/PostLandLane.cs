@@ -251,16 +251,18 @@ namespace Antiphon.Nightly
         // ---- the build slot ------------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Runs one command through the build slot: settings.SlotCommand (default pwsh -File scripts/build-slot.ps1)
-        /// followed by -Label post-land-early-warning -- command, in the repository, its stdout and stderr appended to
-        /// logPath. Returns the exit code (1 when it cannot start). With settings.SlotShim set, nothing is started: the
-        /// command line is appended to the shim file and the shim's exit codes and TRX copy stand in.
+        /// Runs one command through the build slot (label post-land-early-warning) in the repository, the slot's lines and the
+        /// command's stdout and stderr appended to logPath (else stdout). The slot is settings.Slot in this process; a
+        /// settings.SlotCommand (a test's fake slot program) is started instead with -Label post-land-early-warning -- command
+        /// after it. Returns the exit code (1 when it cannot start or no slot is bound). With settings.SlotShim set, nothing is
+        /// started: the command line is appended to the shim file and the shim's exit codes and TRX copy stand in.
         /// </summary>
         public static int RunSlot(IReadOnlyList<string> command, string logPath, string repo, PostLandSettings settings, IDictionary<string, string> environment,
             TextWriter stdout, TextWriter stderr)
         {
             if (!string.IsNullOrWhiteSpace(settings.SlotShim)) return RunShim(command, settings);
-            var launcher = settings.SlotCommand ?? PostLandSettings.SlotCommandFor(Path.Combine(settings.ProductRoot, "scripts", "build-slot.ps1"));
+            if (settings.SlotCommand == null) return RunInProcessSlot(command, logPath, repo, settings, environment, stdout, stderr);
+            var launcher = settings.SlotCommand;
             var start = new ProcessStartInfo(launcher[0])
             {
                 UseShellExecute = false,
@@ -297,6 +299,39 @@ namespace Antiphon.Nightly
                 process.BeginErrorReadLine();
                 process.WaitForExit();
                 return process.ExitCode;
+            }
+            finally
+            {
+                log?.Dispose();
+            }
+        }
+
+        // The build slot in this process (BuildSlot through settings.Slot): the lease belongs to this lane.
+        private static int RunInProcessSlot(IReadOnlyList<string> command, string logPath, string repo, PostLandSettings settings, IDictionary<string, string> environment,
+            TextWriter stdout, TextWriter stderr)
+        {
+            if (settings.Slot == null)
+            {
+                stderr.WriteLine("post-land-early-warning: no build slot is bound");
+                return 1;
+            }
+            StreamWriter log = null;
+            if (!string.IsNullOrWhiteSpace(logPath))
+            {
+                var parent = Path.GetDirectoryName(logPath);
+                if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
+                log = new StreamWriter(new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete), new UTF8Encoding(false));
+            }
+            try
+            {
+                var options = new BuildSlotOptions
+                {
+                    Label = SlotLabel,
+                    Command = command,
+                    WorkingDirectory = repo,
+                    Environment = environment == null ? null : new Dictionary<string, string>(environment),
+                };
+                return settings.Slot(options, log ?? stdout);
             }
             finally
             {

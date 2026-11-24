@@ -3,9 +3,9 @@
 // run-daemon (the body of scripts/run-daemon.ps1, which the AppHost and the logon task still start by path: a thin launcher)
 // and check-daemon-build (the body of scripts/check-daemon-build.ps1, which restart-apphost.ps1 and dev-aspire.ps1 still run
 // by path: a thin launcher). The behaviour is Antiphon.Nightly's RunnerRestart (on RunnerRestartOs), DaemonSupervisor and
-// DaemonBuildCheck on the production host; this file binds them. Each command's checkout (the runner's logs and Debug
-// executable, scripts/build-slot.ps1, the history compared) is the one this executable was built in, else the current
-// directory. ASCII only.
+// DaemonBuildCheck on the production host; this file binds them (run-daemon's build runs under the build slot in this
+// process, BuildSlotCommands.Runner). Each command's checkout (the runner's logs and Debug executable, the history compared)
+// is the one this executable was built in, else the current directory. ASCII only.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -44,8 +44,9 @@ namespace Antiphon.Scripts
         // Exit 0 once supervision ends (the desired state stopped it, or the named supervisor is gone); usage 2.
         internal static int RunRunDaemon(string[] args)
         {
-            var options = DaemonSupervisorOptions.Parse(args.Skip(1).ToArray(), Path.Combine(Checkout, "scripts", "build-slot.ps1"));
-            return DaemonSupervisor.Run(options, NightlyHost.Production(Console.Out, Console.Error), new FileSystem(), DaemonSupervisor.StartService);
+            var options = DaemonSupervisorOptions.Parse(args.Skip(1).ToArray());
+            return DaemonSupervisor.Run(options, NightlyHost.Production(Console.Out, Console.Error), new FileSystem(), DaemonSupervisor.StartService,
+                BuildSlotCommands.Runner());
         }
 
         // Exit 0, or 1 with --fail-on-stale when a daemon is stale; usage 2.

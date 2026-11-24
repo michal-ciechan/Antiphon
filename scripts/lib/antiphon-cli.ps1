@@ -2,8 +2,8 @@
 # W2-nightly S01: the launcher the Windows PowerShell 5.1 entries (Windmill) use to run antiphon-scripts
 # (scripts/lib/Antiphon.Scripts) from this checkout. ASCII-only: parseable under Windows PowerShell 5.1.
 #
-# Invoke-AntiphonCli -Command <name> -Arguments <string[]> [-ResultFile <path>] returns the CLI's exit code, so an
-# entry ends with: exit (Invoke-AntiphonCli ...). The CLI runs as `dotnet exec <dll> <name> <arguments>` on this
+# Invoke-AntiphonCli -Command <name> -Arguments <string[]> [-ResultFile <path>] [-Verbatim <string[]>] returns the CLI's
+# exit code, so an entry ends with: exit (Invoke-AntiphonCli ...). The CLI runs as `dotnet exec <dll> <name> <arguments>` on this
 # process's own stdin, stdout and stderr (no PowerShell pipeline in between), in the current file-system location.
 # Exit 9 is the launcher's own: the build failed or the CLI could not be started; one line on stderr says why.
 #
@@ -19,7 +19,8 @@
 # 5.1 drops an empty native argument, which would hand the flag the next argument; the CLI reads an absent flag as
 # its default. Trailing backslashes are trimmed (a drive root keeps its own): in a quoted 5.1 argument a trailing
 # backslash escapes the closing quote. -ResultFile removes a stale file at that path and passes --result-file <path>;
-# the entry reads the record back (-PassThru).
+# the entry reads the record back (-PassThru). -Verbatim comes last, after the result file, each element one argument as
+# given: an empty value and a trailing backslash survive (build-slot.ps1's wrapped command, which must arrive literally).
 
 function ConvertTo-AntiphonCliQuotedArgument {
     # One argument of a Windows command line, quoted as the C runtime (and .NET) parses it back.
@@ -220,7 +221,8 @@ function Invoke-AntiphonCli {
     param(
         [Parameter(Mandatory = $true)][string]$Command,
         [string[]]$Arguments = @(),
-        [string]$ResultFile = ''
+        [string]$ResultFile = '',
+        [string[]]$Verbatim = @()
     )
     try {
         $root = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', '..'))
@@ -254,6 +256,7 @@ function Invoke-AntiphonCli {
             $argv.Add('--result-file')
             $argv.Add($result)
         }
+        foreach ($argument in @($Verbatim)) { $argv.Add([string]$argument) }
         $line = (@($argv | ForEach-Object { ConvertTo-AntiphonCliQuotedArgument $_ }) -join ' ')
     } catch {
         Write-AntiphonCliFailure ('cannot prepare the CLI: ' + $_.Exception.Message)

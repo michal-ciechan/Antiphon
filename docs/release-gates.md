@@ -478,7 +478,7 @@ reviewed rc integration procedure; they do not grant merge/publication authority
    pwsh -NoProfile -Command {
        $ErrorActionPreference = 'Stop'
        if (-not $IsWindows) { throw 'native Windows required' }
-       foreach ($name in @('C589_SLOT_SHIM', 'C589_COMMAND_SHIM', 'ANTIPHON_APPHOST_TEST_SEAMS')) {
+       foreach ($name in @('C589_SLOT_SHIM', 'ANTIPHON_APPHOST_TEST_SEAMS')) {
            if ([Environment]::GetEnvironmentVariable($name, 'Process')) { throw "test seam present: $name" }
        }
        [Environment]::SetEnvironmentVariable('ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT', [NullString]::Value, 'Process')

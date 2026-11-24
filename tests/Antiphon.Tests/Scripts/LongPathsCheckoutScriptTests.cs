@@ -32,7 +32,7 @@ public sealed class LongPathsCheckoutScriptTests
 
     // In-process since unit 7 of 2026-11-22-remaining-ps1-to-csharp.md (was the test-longpaths-checkout.ps1 case on
     // scripts/qualification/launch-rc.ps1): qualification-launch with real git on a prepared clone refuses
-    // longpaths-not-enabled and names the fix command until the clone opts in, then hands build-slot to the launcher.
+    // longpaths-not-enabled and names the fix command until the clone opts in, then runs nightly-run under the build slot.
     [Test, Timeout(180_000)]
     public void LP_LaunchRefuses(CancellationToken token)
     {
@@ -48,23 +48,29 @@ public sealed class LongPathsCheckoutScriptTests
         }.ToJsonString());
         var launcher = new Antiphon.Tests.Scripts.Nightly.RecordingLauncher(_ => new Antiphon.Nightly.NightlyLaunchResult { ExitCode = 0 });
         var host = RealGit(fixture, launcher);
+        var slots = new List<Antiphon.Nightly.BuildSlotOptions>();
+        int Slot(Antiphon.Nightly.BuildSlotOptions options, TextWriter? capture)
+        {
+            slots.Add(options);
+            return 0;
+        }
         (int Code, string Text) Launch()
         {
             var before = fixture.Out.ToString().Length;
             var code = Antiphon.Nightly.QualificationLaunch.Run(Antiphon.Nightly.QualificationLaunchOptions.Parse(["--config", config], "lp-launch", "pwsh"), host,
-                new System.IO.Abstractions.FileSystem());
+                new System.IO.Abstractions.FileSystem(), Slot);
             return (code, fixture.Out.ToString()[before..]);
         }
         var fix = "git -C " + clone + " config --local core.longpaths true";
         var rows = new Antiphon.Tests.Scripts.Nightly.NightlyCaseRows();
         var bad = Launch();
-        rows.Check(bad.Code == 2 && bad.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal) && launcher.Launches.Count == 0,
+        rows.Check(bad.Code == 2 && bad.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal) && slots.Count == 0 && launcher.Launches.Count == 0,
             "LP launch refuses longpaths-not-enabled", "exit=" + bad.Code + " " + bad.Text);
         rows.Check(bad.Text.Contains(fix, StringComparison.Ordinal) && fix.Contains("config --local core.longpaths true", StringComparison.Ordinal), "LP launch names the fix command", bad.Text);
         Antiphon.Tests.Scripts.Nightly.NightlyRcChain.Git(clone, "config", "--local", "core.longpaths", "true");
         var good = Launch();
         rows.Check(good.Code == 0 && good.Text.Contains("build-slot", StringComparison.Ordinal)
-            && launcher.Launches.Count == 1 && launcher.Launches[0].Arguments.Contains(Path.Combine(clone, "scripts", "build-slot.ps1")),
+            && slots.Count == 1 && slots[0].Command.Contains(Path.Combine(clone, "scripts", "nightly-run.ps1")) && slots[0].Label == "rc-qualification",
             "LP launch with longpaths continues to build-slot", good.Text);
         rows.Check(!good.Text.Contains("longpaths-not-enabled", StringComparison.Ordinal), "LP launch with longpaths does not refuse longpaths", good.Text);
         rows.ShouldAllPass(4, "LP launch refuses longpaths-not-enabled", "LP launch names the fix command", "LP launch with longpaths continues to build-slot",

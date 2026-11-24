@@ -9,8 +9,8 @@
 //
 // Each iteration reads the desired state (logs/<name>.state: "stopped" ends supervision; a missing, empty or unreadable
 // file is "running"), rotates the capture log, takes a fresh startup attempt and, with --build-project-dir, builds the
-// project in Debug before the launch (through scripts/build-slot.ps1, stamped -p:SourceRevisionId=<HEAD> when HEAD reads
-// as 40 hex; a failed build retries after 5 s), so a soft restart picks up new code, then launches the BUILT executable
+// project in Debug before the launch (under a build slot in this process, BuildSlot, stamped -p:SourceRevisionId=<HEAD> when
+// HEAD reads as 40 hex; a failed build retries after 5 s), so a soft restart picks up new code, then launches the BUILT executable
 // directly (never `dotnet run`, whose kill-on-close job would capture the detached pty-hosts). The service runs under
 // `cmd.exe /s /c "<exe> <args> >> "<log>" 2>&1"`, so the Aspire log tailer reads its output from the log; its wrapper's
 // PID is the service PID file while it runs. When the service exits and the desired state is still "running", the next
@@ -86,17 +86,14 @@ namespace Antiphon.Nightly
         /// <summary>The supervisor the records name; null: this process.</summary>
         public int? SupervisorPid { get; init; }
 
-        /// <summary>The build slot wrapper the build runs through (scripts/build-slot.ps1 of the checkout).</summary>
-        public string BuildSlotScript { get; init; } = "";
-
         /// <summary>The service's arguments, split at whitespace.</summary>
         public IReadOnlyList<string> ExeArgList => (ExeArgs ?? "").Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
 
         /// <summary>
-        /// The flags after the command name; the build slot wrapper comes from the CLI. A missing name, working directory,
-        /// executable, log, PID or state file, a non-integer number or a supervisor PID below 1 is a NightlyUsageException.
+        /// The flags after the command name. A missing name, working directory, executable, log, PID or state file, a
+        /// non-integer number or a supervisor PID below 1 is a NightlyUsageException.
         /// </summary>
-        public static DaemonSupervisorOptions Parse(IReadOnlyList<string> arguments, string buildSlotScript)
+        public static DaemonSupervisorOptions Parse(IReadOnlyList<string> arguments)
         {
             var flags = NightlyArgs.Parse(arguments, new[]
             {
@@ -123,7 +120,6 @@ namespace Antiphon.Nightly
                 LogRetainDays = flags.Int("--log-retain-days", 5),
                 LogRetainCount = flags.Int("--log-retain-count", 10),
                 SupervisorPid = supervisor,
-                BuildSlotScript = buildSlotScript ?? "",
             };
         }
     }
@@ -155,17 +151,18 @@ namespace Antiphon.Nightly
         private static readonly JsonSerializerOptions Compact = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
         /// <summary>
-        /// Supervises the service until the desired state stops it or the named supervisor is gone; returns 0. The build runs on
-        /// host's launcher (output captured into the log), HEAD on host's git, the waits on host.Sleep, the clock is host's,
-        /// files are the IFileSystem's and the service starts through start.
+        /// Supervises the service until the desired state stops it or the named supervisor is gone; returns 0. The build runs
+        /// under buildSlot (label daemon-build; its BUILD SLOT lines and output captured into the log), HEAD on host's git, the
+        /// waits on host.Sleep, the clock is host's, files are the IFileSystem's and the service starts through start.
         /// </summary>
-        public static int Run(DaemonSupervisorOptions options, NightlyHost host, IFileSystem files, DaemonServiceStarter start)
+        public static int Run(DaemonSupervisorOptions options, NightlyHost host, IFileSystem files, DaemonServiceStarter start, BuildSlotRunner buildSlot)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
             if (start == null) throw new ArgumentNullException(nameof(start));
-            return new Loop(options, host, files, start).Run();
+            if (buildSlot == null) throw new ArgumentNullException(nameof(buildSlot));
+            return new Loop(options, host, files, start, buildSlot).Run();
         }
 
         /// <summary>The production service start: Process.Start of the raw command line, no shell, no window, this process's streams.</summary>
@@ -215,18 +212,20 @@ namespace Antiphon.Nightly
             private readonly NightlyHost _host;
             private readonly IFileSystem _files;
             private readonly DaemonServiceStarter _start;
+            private readonly BuildSlotRunner _buildSlot;
             private readonly int _supervisorPid;
             private readonly DateTime? _supervisorStart;
             private readonly string _producerStart;
             private readonly bool _watchSupervisor;
             private string _attempt;
 
-            public Loop(DaemonSupervisorOptions options, NightlyHost host, IFileSystem files, DaemonServiceStarter start)
+            public Loop(DaemonSupervisorOptions options, NightlyHost host, IFileSystem files, DaemonServiceStarter start, BuildSlotRunner buildSlot)
             {
                 _options = options;
                 _host = host;
                 _files = files;
                 _start = start;
+                _buildSlot = buildSlot;
                 _supervisorPid = options.SupervisorPid ?? host.Processes.CurrentPid;
                 _supervisorStart = host.Processes.StartTimeUtc(_supervisorPid);
                 _producerStart = _supervisorStart?.ToString("o", CultureInfo.InvariantCulture);
@@ -294,21 +293,12 @@ namespace Antiphon.Nightly
                 }
                 if (Sha.IsMatch(revision)) arguments.Add("-p:SourceRevisionId=" + revision);
                 else WriteLog("WARNING: git rev-parse HEAD failed in " + _options.BuildProjectDir + "; building unstamped.");
-                var slot = new List<string> { "-NoProfile", "-File", _options.BuildSlotScript, "-Label", "daemon-build", "--", "dotnet" };
-                slot.AddRange(arguments);
-                int code;
-                string output;
-                try
-                {
-                    var run = _host.Launch(new NightlyLaunch("pwsh", slot, "", CaptureOutput: true));
-                    code = run.ExitCode;
-                    output = run.LogText ?? "";
-                }
-                catch (Exception e) when (e is Win32Exception || e is InvalidOperationException || e is IOException)
-                {
-                    code = 1;
-                    output = "the build could not start: " + e.Message + "\n";
-                }
+                var command = new List<string> { "dotnet" };
+                command.AddRange(arguments);
+                var capture = new StringWriter(CultureInfo.InvariantCulture);
+                // The slot's own lines and the build's output, in arrival order; a build that cannot start is its exit 1 line.
+                var code = _buildSlot(new BuildSlotOptions { Label = "daemon-build", Command = command }, capture);
+                var output = capture.ToString();
                 WriteStartup("build-complete", _host.Clock.GetElapsedTime(began).TotalMilliseconds, code);
                 var lines = output.Replace("\r\n", "\n").Split('\n');
                 var count = lines.Length;

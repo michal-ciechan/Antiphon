@@ -1,6 +1,9 @@
 #requires -Version 7.0
-# CARD-0589 D-6: take and release a host build slot from the session runner's /build-slots broker.
-# Dot-sourced by scripts/run-checkpoint.ps1 and scripts/build-slot.ps1.
+# CARD-0589 D-6: take and release a host build slot from the session runner's /build-slots broker, for
+# scripts/run-checkpoint.ps1 (dot-sourced; W5, owner-gated, so it keeps this PowerShell client until it is ported). The
+# wrapper and its command-line rules moved to C# (unit 34 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md):
+# scripts/build-slot.ps1 is a launcher of `antiphon-scripts build-slot`, whose broker client is BuildSlotBroker in
+# scripts/lib/Antiphon.Nightly/BuildSlot.cs. Change the lease rules in both until run-checkpoint.ps1 moves.
 #
 #   Enter-AntiphonBuildSlot -Label <what> [-WaitMinutes 45] [-Endpoint <url>] [-HolderPid <pid>]
 #     Waits in FIFO order, printing BUILD SLOT lines, and returns one of
@@ -10,8 +13,6 @@
 #                           /build-slots): run anyway with -maxcpucount 4, and the line says so
 #       Outcome timeout   - busy or below the memory floor for the whole wait: run nothing, exit 4
 #   Exit-AntiphonBuildSlot -Lease <result>       releases a granted lease (a no-op otherwise)
-#   Add-AntiphonMaxCpuCount -Command <tokens> -MaxCpuCount N
-#   Get-AntiphonBuildSlotCapWarning -Command <tokens> -MaxCpuCount N   (CARD-1627; $null for dotnet)
 #
 # A pid-mode lease belongs to the calling process. A renew-mode lease is kept alive by a thread
 # job while the foreground command runs; the broker cannot inspect pids in another container.
@@ -175,55 +176,4 @@ function Exit-AntiphonBuildSlot {
     } else {
         Write-Host ('BUILD SLOT release failed lease={0} held={1}s status={2}; the runner reaps it when this process exits' -f $Lease.LeaseId, $held, [int]$answer.Status)
     }
-}
-
-function Test-AntiphonDotnetExe {
-    param([string]$Token)
-    if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
-    $leaf = ($Token -split '[\\/]')[-1]
-    return ($leaf -ieq 'dotnet' -or $leaf -ieq 'dotnet.exe')
-}
-
-function Add-AntiphonMaxCpuCount {
-    # Inserts -maxcpucount:N (before any `--`) for dotnet build|test|publish|pack|msbuild, unless the
-    # command already names -m / -maxcpucount. Never for `dotnet run`: measured on SDK 10.0.401,
-    # `dotnet run` hands -maxcpucount:N to the PROGRAM as an argument rather than to its build.
-    # Callers collect the result with @(...); it always has at least two tokens when changed.
-    param([string[]]$Command, [int]$MaxCpuCount)
-    $tokens = @($Command)
-    if ($tokens.Count -lt 2 -or $MaxCpuCount -lt 1 -or -not (Test-AntiphonDotnetExe -Token ([string]$tokens[0]))) { return $tokens }
-    $verb = ([string]$tokens[1]).ToLowerInvariant()
-    if (@('build', 'test', 'publish', 'pack', 'msbuild') -notcontains $verb) { return $tokens }
-    $end = [Array]::IndexOf($tokens, '--')
-    if ($end -lt 0) { $end = $tokens.Count }
-    for ($i = 2; $i -lt $end; $i++) {
-        if ([string]$tokens[$i] -imatch '^(-{1,2}|/)(m|maxcpucount)(:.*)?$') { return $tokens }
-    }
-    $switch = '-maxcpucount:' + $MaxCpuCount
-    if ($end -ge $tokens.Count) { return ($tokens + @($switch)) }
-    return (@($tokens[0..($end - 1)]) + @($switch) + @($tokens[$end..($tokens.Count - 1)]))
-}
-
-function Test-AntiphonDotnetRunWithBuild {
-    # `dotnet run` without --no-build: its implicit build runs at the default node count (see above).
-    param([string[]]$Command)
-    $tokens = @($Command)
-    if ($tokens.Count -lt 2 -or -not (Test-AntiphonDotnetExe -Token ([string]$tokens[0])) -or ([string]$tokens[1]) -ine 'run') { return $false }
-    $end = [Array]::IndexOf($tokens, '--')
-    if ($end -lt 0) { $end = $tokens.Count }
-    for ($i = 2; $i -lt $end; $i++) { if ([string]$tokens[$i] -ieq '--no-build') { return $false } }
-    return $true
-}
-
-function Get-AntiphonBuildSlotCapWarning {
-    # CARD-1627: -maxcpucount can only be put on a dotnet command line. MSBuild (SDK 10.0.403)
-    # honours no environment variable for its node count, and a Directory.Build.rsp would reach
-    # every build in the tree, so a wrapped non-dotnet command (a `bash loop.sh`, a script) is told
-    # the grant through ANTIPHON_BUILD_SLOT_MAXCPUCOUNT and this line says the cap is not enforced.
-    # Returns $null for a dotnet command, which keeps its existing argv rules.
-    param([string[]]$Command, [int]$MaxCpuCount)
-    $tokens = @($Command)
-    if ($tokens.Count -lt 1 -or $MaxCpuCount -lt 1 -or (Test-AntiphonDotnetExe -Token ([string]$tokens[0]))) { return $null }
-    $leaf = ([string]$tokens[0] -split '[\\/]')[-1]
-    return ('BUILD SLOT warning: maxcpucount={0} is not applied to {1}: a dotnet build inside it runs at the default node count unless it passes -maxcpucount:$ANTIPHON_BUILD_SLOT_MAXCPUCOUNT; lease each build separately, never one lease around a loop' -f $MaxCpuCount, $leaf)
 }

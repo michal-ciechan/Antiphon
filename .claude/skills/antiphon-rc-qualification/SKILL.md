@@ -260,8 +260,9 @@ wrapper's console and wrote its log through a `1>` wrapper buffer; the run itsel
   cannot be read or parsed (a dead owner is left to nightly-run), refuses a HEAD mismatch, refuses
   (exit 2) `longpaths-not-enabled` unless `git config --local --get core.longpaths` is `true` (fix:
   `git -C <checkout> config --local core.longpaths true`), and runs the checkout's
-  `build-slot.ps1 -- nightly-run.ps1` with PowerShell 7 (`--powershell-path`; the starter resolves
-  `pwsh` on PATH and passes it down). The `run.lock` check is point-in-time: a run that starts
+  `nightly-run.ps1` with PowerShell 7 under a build slot the launch process itself holds (label
+  `rc-qualification`, or the record's `buildSlotLabel`; no `build-slot.ps1` child since unit 34;
+  `--powershell-path`; the starter resolves `pwsh` on PATH and passes it down). The `run.lock` check is point-in-time: a run that starts
   while the launch waits for a build slot (up to 45 min) makes nightly-run refuse it (exit 3), and
   one that ends in that wait lets it start after.
 - `qualification-preflight --checkout-root <checkout>` runs on the checkout before the starter.

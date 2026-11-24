@@ -69,13 +69,24 @@ function PgConns {
 $argv = @('--treenode-filter', $Filter, '--no-progress', '--no-ansi')
 if ($Detailed) { $argv += @('--output', 'Detailed') }
 $start = Get-Date
-. (Join-Path $PSScriptRoot 'lib/build-driver-environment.ps1')
-$environmentRestore = Enter-AntiphonBuildDriverEnvironment
+# CARD-1506: the test host inherits the build-driver policy's variables (the shared C# BuildDriverEnvironment), set in this
+# process for the start and restored after it (an unset variable is removed again).
+if (-not ('Antiphon.Build.BuildDriverEnvironment' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'lib/BuildDriverEnvironment.cs') }
+$onWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+$overrides = (New-Object Antiphon.Build.BuildDriverEnvironment).GetOverrides((New-Object Diagnostics.ProcessStartInfo).EnvironmentVariables, $onWindows)
+$environmentRestore = @{}
+foreach ($name in @($overrides.Keys)) {
+    $environmentRestore[$name] = [Environment]::GetEnvironmentVariable($name)
+    [Environment]::SetEnvironmentVariable($name, $overrides[$name])
+}
 try {
     $p = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -ArgumentList $argv `
             -RedirectStandardOutput $log -RedirectStandardError $err -PassThru -NoNewWindow
 } finally {
-    Exit-AntiphonBuildDriverEnvironment -Restore $environmentRestore
+    foreach ($name in @($environmentRestore.Keys)) {
+        if ($null -eq $environmentRestore[$name]) { [Environment]::SetEnvironmentVariable($name, [NullString]::Value) }
+        else { [Environment]::SetEnvironmentVariable($name, $environmentRestore[$name]) }
+    }
 }
 Note "[$Tag] started pid=$($p.Id) at $($start.ToString('HH:mm:ss')) exe=$Exe filter=$Filter"
 

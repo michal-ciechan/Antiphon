@@ -115,10 +115,12 @@ namespace Antiphon.Nightly
         public string SlotBuildExit { get; set; }
         public string SlotShardExit { get; set; }
         /// <summary>
-        /// The slot launcher's argv before "-Label post-land-early-warning -- command". Null is pwsh -File
-        /// scripts/build-slot.ps1 under the product root. POST_LAND_WARNING_SLOT_SCRIPT sets it (SlotCommandFor).
+        /// A slot program's argv before "-Label post-land-early-warning -- command" (a test's fake slot). Null is the build slot
+        /// in this process (Slot). POST_LAND_WARNING_SLOT_SCRIPT sets it (SlotCommandFor).
         /// </summary>
         public IReadOnlyList<string> SlotCommand { get; set; }
+        /// <summary>The build slot in this process (BuildSlot), used when SlotCommand is null. The CLI binds it.</summary>
+        public BuildSlotRunner Slot { get; set; }
         /// <summary>The impacted-classes selector. Null is ImpactedClasses.Run in this process (ImpactedSelector).</summary>
         public Func<PostLandSelectorRequest, PostLandSelection> Selector { get; set; }
         /// <summary>Starts the detached lane (run mode). The CLI relaunches itself with --child, under setsid where it exists.</summary>
