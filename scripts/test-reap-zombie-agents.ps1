@@ -71,6 +71,9 @@ function Invoke-Reap {
     if (-not $Params.ContainsKey('ReportPath')) {
         $Params['ReportPath'] = New-TestDir
     }
+    if (-not $Params.ContainsKey('SessionLogPath')) {
+        $Params['SessionLogPath'] = $Params.ReportPath
+    }
     return & $reap @Params
 }
 
