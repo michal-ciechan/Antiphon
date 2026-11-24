@@ -181,22 +181,51 @@ public sealed class NightlyFixture : IDisposable
     public void Dispose()
     {
         if (!Directory.Exists(Root)) return;
-        var pending = new Stack<DirectoryInfo>();
-        pending.Push(new DirectoryInfo(Root));
-        while (pending.Count > 0)
-        {
-            var directory = pending.Pop();
-            if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
-            foreach (var item in directory.EnumerateFileSystemInfos())
-            {
-                if (item.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
-                if (item is DirectoryInfo child) pending.Push(child);
-                else if (item.Attributes.HasFlag(FileAttributes.ReadOnly)) item.Attributes &= ~FileAttributes.ReadOnly;
-            }
-        }
+        ClearOwnedReadOnly(Root);
         try { Directory.Delete(Root, true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Clear-C487OwnedResultReadOnly's twin (CARD-1687) on the disk: the owned tree under root, each directory listed with
+    /// <see cref="DirectoryInfo.EnumerateFileSystemInfos()"/> (the find data's attributes, no per-entry lookup). Returns the
+    /// files cleared.
+    /// </summary>
+    public static int ClearOwnedReadOnly(string root) =>
+        ClearOwnedReadOnly<FileSystemInfo>(new DirectoryInfo(root), item => item.Attributes,
+            directory => ((DirectoryInfo)directory).EnumerateFileSystemInfos(), item => item.Attributes &= ~FileAttributes.ReadOnly);
+
+    /// <summary>
+    /// Walks an owned tree from root and clears the read-only bit of each owned file, so the owner's recursive delete succeeds
+    /// on Windows (Git's loose objects are read-only and Directory.Delete refuses them). A link is never followed: a linked
+    /// root, a directory link and a file link are skipped. Each directory is listed once; a file is never listed; nothing is
+    /// deleted (the owner deletes after joining its processes). Returns the files cleared. C487ReadOnlyCleanupWitnessTests
+    /// witnesses it over a forced-Windows tree.
+    /// </summary>
+    public static int ClearOwnedReadOnly<TNode>(TNode root, Func<TNode, FileAttributes> attributes, Func<TNode, IEnumerable<TNode>> list,
+        Action<TNode> clearReadOnly)
+    {
+        var cleared = 0;
+        var pending = new Stack<TNode>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            if ((attributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
+            foreach (var item in list(directory))
+            {
+                var itemAttributes = attributes(item);
+                if ((itemAttributes & FileAttributes.ReparsePoint) != 0) continue;
+                if ((itemAttributes & FileAttributes.Directory) != 0) pending.Push(item);
+                else if ((itemAttributes & FileAttributes.ReadOnly) != 0)
+                {
+                    clearReadOnly(item);
+                    cleared++;
+                }
+            }
+        }
+        return cleared;
     }
 
     private static void CreateParent(string path)

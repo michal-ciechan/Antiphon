@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -38,18 +39,54 @@ public sealed class SourceRevisionStampContractTests
             .Descendants("SourceRevisionId").ShouldBeEmpty();
     }
 
+    // Unit 39 of 2026-11-22-remaining-ps1-to-csharp.md: the census was scripts/test-source-revision-stamp.ps1 (deleted); it is
+    // SourceRevisionStampAudit in the core now, read with the core's PowerShell reader. The stamped builds are C# (units 10, 30,
+    // 36, 37: NightlyWatchdogDeploy, DaemonSupervisor, PhoneHomeRunnerStart, DevAspire and the dev stack, pinned by their tests),
+    // so every remaining PowerShell surface must build nothing unstamped; scripts/run-daemon.ps1, a launcher, is still scanned.
     [Test]
-    public void Deployed_builds_stamp_head() => VerifyPowerShellCase("audit");
-
-    [Test]
-    public void PowerShell_census_rejects_stamp_decoys() => VerifyPowerShellCase("decoys");
-
-    private static void VerifyPowerShellCase(string testCase)
+    public void Deployed_builds_stamp_head()
     {
-        var result = Run("pwsh", "-NoProfile -File scripts/test-source-revision-stamp.ps1 -Case " + testCase,
-            DockerStackDocuments.RepoRoot);
-        result.Code.ShouldBe(0, result.Text);
+        var surfaces = SourceRevisionStampAudit.Surfaces(DockerStackDocuments.RepoRoot);
+        surfaces.ShouldContain("scripts/run-daemon.ps1");
+        surfaces.ShouldAllBe(surface => SourceRevisionStampAudit.SurfaceName.IsMatch(Path.GetFileName(surface)));
+        SourceRevisionStampAudit.Audit(DockerStackDocuments.RepoRoot).ShouldBeEmpty("unstamped PowerShell product builds");
     }
+
+    [Test]
+    [Arguments("comment", "dotnet build server # -p:SourceRevisionId=$sourceRevision")]
+    [Arguments("quoted", "Invoke-Expression \"dotnet publish server\"")]
+    [Arguments("child", "Start-Process pwsh -ArgumentList \"-Command\", \"dotnet publish server\"")]
+    [Arguments("detached", "Start-Process dotnet -ArgumentList \"publish server\"")]
+    [Arguments("forwarded", "& \"./build-slot.ps1\" -Label fixture -- dotnet build -p:SourceRevisionId=$sourceRevision")]
+    [Arguments("logged", "dotnet pack server; Write-Host \"-p:SourceRevisionId=$sourceRevision\"")]
+    [Arguments("literal", "dotnet build server '-p:SourceRevisionId=$sourceRevision'")]
+    [Arguments("splat", "$buildArgs = @(\"build\", \"server\"); if ($false) { $buildArgs += \"-p:SourceRevisionId=$sourceRevision\" }; dotnet @buildArgs")]
+    public void PowerShell_census_rejects_stamp_decoys(string decoy, string text) =>
+        SourceRevisionStampAudit.Unstamped(text).Count.ShouldBe(1, decoy);
+
+    [Test]
+    public void PowerShell_census_accepts_the_stamped_forms()
+    {
+        const string accepted = """
+            dotnet build server "-p:SourceRevisionId=$sourceRevision"
+            Invoke-Expression 'dotnet publish server -p:SourceRevisionId=$sourceRevision'
+            $buildArgs = @('build', 'server')
+            $buildArgs += "-p:SourceRevisionId=$sourceRevision"
+            dotnet @buildArgs
+            Start-Process dotnet -ArgumentList @('publish', 'server', "-p:SourceRevisionId=$sourceRevision")
+            & './build-slot.ps1' -Label fixture -- dotnet build "-p:SourceRevisionId=$sourceRevision"
+            Open-Tab 'server' 'server' 'dotnet run "-p:SourceRevisionId=$sourceRevision"'
+            if ($false) { dotnet build example }
+            Write-Host "dotnet build example"
+            dotnet run --no-build
+            """;
+        SourceRevisionStampAudit.Unstamped(accepted).ShouldBeEmpty();
+        SourceRevisionStampAudit.Builds(accepted).Count.ShouldBe(6, "six real fixture builds");
+    }
+
+    [Test]
+    public void PowerShell_census_refuses_text_it_cannot_read() =>
+        Should.Throw<InvalidDataException>(() => SourceRevisionStampAudit.Builds("dotnet build \"unterminated"));
 
     [Test]
     public void Docker_and_package_builds_stamp_source_revision()

@@ -23,8 +23,8 @@ reparse points, including a linked root, and leaves deletion to the outer owner.
 bare Git repositories that are absent from a fixture's checkout registry. Fault hooks that
 delete a loose Git object during assertions clear that object's attributes at the fault cut.
 The C578 fixture also uses its unique Fx.OutputPath for cancellation runs, so a prior completed
-case cannot supply their build output. The forced-Windows witness is
-`scripts/fixtures/c487-readonly-windows-witness.ps1`. The Windows C1050 audits require their native apphost and
+case cannot supply their build output. The forced-Windows witness is `C487ReadOnlyCleanupWitnessTests`, in process
+over the C# twin of that cleanup (`NightlyFixture.ClearOwnedReadOnly`). The Windows C1050 audits require their native apphost and
 trusted checkpoint source stamp.
 
 CARD-1022 release A: the five PTY assembly guards clear inherited `ANTIPHON_PTY_BACKEND`;
