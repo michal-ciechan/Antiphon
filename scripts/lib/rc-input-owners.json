@@ -66,6 +66,7 @@
     { "path": "dev-aspire.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "restart-server.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "restart-session-runner.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "restart.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "verify-dev-stack.ps1", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/derived-impact-index-known-os-gated.txt", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/expected-platform-skips.json", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },

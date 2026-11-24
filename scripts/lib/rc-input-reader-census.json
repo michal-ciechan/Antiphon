@@ -13,17 +13,20 @@
     {
       "group": "run-daemon",
       "paths": ["scripts/run-daemon.ps1"],
-      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+      "suites": [
+        "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ]
     },
     {
       "group": "runner-restart",
-      "paths": ["scripts/restart-session-runner.ps1", "scripts/session-runner-restart-health.ps1"],
-      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+      "paths": ["restart-session-runner.ps1", "restart.ps1"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     },
     {
       "group": "slot-shim",
       "paths": ["scripts/fixtures/c589-slot-shim.ps1"],
-      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     },
     {
       "group": "live-startup-timing",
