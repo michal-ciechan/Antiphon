@@ -49,9 +49,9 @@ public sealed class OrchestratorBundleOwnershipTests
         var siblingAt = Anchor(owner, "delegate-start-ref",
             "**Continuing a sibling's work (CARD-0613).**", "c1332-owner-anchor-delegate-start-ref");
         var startRef = Window(owner, siblingAt, "#### Delegate branch names", "c1332-owner-startref");
-        startRef.ShouldContain("It requires `-Worktree`", Case.Sensitive, "c1332-owner-startref-worktree");
+        startRef.ShouldContain("It requires `--worktree`", Case.Sensitive, "c1332-owner-startref-worktree");
         var exclusion = Sentence(startRef, "is refused alongside", "c1332-owner-startref-exclusions");
-        foreach (var flag in new[] { "-Shared", "-ReadOnly", "-OnAgent", "-Agent", "-RepairSource", "-SourceLanding" })
+        foreach (var flag in new[] { "--shared", "--read-only", "--on-agent", "--agent", "--repair-source", "--source-landing" })
             exclusion.ShouldContain($"`{flag}`", Case.Sensitive, $"c1332-owner-startref-excluded-{flag}");
         startRef.ShouldContain("reported as its `WorktreeBranch`", Case.Sensitive, "c1332-owner-recorded-branch");
         startRef.ShouldContain("sets no merge target", Case.Sensitive, "c1332-owner-base-only");
@@ -64,16 +64,16 @@ public sealed class OrchestratorBundleOwnershipTests
             "**RepairSource succeeded; owner Failed.**", "c1332-owner-anchor-repairsource-failed-owner-recovery");
         var recovery = Window(owner, recoveryAt, "**Continuing a sibling's work", "c1332-owner-recovery");
         recovery.ShouldContain("whose `subjectTaskId` is the original Code/Worktree owner", Case.Sensitive, "c1332-owner-review-subject");
-        var land = recovery.IndexOf("scripts/delegate.ps1 -Land <owner-guid>", StringComparison.Ordinal);
+        var land = recovery.IndexOf("scripts/antiphon delegate land <owner-guid>", StringComparison.Ordinal);
         land.ShouldBeGreaterThanOrEqualTo(0, "c1332-owner-recovery-command");
-        var status = recovery.IndexOf("scripts/delegate.ps1 -Status <owner-guid>", land, StringComparison.Ordinal);
+        var status = recovery.IndexOf("scripts/antiphon delegate status <owner-guid>", land, StringComparison.Ordinal);
         status.ShouldBeGreaterThan(land, "c1332-owner-recovery-status");
         var landCommand = recovery[land..status];
         foreach (var (flag, literal) in new[]
                  {
-                     ("-ExpectedSourceSha", "-ExpectedSourceSha <full-sha>"),
-                     ("-ReviewEvidenceId", "-ReviewEvidenceId <review-evidence-id>"),
-                     ("-RecoverReviewedSource", "-RecoverReviewedSource"),
+                     ("--expected-source-sha", "--expected-source-sha <full-sha>"),
+                     ("--review-evidence-id", "--review-evidence-id <review-evidence-id>"),
+                     ("--recover-reviewed-source", "--recover-reviewed-source"),
                  })
             landCommand.ShouldContain(literal, Case.Sensitive, $"c1332-owner-recovery-command-{flag}");
         recovery.ShouldContain("a queued request is not publication", Case.Sensitive, "c1332-owner-publication");
@@ -82,16 +82,16 @@ public sealed class OrchestratorBundleOwnershipTests
             Case.Sensitive, "c1332-owner-failed-history");
 
         // Window 3: adopting a separate -StartRef repair, to its next peer heading.
-        const string adoptionHeading = "#### Landing a `-StartRef` repair (CARD-0675)";
+        const string adoptionHeading = "#### Landing a `--start-ref` repair (CARD-0675)";
         var adoptionAt = owner.IndexOf(adoptionHeading, StringComparison.Ordinal);
         adoptionAt.ShouldBeGreaterThanOrEqualTo(0, "c1332-owner-adoption");
         var adoption = Window(owner, adoptionAt + adoptionHeading.Length, NextHeading(owner, adoptionAt + adoptionHeading.Length), "c1332-owner-adoption");
         adoption.ShouldContain("with the **repair task** named as `subjectTaskId`", Case.Sensitive, "c1332-owner-adoption-subject");
         adoption.ShouldContain(
-            "-Land <owner> -FromTask <repair> -ExpectedSourceSha <S> -ReviewEvidenceId <id>",
+            "land <owner> --from-task <repair> --expected-source-sha <S> --review-evidence-id <id>",
             Case.Sensitive, "c1332-owner-adoption-command");
         adoption.ShouldContain(
-            "`-FromTask` is refused `adopt_source_invalid` while `RepairSourceTaskId` is set",
+            "`--from-task` is refused `adopt_source_invalid` while `RepairSourceTaskId` is set",
             Case.Sensitive, "c1332-owner-no-repairsource-adoption");
     }
 
@@ -117,7 +117,7 @@ public sealed class OrchestratorBundleOwnershipTests
         policy.ShouldContain("At the cap, start no new Plan toward Code", Case.Sensitive, "c1332-owner-pipeline-no-plan-at-cap");
         policy.ShouldContain("defer, even with a free Code slot", Case.Sensitive, "c1332-owner-pipeline-overlap");
         policy.ShouldContain("the flag is legal only when `population` is `open` and `canOverride` is true", Case.Sensitive, "c1332-owner-pipeline-override-predicates");
-        policy.ShouldContain("`axis: absolute` with no occupant in that role: re-send with `-IgnoreConcurrencyLimit`", Case.Sensitive, "c1332-owner-pipeline-override-axis");
+        policy.ShouldContain("`axis: absolute` with no occupant in that role: re-send with `--ignore-concurrency-limit`", Case.Sensitive, "c1332-owner-pipeline-override-axis");
         policy.ShouldContain("`axis: role`, or any listed occupant in the role you are dispatching: defer", Case.Sensitive, "c1332-owner-pipeline-override-stage");
     }
 
@@ -132,9 +132,9 @@ public sealed class OrchestratorBundleOwnershipTests
         rounds.ShouldContain("`codeVerificationPolicy`/`reviewVerificationPolicy = AllowInterim`", Case.Sensitive, "c1332-owner-interim-AllowInterim");
         rounds.ShouldContain("`InterimVerification:Enabled`", Case.Sensitive, "c1332-owner-interim-InterimVerification:Enabled");
         rounds.ShouldContain("the nightly backstop readiness receipt/monitor are current", Case.Sensitive, "c1332-owner-interim-nightly-readiness");
-        rounds.ShouldContain("`-VerificationSubject` (the original landing owner)", Case.Sensitive, "c1332-owner-interim-VerificationSubject");
-        rounds.ShouldContain("`-VerificationBaselineOutcome` (a full-scope Review outcome)", Case.Sensitive, "c1332-owner-interim-VerificationBaselineOutcome");
-        rounds.ShouldContain("`-VerificationSelectionFile` (the committed selection as JSON)", Case.Sensitive, "c1332-owner-interim-VerificationSelectionFile");
+        rounds.ShouldContain("`--verification-subject` (the original landing owner)", Case.Sensitive, "c1332-owner-interim-VerificationSubject");
+        rounds.ShouldContain("`--verification-baseline-outcome` (a full-scope Review outcome)", Case.Sensitive, "c1332-owner-interim-VerificationBaselineOutcome");
+        rounds.ShouldContain("`--verification-selection-file` (the committed selection as JSON)", Case.Sensitive, "c1332-owner-interim-VerificationSelectionFile");
         rounds.ShouldContain("is never resubmitted silently as a different round", Case.Sensitive, "c1332-owner-no-fallback");
         rounds.ShouldContain("routes to a fresh Final Review of the unchanged candidate, never to land", Case.Sensitive, "c1332-owner-final-before-land");
         rounds.ShouldContain("a latched owner lands only with a Clean Final/Full Review", Case.Sensitive, "c1332-owner-latched-land");
@@ -181,7 +181,7 @@ public sealed class OrchestratorBundleOwnershipTests
         {
             case "child":
                 AssertChildBundle(Slice(bundle,
-                    "Message a child's session directly only to steer already-dispatched work.",
+                    "Message a child's session only to steer dispatched work.",
                     "When you are working a board", "c1332-bundle-child"), owner);
                 break;
             case "pipeline":
@@ -201,14 +201,14 @@ public sealed class OrchestratorBundleOwnershipTests
     private static void AssertChildBundle(string child, string owner)
     {
         AssertPointers(child, owner, "delegate-start-ref", "repairsource-failed-owner-recovery");
-        child.ShouldContain("use -Worktree -StartRef <full-sha>", Case.Sensitive, "c1332-bundle-startref-worktree");
+        child.ShouldContain("use --worktree --start-ref <full-sha>", Case.Sensitive, "c1332-bundle-startref-worktree");
         child.ShouldContain("never git checkout -B", Case.Sensitive, "c1332-bundle-no-checkout");
         child.ShouldContain("Use its reported WorktreeBranch.", Case.Sensitive, "c1332-bundle-recorded-branch");
         child.ShouldContain("A base grants no land authority.", Case.Sensitive, "c1332-bundle-base-only");
-        child.ShouldContain("for exclusions and -FromTask adoption", Case.Sensitive, "c1332-bundle-adoption-pointer");
+        child.ShouldContain("for exclusions and --from-task adoption", Case.Sensitive, "c1332-bundle-adoption-pointer");
         child.ShouldContain("require owner-bound Clean Final/Full Review", Case.Sensitive, "c1332-bundle-owner-review");
-        child.ShouldContain("-RecoverReviewedSource", Case.Sensitive, "c1332-bundle-recovery");
-        child.ShouldContain("A -RepairSource task cannot be used with -FromTask.", Case.Sensitive, "c1332-bundle-no-repairsource-adoption");
+        child.ShouldContain("--recover-reviewed-source", Case.Sensitive, "c1332-bundle-recovery");
+        child.ShouldContain("A --repair-source task cannot be used with --from-task.", Case.Sensitive, "c1332-bundle-no-repairsource-adoption");
     }
 
     private static void AssertPipelineBundle(string pipeline, string owner)
@@ -218,7 +218,7 @@ public sealed class OrchestratorBundleOwnershipTests
             "read the effective-settings route (CARD-0881): GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true)",
             Case.Sensitive, "c1332-bundle-effective-route");
         pipeline.ShouldContain("never exceed the lower effective cap", Case.Sensitive, "c1332-bundle-lower-cap");
-        pipeline.ShouldContain("Run stages in parallel, each in its own -Worktree.", Case.Sensitive, "c1332-bundle-stage-worktrees");
+        pipeline.ShouldContain("Run stages in parallel, each in its own --worktree.", Case.Sensitive, "c1332-bundle-stage-worktrees");
         pipeline.ShouldContain("Host budget writes need an operator request.", Case.Sensitive, "c1332-bundle-host-authority");
         var depth = Sentence(pipeline, "Keep Code at its depth cap", "c1332-bundle-code-depth");
         foreach (var state in new[] { "in-flight", "queued", "ready" })
@@ -228,7 +228,7 @@ public sealed class OrchestratorBundleOwnershipTests
         pipeline.ShouldContain(
             "Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.",
             Case.Sensitive, "c1332-bundle-overlap");
-        var @override = Sentence(pipeline, "permits -IgnoreConcurrencyLimit", "c1332-bundle-override");
+        var @override = Sentence(pipeline, "permits --ignore-concurrency-limit", "c1332-bundle-override");
         @override.ShouldContain("population=open", Case.Sensitive, "c1332-bundle-override-population");
         @override.ShouldContain("canOverride=true", Case.Sensitive, "c1332-bundle-override-allowed");
         @override.ShouldContain("axis=absolute", Case.Sensitive, "c1332-bundle-override-axis");
@@ -251,8 +251,8 @@ public sealed class OrchestratorBundleOwnershipTests
         AssertPointers(placement, owner, "runner-placement");
         placement.ShouldContain("read GET /api/runner-defaults and GET /api/session-runners", Case.Sensitive, "c1332-bundle-placement-routes");
         placement.ShouldContain("Do not embed a fleet location.", Case.Sensitive, "c1332-bundle-no-fleet-location");
-        placement.ShouldContain("Normally omit -Runner and -Platform", Case.Sensitive, "c1332-bundle-runtime-placement");
-        placement.ShouldContain("Use -Platform Any to unpin.", Case.Sensitive, "c1332-bundle-any-unpins");
+        placement.ShouldContain("Normally omit --runner and --platform", Case.Sensitive, "c1332-bundle-runtime-placement");
+        placement.ShouldContain("Use --platform Any to unpin.", Case.Sensitive, "c1332-bundle-any-unpins");
         placement.ShouldContain(
             "Pin only an OS-required piece with its own filter and budget; leave the rest unpinned.",
             Case.Sensitive, "c1332-bundle-os-scope");

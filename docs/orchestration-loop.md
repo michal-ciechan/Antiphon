@@ -10,7 +10,7 @@ archaeology - and verification is not archaeology's quieter cousin. It is trust,
 
 An **external** orchestrator (ChatGPT / Codex outside an Antiphon TUI) uses a named Delegation
 Capability, not `Delegation:AllowedRoots` and not Codex remote control. The operator procedure and
-the `delegate.ps1 -Capability` UX live in [ops-http.md](ops-http.md).
+the `scripts/antiphon delegate create --capability` UX live in [ops-http.md](ops-http.md).
 
 | Orchestrator skill | Use |
 |---|---|
@@ -96,7 +96,7 @@ four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolli
    what it ran, what passed - is the evidence. Merge on it, close on it, move on. Re-reading a diff
    or re-running a named test "just to be sure" is not diligence here; it is spending the
    orchestrator's context on a question the delegate already answered. The evidence is the
-   task's full `Result` (`delegate.ps1 -Status <id>`, or the task drawer Report section). A
+   task's full `Result` (`scripts/antiphon delegate status <id>`, or the task drawer Report section). A
    `[task … done]` note may be a distillation of that report (CARD-0330,
    `antiphon-output-distiller`) once `OutputDistillerMode=Apply`; until then the note is still
    the raw text and the distilled bullets live on the task as `DistilledResult`. Either way the
@@ -139,7 +139,7 @@ See [CARD-0417](superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness
 for the required real-reply canary before expansion.
 
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
-the landing with `delegate.ps1 -Land <id> -ExpectedSourceSha <full-sha>` (optionally `-Verify <filter>` and `-ReviewEvidenceId`); the server fetches,
+the landing with `scripts/antiphon delegate land <id> --expected-source-sha <full-sha>` (optionally `--verify <filter>` and `--review-evidence-id`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
 `Landed` / `AlreadyPresent` / `LandedWithResidue` outcome records confirmed remote containment.
 Publication and cleanup have separate durable statuses. `LandRefused` leaves publication
@@ -209,7 +209,7 @@ git operations itself.
 |---|---|---|
 | `land_running` | `AgentTaskLandApprovalRequestTests.C488_ActiveRequestConflicts` | a second request for a task with a queued land is refused `land_running`; one pending request remains |
 | `repair_source_landing_owner_required` | `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery` | a RepairSource task's land is refused with status 409; no land request or landing is recorded, the event count is unchanged and the queue is empty |
-| `review_evidence_subject_mismatch` | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused, naming `-FromTask <source>` |
+| `review_evidence_subject_mismatch` | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused, naming `--from-task <source>` |
 
 **Reviewed owner recovery (CARD-0753).** A Code/Worktree owner that settled Failed or Blocked can
 land only through an explicit Clean Final/Full Review of the exact current pushed source tip.
@@ -217,11 +217,11 @@ The Review evidence's `subjectTaskId` names the task whose exact current pushed 
 
 | Operation | Evidence subject | Landing command |
 |---|---|---|
-| Ordinary owner review | Original Code/Worktree landing owner | `-Land <owner> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>` |
-| Recover reviewed owner branch | Same owner | Same flags plus `-RecoverReviewedSource` |
-| Adopt another eligible task's reviewed branch | Source task named by `-FromTask` | `-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>` |
+| Ordinary owner review | Original Code/Worktree landing owner | `land <owner> --expected-source-sha <sha> --review-evidence-id <evidence>` |
+| Recover reviewed owner branch | Same owner | Same flags plus `--recover-reviewed-source` |
+| Adopt another eligible task's reviewed branch | Source task named by `--from-task` | `land <owner> --from-task <source> --expected-source-sha <sha> --review-evidence-id <evidence>` |
 
-The Review's own task ID and `-StartRef` do not establish source identity. The caller's brief
+The Review's own task ID and `--start-ref` do not establish source identity. The caller's brief
 must name both owner and source when they differ. Keep explicit `-Card`: a fresh same-card Review
 may name the source. A follow-up Review must name its `FollowUpOfTaskId` as the evidence subject;
 commission a fresh same-card Review when an old-owner follow-up conflicts. An adopted source
@@ -256,18 +256,18 @@ also keeps the old index/bytes and the ref at the reviewed tip. Cleanup also sam
 uncertainty retains the checkout and any already-confirmed publication.
 
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
-checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original
+checked out elsewhere, pass `scripts/antiphon delegate create --repair-source <owner-guid>` (full GUID of the original
 Code/Worktree landing owner). Antiphon records that owner, routes the repair onto its own unique
 branch at the owner's recorded SHA, and attributes a claimed post-dispatch commit on the owner's
-ref. `-RepairSource` alone sets no merge target and grants no Land: a repair task's
+ref. `--repair-source` alone sets no merge target and grants no Land: a repair task's
 `-Land` is refused `repair_source_landing_owner_required`. Integrate through the original owner
-(or an explicit merge target equal to the owner's branch). A task tagged `-RepairSource` is not
-eligible for `-FromTask` adoption. A separate Code/Worktree source started with `-StartRef` can
+(or an explicit merge target equal to the owner's branch). A task tagged `--repair-source` is not
+eligible for `--from-task` adoption. A separate Code/Worktree source started with `--start-ref` can
 be adopted after its pushed tip is reviewed; the original owner remains the landing target.
-At dispatch, `-RepairSource` checks the owner's desktop ref against origin. A mirror behind origin
+At dispatch, `--repair-source` checks the owner's desktop ref against origin. A mirror behind origin
 fails with `repair_source_owner_remote_ahead`; a diverged mirror fails with
-`repair_source_owner_diverged`. Use `-Worktree -StartRef <remote-sha>` for the repair and the
-reviewed `-FromTask` adoption route below. If origin cannot be observed, dispatch uses the desktop
+`repair_source_owner_diverged`. Use `--worktree --start-ref <remote-sha>` for the repair and the
+reviewed `--from-task` adoption route below. If origin cannot be observed, dispatch uses the desktop
 ref and records an `owner remote unobserved` warning.
 Historical Failed status is preserved.
 
@@ -278,16 +278,16 @@ whose `subjectTaskId` is the original Code/Worktree owner, with that owner's ref
 repository and full SHA. Then request owner self recovery:
 
 ```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner-guid> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource
-pwsh -NoProfile -File scripts/delegate.ps1 -Status <owner-guid>
+scripts/antiphon delegate land <owner-guid> --expected-source-sha <full-sha> --review-evidence-id <review-evidence-id> --recover-reviewed-source
+scripts/antiphon delegate status <owner-guid>
 ```
 
 The registered owner checkout must be clean and on its branch. Inspect the status receipt
 for confirmed target publication; a queued request is not publication. The original owner's
 Failed status, failure code, reason and completion time remain historical. A separate
-`-StartRef` Code/Worktree source instead uses an owner Land with `-FromTask <source-guid>`
-and a Review whose `subjectTaskId` is that separate source. An actual `-RepairSource`
-task is ineligible for `-FromTask` adoption.
+`--start-ref` Code/Worktree source instead uses an owner Land with `--from-task <source-guid>`
+and a Review whose `subjectTaskId` is that separate source. An actual `--repair-source`
+task is ineligible for `--from-task` adoption.
 
 <a id="delegate-start-ref"></a>
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
@@ -302,29 +302,28 @@ base is automatic or a symbolic ref such as master. A StartRef that is a 40- or
 64-character commit id dispatches at once and keeps the ordinary sibling warning when
 that sibling is not contained; an inspection that stops at the inventory cap dispatches
 with the incomplete-inspection warning. Divergent
-eligible tips refuse creation with `worktree_base_ambiguous`; choose one with `-BaseTask <id>`
-or explicitly omit the history with `-FreshWorktree`. An invalid, dirty, active or unavailable
+eligible tips refuse creation with `worktree_base_ambiguous`; choose one with `--base-task <id>`
+or explicitly omit the history with `--fresh-worktree`. An invalid, dirty, active or unavailable
 explicit source is refused. Inspect the create preview and the dispatch event for changes
-between create and launch. Landing still uses the original destination and explicit `-Land`.
+between create and launch. Landing still uses the original destination and explicit `land`.
 
 ```
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Worktree -StartRef <full-sha> -Goal <work>
+scripts/antiphon delegate create --role Code --worktree --start-ref <full-sha> --goal <work>
 ```
 
-(For a long brief, read the file yourself and pass the resulting string to `-Goal`; the script has
-no `-GoalFile`.) The task still gets its own task branch, cut at that commit and reported as its
+(For a long brief, write it to a file and pass `--goal-file <path>`.) The task still gets its own task branch, cut at that commit and reported as its
 `WorktreeBranch` (see [Delegate branch names](#delegate-branch-names-card-1213)); the named
-source branch is untouched and can stay checked out in its own worktree. `-StartRef` accepts a
+source branch is untouched and can stay checked out in its own worktree. `--start-ref` accepts a
 branch, remote-tracking ref, commit tag or SHA the server's repository can already resolve locally,
 or a full SHA origin has (fetched once at create under the repository lease)
-- prefer a full SHA. It requires `-Worktree` and is refused alongside `-Shared`/`-ReadOnly`,
-`-OnAgent`/`-Agent`, `-RepairSource` and `-SourceLanding`. It is distinct from `-RepairSource`:
-that one attributes work committed on ANOTHER task's branch and refuses `-Land`; `-StartRef` only
+- prefer a full SHA. It requires `--worktree` and is refused alongside `--shared`/`--read-only`,
+`--on-agent`/`--agent`, `--repair-source` and `--source-landing`. It is distinct from `--repair-source`:
+that one attributes work committed on ANOTHER task's branch and refuses `land`; `--start-ref` only
 chooses where this task's own branch starts, sets no merge target, and changes nothing about
 landing. Before relying on it, confirm the running build has it (`GET /api/version`) and that the
 task detail shows both the requested ref and the recorded base - an older server silently ignores
 an unknown optional JSON property.
-After a Clean Final/Full Review of a `-StartRef` repair's pushed tip, `-FromTask` can adopt that
+After a Clean Final/Full Review of a `--start-ref` repair's pushed tip, `--from-task` can adopt that
 branch into the original Code owner's source under the reviewed recovery contract above.
 
 #### Delegate branch names (CARD-1213)
@@ -339,22 +338,22 @@ or `orch` for an orchestrator. With it on, the branch is still `feat/card-task-<
 task, a card row that is missing or whose identifier is not `CARD-<n>`, an unknown role, a runner
 whose descriptor or live read lacks that exact feature or whose descriptor cannot be read, and
 a SourceLanding snapshot. A retried creation adopts the branch already registered for the task's
-worktree, in either form. The `-StartRef` and retired-follow-up tests pin `feat/card-task-<id>`
+worktree, in either form. The `--start-ref` and retired-follow-up tests pin `feat/card-task-<id>`
 with the setting off only, so read the name from the task's `WorktreeBranch` rather than
 rebuilding it from the task id.
 
-#### Landing a `-StartRef` repair (CARD-0675)
+#### Landing a `--start-ref` repair (CARD-0675)
 
-A task dispatched with `-RepairSource` can never be that source: `-FromTask` is refused `adopt_source_invalid` while `RepairSourceTaskId` is set, and the accepted route is a fresh Code worktree started with `-StartRef` and no `-RepairSource` that records at least one commit.
+A task dispatched with `--repair-source` can never be that source: `--from-task` is refused `adopt_source_invalid` while `RepairSourceTaskId` is set, and the accepted route is a fresh Code worktree started with `--start-ref` and no `--repair-source` that records at least one commit.
 
 Review the repair's pushed tip with the **repair task** named as `subjectTaskId` in the Review
 brief. Use a Final round with full ordinary scope; Interim evidence cannot approve adoption. Take
-`review-evidence=<id>` from the Review completion header or `delegate.ps1 -Status <review>`.
+`review-evidence=<id>` from the Review completion header or `scripts/antiphon delegate status <review>`.
 Then run:
 
 ```
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner> -FromTask <repair> -ExpectedSourceSha <S> -ReviewEvidenceId <id>
-pwsh -NoProfile -File scripts/delegate.ps1 -Status <owner>
+scripts/antiphon delegate land <owner> --from-task <repair> --expected-source-sha <S> --review-evidence-id <id>
+scripts/antiphon delegate status <owner>
 ```
 
 The owner must be Succeeded, Blocked or Failed, never Canceled. The repair must be settled and
@@ -369,7 +368,7 @@ patch containment; uncontained owner commit IDs are printed when present.
 | `source_dirty`, `source_branch_mismatch` | Inspect the owner's registered checkout, branch, index and working files. Preserve real edits; resolve the cause before a new request. |
 | `review_evidence_subject_mismatch`, `review_verification_scope_ineligible` | Review the repair itself in a Final/Full round. |
 | `adopt_source_remote_changed`, `adopt_source_push_rejected` | Inspect the owner remote tip and request a fresh reviewed adoption. |
-| `source_remote_diverged` | Plain land refused the diverged mirror; use `-FromTask` as above. |
+| `source_remote_diverged` | Plain land refused the diverged mirror; use `--from-task` as above. |
 
 A fresh explicitly reviewed recovery can finish a prior half-reset only when the prior request's
 durable adoption intent and L/S pins identify the same owner, worktree, repository, source and
@@ -437,10 +436,10 @@ raises a `RunnerUnavailable` attention row and queues notes to its callers; no s
 session-scoped watch loop is re-armed.
 
 **Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
-orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
+orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `--stage`
 (§3) — is asked to end its report with a one-line `[antiphon-finding:<id> found|clean]` self-report
 instead; trusting that line is the same rule as trusting the report itself, and overriding it
-(`delegate.ps1 -Finding …`) is rare enough that it should feel like an exception, not a habit.
+(`scripts/antiphon delegate finding …`) is rare enough that it should feel like an exception, not a habit.
 
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
 (it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session) - the hook is the
@@ -548,7 +547,7 @@ A sibling holds dispatch only while its current request is pending in Queued, He
 NeedsResolution emits the ordinary warning. An explicit StartRef that equals or descends from
 the request's reviewed source SHA bypasses that sibling check even if a Merge helper later
 rewrites the sibling's local tip.
-Land a Plan with `delegate.ps1 -Land <id>` when the plan should be published immediately;
+Land a Plan with `scripts/antiphon delegate land <id>` when the plan should be published immediately;
 a same-card Execute can continue its committed branch before that land. A `Landed`
 line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
@@ -636,12 +635,12 @@ is the `orchestrator` bundle; this section carries the reasons.
    outside their card's scope; each one gets its own Backlog card now (`scripts/antiphon card new`, with the
    evidence), never a note to batch later. A finding that lives only in a chat reply or a report
    body is gone at the next compaction.
-7. **`-IgnoreConcurrencyLimit` answers the absolute cap, never a same-stage collision.** A 409
+7. **`--ignore-concurrency-limit` answers the absolute cap, never a same-stage collision.** A 409
    `concurrency_limit` carries `axis` (`absolute` or `role`) and the `open` occupants with their
    roles; the absolute axis wins the report when both caps are exceeded, so read the list, not
    only the axis. `axis: role`, or any listed occupant in the role you are dispatching: defer —
    that is rule 1, and the flag would lift the per-role cap along with the absolute one.
-   `axis: absolute` with no occupant in that role: re-send with `-IgnoreConcurrencyLimit`,
+   `axis: absolute` with no occupant in that role: re-send with `--ignore-concurrency-limit`,
    because rule 1 is the standing request for cross-stage parallelism. CARD-0505 adds
    `population` and `canOverride`: the flag is legal only when `population` is `open` and
    `canOverride` is true. A queued population, `canOverride` false, or a same-stage collision
@@ -672,8 +671,8 @@ up to that shortfall under the same pipeline rules, or declare a hold with
 
 The operator's standing rules for every orchestrator seat, in full. The `orchestrator` bundle, AGENTS.md and the antiphon-orchestrator and antiphon-delegate skills point here and restate nothing; numbers that the generated instructions file owns (caps, host budgets, pins, the keep-six target) are referenced, never copied.
 
-1. **Failures get a Debug task.** A failed dispatch, launch or infrastructure failure (`[task ... failed]` with a launch or save error, `Agent process did not become ready`, `Process exited`, `Dispatch failed before a session existed`) gets a Debug delegate immediately, briefed with the exact error text, times, task ids and what else was in flight; one retry is allowed as first aid so the in-flight target holds, but a retry is never the whole response. Search the board before filing the fix card; when the operator asks for Codex Astra debug tasks, dispatch them with `-Kind Codex -Level Frontier` and raise the Debug role cap through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason.
-2. **Keep the in-flight target on the landing host.** The target counts tasks running on server2 that land onto master (section 9 of the generated instructions carries the live number; the operator said 7 on 2026-10-22), and desktop-only Windows work such as qualification monitors or CP-6 style runs is extra. Refill to the target after every completion; when the project cap is lower, raise it through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason rather than exceeding it with `-IgnoreConcurrencyLimit`.
+1. **Failures get a Debug task.** A failed dispatch, launch or infrastructure failure (`[task ... failed]` with a launch or save error, `Agent process did not become ready`, `Process exited`, `Dispatch failed before a session existed`) gets a Debug delegate immediately, briefed with the exact error text, times, task ids and what else was in flight; one retry is allowed as first aid so the in-flight target holds, but a retry is never the whole response. Search the board before filing the fix card; when the operator asks for Codex Astra debug tasks, dispatch them with `--kind Codex --level Frontier` and raise the Debug role cap through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason.
+2. **Keep the in-flight target on the landing host.** The target counts tasks running on server2 that land onto master (section 9 of the generated instructions carries the live number; the operator said 7 on 2026-10-22), and desktop-only Windows work such as qualification monitors or CP-6 style runs is extra. Refill to the target after every completion; when the project cap is lower, raise it through `scripts/antiphon dispatch-concurrency set` with the operator's words as the reason rather than exceeding it with `--ignore-concurrency-limit`.
 3. **An Interim Review cannot approve a land.** When the plan's closed checkpoint list holds a row that cannot finish on the loaded host, have the Code owner amend the plan first, descoping the row with the reason and the minimal-testing rule below and recording inherited reds as documented non-receipt rows, so that scope Full is reachable before the Final Review is commissioned.
 4. **Review verdict policy, no whack-a-mole.** `found` is for a regression, a new reachable fail-open or a test that cannot fail. When a Review reports examples of one bypass class, the fix changes the design (default-deny, one canonical pipeline or normaliser, a table with a witness per row), and the next round checks that the class is closed with one witness, never more examples of a closed class. Rounds are capped at three under [Review rounds](#review-rounds); after round 1 a Review reports no new attack classes.
 5. **Verify the card binding.** Read the card title before binding a task to a card identifier (a task was once bound to the wrong card from memory); when no card fits, file the card first.
@@ -684,7 +683,7 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 
 10. **Test performance (operator, 2026-10-23).** Apply [test performance standards](test-performance-standards.md). Dispatch a Debug task, with exact selection, source/host/run identity and timing evidence, for any row, batch, selection or run expected or observed over 30 minutes; a retry alone is insufficient. Routine speedups and preflights need no further permission. After establishing ownership and retaining evidence, an orchestrator may stop an abandoned/uncreditable qualification through its supported stop path and join cleanup without asking; this grants no authority to kill another session or bypass custody. Before the next full rc run, require instrumentation ready to record per-test time, exact batch membership and phase attribution (CARD-1514). Destructive/one-way/secret/publish/promote/tag actions retain their existing authorization requirements.
 <a id="land-graph-refresh"></a>
-11. **Land-graph digest mismatch: inherited warns, and the batch's own records refresh and never ask (operator, 2026-11-07; CARD-1753).** When a Merge or Review's base already carries a `LandVerificationBuildGraph` manifest/digest mismatch against the candidate — the mismatch predates the batch's own change — report it as a loud warning and continue past it; it is not a blocker and it is not a silent refresh. When `land-graph-audit --check` fails solely because the landing batch itself changed a selected build-definition record, the selected digest or count, or a target pin, run `scripts/antiphon land-graph-land-refresh --base <batch-base>` (`scripts\antiphon.cmd` on Windows) before `delegate.ps1 -Land`. That command refreshes once, commits only the land-graph files, re-runs `--check` to exit 0, and never asks. Notify in the land report with the old and new digest, count, pins and changed records, and post a card note; a failed note is not a question and not a land block. A bare `-Update` outside that land path stays forbidden. Still hard-refuse, with no wait: a property or construct the audit rejects (for example `_PtyHostArtifactsArguments`), a malformed manifest, a refresh that would change records outside the batch's own changed files, and a `-Check` that still fails after the refresh. The runtime `LandVerificationPolicy` docs-only build skip and the unrecognized-build-graph build fallback above are unchanged by this rule, which governs only how Merge/Review report an inherited mismatch, not what the server decides at land time. The land-graph digest, the nightly `policyHash` (`tests/test-execution-policy.json`) and the live-lane `-PrintInputDigest` five-path pin are three separate identities; the "unchanged policy hash / input digest" requirement applies only to batches that must not touch policy, and a policy-registry edit legitimately moves them, with that edit's own slice updating its pins. See `docs/investigations/2026-11-05-investigate-land-graph-gate-value.md` on its branch: one demonstrated approval catch this week (two changed target pins) against eleven unrelated Merge batches that repeated one inherited mismatch.
+11. **Land-graph digest mismatch: inherited warns, and the batch's own records refresh and never ask (operator, 2026-11-07; CARD-1753).** When a Merge or Review's base already carries a `LandVerificationBuildGraph` manifest/digest mismatch against the candidate — the mismatch predates the batch's own change — report it as a loud warning and continue past it; it is not a blocker and it is not a silent refresh. When `land-graph-audit --check` fails solely because the landing batch itself changed a selected build-definition record, the selected digest or count, or a target pin, run `scripts/antiphon land-graph-land-refresh --base <batch-base>` (`scripts\antiphon.cmd` on Windows) before `scripts/antiphon delegate land`. That command refreshes once, commits only the land-graph files, re-runs `--check` to exit 0, and never asks. Notify in the land report with the old and new digest, count, pins and changed records, and post a card note; a failed note is not a question and not a land block. A bare `-Update` outside that land path stays forbidden. Still hard-refuse, with no wait: a property or construct the audit rejects (for example `_PtyHostArtifactsArguments`), a malformed manifest, a refresh that would change records outside the batch's own changed files, and a `-Check` that still fails after the refresh. The runtime `LandVerificationPolicy` docs-only build skip and the unrecognized-build-graph build fallback above are unchanged by this rule, which governs only how Merge/Review report an inherited mismatch, not what the server decides at land time. The land-graph digest, the nightly `policyHash` (`tests/test-execution-policy.json`) and the live-lane `-PrintInputDigest` five-path pin are three separate identities; the "unchanged policy hash / input digest" requirement applies only to batches that must not touch policy, and a policy-registry edit legitimately moves them, with that edit's own slice updating its pins. See `docs/investigations/2026-11-05-investigate-land-graph-gate-value.md` on its branch: one demonstrated approval catch this week (two changed target pins) against eleven unrelated Merge batches that repeated one inherited mismatch.
 12. **Old finished-work deletion is OK without asking (operator, 2026-11-20).** Build outputs (`bin-*`, `obj`, `publish`), temp trees such as `/tmp` task mirrors and `c487-probe-*` leftovers, and old logs and caches may be deleted when the owner task has finished, the files are about 24 to 48 hours old, and no live holder has them open.
     Delete only by exact literal path: `Remove-Item -LiteralPath` in a loop that re-verifies each path (expected parent, exact leaf pattern, the directory is not a link, `GetFullPath` equals the string, and the path is not held open). Run that loop through a Custom delegate on the owning host, with explicit authority, a list regenerated fresh, and a report of counts and bytes freed.
     Never `rm` a variable or a glob, never `rm -rf` a computed parent (the safety watchdog stops it), and never delete live worktrees or sessions, `.git` of a live repo, databases, Docker volumes, `/state`, secrets or credentials, anything younger than the threshold, or anything with no identified owner. Worked examples: [server2 /tmp growth](investigations/2026-11-19-server2-tmp-growth.md), [server2 housekeeping census](investigations/2026-11-19-server2-housekeeping-census.md).
@@ -693,7 +692,7 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 <a id="fast-track-lane-operator-2026-11-20"></a>
 #### Fast-track lane (operator 2026-11-20)
 
-Orchestrator rules, usable today with no server change. Before dispatch, classify the branch by hand (I-1). Approved defaults are D-1..D-9 and O-1..O-8 of the fast-track lane plan at 52b66df5ed0193104514d8a27fb5604ded06c96e. **FT-2** and **FT-5** stay convention until those slices land. FT-2 makes a docs-only land trust a current committed target manifest and skip the build; until it lands, a FAST-DOC or FAST-DOC-CONTRACT land still builds. FT-5 regenerates `tests/derived-impact-index.json` inside the land; until it lands, regenerate that index once per landing wave (I-5), not once per branch. `delegate.ps1 -Fast` does not exist until FT-6. Today the request is the title bracket, and the same request is the card label `fast`.
+Orchestrator rules, usable today with no server change. Before dispatch, classify the branch by hand (I-1). Approved defaults are D-1..D-9 and O-1..O-8 of the fast-track lane plan at 52b66df5ed0193104514d8a27fb5604ded06c96e. **FT-2** and **FT-5** stay convention until those slices land. FT-2 makes a docs-only land trust a current committed target manifest and skip the build; until it lands, a FAST-DOC or FAST-DOC-CONTRACT land still builds. FT-5 regenerates `tests/derived-impact-index.json` inside the land; until it lands, regenerate that index once per landing wave (I-5), not once per branch. `scripts/antiphon delegate create --fast` does not exist until FT-6. Today the request is the title bracket, and the same request is the card label `fast`.
 
 **Marker.** `[fast]` at the start of a task title is a request. The classifier decides the lane from the changed paths. A mislabelled `[fast]` whose computed lane is NORMAL is demoted to the normal pipeline and the demotion is written on the card revision. Review stays on for a demotion. That demotion is the escape hatch.
 
@@ -906,7 +905,7 @@ The overnight "rc batch" procedure, as practised 2026-10-24, repairs completed
    fetching master. No Review for fixture-only changes (operator); no Unit lane, tags or
    release scripts. Finish with per-class red/green counts, native rows and `next: land`.
 4. **Land and triage.** Read each succeeded task's full report, then order
-   `delegate.ps1 -Land <task> -ExpectedSourceSha <full-sha>` and confirm publication.
+   `scripts/antiphon delegate land <task> --expected-source-sha <full-sha>` and confirm publication.
    A watchdog timeout also gets a desktop `Investigate -ReadOnly`, with run/group/timing
    evidence; it grants no test, stop or lock authority. File a card for a product defect.
 5. **Qualify the next candidate.** Accumulate native rerun rows for a fresh full Windows
@@ -986,7 +985,7 @@ C, L, T, the observation source, `investigation pending` and `override pending`.
 companion from feature picking; never Spawn it.
 
 Then override the Review finding so `scripts/antiphon stage-value-report` counts the miss:
-`delegate.ps1 -Finding <review-task-guid> -Stage Review -Found "post-land miss: <fix card> <one
+`scripts/antiphon delegate finding <review-task-guid> --stage Review --found "post-land miss: <fix card> <one
 line>"`, but only when `landing.cleanup` is `Complete`. The override supersedes the Clean row, and
 a later `-Land` retry for residue or cleanup loads evidence by ID and refuses a superseded row
 (`review_evidence_superseded`); while cleanup is `Pending` or `Refused`, leave `override pending`
@@ -1026,7 +1025,7 @@ bundles are size-capped and test-pinned and change through Code and Review like 
 
 ### Reprioritising the backlog
 
-An agent that can call the API — `delegate.ps1 -Role Custom` (or Plan), or a `ScheduleKind.Prompt`
+An agent that can call the API — `scripts/antiphon delegate create --role Custom` (or Plan), or a `ScheduleKind.Prompt`
 schedule — writes order through the same endpoints a human drag uses. Nothing runs on the
 orchestrator tick. Tracker writes stay explicit.
 
@@ -1084,12 +1083,12 @@ OS placement is independent of the provider pair. A Windows requirement uses
 `-Platform Windows`; otherwise omit `-Runner` and `-Platform` and read runtime
 defaults/inventory. `-Platform Any` removes an inherited platform constraint.
 Normally omit `-Kind` and `-Level` to preserve ordered availability walking.
-OS needs do not authorize `-IgnoreRoutingPin`. A held/unavailable Grok candidate
+OS needs do not authorize `--ignore-routing-pin`. A held/unavailable Grok candidate
 can walk to the listed Opus candidate. An exhausted walked list follows normal
 host selection, including Any defaults, and persists a durable Blocked task on
 the selected eligible host (CARD-1021). It starts no session. The response carries
 a task ID and routing warning; track that task and its grouped attention instead
-of resubmitting or choosing an unlisted provider. `-RefuseIfExhausted` retains
+of resubmitting or choosing an unlisted provider. `--refuse-if-exhausted` retains
 the opt-in 409 `routing_exhausted`; independent invalid or unavailable placement
 still refuses before insertion. Recovery may use only the approved list and
 preserves the task's frozen host and platform requirement.
@@ -1143,7 +1142,7 @@ Source rollback requires a reviewed revert, normal land/restart and policy refre
 Startup failure requires explicit authorized recovery; do not retry Grok automatically.
 Preserve task/session/failure-code and the bounded named startup capture before
 recovering. The authorized recipe keeps `-Role Review` or `-Role Debug`,
-`-Platform Windows`, `-Kind ClaudeCode -Level High`, and no -IgnoreRoutingPin.
+`--platform Windows`, `--kind ClaudeCode --level High`, and no --ignore-routing-pin.
 Explicit kind narrows to that already-listed fallback; a conflicting card pin
 needs an operator decision. Exhausted availability produces durable Blocked after
 normal placement, subject to the independent admission rules above. Startup
@@ -1183,7 +1182,7 @@ snapshot, freeing the Code role slot for another card. See docs/mechanical-pc-co
 
 There are two supported Mutation producers (CARD-0604 D-17/D-19). The default is Windows local
 inherited execution (`windows-job-v1`). The persistent server2 runner is the other:
-`delegate.ps1 -Role Mutation -Runner server2 -Worktree -SourceLanding <operation>` creates the
+`scripts/antiphon delegate create --role Mutation --runner server2 --worktree --source-landing <operation>` creates the
 verification snapshot on the runner at the exact landed sha and runs the battery inside a
 root-owned cgroup the session cannot leave (`linux-cgroup-v1`). The nested Docker daemon inside
 that runner is still never an executor: the placement shim clears the tracked tree's supplementary
@@ -1192,7 +1191,7 @@ groups, so a Mutation session cannot reach the nested socket at all.
 ### Commit on settle
 
 A Succeeded Shared task's own footprint is committed in-process at settle through `GatedCommitService`
-(ignore-rule gate, no push) unless `-NoCommit` / `commitOnSettle=Never`, the project column, or
+(ignore-rule gate, no push) unless `--no-commit` / `commitOnSettle=Never`, the project column, or
 `Delegation:CommitOnSettle` turns it off. Unattributable dirty trees spawn a Commit-role child
 routed by the live pin. Worktree merge-back uses the same gate.
 
@@ -1274,7 +1273,7 @@ An operator can set
 new dispatch (`hostBudget`); the orchestrator does not write it on its own initiative. The
 desktop delegated-task cap `MaxConcurrentTasks` defaults to 2 and does not
 count phone-home seats. Antiphon's role and absolute 409 limits and dispatcher limits are the
-hard ceiling. On 409 defer; `-IgnoreConcurrencyLimit` is allowed only for the existing absolute-axis
+hard ceiling. On 409 defer; `--ignore-concurrency-limit` is allowed only for the existing absolute-axis
 case with no same-stage occupant, and only when `population` is `open` and `canOverride` is true.
 The full rule set is §1's standing pipeline policy.
 
@@ -1331,7 +1330,7 @@ Codex Frontier candidates resolve to `gpt-6.2-astra`.
 | A held single Required target is refused; the unpinned exhausted default row becomes Blocked | `RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`; `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | 409 `model_disabled` for the single pin; Blocked with the cell named for the exhausted default row |
 | A standing-agent pin is displayed as agent-bound | `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | `source: agent`, empty candidate list, `governsDefault: false`, and a withholding reason |
 
-`delegate.ps1 -Pin` records a card exception. Read `scripts/antiphon complexity-chain get --role <R>` to see the
+`scripts/antiphon delegate create --pin` records a card exception. Read `scripts/antiphon complexity-chain get --role <R>` to see the
 stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
 Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
@@ -1476,9 +1475,9 @@ Combining `-Complexity` with `-Kind` or `-Level` is 422 (`ComplexityCreateTests.
 Config defaults ship empty; write the live lists with `scripts/antiphon complexity-chain set` (`--role Plan` for
 a cell, omit `--role` for the any-role row). When the chain
 is exhausted, a Required pin with one effective candidate applies single-target 409 checks
-(V17 D1). Otherwise the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
+(V17 D1). Otherwise the task is **Blocked** (or 409 `routing_exhausted` with `--refuse-if-exhausted`):
 **relay that to the operator; do not pick a kind yourself.** A human answers with Retry,
-`delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
+`scripts/antiphon delegate reroute <id> --kind … --level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
 A usage-wall reroute is ordinary work on the new candidate: the walled session's capacity wait
 ends with the session, and the requeued row dispatches on the next tick unless the new candidate
@@ -1558,7 +1557,7 @@ These are operator instructions; the live migration and rollback are not accepta
    is Blocked and auto-resumes (OD-6); a settlement Commit child or a conflict-resolver Merge child whose row is
    exhausted is Blocked with a note to the settled task's caller (D-3); until the Merge pin is cleared the Merge child
    keeps ignoring it, as today (D-3 step 3); an Orchestrator-kind create and an `ignoreModelDisabled` create follow
-   RolePolicy, not the row (OD-7, V-A7, V-A6); `delegate.ps1 -Pin` still writes a card pin, which the cell shows as an
+   RolePolicy, not the row (OD-7, V-A7, V-A6); `scripts/antiphon delegate create --pin` still writes a card pin, which the cell shows as an
    exception (OD-5); the Role policy section's `Effective next create` column and the delegate modal's tier preview
    read the default-tier row for a Worker create (CARD-1250, superseding D-6). Holds, quota, forbid lists on remaining pins and reroute are unchanged.
 5. **Rollback, in this order (R3-03).** Pins first, cells second, so that no interval exists in which neither a pin
@@ -1577,7 +1576,7 @@ These are operator instructions; the live migration and rollback are not accepta
 
 **A Blocked-on-question child (CARD-0294 S1+S2).** The parent `[task … blocked]` note carries
 `reason:` / `asks:` / `authority:` / `next:` above the body, outside the excerpt window. If
-`authority:` names something, `delegate.ps1 -Continue <id>` is the one action that replays it;
+`authority:` names something, `scripts/antiphon delegate continue <id>` is the one action that replays it;
 otherwise `-Reply` if you can answer, else put `asks:` in your chat reply now — never `NO_REPLY`
 a blocked note. Dispatch with `-Authority "<the user's own words>"` whenever the user has
 pre-approved a sequence. Auto-continue, the 5-minute bound-chat notice, and the unmarked
@@ -1701,25 +1700,25 @@ Never launch the `claude` CLI directly, and never a `launch-remote` script. When
 `modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`). A numeric
 token (`0`, `1`, `99`) is a **400** — the wire is the member name, not the enum ordinal (CARD-0007).
 Frontier maps to fable (Claude) by default, or `grok-4.7` when `Kind=Grok` is passed.
-If `delegate.ps1` 409s `model_disabled`, pick an alias from `available` or wait until
+If `scripts/antiphon delegate` 409s `model_disabled`, pick an alias from `available` or wait until
 `disabledUntil`; do not retry the same kind/tier. If the 409 also says the available list does
-not satisfy a routing pin, wait, pass `-IgnoreModelDisabled` to queue, or replace the pin — do
+not satisfy a routing pin, wait, pass `--ignore-model-disabled` to queue, or replace the pin — do
 not pick from `available`. Dispatch is sequential-by-default at the gate: a 409 `concurrency_limit` names
 this project's occupants, the cap and the `axis` it tripped. On a board worked under §1's standing
-policy that policy is the request for cross-stage parallelism: re-send with `-IgnoreConcurrencyLimit`
+policy that policy is the request for cross-stage parallelism: re-send with `--ignore-concurrency-limit`
 when the axis is `absolute` and no listed occupant shares the stage you are dispatching; defer when
 the axis is `role` or a same-stage occupant is listed. Elsewhere, only when the user asked for
 parallel work this turn. Other projects' work never counts against yours.
 
 ### Reuse first
 
-**Default: `delegate.ps1`.** Unrelated new work needs nothing special — the warm pool reuses an idle
+**Default: `scripts/antiphon delegate`.** Unrelated new work needs nothing special — the warm pool reuses an idle
 agent in the same directory (compacted first) and spawns a fresh ephemeral delegate only when none
-fits. Sequential follow-up that must keep context: `-OnAgent <taskId>` for a local pool delegate
+fits. Sequential follow-up that must keep context: `--on-agent <taskId>` for a local pool delegate
 or a standing agent (already on the script and in the skill). An extant remote pool delegate
 refuses follow-up Create with HTTP 422 `follow_up_remote_pool_unsupported`, before inserting a
 task: remote pool continuations cannot reuse that process. Publish the intended source, then
-create a fresh task with `-Worktree -StartRef <published-sha>` without `-OnAgent`. This refusal
+create a fresh task with `--worktree --start-ref <published-sha>` without `--on-agent`. This refusal
 also applies to explicit `-Shared` and `-ReadOnly`; explicit `-Worktree` retains
 `workspace_existing_agent_conflict`. A retired Worktree delegate follows the frozen-tip path
 described below. Parallelism on one model: let the pool spawn another, or pass `-Worktree`. That *is* the
@@ -1737,7 +1736,7 @@ card. Pass an existing `BoardId` (the project's real board). A unique `workingDi
 a real checkout is how 21 extra `gym-stat-*` projects appeared.
 
 Work you need to hear finish is a task; creating an agent gives you an identity, not a report.
-Pin a task onto an existing named standing agent with `delegate.ps1 -Agent <name|slug|guid>`
+Pin a task onto an existing named standing agent with `scripts/antiphon delegate create --agent <name|slug|guid>`
 (CARD-0291): it queues while that agent is busy, delivers into the live session, and settles with
 the normal `[task … done]` note. A raw session message to a child is for steering work you already
 dispatched, never for handing over work — no completion note will ever arrive for it. A follow-up
@@ -1748,7 +1747,7 @@ Worktree follow-up continues that task's committed tip: Antiphon freezes the loc
 cuts a new worktree there on the follow-up task's own new branch, reported as its `WorktreeBranch`
 (see [Delegate branch names](#delegate-branch-names-card-1213)). It does not reuse the old
 directory, reset the old branch, or fall back to master. If that tip cannot be proven, create refuses
-`follow_up_source_unavailable` and inserts nothing; pass `-Worktree -StartRef <sha>` to choose a
+`follow_up_source_unavailable` and inserts nothing; pass `--worktree --start-ref <sha>` to choose a
 commit yourself. Explicit `-Shared` or `-ReadOnly` is a new task and is warned as such. A live
 follow-up, `-Agent`, or a routing pin that names an existing agent keeps that agent's checkout
 (Shared, or ReadOnly when that was explicit). Explicit `-Worktree` together with one of those is
@@ -1761,7 +1760,7 @@ follow-up, `-Agent`, or a routing pin that names an existing agent keeps that ag
 **Runner task branches are fast-forward-only (CARD-0779).** Never ask a runner-bound Worktree
 delegate to rebase, amend, reset a pushed commit, or force-push its task branch. The server
 publishes a safe unpushed mirror tip at settlement. To bring source current, land the task (the
-land rebases onto the target) or dispatch a fresh task with `-StartRef` on the wanted base.
+land rebases onto the target) or dispatch a fresh task with `--start-ref` on the wanted base.
 Confirmation-only work belongs in Review, not a Code task requiring a new commit.
 
 **The standing rules are delivered automatically now (CARD-0058). Do not retype them.** A
@@ -1825,15 +1824,15 @@ carry:
   false next month.
 - Give **outcomes, not procedures**. The delegate decides how.
 - **OS branch witnesses (Code and Review).** Apply [the mandatory witness checklist](testing-and-build.md#os-branch-witnesses): identify changed OS branches and real production factories/properties, inspect setup and outcome assertions including absent optional inputs, name exact checkpoints and pending native work, and check startup impact before an rc pick. A seam alone cannot satisfy it. Keep required execution incomplete until fresh receipts exist; standing rule 4 and D-2 retain their verdict meanings.
-- **A Code brief names the checkpoint list.** Add one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"`, the shape the server already renders for an Interim `selection:`. The table stays in the committed plan (owner: [testing-and-build.md](testing-and-build.md), Checkpoint manifest); `-ExpectAbout` is the sum of its `EstimatedMinutes` column (a time budget, not the `Min` execution counts) plus authoring. The delegate runs that table through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md>`), one run per committed slice group, then `wait` until the exit is not 75. The `stage-code` bundle carries the obligation to run it as a closed list and to report per row; do not restate that. Since CARD-0589 every row and every other build/test driver waits for a host build slot (`scripts/run-checkpoint.ps1` itself, anything else through `scripts/build-slot.ps1`), so a Cost on a busy host adds the expected slot wait: `GET :17204/build-slots` (server2: the runner container's `:8080/build-slots`) shows occupancy and the queue. Slots compose with seats: CARD-0654 seats decide how many sessions a host runs, slots decide how many of their builds run at once, the live memory floor goes last. A report's `BUILD SLOT timeout` (exit 4) is a row not run, to retry later or end `blocked`; a `BUILD SLOT unleased` line is an unbudgeted run Review reads as such ([testing-and-build.md](testing-and-build.md), Build slots). When behaviour is green on the tested SHA and the only gap is an unusable receipt (another row red, a stopped run, an ancestor SHA), the Code delegate ends `done` with a `RECEIPT GAP:` line naming the rows and the reason, and `next: code` for the receipt rerun, never `failed`: settlement follows the closing token alone (`AgentTaskReplyService.ClassifyReportAsync`), and a Failed owner cannot be answered (CARD-1570). A red run keeps its outputs as evidence, so its receipt fails `report_failed`, not `cleanup_refused`.
+- **A Code brief names the checkpoint list.** Add one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"`, the shape the server already renders for an Interim `selection:`. The table stays in the committed plan (owner: [testing-and-build.md](testing-and-build.md), Checkpoint manifest); `--expect-about` is the sum of its `EstimatedMinutes` column (a time budget, not the `Min` execution counts) plus authoring. The delegate runs that table through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md>`), one run per committed slice group, then `wait` until the exit is not 75. The `stage-code` bundle carries the obligation to run it as a closed list and to report per row; do not restate that. Since CARD-0589 every row and every other build/test driver waits for a host build slot (`scripts/run-checkpoint.ps1` itself, anything else through `scripts/build-slot.ps1`), so a Cost on a busy host adds the expected slot wait: `GET :17204/build-slots` (server2: the runner container's `:8080/build-slots`) shows occupancy and the queue. Slots compose with seats: CARD-0654 seats decide how many sessions a host runs, slots decide how many of their builds run at once, the live memory floor goes last. A report's `BUILD SLOT timeout` (exit 4) is a row not run, to retry later or end `blocked`; a `BUILD SLOT unleased` line is an unbudgeted run Review reads as such ([testing-and-build.md](testing-and-build.md), Build slots). When behaviour is green on the tested SHA and the only gap is an unusable receipt (another row red, a stopped run, an ancestor SHA), the Code delegate ends `done` with a `RECEIPT GAP:` line naming the rows and the reason, and `next: code` for the receipt rerun, never `failed`: settlement follows the closing token alone (`AgentTaskReplyService.ClassifyReportAsync`), and a Failed owner cannot be answered (CARD-1570). A red run keeps its outputs as evidence, so its receipt fails `report_failed`, not `cleanup_refused`.
 - `repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof selection; none required after green. Exceed only for a flake already demonstrated by Review; cite that Review, filter, reason and revised budget.` Count total executions per case across the selection; CARD-0885's one-time five-repeat benchmark is its named exception.
 - **Pass `-Stage` on a Debug/Docs/Custom dispatch that is actually answering a landing-step
   question** (CARD-0272) — a title like "verify CARD-nnnn still builds" or "clean up the stale
   worktrees" gets `-Stage Verify` / `-Stage Cleanup` even though the role itself never defaults
-  one. Review/Test/Merge/Deploy and an `-OnAgent` follow-up already get a stage from their role;
+  one. Review/Test/Merge/Deploy and an `--on-agent` follow-up already get a stage from their role;
   Code and Plan never do, and don't need one. A staged dispatch's brief carries a self-report
   finding line — `[antiphon-finding:<id> found|clean]` on the line before the report token — and
-  `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean` is the orchestrator's override when
+  `scripts/antiphon delegate finding <id> --stage … --found "…"` / `--clean` is the orchestrator's override when
   it judged differently. Full flag reference: `.claude/skills/antiphon-delegate/SKILL.md`.
 
 The test of whether this worked is mechanical: briefs are stored on task rows, so sample the next
@@ -1877,7 +1876,7 @@ queue sweep discards the stale machine-origin message rather than retrying it. A
 remains is deliberately one whose content may still need a human decision (for example a UI/channel
 message, a completion note, or work on a session with an open task).
 
-**Check-ins are automatic now (CARD-0047, slices 1-3).** Delegate with `-ExpectAbout <minutes>`
+**Check-ins are automatic now (CARD-0047, slices 1-3).** Delegate with `--expect-about <minutes>`
 (1-1440, defaults to 10) and the server arms a schedule: a deterministic, read-only probe of the
 task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
 worktree task — lands in your session as a `[check <id> #n] ...` note, first around the minute mark
@@ -1942,8 +1941,8 @@ delegates and already attach the latest interpretation as evidence.
 sends a one-shot `[task <id> failed]` note through `FailAndNotifyAsync`; that note can sit unsubmitted
 or be lost, and the orchestrator bundle says not to poll. The same `NextCheckAt` / `CheckCount`
 columns now arm on a never-dispatched failure (first look at the 5-minute ramp base, not
-`-ExpectAbout`, because that number describes work that never started) and a sweep re-sends the note
-only while nothing shows the caller has heard — note `Sent`, a human Drop, `delegate.ps1 -Status`, or
+`--expect-about`, because that number describes work that never started) and a sweep re-sends the note
+only while nothing shows the caller has heard — note `Sent`, a human Drop, `scripts/antiphon delegate status`, or
 opening the task drawer. It is a reminder, not a check: no probe, no interpreter, no session. While
 the reminder is armed the attention feed lists it as `FailureUnacknowledged` in the **Broken** group
 (counted; not a push, not an alert). The ramp stopping after 10 reminders is not acknowledgement —
@@ -1969,7 +1968,7 @@ Cheapest first:
 curl -s localhost:17202/api/agent-tasks | python -c "import json,sys; d=json.load(sys.stdin); items=d['items'] if isinstance(d, dict) else d; ..."   # filter .items by short id
 
 # the stored report — available BEFORE the notification
-pwsh -NoProfile -File scripts/delegate.ps1 -Status <id>
+scripts/antiphon delegate status <id>
 
 # the truest progress signal: commits exist before reports do
 git log --oneline master..<worktreeBranch>   # the task's recorded WorktreeBranch; see Delegate branch names
@@ -1980,7 +1979,7 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
 
 **Traps:**
 
-- Task detail and `delegate.ps1 -Status` include a read-time `Session:` line: status, working/idle
+- Task detail and `scripts/antiphon delegate status` include a read-time `Session:` line: status, working/idle
   and last transcript time, or its end time. Failed/Blocked completion headers carry
   `session=live-working|live-idle|ended`, observed before release. The API-error failure reason
   also names that observation. `Recovery ended (...)` can still describe an exhausted or
@@ -2007,11 +2006,11 @@ work. `runner_mirror_unavailable` in evidence means the runner could not be insp
 `workspacePublishV1`; inspect that runner and its retained mirror. `runner_mirror_publish_failed`
 means T descends from S but its plain push failed; repair the runner's push access and retry
 settlement. `runner_mirror_diverged` means T is rebased, reset or behind S: keep the mirror,
-dispatch a fresh Code task pinned to that runner with `-StartRef` at the wanted base, cherry-pick
+dispatch a fresh Code task pinned to that runner with `--start-ref` at the wanted base, cherry-pick
 the retained commits from the old local branch, and push the new task branch. `runner_sync_diverged`
 means S itself diverged from B after a force-push. Review that exact pushed S in a Worktree Review
-with `-StartRef <S>`, then use `delegate.ps1 -Land <owner> -ExpectedSourceSha <S>
--ReviewEvidenceId <guid> -RecoverReviewedSource`. The last recovery is explicit; settlement does
+with `--start-ref <S>`, then use `scripts/antiphon delegate land <owner> --expected-source-sha <S>
+--review-evidence-id <guid> --recover-reviewed-source`. The last recovery is explicit; settlement does
 not adopt a rewritten branch.
 
 CARD-1082. Delegation:RunnerSyncDebtOnSettlement defaults to true. A complete report whose only desktop failure is runner_sync_lease_busy, with a full server-observed tip, records progressEvidence.remoteSync.state Pending. Pending is never Confirmed. A debt row is created only for the lease-contention case of a complete report that settles Succeeded or Failed. Dirty, diverged and rewound Code stay Blocked with no debt row; an unfetched owned tip under lease contention is Pending with a debt row, and the sweep fetches its objects under the lease before the fast-forward (CARD-1802). The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked. For a correlated report, a Blocked Pending settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending, and its block reason is never runner_sync_lease_busy (runner_sync_progress_unverified when the progress read gave no reason). For a correlated report, Pending evidence without a debt row means the progress read, not the lease, blocked the task; repair what the handoff names, then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). Bind-refusal recovery has no correlated report, so its lease-contention result stays Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion report that settles it (CARD-1805). An unfetched owned tip settles with the report's claimed commit unverified: the sweep fetches S and fast-forwards but never re-checks the claim, so a claimed commit that is not on S is not caught after settlement; CARD-1109's attestation upgrade would close it (CARD-1805). The unfetched gate reads object presence with git cat-file -e: only exit 1 is an unfetched tip, and any other failure, such as an unreadable repository, is runner_sync_progress_unverified (CARD-1805). When the settlement is not blocked, the report's next= is kept, the caller warning says synced later, and it says No reply is needed. The workspace note contains desktop-sync=pending. -Land uses the pushed branch the same way it does for a synchronized owner. The sweep does not read the kill switch. It retries a Pending debt until `Delegation:RunnerSyncDebtMaxAttempts` (default 48; 0 disables the cap), and backoff is 1, 2, 4, then 5 minutes. At that cap the next due claim holds the row `settlement_sync_attempts_exhausted` before Git. An empty debt table is 1 statement per tick. A synchronized settle is 30 statements and debtSql 0. A pending-review retry is 40 statements and debtSql 1. The kill switch off is 31 statements and debtSql 0. Held debt raises attention SessionDisagreement keyed settlement-sync-debt: and names the recovery. The task attempt, baseline or worktree changed; this debt will not be fast-forwarded. Origin moved past the recorded source; the sweep does not follow it. The desktop checkout is dirty. This debt stays Held. Review that exact pushed S in a Worktree Review with -StartRef is the diverged recovery. Pending debt older than the threshold warns desktop sync still pending (lease contention). RunnerSyncDebtAttentionMinutes defaults to 30. Ready, Superseded, and Pending that is not yet older than that threshold raise nothing. Operators read syncDebt on task detail. A Held debt is re-checked every 60 minutes by restamping NextAttemptAt 60 minutes ahead. Every Held reason except `settlement_sync_attempts_exhausted` reads no filesystem and matches no path, runs no Git, fast-forwards nothing, and does not supersede, because AgentTaskSyncDebts has no registration id that a complete retirement can be bound to, and its attention warning stays. A debt held `settlement_sync_attempts_exhausted` is re-checked on that same hour by reading the desktop worktree HEAD only; when that HEAD is the recorded source and the episode still matches, the row becomes Ready (`settlement_sync_ready`) and the attention warning clears. That recheck does not fetch, merge, or fast-forward.
@@ -2029,14 +2028,14 @@ the same areas. Land this branch first, or expect its rebase to replay onto thei
 For a succeeded Worktree task, make the ordered landing decision with one call:
 
 ```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task> -ExpectedSourceSha <full-reviewed-sha>
-# Optional: -ReviewEvidenceId <review-outcome-guid> -Verify "<treenode-filter>"
+scripts/antiphon delegate land <original-code-task> --expected-source-sha <full-reviewed-sha>
+# Optional: --review-evidence-id <review-outcome-guid> --verify "<treenode-filter>"
 ```
 
 The server performs the fetch, rebase, conditional build and optional named test, fast-forward,
 push, worktree removal, and branch deletion. The request is a row (`LandRequestedAt`); the
 in-process channel is only a hand-off. A restart re-runs anything still pending that this
-process does not hold. `delegate.ps1 -Land` prints "Queued land" or "Requeued land" from the
+process does not hold. `scripts/antiphon delegate land` prints "Queued land" or "Requeued land" from the
 202 `{ status: "queued" | "requeued" }`. A 409 `land_running` means a land is running in this
 server now: wait for the outcome event. For another 409 code, see the conflict-code table in
 §0 ("Also delegated: the landing mechanics"). Three interrupted
@@ -2237,7 +2236,7 @@ Split by what each part actually is:
 - **In Progress and Review are no longer yours to move by hand (CARD-0040).** A task bound to a card
   moves it: to In Progress when the task dispatches, to Review when the last open task settles
   `Succeeded`, within 60 s either way, with `card-transitions` as the actor on the revision. Bind it
-  by leading the brief's title with `CARD-nnnn` or by passing `delegate.ps1 -Card CARD-nnnn`, which
+  by leading the brief's title with `CARD-nnnn` or by passing `scripts/antiphon delegate create --card CARD-nnnn`, which
   prints `- bound to CARD-nnnn` at dispatch so a mis-binding is visible immediately.
 - **Done is still yours**, and so is any move you make on purpose: the sweep only acts on evidence
   NEWER than your last move, so dragging a card back with a reason is respected until the next
@@ -2270,7 +2269,7 @@ Split by what each part actually is:
 
 ## 8. Clean up
 
-For delegated Worktree tasks, worktree removal and branch deletion are the `-Land` operation's own
+For delegated Worktree tasks, worktree removal and branch deletion are the `land` operation's own
 job. Do not run them as a manual orchestrator step after a `Landed` outcome. A
 `LandedWithResidue`, or `AlreadyPresent` with incomplete cleanup, can be retried with `-Land`.
 The retry refreshes remote proof and validates every surviving component before removal,
@@ -2424,12 +2423,12 @@ scripts\antiphon.cmd schedule new `
 ```
 Weekly output-distiller prompt review (CARD-0330). Do not read the distillation ledger yourself. Dispatch one Review-role delegate:
 
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Worktree -Level High -ExpectAbout 30 -Title "distiller prompt review" -Card CARD-0330 -Goal "<paste the brief template from docs/orchestration-loop.md section 10>"
+scripts/antiphon delegate create --role Review --worktree --level High --expect-about 30 --title "distiller prompt review" --card CARD-0330 --goal "<paste the brief template from docs/orchestration-loop.md section 10>"
 
 Then wait for that delegate's report. Do not edit server/Bundles/output-distiller.md yourself.
 ```
 
-**Delegate brief template** (the `-Goal` the orchestrator pastes; fill the ISO timestamps for
+**Delegate brief template** (the `--goal` the orchestrator pastes; fill the ISO timestamps for
 the last 7 days):
 
 ```
@@ -2475,7 +2474,7 @@ drop.
 
 ### Preserved Gotcha #4
 
-- **`-Scope` is a list of AREA NAMES and/or path globs, and a hold is now a visible `Held` event — never a silent wait** (CARD-0063). The column is `Scope` (was `ScopeGlob`); each comma-separated element is compared independently, area names by EXACT match against [`antiphon.areas.json`](antiphon.areas.json) at the repo root, paths by the old literal-prefix rule. Before this the whole string was one glob compared by string prefix: in 623 live tasks it produced exactly ONE hold, a false one (`card-reopen-cli` held `card-reopen-client` because one label prefixes the other), and missed five genuine collisions where two running tasks' comma-lists shared an element outright. The policy is now per workspace PAIR, not per area: **Shared↔Shared serialises** (one checkout, one `git status`, one `bin/`), **anything with a Worktree only warns** (it collides at merge, and blocking it throws away the parallelism worktrees exist to give), **ReadOnly is outside the lease in both directions**, and an intersection only in a `weight: allow` area (`docs`, the only one) costs nothing. `Delegation:SerialiseSharedWriters` (default **true**) additionally holds a Shared task behind any running Shared task in the same repo *with no scope declared at all* — the skill doc has said since 2026-08-18 that disjoint scopes do not make two shared writers safe, and this is the server asking that question instead of the caller remembering to. An area name the map does not know is ACCEPTED as an opaque label plus a `Warning` event, never a rejected create: a bookkeeping field must not refuse a launch over a typo. CARD-0535: the repository-mutation-lease hold and the concurrency-cap skip now trace through `TraceHeldAsync` like the other holds and name their holder (a Running land on the same repo, else a journal fence, else occupied-by-another-process); a Queued task's hold ages into `HeldAged` at `Delegation:DispatchHeldWarningSeconds` / `DispatchHeldErrorSeconds` (300/900) with attention `DispatchHeld` (`ConditionKey` `dispatch-held:{id}`); dated routing pins are excluded. CARD-0537: a follow-up (`-OnAgent`) whose pinned agent is not Idle is the same `Held`/`HeldAged`/`DispatchHeld` path; create refuses 409 `follow_up_agent_blocked` when that agent is parked on a Blocked task; cancel deletes the pool row only when this task ran on it and no other open task still pins it. Nothing enforces what a delegate actually writes — drift is RECORDED at settlement (`ObservedScope`, a `ScopeDrift` event, `drift=` in the completion header) and never blocks, holds, kills or re-types anything; a PreToolUse path hook was considered and rejected because it could only ever be armed in a worktree, where an out-of-area write is already harmless. `pwsh -File scripts/delegate.ps1 -ListAreas` prints the map; the create response prints what your scope just cost; the completion header's `overlapping-running=` names the still-running tasks whose areas this one touched, which is the whole of the merge-ordering deliverable. **Extend the map when two tasks collide in an area, naming it for the work, not the folder** — and never give a glob a leading wildcard in its file name (`Services/*Profile.cs`), because the literal prefix collapses to the directory and the area silently swallows everything in it (`AreaMapContractTests` fails the build on it).
+- **`--scope` is a list of AREA NAMES and/or path globs, and a hold is now a visible `Held` event — never a silent wait** (CARD-0063). The column is `Scope` (was `ScopeGlob`); each comma-separated element is compared independently, area names by EXACT match against [`antiphon.areas.json`](antiphon.areas.json) at the repo root, paths by the old literal-prefix rule. Before this the whole string was one glob compared by string prefix: in 623 live tasks it produced exactly ONE hold, a false one (`card-reopen-cli` held `card-reopen-client` because one label prefixes the other), and missed five genuine collisions where two running tasks' comma-lists shared an element outright. The policy is now per workspace PAIR, not per area: **Shared↔Shared serialises** (one checkout, one `git status`, one `bin/`), **anything with a Worktree only warns** (it collides at merge, and blocking it throws away the parallelism worktrees exist to give), **ReadOnly is outside the lease in both directions**, and an intersection only in a `weight: allow` area (`docs`, the only one) costs nothing. `Delegation:SerialiseSharedWriters` (default **true**) additionally holds a Shared task behind any running Shared task in the same repo *with no scope declared at all* — the skill doc has said since 2026-08-18 that disjoint scopes do not make two shared writers safe, and this is the server asking that question instead of the caller remembering to. An area name the map does not know is ACCEPTED as an opaque label plus a `Warning` event, never a rejected create: a bookkeeping field must not refuse a launch over a typo. CARD-0535: the repository-mutation-lease hold and the concurrency-cap skip now trace through `TraceHeldAsync` like the other holds and name their holder (a Running land on the same repo, else a journal fence, else occupied-by-another-process); a Queued task's hold ages into `HeldAged` at `Delegation:DispatchHeldWarningSeconds` / `DispatchHeldErrorSeconds` (300/900) with attention `DispatchHeld` (`ConditionKey` `dispatch-held:{id}`); dated routing pins are excluded. CARD-0537: a follow-up (`--on-agent`) whose pinned agent is not Idle is the same `Held`/`HeldAged`/`DispatchHeld` path; create refuses 409 `follow_up_agent_blocked` when that agent is parked on a Blocked task; cancel deletes the pool row only when this task ran on it and no other open task still pins it. Nothing enforces what a delegate actually writes — drift is RECORDED at settlement (`ObservedScope`, a `ScopeDrift` event, `drift=` in the completion header) and never blocks, holds, kills or re-types anything; a PreToolUse path hook was considered and rejected because it could only ever be armed in a worktree, where an out-of-area write is already harmless. `scripts/antiphon delegate list-areas` prints the map; the create response prints what your scope just cost; the completion header's `overlapping-running=` names the still-running tasks whose areas this one touched, which is the whole of the merge-ordering deliverable. **Extend the map when two tasks collide in an area, naming it for the work, not the folder** — and never give a glob a leading wildcard in its file name (`Services/*Profile.cs`), because the literal prefix collapses to the directory and the area silently swallows everything in it (`AreaMapContractTests` fails the build on it).
 
 ### Preserved Gotcha #36
 
@@ -2578,7 +2577,7 @@ that closure is refused immediately with `target_build_broken`, without another 
 later build of that commit passed or reached tests. The refusal detail names the failing
 operation, task, projects and age, then the overrides, then the saved output. A refused land
 records nothing, so it never renews the record. Overrides that need no code change:
-`delegate.ps1 -Land <task> -IgnoreKnownBrokenTarget` (land body `ignoreKnownBrokenTarget: true`)
+`scripts/antiphon delegate land <task> --ignore-known-broken-target` (land body `ignoreKnownBrokenTarget: true`)
 clears every recorded broken target when the request is accepted, so the land builds;
 `Landing:RefuseKnownBrokenTarget=false` (default true) or `Landing:ForceVerificationBuild` turns
 the refusal off. A fix that lies in a referenced project or a build input changes the closure,
@@ -3072,7 +3071,7 @@ interruption and reconcile conflicting duplicates before dispatch. Missing ackno
 never authorize duplicate cards/tasks. The stable text key is discoverable, not DB uniqueness.
 Exclude these cards from fresh feature picking; never Spawn a card session for a companion.
 
-Order `delegate.ps1 -Land <original-code-task-id>`. Its correlated publication outcome starts
+Order `scripts/antiphon delegate land <original-code-task-id>`. Its correlated publication outcome starts
 the continuation, not a synthetic next-stage report. Only structured HasPublication for
 Landed, AlreadyPresent or LandedWithResidue qualifies. Queued land, task success, push exit,
 local advance, event prose and LandRefused do not. Record O (operation), L=VerifiedSourceSha
@@ -3084,16 +3083,14 @@ Update the same companion with O/L/R. Use a file-backed brief containing the Rev
 verbatim, full reports/plan, all PC IDs/variants, both card GUIDs, Code/Review task IDs,
 C/O/L/R, restart target for context and the persistent evidence root:
 
-```powershell
-$reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card <original-card-guid> -ReadOnly -Dir '<code-worktree>' -Title 'ordinary review' -Goal $reviewGoal
+```sh
+scripts/antiphon delegate create --role Review --card <original-card-guid> --read-only --dir '<code-worktree>' --title 'ordinary review' --goal-file '<review-brief-file>'
 # After Review and companion recording:
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task-id>
+scripts/antiphon delegate land <original-code-task-id>
 # After confirmed publication and required deployment:
-$mutationGoal = Get-Content -LiteralPath '<mutation-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card <verification-card-guid> -Worktree -SourceLanding <operation-guid> -Title 'post-land mutation checks' -ExpectAbout <pc-floor-plus-analysis> -Goal $mutationGoal
+scripts/antiphon delegate create --role Mutation --card <verification-card-guid> --worktree --source-landing <operation-guid> --title 'post-land mutation checks' --expect-about <pc-floor-plus-analysis> --goal-file '<mutation-brief-file>'
 # After settlement, restoration and durable evidence:
-pwsh -NoProfile -File scripts/delegate.ps1 -CleanupVerification <mutation-task-id>
+scripts/antiphon delegate cleanup-verification <mutation-task-id>
 ```
 
 Use the same commissioning project and authorized repository. SourceLanding accepts only a
@@ -3201,9 +3198,9 @@ Completion notes of profile-v1 tasks are durable obligations (see
 `next=`, never re-read the body.
 
 The first Code and the first Review of a card always run `Final`. Per-task Final is the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. A Merge batch is not that per-task Final lane. When its diff touches `tests/Antiphon.Tests/TestHelpers/**` or a csproj that Compile-includes a file under `tests/Antiphon.Tests`, its one build is `Antiphon.sln` once, or each linking mirror project once, as [Merge verification is short](#merge-verification-is-short-2026-11-18) states (CARD-1996). An
-omitted `-VerificationRound` is `Final`. `Interim` is explicit only: the card's role policy must
-allow it, and the request names `-VerificationSubject` (the original landing owner),
-`-VerificationBaselineOutcome` (a full-scope Review outcome) and `-VerificationSelectionFile`
+omitted `--verification-round` is `Final`. `Interim` is explicit only: the card's role policy must
+allow it, and the request names `--verification-subject` (the original landing owner),
+`--verification-baseline-outcome` (a full-scope Review outcome) and `--verification-selection-file`
 (the committed selection as JSON). A refused Interim request is never resubmitted silently as a
 different round. A clean Interim Review routes to a fresh Final Review of the unchanged
 candidate, never to land; a latched owner lands only with a Clean Final/Full Review.

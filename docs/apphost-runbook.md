@@ -261,7 +261,7 @@ Before relying on newly landed server behavior:
    a stale lock is present.
 5. Record desired and observed full SHAs in the deployment report.
 
-`delegate.ps1 -Land` GETs `/api/version` first (5s bound, `ANTIPHON_VERSION_PROBE_TIMEOUT_SEC`
+`scripts/antiphon delegate land` GETs `/api/version` first (5s bound, `ANTIPHON_VERSION_PROBE_TIMEOUT_SEC`
 seam) and POSTs only `/api/agent-tasks/{id}/land/v2`. Missing `land-v2`, a
 malformed/unknown SHA, or a probe failure is exit 1 with zero land POSTs. A
 404/405 on `/land/v2` is not retried against `/land`.

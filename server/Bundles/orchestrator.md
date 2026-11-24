@@ -39,36 +39,36 @@ beyond standing authority. End only with delegates in flight and nothing else ac
 otherwise pull the next card.
 
 A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified.
-Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use -Continue <id> only for a
-Blocked question with standing authority; otherwise -Reply if you can answer, else surface asks:
+Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only for a
+Blocked question with standing authority; otherwise reply if you can answer, else surface asks:
 now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with
--Authority "<the user's own words>"; keep the work delegated.
+--authority "<the user's own words>"; keep the work delegated.
 A live Blocked child keeps its runner seat; Reply resumes work without freeing it.
 Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline.
 Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots:
 a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.
 
 Missing `[task … done]` does not prove a delegate is running: completion/check notes are
-WhenIdle and can wait. Read the task row or `delegate.ps1 -Status`; the note may arrive late
+WhenIdle and can wait. Read the task row or `delegate status`; the note may arrive late
 and can withhold the report.
 
-Child work uses `delegate.ps1`: pool by default, `-OnAgent <taskId>` to retain context,
-`-Agent <name>` for a named standing child. Never `POST /api/agents` per feature or invent
+Child work uses `scripts/antiphon delegate`: pool by default, `--on-agent <taskId>` to retain context,
+`--agent <name>` for a named standing child. Never `POST /api/agents` per feature or invent
 a child working directory: that mints identity (and a project/board outside a real checkout).
 Such children prompted via session messages never report done/check or move cards.
-Message a child's session directly only to steer already-dispatched work.
+Message a child's session only to steer dispatched work.
 
-To change a child's base, use -Worktree -StartRef <full-sha>; never git checkout -B.
+To change a child's base, use --worktree --start-ref <full-sha>; never git checkout -B.
 Use its reported WorktreeBranch. A base grants no land authority.
-Read docs/orchestration-loop.md#delegate-start-ref for exclusions and -FromTask adoption.
-For a failed -RepairSource owner, require owner-bound Clean Final/Full Review and
--RecoverReviewedSource; follow docs/orchestration-loop.md#repairsource-failed-owner-recovery.
-A -RepairSource task cannot be used with -FromTask.
+Read docs/orchestration-loop.md#delegate-start-ref for exclusions and --from-task adoption.
+For a failed --repair-source owner, require owner-bound Clean Final/Full Review and
+--recover-reviewed-source; follow docs/orchestration-loop.md#repairsource-failed-owner-recovery.
+A --repair-source task cannot be used with --from-task.
 
 When you are working a board through its pipeline, read the effective-settings route (CARD-0881):
 GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true). Use its limits and
 docs/orchestration-loop.md#standing-pipeline-policy; never exceed the lower effective cap.
-Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree.
+Host budget writes need an operator request. Run stages in parallel, each in its own --worktree.
 Land confirmed work promptly. Keep Code at its depth cap, counting in-flight, queued and ready.
 Below cap, pull the lowest-rank unstarted Backlog card; at cap, start no new Plan toward Code.
 A keep-six reminder names the server setting's shortfall. Dispatch up to that shortfall under the same pipeline rules. Declare a hold with scripts/antiphon keep-six. The server does not dispatch.
@@ -77,7 +77,7 @@ File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
 gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
 label `post-land-retrospective`) with its Investigate task and Low-tier Docs pass from
-docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit` permits -IgnoreConcurrencyLimit only for population=open,
+docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit` permits --ignore-concurrency-limit only for population=open,
 canOverride=true, axis=absolute and no same-stage occupant; otherwise defer.
 Other projects' work never counts against yours.
 
@@ -91,14 +91,14 @@ a Debug task; in-flight target on the landing host; no land from an Interim Revi
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
-Model-tier names are **not AgentKind values**. `-Kind` selects `ClaudeCode`, `Grok`,
-or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`. Never pass a
+Model-tier names are **not AgentKind values**. `--kind` selects `ClaudeCode`, `Grok`,
+or `Codex`; `--level` selects `Frontier`, `High`, `Medium`, or `Low`. Never pass a
 model-tier name as either flag. Codex resolves to full model IDs, not bare family
 names. See [agent kinds and model levels](../../docs/agent-kinds.md#3-model-levels)
 and `server/Application/Services/ModelLevelAliases.cs`.
 
 Windows Review/Debug follows the effective required routing pin. OS needs do not
-authorize -IgnoreRoutingPin. Normally omit -Kind/-Level to preserve its ordered
+authorize --ignore-routing-pin. Normally omit --kind/--level to preserve its ordered
 fallback; see docs/orchestration-loop.md#windows-review-and-debug-routing for
 policy and explicit startup-failure recovery.
 
@@ -120,13 +120,13 @@ and reply with a whole line `[expectation-ack:<same-guid>]` followed by the acti
 or the reason you are waiting. The ACK records an answer; the watchdog continues to observe the
 condition and may page the configured operator if no answer arrives by its stated deadline.
 
-Steer Queued, Dispatched or Working tasks with -Refine <taskId> "one sentence".
-Use -Reply for a Blocked task; -Refine returns 409 there.
+Steer Queued, Dispatched or Working tasks with refine <taskId> "one sentence".
+Use reply for a Blocked task; refine returns 409 there.
 
-Work needing its own decomposition goes to a sub-orchestrator (-Orchestrator).
+Work needing its own decomposition goes to a sub-orchestrator (--orchestrator).
 
-Fresh workers already use a worktree; -Shared opts out of that default.
-Another repo: a delegate with -Dir.
+Fresh workers already use a worktree; --shared opts out of that default.
+Another repo: a delegate with --dir.
 
 Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
 Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;
@@ -147,7 +147,7 @@ silently change rounds. A clean Interim goes to Final Review, never land.
 Follow docs/orchestration-loop.md#verification-rounds for prerequisites and flags.
 
 Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location.
-Normally omit -Runner and -Platform; runtime defaults and the inherited platform place the task on an eligible runner.
-Use -Platform Any to unpin. Pin only an OS-required piece with its own filter and budget;
+Normally omit --runner and --platform; runtime defaults and the inherited platform place the task on an eligible runner.
+Use --platform Any to unpin. Pin only an OS-required piece with its own filter and budget;
 leave the rest unpinned. Never write defaults on a pipeline tick.
 Follow docs/orchestration-loop.md#runner-placement for inheritance, pinning and authorized settings changes.

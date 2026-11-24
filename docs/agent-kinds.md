@@ -31,7 +31,7 @@ CARD-0604 widens that lane on the production `server2` runner from one pinned ag
 pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, Claude Code, or
 **Raw** with an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`,
 `/usr/local/bin/pwsh`) — the runner keeps that list itself and refuses any other path, including a
-host path that ends in the same name. **Runner-bound delegated Worktree tasks** (`delegate.ps1
+host path that ends in the same name. **Runner-bound delegated Worktree tasks** (`scripts/antiphon delegate
 -Runner server2`) are Grok or Claude Code (CARD-0628). Card-backed starts, OnAgent, Shared,
 ReadOnly, pins, Herdr and custom wrappers stay refused, and SourceLanding is refused until CARD-0604
 Cut B ships the Linux custody backend. Grok and Claude Code are the agents the image carries (Claude
@@ -85,11 +85,11 @@ Capacity auto-resume (CARD-0412) paces recovery **per execution kind**: supervis
 
 "Delegatable" is `AgentTaskService.DelegatableKinds` — `[ClaudeCode, Grok, Codex]`. A task asking
 for `OpenCode` or `Raw` is **refused with a 422 naming the reason**, never silently substituted.
-An orchestrator is `ClaudeCode` only: its contract (the PreToolUse deny hook, `delegate.ps1`, the
+An orchestrator is `ClaudeCode` only: its contract (the PreToolUse deny hook, `scripts/antiphon delegate`, the
 check interpreter) has only ever run on Claude, and an explicit orchestrator kind of `Grok`/`Codex`
 is rejected rather than reinterpreted. On a Linux placement the deny hook runs the same script
 under `pwsh` (CARD-1225); a Windows placement keeps `powershell`. ChatGPT is not Codex remote control. A named Codex session
-token can still delegate (kind-blind `MayDelegate`); `delegate.ps1 -Orchestrator -Kind Codex` stays
+token can still delegate (kind-blind `MayDelegate`); `scripts/antiphon delegate create --orchestrator --kind Codex` stays
 422. External ChatGPT dispatch uses a Delegation Capability (`docs/ops-http.md`).
 
 `OpenCode` and `Raw` are screen-only lanes: no transcript is tailed, delivery is a blind
@@ -191,7 +191,7 @@ Permission bypass is **not implied by the kind** — `AgentTuiRunnerCatalog` rep
 launches a TUI that will sit on approval prompts nobody is there to answer.
 
 Antiphon also exports its own orchestration identity into the agent process — this is how
-`delegate.ps1` and the card command (`scripts/antiphon card`) know who they are without being told:
+`scripts/antiphon delegate` and the card command (`scripts/antiphon card`) know who they are without being told:
 
 | Launched as | Gets |
 |---|---|
@@ -223,7 +223,7 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 
 **Model-tier names are not `AgentKind` values.** Fable (Frontier), Opus (High), Sonnet
 (Medium), and Haiku (Low) are tiers within `ClaudeCode`; Astra (Frontier), Sol (High),
-Sol (Medium), and Luna (Low) are tiers within `Codex`. `scripts/delegate.ps1` accepts
+Sol (Medium), and Luna (Low) are tiers within `Codex`. `scripts/antiphon delegate` accepts
 `-Kind ClaudeCode|Grok|Codex` and `-Level Frontier|High|Medium|Low`; model-tier names
 are not accepted by either parameter. Optional `-Model` names one delegatable alias,
 for example `gpt-6.2-astra`, and is sent only when set. An omitted `-Model` keeps the
@@ -233,9 +233,9 @@ is HTTP 422, and a hold refuses that alias only. For example:
 
 ```powershell
 # Fable review
-scripts/delegate.ps1 -Role Review -Kind ClaudeCode -Level Frontier -Goal "Review the change; Frontier requested"
+scripts/antiphon delegate create --role Review --kind ClaudeCode --level Frontier --goal "Review the change; Frontier requested"
 # Astra review
-scripts/delegate.ps1 -Role Review -Kind Codex -Level Frontier -Goal "Review the change; Frontier requested"
+scripts/antiphon delegate create --role Review --kind Codex --level Frontier --goal "Review the change; Frontier requested"
 ```
 
 Use the corresponding `-Level` from the table for the other tiers, never `-Kind Fable`,
@@ -493,7 +493,7 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
   missing is Grok clearing `auth.json` after a *permanent* refresh failure (the lock
   file is a permanent artefact and is not evidence of a hung refresh). Registry-path
   pool launches also refuse at create with **409 `provider_sign_in_required`**; pass
-  `allowUnauthenticatedProvider` (`delegate.ps1 -AllowUnauthenticatedProvider`) to
+  `allowUnauthenticatedProvider` (`scripts/antiphon delegate create --allow-unauthenticated-provider`) to
   queue anyway. Do not put `XAI_API_KEY` on the registry `grok` definition by default
   — that moves pool spend onto console.x.ai metered billing.
 - No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
@@ -842,9 +842,9 @@ health episode. A committed caller note keeps its durable queue identity through
 
 ### Preserved Gotcha #58
 
-- **A 409 `subscription_quota_low` is a launch refusal, not a footnote on a launch that already happened** (CARD-0136): `AgentControlService.StartAsync` and `AgentTaskService.CreateAsync` check the latest CARD-0143 sample against remaining-%-vs-time-to-reset (defaults 10%/>1 day, 5%/>2 h). No reading, a stale sample, or a reset already in the past always passes — Claude will never have a sample, and `SubscriptionUsageMonitoring.Enabled` ships false so the gate is inert until an operator turns monitoring on. Two ways forward: pick another `agentKind`/agent, or re-send with `ignoreSubscriptionQuota` (`delegate.ps1 -IgnoreSubscriptionQuota`). The dispatcher never refuses; it only records an informational Warning. Internal AlwaysOn/channel/check-interpreter/diagnose/output-distiller starts pass the flag in code. Never silently reroute.
+- **A 409 `subscription_quota_low` is a launch refusal, not a footnote on a launch that already happened** (CARD-0136): `AgentControlService.StartAsync` and `AgentTaskService.CreateAsync` check the latest CARD-0143 sample against remaining-%-vs-time-to-reset (defaults 10%/>1 day, 5%/>2 h). No reading, a stale sample, or a reset already in the past always passes — Claude will never have a sample, and `SubscriptionUsageMonitoring.Enabled` ships false so the gate is inert until an operator turns monitoring on. Two ways forward: pick another `agentKind`/agent, or re-send with `ignoreSubscriptionQuota` (`scripts/antiphon delegate create --ignore-subscription-quota`). The dispatcher never refuses; it only records an informational Warning. Internal AlwaysOn/channel/check-interpreter/diagnose/output-distiller starts pass the flag in code. Never silently reroute.
 
-- **Usage walls are per-model, not fleet-wide** (CARD-0022 / CARD-0309 / CARD-0335): a Fable 5 cap pauses `fable` on `ClaudeCode` and leaves Sonnet/Haiku/Grok running. Session-limit stubs (`You've hit your session limit · resets 6:10pm (Europe/London)`) pause that model until `ResetAt + 2 min` and schedule one same-session resume. Per-model caps (`You've reached your Fable 5 limit…`) write `DisabledUntil = now + Supervision:ApiErrorRecovery:ModelCapFallbackHoldHours` (default 6) and **never** the CARD-0072 30-minute `WallPrompt`. After the fallback expires, future dispatch is eligible again; if the provider still refuses, the next wall detection renews the hold with fresh evidence. Create/start of a held alias is **409 `model_disabled`** with the remaining aliases listed; already-queued work is skipped until the hold clears. `/usage-credits` is a spend/redeem action, not a readout — do not type it. A Fable AlwaysOn orchestrator restart is refused; do not silently reroute. Operators write `Source = Manual` onto the same `ModelAvailabilityHold` table (`PUT /api/model-availability/{kind}/{alias}`, alias `*` for kind-wide). Omitted `disabledUntil` on that PUT is still a Manual open-ended hold. Manual outranks AutoDetected: a later wall must not shorten a human `DisabledUntil` or demote `Source`. `delegate.ps1 -IgnoreModelDisabled` queues only; Start never ignores. CARD-0090 consumes that same `IsHeldAsync` as the chain walk's availability filter — it does not invent a second pause list. Pass `-Complexity Hard|Medium|Easy` to walk an ordered fallback; exhausted lists Block for a human instead of 409ing an orchestrator into a guess.
+- **Usage walls are per-model, not fleet-wide** (CARD-0022 / CARD-0309 / CARD-0335): a Fable 5 cap pauses `fable` on `ClaudeCode` and leaves Sonnet/Haiku/Grok running. Session-limit stubs (`You've hit your session limit · resets 6:10pm (Europe/London)`) pause that model until `ResetAt + 2 min` and schedule one same-session resume. Per-model caps (`You've reached your Fable 5 limit…`) write `DisabledUntil = now + Supervision:ApiErrorRecovery:ModelCapFallbackHoldHours` (default 6) and **never** the CARD-0072 30-minute `WallPrompt`. After the fallback expires, future dispatch is eligible again; if the provider still refuses, the next wall detection renews the hold with fresh evidence. Create/start of a held alias is **409 `model_disabled`** with the remaining aliases listed; already-queued work is skipped until the hold clears. `/usage-credits` is a spend/redeem action, not a readout — do not type it. A Fable AlwaysOn orchestrator restart is refused; do not silently reroute. Operators write `Source = Manual` onto the same `ModelAvailabilityHold` table (`PUT /api/model-availability/{kind}/{alias}`, alias `*` for kind-wide). Omitted `disabledUntil` on that PUT is still a Manual open-ended hold. Manual outranks AutoDetected: a later wall must not shorten a human `DisabledUntil` or demote `Source`. `scripts/antiphon delegate create --ignore-model-disabled` queues only; Start never ignores. CARD-0090 consumes that same `IsHeldAsync` as the chain walk's availability filter — it does not invent a second pause list. Pass `--complexity Hard|Medium|Easy` to walk an ordered fallback; exhausted lists Block for a human instead of 409ing an orchestrator into a guess.
 
 
 

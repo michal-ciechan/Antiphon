@@ -31,16 +31,16 @@ public class RepairSourceDocumentationTests
         // recovery flag), the recovery-versus-adoption distinction and the two owner pointers; the
         // complete recipe above stays at the owner.
         var bundle = File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"));
-        var bundleAt = bundle.IndexOf("For a failed -RepairSource owner", StringComparison.Ordinal);
+        var bundleAt = bundle.IndexOf("For a failed --repair-source owner", StringComparison.Ordinal);
         bundleAt.ShouldBeGreaterThanOrEqualTo(0);
         var bundleEnd = bundle.IndexOf("\nWhen you are working a board", bundleAt, StringComparison.Ordinal);
         bundleEnd.ShouldBeGreaterThan(bundleAt);
         var bundledRule = string.Join(" ", bundle[bundleAt..bundleEnd].Split((char[]?)null,
             StringSplitOptions.RemoveEmptyEntries));
-        bundledRule.ShouldContain("require owner-bound Clean Final/Full Review and -RecoverReviewedSource");
+        bundledRule.ShouldContain("require owner-bound Clean Final/Full Review and --recover-reviewed-source");
         bundledRule.ShouldContain("docs/orchestration-loop.md#repairsource-failed-owner-recovery");
-        bundledRule.ShouldContain("A -RepairSource task cannot be used with -FromTask.");
-        bundle.ShouldContain("docs/orchestration-loop.md#delegate-start-ref for exclusions and -FromTask adoption");
+        bundledRule.ShouldContain("A --repair-source task cannot be used with --from-task.");
+        bundle.ShouldContain("docs/orchestration-loop.md#delegate-start-ref for exclusions and --from-task adoption");
     }
 
     private static void AssertRecipe(string recipe)
@@ -49,11 +49,11 @@ public class RepairSourceDocumentationTests
         recipe.ShouldContain("subjectTaskId");
         recipe.ShouldContain("original Code/Worktree owner");
         recipe.ShouldContain("Clean Final/Full Review");
-        recipe.ShouldContain("-Land <owner-guid> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource");
+        recipe.ShouldContain("land <owner-guid> --expected-source-sha <full-sha> --review-evidence-id <review-evidence-id> --recover-reviewed-source");
         recipe.ShouldContain("Failed status");
-        recipe.ShouldContain("-StartRef");
-        recipe.ShouldContain("-FromTask");
-        recipe.ShouldContain("-RepairSource");
+        recipe.ShouldContain("--start-ref");
+        recipe.ShouldContain("--from-task");
+        recipe.ShouldContain("--repair-source");
     }
 
     [Test]
@@ -61,15 +61,15 @@ public class RepairSourceDocumentationTests
     {
         var root = FindRepoRoot();
         var orchestration = File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"));
-        orchestration.ShouldContain("-FromTask");
+        orchestration.ShouldContain("--from-task");
         orchestration.ShouldContain("adopt_source_lineage");
         orchestration.ShouldContain("repair_source_owner_diverged");
         File.ReadAllText(Path.Combine(root, "docs", "ops-http.md"))
             .ShouldContain("repair_source_owner_remote_ahead");
         File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"))
-            .ShouldContain("-FromTask");
+            .ShouldContain("--from-task");
         File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"))
-            .ShouldContain("-FromTask");
+            .ShouldContain("--from-task");
         File.ReadAllText(Path.Combine(root, "docs", "antiphon-api.md"))
             .ShouldContain("adoptFromTaskId");
     }
@@ -78,7 +78,7 @@ public class RepairSourceDocumentationTests
     {
         var root = FindRepoRoot();
         File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"))
-            .ShouldContain("-RepairSource");
+            .ShouldContain("--repair-source");
         File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"))
             .ShouldContain("repair_source_landing_owner_required");
         File.ReadAllText(Path.Combine(root, "docs", "ops-http.md"))
@@ -90,7 +90,7 @@ public class RepairSourceDocumentationTests
         File.ReadAllText(Path.Combine(root, "docs", "antiphon-api.md"))
             .ShouldContain("progressEvidence");
         File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"))
-            .ShouldContain("-RepairSource");
+            .ShouldContain("--repair-source");
         var code = File.ReadAllText(Path.Combine(root, "server", "Bundles", "stage-code.md"));
         var formatter = File.ReadAllText(Path.Combine(root, "server", "Application", "Core", "DelegationReportFormatter.cs"));
         (code.Contains("[antiphon-progress:") || formatter.Contains("[antiphon-progress:")).ShouldBeTrue();

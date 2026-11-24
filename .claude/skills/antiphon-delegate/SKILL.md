@@ -5,26 +5,28 @@ description: Hand a piece of work to another agent, at the model tier the work d
 
 # antiphon-delegate — hand work to another agent
 
-**Run it exactly like this** — `pwsh -NoProfile -File`, then the script path, then the arguments.
+**Run it exactly like this** — `scripts/antiphon delegate` (sh, Git Bash) or `scripts\antiphon.cmd delegate`
+(PowerShell, cmd), then the verb, then the flags. The command is `antiphon-scripts delegate`
+(`scripts/lib/Antiphon.Nightly/DelegateCli.cs` lists every verb and flag); it replaced `scripts/antiphon delegate`.
 
 > **The path is relative to your working directory — the repo root — NOT to this skill's folder.**
-> It is `scripts/delegate.ps1`. There is no copy inside `.claude/skills/`, so
-> `.claude/skills/antiphon-delegate/scripts/delegate.ps1` does not exist; pointing `-File` at it
-> makes PowerShell print its usage banner instead of running anything.
+> There is no copy inside `.claude/skills/`, so `.claude/skills/antiphon-delegate/scripts/antiphon` does not exist.
 
-The script is not directly executable, so a bare `./scripts/delegate.ps1` fails, and putting the
-arguments before `-File` makes PowerShell take them as its own.
+The verb comes first: `create` dispatches, then `status`, `land`, `reply`, `continue`, `refine`, `finding`,
+`flag`, `reroute`, `list-areas`, `worktree-health` and `cleanup-verification`. Flags are kebab case (`--role`,
+`--goal`, `--title`).
 
-```powershell
+```sh
 # a worker: one piece of work, reports back to you
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Title "add Fizz" -Goal "add Fizz(int) in Calc.cs, multiples of 3 -> 'Fizz'"
+scripts/antiphon delegate create --role Code --title "add Fizz" --goal "add Fizz(int) in Calc.cs, multiples of 3 -> 'Fizz'"
 
 # a sub-orchestrator: owns a chunk, decomposes it, runs its own agents
-pwsh -NoProfile -File scripts/delegate.ps1 -Orchestrator -Title "Postgres 18 upgrade" -Goal "get the Postgres 18 upgrade shipped"
+scripts/antiphon delegate create --orchestrator --title "Postgres 18 upgrade" --goal "get the Postgres 18 upgrade shipped"
 ```
 
-Quote every value that contains a space. If `pwsh` is not on PATH, use `powershell` — the script is
-ASCII-only and runs under either.
+Quote every value that contains a space. **A long or multi-line goal goes in a file**: `--goal-file <path>`
+(and `--message-file` for `reply`/`refine`, `--authority-file` for `--authority`). `scripts\antiphon.cmd` runs
+through cmd.exe, which cannot carry a line break and mangles `^ % & |` and inner quotes.
 
 Two decisions, in this order.
 
@@ -78,42 +80,40 @@ failure is a separate `Debug` task — don't ask haiku to work out why the build
 
 ## Stage recipes
 
-One `delegate.ps1` line per stage — kind-free (no `-Kind`/`-Level` unless you have a reason to
-state in `-Goal`; the server routes the kind from pins/chains/RolePolicy). Every stage dispatch's
+One `scripts/antiphon delegate` line per stage — kind-free (no `--kind`/`--level` unless you have a reason to
+state in `--goal`; the server routes the kind from pins/chains/RolePolicy). Every stage dispatch's
 brief must additionally carry: the **previous stage's `handoff:` line, verbatim** (the sentence the
 next brief is built from), its `artifact:` path, and — for a Plan dispatch on a `complexity:easy`
 card — the sentence "the test-design stage is folded into this dispatch; the `## Verification
-design` section is required." `-ExpectAbout` for Code is the ordinary V/R floor from the plan's
+design` section is required." `--expect-about` for Code is the ordinary V/R floor from the plan's
 `## Verification design` → `### Checkpoints` table — the sum of its `EstimatedMinutes` column, a time budget and not the `Min` execution counts — plus authoring
 time, not a guess (`feedback_estimate_as_verification_floor_plus_authoring`); the `### Cost` block
 states that same sum as its ordinary Code floor. A Code dispatch also carries the pointer line
 `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"`.
 
-```powershell
+```sh
 # Investigate — root cause only, no fix design
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Investigate -Card CARD-nnnn -Title "investigate <card>" -Worktree -Goal "<what to measure/reproduce>"
+scripts/antiphon delegate create --role Investigate --card CARD-nnnn --title "investigate <card>" --worktree --goal "<what to measure/reproduce>"
 
 # Plan — always dispatched; carries the prior Investigate's handoff verbatim if one ran
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Plan -Card CARD-nnnn -Title "plan <card>" -Worktree -Goal "<what to design>; handoff from investigate: '<verbatim>'; artifact: <path>"
+scripts/antiphon delegate create --role Plan --card CARD-nnnn --title "plan <card>" --worktree --goal "<what to design>; handoff from investigate: '<verbatim>'; artifact: <path>"
 
 # TestDesign — separate dispatch (hard/medium); read the landed plan doc first
-pwsh -NoProfile -File scripts/delegate.ps1 -Role TestDesign -Card CARD-nnnn -Title "verification design <card>" -Worktree -Goal "write ## Verification design for <plan artifact path>"
+scripts/antiphon delegate create --role TestDesign --card CARD-nnnn --title "verification design <card>" --worktree --goal "write ## Verification design for <plan artifact path>"
 
-# Code — runs the plan's ### Checkpoints table as a closed list; -ExpectAbout is the EstimatedMinutes sum + authoring
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <cp-estimated-minutes-sum+authoring> -Goal "execute <plan artifact path> and its verification section; checkpoints: <plan artifact path>@<full plan commit sha> section \"### Checkpoints\"; handoff from test-design/plan: '<verbatim>'"
+# Code — runs the plan's ### Checkpoints table as a closed list; --expect-about is the EstimatedMinutes sum + authoring
+scripts/antiphon delegate create --role Code --card CARD-nnnn --title "build <card>" --worktree --expect-about <cp-estimated-minutes-sum+authoring> --goal "execute <plan artifact path> and its verification section; checkpoints: <plan artifact path>@<full plan commit sha> section \"### Checkpoints\"; handoff from test-design/plan: '<verbatim>'"
 # The delegate runs the table once per committed slice group and waits (exit 75 means call wait again; do not end the turn while it is running):
 # dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md> --max-wait 570s
 # dotnet run --project tools/Antiphon.Checkpoints -- wait --latest --max-wait 570s
 # Review re-runs the claimed ordinary checks as one checkpoint-tool run of that same table before land.
 
 # Review -- ordinary pre-land review of the retained Code worktree
-$reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card <original-card-guid> -ReadOnly -Dir '<code-worktree>' -Title 'ordinary review' -Goal $reviewGoal
+scripts/antiphon delegate create --role Review --card <original-card-guid> --read-only --dir '<code-worktree>' --title 'ordinary review' --goal-file '<review-brief-file>'
 # Record linked companion, then land the original Code task and await confirmed O/L
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task-id>
+scripts/antiphon delegate land <original-code-task-id>
 # Mutation -- after confirmed publication and required deployment
-$mutationGoal = Get-Content -LiteralPath '<mutation-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card <verification-card-guid> -Worktree -SourceLanding <operation-guid> -Title 'post-land mutation' -ExpectAbout <pc-floor-plus-analysis> -Goal $mutationGoal
+scripts/antiphon delegate create --role Mutation --card <verification-card-guid> --worktree --source-landing <operation-guid> --title 'post-land mutation' --expect-about <pc-floor-plus-analysis> --goal-file '<mutation-brief-file>'
 ```
 
 **The handoff block (D2).** A stage-role report must close with, immediately above the
@@ -127,11 +127,11 @@ artifact: docs/<repo-relative path>.md   (optional)
 [antiphon-report:<id> done]
 ```
 
-This is delivered automatically in the stage's `ReportingContract` — do not retype it in `-Goal`.
+This is delivered automatically in the stage's `ReportingContract` — do not retype it in `--goal`.
 A missing block still settles, as `next=unmarked` on the completion header; that is the cue to send
 the same delegate back (§0 of the loop doc), never to read the diff instead of it.
 
-A clean fast-forward plus deploy is `Deploy` (and `Test` for the suites). `-Role Merge` is the
+A clean fast-forward plus deploy is `Deploy` (and `Test` for the suites). `--role Merge` is the
 conflict specialist the server already spawns; sending it a clean merge pays opus for haiku work.
 
 A sub-orchestrator defaults to `Plan` and never runs below opus.
@@ -140,42 +140,42 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 
 | | |
 |---|---|
-| `-Orchestrator` | make it a sub-orchestrator instead of a worker |
-| `-OnAgent <taskId>` | follow-up on the SAME agent that ran that task — it keeps its context. Use the short id from its report |
-| `-Agent <name>` | run this task on an existing standing agent by name, slug, or guid. The task queues while that agent is busy; you get the normal `[task … done]` note when it settles. Ambiguous or unknown references are refused 422, and so are pool delegates (that's `-OnAgent`'s job). Combined with `-OnAgent` is refused |
-| `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
-| `-Complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). When omitted on an ordinary Worker dispatch, a resolved row uses `Delegation:DefaultComplexity` (shipped Medium); an unset row falls back to RolePolicy. Explicit kind/level, standing-agent assignments, specialists, Orchestrator tasks and model-disable bypasses are excluded from default stamping; Required pins can override the row. Tests: `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path`, `The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled`. Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
-| `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
-| `-Worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
-| `-BaseTask <id>` | start a fresh card-bound Worktree at that same-card task's clean committed tip; accepts a GUID or unique short ID and retains the ordinary landing destination |
-| `-FreshWorktree` | deliberately start at the target and omit unlanded same-card history; exclusive with `-BaseTask` |
-| `-SourceLanding <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
-| `-RepairSource <owner-guid>` | CARD-0499. Attribute this Code Worktree repair to the original Code/Worktree landing owner. Isolated branch at the owner's SHA; Land is refused (`repair_source_landing_owner_required`). No merge target unless you pass the owner's branch explicitly |
-| `-FromTask <repair-guid>` / `-RecoverReviewedSource` | Land a separately reviewed `-StartRef` repair through its original owner with `-Land <owner> -FromTask <repair> -ExpectedSourceSha <sha> -ReviewEvidenceId <id>`; `-RecoverReviewedSource` instead recovers the owner's own reviewed branch. The Review must name the actual source as subject. |
-| `-CleanupVerification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |
-| `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
-| `-ReadOnly` | shared directory, but the brief says don't write |
-| `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
-| `-Scope "<areas>"` | what this task owns: area names from `antiphon.areas.json` and/or path globs, comma-separated. Two **Shared** tasks whose scopes intersect are serialised — the waiting one gets a visible `Held` event; a worktree on either side runs anyway with a `Warning`. `-ListAreas` prints the names |
-| `-Title "<text>"` | a 2–5 word label (max 80) for check headers, completion notes, and the board. Omitted, the Goal's first line is stored (clamped 300). Always pass it when `-Goal` is more than one short sentence |
-| `-Card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `-Title` |
-| `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
-| `-NoInheritEnv` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
-| `-Authority "<text>"` | the caller's own words for what this task is already authorised to do. Injected into the child's brief so it does not stop to ask for a go-ahead this already grants. Long text: `-AuthorityFile <path>` |
-| `-Continue <taskId>` | replay that standing authority as the answer to a Blocked-on-question task. One action; the child resumes and reports back |
-| `-Stage <name>` | which landing-step question this task answers: `Rebase`/`Verify`/`Cleanup`/`Review`/`FollowUp`/`Deploy` (CARD-0272). Omitted, the role maps: Review, Test→Verify, Merge→Rebase, Deploy; `-OnAgent` → FollowUp. Code and Plan never default. **Not** `-Role` (pipeline seat). A Debug titled "verify" is `-Stage Verify`. Unknown names 422 |
-| `-Finding <id> -Stage … -Found "…" / -Clean` | orchestrator override of a stage finding (rare: the delegate said clean and you acted). Writes an Orchestrator row that supersedes the latest for that (task, stage) |
-| `-NoCommit` | CARD-0527. Leave this Shared task's changes uncommitted at settle (`commitOnSettle=Never`). The only opt-out an instruction can carry; goal prose is an advisory. Project/global default is `Delegation:CommitOnSettle` (on). |
+| `--orchestrator` | make it a sub-orchestrator instead of a worker |
+| `--on-agent <taskId>` | follow-up on the SAME agent that ran that task — it keeps its context. Use the short id from its report |
+| `--agent <name>` | run this task on an existing standing agent by name, slug, or guid. The task queues while that agent is busy; you get the normal `[task … done]` note when it settles. Ambiguous or unknown references are refused 422, and so are pool delegates (that's `--on-agent`'s job). Combined with `--on-agent` is refused |
+| `--level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `--goal` |
+| `--complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). When omitted on an ordinary Worker dispatch, a resolved row uses `Delegation:DefaultComplexity` (shipped Medium); an unset row falls back to RolePolicy. Explicit kind/level, standing-agent assignments, specialists, Orchestrator tasks and model-disable bypasses are excluded from default stamping; Required pins can override the row. Tests: `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path`, `The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled`. Combined with `--kind` or `--level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `--refuse-if-exhausted` 409s instead. `reroute <id> --kind … --level …` is the explicit human pick |
+| `--dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
+| `--worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
+| `--base-task <id>` | start a fresh card-bound Worktree at that same-card task's clean committed tip; accepts a GUID or unique short ID and retains the ordinary landing destination |
+| `--fresh-worktree` | deliberately start at the target and omit unlanded same-card history; exclusive with `--base-task` |
+| `--source-landing <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
+| `--repair-source <owner-guid>` | CARD-0499. Attribute this Code Worktree repair to the original Code/Worktree landing owner. Isolated branch at the owner's SHA; Land is refused (`repair_source_landing_owner_required`). No merge target unless you pass the owner's branch explicitly |
+| `--from-task <repair-guid>` / `--recover-reviewed-source` | Land a separately reviewed `--start-ref` repair through its original owner with `land <owner> --from-task <repair> --expected-source-sha <sha> --review-evidence-id <id>`; `--recover-reviewed-source` instead recovers the owner's own reviewed branch. The Review must name the actual source as subject. |
+| `cleanup-verification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |
+| `--shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
+| `--read-only` | shared directory, but the brief says don't write |
+| `--allow-direct-edits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
+| `--scope "<areas>"` | what this task owns: area names from `antiphon.areas.json` and/or path globs, comma-separated. Two **Shared** tasks whose scopes intersect are serialised — the waiting one gets a visible `Held` event; a worktree on either side runs anyway with a `Warning`. `list-areas` prints the names |
+| `--title "<text>"` | a 2–5 word label (max 80) for check headers, completion notes, and the board. Omitted, the Goal's first line is stored (clamped 300). Always pass it when `--goal` is more than one short sentence |
+| `--card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `--title` |
+| `--expect-about <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
+| `--no-inherit-env` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
+| `--authority "<text>"` | the caller's own words for what this task is already authorised to do. Injected into the child's brief so it does not stop to ask for a go-ahead this already grants. Long text: `--authority-file <path>` |
+| `continue <taskId>` | replay that standing authority as the answer to a Blocked-on-question task. One action; the child resumes and reports back |
+| `--stage <name>` | which landing-step question this task answers: `Rebase`/`Verify`/`Cleanup`/`Review`/`FollowUp`/`Deploy` (CARD-0272). Omitted, the role maps: Review, Test→Verify, Merge→Rebase, Deploy; `--on-agent` → FollowUp. Code and Plan never default. **Not** `--role` (pipeline seat). A Debug titled "verify" is `--stage Verify`. Unknown names 422 |
+| `finding <id> --stage … --found "…" / --clean` | orchestrator override of a stage finding (rare: the delegate said clean and you acted). Writes an Orchestrator row that supersedes the latest for that (task, stage) |
+| `--no-commit` | CARD-0527. Leave this Shared task's changes uncommitted at settle (`commitOnSettle=Never`). The only opt-out an instruction can carry; goal prose is an advisory. Project/global default is `Delegation:CommitOnSettle` (on). |
 
-**LLM project routing follows the caller by default.** `delegate.ps1` forwards the live shell's
+**LLM project routing follows the caller by default.** `scripts/antiphon delegate` forwards the live shell's
 `X_LLM_PROJECT` and `X_LLM_KEY` into the child's inherited routing layer, because the server cannot
-see process-only values. An explicit `-EnvOverride` for either name wins and is not duplicated in
-that snapshot. Use `-NoInheritEnv` only when the child must not follow the current shell project;
+see process-only values. An explicit `--env-override` for either name wins and is not duplicated in
+that snapshot. Use `--no-inherit-env` only when the child must not follow the current shell project;
 server-side reconstruction from stored agent/task env remains available when nothing is forwarded.
 
 **Bind the card, and the card moves itself (CARD-0040).** A bound task drags its card to In Progress
 when it dispatches and to Review when it settles `Succeeded` with nothing else open — within 60 s,
-with `card-transitions` on the revision. Leading `-Title` with `CARD-nnnn` is enough; `-Card` is the
+with `card-transitions` on the revision. Leading `--title` with `CARD-nnnn` is enough; `--card` is the
 explicit form and is refused 422 if it names no card. Creation echoes `- bound to CARD-nnnn`, so
 check that line rather than discovering a mis-binding on the board a week later. A `Failed` task moves
 the card nowhere, and a move you make by hand is never overridden — the sweep only acts on evidence
@@ -183,52 +183,52 @@ newer than your last move. **Review → Done is still yours.**
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
 That default is only safe when it is the only write-capable worker in there. Settlement will commit
-this task's own footprint unless you pass `-NoCommit`. Decide explicitly, every
+this task's own footprint unless you pass `--no-commit`. Decide explicitly, every
 dispatch, don't just accept the default:
 
 - **Nothing else is currently active in the shared directory** → shared is fine.
-- **Anything else (worker or sub-orchestrator) is still running there** → pass `-Worktree`, even if
+- **Anything else (worker or sub-orchestrator) is still running there** → pass `--worktree`, even if
   the file scopes look unrelated. The collision isn't only "two agents touch the same file" — it's
   shared commit boundaries (`git add -A` from one agent can sweep up another's uncommitted work),
   shared build/test output, shared `git status`. Two Code workers editing disjoint files in the same
   checkout at the same time is still a collision risk.
 - **You want the change reviewable before it lands, or several delegates will genuinely touch the
-  same files** → `-Worktree` regardless of the above.
+  same files** → `--worktree` regardless of the above.
 
 (Live miss 2026-08-18: CARD-0054 slice 1 landed in the shared directory; a second, unrelated Code
 worker was then queued while it was still running, without stopping to ask this question first. Caught
-before either wrote anything wrong — fixed by giving the second task `-Worktree`. The checklist above
+before either wrote anything wrong — fixed by giving the second task `--worktree`. The checklist above
 is the fix, so the next dispatch doesn't rely on catching it by luck. Since CARD-0063 the server asks
 the same question itself: a second Shared task in a repo that already has one running is **held**,
 scope or no scope, and the `Held` event says so. `Delegation:SerialiseSharedWriters` turns that off
 for an operator who knows the pair is safe.)
 
-**Declare areas, not file lists.** `-Scope` takes a comma-separated list; each element is either an
+**Declare areas, not file lists.** `--scope` takes a comma-separated list; each element is either an
 **area name** from [`antiphon.areas.json`](../../../antiphon.areas.json) at the repo root
 (`delivery`, `schema`, `client`, `ops`, …) or a **path glob** (`server/Migrations/**`,
 `docs/setup.md`). Elements are compared one at a time, area names by exact match — so
 `card-reopen-cli` and `card-reopen-client` are two different things, and `delivery,docs/x.md`
-collides with `AGENTS.md,delivery`. Run `pwsh -File scripts/delegate.ps1 -ListAreas` to see the
+collides with `AGENTS.md,delivery`. Run `scripts/antiphon delegate list-areas` to see the
 names, and read the response the create prints: `will wait behind 3f2a1c…` means this task is queued
 behind that one, `overlaps 3f2a1c…` means it starts now and somebody owes a rebase. A name the map
 does not know is still accepted (it becomes a label that matches only itself) and earns a `Warning`
 event — it never refuses the launch. **An area is added when two tasks collide in it, named for the
 work, not the folder.**
 
-**A sub-orchestrator defaults to its own worktree** (or just its own `-Dir` when you point it
+**A sub-orchestrator defaults to its own worktree** (or just its own `--dir` when you point it
 elsewhere) — it fans out writers, so it must own something. Its workers land on ITS branch and it
-merges one level up when the subtree is done. Forcing `-Shared` is allowed but the server will warn:
+merges one level up when the subtree is done. Forcing `--shared` is allowed but the server will warn:
 its delegates and its caller can overwrite each other. Inside its worktree a PreToolUse hook refuses
-direct Edit/Write ("delegate this instead") — pass `-AllowDirectEdits` if it genuinely must write.
+direct Edit/Write ("delegate this instead") — pass `--allow-direct-edits` if it genuinely must write.
 
 ## Working across repos
 
 The directory is a property of the task, so one orchestrator can drive several repos — an agent per
 repo, each reporting back to you:
 
-```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Dir C:\src\am-service -Role Deploy -Goal "roll out the gateway build and confirm health"
-pwsh -NoProfile -File scripts/delegate.ps1 -Dir C:\src\antiphon -Orchestrator -Goal "make the client speak the new contract"
+```sh
+scripts/antiphon delegate create --dir C:\src\am-service --role Deploy --goal "roll out the gateway build and confirm health"
+scripts/antiphon delegate create --dir C:\src\antiphon --orchestrator --goal "make the client speak the new contract"
 ```
 
 A directory outside the configured allowed roots is refused — that is a guard, not a bug. Ask for
@@ -241,8 +241,8 @@ For the first five minutes it is reserved for YOUR run; after that it serves any
 directory, until it retires after an hour idle. Work that builds on a task's result should go back
 to that agent:
 
-```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -OnAgent 7f3a2b91 -Goal "now add the edge-case tests for what you just wrote"
+```sh
+scripts/antiphon delegate create --on-agent 7f3a2b91 --goal "now add the edge-case tests for what you just wrote"
 ```
 
 Unrelated new work needs nothing special — the pool handles it: an idle warm agent in the same
@@ -254,8 +254,8 @@ spawned only when none fits.
 A named agent is an **identity**, not a unit of work. Create it once (`POST /api/agents`), then
 dispatch every piece of work to it as a task:
 
-```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Agent gym-stat-dupmachine-plan -Role Plan -Card CARD-0029 -Goal "design the duplicate-machine detection pass"
+```sh
+scripts/antiphon delegate create --agent gym-stat-dupmachine-plan --role Plan --card CARD-0029 --goal "design the duplicate-machine detection pass"
 ```
 
 Why the task, and never a raw session message: work handed to a child over
@@ -268,16 +268,16 @@ Two pinned same-directory tasks are Shared writers and therefore serialised — 
 collision default, not a bug. For a standing child whose value is its cwd and context, sequential
 Shared dispatch is usually what you want; buy real parallelism explicitly:
 
-```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Agent gym-stat-setupmockups -Role Code -Worktree -Goal "build the setup mockups"
+```sh
+scripts/antiphon delegate create --agent gym-stat-setupmockups --role Code --worktree --goal "build the setup mockups"
 ```
 
-noting that a `-Worktree` task pinned to a standing agent runs in the worktree, not the agent's own
+noting that a `--worktree` task pinned to a standing agent runs in the worktree, not the agent's own
 directory.
 
 ## Check-ins while it runs
 
-A dispatched task with `-ExpectAbout` (or the 10-minute default) is checked on automatically. The
+A dispatched task with `--expect-about` (or the 10-minute default) is checked on automatically. The
 first check lands around the minute mark you declared; later ones back off along a Fibonacci ramp
 fixed from a 5-minute base — 5, 10, 15, 25, 40, 60, 60 … minutes, capped at 60 — for up to 10 checks,
 then it stops with a note saying so. Gaps are rounded to a human-readable number (nearest 5 below 30
@@ -298,29 +298,29 @@ It shows up in your session as a `[check <id> #n] ...` line, for example:
 if the task had finished.** The delegate's own report still arrives separately as
 `[task <id> done] ...` when the work actually completes — a check note is never that, never begins
 with `[task `, and never uses completion language. If a note says the check budget is spent, the
-task is still running, just no longer being watched on a schedule; ask `-Status <id>` if you want
+task is still running, just no longer being watched on a schedule; ask `status <id>` if you want
 to know where it stands.
 
-`-ExpectAbout` is a hint that schedules the first check, never a deadline — nothing about the task
+`--expect-about` is a hint that schedules the first check, never a deadline — nothing about the task
 fails, escalates or gets killed off it. Declare the honest duration: padding it just delays the
 first check, and it doesn't buy the delegate more time to run.
 
 ## Rules
 
 These are rules for YOU, the caller. The rules the *delegate* works under are delivered to it
-automatically — see "What the delegate is told" below; don't type them into `-Goal`.
+automatically — see "What the delegate is told" below; don't type them into `--goal`.
 
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
-- **Always pass `-Title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
-- **Write `-Goal` as an outcome, not a procedure.** The delegate decides how.
+- **Always pass `--title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
+- **Write `--goal` as an outcome, not a procedure.** The delegate decides how.
 - **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task; never Reply to a complete report Blocked only by runner sync, Reply only for a missing report and ask for the full report; verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
 - **A Review brief names its round** (at most three per subject): the round number, the previous reviewed SHA, the exact range (`<previous reviewed SHA>..<tip>`; round 1 the full candidate range) and the stringency (full; diff with round-1 defect closure; blockers only), and asks for `reviewRound:` and `reviewedRange:` lines in the review evidence block. After round 3 with a blocker, surface it to the operator instead of dispatching a fix: [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635).
-- **Put the state of today in `-Goal`, not the standing rules.** Known-red tests, what already
+- **Put the state of today in `--goal`, not the standing rules.** Known-red tests, what already
   landed, what is out of scope, which ports are taken — that is what only you know. The harness
   rules it already has.
 - **Don't poll — this rule is for the CALLER, not the delegate.** As the caller, the report is
   delivered into your session as `[task <id> done] ...` when it lands; end your turn and it will
-  reach you. The same applies to `-Land`: its outcome auto-delivers to the caller session via the
+  reach you. The same applies to `land`: its outcome auto-delivers to the caller session via the
   same `WhenIdle` mechanism, so wait for it rather than running a manual `GET /api/agent-tasks/{id}`
   poll loop, which only duplicates the delivery (CARD-0386). The delegate's side of this is the opposite and it is already in
   `server/Bundles/delegate-basics.md`: it settles when its turn ends, so it finishes the work in the
@@ -334,37 +334,37 @@ automatically — see "What the delegate is told" below; don't type them into `-
   > settlement fired on it. See `docs/superpowers/specs/2026-08-14-card-0046-settlement-final-message.md`
   > and CARD-0046. The guidance above is still worth scoping, but it was never the bug.
 - **A delegate that asks a question comes back blocked.** The `[task … blocked]` note carries
-  `reason:` / `asks:` / `authority:` / `next:`. If `authority:` names something, `-Continue` is
+  `reason:` / `asks:` / `authority:` / `next:`. If `authority:` names something, `continue` is
   the one action; otherwise answer it — don't take the work back:
-  ```powershell
-  pwsh -NoProfile -File scripts/delegate.ps1 -Continue <taskId>
-  pwsh -NoProfile -File scripts/delegate.ps1 -Reply <taskId> "yes, accept negatives"
+  ```sh
+  scripts/antiphon delegate continue <taskId>
+  scripts/antiphon delegate reply <taskId> "yes, accept negatives"
   ```
 - **A running delegate can be steered without cancelling it** (CARD-0062). A spec that sharpens
   mid-flight — a test failure you already diagnosed elsewhere, a file another agent owns, "skip
   slice 3" — is one sentence, not a cancel-and-redispatch:
-  ```powershell
-  pwsh -NoProfile -File scripts/delegate.ps1 -Refine <taskId> "the CARD-0050 failures are known-red; do not chase them"
+  ```sh
+  scripts/antiphon delegate refine <taskId> "the CARD-0050 failures are known-red; do not chase them"
   ```
   It lands between the delegate's turns (never mid-tool-call), its report will open by noting the
   refinement arrived, and the task's timeline records what you said. A still-queued task gets the
-  message folded into its brief instead; a Blocked one needs `-Reply`, not this.
+  message folded into its brief instead; a Blocked one needs `reply`, not this.
 
-  `-Interrupt` on that `-Refine` asks for one conditional Ctrl+C before the message is typed.
+  `--interrupt` on that `refine` asks for one conditional Ctrl+C before the message is typed.
   Ctrl+C stops the current turn or tool. It does not stop the session, and it can leave partial
   tool output or files. `interruptWritten` and `refinementDelivered` are separate: the key can be
-  written while delivery stays pending until a complete UserPrompt confirms the row. `-Refine`
-  without `-Interrupt` stays the non-interruptive path.
+  written while delivery stays pending until a complete UserPrompt confirms the row. `refine`
+  without `--interrupt` stays the non-interruptive path.
 - **Trust the full report.** A `[task … done]` note may be a distillation (CARD-0330) with a
   one-line pointer at the task. The evidence is still the settled task's own `Result` —
-  `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>` or the drawer Report section —
+  `scripts/antiphon delegate status <taskId>` or the drawer Report section —
   never the distilled bullets alone. Flag a bad summary with
-  `delegate.ps1 -Flag <id> -Verdict Lost|Noisy|Good [-Note]`.
-- **Need a task's full text later?** `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>`
-- **A stage run self-reports a finding line.** Review/Test/Merge/Deploy/`-OnAgent` get a stage by default; pass `-Stage` for a Debug/Docs/Custom dispatch that is actually a verify, cleanup, etc. The brief asks for `[antiphon-finding:<id> found\|clean]` on the line before the report token. If you judged differently from the delegate:
-  ```powershell
-  pwsh -NoProfile -File scripts/delegate.ps1 -Finding <taskId> -Stage Review -Found "hole in X; dispatched a fix"
-  pwsh -NoProfile -File scripts/delegate.ps1 -Finding <taskId> -Stage Review -Clean
+  `scripts/antiphon delegate flag <id> --verdict Lost|Noisy|Good [--note]`.
+- **Need a task's full text later?** `scripts/antiphon delegate status <taskId>`
+- **A stage run self-reports a finding line.** Review/Test/Merge/Deploy/`--on-agent` get a stage by default; pass `--stage` for a Debug/Docs/Custom dispatch that is actually a verify, cleanup, etc. The brief asks for `[antiphon-finding:<id> found\|clean]` on the line before the report token. If you judged differently from the delegate:
+  ```sh
+  scripts/antiphon delegate finding <taskId> --stage Review --found "hole in X; dispatched a fix"
+  scripts/antiphon delegate finding <taskId> --stage Review --clean
   ```
 
 ## What the delegate is told
@@ -389,7 +389,7 @@ is exactly what happened to the list this section replaced. To change how every 
 behaves, edit the bundle in a PR; a running delegate keeps what it launched with, and a warm pool
 agent until it retires (60 minutes idle).
 
-What is NOT in a bundle, and is therefore yours to say in `-Goal`: today's known-red tests, what has
+What is NOT in a bundle, and is therefore yours to say in `--goal`: today's known-red tests, what has
 already landed, what is out of scope, and anything else that is true this afternoon and false next
 month.
 
@@ -412,7 +412,7 @@ interruption and reconcile conflicting duplicates before dispatch. Missing ackno
 never authorize duplicate cards/tasks. The stable text key is discoverable, not DB uniqueness.
 Exclude these cards from fresh feature picking; never Spawn a card session for a companion.
 
-Order `delegate.ps1 -Land <original-code-task-id>`. Its correlated publication outcome starts
+Order `scripts/antiphon delegate land <original-code-task-id>`. Its correlated publication outcome starts
 the continuation, not a synthetic next-stage report. Only structured HasPublication for
 Landed, AlreadyPresent or LandedWithResidue qualifies. Queued land, task success, push exit,
 local advance, event prose and LandRefused do not. Record O (operation), L=VerifiedSourceSha
@@ -424,16 +424,14 @@ Update the same companion with O/L/R. Use a file-backed brief containing the Rev
 verbatim, full reports/plan, all PC IDs/variants, both card GUIDs, Code/Review task IDs,
 C/O/L/R, restart target for context and the persistent evidence root:
 
-```powershell
-$reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card <original-card-guid> -ReadOnly -Dir '<code-worktree>' -Title 'ordinary review' -Goal $reviewGoal
+```sh
+scripts/antiphon delegate create --role Review --card <original-card-guid> --read-only --dir '<code-worktree>' --title 'ordinary review' --goal-file '<review-brief-file>'
 # After Review and companion recording:
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task-id>
+scripts/antiphon delegate land <original-code-task-id>
 # After confirmed publication and required deployment:
-$mutationGoal = Get-Content -LiteralPath '<mutation-brief-file>' -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card <verification-card-guid> -Worktree -SourceLanding <operation-guid> -Title 'post-land mutation checks' -ExpectAbout <pc-floor-plus-analysis> -Goal $mutationGoal
+scripts/antiphon delegate create --role Mutation --card <verification-card-guid> --worktree --source-landing <operation-guid> --title 'post-land mutation checks' --expect-about <pc-floor-plus-analysis> --goal-file '<mutation-brief-file>'
 # After settlement, restoration and durable evidence:
-pwsh -NoProfile -File scripts/delegate.ps1 -CleanupVerification <mutation-task-id>
+scripts/antiphon delegate cleanup-verification <mutation-task-id>
 ```
 
 Use the same commissioning project and authorized repository. SourceLanding accepts only a
@@ -493,4 +491,4 @@ Only then commission the feature's own pending PCs. Never use a prose-only, Shar
 fallback. Preserve active PC commands: await and restore through their owner before adopting
 the new order, keep evidence at its tested SHA and rerun affected controls at the actual L.
 No pins/holds/quotas, historical reports, role ordinals or parser tokens change; `verify` still
-aliases Review and optional `-Stage Verify` remains outcome accounting.
+aliases Review and optional `--stage Verify` remains outcome accounting.

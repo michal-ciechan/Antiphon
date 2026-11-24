@@ -49,7 +49,10 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // Normalised body 11,494 of 11,500.
         // CARD-0569 replaces the opt-in -Worktree collision sentence with the worktree tool default.
         // Normalised body 11,472 of 11,500.
+        // Unit 28 of the 2026-11-22 ps1-to-C# plan: the delegate command replaced delegate.ps1, so the bundle names
+        // scripts/antiphon delegate and its kebab-case flags; two clauses are shorter to stay in the allocation.
+        // Normalised body 11,498 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("c1ee24b37dd9497ebe099045791dfcff2101b1a46191111540885161ad524b45", "orchestrator-approved-bytes");
+            .ShouldBe("2381adc9b95cb3aa2d53f863e6c57019a3d058a58e79814fc2929e679a06832f", "orchestrator-approved-bytes");
     }
 }

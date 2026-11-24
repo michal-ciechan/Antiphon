@@ -43,8 +43,8 @@ public sealed class PostLandMutationContractTests
         root.ShouldNotBeNull();
         var text = File.ReadAllText(Path.Combine(root.FullName, path));
         foreach (var contract in new[] { "post-land-verification:<original-code-task-guid>", "publication pending",
-                     "preserve existing", "HasPublication", "L=VerifiedSourceSha", "-SourceLanding <operation-guid>",
-                     "-CleanupVerification <mutation-task-id>", "same commissioning project", "including Blocked",
+                     "preserve existing", "HasPublication", "L=VerifiedSourceSha", "--source-landing <operation-guid>",
+                     "cleanup-verification <mutation-task-id>", "same commissioning project", "including Blocked",
                      "never PC-clean", "Failed/Canceled", "external executor", "NeedsDecision", "O2/L2",
                      "No force or recursive deletion", "health alone is insufficient" })
             text.ShouldContain(contract, Case.Insensitive);

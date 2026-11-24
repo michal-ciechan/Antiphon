@@ -19,7 +19,7 @@ defaults; omit kind/level for ordered fallback. The future Debug pair stays gate
 
 For runner-bound Worktree tasks, never ask the delegate to rebase, amend or force-push its task
 branch. It must advance the owned branch by fast-forward pushes. Land performs the target rebase;
-use a fresh task with `-StartRef` when a different base is needed. A confirmation-only step is a
+use a fresh task with `--start-ref` when a different base is needed. A confirmation-only step is a
 Review task, not a Code task requiring new attributed progress (CARD-0779).
 
 A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat. Answer it within the session or surface the missing decision before leaving; do not leave one overnight. At capacity, read GET /api/session-runners/{id}/slots: orphan=true is not a count of free seats; a live Blocked owner reads orphan=false with its park field. BlockedTaskParking:Enabled and TerminalRunnerSeatRelease:AutomaticEnabled default to false; do not count a live Blocked seat free until its release is confirmed. An Exited or Failed status, or absence from a listed catalogue, drops that seat. Parking never stops a Working session (CARD-1083).
@@ -65,7 +65,7 @@ For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-
 - **Concurrency is per-project.** The absolute cap (`concurrency_limit` 409) and each stage's
   `recommendedInFlight` are both scoped to the project the board belongs to — unrelated boards
   (other projects) never count against it.
-- **`-IgnoreConcurrencyLimit` only for `axis: absolute` with no same-stage occupant** in the 409's
+- **`--ignore-concurrency-limit` only for `axis: absolute` with no same-stage occupant** in the 409's
   `open` list. `axis: role`, or a listed occupant in the role you are dispatching: defer. The
   absolute axis wins the report when both caps trip, so read the list.
 - **File a card immediately** for any structural bug/defect found during Investigate or Review,
@@ -80,8 +80,8 @@ Every stage report ends with a `--- next stage ---` block naming `next:` and `ha
 exactly that stage next. Write the new goal file referencing the prior task's branch/commit and
 the handoff text — don't re-derive it by reading the report prose.
 
-Goal text always goes through a file (`Write` a scratchpad `.md`, then `Get-Content -Raw` into
-`-Goal`), never inline through Bash — long text with quotes/backticks/newlines gets mangled
+Goal text always goes through a file (`Write` a scratchpad `.md`, then pass it as
+`--goal-file <path>`), never inline through a shell — long text with quotes/backticks/newlines gets mangled
 otherwise.
 
 A brief that restates the build rules sends every direct build to the worktree's native default
@@ -106,8 +106,8 @@ Migration changes (`server/Migrations/**`) follow the operator rule (2026-11-07,
 A fresh `-Worktree` task works on its own recorded `WorktreeBranch`; git-common forbids switching
 branches, and a branch under Review is frozen. Do not tell a delegate to fetch or check out a
 sibling's branch. To continue a sibling's work, select the sibling's tip as the creation base:
-`-StartRef <full SHA>` (owner: Continuing a sibling's work (CARD-0613) in
-`docs/orchestration-loop.md`). Without `-StartRef`, dispatch selects the base from the card's kept
+`--start-ref <full SHA>` (owner: Continuing a sibling's work (CARD-0613) in
+`docs/orchestration-loop.md`). Without `--start-ref`, dispatch selects the base from the card's kept
 siblings; outcomes include continuing one, taking the target, refusing and holding. Tested cases are in the table
 below; read a refusal's code and message before re-dispatching. When a brief names
 a branch, copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or
@@ -115,9 +115,9 @@ a branch, copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<sta
 
 | Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
 |---|---|---|
-| `-StartRef` cuts a new branch at the requested base | `WorktreeStartRefDispatchTests.C613_StartRefCreatesOwnBranchAndBaseline` | for a branch, tag or full SHA: HEAD is the source SHA, the branch is the new task's own `feat/card-task-<id>`, and the source checkout keeps its branch and HEAD |
-| One clean same-card kept sibling, Review created without `-StartRef` | `AgentTaskDispatchBaseGuardTests.retained_real_create_continues_clean_same_card_tip` | the new checkout HEAD and `WorktreeBaseSha` equal the sibling SHA; master is unchanged |
-| Two divergent same-card kept siblings | `AgentTaskDispatchBaseGuardTests.retained_divergent_create_refuses_and_both_recovery_modes_work` | create is refused `worktree_base_ambiguous`, naming both tasks, `-BaseTask` and `-FreshWorktree`, and no task is added; with `WorktreeBaseTask` it continues the named sibling; with `FreshWorktree` it takes the target |
+| `--start-ref` cuts a new branch at the requested base | `WorktreeStartRefDispatchTests.C613_StartRefCreatesOwnBranchAndBaseline` | for a branch, tag or full SHA: HEAD is the source SHA, the branch is the new task's own `feat/card-task-<id>`, and the source checkout keeps its branch and HEAD |
+| One clean same-card kept sibling, Review created without `--start-ref` | `AgentTaskDispatchBaseGuardTests.retained_real_create_continues_clean_same_card_tip` | the new checkout HEAD and `WorktreeBaseSha` equal the sibling SHA; master is unchanged |
+| Two divergent same-card kept siblings | `AgentTaskDispatchBaseGuardTests.retained_divergent_create_refuses_and_both_recovery_modes_work` | create is refused `worktree_base_ambiguous`, naming both tasks, `--base-task` and `--fresh-worktree`, and no task is added; with `WorktreeBaseTask` it continues the named sibling; with `FreshWorktree` it takes the target |
 | A kept sibling whose land is in flight | `AgentTaskDispatchBaseGuardTests.a_sibling_land_in_flight_holds_until_the_base_contains_it` | the task stays Queued with no checkout and one Held event naming the sibling; after the land completes it dispatches |
 | Delegates receive the assigned-branch-only and frozen-Review rules | `InstructionBundleTests.C1213_GitContractPins` | Code, Review, Mutation and orchestrator compositions carry each git-common sentence once |
 
@@ -179,13 +179,13 @@ Owner: the Reviewed owner recovery table (CARD-0753) and
 [RepairSource succeeded; owner Failed](../../../docs/orchestration-loop.md#repairsource-failed-owner-recovery)
 in `docs/orchestration-loop.md`.
 
-1. Ordinary: `-Land <owner> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`, the Review's
+1. Ordinary: `land <owner> --expected-source-sha <sha> --review-evidence-id <evidence>`, the Review's
    `subjectTaskId` being the owner.
-2. The reviewed tip is on another task's branch (a `-StartRef` repair): `-Land <owner> -FromTask <source>
-   -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`, the Review's `subjectTaskId` being the source.
+2. The reviewed tip is on another task's branch (a `--start-ref` repair): `land <owner> --from-task <source>
+   --expected-source-sha <sha> --review-evidence-id <evidence>`, the Review's `subjectTaskId` being the source.
 3. The reviewed tip is on the owner's own branch and the owner settled Failed or Blocked: the
-   ordinary flags plus `-RecoverReviewedSource`. Use `-FromTask` or `-RecoverReviewedSource`, not both.
-4. A `-RepairSource` task is not a landing owner; its land is refused with
+   ordinary flags plus `--recover-reviewed-source`. Use `--from-task` or `--recover-reviewed-source`, not both.
+4. A `--repair-source` task is not a landing owner; its land is refused with
    `repair_source_landing_owner_required`, naming the owner recipe.
 5. A `Conflicted` outcome (master moved since the branch's base) usually auto-spawns a `Merge`-role
    task to resolve it — check for one (`role=Merge`, `status=Dispatched`) before manually retrying;
@@ -209,10 +209,10 @@ in `docs/orchestration-loop.md`.
 
 | Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
 |---|---|---|
-| A RepairSource task's land is refused and names the owner route | `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery` | 409 `repair_source_landing_owner_required`; the message names `-Land <owner>`, `subjectTaskId`, `-ExpectedSourceSha`, `-ReviewEvidenceId` and `-RecoverReviewedSource`; no land request is queued |
-| Adoption requires a Review of the source | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused `review_evidence_subject_mismatch`, naming `-FromTask <source>` |
+| A RepairSource task's land is refused and names the owner route | `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery` | 409 `repair_source_landing_owner_required`; the message names `land <owner>`, `subjectTaskId`, `--expected-source-sha`, `--review-evidence-id` and `--recover-reviewed-source`; no land request is queued |
+| Adoption requires a Review of the source | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused `review_evidence_subject_mismatch`, naming `--from-task <source>` |
 | A Failed owner lands its reviewed repaired tip | `RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip` | with `RecoverReviewedSource` and an owner-subject Review the request queues and completes with recovery mode `OwnerReviewedSource`, recording owner status Failed |
-| `-FromTask` with `-RecoverReviewedSource` is refused | not covered by a test | `AgentTaskLandService` refuses `recovery_source_ambiguous`; `delegate.ps1` refuses before the request |
+| `--from-task` with `--recover-reviewed-source` is refused | not covered by a test | `AgentTaskLandService` refuses `recovery_source_ambiguous`; `scripts/antiphon delegate` refuses before the request |
 
 ## 7. Mutation is post-land, throttled, and (as of CARD-0552) trackable
 

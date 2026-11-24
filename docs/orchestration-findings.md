@@ -253,7 +253,7 @@ structural single point of failure.
 
 ## 2026-08-22 — Reading a task's own manual status poll looks exactly like a duplicate delivery
 
-**What we learned:** the orchestrator calling `delegate.ps1 -Status <taskId>` on a task whose
+**What we learned:** the orchestrator calling `scripts/antiphon delegate status <taskId>` on a task whose
 completion note is still queued (`WhenIdle`, waiting for this session to go idle) reads the stored
 result straight from the database — a path completely separate from the queue delivery. Minutes
 later, once the caller session actually goes idle, the queue delivers that same text once, for the

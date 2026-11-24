@@ -205,8 +205,8 @@ ssh mc@server2 'c=$(docker ps -q --filter label=com.docker.compose.project=<proj
 
 Codex must never be exec'd as root in the server2 runner container: use uid 1654, because a root exec leaves root-owned names under `/state/codex/tmp` that the session user cannot remove (CARD-1174).
 
-Use `scripts/delegate.ps1 -Role Plan -Worktree -Runner <runner> -Card <sanctioned-canary-card>
--Goal <bounded-canary-goal>` for the canary, then `scripts/delegate.ps1 -Status <task-id>` to
+Use `scripts/antiphon delegate create --role Plan --worktree --runner <runner> --card <sanctioned-canary-card>
+--goal <bounded-canary-goal>` for the canary, then `scripts/antiphon delegate status <task-id>` to
 confirm it started, ran, and produced a report on the intended runner. If a canary cannot be
 sanctioned, stop before the next handoff. `runner-defaults` may still name `server2` throughout;
 the drain redirect, rather than a settings write, is the current scheduling switch.
@@ -573,7 +573,7 @@ PowerShell session, supply `-Manual -RetiredRunnerId server2-temp -ProjectId <id
 four temp-private names. `-Preview -Template` writes an unsigned
 `attestation-template.json` and never creates Ready. After explicit human authority,
 fill actor, authority reference, reason and UTC; delegated authority also needs
-`-AuthorityFile` with the exact operation, actor and authority reference. The
+`--authority-file` with the exact operation, actor and authority reference. The
 existing operator credential is required for both operator and delegate calls.
 `-Preview -AttestationFile <file>` (or `-DryRun`) runs the full read-only gate.
 For `-Apply`, use an Apply attestation bound to the completed Preview digest and

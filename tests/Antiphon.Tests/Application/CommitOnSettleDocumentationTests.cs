@@ -10,9 +10,9 @@ public sealed class CommitOnSettleDocumentationTests
     public void Docs_name_the_flag_the_endpoint_and_the_policy()
     {
         var root = DelegateScriptRunner.RepoRoot;
-        File.ReadAllText(Path.Combine(root, "AGENTS.md")).ShouldContain("-NoCommit");
+        File.ReadAllText(Path.Combine(root, "AGENTS.md")).ShouldContain("--no-commit");
         var skill = File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"));
-        skill.ShouldContain("-NoCommit");
+        skill.ShouldContain("--no-commit");
         skill.ShouldContain("Delegation:CommitOnSettle");
         var api = File.ReadAllText(Path.Combine(root, "docs", "antiphon-api.md"));
         api.ShouldContain("POST   /api/agent-tasks/{id}/commit");

@@ -431,7 +431,7 @@ public class AgentBundleAttachmentTests
             "A live Blocked child keeps its runner seat; Reply resumes work without freeing it.",
             customMessage: "c1083-orchestrator-seat");
         orchestratorCollapsed.ShouldContain(
-            "Use -Reply for a Blocked task; -Refine returns 409 there.",
+            "Use reply for a Blocked task; refine returns 409 there.",
             customMessage: "c1083-orchestrator-refine");
         withBoard.ShouldContain(planChecklist, customMessage: "c1083-board-plan");
 

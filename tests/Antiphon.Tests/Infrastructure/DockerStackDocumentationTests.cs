@@ -305,7 +305,7 @@ public sealed class DockerStackDocumentationTests
 
         var testing = Read("docs/testing-and-build.md");
         testing.ShouldContain("linux-cgroup-v1");
-        testing.ShouldContain("delegate.ps1 -Role Mutation -Runner server2");
+        testing.ShouldContain("scripts/antiphon delegate create --role Mutation --runner server2");
         testing.ShouldContain("provider_sign_in_required");
         testing.ShouldContain("restoration.json");
 
@@ -320,7 +320,7 @@ public sealed class DockerStackDocumentationTests
     {
         var text = Read("docs/orchestration-loop.md");
         text.ShouldContain("two supported Mutation producers");
-        text.ShouldContain("-Runner server2");
+        text.ShouldContain("--runner server2");
         text.ShouldContain("linux-cgroup-v1");
         // The fence that survives the new lane: the nested daemon is not an executor.
         text.ShouldContain("nested Docker daemon inside that runner is still never an executor");
@@ -379,7 +379,7 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("Runners:server2-temp");
         text.ShouldContain("AllowDelegatedTasks=true");
         text.ShouldContain("restart-apphost.ps1");
-        text.ShouldContain("delegate.ps1 -Runner server2");
+        text.ShouldContain("scripts/antiphon delegate create --runner server2");
         // The rule that caused CARD-0358: enablement runs from the main checkout, not a worktree.
         text.ShouldContain("never a worktree");
         text.ShouldContain("--ff-only");

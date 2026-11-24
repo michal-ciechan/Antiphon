@@ -51,7 +51,7 @@ These directions override the cited standing rules in
 2. **Arm three bounded watchers and re-arm about every 30 minutes.** Run each as a
    Monitor task with `timeout_ms: 1800000` in the orchestrator's
    Monitor facility (not a new native test task). Helpers finish before that timeout.
-   Monitor is a watcher facility, not a `delegate.ps1 -Role` value. If the current
+   Monitor is a watcher facility, not a `scripts/antiphon delegate create --role` value. If the current
    client has no Monitor facility, report that limitation rather than starting an
    unowned background process. Keep watcher state in an orchestrator-owned scratch
    directory outside the candidate, qualification state, and supervisor directories.
@@ -104,11 +104,10 @@ These directions override the cited standing rules in
    for this repair when Debug is full, subject to effective host/project limits.
    A failure in the same family as an in-flight Debug is a `-Refine` of that task,
    not a duplicate dispatch. Resolve the **current remote rc tip** and pass it as
-   `-StartRef <full-sha>`; a default master-based worktree can block an rc fixer.
+   `--start-ref <full-sha>`; a default master-based worktree can block an rc fixer.
 
-   ```powershell
-   $goal = Get-Content -LiteralPath '<fix-brief.md>' -Raw
-   pwsh -NoProfile -File scripts/delegate.ps1 -Role Debug -Kind Codex -Level High -Runner server2 -Worktree -StartRef '<current-rc-full-sha>' -Title 'rc failure: <family>' -Goal $goal
+   ```sh
+   scripts/antiphon delegate create --role Debug --kind Codex --level High --runner server2 --worktree --start-ref '<current-rc-full-sha>' --title 'rc failure: <family>' --goal-file '<fix-brief.md>'
    ```
 
    Require RED FIRST through a deterministic Linux witness feeding Windows-shaped
@@ -175,7 +174,7 @@ These directions override the cited standing rules in
    must be re-created after CARD-1610's. The rc-to-master merge-commit exception and
    target publication mechanics belong to `docs/release-gates.md`; do not substitute
    an ordinary rebase land for that merge. For a task using managed landing, the
-   orchestrator orders `delegate.ps1 -Land <task> -ExpectedSourceSha <full-sha>`.
+   orchestrator orders `scripts/antiphon delegate land <task> --expected-source-sha <full-sha>`.
    Confirm publication only with `git ls-remote origin refs/heads/<target>`;
    `watch-master --from <sha>` signals master movement, which must be matched to
    the intended landed SHA (an unrelated advance alone proves nothing).

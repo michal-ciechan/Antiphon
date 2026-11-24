@@ -91,7 +91,7 @@ server does not know, keeps it open. The rows persist: the hold is computed at r
 | The pipeline snapshot (`GET /api/agent-tasks/pipeline`) leaves a held Backlog card out of `investigateBacklog.total` and `items`, counts it in `blocked` and lists it in `blockedItems` with `blockedBy` (open blocker identifiers, top five by rank). A card whose only blocker is `Done` stays a candidate. With nothing held, `blocked` and `blockedItems` are omitted from the JSON. | `AgentTaskPipelineStatusTests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` | `total` 2 with items cards 1 and 3; `blocked` 1; the single blocked item is card 2 with `blockedBy` `["CARD-0001"]`; an empty backlog DTO serializes as `{"total":0,"items":[]}`. |
 | The expectation watchdog's `EligibleBacklog` (`ExpectationSnapshotReader.ReadBacklogAsync`) leaves a held Backlog card out; a `Done` or archived blocker releases it; the open blocker itself stays eligible. | `ExpectationSnapshotTests.C100_Backlog_candidates_exclude_cards_with_an_open_blocker` | `EligibleBacklog` 4; the candidate ids are the eligible card, the two released cards and the open blocker. |
 | The resolved set is archived, `Done` or `Canceled`; reopening or unarchiving the blocker re-opens it without a write. | `CardRelationshipApiTests.Resolved_follows_the_blockers_Done_Canceled_archived_state_and_reopen` | The API `resolved` flag over each transition. A `Canceled` blocker and a reopened blocker at pickup are not covered by a test. |
-| Explicit task creation (`POST /api/agent-tasks`, `delegate.ps1`) on a held card is not refused (OD-3); the hold is a pull rule only. | none | Not covered by a test; no task-creation line changed. |
+| Explicit task creation (`POST /api/agent-tasks`, `scripts/antiphon delegate`) on a held card is not refused (OD-3); the hold is a pull rule only. | none | Not covered by a test; no task-creation line changed. |
 | A held card raises no attention item and pushes nothing to an external tracker. | none | Not covered by a test. |
 
 ## Importance and urgency
@@ -118,7 +118,7 @@ column a human last dragged it to.
 
 **The link.** `AgentTask.CardId`, resolved once at creation in this order:
 
-1. an explicit `-Card` on `scripts/delegate.ps1` (`CARD-0040`, `card-40`, `#40`, `40`, or the guid) —
+1. an explicit `--card` on `scripts/antiphon delegate` (`CARD-0040`, `card-40`, `#40`, `40`, or the guid) —
    a value that resolves to no card is a **422**, never a silent no-binding;
 2. the parent task's card, the followed-up task's card, or the conflicted task's card for an
    auto-spawned Merge task;
@@ -221,7 +221,7 @@ A `StageOutcome` finding row (CARD-0272 — a land op's own Rebase/Verify/Cleanu
 
 ### Preserved Gotcha #57
 
-- **A card with a bound task moves ITSELF, and a manual move after the evidence is respected** (CARD-0040): `AgentTask.CardId` is resolved once at creation - an explicit `delegate.ps1 -Card CARD-nnnn` (422 if it names no card), else the parent/follow-up/merge task's card, else the FIRST `CARD-nnnn` in the title, never for `Role = Check`. Identifiers are unique per BOARD, so resolution walks caller-boards -> repo-matched project boards -> every board and binds only on uniqueness inside the scope that answers; ambiguity binds nothing and warns. `CardWorkTransitionService` then sweeps every 60 s over durable rows only (never session or transcript liveness): Backlog/Review -> **In Progress** while a bound task is Dispatched/Working/Blocked, Backlog/InProgress -> **Review** when the newest evidence is a `Succeeded` settle and nothing is open, and `Failed`/`Canceled` move nothing. **The edge trigger is the whole safety property**: it acts only when the evidence is NEWER than the card's last Move/Reopen row (`UpdatedAt` with no history), so a human who drags a card back is never overridden, and the sweep is idempotent because its own row becomes the new last word. The actor is `card-transitions`, NOT `system` (that name means the RunAttempt/card-spawn path), and the two paths never collide because the sweep skips every card with `OwnerSessionId != null`. An automated move calls `ApplyColumnMove` directly like `ReopenAsync`, so it cannot spawn; it sets `AutoDispatchHeldAt` on an active landing (CARD-0087) and dequeues on Review (CARD-0001). A card In Progress past `CardTransitions:StaleAfterDays` (7) with nothing open and nothing live becomes a Warning `AttentionKind.CardStalled` row - detection only, nothing un-stalls it (CARD-0153's rule). **Review -> Done is NOT automated** — CARD-0039 shipped the ranking axes; closing a card is still a human move. Pinned by `AgentTaskCardBindingTests`, `CardWorkTransitionServiceTests`, `AttentionServiceTests`.
+- **A card with a bound task moves ITSELF, and a manual move after the evidence is respected** (CARD-0040): `AgentTask.CardId` is resolved once at creation - an explicit `scripts/antiphon delegate create --card CARD-nnnn` (422 if it names no card), else the parent/follow-up/merge task's card, else the FIRST `CARD-nnnn` in the title, never for `Role = Check`. Identifiers are unique per BOARD, so resolution walks caller-boards -> repo-matched project boards -> every board and binds only on uniqueness inside the scope that answers; ambiguity binds nothing and warns. `CardWorkTransitionService` then sweeps every 60 s over durable rows only (never session or transcript liveness): Backlog/Review -> **In Progress** while a bound task is Dispatched/Working/Blocked, Backlog/InProgress -> **Review** when the newest evidence is a `Succeeded` settle and nothing is open, and `Failed`/`Canceled` move nothing. **The edge trigger is the whole safety property**: it acts only when the evidence is NEWER than the card's last Move/Reopen row (`UpdatedAt` with no history), so a human who drags a card back is never overridden, and the sweep is idempotent because its own row becomes the new last word. The actor is `card-transitions`, NOT `system` (that name means the RunAttempt/card-spawn path), and the two paths never collide because the sweep skips every card with `OwnerSessionId != null`. An automated move calls `ApplyColumnMove` directly like `ReopenAsync`, so it cannot spawn; it sets `AutoDispatchHeldAt` on an active landing (CARD-0087) and dequeues on Review (CARD-0001). A card In Progress past `CardTransitions:StaleAfterDays` (7) with nothing open and nothing live becomes a Warning `AttentionKind.CardStalled` row - detection only, nothing un-stalls it (CARD-0153's rule). **Review -> Done is NOT automated** — CARD-0039 shipped the ranking axes; closing a card is still a human move. Pinned by `AgentTaskCardBindingTests`, `CardWorkTransitionServiceTests`, `AttentionServiceTests`.
 <!-- CARD-0254 preserved source ends -->
 
 ## Card-file publication (CARD-0408)
@@ -245,14 +245,14 @@ Canceled/superseded verification records reason and successor, never Done/Clean.
 on existing move/reopen revisions and attention, never an alert sink.
 
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
-`delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
+`scripts/antiphon delegate create --source-landing`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.
 `GET /api/agent-tasks/{id}` exposes sourceLandingOperationId, sourceLandingSha and
 verificationCleanupResidue. Same-O Queued/Dispatched/Working/Blocked admission is serialized;
 conflict includes the existing task ID. Provider/capacity refusal retains the companion; no fallback.
 
 `POST /api/agent-tasks/{id}/cleanup-verification` (no body), or
-`delegate.ps1 -CleanupVerification <task-id>`, irreversibly seals terminal sourced task admission
+`scripts/antiphon delegate cleanup-verification <task-id>`, irreversibly seals terminal sourced task admission
 and freezes all accepted generations. It imports exact runner-owned receipt bytes before guarded
 removal, returns separate directory/registration/branch facts and residue, and never kills or lands.
 Missing/unsupported/unknown custody, live owners, dirty source or unknown outputs retain the tree.

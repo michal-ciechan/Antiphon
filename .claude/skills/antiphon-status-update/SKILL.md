@@ -16,14 +16,14 @@ Run from the repository root. General operating rules and dispatch mechanics liv
    Run `scripts/antiphon status-snapshot --project-id <id>` (`scripts\antiphon.cmd` on
    Windows; add `--json` for machine output). Omit `--project-id` only when the pipeline
    identifies one project; ambiguity requires an explicit id. API URL and authentication use
-   `ANTIPHON_API` and the task-token header, as the card command and delegate.ps1 do.
+   `ANTIPHON_API` and the task-token header, as the card command and scripts/antiphon delegate do.
    The command is read-only, reads remote refs without fetching, and marks cached
    history. Exit 2 means partial facts: preserve every `UNVERIFIED`/`errors` entry.
 2. Check `GET /api/agent-tasks/pipeline?projectId=<id>` for stages in flight,
    queued, blocked, effective limits, hosts and remaining seats. Check
    `GET /api/session-runners/<runner>/slots` for occupied seats and orphan ghosts.
    Runner seats/hosts are fleet facts even on a project-scoped pipeline.
-3. Run `pwsh -NoProfile -File scripts/delegate.ps1 -Status <8hex>` for every
+3. Run `scripts/antiphon delegate status <8hex>` for every
    relevant task, including finished/failed tasks known from the previous update.
    Read state, session activity, and parsed `next=`/`next:` and `handoff:` lines.
    Pull transcript progress before declaring healthy or stalled. Use

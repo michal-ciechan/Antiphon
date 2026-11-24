@@ -218,12 +218,12 @@ command-by-command example is the post-cut activation runbook
    ssh mc@server2 'c=$(docker ps -q --filter label=com.docker.compose.project=antiphon-runner-temp --filter label=com.docker.compose.service=session-runner); test -n "$c" && docker exec -u 1654:1654 -e HOME=/home/app -e CODEX_HOME=/state/codex "$c" codex --version'
    ```
 
-   Require `codex-cli <new>`. Then a sanctioned Plan canary `-Runner server2-temp -NoCommit`.
+   Require `codex-cli <new>`. Then a sanctioned Plan canary `--runner server2-temp --no-commit`.
 7. `… -Phase drain-old -WaitIdleMinutes 240`. `OldRunnerStillBusy` at 240 minutes is a report, not
    permission; the four-hour cap allows releasing the remaining **server2** seats only
    (`scripts\antiphon.cmd runner-slots release`, see the gate table).
 8. `… -Phase redeploy-old` only when server2 `sessions`, `runnerSessions`, `queuedTasks` are zero.
-9. Smoke server2 the same way (project `antiphon-runner`), a Plan canary `-Runner server2 -NoCommit`,
+9. Smoke server2 the same way (project `antiphon-runner`), a Plan canary `--runner server2 --no-commit`,
    then `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`.
 10. `… -Phase drain-temp -WaitIdleMinutes 240`.
 11. `… -Phase retire-temp -DryRun`, then immediately the enabled apply with that preview's token
@@ -294,9 +294,9 @@ Two canaries, then one real-work task. Each is a sanctioned spend of one launch.
 
 ```powershell
 # Ladder: no -Model. High resolves through ForCodex.
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Custom -Kind Codex -Level High -Runner server2 -NoCommit -Title '<ver> ladder canary' -Goal 'Reply with one line ready. Do not edit files.'
+scripts/antiphon delegate create --role Custom --kind Codex --level High --runner server2 --no-commit --title '<ver> ladder canary' --goal 'Reply with one line ready. Do not edit files.'
 # Explicit slug.
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Custom -Kind Codex -Level High -Model <new slug> -Runner server2 -NoCommit -Title '<ver> explicit canary' -Goal 'Reply with one line ready. Do not edit files.'
+scripts/antiphon delegate create --role Custom --kind Codex --level High --model <new slug> --runner server2 --no-commit --title '<ver> explicit canary' --goal 'Reply with one line ready. Do not edit files.'
 ```
 
 Then a real-work canary with a checkable answer, for example a goal asking for `git rev-parse HEAD`,
@@ -304,7 +304,7 @@ the `git log -1 --format=%s` subject, and one arithmetic result. Compare each an
 
 Confirm, for every canary:
 
-- `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>` reaches a report; the task record's
+- `scripts/antiphon delegate status <taskId>` reaches a report; the task record's
   `requestedModelAlias` is the explicit slug (null for the ladder canary).
 - `GET /api/sessions/<sessionId>/transcript?since=0` has a `UserPrompt` (the delivery verdict).
 - The model in the Codex rollout file inside the runner container (session files only; do not

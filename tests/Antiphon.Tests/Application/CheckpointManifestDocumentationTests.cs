@@ -111,7 +111,7 @@ public sealed class CheckpointManifestDocumentationTests
     {
         var skill = ReadCollapsed(".claude", "skills", "antiphon-delegate", "SKILL.md");
         skill.ShouldContain("checkpoints: <plan artifact path>@<full plan commit sha> section", Case.Insensitive);
-        skill.ShouldContain("-ExpectAbout <cp-estimated-minutes-sum+authoring>", Case.Insensitive);
+        skill.ShouldContain("--expect-about <cp-estimated-minutes-sum+authoring>", Case.Insensitive);
 
         var loop = ReadCollapsed("docs", "orchestration-loop.md");
         loop.ShouldContain("sum of its", Case.Insensitive);

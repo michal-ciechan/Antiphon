@@ -9,8 +9,8 @@ unless the command genuinely can't do it. These are the shapes that bite either 
   stored full text and follows every page. A capped list or summary preview cannot prove absence;
   a failed or changed enumeration cannot establish "no duplicate".
 
-- An **external** ChatGPT/Codex caller dispatches with `delegate.ps1 -Capability <name>` (the name,
-  never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit
+- An **external** ChatGPT/Codex caller dispatches with `scripts/antiphon delegate create --capability <name>` (the name,
+  never a secret). While Claude is held, pass `--kind Codex` on Worker/stage work. Do not edit
   `Delegation:AllowedRoots`. Operator issue is `scripts\antiphon.cmd capability issue` (Windows).
 
 - Address cards as `CARD-0051`, `card-51`, `#51`, `51`, or a guid; use `--board` to scope identifiers.

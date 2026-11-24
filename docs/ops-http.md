@@ -64,13 +64,13 @@ is in [antiphon-api.md](antiphon-api.md#4-the-session-runners-own-api-internal).
 
 ### ChatGPT / Codex as an external orchestrator (CARD-0398)
 
-Run `delegate.ps1 -Capability <name> …` from the approved checkout (add `-Kind Codex` while Claude is held). Do not read capability files, do not dump env looking for tokens, do not edit `Delegation:AllowedRoots`. Reports land on the bound card; poll `delegate.ps1 -Status <id>` or the card thread.
+Run `scripts/antiphon delegate create --capability <name> …` from the approved checkout (add `--kind Codex` while Claude is held). Do not read capability files, do not dump env looking for tokens, do not edit `Delegation:AllowedRoots`. Reports land on the bound card; poll `scripts/antiphon delegate status <id>` or the card thread.
 
 The operator issues the capability on Windows with `scripts\antiphon.cmd capability issue --name <n> --roots <checkout>`. That command writes a DPAPI blob and prints the name and store path — never the token; off Windows issue and rotate refuse before any request. `-Orchestrator -Kind Codex` stays 422. Codex remote control stays `409 remote_control_refused`. A Claude usage hold still `409 model_disabled` unless the caller passed `-Kind Codex`; quota-exhausted is `409 subscription_quota_low`. The complementary fallback is a named Codex AlwaysOn plus `POST /api/sessions/{id}/messages` — still do not widen `AllowedRoots`.
 
 ### Claude held
 
-While Claude aliases are on a usage hold, a capability caller that wants to keep dispatching must pass `-Kind Codex` (Worker or stage role, not Orchestrator). Default kind is still ClaudeCode and still 409s. The complementary path is the named Codex AlwaysOn session token (kind-blind `MayDelegate`). Neither path edits `Delegation:AllowedRoots`.
+While Claude aliases are on a usage hold, a capability caller that wants to keep dispatching must pass `--kind Codex` (Worker or stage role, not Orchestrator). Default kind is still ClaudeCode and still 409s. The complementary path is the named Codex AlwaysOn session token (kind-blind `MayDelegate`). Neither path edits `Delegation:AllowedRoots`.
 
 ## The jobs you have
 
@@ -139,14 +139,14 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 
 | Header | Stored label |
 |---|---|
-| `delegate.ps1` | `delegate.ps1` |
+| `scripts/antiphon delegate` | `scripts/antiphon delegate` |
 | `status-snapshot.ps1` | `status-snapshot.ps1` |
 | `checkpoint-task.ps1` | `checkpoint-task.ps1` |
 | `card.ps1` | `card.ps1` |
 | `board-watch` | `board-watch` |
 | `useAgentTask` | `useagenttask` |
 
-`scripts/delegate.ps1`, `scripts/checkpoint-task.ps1` and the `card` and `status-snapshot` commands (`scripts/antiphon card` and `scripts/antiphon status-snapshot`, which kept the `card.ps1` and `status-snapshot.ps1` labels of the scripts they replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
+`scripts/antiphon delegate`, `scripts/checkpoint-task.ps1` and the `card` and `status-snapshot` commands (`scripts/antiphon card` and `scripts/antiphon status-snapshot`, which kept the `card.ps1` and `status-snapshot.ps1` labels of the scripts they replaced) send their row on every server call. `scripts/lib/antiphon-caller.ps1` and its compiled reading (`Antiphon.Nightly.AntiphonCaller`) refuse any other value and do not copy it into the header or the error. `board-watch` is registered and has no script. The client `useAgentTask` drawer does not send the header.
 
 | Need | Method | Path |
 |---|---|---|
@@ -195,13 +195,13 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `scripts/antiphon card diagnose CARD-nnnn` (`--no-wait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
 | Diagnoses ledger / stats | GET | `/api/diagnoses?cardId=` (newest first), `/api/diagnoses/stats?since=` |
 | Distillations ledger / stats (CARD-0330) | GET | `/api/distillations?since=&outcome=&feedback=&limit=`, `/api/distillations/stats?since=` — `scripts/distiller.ps1 -Stats` / `-List [-Flagged]` |
-| Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `delegate.ps1 -Flag <id> -Verdict Lost\|Noisy\|Good [-Note]` |
+| Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `scripts/antiphon delegate flag <id> --verdict Lost\|Noisy\|Good [--note]` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
 | What needs a human (fleet-global) | GET | `/api/attention` — fleet-global across every board; there is no board filter. Optional `?minSeverity=` (CARD-1085) is omitted for the unfiltered feed. Info, Warning, Error, and Critical match case-insensitively and return only rows at or above that floor. Empty, whitespace, numeric, and unknown values are 400 problem+json (`bad_request`). `kindCounts` counts every kind before the floor. `LandOutcomeUnconfirmed` is the newest unconfirmed receipt per task, evidence prefixed `receipts=N` (an unconfirmed receipt stays until it confirms). `LandLegacyUnverified` is one row per task. A historical receipt (`Landed`, `AlreadyPresent`, `LandedWithResidue`, or `LandingCleanup`, no land request) is omitted when that newest event's notification is confirmed, when `ReplyTo` is None, or when the task is Succeeded or Canceled and that newest receipt event's `At` is at least 24h before the read (`At` is the event time, not `CompletedAt`). An unresolved `LandRefused` never ages out, at any task status. `ReplyTo` None omits it. The row's representative is the refusal when both groups are eligible, and it is the `LandRefused` event when the refusal is the only eligible group. When both groups are eligible, the other events are evidence lines: the receipts sentence, then up to three newest other events, then `N more` when more remain. The refusal is resolved when its own notification is confirmed, a later outcome receipt for that task is confirmed, or a later event records publication Landed or AlreadyPresent. `RecentCriticalIncident` stays one row per agent and kind; evidence shows up to three newest messages, then `N more` when more remain. `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. Its `evidence` ends with the per-class wait ledger for the current queue stint, summed from the task's `Held` rows (CARD-0672 D-3): `leaseWait=Ns; prepWait=Ns; runnerWait=Ns; capWait=Ns; otherWait=Ns; class=<dominant>`, and `holdClass` is that dominant class (`lease`, `remoteprep`, `runner`, `cap`, `scope`, `agent`, `landing`, `routing`, `other`), so land-lease starvation reads apart from runner capacity. The dispatcher's `HeldAged` rows carry the same fields after `occupants=`. `CompactionContinuationStalled` (CARD-0079) is one open Check compaction episode; `ConditionKey` `compaction-continuation:{id:N}`. |
 | Runner and journal alarms | GET | `/api/attention` — `RunnerUnavailable` is one raised outage per runner, keyed `runner-unavailable:{runnerId}` after `Alarms:RunnerGraceSeconds` (180 default). `RepositoryChildJournalStale` is one row per fenced Git common directory, keyed `journal-stale:{commonDirectoryKey}`, with each stale record and the manual recovery command in `evidence`. The loop inspects on startup, a fence signal, and every `Alarms:SweepMinutes` (15 default); `Alarms:JournalStaleMinutes` (5 default) sets the stale-record age. `Alarms:RunnerDrainMaxMinutes` (30 default, at most 10080 = 7 days; CARD-1666, CARD-1671) is how long a draining runner that is offline stays excluded from `RunnerUnavailable`; the loop also wakes when a drain passes it. A retired runner is excluded without a bound. `Alarms:Enabled` and `Alarms:JournalEnabled` gate the loop and journal inspection respectively (both default true). Both rows clear when the source state clears. |
 | Seat occupancy (CARD-1079) | GET | `/api/attention` — three detection-only kinds, phone-home hosts only (the local host is samples, not seat rows). `SeatIdle` (57) is a seat that occupies capacity while its task is not Dispatched or Working, keyed `seat-idle:{runnerId}:{sessionId:N}`, Warning at `Attention:SeatIdleWarningMinutes` (30) and Error at `Attention:SeatIdleErrorMinutes` (180). Evidence `age=` is minutes (`age=30min`). `OccupancyDivergence` (58) is one row per host, keyed `occupancy-divergence:{hostId}`, for `inFlight` minus Dispatched/Working when at least one idle seat is behind that gap, on the same ages. `SlotOrphan` (59) is an immediate Warning for an occupying `orphan=true` slot, keyed `slot-orphan:{runnerId}:{sessionId:N}`. A live Blocked owner is not an orphan; it is a `SeatIdle` row from the warning age, and seat evidence carries `park=` (`none`, or the park state and reason). `Attention:SeatWatchEnabled` defaults true; false is the rollback (the sampler writes nothing and these three kinds are omitted). Nothing here stops, kills, releases or dispatches. |
 | Runner seat release and park sync (CARD-1065) | GET | `/api/attention` — `SessionDisagreement` keyed `runner-seat-release:{releaseId}` while a release is open or its park sync is pending or held. Evidence carries the park id, sync state, source SHA and reason, and omits report and answer text. Task detail `parkSync` is set when that attempt's sync state is not `NotRequired`. `BlockedTaskParking:Enabled` defaults to false and `ReclaimExisting` defaults to false. `ReclaimIntervalSeconds` defaults to 120. ReclaimHeldBackoffSeconds defaults to 600. `TerminalRunnerSeatRelease:AutomaticEnabled` defaults to false. New publication and Blocked release require Enabled plus automatic release. Legacy discovery additionally requires ReclaimExisting. Disabling does not delete a publication receipt. Nothing here stops a Working session. |
-| Settlement sync debt (CARD-1082) | GET | `/api/agent-tasks/{id}` exposes syncDebt (id, state, sourceSha, confirmedSha, reasonCode, attempts, nextAttemptAt, sourceReadyAt) for the current attempt's debt row. Pending is never Confirmed. progressEvidence.remoteSync.state Pending with no syncDebt is the progress-blocked case for a correlated report: the progress read, not the lease, blocked the task; repair what the handoff names, then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). Bind-refusal recovery has no correlated report, so its lease-contention result stays Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion report that settles it (CARD-1805). GET /api/attention adds SessionDisagreement keyed settlement-sync-debt: for Held debt and for Pending debt older than the threshold. The stale headline is desktop sync still pending (lease contention). Delegation:RunnerSyncDebtOnSettlement defaults to true. The only debt-creating reason is runner_sync_lease_busy. The succeeded caller line says synced later. RunnerSyncDebtAttentionMinutes defaults to 30. delegate.ps1 status prints the Pending origin line and a Desktop sync debt line. Held debt other than `settlement_sync_attempts_exhausted` is re-checked hourly and stays Held, so that re-check does not clear its attention row. A debt held `settlement_sync_attempts_exhausted` is re-checked hourly by reading the desktop worktree HEAD; when that HEAD is the recorded source the row becomes Ready and the attention warning clears. |
+| Settlement sync debt (CARD-1082) | GET | `/api/agent-tasks/{id}` exposes syncDebt (id, state, sourceSha, confirmedSha, reasonCode, attempts, nextAttemptAt, sourceReadyAt) for the current attempt's debt row. Pending is never Confirmed. progressEvidence.remoteSync.state Pending with no syncDebt is the progress-blocked case for a correlated report: the progress read, not the lease, blocked the task; repair what the handoff names, then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). Bind-refusal recovery has no correlated report, so its lease-contention result stays Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion report that settles it (CARD-1805). GET /api/attention adds SessionDisagreement keyed settlement-sync-debt: for Held debt and for Pending debt older than the threshold. The stale headline is desktop sync still pending (lease contention). Delegation:RunnerSyncDebtOnSettlement defaults to true. The only debt-creating reason is runner_sync_lease_busy. The succeeded caller line says synced later. RunnerSyncDebtAttentionMinutes defaults to 30. scripts/antiphon delegate status prints the Pending origin line and a Desktop sync debt line. Held debt other than `settlement_sync_attempts_exhausted` is re-checked hourly and stays Held, so that re-check does not clear its attention row. A debt held `settlement_sync_attempts_exhausted` is re-checked hourly by reading the desktop worktree HEAD; when that HEAD is the recorded source the row becomes Ready and the attention warning clears. |
 | Delegated work | GET | `/api/agent-tasks?projectId=` — always `{ scope, items, excluded }`. An omitted `projectId`/`boardId` is the whole fleet (`scope` null). `unscoped=exclude|include|only` (default exclude when a scope id is present). Unknown list keys are `400 unknown_query_parameter`. `/summary` takes the same scope. `/pipeline` without a query stays fleet-wide and adds `concurrencyScopes`, `runners` and `runnerDefaults` (CARD-0881). `?projectId=<guid>` and `?unscoped=true` are mutually exclusive; an unknown project is 404 and a bad or conflicting scope is 422. Host summaries stay fleet totals. | 
 | Dispatch concurrency (CARD-0505) | GET/PUT | `/api/dispatch-concurrency` and `/api/projects/{projectId}/dispatch-concurrency`, plus `/revisions`. `scripts/antiphon dispatch-concurrency` get/history/set/clear. A PUT replaces one scope and requires `expectedRevision`, `overrides`, and a reason. Clear sends `{}`. A 409 is not retried. UI: Settings → Concurrency, `/settings?tab=concurrency` (`&project=<id>` for one project, `C506 V15 project-deeplink`; CARD-0506, [orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). |
 | Effective dispatch settings (CARD-0881) | GET | `/api/agent-tasks/pipeline?projectId=<guid>` (or `?unscoped=true`) is the one read before dispatch. `concurrencyScopes[0]` is that scope's effective policy with sources (`default` = imported seed, `global`/`project` = runtime overrides) and `occupancy` (`open`, `parallel`, `queued`, `parallelRemaining`, `queuedRemaining` per scope and per role); `hosts[]` carries `effectiveLimit`, `configured`, `declared`, `source` (`budget`/`config`/`runner`), `inFlight` and `remaining` (max(0, effectiveLimit − inFlight), null when unknown); `runners` is the `GET /api/session-runners` body; `runnerDefaults` is the `GET /api/runner-defaults` body (null before the first import). `hosts`, `runners` and `runnerDefaults` are fleet facts on every read. A snapshot, not a reservation: a later create can still 409. |
@@ -220,11 +220,11 @@ Registered `X-Antiphon-Caller` labels (CARD-2004). The header is trimmed and low
 | Worktree residue run | GET | `/api/agent-tasks/worktree-residue/runs/{runId}?page=` — durable candidate page. A daily (non-preview) run's page omits `Held` candidates whose verdict is unchanged since the previous daily run (CARD-1446 D-5); the run's `candidates`/`held` counters still count them, and a preview lists every row. |
 | Release a settled worktree | POST | `/api/agent-tasks/{id}/worktree-retirement` `{ expectedTaskRevision, sourceSha, reportDigest?, noFurtherWorkspaceUse: true, reason, handoffDispositions? }`. Records release; does not delete. Child task tokens cannot release siblings. |
 | Revoke a release | DELETE | `/api/agent-tasks/{id}/worktree-retirement/{retirementId}` — refused after claim or deletion intent. |
-| Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land/v2` (CARD-0495; same body and handler as `/land`) — `{ expectedSourceSha: string, reviewEvidenceId?: guid, verify?: string }` — 202 `{ status: "queued" \| "requeued" }`. `GET /api/version` advertises `capabilities: ["land-v2"]` with the build SHA. `delegate.ps1 -Land` requires that exact marker (case-sensitive) and a full 40/64-hex SHA, then POSTs only `/land/v2`; missing marker/SHA, 404 version, or timeout is exit 1 with zero POSTs. A 404/405 on `/land/v2` is a loud compatibility failure, never a retry to `/land`. Fresh work requires a full 40- or 64-hex `expectedSourceSha` (422 `expected_source_sha_required` if omitted; 422 `expected_source_sha_invalid` if abbreviated). Optional `reviewEvidenceId` must name a clean Review row whose subject/SHA/ref/repository match (409 otherwise). A pending request cannot change SHA, evidence or filter (409 `land_request_identity_conflict`). 409 `land_running` means a land is running in this server now. Read `Landed` / `AlreadyPresent` / `LandedWithResidue` / `LandRefused` and the structured `landing` / `landRequest` / `reviewEvidence` on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`, approved original vs verified SHAs. Re-POST of identical pending fields preserves identity; omitted resume fields inherit stored approval. Schema 3 never moves the local target before publication; a schema-2 row (pre-2026-09-25) may have. Legacy `/land` remains for old clients on an upgraded server. |
-| Land onto a known-broken target (CARD-1995) | POST | `/api/agent-tasks/{id}/land/v2` with `ignoreKnownBrokenTarget: true` added to the land body; `delegate.ps1 -Land <task> -ExpectedSourceSha <sha> -IgnoreKnownBrokenTarget`. A land is refused `target_build_broken` without a build when, within `Landing:KnownBrokenTargetMaxAgeMinutes` (default 30, measured from the failed land's last write), a land build of the same target SHA (`TargetBeforeSha`, the target tip before the land) failed with `CS` compiler errors in projects that land's own diff did not change, no later build of that SHA passed or reached tests, and this diff changes none of those projects, the projects they reference (transitively), or a build input (`*.props`, `*.targets`, `*.rsp`, `*.sln*`, `global.json`, `nuget.config`, `.editorconfig`, `*.globalconfig`). A failure the failing land's own diff could have caused, an `MSB` error, or a project that cannot be read records nothing. The refusal detail names the failing operation, task, projects and age, then both overrides, then the saved output; a refused land records nothing, so it never renews the record. The flag clears every recorded broken target when the request is accepted (`LandRequested` detail `ignoreKnownBrokenTarget (cleared N)`), so the land builds. `Landing:RefuseKnownBrokenTarget=false` (default true) or `Landing:ForceVerificationBuild` turns the refusal off for every land. |
-| Recover a reviewed Code landing owner | POST | `/api/agent-tasks/{owner}/land/v2` — `{ expectedSourceSha: full-sha, reviewEvidenceId: guid, recoverReviewedSource: true }` for its own pushed branch, or `{ expectedSourceSha: full-sha, reviewEvidenceId: guid, adoptFromTaskId: guid }` for a same-card Code/Worktree task's pushed branch. `delegate.ps1 -Land <owner> -ExpectedSourceSha <sha> -ReviewEvidenceId <guid> -RecoverReviewedSource` or `-FromTask <task-id>` sends this body only to `/land/v2`. The source Review must be Clean Final/Full, current, exact SHA/ref/repository, and not superseded. Owner may be Succeeded, Blocked or Failed; Canceled and repair-source land targets refuse. A NeedsResolution request is superseded with a new row; a live Queued/Held/Running request and an unconfirmed publication are not bypassed. Status and receipt expose `recoveryMode`, `recoverySourceTaskId`, `recoverySourceFullRef`, reviewed SHA, original owner status, owner remote before/after and superseded request ID. Adoption is leased, pinned and uses source `--force-with-lease`; target publication retains its ordinary guard. |
+| Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land/v2` (CARD-0495; same body and handler as `/land`) — `{ expectedSourceSha: string, reviewEvidenceId?: guid, verify?: string }` — 202 `{ status: "queued" \| "requeued" }`. `GET /api/version` advertises `capabilities: ["land-v2"]` with the build SHA. `scripts/antiphon delegate land` requires that exact marker (case-sensitive) and a full 40/64-hex SHA, then POSTs only `/land/v2`; missing marker/SHA, 404 version, or timeout is exit 1 with zero POSTs. A 404/405 on `/land/v2` is a loud compatibility failure, never a retry to `/land`. Fresh work requires a full 40- or 64-hex `expectedSourceSha` (422 `expected_source_sha_required` if omitted; 422 `expected_source_sha_invalid` if abbreviated). Optional `reviewEvidenceId` must name a clean Review row whose subject/SHA/ref/repository match (409 otherwise). A pending request cannot change SHA, evidence or filter (409 `land_request_identity_conflict`). 409 `land_running` means a land is running in this server now. Read `Landed` / `AlreadyPresent` / `LandedWithResidue` / `LandRefused` and the structured `landing` / `landRequest` / `reviewEvidence` on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`, approved original vs verified SHAs. Re-POST of identical pending fields preserves identity; omitted resume fields inherit stored approval. Schema 3 never moves the local target before publication; a schema-2 row (pre-2026-09-25) may have. Legacy `/land` remains for old clients on an upgraded server. |
+| Land onto a known-broken target (CARD-1995) | POST | `/api/agent-tasks/{id}/land/v2` with `ignoreKnownBrokenTarget: true` added to the land body; `scripts/antiphon delegate land <task> --expected-source-sha <sha> --ignore-known-broken-target`. A land is refused `target_build_broken` without a build when, within `Landing:KnownBrokenTargetMaxAgeMinutes` (default 30, measured from the failed land's last write), a land build of the same target SHA (`TargetBeforeSha`, the target tip before the land) failed with `CS` compiler errors in projects that land's own diff did not change, no later build of that SHA passed or reached tests, and this diff changes none of those projects, the projects they reference (transitively), or a build input (`*.props`, `*.targets`, `*.rsp`, `*.sln*`, `global.json`, `nuget.config`, `.editorconfig`, `*.globalconfig`). A failure the failing land's own diff could have caused, an `MSB` error, or a project that cannot be read records nothing. The refusal detail names the failing operation, task, projects and age, then both overrides, then the saved output; a refused land records nothing, so it never renews the record. The flag clears every recorded broken target when the request is accepted (`LandRequested` detail `ignoreKnownBrokenTarget (cleared N)`), so the land builds. `Landing:RefuseKnownBrokenTarget=false` (default true) or `Landing:ForceVerificationBuild` turns the refusal off for every land. |
+| Recover a reviewed Code landing owner | POST | `/api/agent-tasks/{owner}/land/v2` — `{ expectedSourceSha: full-sha, reviewEvidenceId: guid, recoverReviewedSource: true }` for its own pushed branch, or `{ expectedSourceSha: full-sha, reviewEvidenceId: guid, adoptFromTaskId: guid }` for a same-card Code/Worktree task's pushed branch. `scripts/antiphon delegate land <owner> --expected-source-sha <sha> --review-evidence-id <guid> --recover-reviewed-source` or `--from-task <task-id>` sends this body only to `/land/v2`. The source Review must be Clean Final/Full, current, exact SHA/ref/repository, and not superseded. Owner may be Succeeded, Blocked or Failed; Canceled and repair-source land targets refuse. A NeedsResolution request is superseded with a new row; a live Queued/Held/Running request and an unconfirmed publication are not bypassed. Status and receipt expose `recoveryMode`, `recoverySourceTaskId`, `recoverySourceFullRef`, reviewed SHA, original owner status, owner remote before/after and superseded request ID. Adoption is leased, pinned and uses source `--force-with-lease`; target publication retains its ordinary guard. |
 
-| Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean`. |
+| Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `scripts/antiphon delegate finding <id> --stage … --found "…"` / `--clean`. |
 | Per-stage hit rate vs. cost (CARD-0272) | GET | `/api/stage-outcomes` (`since`, `until`, `stage`, `cardId`, `latestOnly` default true) — rows plus a per-stage summary (runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per finding, server seconds). `scripts/antiphon stage-value-report` prints it as a table. |
 | Host build slots (CARD-0589) | GET | `:17204/build-slots` (desktop; server2: `http://127.0.0.1:8080/build-slots` inside the runner container): budget, occupancy, live memory vs floor, leases with `holderAlive`, FIFO waiters. `GET .../build-slots/metrics` (CARD-1489): read-only 3-hour grant/release/reap/refusal counts and wait/held statistics; on server2 poll `ANTIPHON_BUILD_SLOTS_URL` (the shared broker). `POST`/`DELETE :17204/build-slots[/{leaseId}]` are for `scripts/run-checkpoint.ps1`, `scripts/build-slot.ps1` and the land verifier, never by hand; a `BUILD SLOT unleased` line in a report means the runner did not answer. Owner: [testing-and-build.md](testing-and-build.md) Build slots |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` (CARD-0514: snapshot may include `acceptedStartedAt`; automatic RC uses `POST :17204/sessions/{id}/conditional-input` when `/capabilities` lists `conditionalMaintenanceInputV1`, never raw `/input`) |
@@ -664,7 +664,7 @@ agent (CARD-0221). A stalled session is a detection and decision state, never an
 
 Review/files, tracker sync, workflows, gates, channels, settings and delegation routes are in
 [antiphon-api.md](antiphon-api.md), which also explains why there is no OpenAPI document.
-Delegation is `scripts/delegate.ps1` ([orchestration-loop.md](orchestration-loop.md)); card writes
+Delegation is `scripts/antiphon delegate` ([orchestration-loop.md](orchestration-loop.md)); card writes
 are `scripts/antiphon card`. There is deliberately **no `scripts/agents.ps1` wrapper** (CARD-0296): this
 surface is almost all GET, and the one write that bites must go through the message queue rather
 than a script that could quietly reimplement it. If turning an agent name into a guid keeps
@@ -716,7 +716,7 @@ reconciliation disagreement, source SHAs, `sourceRefusalReason`, terminal failur
 metadata (`sourceDiagnosticCommand`, `sourceDiagnosticExitCode`, `sourceDiagnosticCode`,
 `sourceDiagnosticExceptionType`). Inspection metadata is a generated command/exit/code, never
 captured stderr. POST land returns additive `requestId` and `notification`.
-Repeated inactive pending requests preserve age and identity. `delegate.ps1 -Status`
+Repeated inactive pending requests preserve age and identity. `scripts/antiphon delegate status`
 prints delegate, land, candidate/refusal/execution-failure/inspection, publication/cleanup,
 `Landing reason:` from the operation, and receipt separately. A land hold's `Reason:` line
 is `holdReasonCode; holder …; holdDetail` — including `git_index_lock_stale` /
@@ -744,7 +744,7 @@ Canceled/superseded verification records reason and successor, never Done/Clean.
 on existing move/reopen revisions and attention, never an alert sink.
 
 `POST /api/agent-tasks` accepts optional `repairSourceTaskId` (full GUID), exposed by
-`delegate.ps1 -RepairSource`. Only a fresh Worker/Code/Worktree task may carry it. The owner must
+`scripts/antiphon delegate create --repair-source`. Only a fresh Worker/Code/Worktree task may carry it. The owner must
 be an authorized Code/Worktree task in the same project and git common directory.
 `GET /api/agent-tasks/{id}` exposes `repairSourceTaskId` and `progressEvidence`
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
@@ -754,12 +754,12 @@ Final/Full Review and explicit owner self recovery; the exact command and public
 checks are in [RepairSource succeeded; owner Failed](orchestration-loop.md#repairsource-failed-owner-recovery).
 Dispatch refuses a `repairSourceTaskId` whose desktop owner ref is behind origin with
 `repair_source_owner_remote_ahead`, or diverged with `repair_source_owner_diverged`. Its failure
-reason gives both SHAs and directs a fresh `-Worktree -StartRef <remote-sha>` task to the reviewed
-`-Land <owner> -FromTask <repair>` adoption route. An unreachable origin leaves the desktop base
+reason gives both SHAs and directs a fresh `--worktree --start-ref <remote-sha>` task to the reviewed
+`land <owner> --from-task <repair>` adoption route. An unreachable origin leaves the desktop base
 in place and emits an `owner remote unobserved` warning.
 
 `POST /api/agent-tasks` accepts optional `worktreeBaseRequestedRef` (CARD-0613), exposed by
-`delegate.ps1 -StartRef`. It is the commit-ish the task's OWN fresh worktree branch is cut at:
+`scripts/antiphon delegate create --start-ref`. It is the commit-ish the task's OWN fresh worktree branch is cut at:
 a branch, a remote-tracking ref, a commit tag or a SHA that the server's repository can already
 resolve locally, or a full 40/64-hex SHA only origin has (no remote URL is accepted) - prefer a
 full SHA for a reproducible continuation. CARD-0666: a full SHA missing locally is fetched from
@@ -794,7 +794,7 @@ actual `worktreeBaseTaskId`, `worktreeBaseBranch`, `worktreeBaseSha` and source 
 detail and the creation event. A pending sibling land continues to hold dispatch.
 
 Same-card base inspection skips Git for non-Succeeded rows unless a row has a pending land
-request or was explicitly selected with `-BaseTask`. It reads branch tips and target-contained
+request or was explicitly selected with `--base-task`. It reads branch tips and target-contained
 branches in batches, then checks checkout safety only for tips that can win. The default
 inspection budget is 5 seconds. If dispatch cannot finish an Auto inspection, it blocks a
 Review or a task whose create preview selected a source; the block names the previewed
@@ -802,7 +802,7 @@ source and explicit retry flags. A fresh Code task previewed at the target retai
 target fallback.
 
 Review-evidence land 409 details name the evidence ID, recorded subject/ref/SHA, required
-owner or adoption source/ref/SHA, and the fitting `-FromTask` or `-RecoverReviewedSource`
+owner or adoption source/ref/SHA, and the fitting `--from-task` or `--recover-reviewed-source`
 shape. The same detail appears in asynchronous refusal status. A non-Code Worktree task
 that settles without pushed progress succeeds with a caller-visible `progress=none` warning
 that names the reason, ref and last confirmed tip when available.
@@ -819,7 +819,7 @@ nothing else - it never merges the branch back, and landing stays the explicit `
 CARD-0544 (dormant: `InterimVerification:Enabled=false`, every card `FullOnly`): `POST /api/agent-tasks`
 accepts optional `verificationRound` (`Final` | `Interim`), `verificationSubjectTaskId`,
 `verificationBaselineOutcomeId` and `verificationSelection` (`artifactPath`, `artifactCommitSha`,
-`section`); `delegate.ps1 -VerificationRound/-VerificationSubject/-VerificationBaselineOutcome/-VerificationSelectionFile`.
+`section`); `scripts/antiphon delegate create --verification-round/--verification-subject/--verification-baseline-outcome/--verification-selection-file`.
 New Code/Review tasks carry profile v1 (Final unless Interim is requested and admitted). Interim
 admission refuses 409 with `verification_round_role`, `verification_round_invalid`,
 `verification_interim_disallowed`, `verification_baseline_invalid`, `verification_selection_invalid`,
@@ -832,13 +832,13 @@ approves a land. `GET /api/agent-tasks/{id}` exposes `verification` (version, ro
 baseline and reviewed SHA, selection, final-review pending, owner latch, hold reason, readiness time);
 stage outcomes expose `verificationProfileVersion`, `commissionedRound` and `ordinaryScopeCompleted`.
 Review evidence and stage-outcome reads also expose nullable `reviewedSourceClean`. A clean
-Review finding may supply it explicitly with `delegate.ps1 -ReviewedSourceClean`; omission
+Review finding may supply it explicitly with `scripts/antiphon delegate finding --reviewed-source-clean`; omission
 stays null. Evidence-backed land refuses false/null with `review_evidence_source_not_clean`,
 including unpublished resume. Check checkpoint `source.json` or schema-2 `report.json` with
 `scripts/validate-checkpoint-receipt.ps1` before Review declares true.
 
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
-`delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
+`scripts/antiphon delegate create --source-landing`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.
 `GET /api/agent-tasks/{id}` exposes sourceLandingOperationId, sourceLandingSha,
 verificationCleanupResidue, verificationCleanupSealId, verificationExecutionRevision,
@@ -848,7 +848,7 @@ Same-O Queued/Dispatched/Working/Blocked admission is serialized;
 conflict includes the existing task ID. Provider/capacity refusal retains the companion; no fallback.
 
 `POST /api/agent-tasks/{id}/cleanup-verification` (no body), or
-`delegate.ps1 -CleanupVerification <task-id>`, irreversibly seals terminal sourced task admission
+`scripts/antiphon delegate cleanup-verification <task-id>`, irreversibly seals terminal sourced task admission
 and freezes all accepted generations. It imports exact runner-owned receipt bytes before guarded
 removal, returns separate directory/registration/branch facts and residue, and never kills or lands.
 Missing/unsupported/unknown custody, live owners, dirty source or unknown outputs retain the tree.
@@ -879,7 +879,7 @@ a column move or invent a dispatch timestamp.
 
 Track the returned task instead of resubmitting the work or inventing a provider
 fallback. The approved list can recover the same task on its frozen host and
-platform. Explicit `refuseIfExhausted: true` (delegate.ps1 `-RefuseIfExhausted`)
+platform. Explicit `refuseIfExhausted: true` (scripts/antiphon delegate `--refuse-if-exhausted`)
 retains 409 `routing_exhausted` with no task inserted. Single-candidate holds, pin
 conflicts and independent placement failures, including no eligible required-OS
 host, retain their existing refusals. `runner_platform_unavailable` still means
@@ -983,7 +983,7 @@ A declared budget is a create-time field. `POST /api/agent-tasks` accepts
 `ceilingMinutes` (1..720) with `ceilingReason` (1..1000 characters, no control
 characters). A reason without minutes, or any value outside those bounds, is 422
 before any side effect. The created response echoes `requestedCeilingMinutes`.
-`delegate.ps1 -CeilingMinutes 600 -CeilingReason "long review"` checks the same
+`scripts/antiphon delegate create --ceiling-minutes 600 --ceiling-reason "long review"` checks the same
 rule locally (`ceiling_invalid:`, exit 2) and warns `ceiling_unconfirmed` when an
 older server does not echo the value. Follow-ups and children never inherit a
 ceiling. Retry keeps the requested value and re-resolves at the next dispatch.
@@ -991,19 +991,19 @@ ceiling. Retry keeps the requested value and re-resolves at the next dispatch.
 `GET /api/agent-tasks/{id}` always carries `ceilingBudget` (requested, resolved,
 source, next bound, cap 720). `ceilingHold` is present while a Working task is
 held at its ceiling, and `failedSession` is present while a Failed task still has
-a session. `delegate.ps1 -Status <id>` prints `Ceiling:`, `Ceiling hold:`,
+a session. `scripts/antiphon delegate status <id>` prints `Ceiling:`, `Ceiling hold:`,
 `Phase:`, then `Decide:` (or the final-hold guidance at 720 minutes), and
 `Seat:` with the server's own summary. It never claims a seat is held unless the
 server says so.
 
 Answer a hold with a typed decision, never an ordinary reply:
-`delegate.ps1 -Reply <id> -CeilingAction Continue|Extend -EpisodeId <episode>
-[-ExtendMinutes 1..720]`. The body is exactly `ceilingAction`, `episodeId` and
+`scripts/antiphon delegate reply <id> --ceiling-action Continue|Extend --episode-id <episode>
+[--extend-minutes 1..720]`. The body is exactly `ceilingAction`, `episodeId` and
 optional `extendMinutes`, with no `origin`, `message` or `round`. The decision
 is recorded and the session continues; nothing is typed into it. A moved episode
 is 409 `ceiling_episode_stale`: run `-Status` again. At the final 720-minute hold,
-Continue and Extend refuse. An operator may add `-OperatorExtend -ExtendMinutes
-1..240 -CeilingReason "..."`. That reads the owner-only token through
+Continue and Extend refuse. An operator may add `--operator-extend --extend-minutes
+1..240 --ceiling-reason "..."`. That reads the owner-only token through
 `scripts/lib/runner-operator-token.ps1` (`ANTIPHON_OPERATOR_TOKEN_FILE`) for that
 one request and fails closed with `operator_token_unavailable:` before any
 request. Otherwise use `POST /api/agent-tasks/{id}/cancel`. A hold is never

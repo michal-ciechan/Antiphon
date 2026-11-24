@@ -80,7 +80,7 @@ an already committed claim or Starting session after a save failure (CARD-1301).
 | 4 | Inherited caller env | task `InheritedLaunchEnvJson` (CARD-0260: snapshot of the caller's LLM-routing names at create) |
 | 5 | **The agent's own launch env** | `Agent.LaunchEnvJson` (agent PATCH `launchEnv`) |
 | 5b | Agent provider endpoint | `Agent.ProviderEndpointJson` in `Endpoint` mode; replaces the project endpoint selection |
-| 6 | Launch-time override | task `envOverride` / `delegate.ps1 -EnvOverride` |
+| 6 | Launch-time override | task `envOverride` / `scripts/antiphon delegate create --env-override` |
 | 7 | `ExtraEnv` — Antiphon's `ANTIPHON_*` orchestration identity | code |
 
 The reasoning, which is worth keeping in mind when you are tempted to reorder it: the agent's own
@@ -88,7 +88,7 @@ field outranks inherited env and the profile because it is the more specific thi
 about *this agent*; inherited env outranks the project default because the caller's actual routing
 is more specific than the blanket; a project default outranks the shared profile because it is a
 credential/endpoint fact about this project's agents; none of them outrank `ExtraEnv`, which
-carries Antiphon's own identity plumbing. An explicit `-EnvOverride` still wins over inherited.
+carries Antiphon's own identity plumbing. An explicit `--env-override` still wins over inherited.
 
 These ranks apply to both managed-profile and legacy registry launches. `Inherit` selects the
 project's endpoint for the resolved kind; `Endpoint` selects only the agent's own endpoint, so a
@@ -97,9 +97,9 @@ the typed endpoint entirely. It removes no generic env entries: a URL/key in a p
 env or `launchEnv` still applies. Codex's five generated `-c` pairs follow `ExtraArgs` and count
 against the existing command-line budget; an environment override cannot replace their base URL.
 
-`delegate.ps1` also snapshots its live `X_LLM_PROJECT` and `X_LLM_KEY` process variables into the
+`scripts/antiphon delegate` also snapshots its live `X_LLM_PROJECT` and `X_LLM_KEY` process variables into the
 inherited layer by default; this is the one caller environment the server cannot reconstruct from
-stored agent/task layers. `-EnvOverride` wins name-by-name, and `-NoInheritEnv` opts out of that
+stored agent/task layers. `--env-override` wins name-by-name, and `--no-inherit-env` opts out of that
 client-side snapshot without disabling the server-side fallback.
 
 **Then** three things happen, in this order:
@@ -224,12 +224,12 @@ nothing. This is deliberately *not* retrofitted onto the agent PATCH `launchEnv`
 refusing there now could 422 an already-stored config on its next unrelated save.
 
 A non-empty per-task override also **excludes that task from warm-pool reuse** — reuse launches no
-process, so the overlay could never apply — and combining it with `-OnAgent` is refused 422 for the
+process, so the overlay could never apply — and combining it with `--on-agent` is refused 422 for the
 same reason.
 
-```powershell
-pwsh -File scripts/delegate.ps1 Code -Goal '...' `
-  -EnvOverride @{ ANTHROPIC_BASE_URL='http://proxy:8080'; ANTHROPIC_API_KEY='{{key:proxy-key}}' }
+```sh
+scripts/antiphon delegate create --role Code --goal '...' \
+  --env-override 'ANTHROPIC_BASE_URL=http://proxy:8080,ANTHROPIC_API_KEY={{key:proxy-key}}'
 ```
 
 ## 5. Key custody

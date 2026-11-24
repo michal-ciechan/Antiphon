@@ -82,7 +82,7 @@ public class InstructionBundleTests
     public void C1011_composed_windows_routing_contract()
     {
         var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
-        text.ShouldContain("OS needs do not authorize -IgnoreRoutingPin.", customMessage: "os-pin");
+        text.ShouldContain("OS needs do not authorize --ignore-routing-pin.", customMessage: "os-pin");
         var omitted = System.Text.RegularExpressions.Regex.Match(text, @"Normally omit (.*?) to preserve").Groups[1].Value;
         omitted.ShouldContain("-Kind", customMessage: "omit-kind");
         omitted.ShouldContain("-Level", customMessage: "omit-level");
@@ -97,8 +97,8 @@ public class InstructionBundleTests
     public void C1011_model_kind_and_tier_contract()
     {
         var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
-        text.ShouldContain("`-Kind` selects `ClaudeCode`, `Grok`, or `Codex`", customMessage: "kind-values");
-        text.ShouldContain("`-Level` selects `Frontier`, `High`, `Medium`, or `Low`", customMessage: "level-values");
+        text.ShouldContain("`--kind` selects `ClaudeCode`, `Grok`, or `Codex`", customMessage: "kind-values");
+        text.ShouldContain("`--level` selects `Frontier`, `High`, `Medium`, or `Low`", customMessage: "level-values");
         text.ShouldContain("Model-tier names are **not AgentKind values**.");
         text.ShouldContain("Never pass a model-tier name as either flag.");
         text.ShouldContain("server/Application/Services/ModelLevelAliases.cs");
@@ -121,8 +121,8 @@ public class InstructionBundleTests
         recoveryAt.ShouldBeGreaterThanOrEqualTo(0);
         var recovery = owner[recoveryAt..];
         recovery.ShouldContain("-Platform Windows", customMessage: "recovery-platform");
-        recovery.ShouldContain("-Kind ClaudeCode -Level High");
-        recovery.ShouldContain("no -IgnoreRoutingPin", customMessage: "recovery-no-bypass");
+        recovery.ShouldContain("--kind ClaudeCode --level High");
+        recovery.ShouldContain("no --ignore-routing-pin", customMessage: "recovery-no-bypass");
     }
 
     [Test]
@@ -589,7 +589,7 @@ public class InstructionBundleTests
         // are what say the move carried it rather than paraphrased it.
         DelegationReportFormatter.OrchestratorContract.ShouldStartWith("You are an orchestrator.");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Delegate everything else");
-        DelegationReportFormatter.OrchestratorContract.ShouldContain("-Reply");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("Use reply for a Blocked task");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("StoppedBeforeFirstPrompt");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("AuthenticationRequired");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("grok login");
@@ -1068,18 +1068,18 @@ public class InstructionBundleTests
         var text = Collapse(InstructionBundles.TextOf(InstructionBundles.Orchestrator));
         const string report =
             "A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified. "
-            + "Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use -Continue <id> only for a "
-            + "Blocked question with standing authority; otherwise -Reply if you can answer, else surface asks: "
+            + "Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only for a "
+            + "Blocked question with standing authority; otherwise reply if you can answer, else surface asks: "
             + "now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with "
-            + "-Authority \"<the user's own words>\"; keep the work delegated.";
+            + "--authority \"<the user's own words>\"; keep the work delegated.";
         const string seat =
             "A live Blocked child keeps its runner seat; Reply resumes work without freeing it. "
             + "Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline. "
             + "Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots: "
             + "a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.";
         const string refine =
-            "Steer Queued, Dispatched or Working tasks with -Refine <taskId> \"one sentence\". "
-            + "Use -Reply for a Blocked task; -Refine returns 409 there.";
+            "Steer Queued, Dispatched or Working tasks with refine <taskId> \"one sentence\". "
+            + "Use reply for a Blocked task; refine returns 409 there.";
         PinSentence(text, report, "c1083-orchestrator-report");
         PinSentence(text, seat, "c1083-orchestrator-seat");
         PinSentence(text, refine, "c1083-orchestrator-refine");

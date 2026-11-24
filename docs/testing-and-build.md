@@ -694,7 +694,7 @@ the same child-directory binding applies to `-NoBuild` reuse and the dotnet shim
 
 CARD-0847: `Antiphon.Tests` also stages a real `Antiphon.PtyHost` apphost on Linux. Its `CopyOwnedPtyHostAppHost` target restores `Antiphon.PtyHost` with `UseAppHost=true` before the inner build, because an outer restore with `UseAppHost=false` does not download the net9 apphost pack. An empty `NUGET_PACKAGES` cache must still build the test project with the checkpoint default.
 
-The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedMinutes` column — a time, never the `Min` counts — and `-ExpectAbout` for a Code dispatch is that sum plus authoring time. The Code brief points at the table with one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"` — the shape the server already renders for an Interim `selection:`.
+The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedMinutes` column — a time, never the `Min` counts — and `--expect-about` for a Code dispatch is that sum plus authoring time. The Code brief points at the table with one line, `checkpoints: <plan artifact path>@<full plan commit sha> section "### Checkpoints"` — the shape the server already renders for an Interim `selection:`.
 
 **Repeat proof (CARD-0885).** `-Repeat N` on `run-checkpoint.ps1`, and `--repeat N` on checkpoint-tool `run`, `start`, and `row`, request N total executions of each selected TUnit case in one test host; omitted means one. TUnit generates separate native results and runs ordinary hooks. A different N needs its own isolated build output and matching build-source stamp. Qualify a repeated receipt with `-ExpectedRepeat N` or `--expected-repeat N`; the script writes source envelope v2 and the tool writes report schema 3, with every ordinal's cases and phase timings. The TRX and receipt must agree; a later pass does not erase an earlier failure. One-host repeats do not prove behavior that needs a fresh process per trial.
 
@@ -1161,7 +1161,7 @@ Bash - MSYS rewrites a bare `/work` argument into `C:/Program Files/Git/work` (C
    `runnerStoreId`, `processBootId` and `buildVersion`. An id that is not in the map is 404, and
    that 404 is not eligible (CARD-0729). A passing `/health` is not that confirmation.
 
-Once eligible, `scripts/delegate.ps1 -Runner server2 -Worktree ...` routes an ordinary Grok or
+Once eligible, `scripts/antiphon delegate create --runner server2 --worktree ...` routes an ordinary Grok or
 Claude task there (Claude needs the runner's `CLAUDE_CODE_OAUTH_TOKEN` or the fallback login first;
 see [agent-credentials.md](agent-credentials.md) §5 and `GET
 /api/session-runners/server2/provider-auth/claude`). The **desktop** worktree is still created and stays canonical: the branch is pushed to
@@ -1467,8 +1467,8 @@ Use local inherited execution only; never grant snapshot access to an external e
 remote service or pre-existing process. Literal eligibility checks are in docs/mechanical-pc-contract.md.
 
 There are two supported producers (CARD-0604 D-17/D-19). Windows local inherited execution is
-`windows-job-v1`. The persistent server2 runner is `linux-cgroup-v1`: `delegate.ps1 -Role Mutation
--Runner server2 -Worktree -SourceLanding <operation>` creates the verification snapshot **on the
+`windows-job-v1`. The persistent server2 runner is `linux-cgroup-v1`:
+`scripts/antiphon delegate create --role Mutation --runner server2 --worktree --source-landing <operation>` creates the verification snapshot **on the
 runner** at the exact landed sha, runs the battery inside a root-owned cgroup the session cannot
 leave, and writes `restoration.json` to the runner's own evidence root under
 `/work/repos/antiphon/.git/antiphon/verification/<operation>/<task>/`. The desktop filesystem is

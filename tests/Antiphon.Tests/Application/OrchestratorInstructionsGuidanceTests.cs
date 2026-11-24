@@ -28,7 +28,7 @@ public sealed class OrchestratorInstructionsGuidanceTests
         "use the lower effective stage cap",
         "CARD-0881",
         "/api/agent-tasks/pipeline?projectId=",
-        "-IgnoreConcurrencyLimit",
+        "--ignore-concurrency-limit",
         "axis",
     ];
 
@@ -43,10 +43,10 @@ public sealed class OrchestratorInstructionsGuidanceTests
         "/api/agent-tasks/pipeline?projectId=",
         "docs/orchestration-loop.md#standing-pipeline-policy",
         "never exceed the lower effective cap",
-        "each in its own -Worktree",
+        "each in its own --worktree",
         "Host budget writes need an operator request",
         "depth cap",
-        "-IgnoreConcurrencyLimit",
+        "--ignore-concurrency-limit",
         "axis",
     ];
 

@@ -21,7 +21,7 @@ public class RunnerBranchContractDocumentationTests
         text.ShouldContain("runner_mirror_publish_failed");
         text.ShouldContain("runner_mirror_unavailable");
         text.ShouldContain("runner_sync_diverged");
-        text.ShouldContain("-RecoverReviewedSource");
+        text.ShouldContain("--recover-reviewed-source");
     }
 
     [Test]
@@ -257,7 +257,7 @@ public class RunnerBranchContractDocumentationTests
         agents.ShouldContain("Parking never stops a Working session.", Case.Sensitive, "c1083-agents-working");
 
         Read(".claude/skills/antiphon-delegate/SKILL.md")
-            .ShouldContain("a Blocked one needs `-Reply`, not this.", Case.Sensitive, "c1083-delegate-reply");
+            .ShouldContain("a Blocked one needs `reply`, not this.", Case.Sensitive, "c1083-delegate-reply");
         var claude = Read("CLAUDE.md").Replace("\r\n", "\n").Trim();
         claude.ShouldBe("@AGENTS.md", "c1083-claude-import");
     }
@@ -337,16 +337,16 @@ public class RunnerBranchContractDocumentationTests
         skill.ShouldNotContain("feat/card-task-XXXX", Case.Sensitive, "c1213-skill-legacy-example");
         // Review dd8ce0cf F2: the sibling is the creation base; the delegate stays on its own branch.
         Pin(skill, "Do not tell a delegate to fetch or check out a sibling's branch.", "c1213-skill-no-sibling-checkout");
-        Pin(skill, "select the sibling's tip as the creation base: `-StartRef <full SHA>`", "c1213-skill-start-ref");
+        Pin(skill, "select the sibling's tip as the creation base: `--start-ref <full SHA>`", "c1213-skill-start-ref");
         skill.ShouldNotContain("fetch/checkout", Case.Sensitive, "c1213-skill-no-fetch-checkout");
         // F5: the report token settles; the handoff block only sets next=.
         Pin(skill, "A report with the token and no block settles, and its completion header says `next=unmarked`.",
             "c1213-skill-unmarked-settles");
         skill.ShouldNotContain("never settles", Case.Sensitive, "c1213-skill-no-never-settles");
         // F6: the original Code owner lands; the reviewed source is named with -FromTask.
-        Pin(skill, "`-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`",
+        Pin(skill, "`land <owner> --from-task <source> --expected-source-sha <sha> --review-evidence-id <evidence>`",
             "c1213-skill-from-task");
-        Pin(skill, "Use `-FromTask` or `-RecoverReviewedSource`, not both.", "c1213-skill-recovery-exclusive");
+        Pin(skill, "Use `--from-task` or `--recover-reviewed-source`, not both.", "c1213-skill-recovery-exclusive");
         skill.ShouldNotContain("Land against whichever task's branch", Case.Sensitive, "c1213-skill-no-branch-holder");
 
         var readme = Collapse(Read("server/Bundles/README.md"));

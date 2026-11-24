@@ -49,7 +49,7 @@ public class DelegationCapabilityContractTests
     {
         var root = DelegateScriptRunner.RepoRoot;
         var ops = File.ReadAllText(Path.Combine(root, "docs", "ops-http.md"));
-        ops.ShouldContain("Run `delegate.ps1 -Capability");
+        ops.ShouldContain("Run `scripts/antiphon delegate create --capability");
 
         var kinds = File.ReadAllText(Path.Combine(root, "docs", "agent-kinds.md"));
         kinds.ShouldContain("An orchestrator is `ClaudeCode` only");
@@ -57,7 +57,7 @@ public class DelegationCapabilityContractTests
         kinds.ShouldContain("409 remote_control_refused");
 
         var boardApi = File.ReadAllText(Path.Combine(root, "server", "Bundles", "board-api.md"));
-        boardApi.ShouldContain("-Capability");
-        boardApi.ShouldContain("-Kind Codex");
+        boardApi.ShouldContain("--capability");
+        boardApi.ShouldContain("--kind Codex");
     }
 }

@@ -42,8 +42,8 @@ public sealed class TaskPlatformGuidanceTests
         orchestrator.ShouldContain("GET /api/runner-defaults");
         orchestrator.ShouldContain("GET /api/session-runners");
         orchestrator.ShouldContain("Do not embed a fleet location.");
-        orchestrator.ShouldContain("Normally omit -Runner and -Platform");
-        orchestrator.ShouldContain("Use -Platform Any to unpin.");
+        orchestrator.ShouldContain("Normally omit --runner and --platform");
+        orchestrator.ShouldContain("Use --platform Any to unpin.");
         orchestrator.ShouldContain("Pin only an OS-required piece with its own filter and budget");
         orchestrator.ShouldContain("leave the rest unpinned");
         orchestrator.ShouldContain("Never write defaults on a pipeline tick.");
@@ -83,10 +83,10 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("Carry the original Code landing owner.");
         text.ShouldContain("The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.");
         var ownerDoc = File.ReadAllText(Path.Combine(RepoRoot(), "docs", "orchestration-loop.md"));
-        ownerDoc.ShouldContain("| Adopt another eligible task's reviewed branch | Source task named by `-FromTask` |");
+        ownerDoc.ShouldContain("| Adopt another eligible task's reviewed branch | Source task named by `--from-task` |");
         ownerDoc.ShouldContain("A follow-up Review must name its `FollowUpOfTaskId`");
-        foreach (var flag in new[] { "-Land <owner>", "-FromTask <source>", "-ExpectedSourceSha <sha>",
-                     "-ReviewEvidenceId <evidence>", "-RecoverReviewedSource", "-Card", "-StartRef" })
+        foreach (var flag in new[] { "land <owner>", "--from-task <source>", "--expected-source-sha <sha>",
+                     "--review-evidence-id <evidence>", "--recover-reviewed-source", "--card", "--start-ref" })
             ownerDoc.ShouldContain(flag);
         text.ShouldContain("GET /api/runner-defaults");
         text.ShouldContain("GET /api/session-runners");
@@ -183,7 +183,7 @@ public sealed class RunnerDefaultGuidanceTests
         // OS-scope detail to the owner section it points at.
         var orchestrator = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "orchestrator.md"));
         orchestrator.ShouldContain("the inherited platform place the task on an eligible runner");
-        orchestrator.ShouldContain("Use -Platform Any to unpin.");
+        orchestrator.ShouldContain("Use --platform Any to unpin.");
         orchestrator.ShouldContain("Pin only an OS-required piece");
         orchestrator.ShouldContain("docs/orchestration-loop.md#runner-placement");
         var owner = File.ReadAllText(Path.Combine(Root(), "docs", "orchestration-loop.md"));

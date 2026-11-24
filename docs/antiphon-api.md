@@ -131,7 +131,7 @@ board's `tracker.operator_logins` is unset and the author was never judged), and
 [agent-card-lifecycle.md](agent-card-lifecycle.md) for the review marker.
 
 `Identifier` is unique per **board**, not globally. Every `{id}` card route walks the same scope
-`delegate.ps1 -Card` uses (CARD-0218), narrowed by two query parameters:
+`scripts/antiphon delegate create --card` uses (CARD-0218), narrowed by two query parameters:
 
 1. explicit `?boardId=` — a fence. One match on that board is the card; zero is a **404** naming
    the boards that *do* hold it. Never falls through to a different board.
@@ -352,7 +352,7 @@ curl -s -X POST http://localhost:17202/api/agents/{id}/attach-herdr \
 
 ### Delegation
 
-`AgentTaskEndpoints.cs` — the API behind `scripts/delegate.ps1`.
+`AgentTaskEndpoints.cs` — the API behind `scripts/antiphon delegate`.
 
 ```
 POST   /api/agent-tasks                      create (CreateAgentTaskRequest)
@@ -373,7 +373,7 @@ GET    /api/agent-tasks                      list envelope `{ scope, items, excl
                                              (`client/src/api/agentTasks.ts`),
                                              `scripts/checkpoint-task.ps1` (Working/Dispatched
                                              occupancy) and `scripts/prune-test-data.ps1`
-                                             (open-task safety); `delegate.ps1` does not list.
+                                             (open-task safety); `scripts/antiphon delegate` does not list.
                                              Status names are case-insensitive
                                              (`working` == `Working`); an unrecognised value,
                                              including an undefined number, is `422
@@ -442,7 +442,7 @@ POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's questio
                                              `message`, optional `round` (stale
                                              guard, 409 if the question moved on),
                                              optional `origin` (`Web` default;
-                                             `delegate.ps1` sends `Cli`).
+                                             `scripts/antiphon delegate` sends `Cli`).
 POST   /api/agent-tasks/{id}/continue        replay the standing authority given at
                                              dispatch as the answer (CARD-0294 S1).
                                              Body `{ origin?: "Web"|"Cli" }`
@@ -455,7 +455,7 @@ POST   /api/agent-tasks/{id}/distillation/feedback
                                              CARD-0330: flag a distillation.
                                              Body `{ verdict: "Good"|"Lost"|"Noisy", note? }`.
                                              409 if the task has no distillation row.
-                                             `delegate.ps1 -Flag <id> -Verdict Lost|Noisy|Good [-Note]`.
+                                             `scripts/antiphon delegate flag <id> --verdict Lost|Noisy|Good [--note]`.
 GET    /api/distillations                    CARD-0330 ledger. Query: since, outcome,
                                              feedback, limit (default 50, max 200).
                                              Joins raw and distilled texts from the task.
@@ -476,10 +476,10 @@ POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of
                                              for that (task, stage). Optional nullable
                                              `reviewedSourceClean` requires an explicit
                                              `reviewedSourceSha` and never copies a prior
-                                             assertion. `delegate.ps1 -Finding <id>
+                                             assertion. `scripts/antiphon delegate finding <id>
                                              -Stage … -Found "…"` / `-Clean`
-                                             [`-ReviewedSourceSha`]
-                                             [`-ReviewedSourceClean <bool>`]. Status and
+                                             [`--reviewed-source-sha`]
+                                             [`--reviewed-source-clean <bool>`]. Status and
                                              stage-outcome DTOs expose the nullable field.
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree task
 POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495). New CLI
@@ -490,7 +490,7 @@ POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495)
                                              adoptFromTaskId?, recoverReviewedSource?, verify?,
                                              ignoreKnownBrokenTarget? }`.
                                              `ignoreKnownBrokenTarget: true` (CARD-1995,
-                                             `delegate.ps1 -IgnoreKnownBrokenTarget`) clears
+                                             `scripts/antiphon delegate land --ignore-known-broken-target`) clears
                                              the recorded broken targets so this land builds
                                              instead of a `target_build_broken` refusal.
                                              `adoptFromTaskId` lands a reviewed source through
@@ -553,7 +553,7 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
-`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `commitOnSettle` (`Never`/`Always`/`Agent`; omitted inherits project then `Delegation:CommitOnSettle`; `-NoCommit` sends Never), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
+`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `commitOnSettle` (`Never`/`Always`/`Agent`; omitted inherits project then `Delegation:CommitOnSettle`; `--no-commit` sends Never), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`). `mergeTargetRef` is the landing target, never a
 worktree base. Fresh card-bound Worktrees default to `requestedWorktreeBaseMode: Auto`:
 creation returns `worktreeBase` with the observed decision, source task/branch/full SHA,
@@ -586,7 +586,7 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > It can also refuse with **409 `provider_sign_in_required`** (CARD-0324) for a registry-Grok
 > create whose `GROK_HOME` has no usable `auth.json`. The problem-details extension carries
 > `agentKind`, `grokHome`, and `remedy: "grok login"`. Retry with `allowUnauthenticatedProvider:
-> true` (`delegate.ps1 -AllowUnauthenticatedProvider`) to queue anyway; the dispatcher still
+> true` (`scripts/antiphon delegate create --allow-unauthenticated-provider`) to queue anyway; the dispatcher still
 > fails the task if the store is empty at launch. Never silently reroute. Profiles that
 > authenticate with an API key (the standing `gkp` path) are not probed.
 >
@@ -738,7 +738,7 @@ DELETE /api/routing-pins/{id}                         clear (204 if already clea
 A pin is the standing instruction the **next** create reads; it does not rewrite Queued work.
 Stage-wide: omit `card`. A `PUT` for Check, Distill or Diagnose is 422
 (`RoutingPinServiceTests.A_specialist_role_has_no_stage_to_pin`). Command: `scripts/antiphon routing-pin get|set|clear`.
-`delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
+`scripts/antiphon delegate create --pin` writes Human Required from the resolved kind/level; `--pin` without a card is
 refused (that would be a stage-wide pin).
 
 CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mutually exclusive
@@ -823,8 +823,8 @@ POST   /api/agent-tasks/{id}/reroute                   { agentKind, modelLevel }
 ```
 
 Config defaults for chains ship **empty**. Command: `scripts/antiphon complexity-chain get|set|clear`
-(`--role` omitted or `Any` writes the any-role row). `delegate.ps1 -Complexity Hard|Medium|Easy`,
-`-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`. 422 for Check/Distill/Diagnose as a cell
+(`--role` omitted or `Any` writes the any-role row). `scripts/antiphon delegate create --complexity Hard|Medium|Easy`,
+`--refuse-if-exhausted`, `reroute <id> --kind … --level …`. 422 for Check/Distill/Diagnose as a cell
 role ("seat-pinned roles are not routed by chains") and for an unknown role.
 
 The role view adds `effective: { source, candidates, stagePin, governsDefault, withheldReason }`.
@@ -1268,7 +1268,7 @@ state. Each row carries the card and board IDs, the move/reopen reason as its ev
 `AttentionSummaryDto`'s decision total. One row per card with `needsHumanReview == true`: `Title`
 is `CARD-nnnn — title`, `Headline` is `Raised on GitHub by <author> (not an operator) — nobody has
 rated it.`, `Evidence` carries the issue key/URL, the first line of the body, and the ready-to-paste
-`delegate.ps1` triage command (see [workflow-tracker-block.md](workflow-tracker-block.md)), and
+`scripts/antiphon delegate` triage command (see [workflow-tracker-block.md](workflow-tracker-block.md)), and
 `Actions` is `[OpenCard]`.
 
 `AttentionKind.CommitRecoveryPending = 41` (CARD-0547; appended after 40, not renumbered) is an
@@ -1372,12 +1372,12 @@ concurrency tokens and PowerShell's quoting hazards.
 |---|---|
 | `scripts/antiphon card` | `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, `limits`. Long text via `--description-file` / `--reason-file`, never inline. |
 | `scripts/antiphon schedule` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `--prompt-file`. Prints preview before create. |
-| `scripts/delegate.ps1` | create / `-Status` / `-Reply` / `-Refine` a delegated task |
+| `scripts/antiphon delegate` | create / `status` / `reply` / `refine` a delegated task |
 | `scripts/antiphon github-sync` | a bidirectional tracker push (`--board-id`, `--notify`) |
 | `scripts/checkpoint-task.ps1` | WIP-commit a stalled task's work without killing it |
 | `verify-dev-stack.ps1` | health check across the whole stack |
 
-Both the card command and `delegate.ps1` read `ANTIPHON_API`, defaulting to
+Both the card command and `scripts/antiphon delegate` read `ANTIPHON_API`, defaulting to
 `http://localhost:17202`. Inside a running agent session, `ANTIPHON_API` is already set.
 
 ## 6. Why there is no OpenAPI document (yet)

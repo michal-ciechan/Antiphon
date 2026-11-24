@@ -115,17 +115,16 @@ as an `ImportedIssueNeedsReview` row on `GET /api/attention` (see
 
 **Triage brief (decision 8).** There is no automatic dispatch on a `needsHumanReview` card — the
 card says "if needed", and a tick that spends tokens on every external issue is a spend policy
-nobody asked for. The seam is a documented, on-demand `delegate.ps1` brief, run by the operator (or
+nobody asked for. The seam is a documented, on-demand `scripts/antiphon delegate` brief, run by the operator (or
 an orchestrator reading the attention feed) via the ready-to-paste command in that row's evidence:
 
 ```
-pwsh -File scripts/delegate.ps1 -Card CARD-nnnn -Role Debug -Goal @'
+scripts/antiphon delegate create --card CARD-nnnn --role Debug --goal-file <brief.md>, where <brief.md> holds:
 Triage GitHub issue #N (raised by <author>, not an operator). Answer, in under 300 words:
 (1) is it real - reproduce or cite the code path; (2) is it feasible - name the owner file(s)
 and rough size (S/M/L); (3) suggested importance (Low|Normal|High) and why. Post the answer
 with POST /api/cards/CARD-nnnn/discussion (author "triage-delegate"). Do NOT edit the card's
 importance - the rating is the human's act and is what clears the review marker.
-'@
 ```
 
 Use `Role Debug` for "is this real"; `Role Plan` for a feature-shaped issue. The finding lands as a
@@ -169,7 +168,7 @@ only a human rating (or an explicit `importanceProvenance: Human` edit) clears t
 
 ### Preserved Gotcha #71
 
-- **`CARD-nnnn` is unique per BOARD, and every card route resolves it through the same scope walk `delegate.ps1 -Card` uses** (CARD-0218): explicit `?boardId=` (`scripts/antiphon card ... --board <name|guid>`, on every verb), else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`), else the boards of every project whose `LocalRepositoryPath` contains `?cwd=` (the card command sends `git rev-parse --show-toplevel`), else everywhere — uniqueness demanded inside the scope that answers, never a silent first row. A collision that survives all of that is `409 card_identifier_ambiguous` listing every candidate (board, guid, status, title) in `detail` and in a `candidates` extension; `-Board` on a card the board does not hold is a 404 naming where it does live. Two boards hold cards today (Antiphon, Gym Stat — `CARD-0001…0021` collide) and every project setup adds a board that will collide from its first card, so never resolve an identifier with a bare global query; go through `CardIdentifierScope`.
+- **`CARD-nnnn` is unique per BOARD, and every card route resolves it through the same scope walk `scripts/antiphon delegate create --card` uses** (CARD-0218): explicit `?boardId=` (`scripts/antiphon card ... --board <name|guid>`, on every verb), else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`), else the boards of every project whose `LocalRepositoryPath` contains `?cwd=` (the card command sends `git rev-parse --show-toplevel`), else everywhere — uniqueness demanded inside the scope that answers, never a silent first row. A collision that survives all of that is `409 card_identifier_ambiguous` listing every candidate (board, guid, status, title) in `detail` and in a `candidates` extension; `-Board` on a card the board does not hold is a 404 naming where it does live. Two boards hold cards today (Antiphon, Gym Stat — `CARD-0001…0021` collide) and every project setup adds a board that will collide from its first card, so never resolve an identifier with a bare global query; go through `CardIdentifierScope`.
 
 ### Preserved Gotcha #72
 

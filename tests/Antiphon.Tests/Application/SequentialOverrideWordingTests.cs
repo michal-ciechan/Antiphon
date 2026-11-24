@@ -28,9 +28,9 @@ public sealed class SequentialOverrideWordingTests
     private const string DelegateDefer = "A same-stage collision still defers.";
 
     private const string WorktreeDefault =
-        "Fresh workers already use a worktree; -Shared opts out of that default.";
+        "Fresh workers already use a worktree; --shared opts out of that default.";
 
-    private const string StageWorktree = "each in its own -Worktree.";
+    private const string StageWorktree = "each in its own --worktree.";
 
     private const string OptInWorktree = "pass -Worktree so they cannot overwrite";
 
