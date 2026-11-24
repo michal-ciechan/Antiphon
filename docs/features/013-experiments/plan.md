@@ -71,8 +71,9 @@ explainable.
   version once per iteration (a blob), and each node references it.
 - **`llm_call` rows** (design 7.4) for every model call: provider, resolved model, tokens, cost,
   latency, outcome, request and response blob hashes.
-- **Reviewer checkouts.** A reviewer agent reads a real checkout. A case pins its base and head
-  commits in the mirror under `refs/antiphon/cases/<case-id>/{base,head}` so they survive pruning.
+- **Workspace record.** Every step that runs against a checkout records enough to rebuild it
+  (section 2a). A case pins its commits in the mirror under `refs/antiphon/cases/<case-id>/…` so
+  they survive pruning.
 - **Retention.** Blobs referenced by a case are kept until the case is deleted. Others follow the
   run's retention.
 
@@ -92,6 +93,50 @@ explainable.
 - **Reuse.** A trial is keyed by (case inputs hash, variant hash, sample number). An identical key
   reuses the stored trial unless the person asks for fresh samples.
 
+### 2a. A clean workspace per run, one run per container
+
+Decided 2026-11-24: every scenario run gets its own clean checkout that looks like the original
+run's, and every run has its own container.
+
+**Recorded on the original run** (the workspace record, stored with the step's inputs):
+
+| Item | Why |
+|---|---|
+| Repository (host, `owner/name`, clone URL) | Where the commits come from |
+| **Parent:** the commit the worktree was cut from, and the branch or ref it was on | The starting point |
+| **Worktree:** the checked-out commit, branch name or detached, and its absolute path | What the step saw, and where |
+| Base commit and merge-base, for a PR | Diffs resolve the same way |
+| Uncommitted state: a patch of tracked changes and an archive of untracked, non-ignored files | Pipeline stages often start from a dirty worktree; review steps normally have none |
+| Submodule commits, sparse-checkout patterns, LFS use | The tree matches file for file |
+| How it was cut (fresh worktree, fetched `refs/pull/<n>/head`, shallow or full) | The same history depth is visible |
+| Container image digest, runner labels, agent CLI version, tool versions | The same environment |
+| Environment names the step relied on (never values) | The run can say what is missing |
+
+The patch and archive are blobs. Secrets and ignored files are never captured.
+
+**Recreated for each run**
+
+- A new container from the recorded image digest (or the variant's image, when the image is what is
+  being compared).
+- The repository is cloned from the mirror at the pinned commits, and the worktree is created **at
+  the same path** as the original, on the same branch name, cut from the same parent, with the
+  uncommitted state applied. Paths in packs, prompts and tool output then match the original.
+- The run starts from a verified state: the commit, the tree hash and the uncommitted-state hash
+  must equal the record, or the trial fails as "workspace mismatch" before any model call.
+- No network access to the code host for writes; the sandbox code host is the only one reachable.
+
+**One run per container**
+
+- A container holds exactly one trial and is never reused, so one run cannot see another's files,
+  caches, agent memory or session history.
+- Variants of the same case run in separate containers side by side, within the host's limits.
+- When the trial ends, its outputs (report, findings, files changed as a patch, transcript) are
+  stored as blobs and the container is removed. **Keep workspace** on a failed trial holds it for a
+  set time for inspection.
+- This uses the per-session containers the design already plans (phase P4, "ephemeral per-session
+  containers") and the server2 runner image. Decision and completion steps make no checkout and need
+  no container; they run in the server's sandbox.
+
 ### 3. Cases
 
 A case records enough to replay cleanly and to understand later:
@@ -100,7 +145,7 @@ A case records enough to replay cleanly and to understand later:
 |---|---|
 | Origin | The run, iteration and node it came from, the PR link, who captured it and when |
 | Context | A title and "why this case exists" in plain words, with links: the human comment that caught the miss, the dismissal, the incident |
-| Inputs | The manifest of frozen inputs for the first node in scope, plus the run state |
+| Inputs | The manifest of frozen inputs for the first targeted step, the run state, and the workspace record (section 2a) |
 | Original | The original output of each node in scope, and the settings and prompts in force |
 | Expectations | One or more (below) |
 | Tags | Stage, language, category, "missed", "false-positive", "regression" |
@@ -347,7 +392,7 @@ Each phase lands on its own and is useful alone.
 | **1. See a node** | `review_blob`, `InputsJson` and `InputsHash` on every node, `llm_call`, raw answers kept, settings snapshot, `OutputJson` in the DTO; node panel Inputs / Output / Calls tabs | An API test: after a scripted run, every node has a manifest whose blobs exist; a client test for the panel |
 | **2. Prompts as data** | The prompt registry with today's text as defaults; rendered prompt and hashes recorded; Prompt tab | A test that the default registry renders byte-identical text to today's strings |
 | **3. Replay one node** | `IStepInputs` live and replay; the sandbox run and code host; cases captured from a node; `unchanged` and `field` expectations; replay of decision and completion nodes (categorise, select, verify) | A test: capture a case from a scripted run, replay with the same scripted model, expect `unchanged`; replay with a changed answer, expect a fail; assert the sandbox sent nothing to the code host |
-| **4. Experiments and the A/B view** | Variants, experiments, repeats, estimate and budget, trial reuse; the history page, A/B grid and comparison; graph actions and badge; reviewer (agent) trials with pinned commits; `finding-present`, `finding-absent`, `budget`; the finding matcher | Matcher unit tests; an API test for a 2×2 experiment; a story and a test for the grid |
+| **4. Experiments and the A/B view** | Variants, experiments, estimate and budget, trial reuse; the history page, A/B grid and comparison; graph actions and badge; the workspace record, and reviewer (agent) trials in a rebuilt workspace, one container per trial (section 2a); `finding-present`, `finding-absent`, `budget`; the finding matcher | Matcher unit tests; an API test for a 2×2 experiment; a test that a rebuilt workspace has the recorded commit, tree hash and path, and that a mismatch fails the trial; a story and a test for the grid |
 | **5. Scenarios and ground truth** | Scenario files and the guide; `script`, `prompt` and combined expectations; suites with held-out; human comments read back, **Bot missed this**; demo-repo scenarios; the CLI | Parser tests; one live run of the demo suite on server2 comparing two reviewer models |
 | **6. Self-improvement gate, and other workflows** | The learn loop's candidate gate (section 7) with the generality lint and judge; pipeline-stage cases | A test that a candidate naming a file from its target case is rejected; a test that a regression blocks a candidate |
 
