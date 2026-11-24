@@ -1189,12 +1189,16 @@ public sealed class RunnerSettlementSyncTests
                 if (extraMasterCommit || withSubmodule || initialFiles is { Count: > 0 })
                     throw new InvalidOperationException("Immutable seed clones require the unmodified base fixture.");
                 await world.RunAsync(world.Root, "clone", "--bare", immutableSeedOrigin, world.Origin);
+                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c).
+                await world.RunAsync(world.Origin, "config", "receive.autogc", "false");
                 await world.RunAsync(world.Root, "clone", world.Origin, world.Desktop);
                 await world.ConfigureAsync(world.Desktop);
             }
             else
             {
                 await world.RunAsync(world.Root, "init", "--bare", "-b", "master", world.Origin);
+                // A push into the world's origin starts no gc there (receive-pack's own; it inherits no -c).
+                await world.RunAsync(world.Origin, "config", "receive.autogc", "false");
                 Directory.CreateDirectory(world.Desktop);
                 await world.RunAsync(world.Desktop, "init", "-b", "master");
                 await world.ConfigureAsync(world.Desktop);
@@ -1377,6 +1381,16 @@ public sealed class RunnerSettlementSyncTests
                 RedirectStandardOutput = true, RedirectStandardError = true,
             };
             start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            // A world's own commit, merge or fetch is setup, not the code under test: no auto-maintenance child after
+            // it (as ScratchGitRepo.GitInAsync). Only this command line carries it, and the hooks and child gits it
+            // starts (GIT_CONFIG_PARAMETERS); no world hook reads it.
+            var verb = 0;
+            while (verb + 1 < arguments.Count && arguments[verb] is "-c" or "-C") verb += 2;
+            if (verb < arguments.Count && arguments[verb] is "commit" or "merge" or "cherry-pick" or "revert" or "am" or "rebase" or "fetch" or "pull")
+            {
+                start.ArgumentList.Add("-c");
+                start.ArgumentList.Add("maintenance.auto=false");
+            }
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             using var process = System.Diagnostics.Process.Start(start)
                 ?? throw new IOException("git_start_failed");
