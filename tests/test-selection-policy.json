@@ -3577,7 +3577,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "b86d98950ea5c82b7213caf030003103d2a82ca15c95c425b7d887472dfa5009",
+  "catalogHash": "665b3fd487ac112ad6088f4472716a5e45b2551565b612ac8532f96ce7540695",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
