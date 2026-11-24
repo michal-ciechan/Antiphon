@@ -341,14 +341,17 @@ public sealed class C1744G3PhoneHomeSupervisionTests
         var danger = restart.IndexOf("AppHostLocks.TakeRestart(", StringComparison.Ordinal);
         (work >= 0 && guard > work && danger > guard).ShouldBeTrue($"apphost-guard.restart-order work={work} guard={guard} lock={danger}");
 
-        // dev-aspire.ps1: the worktree classification, then the refusal, then the launch lock write.
-        var aspire = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "dev-aspire.ps1"));
-        var aspireWork = aspire.IndexOf("Get-AppHostWorktreeClassification", StringComparison.Ordinal);
-        var aspireGuard = aspire.IndexOf("LaunchRefusal", aspireWork + 1, StringComparison.Ordinal);
-        var aspireWrite = aspire.IndexOf("Set-Content", StringComparison.Ordinal);
+        // dev-aspire (DevAspire.cs since unit 37; dev-aspire.ps1 is its launcher): the worktree classification, then the
+        // refusal, then the launch lock write.
+        var aspireLauncher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "dev-aspire.ps1"));
+        aspireLauncher.ShouldContain("Invoke-AntiphonCli -Command 'dev-aspire'");
+        var aspire = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DevAspire.cs"));
+        var aspireWork = aspire.IndexOf("AppHostWorktree.Classify(", StringComparison.Ordinal);
+        var aspireGuard = aspire.IndexOf("WindowsPhoneHome.LaunchRefusal(", StringComparison.Ordinal);
+        var aspireWrite = aspire.IndexOf("files.File.WriteAllText(launchLock", StringComparison.Ordinal);
         (aspireWork >= 0 && aspireGuard > aspireWork && aspireWrite > aspireGuard)
             .ShouldBeTrue($"apphost-guard.aspire-order work={aspireWork} guard={aspireGuard} write={aspireWrite}");
-        (launcher + aspire).ShouldNotContain("restart-linux-server", Case.Sensitive, "apphost-guard.no-linux-name");
+        (launcher + aspireLauncher + aspire).ShouldNotContain("restart-linux-server", Case.Sensitive, "apphost-guard.no-linux-name");
     }
 
     // ---- compat ----
