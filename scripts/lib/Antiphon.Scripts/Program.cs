@@ -236,6 +236,10 @@ namespace Antiphon.Scripts
             // 0 accepted, 1 refused or not accepted. Usage is 2 for each.
             [BuildSlotCommands.BuildSlotName] = BuildSlotCommands.RunBuildSlot,
             [BuildSlotCommands.MeasureLinuxSharedCompiler] = BuildSlotCommands.RunMeasureLinuxSharedCompiler,
+            // The checkpoint tool built from this checkout (unit 20): the tool's own code (row: 0 green, 1 failed tests, 2
+            // invalid, 3 roster or minimum, 4 no slot, 5 row timeout, 130 cancelled; validate: 0 valid, 2 invalid), 9 when it
+            // could not be built or started, 2 usage.
+            [CheckpointsCommand.Name] = CheckpointsCommand.Run,
             // The desktop AppHost chain answers every input itself (unit 31). restart-apphost: exit 0 restarted (or --stop-only done),
             // 1 failed or not Windows, 3 refused (nothing killed), 4 DCP dependency timeout, 5 server build unverified. watchdog-apphost: 0,
             // 1 an unreadable state file or not Windows. set-apphost-maintenance: 0 done, 2 --clear with --enter-if-absent or the marker
@@ -322,6 +326,7 @@ namespace Antiphon.Scripts
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
+                + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage);
             return Usage;
         }

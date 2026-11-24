@@ -87,6 +87,10 @@ public static class Program
 
         var verb = args[0];
         var options = Parse(args.Skip(1).ToArray());
+        // validate reads only the receipt (the server starts its launcher from a directory that need not be a checkout); a
+        // placement skip asks git at the receipt's commit in this repository, else in the current directory.
+        if (verb == "validate")
+            return Validate(options, options.Get("repo-root") ?? runtime.RepoRoot ?? TryFindRoot(context) ?? context.Io.CurrentDirectory, runtime);
         var repo = options.Get("repo-root") ?? runtime.RepoRoot ?? RepoPaths.FindRoot(context: context);
         switch (verb)
         {
@@ -106,12 +110,10 @@ public static class Program
                 return Stop(options, repo, runtime);
             case "report":
                 return Report(options, repo, runtime.Output ?? Console.Out, runtime);
-            case "validate":
-                return Validate(options, repo, runtime);
             case "clean":
                 return Clean(options, repo, runtime.Output ?? Console.Out, runtime);
             case "row":
-                return await Row(options, repo, runtime).ConfigureAwait(false);
+                return await RowCommand.RunAsync(options, repo, runtime).ConfigureAwait(false);
             case "execute":
                 return await CheckpointApp.ExecuteAsync(Required(options, "run"), runtime.CancellationToken, runtime).ConfigureAwait(false);
             default:
@@ -491,149 +493,46 @@ public static class Program
         return ExitCodes.Invalid;
     }
 
+    private static string? TryFindRoot(CheckpointCleanupContext context)
+    {
+        try { return RepoPaths.FindRoot(context: context); }
+        catch (ManifestValidationException) { return null; }
+    }
+
     private static int Validate(ArgSet options, string repo, CheckpointApp.Runtime runtime)
     {
         var path = Required(options, "evidence");
         path = Path.IsPathRooted(path) ? path : Path.Combine(repo, path);
         var expected = Required(options, "expected-source-sha");
+        // scripts/validate-checkpoint-receipt.ps1 is this verb's launcher (unit 20): both verdict lines go to stdout, as the
+        // script printed them; the exit code is the verdict (0 valid, 2 not).
+        var output = runtime.Output ?? Console.Out;
+        // A comma-separated --rows, given once or more (the launcher joins a string[] with commas).
+        var rows = options.GetAll("rows").SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToArray();
         try
         {
+            var expectedRepeat = 1;
+            if (options.Get("expected-repeat") is string count && !int.TryParse(count.Trim(), System.Globalization.NumberStyles.AllowLeadingSign,
+                    System.Globalization.CultureInfo.InvariantCulture, out expectedRepeat))
+                expectedRepeat = 0;
             var raw = ReceiptFile.ReadStrictText(runtime.CleanupContext, path, runtime.CancellationToken);
-            using var document = JsonDocument.Parse(raw);
-            AssertUniqueJson(document.RootElement);
-            var report = ReceiptJson.Parse<ReportModel>(raw, ReportWriter.Json);
-            if (report is null) throw new InvalidDataException("report_empty");
-            var rows = (options.Get("rows") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var expectedRepeat = options.Get("expected-repeat") is string count ? RepeatRequest.Parse(count) : 1;
-            var refusal = ReportValidator.Validate(report, expected, rows, expectedRepeat);
-            if (refusal is not null) { Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + refusal); return ExitCodes.Invalid; }
-            Console.WriteLine("CHECKPOINT SOURCE VALID source=" + expected + " rows=" + (rows.Length == 0 ? report.Rows.Count : rows.Length));
+            var refusal = ReceiptQualification.Validate(raw, expected, rows, expectedRepeat, repo, runtime.CancellationToken);
+            if (refusal is not null) { output.WriteLine("CHECKPOINT SOURCE INVALID reason=" + refusal); return ExitCodes.Invalid; }
+            var selected = rows.Length;
+            if (selected == 0)
+            {
+                using var document = JsonDocument.Parse(raw);
+                selected = document.RootElement.TryGetProperty("rows", out var listed) && listed.ValueKind == JsonValueKind.Array ? listed.GetArrayLength() : 1;
+            }
+            output.WriteLine("CHECKPOINT SOURCE VALID source=" + expected + " rows=" + selected);
             return ExitCodes.Green;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or System.Xml.XmlException
+            or ManifestValidationException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + ex.GetType().Name);
+            output.WriteLine("CHECKPOINT SOURCE INVALID reason=" + ex.GetType().Name);
             return ExitCodes.Invalid;
         }
-    }
-
-    private static void AssertUniqueJson(JsonElement element)
-    {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            var names = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var property in element.EnumerateObject())
-            {
-                if (!names.Add(property.Name)) throw new InvalidDataException("duplicate_json_property");
-                AssertUniqueJson(property.Value);
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-            foreach (var item in element.EnumerateArray()) AssertUniqueJson(item);
-    }
-
-    private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime runtime)
-    {
-        var output = runtime.Output ?? Console.Out;
-        var platform = runtime.Platform ?? new RuntimePlatform();
-        var repeat = options.Get("repeat") is string directRepeat ? RepeatRequest.Parse(directRepeat) : 1;
-        if (repeat > 1)
-            _ = RepeatRequest.CanonicalProject(repo, Required(options, "project"));
-        var expectedSha = options.Get("expected-source-sha");
-        var start = (runtime.SourceCapture ?? new SourceSnapshot().Capture)(repo);
-        var source = new SourceEvidence { Start = start };
-        if (expectedSha is not null && (!System.Text.RegularExpressions.Regex.IsMatch(expectedSha, "^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
-            || start.CaptureStatus != "known" || start.DirtyFiles != 0 || start.Commit != expectedSha))
-        {
-            output.WriteLine("CHECKPOINT source_mismatch or source_dirty");
-            return ExitCodes.Invalid;
-        }
-        var guard = new SourceRunGuard(repo, source, runtime.SourceCapture);
-        if (!guard.Observe()) { output.WriteLine("CHECKPOINT " + guard.Reason); return ExitCodes.Invalid; }
-        var slots = runtime.Slots ?? new BuildSlotClient(
-            runtime.SlotHandler ?? new HttpClientHandler(),
-            BuildSlotClient.DefaultEndpoint(platform.IsWindows),
-            clock: runtime.SlotClock,
-            delay: runtime.SlotDelay,
-            holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
-            sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN"));
-        var session = options.Get("slots") == "off"
-            ? new SlotSession("off", 4)
-            : await slots.ProbeAsync(runtime.CancellationToken).ConfigureAwait(false);
-        var name = Required(options, "name");
-        if (string.IsNullOrWhiteSpace(name))
-        { output.WriteLine("refused: manifest-identity: row name is empty"); return ExitCodes.Invalid; }
-        await using var lease = await slots.AcquireAsync(session, name, runtime.CancellationToken).ConfigureAwait(false);
-        if (lease.ExitCode != 0)
-        {
-            output.WriteLine(CheckpointLine.Format(new CheckpointLineModel
-            {
-                Name = name, Commit = start.Commit ?? "unknown", Source = source,
-                Build = "failed", Filter = options.Get("filter") ?? "", Slot = lease.State,
-                SlotReason = lease.SlotReason, WaitedSeconds = lease.WaitedSeconds,
-            }));
-            output.WriteLine($"CHECKPOINT {name} EXIT CODE: {lease.ExitCode}");
-            return lease.ExitCode;
-        }
-
-        var resultsRoot = options.Get("results-root") ?? ".antiphon/checkpoints";
-        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4];
-        var results = Path.Combine(repo, resultsRoot, name + "-" + stamp);
-        var parent = Path.GetDirectoryName(results)!;
-        var resultRefusal = SafeWrite.CreateDirectory(parent, SafeWrite.Under(parent))
-            ?? SafeWrite.CreateFreshDirectory(results, SafeWrite.Under(parent));
-        if (resultRefusal is not null)
-        {
-            output.WriteLine("CHECKPOINT " + name + " refused: " + resultRefusal);
-            return ExitCodes.Invalid;
-        }
-        var properties = (options.GetAll("msbuild-property"))
-            .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Select(token =>
-            {
-                var eq = token.IndexOf('=');
-                return new KeyValuePair<string, string>(token[..eq], token[(eq + 1)..]);
-            })
-            .ToList();
-        var commit = start.Commit ?? "unknown";
-        var runner = new RowRunner(runtime.Driver ?? new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
-        var result = await runner.RunAsync(new RowRequest
-        {
-            Name = name,
-            Project = Required(options, "project"),
-            OutputPath = Required(options, "output-path"),
-            Filter = Required(options, "filter"),
-            ResultsDirectory = results,
-            WorkingDirectory = repo,
-            NoBuild = options.Has("no-build"),
-            MinExecuted = int.TryParse(options.Get("min-executed"), out var min) ? min : 1,
-            Repeat = repeat,
-            Expect = (options.Get("expect") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(token => token.Trim('\'', '"')).Where(token => token.Length > 0).ToList(),
-            Properties = properties,
-            Commit = commit.Trim(),
-            Source = source,
-            SourceBoundary = guard.Observe,
-            ExpectedSourceSha = expectedSha,
-            Slot = lease.State,
-            SlotReason = lease.SlotReason,
-            WaitedSeconds = lease.WaitedSeconds,
-            MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
-            TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
-            TimingRunId = name,
-            ProducingBuildId = options.Get("output-path"),
-        }, output, runtime.CancellationToken).ConfigureAwait(false);
-        result.Source = source;
-        ReportWriter.WriteFiles(results, new ReportModel
-        {
-            SchemaVersion = 2, RunId = name + "-" + stamp, Commit = commit, Worktree = repo,
-            Source = source, ExitCode = result.ExitCode, Verdict = result.ExitCode == 0 ? "GREEN" : "INVALID",
-            Reason = result.ExitCode == 0 ? null : "source_ineligible",
-            Rows = [new ReportRow { Id = name, Filter = Required(options, "filter"), State = result.State,
-                ExitCode = result.ExitCode, Source = result.Source, Line = result.Line, Trx = result.TrxPath,
-                JournalDiagnostic = result.JournalDiagnostic,
-                Executed = result.Trx?.Executed, Passed = result.Trx?.Passed, Failed = result.Trx?.Failed, Skipped = result.Trx?.Skipped }],
-        });
-        return result.ExitCode;
     }
 
     private static (CheckpointManifest Manifest, RunRequest Request) LoadSelection(ArgSet options, string repo, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)

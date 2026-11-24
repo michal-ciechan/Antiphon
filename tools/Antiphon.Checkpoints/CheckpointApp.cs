@@ -26,6 +26,8 @@ public static class CheckpointApp
         public Func<DateTimeOffset>? SlotClock { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? SlotDelay { get; init; }
         public Func<Process, DateTime>? SlotStartTimeReader { get; init; }
+        // The row verb's lease holders (tests: this process); null starts a hold child per lease.
+        public ILeaseHolderSource? SlotHolders { get; init; }
         public IPlatform? Platform { get; init; }
         public TimeProvider? TimeProvider { get; init; }
         public Func<LaunchRequest, int>? Launch { get; init; }
@@ -42,6 +44,8 @@ public static class CheckpointApp
         public TextWriter? Output { get; init; }
         public string? GitExecutable { get; init; }
         public Func<string, SourceObservation>? SourceCapture { get; init; }
+        // The row verb's results-directory stamp (yyyyMMdd-HHmmss-xxxx); tests pin it to reach an existing directory.
+        public Func<string>? RowStamp { get; init; }
     }
 
     public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? (runtime?.CleanupContext ?? CheckpointCleanupDefaults.Context).Io.ImageDirectory;

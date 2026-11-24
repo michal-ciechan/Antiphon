@@ -313,7 +313,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                 services.Configure<CheckpointReceiptSettings>(settings =>
                 {
                     settings.StorageRoot = Path.Combine(correction.Root, "wired-retained");
-                    settings.ValidatorScript = Path.Combine(correction.Repository, "scripts", "validate-checkpoint-receipt.ps1");
+                    settings.ValidatorScript = typeof(Antiphon.Checkpoints.Program).Assembly.Location;
                     settings.Producers = [new(correction.Request.ProducerIdentity,
                         Path.Combine(correction.ProducerRoot, "producer-pack-index.json"), correction.Request.BundleDigest,
                         correction.Request.RepositoryPath, correction.SelectionRepository)];

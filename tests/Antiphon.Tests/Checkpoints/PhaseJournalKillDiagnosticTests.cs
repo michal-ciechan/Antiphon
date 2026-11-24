@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Antiphon.Checkpoints;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -11,8 +10,6 @@ namespace Antiphon.Tests.Checkpoints;
 /// completed/pending counts. Those counts are a diagnostic, never a receipt.
 /// </summary>
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
-[SharedCheckoutChild]
 public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
 {
     public const string Diagnostic =
@@ -90,85 +87,103 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
         (run.Environment?.ContainsKey("ANTIPHON_TEST_PHASE_ROOT") ?? false).ShouldBeFalse();
     }
 
+    // The row verb (scripts/run-checkpoint.ps1's body since unit 20): a run that wrote a journal and no TRX is exit 2 with
+    // the same diagnostic, and its report line keeps the no-TRX zeros.
     [Test]
-    [Timeout(180_000)]
-    public async Task script_killed_row_prints_the_same_diagnostic()
+    public async Task row_verb_killed_row_prints_the_same_diagnostic()
     {
-        var results = Path.Combine(TempDir(), "c1748-script");
-        Directory.CreateDirectory(results);
-        var psi = new ProcessStartInfo("pwsh")
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "tests", "Antiphon.Tests"));
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
         {
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var token in new[]
+            WriteKilledJournal(request);
+            return Task.FromResult(new DriverResult(1, "", ""));
+        });
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(
+        [
+            "row", "--repo-root", repo, "--name", "CP-1", "--project", "tests/Antiphon.Tests", "--output-path", "bin-c1748/",
+            "--filter", "/*/*/Sample/*", "--no-slot",
+        ], new CheckpointApp.Runtime
         {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "test-run-checkpoint.ps1"),
-            "-Case", "C1748_KilledRowPrintsJournalCounts",
-            "-ResultsDirectory", results,
-        })
-            psi.ArgumentList.Add(token);
-        StripPhaseEnvironment(psi);
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var done = new CancellationTokenSource(TimeSpan.FromSeconds(150));
-        await process.WaitForExitAsync(done.Token);
-        var text = await stdout + await stderr;
-        process.ExitCode.ShouldBe(0, text);
-        text.ShouldContain(Diagnostic);
+            Output = output, Driver = driver, Platform = new FakePlatform(),
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), EnvironmentLookup = _ => null,
+        });
+        exit.ShouldBe(ExitCodes.Invalid, output.ToString());
+        var lines = output.ToString().Replace("\r\n", "\n").Split('\n');
+        lines.Where(line => line.StartsWith("JOURNAL-DIAGNOSTIC", StringComparison.Ordinal)).ShouldBe(new[] { Diagnostic });
+        var receipt = lines.Single(line => line.StartsWith("CHECKPOINT CP-1 commit=", StringComparison.Ordinal));
+        receipt.ShouldContain(" executed=0 passed=0 failed=0 skipped=0 ");
+        receipt.ShouldNotContain("completed=");
     }
 
+    // A row started inside a journaled host clears every inherited ANTIPHON_TEST_PHASE_* name from its children; only an
+    // Antiphon.Tests run gets the row's own root back.
     [Test]
-    [Timeout(180_000)]
-    public async Task inherited_phase_root_uses_the_row_and_leaves_the_decoy_empty()
+    [Arguments("tests/Antiphon.Tests", true)]
+    [Arguments("tests/Antiphon.Agents.Pty.Tests", false)]
+    public async Task inherited_phase_names_leave_the_row_children(string project, bool journaled)
     {
-        var results = Path.Combine(TempDir(), "c1748-decoy");
-        Directory.CreateDirectory(results);
-        var psi = new ProcessStartInfo("pwsh")
+        var decoy = "ANTIPHON_TEST_PHASE_C1748_DECOY_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(decoy, "outer-extra");
+        try
         {
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var token in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "test-run-checkpoint.ps1"),
-            "-Case", "C1748_InheritedPhaseRootUsesTheRowRoot",
-            "-ResultsDirectory", results,
-        })
-            psi.ArgumentList.Add(token);
-        StripPhaseEnvironment(psi);
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var done = new CancellationTokenSource(TimeSpan.FromSeconds(150));
-        await process.WaitForExitAsync(done.Token);
-        var text = await stdout + await stderr;
-        process.ExitCode.ShouldBe(0, text);
-        text.ShouldContain(Diagnostic);
-        text.ShouldContain("PASS C1748 inherited root leaves the decoy empty");
-        text.ShouldContain("PASS C1748 journal is under the row phase root");
-    }
-
-    private static void StripPhaseEnvironment(ProcessStartInfo psi)
-    {
-        var keys = new List<string>();
-        foreach (var key in psi.Environment.Keys)
-        {
-            if (key.StartsWith("ANTIPHON_TEST_PHASE_", StringComparison.OrdinalIgnoreCase))
-                keys.Add(key);
+            var repo = TempDir();
+            Directory.CreateDirectory(Path.Combine(repo, project));
+            var factory = new CapturingFactory();
+            var output = new StringWriter();
+            await Antiphon.Checkpoints.Program.RunAsync(
+            [
+                "row", "--repo-root", repo, "--name", "CP-1", "--project", project, "--output-path", "bin-c1748/",
+                "--filter", "/*/*/Sample/*", "--no-slot", "--results-root", "results",
+            ], new CheckpointApp.Runtime
+            {
+                Output = output, Driver = new ProcessDriver(factory) { DotnetShim = "fake-dotnet" }, Platform = new FakePlatform(),
+                SourceCapture = _ => CheckpointFixtures.CleanSource(), EnvironmentLookup = _ => null,
+            });
+            factory.Starts.Count.ShouldBe(2, output.ToString());
+            foreach (var start in factory.Starts)
+                start.Environment.ContainsKey(decoy).ShouldBeFalse("an inherited phase name leaves every child");
+            factory.Starts[0].Environment.Keys.ShouldNotContain(key => key.StartsWith("ANTIPHON_TEST_PHASE_", StringComparison.OrdinalIgnoreCase),
+                "the build gets no journal");
+            var run = factory.Starts[1].Environment;
+            if (journaled)
+            {
+                var results = Directory.GetDirectories(Path.Combine(repo, "results"), "CP-1-*").Single();
+                run["ANTIPHON_TEST_PHASE_ROOT"].ShouldBe(Path.GetFullPath(Path.Combine(results, "phase")));
+                run["ANTIPHON_TEST_PHASE_GROUP_ID"].ShouldBe("CP-1");
+            }
+            else
+                run.Keys.ShouldNotContain(key => key.StartsWith("ANTIPHON_TEST_PHASE_", StringComparison.OrdinalIgnoreCase));
         }
-
-        foreach (var key in keys)
-            psi.Environment.Remove(key);
+        finally
+        {
+            Environment.SetEnvironmentVariable(decoy, null);
+        }
     }
 
+    private sealed class CapturingFactory : IProcessHandleFactory
+    {
+        public List<ProcessStartInfo> Starts { get; } = [];
+
+        public IProcessHandle Create(ProcessStartInfo startInfo)
+        {
+            Starts.Add(startInfo);
+            return new ImmediateHandle();
+        }
+    }
+
+    private sealed class ImmediateHandle : IProcessHandle
+    {
+        public bool Start() => true;
+        public void BeginRead(Action<string?> stdout, Action<string?> stderr) { }
+        public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public bool HasExited => true;
+        public int ExitCode => 0;
+        public void Kill(bool entireProcessTree) { }
+        public void Dispose() { }
+    }
     private async Task<RowRunResult> RunKilled(FakeDriver driver, string project)
     {
         var workingDirectory = TempDir();

@@ -126,6 +126,11 @@ public sealed class ProcessDriver : IConfinedDriver
         var psi = CreateStartInfo(fileName, workingDirectory);
         foreach (var argument in resolved)
             psi.ArgumentList.Add(argument);
+        foreach (var prefix in request.ClearedEnvironmentPrefixes)
+        {
+            foreach (var inherited in psi.Environment.Keys.Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
+                psi.Environment.Remove(inherited);
+        }
         if (request.Environment is not null)
             foreach (var (name, value) in request.Environment)
                 psi.Environment[name] = value;

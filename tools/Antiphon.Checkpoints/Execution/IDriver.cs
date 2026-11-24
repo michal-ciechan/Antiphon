@@ -20,6 +20,9 @@ public sealed record DriverRequest(
 {
     // Stamps of files outside the build's write roots, taken before the build slot; the build stamps the others inside it.
     public BuildConfinement.Ledger? Ledger { get; init; }
+
+    // Inherited environment names starting with one of these (ignoring case) are removed before Environment is applied.
+    public IReadOnlyList<string> ClearedEnvironmentPrefixes { get; init; } = [];
 }
 
 public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false, bool TimedOut = false)

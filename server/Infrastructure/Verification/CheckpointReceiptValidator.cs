@@ -144,9 +144,8 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         }
         await VerifyRetainedAsync(retainedIndex, request.BundleDigest, ct);
         var retainedReport = Resolve(retained, reportEntry.RelativePath);
-        var arguments = new[] { "-NoProfile", "-NonInteractive", "-File", settings.ValidatorScript,
-            "-Evidence", retainedReport, "-ExpectedSourceSha", request.SourceSha, "-Rows", string.Join(',', request.Selection.Rows) };
-        var validation = await RunValidatorAsync(arguments, ct);
+        var (validator, arguments) = ValidatorCommand(settings.ValidatorScript, retainedReport, request.SourceSha, request.Selection.Rows);
+        var validation = await RunValidatorAsync(validator, arguments, ct);
         if (validation.Exit != 0) return Incomplete(request.Selection.Rows);
         return new(retainedIndex, JsonSerializer.Serialize(new { schemaVersion = 1, verified = true,
             sourceSha = request.SourceSha, rows = request.Selection.Rows, bundleDigest = request.BundleDigest,
@@ -235,11 +234,22 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         for (string? path = root; path is not null; path = Path.GetDirectoryName(path))
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("storage_linked");
     }
-    private static async Task<(int Exit, string Output)> RunValidatorAsync(string[] arguments, CancellationToken ct)
+    // CheckpointReceipts:ValidatorScript names scripts/validate-checkpoint-receipt.ps1 (run with pwsh -File; the production
+    // setting), the launcher of the checkpoint tool's validate verb since unit 20 of
+    // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, or a built Antiphon.Checkpoints.dll, run with dotnet exec
+    // as that same verb (the tests, which start no PowerShell). Either answers exit 0 for a qualifying receipt.
+    internal static (string FileName, string[] Arguments) ValidatorCommand(string validator, string evidence, string sourceSha,
+        IReadOnlyList<string> rows) =>
+        validator.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            ? ("dotnet", ["exec", validator, "validate", "--evidence", evidence, "--expected-source-sha", sourceSha, "--rows", string.Join(',', rows)])
+            : ("pwsh", ["-NoProfile", "-NonInteractive", "-File", validator, "-Evidence", evidence, "-ExpectedSourceSha", sourceSha,
+                "-Rows", string.Join(',', rows)]);
+
+    private static async Task<(int Exit, string Output)> RunValidatorAsync(string fileName, string[] arguments, CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromSeconds(30));
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true,
+        var start = new ProcessStartInfo(fileName) { UseShellExecute = false, RedirectStandardOutput = true,
             RedirectStandardError = true, CreateNoWindow = true };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var child = Process.Start(start) ?? throw new IOException("validator_start_failed");

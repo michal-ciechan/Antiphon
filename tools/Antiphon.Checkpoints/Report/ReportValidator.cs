@@ -21,7 +21,11 @@ public static class ReportValidator
             && start.Fingerprint == end.Fingerprint;
     }
 
-    public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1)
+    // skippedRow: a non-command row whose only shortfall is skipped results (every executed one passed) is refused
+    // row_failed unless this admits it (ReceiptQualification.PlacementSkips: Windows-only skips on a non-Windows host)
+    // by answering null; otherwise its answer is the refusal.
+    public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1,
+        Func<ReportRow, string?>? skippedRow = null)
     {
         static bool Invalid(double? seconds) => seconds is double value && (!double.IsFinite(value) || value < 0);
         if (report.Rows.Any(row => Invalid(row.ExecutedSeconds) || Invalid(row.WallSeconds))
@@ -49,9 +53,18 @@ public static class ReportValidator
             return "selected_rows_missing";
         foreach (var row in rows)
         {
-            if (row.ExitCode != 0 || row.State != "green" ||
-                (row.Command is null && (row.Executed is not > 0 || row.Passed != row.Executed || row.Failed != 0 || row.Skipped != 0)))
+            if (row.ExitCode != 0 || row.State != "green")
                 return "row_failed";
+            if (row.Command is null && (row.Executed is not > 0 || row.Passed != row.Executed || row.Failed != 0 || row.Skipped != 0))
+            {
+                if (skippedRow is null || row.Executed is not >= 0 || row.Passed != row.Executed || row.Failed != 0 || row.Skipped is not > 0)
+                    return "row_failed";
+                if (skippedRow(row) is string skipRefusal)
+                    return skipRefusal;
+            }
+            // A test row's build must be verified; notApplicable belongs to a command row only.
+            if (row.Command is null && row.Source.BuildSource != "verified")
+                return "row_source_ineligible";
             if (!IsSourceEligible(row.Source, expectedSha) || row.Source.Start.Fingerprint != report.Source.Start.Fingerprint ||
                 (row.Command is null ? row.Source.BuildSource != report.Source.BuildSource
                     : row.Source.BuildSource != "notApplicable"))
@@ -81,6 +94,9 @@ public static class ReportValidator
             else if (row.Executed is int count &&
                 (!fields.TryGetValue("executed", out var executed) || executed != count.ToString()))
                 return "receipt_count_disagreement";
+            // A row with skips names the TRX its skips were qualified from.
+            if (row.Skipped is > 0 && (row.Trx is null || !row.Line.Contains(" trx=" + row.Trx + " slot=", StringComparison.Ordinal)))
+                return "receipt_trx_disagreement";
             if (expectedRepeat > 1)
             {
                 if (row.Repeat is null || row.Repeat.Requested != expectedRepeat

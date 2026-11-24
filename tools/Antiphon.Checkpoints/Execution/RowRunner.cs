@@ -37,6 +37,11 @@ public sealed class RowRequest
     public string? ProducingBuildId { get; init; }
     public string? TimingDiscoveryJson { get; init; }
     public string? TimingAssemblyHash { get; init; }
+    // Each child's output line as it arrives (the row verb's console); the logs are written either way.
+    public Action<string>? ChildOutput { get; init; }
+    // Inherited environment names with these prefixes leave every child before the row's own are set (the row verb:
+    // ANTIPHON_TEST_PHASE_, so a row started inside a journaled host never writes that host's root, CARD-1748).
+    public IReadOnlyList<string> ClearedEnvironmentPrefixes { get; init; } = [];
 }
 
 public sealed class RowRunResult
@@ -160,7 +165,7 @@ public sealed class RowRunner
             commandEnvironment["ANTIPHON_BUILD_SLOT_MAXCPUCOUNT"] = request.MaxCpuCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var ran = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: commandEnvironment),
+                Child(request, shell, shellArgs, "console.log", commandEnvironment),
                 request.Deadline,
                 _time,
                 cancellationToken).ConfigureAwait(false);
@@ -218,7 +223,7 @@ public sealed class RowRunner
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
+                Child(request, fileName, buildArgs, "build.log", request.Environment),
                 request.Deadline,
                 _time,
                 cancellationToken).ConfigureAwait(false);
@@ -279,7 +284,7 @@ public sealed class RowRunner
         var hostStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
-            new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
+            Child(request, fileName, runArgs, "console.log", runEnvironment ?? request.Environment),
             request.Deadline,
                 _time,
             cancellationToken).ConfigureAwait(false);
@@ -352,7 +357,7 @@ public sealed class RowRunner
                 }
                 var second = await RowTimeout.RunWithDeadlineAsync(
                     _driver,
-                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: rerunEnvironment),
+                    Child(request, fileName, rerunArgs, "console.log", rerunEnvironment),
                     request.Deadline,
                 _time,
                     cancellationToken).ConfigureAwait(false);
@@ -484,6 +489,13 @@ public sealed class RowRunner
             await CompleteTimingAsync(timing, timingOutcome).ConfigureAwait(false);
         }
     }
+
+    private static DriverRequest Child(RowRequest request, string fileName, IReadOnlyList<string> arguments, string log,
+        IReadOnlyDictionary<string, string>? environment) =>
+        new(fileName, arguments, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, log), request.ChildOutput, environment)
+        {
+            ClearedEnvironmentPrefixes = request.ClearedEnvironmentPrefixes,
+        };
 
     private static string? JournalDiagnosticFor(RowRequest request, IReadOnlyDictionary<string, string>? environment)
     {
@@ -641,7 +653,7 @@ public sealed class RowRunner
             Filter = request.Filter ?? request.Command ?? "", Slot = request.Slot,
             SlotReason = request.SlotReason, WaitedSeconds = request.WaitedSeconds,
             Command = request.Command is not null, Source = request.Source,
-        });
+        }) + " reason=" + reason;
         output.WriteLine(line);
         output.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2 reason={reason}");
         return new RowRunResult { ExitCode = ExitCodes.Invalid, BuildState = request.NoBuild ? "reused" : "failed",

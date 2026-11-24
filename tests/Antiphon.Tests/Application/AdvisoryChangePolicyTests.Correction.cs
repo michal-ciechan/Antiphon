@@ -341,7 +341,8 @@ public partial class AdvisoryChangePolicyTests
             services.AddSingleton<ILandingGit, LandingGit>();
             services.AddSingleton(Options.Create(new CheckpointReceiptSettings {
                 StorageRoot = Path.Combine(Root, "retained"),
-                ValidatorScript = Path.Combine(Repository, "scripts", "validate-checkpoint-receipt.ps1"),
+                // The validate verb of the checkpoint tool this test references, run with dotnet exec (no PowerShell).
+                ValidatorScript = typeof(Antiphon.Checkpoints.Program).Assembly.Location,
                 Producers = [new(Request.ProducerIdentity, Path.Combine(ProducerRoot, "producer-pack-index.json"),
                     Request.BundleDigest, Request.RepositoryPath, SelectionRepository)] }));
             services.AddSingleton<TimeProvider>(TimeProvider.System);
