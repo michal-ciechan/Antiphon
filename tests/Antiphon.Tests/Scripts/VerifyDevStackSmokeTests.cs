@@ -213,6 +213,7 @@ public sealed class VerifyDevStackSmokeTests
             _ => new AppHostCommandResult(false, 0, ""),
         };
         world.Listening.AddRange([17200, 17202, 17203, 17204, 17205, 17206, 17281, 17282]);
+        world.Http = _ => new AppHostHttpAnswer(200, "Healthy", null);
         return world;
     }
 
