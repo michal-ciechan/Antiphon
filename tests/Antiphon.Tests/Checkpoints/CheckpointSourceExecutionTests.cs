@@ -790,6 +790,47 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         (await ToolValidateAsync(builtEvidence)).ShouldBe(ExitCodes.Invalid, "tool-refuses-declared-outputs-without-paths");
     }
 
+    // The validate verb is scripts/validate-checkpoint-receipt.ps1's body since unit 20, and that script read a report.json
+    // as any tool version wrote it. A retained receipt from before 2026-10-23 has no budget or attempts, one from before
+    // 2026-10-13 no markdownSha256, and the review evidence correction imports such packs (integration found the strict
+    // reader refusing them: C1281_ReceiptCorrection, C1281_B1*). A missing member takes its default; a present one is
+    // still checked.
+    [Test]
+    public async Task validate_admits_the_report_shapes_older_tool_versions_wrote()
+    {
+        var older = System.Text.Json.Nodes.JsonNode.Parse(ReportWriter.JsonText(ValidReport()))!.AsObject();
+        foreach (var name in new[] { "budget", "attempts", "markdownSha256", "host", "builds", "evidence", "outputNames", "outputPaths" })
+            older.Remove(name).ShouldBeTrue(name);
+        async Task<(int Exit, string Output)> ValidateAsync(System.Text.Json.Nodes.JsonObject report)
+        {
+            var evidence = Path.Combine(TempDir(), "report.json");
+            File.WriteAllText(evidence, report.ToJsonString());
+            return await ValidateFileWithVerbAsync(evidence);
+        }
+
+        var admitted = await ValidateAsync(older);
+        admitted.Exit.ShouldBe(0, "older-shape-admitted: " + admitted.Output);
+
+        var nulled = older.DeepClone().AsObject();
+        nulled["source"] = null;
+        var nullSource = await ValidateAsync(nulled);
+        nullSource.Exit.ShouldBe(2, "present-null-source-refused");
+        nullSource.Output.ShouldContain("reason=JsonException");
+
+        var noCleanup = older.DeepClone().AsObject();
+        noCleanup.Remove("cleanupRefusals");
+        var cleanupMissing = await ValidateAsync(noCleanup);
+        cleanupMissing.Exit.ShouldBe(2, "cleanup-refusals-required");
+        cleanupMissing.Output.ShouldContain("reason=cleanup_refusals_invalid");
+
+        var undeclared = older.DeepClone().AsObject();
+        undeclared["outputNames"] = new System.Text.Json.Nodes.JsonArray("bin-c1240/");
+        undeclared["outputPaths"] = new System.Text.Json.Nodes.JsonArray();
+        var pathsMissing = await ValidateAsync(undeclared);
+        pathsMissing.Exit.ShouldBe(2, "recorded-empty-output-paths-refused");
+        pathsMissing.Output.ShouldContain("reason=output_paths_missing");
+    }
+
     [Test]
     public async Task cleanup_refusals_disqualify_green_rows_in_both_validators()
     {

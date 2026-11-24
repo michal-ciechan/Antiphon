@@ -56,11 +56,31 @@ public static class ReceiptQualification
         var root = document.RootElement;
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("rows", out var listed) && listed.ValueKind != JsonValueKind.Null)
         {
-            var report = ReceiptJson.Parse<ReportModel>(raw, ReportWriter.Json) ?? throw new InvalidDataException("report_empty");
-            return ReportValidator.Validate(report, expectedSha, rows, expectedRepeat,
-                row => PlacementSkips(report, row, expectedSha, expectedRepeat, repository, cancellationToken));
+            var report = ReadReport(root, raw);
+            if (report.Refusal is not null) return report.Refusal;
+            return ReportValidator.Validate(report.Model, expectedSha, rows, expectedRepeat,
+                row => PlacementSkips(report.Model, row, expectedSha, expectedRepeat, repository, cancellationToken));
         }
         return Envelope(root, expectedSha, expectedRepeat);
+    }
+
+    // A report.json as any tool version wrote it. The tool's own receipt reader (ReceiptJson.Parse) requires every
+    // property the current writer serializes, but a retained receipt keeps the shape of the writer that made it: a report
+    // from before 2026-10-23 has no budget or attempts, one from before 2026-10-13 no markdownSha256, and the review
+    // evidence correction imports such packs (CARD-1281's producer pack is from 2026-10-15). The PowerShell validator this
+    // verb replaced read every report that way, so a missing member takes its default and only the source facts decide.
+    // Still refused: a member that is present but null where the model forbids null, a blank list entry (both
+    // JsonException), cleanupRefusals that is not an array, and a report that records outputPaths but leaves them empty
+    // for its declared outputNames.
+    private static (ReportModel Model, string? Refusal) ReadReport(JsonElement root, string raw)
+    {
+        var model = JsonSerializer.Deserialize<ReportModel>(raw, ReportWriter.Json) ?? throw new InvalidDataException("report_empty");
+        CheckpointReceiptJson.Validate(model);
+        if (!root.TryGetProperty("cleanupRefusals", out var cleanup) || cleanup.ValueKind != JsonValueKind.Array)
+            return (model, "cleanup_refusals_invalid");
+        if (root.TryGetProperty("outputPaths", out _) && model.OutputNames.Count > 0 && model.OutputPaths.Count == 0)
+            return (model, "output_paths_missing");
+        return (model, null);
     }
 
     /// <summary>
