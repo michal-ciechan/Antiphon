@@ -22368,15 +22368,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1",
-      "classes": [
-        "CodexCliVersionProbeTests",
-        "CodexCliVersionWindowsTests",
-        "CodexLaunchRefusalTests",
-        "RunnerCodexCliEvidenceTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.SessionRunner.Tests/GrokRulesAdoptionTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
