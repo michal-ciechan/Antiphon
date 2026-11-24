@@ -62,8 +62,18 @@ public sealed class LiveLaneGateScanTests
     {
         var scan = ScanHeadedGateCases($$"""
             [Test]
-            public void RequiresFlag() =>
-                _ = Environment.GetEnvironmentVariable(target: EnvironmentVariableTarget.Process, variable: "{{HeadedFlag}}");
+            public void RequiresFlagWithTargetFirst()
+            {
+                if (Environment.GetEnvironmentVariable(target: EnvironmentVariableTarget.Process, variable: "{{HeadedFlag}}") != "1")
+                    throw new InvalidOperationException();
+            }
+
+            [Test]
+            public void RequiresFlagWithVariableFirst()
+            {
+                if (Environment.GetEnvironmentVariable(variable: "{{HeadedFlag}}") != "1")
+                    throw new InvalidOperationException();
+            }
 
             [Test]
             public void SeedsChildEnvironment()
@@ -73,8 +83,9 @@ public sealed class LiveLaneGateScanTests
             }
             """);
 
-        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlag"]);
-        scan.Gates.Single().Shapes.ShouldBe([HeadedFlag]);
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlagWithTargetFirst", "RequiresFlagWithVariableFirst"]);
+        foreach (var gate in scan.Gates)
+            gate.Shapes.ShouldBe([HeadedFlag]);
     }
 
     [Test]
@@ -83,14 +94,21 @@ public sealed class LiveLaneGateScanTests
         var scan = ScanHeadedGateCases($$"""
             [Test]
             public void PrintsLookupText() =>
+                Console.WriteLine("Environment.GetEnvironmentVariable(variable: {{HeadedFlag}})");
+
+            [Test]
+            public void PrintsQuotedLookupText() =>
                 Console.WriteLine("Environment.GetEnvironmentVariable(\"{{HeadedFlag}}\")");
 
             [Test]
-            public void PrintsLookupResult() =>
-                Console.WriteLine($"{Environment.GetEnvironmentVariable("{{HeadedFlag}}")}");
+            public void RequiresFlagFromLookupResult()
+            {
+                if ($"{Environment.GetEnvironmentVariable("{{HeadedFlag}}")}" != "1")
+                    throw new InvalidOperationException();
+            }
             """);
 
-        scan.Gates.Select(gate => gate.Method).ShouldBe(["PrintsLookupResult"]);
+        scan.Gates.Select(gate => gate.Method).ShouldBe(["RequiresFlagFromLookupResult"]);
         scan.Gates.Single().Shapes.ShouldBe([HeadedFlag]);
     }
 
