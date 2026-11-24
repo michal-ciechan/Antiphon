@@ -86,6 +86,7 @@
     <ProjectReference Include="..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" ReferenceOutputAssembly="false" />
     <!-- The built CLI (antiphon-scripts), staged for AntiphonCliLauncherTests (ANTIPHON_SCRIPTS_DLL); CopyStagedHelpers owns its output. -->
     <ProjectReference Include="..\..\scripts\lib\Antiphon.Scripts\Antiphon.Scripts.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\..\scripts\regenerate-derived-impact-index\Antiphon.DerivedImpactIndex.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <!-- The nightly core, called in-process (plain C# types only: PowerShell is not loaded here). -->
     <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
@@ -134,6 +135,7 @@
   <ItemGroup>
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" Folder="nightly-owned-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\scripts\lib\Antiphon.Scripts\Antiphon.Scripts.csproj" Folder="antiphon-scripts" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\scripts\regenerate-derived-impact-index\Antiphon.DerivedImpactIndex.csproj" Folder="derived-impact-index" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" Folder="file-use-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" Folder="custody-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" Folder="script-harness-host" Glob="**\*" />
