@@ -120,7 +120,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         // V-12 (G-2, G-16, G-17, P-B). After "none", a new task gets the legacy mirror, and an already-leased slot is still
         // released by a direct pass and by the hosted loop (whose IOptions also says "none").
         var monitor = new MutableDelegationMonitor("Plan");
-        await using var world = await C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor));
+        var probe = new WindowsWorkspaceSlotProcessProbe(_ => new HolderScan(pass != "reconcile-pass", []));
+        await using var world = await C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor), slotProcesses: probe);
         var a = await SeedAsync(world, AgentTaskRole.Plan);
         await PrepareAsync(world);
         var leased = LeasedFor(world, a).ShouldHaveSingleItem();
@@ -137,9 +138,21 @@ public sealed class C0824WorkspaceSlotRoleGateTests
 
         if (pass == "reconcile-pass")
         {
+            PhoneHomeWorkspaceSlotReleaseResponse? reply = null;
+            world.Intercept = frame =>
+            {
+                if (frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease)
+                    return null;
+                var response = world.Deliver(frame);
+                reply = response.Payload?.Deserialize<PhoneHomeWorkspaceSlotReleaseResponse>(PhoneHomeFraming.Json);
+                return response;
+            };
             using var scope = world.Rig.Provider.CreateScope();
-            (await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>()
-                .ReconcileAsync(CancellationToken.None).WaitAsync(Bound)).ShouldBe(1);
+            var released = await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>()
+                .ReconcileAsync(CancellationToken.None).WaitAsync(Bound);
+            var slot = world.Pool.Ledger().Slot(leased.Id)!;
+            released.ShouldBe(1, $"outcome={reply?.Outcome} state={slot.State} requested={slot.ReleaseRequested} "
+                + $"attempts={slot.LingerAttempts} detail={slot.Detail}");
         }
         else
         {
