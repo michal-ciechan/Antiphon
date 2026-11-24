@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 // Native executable shim for the audit fixture: ProcessStartInfo bypasses git.cmd.
 if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "git"
@@ -25,6 +26,20 @@ if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "git"
 // The fake `codex --version` child of the Codex CLI version probe tests (CodexVersionChild.cs, unit 40).
 if (args.Length >= 1 && args[0] == CodexVersionChild.Command)
     return CodexVersionChild.Run(args);
+
+// Fake Docker for the PowerShell desktop PostgreSQL tests. A native apphost lets
+// ProcessStartInfo launch docker.exe on Windows with shell execution disabled.
+if (Environment.GetEnvironmentVariable("C2065_DOCKER_TRACE") is { } dockerTrace)
+{
+    var operation = args.FirstOrDefault() == "--context" ? args.ElementAtOrDefault(2) : args.FirstOrDefault();
+    var stdin = operation == "exec" && args.Contains("-i") ? await Console.In.ReadToEndAsync() : "";
+    File.AppendAllText(dockerTrace, JsonSerializer.Serialize(new { Arguments = args, Stdin = stdin }) + Environment.NewLine);
+    Console.Error.WriteLine(Environment.GetEnvironmentVariable("C2065_DOCKER_STDERR"));
+    if (operation is not ("inspect" or "exec")) return 64;
+    var response = operation == "inspect" ? "C2065_INSPECT" : "C2065_QUERY";
+    Console.Out.WriteLine(Environment.GetEnvironmentVariable(response));
+    return int.Parse(Environment.GetEnvironmentVariable(response + "_EXIT")!);
+}
 
 // Owned, unpaid native peer. Named events keep ancestry/exit cuts deterministic.
 if (!OperatingSystem.IsWindows() || args.Length != 3) return 2;
