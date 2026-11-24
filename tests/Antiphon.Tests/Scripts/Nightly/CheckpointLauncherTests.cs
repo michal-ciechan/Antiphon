@@ -148,6 +148,23 @@ public sealed class CheckpointLauncherTests
         });
     }
 
+    // The server's budget for one validation: the launcher may build the CLI and the tool first, so it gets minutes; a built
+    // DLL keeps 30 s. Both forms run the validate verb with the same receipt facts.
+    [Test]
+    public void The_server_gives_the_launcher_time_to_build_and_a_dll_thirty_seconds()
+    {
+        const string launcher = @"C:\src\Antiphon\scripts\validate-checkpoint-receipt.ps1";
+        const string dll = @"C:\tools\Antiphon.Checkpoints.DLL";
+        Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorBudget(launcher).ShouldBe(TimeSpan.FromMinutes(5));
+        Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorBudget(dll).ShouldBe(TimeSpan.FromSeconds(30));
+        var (shell, shellArguments) = Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorCommand(launcher, "r.json", "abc", ["CP-1", "CP-2"]);
+        shell.ShouldBe("pwsh");
+        shellArguments.ShouldBe(new[] { "-NoProfile", "-NonInteractive", "-File", launcher, "-Evidence", "r.json", "-ExpectedSourceSha", "abc", "-Rows", "CP-1,CP-2" });
+        var (exec, execArguments) = Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorCommand(dll, "r.json", "abc", ["CP-1"]);
+        exec.ShouldBe("dotnet");
+        execArguments.ShouldBe(new[] { "exec", dll, "validate", "--evidence", "r.json", "--expected-source-sha", "abc", "--rows", "CP-1" });
+    }
+
     [Test]
     public async Task The_launchers_are_thin_ascii_and_parse()
     {

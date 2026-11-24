@@ -145,7 +145,7 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         await VerifyRetainedAsync(retainedIndex, request.BundleDigest, ct);
         var retainedReport = Resolve(retained, reportEntry.RelativePath);
         var (validator, arguments) = ValidatorCommand(settings.ValidatorScript, retainedReport, request.SourceSha, request.Selection.Rows);
-        var validation = await RunValidatorAsync(validator, arguments, ct);
+        var validation = await RunValidatorAsync(validator, arguments, ValidatorBudget(settings.ValidatorScript), ct);
         if (validation.Exit != 0) return Incomplete(request.Selection.Rows);
         return new(retainedIndex, JsonSerializer.Serialize(new { schemaVersion = 1, verified = true,
             sourceSha = request.SourceSha, rows = request.Selection.Rows, bundleDigest = request.BundleDigest,
@@ -245,10 +245,21 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
             : ("pwsh", ["-NoProfile", "-NonInteractive", "-File", validator, "-Evidence", evidence, "-ExpectedSourceSha", sourceSha,
                 "-Rows", string.Join(',', rows)]);
 
-    private static async Task<(int Exit, string Output)> RunValidatorAsync(string fileName, string[] arguments, CancellationToken ct)
+    // A built DLL answers in seconds and keeps the 30 s budget. The launcher builds the antiphon-scripts CLI and the
+    // checkpoint tool on its first call after their sources change (19 s cold, 2.4 s warm on the laptop, 2026-11-24), so it
+    // gets enough time for that build: a kill at 30 s would end the build every time, and every receipt would be refused
+    // until something else built the tool. The owner chose the longer budget over a startup warm-up (2026-11-24).
+    internal static readonly TimeSpan DllValidatorBudget = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan LauncherValidatorBudget = TimeSpan.FromMinutes(5);
+
+    internal static TimeSpan ValidatorBudget(string validator) =>
+        validator.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? DllValidatorBudget : LauncherValidatorBudget;
+
+    private static async Task<(int Exit, string Output)> RunValidatorAsync(string fileName, string[] arguments, TimeSpan limit,
+        CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(TimeSpan.FromSeconds(30));
+        budget.CancelAfter(limit);
         var start = new ProcessStartInfo(fileName) { UseShellExecute = false, RedirectStandardOutput = true,
             RedirectStandardError = true, CreateNoWindow = true };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
