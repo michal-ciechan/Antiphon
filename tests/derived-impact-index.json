@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 352,
+      "classes": 354,
       "reason": "allowlist"
     },
     {
@@ -2115,11 +2115,10 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 27,
+      "classes": 26,
       "reason": "cap",
-      "owed": 2,
+      "owed": 1,
       "first": [
-        "CheckpointWindowsAnchoredDeleteTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
     },
@@ -2173,26 +2172,27 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 48,
+      "classes": 50,
       "reason": "cap",
-      "owed": 23,
+      "owed": 25,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
+        "OsWitnessCheckTests",
         "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
-        "ShellFixtureLineEndingContractTests",
-        "ZombieCensusPlatformTests"
+        "ShellFixtureLineEndingContractTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
+        "LandGraphCommandTests",
         "NightlyTestHelpersTests",
         "BuildSlotScriptTests",
         "NightlyTestsParityTests"
@@ -2216,9 +2216,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 55,
+      "classes": 56,
       "reason": "cap",
-      "owed": 30,
+      "owed": 31,
       "first": [
         "RcFailedFirstPlannerTests",
         "RcProjectSelectionTests",
@@ -2232,9 +2232,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
         "OrchestrationWatcherTests",
         "OrchestratorWorkspaceCommandTests",
@@ -2248,10 +2248,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
+        "ProjectScriptWorkspaceTests",
         "RoutingPinScriptTests",
         "DelegateScriptInterruptSwitchTests",
         "DelegateScriptRunnerSwitchTests"
@@ -2332,9 +2333,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 138,
+      "classes": 139,
       "reason": "cap",
-      "owed": 113,
+      "owed": 114,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -2492,9 +2493,9 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 39,
+      "classes": 40,
       "reason": "cap",
-      "owed": 14,
+      "owed": 15,
       "first": [
         "DindRunnerContractTests",
         "GitDiffSpikeTests",
@@ -2502,8 +2503,8 @@
         "LandingFixtureGitInProcessTests",
         "MechanicalPcRehearsalTests",
         "NightlyRunTests",
-        "PhoneHomeMirrorJoinTests",
-        "ProjectReadinessTests"
+        "OsWitnessCheckTests",
+        "PhoneHomeMirrorJoinTests"
       ]
     },
     {
@@ -22545,7 +22546,6 @@
     {
       "path": "tests/Antiphon.SessionRunner.Tests/RunnerInProcessGitTests.cs",
       "classes": [
-        "DirectoryLinkFixtureTests",
         "PostLandEarlyWarningTests"
       ]
     },
@@ -25051,7 +25051,7 @@
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
         "CheckpointTypeCacheTests",
-        "DirectoryLinkFixtureTests",
+        "CheckpointWindowsAnchoredDeleteTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
         "PosixHarnessToolTests"
@@ -25821,6 +25821,7 @@
         "ReleaseStatusTests",
         "RunnerRestartOsTests",
         "StageValueReportTests",
+        "TestDataPruneCommandTests",
         "ZombieAgentReaperTests"
       ]
     },
@@ -25835,7 +25836,6 @@
         "DaemonSupervisorTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
-        "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "MeasureSessionStateCacheScriptTests",
         "NightlyReclaimRaceTests",
@@ -25850,6 +25850,7 @@
         "RepositoryChildRecoveryCommandTests",
         "RunnerRestartOsTests",
         "StageValueReportTests",
+        "TestDataPruneCommandTests",
         "ToolchainFloorWarningTests",
         "ZombieAgentReaperTests"
       ]
@@ -26216,12 +26217,12 @@
         "OrchestratorWorkspaceCommandTests",
         "PipelineDefinitionScriptTests",
         "ProjectCommandTests",
-        "ProjectScriptWorkspaceTests",
         "RegisteredCallerScriptTests",
         "RunnerDrainScriptTests",
         "RunnerSlotsCommandTests",
         "ScheduleCommandTests",
         "StageValueReportTests",
+        "TestDataPruneCommandTests",
         "WorktreeResidueScriptTests"
       ]
     },
@@ -26364,7 +26365,6 @@
       "classes": [
         "C1744G3PhoneHomeSupervisionTests",
         "CheckpointOwnedOutputScriptTests",
-        "ClaudeEffortFixtureTraceTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
@@ -26387,9 +26387,6 @@
         "C1514HostLoadScriptTests",
         "C1744G3PhoneHomeSupervisionTests",
         "C487ReadOnlyCleanupWitnessTests",
-        "ClaudeEffortFixtureTraceTests",
-        "DirectoryLinkFixtureTests",
-        "DirectoryLinkFixtureWindowsTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
@@ -26407,7 +26404,8 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcessFixture.cs",
       "classes": [
         "AstraFixesBTests",
-        "DirectoryLinkFixtureWindowsTests",
+        "ClaudeAdapterEffortPromptTests",
+        "ClaudeEffortFixtureTraceTests",
         "NightlyLockFormatTests",
         "PosixHarnessToolTests",
         "RunnerProbePowerShellFixtureTests",
@@ -26434,7 +26432,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessWindowsProcessFixture.cs",
       "classes": [
-        "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessWindowsOwnershipTests"
       ]
     },
@@ -26488,7 +26485,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/WindowsScriptHarnessProcess.cs",
       "classes": [
-        "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessWindowsOwnershipTests"
       ]
@@ -27111,24 +27107,14 @@
         "DirectoryLinkFixtureWindowsTests",
         "LandGraphAuditCleanupTests",
         "LandingRemovalPolicyControlTests",
-        "ProcessSpawnLimitTests",
         "TempRootSweepAnchoredDeleteTests",
         "WorktreeGuardedCleanupTests"
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/TestHelpers/DirectoryLinkCommand.cs",
-      "classes": [
-        "DirectoryLinkFixtureTests",
-        "DirectoryLinkFixtureWindowsTests",
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/TestHelpers/DirectoryLinkFixtureWindowsTests.cs",
       "classes": [
-        "ChannelReplyAttachmentReaderWindowsTests",
-        "ScriptHarnessProcessContractTests"
+        "ChannelReplyAttachmentReaderWindowsTests"
       ]
     },
     {
