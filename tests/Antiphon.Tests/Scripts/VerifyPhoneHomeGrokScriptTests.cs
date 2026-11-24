@@ -106,7 +106,7 @@ public sealed class VerifyPhoneHomeGrokScriptTests
 
         public void Dispose() => _fixture.Dispose();
 
-        public sealed class Child(int id) : IPhoneHomeGrokChild
+        internal sealed class Child(int id) : IPhoneHomeGrokChild
         {
             public int Id => id;
             public bool HasExited { get; set; }
