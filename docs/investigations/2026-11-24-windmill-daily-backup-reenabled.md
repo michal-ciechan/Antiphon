@@ -1,37 +1,48 @@
-# Windmill daily Postgres backup re-enable blocked (2026-11-24)
+# Windmill daily Postgres backup re-enabled (2026-11-24)
 
-Task 28dc44fe refreshed the desktop Windmill runner and selected the production Postgres on server2. Both schedules are disabled. The manual Windmill run is pending an operator decision about retention.
+Both Windmill schedules are enabled. One manual run through the desktop worker verified a new backup of the production Postgres container on server2 before the schedules were enabled.
 
-## Runner and source receipts
+## Manual verification
 
-At 18:51 UTC the four files in `C:\Users\lndco\antiphon-snapshot-runner` were refreshed byte-for-byte from master commit `3e0cbab19324fb3ca2f50df1b74cb8b957fef06a`.
-
-| Runner file | SHA-256 |
+| Receipt | Value |
 | --- | --- |
-| `postgres-snapshot.ps1` | `43c7967a8dd80847ff8ceb6156a2951aca360633677b75f5f1cebb184eb53d80` |
-| `invoke-postgres-snapshot.ps1` | `7c49b33d3afd86b4a24c88faf0bec6deac841f87c7e325e4a380393b120a9986` |
-| `invoke-postgres-snapshot-stale.ps1` | `2577122f9b068819ab6687286e5dd25e4746b9f800135f0e93f33a15ebf0e036` |
-| `job-status.ps1` | `728a9b72a96fdd22ee2cec372e6d9d3679fbc9c6b5fb80d264037e7ad092d8e1` |
+| Windmill workspace and job | `mc`, `01a20f0d-6728-e2ff-0f15-c8155bc6337e`, desktop worker, success in 370.293 seconds |
+| Source | SSH Docker context `antiphon-server2`, container `antiphon-server2-postgres-postgres-1`, PostgreSQL 16.14 |
+| Source checks | Running container, compose project `antiphon-server2-postgres`, volume `antiphon-server2-postgres_pgdata` at `/var/lib/postgresql/data`. The desktop container `antiphon-postgres` was absent. A live process check observed `pg_dump` in the server2 production container. |
+| Local dump | `C:\Users\lndco\antiphon-backups\antiphon-20261124T193429Z.dump` |
+| OneDrive copy | `C:\Users\lndco\OneDrive\Backups\antiphon-postgres\antiphon-20261124T193429Z.dump` |
+| Size | 916,334,606 bytes in each location |
+| SHA-256 | `62741e4620b57ea997374ec6acf0952b8ab49b6dc653515683277d33ffe7e091` on both copies |
+| Restore listing | Independent `pg_restore --list` exited 0 and returned 153 TABLE DATA entries using the local PostgreSQL 16 image with networking disabled and a read-only file mount |
+| Cloud status | Windmill logged `oneDrive=ok`. Windows reported `System.StorageProviderState=2` (in sync). |
+| Telegram | `DB backup: OK 0.9 GB +cloud src=server2`. The job returned `telegram=0`. The gateway recorded Telegram message ID `1891` at 19:40:36 UTC. |
 
-`SOURCE-SHA` contains the 64-byte ASCII SHA-256 of `postgres-snapshot.ps1`. The obsolete `SOURCE-SHA.txt` was removed. `Set-SnapshotTarget server2` printed `SNAPSHOT TARGET server2`. The resolver selected `C:\src\Antiphon\scripts\postgres-snapshot.ps1`, whose bytes match the pin. The desktop Windmill worker read back the same target and pin through its Windows SSH bridge.
+The manual run removed one OneDrive dump, `antiphon-20261113T075003Z.dump` (638,663,717 bytes), under the operator-approved seven-dump policy. Before starting the job, the existing local copy at `C:\Users\lndco\antiphon-backups\antiphon-20261113T075003Z.dump` matched the OneDrive SHA-256 `4a0fbecfec9f992dd79cf437e42249af4e51bc0037d71cbbec5969dc48c6a05`. Afterward, the local daily count grew from 12 to 13 and OneDrive still held 7. The earlier verified `antiphon-20261124T090703Z.dump` was preserved in both locations. Its prior restore proof is documented separately. [Earlier verification](2026-11-24-server2-db-backup-verification.md)
 
-The SSH-backed Docker context `antiphon-server2` reached daemon 24.0.2. Container `antiphon-server2-postgres-postgres-1` was running with compose project `antiphon-server2-postgres` and volume `antiphon-server2-postgres_pgdata` mounted at `/var/lib/postgresql/data`. The desktop daemon returned no container named `antiphon-postgres`.
+## Schedules
 
-## Retention decision
+Both schedule states were read back through the Windmill API, and the next occurrences below were confirmed in the Windmill queue. Each temporary API credential was removed and its absence verified.
 
-The Windmill wrapper passes `-OneDriveCopy` and uses the default retention of seven OneDrive dumps and fourteen local daily dumps. Before the run, OneDrive already held seven matching files and the local folder held twelve. A successful Windmill run would remove `C:\Users\lndco\OneDrive\Backups\antiphon-postgres\antiphon-20261113T075003Z.dump` (638,663,717 bytes) after verifying the new copy. This task's authority requires preserving all existing backup files. The operator needs to authorize the documented pruning for the manual and scheduled runs, or commission a runner change that preserves the existing files.
+| Schedule | Cron | Timezone | Next run |
+| --- | --- | --- | --- |
+| `u/lndcobra/antiphon_postgres_snapshot` | `0 50 7 * * *` | Europe/London | 2026-11-25 07:50 UTC |
+| `u/lndcobra/antiphon_postgres_snapshot_stale` | `0 0 8 * * *` | Europe/London | 2026-11-25 08:00 UTC |
 
-The Telegram sender calls `dotnet run` for `tg-send.cs`, which can compile on the desktop. If the qualification's desktop build restriction is still in effect, the sender invocation needs an explicit exception or an approved prebuilt sender before the manual run.
+The first scheduled backup and the stale-alert path await live execution. OneDrive retention and sync were verified on the manual Windmill run. Local retention is configured for 14 daily dumps and did not need to prune. Full scratch restore drills remain manual. This run verified `pg_restore --list`. The failure and stale Telegram paths were not exercised.
 
-## Windmill state and remaining verification
+## Deployed runner
 
-Read-only Windmill database queries confirmed zero queued or running jobs for the two paths. The rows below have no scheduled next run while disabled. The times in the last column are the next configured times if enabled before those occurrences.
+The runner at `C:\Users\lndco\antiphon-snapshot-runner` was refreshed from master commit `3e0cbab19324fb3ca2f50df1b74cb8b957fef06a`. The 64-byte ASCII `SOURCE-SHA` pins its `postgres-snapshot.ps1` bytes, and `Set-SnapshotTarget server2` wrote the verified target. The runner resolver selected a matching copy at `C:\src\Antiphon\scripts\postgres-snapshot.ps1`. The desktop worker read back the pin and target over its SSH bridge. The obsolete `SOURCE-SHA.txt` was removed.
 
-| Schedule (workspace `mc`) | Cron | Timezone | Enabled | Next configured time |
-| --- | --- | --- | --- | --- |
-| `u/lndcobra/antiphon_postgres_snapshot` | `0 50 7 * * *` | Europe/London | false | 2026-11-25 07:50 UTC |
-| `u/lndcobra/antiphon_postgres_snapshot_stale` | `0 0 8 * * *` | Europe/London | false | 2026-11-25 08:00 UTC |
+| Deployed file | SHA-256 |
+| --- | --- |
+| `postgres-snapshot.ps1` (also the value in `SOURCE-SHA`) | `43c7967a8dd80847ff8ceb6156a2951aca360633677b75f5f1cebb184eb53d80` |
+| `invoke-postgres-snapshot.ps1` | `f3e436b8cbe2189424029b0c3ab5cd38ad5b4976b08225dd88d228a2eedaa753` |
+| `invoke-postgres-snapshot-stale.ps1` | `cc708dd8b6c1d64274717d9da5f36c2544d7347be590caac22fbeb0c7d79c380` |
+| `job-status.ps1` | `70ed04247d68317fcd2f88d9db83b17495edde14cef725d6dd1108a641e743ca` |
+| `telegram-sender\tg-send.exe` | `388c34d6bd2604475299a67fc184eb699c5ea8214950b6316c056182750726e9` |
+| `telegram-sender\tg-send.dll` | `4fd7c66c098ad22c7ce8b5b3362bac82a3c8cb53c1a3db76ef35ec53cd890d5c` |
 
-No Windmill API token was issued. The manual job still needs to prove a new server2 dump, successful `pg_restore --list`, matching SHA-256 on the OneDrive copy, and a delivered Telegram status line naming server2. Schedule enablement and readback follow that proof.
+Three launchers have local deployment changes. The main launcher prepends `C:\Program Files\Git\usr\bin` to the server2 snapshot child's PATH. The Windows OpenSSH client stalled when Docker invoked it under the worker's non-PTY bridge. Git's SSH client passed the worker-side container check and the manual run. The snapshot script and source pin remain byte-for-byte master. `job-status.ps1` uses the prebuilt `telegram-sender\tg-send.exe`. The two job launchers report the Telegram result separately, so a sender failure does not change the backup or stale-check exit status. Preserve these changes on the next runner refresh.
 
-The newest dump observed in both folders was the earlier `antiphon-20261124T090703Z.dump`, at 905,456,635 bytes. The [earlier verification](2026-11-24-server2-db-backup-verification.md) recorded matching SHA-256 `36ad51c138a100cf834d4663a3e86922f02520a8076508056381e3b55c41b89f`, OneDrive sync, and a successful scratch restore for that dump. The restore drill remains manual. Retention on the retargeted Windmill job, the scheduled off-host copy, and Telegram failure and stale alerts on the refreshed runner remain unverified.
+The file-based publish attempt stopped during MSBuild project parsing, before compilation. The sender was then published once successfully from a temporary conventional project using the same source and Confluent.Kafka 2.5.3. The repository's PowerShell build-slot gate at `4877e5958cf5aa85acc61b18aef35cbb760efe42` avoided building the current C# gate on the desktop. The successful publish used lease `e9d4e294-533b-4a74-b1fa-1c382e4a10b2`, max CPU count 4, and released the lease after 23 seconds. No repository tests were run.
