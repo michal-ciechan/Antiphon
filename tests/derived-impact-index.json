@@ -2248,18 +2248,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "NightlyNativeOwnershipTests",
         "NightlyRunTests",
         "NightlyScriptsTests",
         "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "OrchestratorWorkspaceCommandTests",
-        "PtyHostReaperTests",
-        "QualificationEtaTests"
+        "PtyHostReaperTests"
       ]
     },
     {
@@ -4687,12 +4687,6 @@
       ]
     },
     {
-      "path": "scripts/regenerate-derived-impact-index.ps1",
-      "classes": [
-        "LandGeneratedArtifactTests"
-      ]
-    },
-    {
       "path": "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj",
       "classes": [
         "LandGeneratedArtifactTests"
@@ -6600,6 +6594,7 @@
         "AgentTaskLandMonitoringTests",
         "AgentTaskLandSourceFreshnessTests",
         "AgentTaskLandStageOutcomeTests",
+        "LandGeneratedArtifactTests",
         "LandVerificationBuildSlotTests"
       ]
     },
@@ -26183,13 +26178,13 @@
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
         "ExpectedDurationSyncTests",
+        "ImpactIndexRegenerationTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "MeasureSessionStateCacheScriptTests",
         "NightlyDiscoveryParserTests",
-        "NightlyNativeOwnershipTests",
         "NightlyTestHelpersTests",
         "NightlyTestsRunTests",
         "QualificationTimingTests",
