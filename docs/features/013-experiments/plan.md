@@ -344,6 +344,10 @@ its gate:
    over a per-repo check).
 5. The proposal PR links the experiment as its evidence. A human still approves it.
 
+Scenarios live in the same repo as the code. The agent that drafts a candidate works in a
+workspace where the held-out scenario files are removed before it starts, and its sandbox code host
+does not serve them, so it cannot read the cases it will be scored on.
+
 Suites split tuning and held-out by case, stably (by case id), and the held-out part is refreshed
 with new cases over time so candidates cannot slowly fit it.
 
@@ -492,7 +496,8 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
    reviewer. Reverse it if comparing reviewer models matters most.
 3. **Repeats:** decided 2026-11-24: one run per cell, repeats optional. Spend: decided 2026-11-24: an estimate and a
    budget; no confirmation until the budget is breached; no budget or a high budget is allowed.
-4. **Scenario files location:** `.antiphon/review/scenarios/` as planned, or a separate repo so
-   held-out cases are not visible to agents working in the repo.
+4. **Scenario files location:** decided 2026-11-24: the same repo, `.antiphon/review/scenarios/`.
+   Held-out cases are kept from the drafting agent by leaving them out of its workspace
+   (section 7), not by a second repo.
 5. **Judge:** decided 2026-11-24: a setting, per suite with an instance default; a model fed by an
    optional Python or C# gather script, or a separate agent (section 4a).
