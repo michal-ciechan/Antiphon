@@ -123,6 +123,12 @@ namespace Antiphon.Nightly
         public string RepoRoot { get; set; } = "";
         public string LogRoot { get; set; } = "";
 
+        /// <summary>
+        /// The antiphon-scripts assembly a client chunk runs `test-client` from (dotnet exec); blank: this process's entry
+        /// assembly, the CLI that runs nightly-tests (unit 32 of 2026-11-22-remaining-ps1-to-csharp.md).
+        /// </summary>
+        public string CliPath { get; set; } = "";
+
         /// <summary>The qualification timing root ($TimingRoot).</summary>
         public string TimingRoot { get; set; } = "";
 
@@ -414,7 +420,7 @@ namespace Antiphon.Nightly
         private static readonly Regex ProcessExitReason = new Regex("^process-exit-", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// Invoke-NightlyScheduledChunk: runs one chunk of a prepared suite (client: the npm runner; scripts: each unattended
+        /// Invoke-NightlyScheduledChunk: runs one chunk of a prepared suite (client: the CLI's test-client; scripts: each unattended
         /// census script; otherwise the native test host under the launch watchdog), judges its log, its native verdict and
         /// its timeout, records its timing, and returns the run state after it with its suite row. Never throws for the
         /// chunk's own failures: they are the outcome's Error.
@@ -511,8 +517,10 @@ namespace Antiphon.Nightly
             var runStart = host.Clock.GetTimestamp();
             if (isClient)
             {
-                var wrapper = Path.Combine(c.RepoRoot, Path.Combine("scripts", "test-client.ps1"));
-                run = Launch(OwnedLaunch("pwsh", new[] { "-NoProfile", "-NoLogo", "-File", wrapper, "-JsonResultPath", jsonPath }, c.RepoRoot, 1200000, envMap, logPath));
+                // The client suite is the CLI's test-client command on the checkout under test (its gates, then Vitest).
+                var cli = string.IsNullOrWhiteSpace(c.CliPath) ? System.Reflection.Assembly.GetEntryAssembly()?.Location ?? "" : c.CliPath;
+                if (string.IsNullOrWhiteSpace(cli)) throw new NightlyRefusal("client-cli-unresolved");
+                run = Launch(OwnedLaunch("dotnet", new[] { "exec", cli, "test-client", "--repo-root", c.RepoRoot, "--json-result-path", jsonPath }, c.RepoRoot, 1200000, envMap, logPath));
             }
             else if (isScripts)
             {

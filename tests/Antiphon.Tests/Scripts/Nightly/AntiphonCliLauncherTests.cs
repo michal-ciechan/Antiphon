@@ -929,6 +929,46 @@ public sealed class AntiphonCliLauncherTests
         AssertThinLauncher("check-daemon-build.ps1", "param([switch]$FailOnStale)");
     }
 
+    // ---- unit 32: scripts/test-client.ps1, which scripts/c590-remote.sh (the CARD-0590 nested-lane client case) runs by path ----
+
+    [Test]
+    public async Task Test_client_launcher_maps_its_switches_and_forwards_every_vitest_argument()
+    {
+        using var fixture = CleanupCheckout("test-client.ps1");
+        var entry = fixture.PathOf("scripts", "test-client.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "test-client" };
+
+        // c590-remote.sh's command line (pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath '<case>/client.json').
+        var c590 = await NightlyRunHops.LauncherEcho(entry, ["-JsonResultPath", "/work/test-evidence/run/client-tests/client.json"], fixture.Root, pwsh: true, environment: echo);
+        c590.ExitCode.ShouldBe(0, c590.Stderr);
+        c590.Arguments.ShouldBe(["--json-result-path", "/work/test-evidence/run/client-tests/client.json"]);
+
+        var all = await NightlyRunHops.LauncherEcho(entry, ["-TypecheckProject", "client/tsconfig.node.json", "-LintPath", "client/src/a.test.ts", "attentionVisuals.test",
+            "-t", "keeps a name with spaces"], fixture.Root, environment: echo);
+        all.ExitCode.ShouldBe(0, all.Stderr);
+        all.Arguments.ShouldBe(["--typecheck-project", "client/tsconfig.node.json", "--lint-path", "client/src/a.test.ts", "attentionVisuals.test", "-t",
+            "keeps a name with spaces"]);
+        var options = ClientTestsOptions.Parse(all.Arguments!, "root");
+        (options.TypecheckProject, options.LintPath, options.JsonResultPath).ShouldBe(("client/tsconfig.node.json", "client/src/a.test.ts", ""));
+        options.Forward.ToArray().ShouldBe(["attentionVisuals.test", "-t", "keeps a name with spaces"]);
+
+        AssertThinLauncher("test-client.ps1");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lint-client.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "typecheck-client.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "client-mode.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "client-npm-install.ps1")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Test_client_launcher_that_cannot_start_the_cli_exits_9()
+    {
+        using var fixture = CleanupCheckout("test-client.ps1");
+        var run = await NightlyRunHops.LauncherEcho(fixture.PathOf("scripts", "test-client.ps1"), ["BoardPage"], fixture.Root,
+            environment: new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        run.ExitCode.ShouldBe(9, run.Stderr);
+        run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+    }
+
     [Test]
     public async Task Root_restart_session_runner_forwards_its_bound_parameters_to_the_command()
     {
@@ -961,7 +1001,7 @@ public sealed class AntiphonCliLauncherTests
     {
         if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
-        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
+        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
             "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1"];
         foreach (var file in files)
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).All(b => b < 128).ShouldBeTrue(file + " is ASCII");

@@ -3050,9 +3050,6 @@
           "script": "scripts/test-client.ps1"
         },
         {
-          "script": "scripts/test-client-mode.ps1"
-        },
-        {
           "script": "scripts/test-deploy-am-service.ps1"
         },
         {
@@ -3598,7 +3595,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "bfa7d4318a85ac75268cf89225b6fc0438968955542e717f3da4c9b540f6e44e",
+  "catalogHash": "c69c9fdab6d43e3d00ef1b6712bb39e7363ff41018b7ec66be75953ea8b9be19",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

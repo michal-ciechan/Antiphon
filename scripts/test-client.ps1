@@ -1,139 +1,30 @@
-# Runs the client vitest suite and reports the REAL exit code, visibly and unlosably.
-#
-# Why this exists (CARD-0069): a merge run reported "Exit code 0" over SIX failing client tests.
-# Nothing in vitest or npm converts failures to success - measured 2026-08-19, a failing test
-# yields exit 1 from `npx vitest run` and `npm test` in both PowerShell and Bash. The mechanism
-# was the caller's own output-capping pipeline: in Bash, `npm test 2>&1 | tail -50` reports the
-# exit code of TAIL (always 0), not the test run. PowerShell's `| Select-Object -Last N` does
-# not have this problem ($LASTEXITCODE survives), but the Bash habit is common enough that the
-# suite needs a runner whose verdict survives any pipe.
-#
-# So: this script streams vitest's output through, also tees it to logs/client-tests.log, and
-# ends with an unambiguous "CLIENT TESTS EXIT CODE: n" line - the verdict is IN the text, so
-# even a tail-capped capture shows it. It exits with vitest's real code.
-#
-# Usage (from repo root or anywhere):
-#   pwsh -File scripts/test-client.ps1                 # full suite
-#   pwsh -File scripts/test-client.ps1 BoardPage       # vitest filter args pass through
-#
-# If client/node_modules has no vitest (a fresh linked worktree), this installs it before running
-# rather than telling the caller to do it - see the comment at the install block below.
-#
-# Why this runs vitest through `node <path>\vitest.mjs` and NOT `npx vitest` (CARD-0307): on
-# Windows `npx` resolves to the Node installer's npx.ps1 shim, and when that shim is called from a
-# line inside a script it does not use its bound parameters - it re-parses the SOURCE TEXT of the
-# calling line ($MyInvocation.Statement) and Invoke-Expressions it. The calling line here literally
-# reads `@args`, so the caller's filter never reaches Node and every scoped run silently became the
-# whole suite (measured 2026-09-01: two full-suite runs, 7.5m and 5m, where one file was ~15s).
-# Running the local vitest bin with node.exe hands the splat over as real argv. Do not "simplify"
-# this back to npx / npm exec - npm.ps1 has the same trap; TestClientFilterTests pins it.
-#
-# ASCII-only on purpose - must parse under Windows PowerShell 5.1 too.
+#requires -Version 5.1
+<#
+.SYNOPSIS
+    Thin launcher for `antiphon-scripts test-client` (scripts/lib/Antiphon.Nightly/ClientChecks.cs): the client Vitest
+    suite behind its typecheck and lint gates, ending with the unlosable "CLIENT TESTS EXIT CODE: n" line (CARD-0069).
+
+    Unit 32 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/c590-remote.sh (the
+    CARD-0590 nested-lane client case) runs this file by path. Delete it when that harness is ported. Agents run
+    `scripts/antiphon test-client` (Windows: scripts\antiphon.cmd test-client) directly, and the nightly's client chunk
+    runs the command.
+
+    -JsonResultPath, -TypecheckProject and -LintPath are the command's --json-result-path, --typecheck-project and
+    --lint-path; every other argument is a Vitest filter or flag and passes through unchanged. The command's exit code is
+    returned; 9 when the CLI cannot be built or started (one stderr line). ASCII-only: parseable under Windows PowerShell 5.1.
+#>
 
 $ErrorActionPreference = 'Continue'
-$jsonResultPath = ''
-$typecheckProject = ''
-$lintPath = ''
-$forward = @()
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
+$flags = @{ '-JsonResultPath' = '--json-result-path'; '-TypecheckProject' = '--typecheck-project'; '-LintPath' = '--lint-path' }
+$arguments = @()
 for ($i = 0; $i -lt $args.Count; $i++) {
-    if ([string]$args[$i] -eq '-JsonResultPath' -and ($i + 1) -lt $args.Count) {
-        $jsonResultPath = [string]$args[$i + 1]
+    $item = [string]$args[$i]
+    if ($flags.ContainsKey($item) -and ($i + 1) -lt $args.Count) {
+        $arguments += @($flags[$item], [string]$args[$i + 1])
         $i++
         continue
     }
-    # Witness switches (CARD-1398). They are not vitest filters. -TypecheckProject
-    # forwards to typecheck-client.ps1 -Project. -LintPath forwards to lint-client.ps1 -Path.
-    if ([string]$args[$i] -eq '-TypecheckProject' -and ($i + 1) -lt $args.Count) {
-        $typecheckProject = [string]$args[$i + 1]
-        $i++
-        continue
-    }
-    if ([string]$args[$i] -eq '-LintPath' -and ($i + 1) -lt $args.Count) {
-        $lintPath = [string]$args[$i + 1]
-        $i++
-        continue
-    }
-    $forward += $args[$i]
+    $arguments += $item
 }
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$clientDir = Join-Path $repoRoot 'client'
-$logDir = Join-Path $repoRoot 'logs'
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
-$logFile = Join-Path $logDir 'client-tests.log'
-$vitest = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'vitest') 'vitest.mjs'
-$tsc = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'typescript') (Join-Path 'bin' 'tsc')
-$eslint = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'eslint') (Join-Path 'bin' 'eslint.js')
-
-# A fresh linked worktree gets a client/ with no node_modules, and this used to print "run npm ci"
-# and exit 1. That reads as a failing client suite to anyone capturing the output, and it is a dead
-# end for an agent that cannot type the command itself - it cost CARD-0417's review (task f42b6b25)
-# the client evidence entirely. So install once, here, and then re-check. A suite that still cannot
-# run fails just as loudly as before; it is only the install that is no longer somebody else's job.
-# Typecheck and lint share this one install (CARD-1393). The install takes
-# logs/client-npm-ci.lock so a second cold row waits instead of running npm ci
-# beside this one (CARD-1394, CARD-1398). npm.cmd, not the npm.ps1 shim: the shim
-# re-parses the calling line's SOURCE TEXT (the CARD-0307 trap).
-. (Join-Path $PSScriptRoot (Join-Path 'lib' 'client-npm-install.ps1'))
-if (-not (Test-Path $vitest) -or -not (Test-Path -LiteralPath $tsc) -or -not (Test-Path -LiteralPath $eslint)) {
-    Write-Output "client dependencies are not installed - installing once for vitest, tsc and eslint."
-    $installCode = Install-ClientNpmDependencies -RepoRoot $repoRoot -RequiredPaths @($vitest, $tsc, $eslint)
-    if ($installCode -ne 0) {
-        Write-Output "npm ci exited with code $installCode."
-    }
-}
-
-if (-not (Test-Path $vitest)) {
-    Write-Output "vitest is still not installed at $vitest; run npm ci in client/ by hand and look at why it failed."
-    Write-Output ""
-    Write-Output "CLIENT TESTS EXIT CODE: 1  (FAIL - do not report this run as green)"
-    exit 1
-}
-
-$typecheckScript = Join-Path $PSScriptRoot 'typecheck-client.ps1'
-$shell = 'pwsh'
-if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { $shell = 'powershell' }
-$typecheckArgs = @()
-if (-not [string]::IsNullOrWhiteSpace($typecheckProject)) {
-    $typecheckArgs = @('-Project', $typecheckProject)
-}
-& $shell -NoProfile -NonInteractive -File $typecheckScript @typecheckArgs
-$typecheckCode = $LASTEXITCODE
-if ($null -eq $typecheckCode -or $typecheckCode -ne 0) {
-    if ($null -eq $typecheckCode) { $typecheckCode = 1 }
-    Write-Output ""
-    Write-Output "CLIENT TESTS EXIT CODE: $typecheckCode  (FAIL - typecheck failed; vitest was not started)"
-    exit $typecheckCode
-}
-
-$lintScript = Join-Path $PSScriptRoot 'lint-client.ps1'
-$lintArgs = @()
-if (-not [string]::IsNullOrWhiteSpace($lintPath)) {
-    $lintArgs = @('-Path', $lintPath)
-}
-& $shell -NoProfile -NonInteractive -File $lintScript @lintArgs
-$lintCode = $LASTEXITCODE
-if ($null -eq $lintCode -or $lintCode -ne 0) {
-    if ($null -eq $lintCode) { $lintCode = 1 }
-    Write-Output ""
-    Write-Output "CLIENT TESTS EXIT CODE: $lintCode  (FAIL - lint failed; vitest was not started)"
-    exit $lintCode
-}
-
-Push-Location $clientDir
-try {
-    $vitestArgs = @('run')
-    if (-not [string]::IsNullOrWhiteSpace($jsonResultPath)) {
-        $vitestArgs += @('--reporter=default', '--reporter=json', '--outputFile', $jsonResultPath)
-    }
-    if ($forward.Count -gt 0) { $vitestArgs += $forward }
-    node $vitest @vitestArgs 2>&1 | Tee-Object -FilePath $logFile
-    $code = $LASTEXITCODE
-}
-finally {
-    Pop-Location
-}
-
-Write-Output ""
-Write-Output "CLIENT TESTS EXIT CODE: $code  ($(if ($code -eq 0) { 'PASS' } else { 'FAIL - do not report this run as green' }))"
-Write-Output "Full output: $logFile"
-exit $code
+exit (Invoke-AntiphonCli -Command 'test-client' -Arguments $arguments)

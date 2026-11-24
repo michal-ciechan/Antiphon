@@ -310,8 +310,8 @@ shell; read the runbook's current-checkout Job Object limitation first.
 Never launch a second bare `dev-aspire.ps1`.
 
 Port 17203 serves the built bundle by default (CARD-0216). Wait for
-`pwsh -File scripts/client-mode.ps1 -Status` to show the latest rebuild before
-checking the browser; use `-Mode dev` when HMR is required.
+`scripts\antiphon.cmd client-mode --status` to show the latest rebuild before
+checking the browser; use `--mode dev` when HMR is required.
 
 ### 8. Self-check
 
@@ -472,8 +472,8 @@ missing) and runs one of two modes on that same port: **built** does a clean `vi
 `vite preview` on the result, and keeps a `vite build --watch` running (`emptyOutDir` off) so a
 merge or a local edit shows up within one rebuild without ever wiping `dist/` out from under a
 live page; **dev** runs plain `vite` — HMR, `/@vite/client`, source maps — exactly like `npm run
-dev` did before this card. Switch or inspect it with `pwsh -File scripts/client-mode.ps1 -Mode
-dev|built` or `-Status` (also `-Rebuild` to force a clean rebuild in built mode without a mode
+dev` did before this card. Switch or inspect it with `scripts\antiphon.cmd client-mode --mode
+dev|built` or `--status` (also `--rebuild` to force a clean rebuild in built mode without a mode
 switch); the choice persists across AppHost restarts. `ANTIPHON_CLIENT_WATCH=0` turns the watcher
 off. Simple mode (`dev-start.ps1`, port 17282) is unaffected — it always runs `npm run dev`
 directly and has no mode concept.
@@ -574,7 +574,7 @@ Open **http://localhost:17282** in your browser.
 | 17200   | AppHost resource service  |
 | 17280   | PostgreSQL (always-on external container `antiphon-postgres`) |
 | 17202   | .NET server (API)         |
-| 17203   | Vite client (built bundle by default; `client-mode.ps1 -Mode dev` for HMR) |
+| 17203   | Vite client (built bundle by default; `client-mode --mode dev` for HMR) |
 | 17204   | Session runner            |
 | 17205   | Aspire dashboard UI       |
 | 17206   | OTLP telemetry endpoint   |
@@ -623,8 +623,8 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 ### Preserved Gotcha #1
 
 - **`localhost:17203` and the remote domain serve the built bundle; a client change appears after
-  the watcher's rebuild (seconds), not instantly** (CARD-0216) — `client-mode.ps1 -Status` shows
-  `lastBuildAt`, and `-Mode dev` gives HMR. A delegate that fires a browser check against 17203
+  the watcher's rebuild (seconds), not instantly** (CARD-0216) — `scripts/antiphon client-mode --status` shows
+  `lastBuildAt`, and `--mode dev` gives HMR. A delegate that fires a browser check against 17203
   inside the rebuild window after pushing a client change is testing the OLD code; check
   `lastBuildAt` moved past the change's own commit time before trusting what the page shows, or
   switch to `-Mode dev` for the check. ### Preserved Gotcha #5

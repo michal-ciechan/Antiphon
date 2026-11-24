@@ -1591,7 +1591,7 @@ check at **$0.12**.
 [antiphon-api.md](antiphon-api.md) (Dispatch concurrency routes). Each row below states what the
 named test asserts and nothing more; behaviour outside these rows is not documented here. `C506 …`
 tests are Vitest titles in the named `client/src` test file, run with
-`pwsh -NoProfile -File scripts/test-client.ps1 <file>`. The one TUnit method is named with its class
+`scripts/antiphon test-client <file>`. The one TUnit method is named with its class
 and file.
 
 Navigation:

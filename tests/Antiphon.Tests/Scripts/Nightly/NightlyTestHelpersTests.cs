@@ -127,7 +127,7 @@ public sealed class NightlyTestHelpersTests
             listing.RootElement.GetProperty("format").GetString().ShouldBe("antiphon-tunit-discovery-v1");
 
         var json = fixture.PathOf("npm", "result.json");
-        host(new NightlyLaunch("pwsh", ["-File", "npm.ps1", "-JsonResultPath", json], fixture.Root)).ExitCode.ShouldBe(0);
+        host(new NightlyLaunch("dotnet", ["exec", "cli.dll", "test-client", "--json-result-path", json], fixture.Root)).ExitCode.ShouldBe(0);
         File.ReadAllText(json).ShouldContain("\"numPassedTests\": 1");
 
         var refused = host(new NightlyLaunch("dotnet", ["--results-directory", results, "--report-trx-filename", "sub/chunk.trx"], fixture.Root));

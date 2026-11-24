@@ -16,8 +16,8 @@ public static class FakeTestHost
     /// A passing native test host. From the argv: --results-directory and --report-trx-filename name the TRX, which
     /// holds the rows (a filename with a directory separator is refused: exit 5, "trx-filename-not-basename"); beside it
     /// &lt;name&gt;.discovery.json holds the nodes unless omitDiscovery. --diagnostic-output-directory gets log.diag: the
-    /// discovery document under --list-tests, otherwise the execution document of the rows. -JsonResultPath gets the npm
-    /// runner's one-pass JSON. Every other launch passes (exit 0, pid 2, children exited).
+    /// discovery document under --list-tests, otherwise the execution document of the rows. --json-result-path (the client
+    /// chunk's test-client) gets the npm runner's one-pass JSON. Every other launch passes (exit 0, pid 2, children exited).
     /// </summary>
     public static Func<NightlyLaunch, NightlyLaunchResult> NativePass(IReadOnlyList<NightlyTrxRow> rows, IReadOnlyList<NightlyTestNode> nodes, bool omitDiscovery = false) =>
         launch =>
@@ -49,7 +49,7 @@ public static class FakeTestHost
                 else NightlyFixture.WriteExecution(log, rows.Select(row => new NightlyTestNode(row.Id, row.ClassName, row.MethodName,
                     State: string.IsNullOrWhiteSpace(row.Outcome) ? "Passed" : row.Outcome, ClassName: row.ClassName)));
             }
-            var json = Value("-JsonResultPath");
+            var json = Value("--json-result-path");
             if (json.Length > 0)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(json))!);

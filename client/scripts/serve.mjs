@@ -6,8 +6,8 @@
 //   dev:              plain `vite`, identical to `npm run dev` today.
 //
 // The mode lives in logs/client.mode (repo-root-relative), polled every ~1s, so switching modes
-// (scripts/client-mode.ps1 -Mode dev|built) takes seconds and never needs an AppHost restart.
-// State is mirrored to logs/client.state.json for client-mode.ps1 -Status to read.
+// (scripts/antiphon client-mode --mode dev|built) takes seconds and never needs an AppHost restart.
+// State is mirrored to logs/client.state.json for `client-mode --status` to read.
 //
 // Dependency-free by design (only Node builtins) — this is infrastructure the client's own
 // dependency tree must not be able to break.
@@ -159,7 +159,7 @@ export class ServeSupervisor {
 
   runStep(step) {
     // The watcher (`vite build --watch`) is the one persistent step whose own completions matter
-    // after the initial swap: client-mode.ps1 -Status's lastBuildAt is the delegate-footgun
+    // after the initial swap: client-mode --status's lastBuildAt is the delegate-footgun
     // mitigation (AGENTS.md Gotchas), so its stdout has to be scanned for vite's own
     // "built in <n>ms" line rather than left untracked like preview/dev's stdout.
     const trackBuilds = step.id === 'watch'

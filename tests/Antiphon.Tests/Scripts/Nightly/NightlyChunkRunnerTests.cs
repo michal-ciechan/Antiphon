@@ -172,16 +172,24 @@ public sealed class NightlyChunkRunnerTests
     }
 
     [Test]
-    public void A_client_chunk_runs_the_npm_wrapper_and_needs_its_json()
+    public void A_client_chunk_runs_the_cli_test_client_command_and_needs_its_json()
     {
         using (var missing = new NightlyChunkWorld(_ => RecordingLauncher.Passed()))
         {
+            // Unit 32 of the 2026-11-22 plan: the CLI that runs nightly-tests (its entry assembly, unless the context names
+            // one) runs test-client on the checkout under test; no PowerShell wrapper.
             var outcome = NightlyChunkRunner.Run(missing.Context(), missing.Suite("client", native: false), NightlyChunkWorld.Chunk());
             outcome.Error.ShouldBeNull();
             var launch = missing.Launcher.Launches.Single();
-            launch.FileName.ShouldBe("pwsh");
-            launch.Arguments.ShouldBe(new[] { "-NoProfile", "-NoLogo", "-File", Path.Combine(missing.Fixture.Root, "scripts", "test-client.ps1"), "-JsonResultPath", missing.LogPath("client-all.json") });
+            launch.FileName.ShouldBe("dotnet");
+            launch.Arguments.ShouldBe(new[] { "exec", System.Reflection.Assembly.GetEntryAssembly()!.Location, "test-client", "--repo-root", missing.Fixture.Root,
+                "--json-result-path", missing.LogPath("client-all.json") });
+            launch.WorkingDirectory.ShouldBe(missing.Fixture.Root);
+            launch.Custody.ShouldBe(NightlyCustody.Owned);
+            launch.LogPath.ShouldBe(missing.LogPath("client-all-tests.log"));
             launch.TimeoutMilliseconds.ShouldBe(1200000);
+            ClientTestsOptions.Parse(launch.Arguments.Skip(3).ToArray(), "cli-checkout").ShouldSatisfyAllConditions(
+                o => o.RepoRoot.ShouldBe(missing.Fixture.Root), o => o.JsonResultPath.ShouldBe(missing.LogPath("client-all.json")), o => o.Forward.ShouldBeEmpty());
             outcome.Reasons.Select(PsValue.Str).ShouldBe(new[] { "missing-client-json" });
             outcome.Row!["coverageComplete"].ShouldBe(false);
             outcome.TestsOutcome.ShouldBe("TESTS");
@@ -190,10 +198,13 @@ public sealed class NightlyChunkRunnerTests
             missing.Published.ShouldBeEmpty();
         }
         using var written = new NightlyChunkWorld();
-        var passed = NightlyChunkRunner.Run(written.Context(), written.Suite("client", native: false), NightlyChunkWorld.Chunk());
+        var context = written.Context();
+        context.CliPath = written.Fixture.PathOf("cli", "Antiphon.Scripts.dll");
+        var passed = NightlyChunkRunner.Run(context, written.Suite("client", native: false), NightlyChunkWorld.Chunk());
         passed.Reasons.ShouldBeEmpty();
         passed.Row!["result"].ShouldBe("pass");
         NightlyChunkWorld.Field(written.Timing("client", "all"), "why").ShouldBe("no-trx:client");
+        written.Launcher.Launches.Single().Arguments[1].ShouldBe(context.CliPath);
     }
 
     [Test]

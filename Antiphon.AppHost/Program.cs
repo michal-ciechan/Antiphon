@@ -88,7 +88,7 @@ if (!string.IsNullOrWhiteSpace(liveBroker))
 // "serve" runs client/scripts/serve.mjs (CARD-0216), a self-supervising shim that reads
 // logs/client.mode (default "built") and runs either a built bundle behind `vite preview` or a
 // plain `vite` dev server on this same port, swapping between them without an AppHost restart
-// when scripts/client-mode.ps1 changes the mode file. See AGENTS.md, "Running Locally".
+// when `scripts/antiphon client-mode` changes the mode file. See AGENTS.md, "Running Locally".
 builder.AddNpmApp("client", "../client", "serve")
     .WithReference(server)
     .WaitFor(server)
@@ -115,7 +115,7 @@ var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ant
 
 // Report which mode client/scripts/serve.mjs will find on its first poll. This is a startup log
 // line only - the shim re-reads the file itself every ~1s and is the actual source of truth, so
-// this can go stale the instant someone runs scripts/client-mode.ps1 without restarting.
+// this can go stale the instant someone runs `scripts/antiphon client-mode` without restarting.
 var clientModeFile = Path.Combine(repoRoot, "logs", "client.mode");
 var clientMode = File.Exists(clientModeFile) ? File.ReadAllText(clientModeFile).Trim() : "";
 logger.LogInformation(

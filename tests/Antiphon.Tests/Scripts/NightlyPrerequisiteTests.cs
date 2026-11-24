@@ -27,7 +27,7 @@ public sealed class NightlyPrerequisiteTests
         var launches = world.Launcher.Launches.Select(l => string.Join(" ", l.Arguments)).ToArray();
         var sawCi = launches.Any(j => Regex.IsMatch(j, "(^| )ci($| )"));
         var sawBuild = launches.Any(j => Regex.IsMatch(j, "(^| )run build($| )"));
-        var sawLater = launches.Any(j => Regex.IsMatch(j, "(^| )run lint($| )") || Regex.IsMatch(j, @"Antiphon\.sln") || Regex.IsMatch(j, @"test-client\.ps1"));
+        var sawLater = launches.Any(j => Regex.IsMatch(j, "(^| )run lint($| )") || Regex.IsMatch(j, @"Antiphon\.sln") || Regex.IsMatch(j, "(^| )test-client( |$)"));
         var summary = NightlyTestsWorld.Summary(result);
         var hasSummary = summary.ValueKind == JsonValueKind.Object;
         var reasons = NightlyTestsWorld.SummaryReasons(result);
@@ -104,14 +104,14 @@ public sealed class NightlyPrerequisiteTests
     {
         var nightly = RunLintFixture("nightly");
         var nightlySln = Regex.IsMatch(nightly.Launches, @"Antiphon\.sln");
-        var nightlySuite = Regex.IsMatch(nightly.Launches, @"test-client\.ps1");
+        var nightlySuite = nightly.Launches.Contains("\"test-client\"", StringComparison.Ordinal);
         var nightlyReason = nightly.Reasons.Contains("client-lint-failed", StringComparer.Ordinal);
         var nightlyPrereq = nightly.Reasons.Contains("prerequisite-failed:client lint", StringComparer.Ordinal);
         var nightlyOk = nightly.ExitCode != 0 && !nightly.TestsPassed && !nightly.CoverageComplete && nightlyReason && !nightlyPrereq && nightlySln && nightlySuite;
 
         var rc = RunLintFixture("rc");
         var rcSln = Regex.IsMatch(rc.Launches, @"Antiphon\.sln");
-        var rcSuite = Regex.IsMatch(rc.Launches, @"test-client\.ps1");
+        var rcSuite = rc.Launches.Contains("\"test-client\"", StringComparison.Ordinal);
         var rcReason = rc.Reasons.Contains("prerequisite-failed:client lint", StringComparer.Ordinal);
         var rcNightlyReason = rc.Reasons.Contains("client-lint-failed", StringComparer.Ordinal);
         var rcOk = rc.ExitCode != 0 && !rc.TestsPassed && rcReason && !rcNightlyReason && !rcSln && !rcSuite;

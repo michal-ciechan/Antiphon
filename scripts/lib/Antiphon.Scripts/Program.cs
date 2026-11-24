@@ -204,6 +204,14 @@ namespace Antiphon.Scripts
             [RunnerDaemonCommands.RestartSessionRunner] = RunnerDaemonCommands.RunRestartSessionRunner,
             [RunnerDaemonCommands.RunDaemon] = RunnerDaemonCommands.RunRunDaemon,
             [RunnerDaemonCommands.CheckDaemonBuild] = RunnerDaemonCommands.RunCheckDaemonBuild,
+            // The client commands answer every input themselves (unit 32). client-mode: exit 0 done, 1 the port did not show the
+            // mode in time (without --status) or the state file is not JSON. lint-client, typecheck-client and test-client: the
+            // tool's (or the first failing gate's) code, 1 when a binary is still missing after the shared npm install. Usage is
+            // 2 for each.
+            [ClientCommands.ClientModeCommand] = ClientCommands.RunClientMode,
+            [ClientCommands.LintClient] = ClientCommands.RunLintClient,
+            [ClientCommands.TypecheckClient] = ClientCommands.RunTypecheckClient,
+            [ClientCommands.TestClient] = ClientCommands.RunTestClient,
         };
 
         public static int Main(string[] args)
@@ -241,7 +249,7 @@ namespace Antiphon.Scripts
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
-                + " | " + RunnerDaemonCommands.Usage);
+                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage);
             return Usage;
         }
 

@@ -135,7 +135,8 @@ public sealed class NightlyTestsWorld : IDisposable
     /// Write-C487NativePassSeams: from the argv, what a passing native TUnit run leaves (FakeTestHost.NativePass), the files
     /// written in the seams file's shapes: the TRX of the rows, &lt;name&gt;.discovery.json beside it unless omitDiscovery, and
     /// log.diag in the diagnostic directory (the discovery document under --list-tests, else the execution document of
-    /// the rows, whose nodes carry no namespace); -JsonResultPath gets the npm runner's one-pass JSON line.
+    /// the rows, whose nodes carry no namespace); --json-result-path (the client chunk's test-client) gets the npm runner's
+    /// one-pass JSON line.
     /// </summary>
     public static Func<NightlyLaunch, NightlyLaunchResult> C487NativePass(IReadOnlyList<NightlyTrxRow> rows, IReadOnlyList<NightlyTestNode> nodes, bool omitDiscovery = false) =>
         launch =>
@@ -170,7 +171,7 @@ public sealed class NightlyTestsWorld : IDisposable
                     nodes = rows.Select(r => new { uid = r.Id, state = r.Outcome, type = r.ClassName, method = r.MethodName, className = r.ClassName }).ToArray(),
                 });
             }
-            var json = Value("-JsonResultPath");
+            var json = Value("--json-result-path");
             if (json.Length > 0)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(json))!);

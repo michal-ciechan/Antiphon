@@ -77,7 +77,9 @@ add('PC-39e', 'server/Infrastructure/Git/CardFileRepository.cs', 'if (unmerged.S
 
 def run_test(key, phase, cls, method, client):
     if client:
-        cmd = ['pwsh', '-NoProfile', '-File', 'scripts/test-client.ps1', cls, '-t', method]
+        # The test-client command (unit 32 of the 2026-11-22 plan): scripts\antiphon.cmd on Windows, scripts/antiphon elsewhere.
+        launcher = [str(ROOT / 'scripts' / 'antiphon.cmd')] if sys.platform == 'win32' else ['sh', str(ROOT / 'scripts' / 'antiphon')]
+        cmd = launcher + ['test-client', cls, '-t', method]
     else:
         cmd = ['dotnet', 'run', '--project', 'tests/Antiphon.Tests', '--property:OutputPath=bin-c408/', '--', '--treenode-filter', f'/*/*/{cls}/{method}', '--report-trx', '--report-trx-filename', f'{key}-{phase}.trx']
     log = OUT / f'{key}-{phase}.log'

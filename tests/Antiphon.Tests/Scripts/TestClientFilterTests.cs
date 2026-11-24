@@ -1,91 +1,40 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.Nightly;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0307 S2 — <c>scripts/test-client.ps1 &lt;filter&gt;</c> must scope the vitest run to the named
-/// file. The wrapper used to call <c>npx vitest run @args</c>; on Windows <c>npx</c> is the installer's
-/// <c>npx.ps1</c>, which rebuilds argv from the SOURCE TEXT of the calling line, so the literal
-/// <c>@args</c> reached Node and every scoped run silently became the whole 5–7 minute suite. The
-/// wrapper now runs <c>node node_modules/vitest/vitest.mjs run @args</c>. This test drives the real
-/// script under pwsh with the <c>attentionVisuals.test</c> filter and pins that exactly one test file
-/// ran — its neighbour <c>AttentionPanel.test.tsx</c>, which the full suite would name, must be absent.
-/// It does not run the unfiltered wrapper (that is the full suite, nightly's job).
+/// CARD-0307 S2: <c>test-client &lt;filter&gt;</c> must scope the Vitest run to the named file. The PowerShell wrapper once
+/// called <c>npx vitest run @args</c>; on Windows <c>npx</c> is the installer's <c>npx.ps1</c>, which rebuilt argv from the
+/// SOURCE TEXT of the calling line, so the literal <c>@args</c> reached Node and every scoped run silently became the whole
+/// 5-7 minute suite. The command (Antiphon.Nightly.ClientTests, which replaced the body of scripts/test-client.ps1 in unit 32
+/// of the 2026-11-22 plan) starts <c>node client/node_modules/vitest/vitest.mjs run</c> itself, each argument one argv entry.
+/// These cases pin that boundary in process, on a recording runner: the filter, a flag and a name with spaces reach the
+/// Vitest launch unchanged and in order, npx and npm are never the program, and the gate switches are the gates' (the small
+/// node tsconfig and the one test file), not Vitest's. The real-Vitest run of the former test (one test file under the
+/// wrapper, ~46 s) is gone: no test runs node or npm.
 /// </summary>
-[Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[Category("Unit")]
 public sealed class TestClientFilterTests
 {
-    private static readonly Regex AnsiEscape = new("\x1b\\[[0-9;]*[A-Za-z]", RegexOptions.Compiled);
-
     [Test]
-    public async Task Filter_argument_reaches_vitest_and_runs_exactly_one_file()
+    public void Filter_argument_reaches_vitest_and_runs_exactly_one_file()
     {
-        var repoRoot = DelegateScriptRunner.RepoRoot;
-        var vitest = Path.Combine(repoRoot, "client", "node_modules", "vitest", "vitest.mjs");
-        if (!File.Exists(vitest))
-            throw new SkipTestException($"client/node_modules is not installed ({vitest}); run npm ci in client/.");
+        var world = new ClientChecksTests.World().Installed();
+        world.Write(world.Client("src", "features", "attention", "attentionVisuals.test.ts"));
 
-        // The wrapper gates vitest on a typecheck and a lint. Those gates are not the claim here, so they are
-        // scoped with the wrapper's own forwarding switches (the small node tsconfig, the one test file):
-        // all three stages still run in order, but not over the whole client (a cold full typecheck plus
-        // lint cost most of this test's ~46 s). The switches must be consumed by the wrapper, not reach vitest.
-        var run = await RunWrapperAsync(repoRoot,
-            "-TypecheckProject", "client/tsconfig.node.json",
-            "-LintPath", "client/src/features/attention/attentionVisuals.test.ts",
-            "attentionVisuals.test");
-        var output = AnsiEscape.Replace(run.Output, string.Empty);
+        world.Test("--typecheck-project", "client/tsconfig.node.json", "--lint-path", "client/src/features/attention/attentionVisuals.test.ts",
+            "attentionVisuals.test", "-t", "keeps the glow when collapsed").ShouldBe(0);
 
-        output.ShouldContain("CLIENT TYPECHECK EXIT CODE: 0", customMessage: output);
-        output.ShouldContain("CLIENT LINT EXIT CODE: 0", customMessage: output);
-        output.ShouldContain("CLIENT TESTS EXIT CODE:", customMessage: output);
-        // vitest's summary shape: " Test Files  1 passed (1)" (or "1 failed (1)" if that file is red —
-        // still ONE file, which is the claim under test).
-        Regex.IsMatch(output, @"Test Files\s+1 (passed|failed)").ShouldBeTrue(
-            "expected vitest to run exactly one test file for the attentionVisuals.test filter. Output:\n" + output);
-        output.ShouldNotContain("AttentionPanel.test",
-            customMessage: "the neighbouring AttentionPanel.test.tsx ran, so the filter was ignored (full suite). Output:\n" + output);
-    }
-
-    private static async Task<(int ExitCode, string Output)> RunWrapperAsync(string repoRoot, params string[] args)
-    {
-        var scriptPath = Path.Combine(repoRoot, "scripts", "test-client.ps1");
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = repoRoot,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(scriptPath);
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-        // tinyrainbow always colours on win32 regardless of TTY; ask for plain text so the summary
-        // line is matchable (the ANSI strip above is belt-and-braces).
-        startInfo.Environment["NO_COLOR"] = "1";
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        // One file is ~15s idle, ~35s on a loaded machine; vitest's own worker-start timeout is 60s.
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-            throw new System.TimeoutException("scripts/test-client.ps1 attentionVisuals.test did not finish within 180s — a scoped run is seconds, so the filter is probably being ignored again (full suite).");
-        }
-        return (process.ExitCode, await stdout + await stderr);
+        var launches = world.Tools.Launches;
+        launches.Count.ShouldBe(3, "the typecheck gate, the lint gate and Vitest, in that order");
+        launches.ShouldAllBe(launch => launch.FileName == "node", "never npx or npm: their PowerShell shims rebuild argv from source text");
+        launches[0].Arguments.ToArray().ShouldBe([world.Tsc, "--pretty", "false", "--noEmit", "-p", "client/tsconfig.node.json"]);
+        launches[1].Arguments.ToArray().ShouldBe([world.Eslint, "attentionVisuals.test.ts", "--max-warnings", "0"]);
+        launches[2].Arguments.ToArray().ShouldBe([world.Vitest, "run", "attentionVisuals.test", "-t", "keeps the glow when collapsed"]);
+        launches[2].WorkingDirectory.ShouldBe(world.Client());
+        launches[2].Arguments.ShouldNotContain("--typecheck-project");
+        launches[2].Arguments.ShouldNotContain("--lint-path");
     }
 }

@@ -348,7 +348,7 @@ $hopText
             `$exec | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$diagPath -Encoding UTF8
         }
     }
-    `$jsonIdx = [array]::IndexOf(`$args, '-JsonResultPath')
+    `$jsonIdx = [array]::IndexOf(`$args, '--json-result-path')
     if (`$jsonIdx -ge 0 -and (`$jsonIdx + 1) -lt `$args.Count) {
         `$jp = [string]`$args[`$jsonIdx + 1]
         `$jd = Split-Path -Parent `$jp

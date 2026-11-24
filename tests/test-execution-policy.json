@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a483bc8b7293e9d353dfef1e12e6cef066fbbdd3fddf332dcb3c7742f16c33b2",
+  "policyHash": "cbcadd0754abc067eb39bc4a6043d9e584608eac616e8222153f291f7108bbb4",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1987,12 +1987,6 @@
       "wildcard": false
     },
     {
-      "id": "test-client-mode",
-      "path": "scripts/test-client-mode.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
       "id": "test-deploy-am-service",
       "path": "scripts/test-deploy-am-service.ps1",
       "disposition": "unattended",
@@ -2168,7 +2162,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "bfa7d4318a85ac75268cf89225b6fc0438968955542e717f3da4c9b540f6e44e",
+    "hash": "c69c9fdab6d43e3d00ef1b6712bb39e7363ff41018b7ec66be75953ea8b9be19",
     "path": "tests/test-selection-policy.json"
   }
 }

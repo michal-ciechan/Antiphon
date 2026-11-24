@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 352,
+      "classes": 351,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 144,
+      "classes": 143,
       "reason": "cap",
-      "owed": 119,
+      "owed": 118,
       "first": [
         "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
@@ -2903,6 +2903,7 @@
     {
       "path": "client/tsconfig.node.json",
       "classes": [
+        "AntiphonCliLauncherTests",
         "TestClientFilterTests"
       ]
     },
@@ -4629,6 +4630,12 @@
       "path": "scripts/test-checkpoint-stamp.ps1",
       "classes": [
         "CheckpointStampSafetyTests"
+      ]
+    },
+    {
+      "path": "scripts/test-client.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {

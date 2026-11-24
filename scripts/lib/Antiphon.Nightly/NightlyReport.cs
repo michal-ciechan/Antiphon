@@ -500,7 +500,7 @@ namespace Antiphon.Nightly
                 var first = failed.Names[0] ?? "";
                 if (J.Eq(J.Str(J.Field(suite, "id")), "client") || J.Eq(J.Str(J.Field(suite, "name")), "client"))
                 {
-                    rerun = "pwsh -File scripts/test-client.ps1 " + ClientFile(first);
+                    rerun = "scripts/antiphon test-client " + ClientFile(first);
                 }
                 else
                 {
@@ -565,7 +565,7 @@ namespace Antiphon.Nightly
                 project = "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj";
             }
             if (J.Eq(suiteId, "client") || J.Eq(J.Str(J.Field(suite, "name")), "client"))
-                return "pwsh -File scripts/test-client.ps1 " + ClientFile(failedName);
+                return "scripts/antiphon test-client " + ClientFile(failedName);
             return "dotnet run --project " + project + " -- --treenode-filter \"/*/*/*/" + failedName + "\"  (" + exe + ")";
         }
 

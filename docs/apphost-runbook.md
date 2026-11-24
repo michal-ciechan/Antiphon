@@ -153,7 +153,7 @@ Invoke-WebRequest 'http://localhost:17202/health'
 git rev-parse HEAD
 (Invoke-RestMethod 'http://localhost:17204/capabilities').build.commitSha
 scripts\antiphon.cmd check-daemon-build
-pwsh -File scripts/client-mode.ps1 -Status
+scripts\antiphon.cmd client-mode --status
 ```
 
 **AppHost restart does not pick up session-runner source.** Its stale-daemon check
@@ -169,9 +169,9 @@ out-of-band push to `origin/master`, update the main checkout with
 with feature/build evidence. A runner SHA can legitimately predate unrelated
 commits; `check-daemon-build` compares its project source closure.
 
-Port 17203 serves `vite preview` plus `vite build --watch`. Wait for `-Status` to
+Port 17203 serves `vite preview` plus `vite build --watch`. Wait for `--status` to
 show a rebuild after the client change before checking the browser. Use
-`pwsh -File scripts/client-mode.ps1 -Mode dev` when HMR is required.
+`scripts\antiphon.cmd client-mode --mode dev` when HMR is required.
 
 ## AppHost locks and exits
 
