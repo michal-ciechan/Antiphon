@@ -9,6 +9,9 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
 {
+    private const string IsolationCaller = "scripts/test-live-lane-isolation.ps1";
+    private const string EvidenceCaller = "scripts/test-live-lane-evidence.ps1";
+
     [Test]
     [Arguments("plan")]
     [Arguments("yaml")]
@@ -43,28 +46,26 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
         Select(manifest, root, ["CP-1"], 12).TotalTimeoutMinutes.ShouldBe(12);
     }
 
+    // The unreferenced-script cleanup retired the startup and delivery checkpoint drivers.
     [Test]
-    [Arguments("startup", "rows", false)]
-    [Arguments("startup", "rows", true)]
-    [Arguments("delivery", "rows", false)]
-    [Arguments("delivery", "rows", true)]
-    [Arguments("isolation", "producerRows", false)]
-    [Arguments("isolation", "producerRows", true)]
-    [Arguments("isolation", "consumerRows", false)]
-    [Arguments("isolation", "consumerRows", true)]
-    [Arguments("evidence", "CP-20,CP-26", false)]
-    [Arguments("evidence", "CP-29", false)]
+    [Arguments(IsolationCaller, "producerRows", false)]
+    [Arguments(IsolationCaller, "producerRows", true)]
+    [Arguments(IsolationCaller, "consumerRows", false)]
+    [Arguments(IsolationCaller, "consumerRows", true)]
+    [Arguments(EvidenceCaller, "CP-20,CP-26", false)]
+    [Arguments(EvidenceCaller, "CP-29", false)]
     public void committed_live_lane_callers_pass_total_lint(string caller, string selection, bool controls)
     {
-        var source = File.ReadAllText(Path.Combine(CheckpointFixtures.RepoRoot, "scripts", $"test-live-lane-{caller}.ps1"));
+        var source = File.ReadAllText(Path.Combine(CheckpointFixtures.RepoRoot, caller));
         var plan = Match(source, @"import --plan \(Join-Path \$repo '(?<value>[^']+)'\)");
         var manifest = PlanTableImporter.ImportFile(Path.Combine(CheckpointFixtures.RepoRoot, plan)).Manifest.ShouldNotBeNull();
         string[] rows;
         int total;
-        if (caller == "evidence")
+        if (caller == EvidenceCaller)
         {
             // Both real calls to the parameterized start wrapper carry their own total.
             Regex.Matches(source, @"Invoke-EvidenceCheckpoint -Rows '[^']+' -TotalMinutes \d+").Count.ShouldBe(2);
+            source.ShouldContain("'--total-timeout', ($TotalMinutes.ToString() + 'm')");
             total = int.Parse(Match(source, $@"Invoke-EvidenceCheckpoint -Rows '{selection}' -TotalMinutes (?<value>\d+)"));
             rows = selection.Split(',');
         }
@@ -84,11 +85,8 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
                 var estimate = int.Parse(Match(source, @"- id: PC-V\$v[\s\S]*?estimatedMinutes: (?<value>\d+)"));
                 var variants = Regex.Matches(source, @"@\((\d+),'[^']+'\)").Select(match => int.Parse(match.Groups[1].Value)).ToArray();
                 variants.ShouldNotBeEmpty();
-                if (caller == "isolation")
-                {
-                    source.ShouldContain("$isPty = $v -le 12");
-                    variants = variants.Where(v => selection == "producerRows" ? v <= 12 : v > 12).ToArray();
-                }
+                source.ShouldContain("$isPty = $v -le 12");
+                variants = variants.Where(v => selection == "producerRows" ? v <= 12 : v > 12).ToArray();
                 foreach (var variant in variants)
                 {
                     var id = $"PC-V{variant}";
