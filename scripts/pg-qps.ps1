@@ -2,6 +2,7 @@
 <#
 .SYNOPSIS
   Read-only pg_stat_statements rate over a window. CARD-1987.
+  Defaults to the PostgreSQL endpoint configured in AppHost user secrets.
   The connection string, when -ConnectionEnv is used, is copied onto the psql
   child process only and is never printed.
 #>
@@ -20,6 +21,7 @@ $ErrorActionPreference = "Stop"
 $Tag = "-- rt.diag.pgss"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($ScriptDir) -and $PSCommandPath) { $ScriptDir = Split-Path -Parent $PSCommandPath }
+. (Join-Path $ScriptDir 'lib/desktop-postgres.ps1')
 
 function Write-Fixed([string]$text) {
     [Console]::Out.WriteLine($text)
@@ -30,8 +32,9 @@ function Stop-Bad {
     exit 2
 }
 
-function Stop-Unreachable {
-    Write-Fixed "database unreachable or extension not loaded"
+function Stop-Unreachable([string]$Detail) {
+    if ($Detail) { Write-Fixed $Detail }
+    Write-Fixed 'database unreachable or extension not loaded'
     exit 3
 }
 
@@ -41,8 +44,7 @@ if ($Database -notmatch '^[A-Za-z0-9_]+$' -or $User -notmatch '^[A-Za-z0-9_]+$')
 
 $useEnv = $ConnectionEnv.Length -gt 0
 if ($useEnv -and $Container.Length -gt 0) { Stop-Bad }
-if (-not $useEnv -and $Container.Length -eq 0) { $Container = "antiphon-postgres" }
-if (-not $useEnv -and $Container -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Stop-Bad }
+if ($Container -and $Container -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Stop-Bad }
 if ($useEnv -and $ConnectionEnv -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { Stop-Bad }
 
 function Get-SqlParts {
@@ -103,6 +105,13 @@ function Convert-ConnMap([string]$raw) {
 }
 
 function Invoke-Query([string]$sql) {
+    if (-not $useEnv) {
+        try { $output = Invoke-DesktopPostgresQuery -Target $postgresTarget -Sql $sql }
+        catch { Stop-Unreachable $_.Exception.Message }
+        if ([string]::IsNullOrWhiteSpace($output)) { Stop-Unreachable }
+        return $output
+    }
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
@@ -134,10 +143,7 @@ function Invoke-Query([string]$sql) {
         $psi.EnvironmentVariables["PGUSER"] = $userName
         $psi.EnvironmentVariables["PGDATABASE"] = $dbName
         $psi.EnvironmentVariables["PGPASSWORD"] = $password
-    }
-    else {
-        $psi.FileName = "docker"
-        $psi.Arguments = "exec -i $Container psql -X -A -t -U $User -d $Database -v ON_ERROR_STOP=1"
+        $psi.EnvironmentVariables["PGOPTIONS"] = "-c default_transaction_read_only=on"
     }
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
@@ -235,6 +241,10 @@ function Get-Texts($parts, $ids) {
 }
 
 $parts = Get-SqlParts
+if (-not $useEnv) {
+    try { $postgresTarget = Resolve-DesktopPostgresTarget -Container $Container -User $User -Database $Database }
+    catch { Stop-Unreachable $_.Exception.Message }
+}
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $firstRaw = Invoke-Query $parts.Counters
 $first = Convert-Rows $firstRaw

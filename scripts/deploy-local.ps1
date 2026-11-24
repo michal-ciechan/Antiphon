@@ -8,7 +8,7 @@
     composes restart-apphost.ps1 instead of reproducing its lock, teardown, or
     health-waiting behaviour. Once that restart succeeds, it verifies the full
     dev stack (without a browser smoke) and confirms every source migration is
-    recorded in the live antiphon-postgres database.
+    recorded in the production PostgreSQL database.
 
     The last line is always the deploy result. It is intentionally printed by
     this script, not inferred from a caller's wrapping pipeline.
@@ -22,6 +22,12 @@
 .PARAMETER AllowWorktree
     Intentionally allow a linked worktree to control the shared local stack.
 
+.PARAMETER Report
+    Compare source migrations with the database without restarting or verifying the stack.
+
+.PARAMETER PgContainer
+    Use an explicit local/test Docker container instead of the AppHost database.
+
 .OUTPUTS
     DEPLOY VERDICT: ok
     DEPLOY VERDICT: failed <detail>
@@ -34,22 +40,29 @@
 param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
-    [switch]$AllowWorktree
+    [switch]$AllowWorktree,
+    [switch]$Report,
+    [string]$PgContainer,
+    [string]$PgUser = 'antiphon',
+    [string]$PgDatabase = 'antiphon'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+. (Join-Path $PSScriptRoot 'lib/desktop-postgres.ps1')
 
-$worktree = Get-AppHostWorktreeClassification -SourceRoot $repoRoot
-if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
-    $detail = (Format-AppHostWorktreeGuardMessage -Classification $worktree) -join ' '
-    Write-Output "DEPLOY VERDICT: refused $detail"
-    exit 3
-}
-if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
-    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+if (-not $Report) {
+    $worktree = Get-AppHostWorktreeClassification -SourceRoot $repoRoot
+    if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
+        $detail = (Format-AppHostWorktreeGuardMessage -Classification $worktree) -join ' '
+        Write-Output "DEPLOY VERDICT: refused $detail"
+        exit 3
+    }
+    if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
+        Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    }
 }
 
 $restartScript = Join-Path $PSScriptRoot 'restart-apphost.ps1'
@@ -75,18 +88,10 @@ function Get-SourceMigrationIds {
 }
 
 function Get-RecordedMigrationIds {
-    $recorded = @(
-        & docker exec antiphon-postgres psql -X -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 `
-            -c 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";' |
-            ForEach-Object { $_.ToString().Trim() } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    )
-    $psqlExitCode = $LASTEXITCODE
-    if ($psqlExitCode -ne 0) {
-        throw "Could not read __EFMigrationsHistory from antiphon-postgres (docker exec exit $psqlExitCode)"
-    }
+    param([hashtable]$Target)
 
-    $recorded
+    $rows = Invoke-DesktopPostgresQuery -Target $Target -Sql 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";'
+    ($rows -split '\r?\n') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 }
 
 function Invoke-ChildPowerShell {
@@ -117,18 +122,21 @@ function Format-FailureDetail {
 
 $failure = $null
 try {
-    $restartArguments = @('-TimeoutSec', $TimeoutSec)
-    if ($NoBuild) { $restartArguments += '-NoBuild' }
-    if ($AllowWorktree) { $restartArguments += '-AllowWorktree' }
-    Invoke-ChildPowerShell -ScriptPath $restartScript -Name 'restart-apphost.ps1' -Arguments $restartArguments
+    $target = Resolve-DesktopPostgresTarget -Container $PgContainer -User $PgUser -Database $PgDatabase
+    if (-not $Report) {
+        $restartArguments = @('-TimeoutSec', $TimeoutSec)
+        if ($NoBuild) { $restartArguments += '-NoBuild' }
+        if ($AllowWorktree) { $restartArguments += '-AllowWorktree' }
+        Invoke-ChildPowerShell -ScriptPath $restartScript -Name 'restart-apphost.ps1' -Arguments $restartArguments
 
-    # The built client can still be finishing its first post-restart build after
-    # restart-apphost.ps1 has confirmed the backend. Allow that readiness probe
-    # longer than verify-dev-stack.ps1's interactive default.
-    Invoke-ChildPowerShell -ScriptPath $verifyScript -Name 'verify-dev-stack.ps1' -Arguments @('-SkipBrowser', '-TimeoutSec', '30')
+        # The built client can still be finishing its first post-restart build after
+        # restart-apphost.ps1 has confirmed the backend. Allow that readiness probe
+        # longer than verify-dev-stack.ps1's interactive default.
+        Invoke-ChildPowerShell -ScriptPath $verifyScript -Name 'verify-dev-stack.ps1' -Arguments @('-SkipBrowser', '-TimeoutSec', '30')
+    }
 
     $sourceMigrationIds = @(Get-SourceMigrationIds -Directory $migrationDirectory)
-    $recordedMigrationIds = @(Get-RecordedMigrationIds)
+    $recordedMigrationIds = @(Get-RecordedMigrationIds -Target $target)
     $pendingMigrationIds = @($sourceMigrationIds | Where-Object { $_ -notin $recordedMigrationIds })
     $unknownMigrationIds = @($recordedMigrationIds | Where-Object { $_ -notin $sourceMigrationIds })
 
