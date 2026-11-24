@@ -616,6 +616,142 @@ function Test-MissingAppHostDatabase {
 }
 Test-MissingAppHostDatabase
 
+function Test-DesktopPostgresRouting {
+    # A native executable shim exercises the actual Docker argv/stdin boundary on Linux.
+    # The missing-secret refusal above runs on Windows PowerShell as well.
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Unix) { return }
+
+    $fixture = New-TestDir
+    $savedAppData = $env:APPDATA
+    $savedPath = $env:PATH
+    $savedFixture = $env:C2065_FIXTURE
+    try {
+        $env:APPDATA = $fixture
+        $env:C2065_FIXTURE = $fixture
+        $env:PATH = "$fixture$([IO.Path]::PathSeparator)$savedPath"
+        $secretsDir = Join-Path $fixture 'Microsoft/UserSecrets/aspire-antiphon-apphost'
+        New-Item -ItemType Directory -Path $secretsDir -Force | Out-Null
+        $secretsFile = Join-Path $secretsDir 'secrets.json'
+        $connection = 'Host=192.0.2.55;Port=5433;Database=fixture_db;Username=fixture_user;Password="fixture-private;value"'
+        Save-Json $secretsFile @{ ConnectionStrings = @{ DefaultConnection = $connection } }
+        $docker = Join-Path $fixture 'docker'
+        Set-Content -LiteralPath $docker -Encoding ascii -Value @'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$C2065_FIXTURE/argv"
+if [ "$1" = --context ]; then
+    [ "$2" = antiphon-server2 ]
+    shift 2
+fi
+id=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+case "$1:$2" in
+    inspect:--type)
+        [ "$5" = '{{.Id}}|{{.State.Running}}|{{json (index .NetworkSettings.Ports "5432/tcp")}}' ]
+        [ "$6" = antiphon-server2-postgres-postgres-1 ]
+        printf '%s|true|[{"HostIp":"192.0.2.55","HostPort":"5433"}]\n' "$id"
+        ;;
+    inspect:--format)
+        [ "$4" = "$id" ]
+        printf '%s|fixture-start\n' "$id"
+        ;;
+    exec:-i)
+        sql=$(cat)
+        [ "$4" = psql ]
+        if [ "$3" = "$id" ]; then
+            [ "$*" = "exec -i $id psql -X -A -t -w -v ON_ERROR_STOP=1 -h /var/run/postgresql -p 5432 -U fixture_user -d fixture_db -f -" ]
+        else
+            [ "$*" = 'exec -i fixture-local psql -X -A -t -w -v ON_ERROR_STOP=1 -U localUser -d localDb -f -' ]
+        fi
+        if [ -f "$C2065_FIXTURE/fail-query" ]; then
+            printf '%s\n' 'fixture-private;value' >&2
+            exit 2
+        fi
+        case "$sql" in
+            *'"__EFMigrationsHistory"'*) printf '%s\n' '20260101000000_Test' ;;
+            *'current_setting('*'pg_stat_statements_info'*) printf '%s\n' '160014|16.14|0||42|1|0.1|1' ;;
+            *'container-test'*) printf '%s\n' 'local-ok' ;;
+            *'fingerprint'*) printf '%s\n' '{"databaseOid":123}' ;;
+            *'json_agg(json_build_object('*'"AgentTasks"'*) printf '%s\n' '{"sessions":[],"agents":[],"tasks":[]}' ;;
+            *'"AgentSessions" where "Id" in '*) printf '%s\n' 'aaaaaaaa-0000-0000-0000-000000000001' ;;
+            *) exit 9 ;;
+        esac
+        ;;
+    "exec:$id") [ "$3" = sh ]; printf 'usage_usec 2000000\n' ;;
+    *) exit 9 ;;
+esac
+'@
+        & chmod +x $docker
+        function Start-Sleep { param([int]$Seconds) if ($Seconds -ne 10) { throw 'Unexpected sleep in database fixture.' } }
+
+        $qps = & (Join-Path $here 'pg-qps.ps1') -Seconds 10 -Json
+        Assert-Eq $LASTEXITCODE 0 'pg-qps samples the production endpoint without desktop Postgres'
+        Assert-True ([bool](($qps | ConvertFrom-Json).windowSeconds -gt 0)) 'pg-qps emits valid rate JSON'
+
+        # A report fixture has a source migration and deliberately no restart or stack verifier.
+        $fixtureScripts = Join-Path $fixture 'scripts'
+        $migrations = Join-Path $fixture 'server/Migrations'
+        New-Item -ItemType Directory -Path $fixtureScripts, $migrations | Out-Null
+        Copy-Item -LiteralPath (Join-Path $here 'deploy-local.ps1'), (Join-Path $here 'apphost-common.ps1') -Destination $fixtureScripts
+        New-Item -ItemType SymbolicLink -Path (Join-Path $fixtureScripts 'lib') -Target (Join-Path $here 'lib') | Out-Null
+        New-Item -ItemType File -Path (Join-Path $migrations '20260101000000_Test.cs') | Out-Null
+        $deploy = & (Join-Path $fixtureScripts 'deploy-local.ps1') -Report 6>$null
+        Assert-True ($LASTEXITCODE -eq 0 -and $deploy -contains 'DEPLOY VERDICT: ok') 'deploy report verifies history without restarting the stack'
+
+        . (Join-Path $here 'lib/desktop-postgres.ps1')
+        $measure = Join-Path $here 'measure-session-state-cache.ps1'
+        $tokens = $parseErrors = $null
+        $tree = [System.Management.Automation.Language.Parser]::ParseFile($measure, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count) { throw 'Could not parse the measurement script.' }
+        foreach ($definition in $tree.EndBlock.Statements) {
+            if ($definition -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $definition.Name -in @('Get-StatisticsSql', 'Read-Statistics')) {
+                . ([scriptblock]::Create($definition.Extent.Text))
+            }
+        }
+        $target = Resolve-DesktopPostgresTarget
+        $stats = Read-Statistics -Target $target
+        Assert-True ($stats.statistics.databaseOid -eq 123 -and $stats.containerCpuSeconds -eq 2 -and $stats.containerIdentity -like '*|fixture-start') 'cache measurement reads SQL and CPU from the same production container'
+        $local = Resolve-DesktopPostgresTarget -Container 'fixture-local' -User 'localUser' -Database 'localDb'
+        Assert-Eq (Invoke-DesktopPostgresQuery -Target $local -Sql 'SELECT 1; -- container-test') 'local-ok' 'explicit local container preserves user and database'
+
+        $manifestDir = Join-Path $fixture 'pty-hosts/manifests'
+        New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+        Save-Json (Join-Path $manifestDir 'sample.json') @{
+            sessionId = 'aaaaaaaa-0000-0000-0000-000000000001'; hostPid = 123; childPid = 124
+            hostStartTimeUtc = '2026-08-20T06:00:00Z'; createdAtUtc = '2026-08-20T06:00:00Z'
+            exe = 'fixture'; cwd = $fixture; ansiLogPath = (Join-Path $fixture 'sample.ansi')
+        }
+        function Invoke-RestMethod {
+            param($Method, $Uri, $TimeoutSec)
+            if ($Method -ne 'GET' -or $Uri -ne 'http://fixture.invalid/sessions') { throw 'Unexpected runner call.' }
+            @()
+        }
+        function Get-CimInstance { @() }
+        $orphan = Join-Path $here 'reap-orphaned-pty-hosts.ps1'
+        $report = & $orphan -SessionLogPath $fixture -RunnerUrl 'http://fixture.invalid' 6>&1
+        Assert-True ($LASTEXITCODE -eq 0 -and ($report -join "`n") -match 'protected \(DB row\): 1') 'pty reaper protects a session found in production'
+
+        New-Item -ItemType File -Path (Join-Path $fixture 'fail-query') | Out-Null
+        $report = & $orphan -SessionLogPath $fixture -RunnerUrl 'http://fixture.invalid' -Execute 6>&1
+        Assert-True ($LASTEXITCODE -eq 2 -and ($report -join "`n") -match 'ABORT: the database did not answer' -and ($report -join "`n") -notmatch 'fixture-private') 'pty reaper refuses to execute when PostgreSQL fails and suppresses stderr'
+        Remove-Item -LiteralPath (Join-Path $fixture 'fail-query')
+
+        $record = @(Invoke-Reap @{ ProcessesJson = $cFiles.Processes; RunnerJson = $cFiles.Runner; Now = $cFiles.Now; ReportPath = $fixture } *>&1)
+        Assert-Eq $record[-1].ExitCode 0 'zombie reaper accepts a successful production database census'
+
+        Save-Json $secretsFile @{ 'ConnectionStrings:DefaultConnection' = $connection.Replace('5433', '17280') }
+        $qps = & (Join-Path $here 'pg-qps.ps1') -Seconds 10
+        Assert-True ($LASTEXITCODE -eq 3 -and ($qps -join "`n") -match 'must publish the endpoint' -and ($qps -join "`n") -notmatch 'fixture-private') 'pg-qps refuses an AppHost endpoint that does not match server2'
+        $argv = Get-Content -LiteralPath (Join-Path $fixture 'argv') -Raw
+        Assert-True ($argv -notmatch 'fixture-private|\bantiphon-postgres\b') 'Docker arguments contain neither the password nor the desktop container'
+    } finally {
+        $env:APPDATA = $savedAppData
+        $env:PATH = $savedPath
+        $env:C2065_FIXTURE = $savedFixture
+        Remove-Item -LiteralPath $fixture -Recurse -Force
+    }
+}
+Test-DesktopPostgresRouting
+
 # --- incident execute records server kill via HttpShim -------------------------------------
 $incXDir = New-TestDir
 Save-Json (Join-Path $incXDir 'processes.json') $incProcs

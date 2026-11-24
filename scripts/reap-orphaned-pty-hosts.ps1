@@ -56,7 +56,7 @@ param(
 
     [string]$OutputDistillerDir = 'C:\logs\antiphon\output-distiller',
 
-    [string]$PgContainer = 'antiphon-postgres',
+    [string]$PgContainer = '',
     [string]$PgUser = 'antiphon',
     [string]$PgDatabase = 'antiphon',
 
@@ -75,6 +75,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/desktop-postgres.ps1')
 $RunnerUrl = $RunnerUrl.TrimEnd('/')
 $manifestDir = Join-Path $SessionLogPath 'pty-hosts\manifests'
 
@@ -123,18 +124,29 @@ if ($manifests.Count -eq 0) {
     exit 0
 }
 
-$idList = ($manifests | ForEach-Object { "'" + $_.SessionId + "'" }) -join ','
-$sql = 'select "Id" from "AgentSessions" where "Id" in (' + $idList + ');'
-$dbRows = & docker exec $PgContainer psql -U $PgUser -d $PgDatabase -At -c $sql 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ABORT: the database did not answer (docker exec $PgContainer psql ... exit $LASTEXITCODE):"
-    Write-Host ($dbRows | Out-String)
+try {
+    $ids = foreach ($manifest in $manifests) {
+        $sessionId = [guid]::Empty
+        if (-not [guid]::TryParseExact($manifest.SessionId, 'D', [ref]$sessionId)) { throw 'A manifest has an invalid session ID.' }
+        "'$sessionId'"
+    }
+    $sql = 'select "Id" from "AgentSessions" where "Id" in (' + ($ids -join ',') + ');'
+    $target = Resolve-DesktopPostgresTarget -Container $PgContainer -User $PgUser -Database $PgDatabase
+    $dbRows = Invoke-DesktopPostgresQuery -Target $target -Sql $sql
+} catch {
+    Write-Host ('ABORT: the database did not answer. ' + $_.Exception.Message)
     exit 2
 }
 $known = @{}
-foreach ($line in @($dbRows)) {
-    $t = ([string]$line).Trim()
-    if ($t -match '^[0-9a-f-]{36}$') { $known[$t] = $true }
+if ($dbRows) {
+    foreach ($line in ($dbRows -split '\r?\n')) {
+        $sessionId = [guid]::Empty
+        if (-not [guid]::TryParseExact($line.Trim(), 'D', [ref]$sessionId)) {
+            Write-Host 'ABORT: the database returned an invalid session ID.'
+            exit 2
+        }
+        $known[$sessionId.ToString('D')] = $true
+    }
 }
 
 $processes = @{}

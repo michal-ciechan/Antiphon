@@ -146,6 +146,16 @@ for result JSON, logs and exit codes; these differ from AppHost's table below.
 
 ## Verify health and the code actually loaded
 
+Use `pwsh -File scripts/deploy-local.ps1 -Report` for a read-only comparison of
+the checkout's EF migrations with the production migration history. The deploy
+report, the two reapers, `pg-qps.ps1` and `measure-session-state-cache.ps1`
+use the `antiphon-server2` Docker context over SSH. The helpers require the
+running container to publish the endpoint in the desktop account's AppHost
+`ConnectionStrings:DefaultConnection` user secret before querying its local
+PostgreSQL socket. For a local test database in the current Docker context,
+pass `-PgContainer` to the deploy script or reapers, `-Container` to `pg-qps.ps1`,
+or `-PostgresContainer` to `measure-session-state-cache.ps1`.
+
 ```powershell
 pwsh -File verify-dev-stack.ps1 -SkipBrowser
 Invoke-WebRequest 'http://localhost:17202/health'

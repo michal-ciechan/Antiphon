@@ -64,7 +64,7 @@ param(
 
     [string]$SessionLogPath = 'C:\logs\antiphon\session-runner',
 
-    [string]$PgContainer = 'antiphon-postgres',
+    [string]$PgContainer = '',
     [string]$PgUser = 'antiphon',
     [string]$PgDatabase = 'antiphon',
 
@@ -94,6 +94,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'lib/desktop-postgres.ps1')
 
 $RunnerUrl = $RunnerUrl.TrimEnd('/')
 $ServerUrl = $ServerUrl.TrimEnd('/')
@@ -283,17 +284,17 @@ SELECT json_build_object(
     )) FROM "AgentTasks"), '[]'::json)
 );
 '@
-    $dbRows = & docker exec $PgContainer psql -U $PgUser -d $PgDatabase -At -c $sql 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ABORT: the database did not answer (docker exec $PgContainer psql ... exit $LASTEXITCODE):"
-        Write-Host ($dbRows | Out-String)
-        return (Complete-Run -Code 2 -Message '')
-    }
-    $dbText = (@($dbRows) | ForEach-Object { [string]$_ }) -join ''
     try {
-        $db = $dbText | ConvertFrom-Json
+        $target = Resolve-DesktopPostgresTarget -Container $PgContainer -User $PgUser -Database $PgDatabase
+        $dbText = Invoke-DesktopPostgresQuery -Target $target -Sql $sql
     } catch {
-        return (Complete-Run -Code 2 -Message ("ABORT: the database did not answer (JSON parse): {0}" -f $_.Exception.Message))
+        return (Complete-Run -Code 2 -Message ('ABORT: the database did not answer. ' + $_.Exception.Message))
+    }
+    try {
+        $db = ConvertFrom-Json -InputObject $dbText -ErrorAction Stop
+        if ($db.sessions -isnot [array] -or $db.agents -isnot [array] -or $db.tasks -isnot [array]) { throw 'invalid rows' }
+    } catch {
+        return (Complete-Run -Code 2 -Message 'ABORT: the database returned an invalid census.')
     }
 }
 

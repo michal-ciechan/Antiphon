@@ -18,7 +18,7 @@ param(
     [string]$AfterPath,
     [string]$ContextPath,
     [string]$Api = $(if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:17202' }),
-    [string]$PostgresContainer = 'antiphon-postgres',
+    [string]$PostgresContainer,
     [string]$Database = 'antiphon',
     [string]$DatabaseUser = 'antiphon',
     [ValidateRange(60, 3600)] [int]$WarmSeconds = 60,
@@ -26,6 +26,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'lib/desktop-postgres.ps1')
 if (-not $BaselinePath) { $BaselinePath = Join-Path $EvidenceRoot 'baseline.json' }
 
 function Invoke-Bounded {
@@ -130,11 +131,15 @@ SELECT json_build_object(
 }
 
 function Read-Statistics {
+    param([hashtable]$Target)
+
     $sql = Get-StatisticsSql
-    $raw = Invoke-Bounded 'docker' @('exec', $PostgresContainer, 'psql', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-U', $DatabaseUser, '-d', $Database, '-c', $sql)
+    $raw = Invoke-DesktopPostgresQuery -Target $Target -Sql $sql
     $stats = $raw | ConvertFrom-Json -AsHashtable
-    $identity = Invoke-Bounded 'docker' @('inspect', '--format', '{{.Id}}|{{.State.StartedAt}}', $PostgresContainer)
-    $cpu = Invoke-Bounded 'docker' @('exec', $PostgresContainer, 'sh', '-c', 'if [ -r /sys/fs/cgroup/cpu.stat ]; then cat /sys/fs/cgroup/cpu.stat; else cat /sys/fs/cgroup/cpuacct/cpuacct.usage; fi')
+    $identity = Invoke-DesktopPostgresDocker -Arguments ($Target.DockerPrefix + @('inspect', '--format', '{{.Id}}|{{.State.StartedAt}}', $Target.Container)) `
+        -Operation 'PostgreSQL container identity lookup'
+    $cpu = Invoke-DesktopPostgresDocker -Arguments ($Target.DockerPrefix + @('exec', $Target.Container, 'sh', '-c', 'if [ -r /sys/fs/cgroup/cpu.stat ]; then cat /sys/fs/cgroup/cpu.stat; else cat /sys/fs/cgroup/cpuacct/cpuacct.usage; fi')) `
+        -Operation 'PostgreSQL container CPU lookup'
     if ($cpu -match '(?m)^usage_usec\s+(\d+)') { $cpuSeconds = [double]$Matches[1] / 1e6 }
     elseif ($cpu -match '^\d+$') { $cpuSeconds = [double]$cpu / 1e9 }
     else { throw 'PostgreSQL container CPU accounting is unavailable.' }
@@ -142,12 +147,12 @@ function Read-Statistics {
 }
 
 function New-Snapshot {
-    param($Context)
+    param([hashtable]$Target)
     # The pre-feature runtime fallback must also use this sample's observations.
     $observed = Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json -AsHashtable
     $version = Read-Api '/api/version'
     $runtime = Read-Runtime $observed
-    $pg = Read-Statistics
+    $pg = Read-Statistics -Target $Target
     # Refresh the operator's sanitized observations at every sample, not only at startup.
     $observation = @{ openClients = $observed.openClients; workloadKey = $observed.workloadKey; siblingShas = $observed.siblingShas }
     return @{ utc = [DateTimeOffset]::UtcNow.ToString('o'); version = $version; runtime = $runtime; postgres = $pg; observation = $observation }
@@ -240,6 +245,7 @@ function Capture-Evidence {
     foreach ($sibling in @('CARD-0696','CARD-0698','CARD-0699','CARD-0700')) {
         if ($context.siblingShas[$sibling] -notmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw "Context requires the observed deployed SHA for $sibling." }
     }
+    $target = Resolve-DesktopPostgresTarget -Container $PostgresContainer -User $DatabaseUser -Database $Database
     $worktrees = Invoke-Bounded 'git' @('-C', $PSScriptRoot, 'worktree', 'list', '--porcelain')
     $canonical = [regex]::Match($worktrees, '(?m)^worktree (.+)$').Groups[1].Value.Trim()
     if (-not $canonical) { throw 'Canonical checkout is unavailable.' }
@@ -249,7 +255,7 @@ function Capture-Evidence {
     Wait-Observed $WarmSeconds 'Warm-up'
     $windows = @()
     foreach ($windowNumber in @(1,2)) {
-        $start = New-Snapshot $context
+        $start = New-Snapshot -Target $target
         # Round trip through JSON produces independent dictionaries, including baseline runtime facts.
         $start = $start | ConvertTo-Json -Depth 40 | ConvertFrom-Json -AsHashtable
         Save-Immutable (Join-Path $Destination "window-$windowNumber-start.json") $start
@@ -258,7 +264,7 @@ function Capture-Evidence {
         while ($timer.Elapsed.TotalSeconds -lt $WindowSeconds) {
             $pause = [int][Math]::Ceiling([Math]::Min(30, $WindowSeconds - $timer.Elapsed.TotalSeconds))
             Wait-Observed $pause "Observation window $windowNumber"
-            $sample = New-Snapshot $context | ConvertTo-Json -Depth 40 | ConvertFrom-Json -AsHashtable
+            $sample = New-Snapshot -Target $target | ConvertTo-Json -Depth 40 | ConvertFrom-Json -AsHashtable
             Save-Immutable (Join-Path $Destination "window-$windowNumber-sample-$($samples.Count).json") $sample
             $samples += $sample
         }
