@@ -795,9 +795,16 @@ namespace Antiphon.Nightly
             var token = _stop.Token;
             _thread = new Thread(() =>
             {
-                while (host.RenewWait(TimeSpan.FromSeconds(everySeconds), token))
+                try
                 {
-                    if (BuildSlotBroker.Send(host, "POST", uri, null).Status == 404) break;
+                    while (host.RenewWait(TimeSpan.FromSeconds(everySeconds), token))
+                    {
+                        if (BuildSlotBroker.Send(host, "POST", uri, null).Status == 404) break;
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Stopped while a renewal was in flight: the release follows.
                 }
             })
             { IsBackground = true, Name = "build-slot renewal" };
@@ -813,8 +820,8 @@ namespace Antiphon.Nightly
         internal void Stop()
         {
             _stop.Cancel();
-            _thread.Join(TimeSpan.FromSeconds(15));
-            _stop.Dispose();
+            // A renewal still in flight (10 s at most) keeps its token: dispose only a finished thread's.
+            if (_thread.Join(TimeSpan.FromSeconds(15))) _stop.Dispose();
         }
     }
 
