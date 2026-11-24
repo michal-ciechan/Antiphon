@@ -19,9 +19,10 @@ public sealed class DelegationScratchCallerTests
 {
     private const string TaskId = "12345678-1111-2222-3333-444444444444";
 
-    [Test]
     // The name is the scratch-copy witness's (scripts/fixtures/nightly/c1584-e2e-source-roster.txt); the caller is now the
-    // command, run from the scratch repository.
+    // command, run from the scratch repository. The comment stays above the attributes: the C1584 source census reads a
+    // test as attributes followed directly by its signature.
+    [Test]
     public async Task Copied_delegate_loads_the_caller_helper_before_the_server_call()
     {
         using var repo = new DelegationScratchRepo("antiphon-scratch-caller");
