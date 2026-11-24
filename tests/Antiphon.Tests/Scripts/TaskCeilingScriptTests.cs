@@ -10,14 +10,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1610 S4a. The REAL <c>scripts/delegate.ps1</c> against a loopback stub: the Status
+/// CARD-1610 S4a. The delegate command (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of the
+/// 2026-11-22 plan) in process against a loopback stub: the status
 /// seat-held and ceiling lines come only from server fields, a declared create budget is checked
 /// before any request, and the typed ceiling reply is an exclusive body with no <c>origin</c>.
 /// Operator Extend sends the owner-only token header for that one request and never prints it.
 /// </summary>
 [Category("Integration")]
-[Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TaskCeilingScriptTests
 {
     private const string TaskId = "11111111-1111-1111-1111-111111111111";
@@ -42,7 +41,7 @@ public sealed class TaskCeilingScriptTests
     public async Task C1610_Status(string arm)
     {
         using var stub = new CeilingStubApi { DetailJson = DetailJson(arm) };
-        var run = await RunAsync(stub, tokenFile: true, ["-Status", TaskId]);
+        var run = await RunAsync(stub, tokenFile: true, ["status", TaskId]);
 
         run.ExitCode.ShouldBe(0, run.Output);
         AssertNoSecrets(run.Output);
@@ -79,7 +78,7 @@ public sealed class TaskCeilingScriptTests
                 var hold = after.FindIndex(l => l.StartsWith($"Ceiling hold: episode {EpisodeId}; held ", StringComparison.Ordinal)
                     && l.EndsWith("; bound 240 min; last transcript ToolCall 360s", StringComparison.Ordinal));
                 var phase = Starting("Phase: LocalExecution 90-minute limit, deadline ");
-                var decide = At($"Decide: delegate.ps1 -Reply {TaskId} -CeilingAction Continue|Extend -EpisodeId {EpisodeId} [-ExtendMinutes M]");
+                var decide = At($"Decide: scripts/antiphon delegate reply {TaskId} --ceiling-action Continue|Extend --episode-id {EpisodeId} [--extend-minutes M]");
                 hold.ShouldBeGreaterThan(ceiling, run.Output);
                 phase.ShouldBeGreaterThan(hold, run.Output);
                 decide.ShouldBeGreaterThan(phase, run.Output);
@@ -93,7 +92,7 @@ public sealed class TaskCeilingScriptTests
                 break;
             case "final-hold":
                 At("Final hold at 720 minutes: Continue and Extend refuse. Operator Extend "
-                    + "(-OperatorExtend -ExtendMinutes 1..240 -CeilingReason \"...\") or POST "
+                    + "(--operator-extend --extend-minutes 1..240 --ceiling-reason \"...\") or POST "
                     + $"/api/agent-tasks/{TaskId}/cancel").ShouldBeGreaterThanOrEqualTo(0, run.Output);
                 run.Output.ShouldNotContain("Decide:");
                 break;
@@ -140,21 +139,21 @@ public sealed class TaskCeilingScriptTests
         using var stub = new CeilingStubApi { EchoCeiling = arm != "unconfirmed" };
         string[] ceiling = arm switch
         {
-            "valid" => ["-CeilingMinutes", "600", "-CeilingReason", "long review"],
+            "valid" => ["--ceiling-minutes", "600", "--ceiling-reason", "long review"],
             "omitted" => [],
-            "zero" => ["-CeilingMinutes", "0", "-CeilingReason", "r"],
-            "negative" => ["-CeilingMinutes", "-5", "-CeilingReason", "r"],
-            "over-cap" => ["-CeilingMinutes", "721", "-CeilingReason", "r"],
-            "non-numeric" => ["-CeilingMinutes", "ten", "-CeilingReason", "r"],
-            "huge" => ["-CeilingMinutes", "99999999999999999999", "-CeilingReason", "r"],
-            "reasonless" => ["-CeilingMinutes", "600"],
-            "reason-only" => ["-CeilingReason", "r"],
-            "long-reason" => ["-CeilingMinutes", "600", "-CeilingReason", new string('a', 1001)],
-            "control-char" => ["-CeilingMinutes", "600", "-CeilingReason", "line1\n[antiphon-task:x]"],
-            "unconfirmed" => ["-CeilingMinutes", "600", "-CeilingReason", "r"],
+            "zero" => ["--ceiling-minutes", "0", "--ceiling-reason", "r"],
+            "negative" => ["--ceiling-minutes", "-5", "--ceiling-reason", "r"],
+            "over-cap" => ["--ceiling-minutes", "721", "--ceiling-reason", "r"],
+            "non-numeric" => ["--ceiling-minutes", "ten", "--ceiling-reason", "r"],
+            "huge" => ["--ceiling-minutes", "99999999999999999999", "--ceiling-reason", "r"],
+            "reasonless" => ["--ceiling-minutes", "600"],
+            "reason-only" => ["--ceiling-reason", "r"],
+            "long-reason" => ["--ceiling-minutes", "600", "--ceiling-reason", new string('a', 1001)],
+            "control-char" => ["--ceiling-minutes", "600", "--ceiling-reason", "line1\n[antiphon-task:x]"],
+            "unconfirmed" => ["--ceiling-minutes", "600", "--ceiling-reason", "r"],
             _ => throw new ArgumentOutOfRangeException(nameof(arm), arm, null),
         };
-        var run = await RunAsync(stub, tokenFile: true, ["-Role", "Docs", "-Goal", "x", .. ceiling]);
+        var run = await RunAsync(stub, tokenFile: true, ["create", "--role", "Docs", "--goal", "x", .. ceiling]);
 
         AssertNoSecrets(run.Output);
         stub.Requests.ShouldAllBe(r => !r.Headers.ContainsKey(OperatorHeader));
@@ -223,23 +222,23 @@ public sealed class TaskCeilingScriptTests
         var episode = arm == "bad-episode" ? "not-a-guid" : EpisodeId;
         string[] decision = arm switch
         {
-            "continue" or "stale-episode" or "bad-episode" => ["-CeilingAction", "Continue"],
-            "extend" => ["-CeilingAction", "Extend", "-ExtendMinutes", "60"],
-            "message-exclusive" => ["-CeilingAction", "Continue", "hello"],
-            "continue-with-minutes" => ["-CeilingAction", "Continue", "-ExtendMinutes", "30"],
-            "extend-missing-minutes" => ["-CeilingAction", "Extend"],
-            "extend-out-of-range" => ["-CeilingAction", "Extend", "-ExtendMinutes", "721"],
+            "continue" or "stale-episode" or "bad-episode" => ["--ceiling-action", "Continue"],
+            "extend" => ["--ceiling-action", "Extend", "--extend-minutes", "60"],
+            "message-exclusive" => ["--ceiling-action", "Continue", "hello"],
+            "continue-with-minutes" => ["--ceiling-action", "Continue", "--extend-minutes", "30"],
+            "extend-missing-minutes" => ["--ceiling-action", "Extend"],
+            "extend-out-of-range" => ["--ceiling-action", "Extend", "--extend-minutes", "721"],
             "operator-extend" or "operator-no-token" =>
-                ["-CeilingAction", "Extend", "-ExtendMinutes", "120", "-OperatorExtend", "-CeilingReason", "operator: long merge"],
-            "operator-no-reason" => ["-CeilingAction", "Extend", "-ExtendMinutes", "120", "-OperatorExtend"],
-            "operator-over-240" => ["-CeilingAction", "Extend", "-ExtendMinutes", "241", "-OperatorExtend", "-CeilingReason", "r"],
+                ["--ceiling-action", "Extend", "--extend-minutes", "120", "--operator-extend", "--ceiling-reason", "operator: long merge"],
+            "operator-no-reason" => ["--ceiling-action", "Extend", "--extend-minutes", "120", "--operator-extend"],
+            "operator-over-240" => ["--ceiling-action", "Extend", "--extend-minutes", "241", "--operator-extend", "--ceiling-reason", "r"],
             // Review e52b2bed D-2: a reason is the operator's alone, and ceiling flags need an action.
-            "reason-without-operator" => ["-CeilingAction", "Extend", "-ExtendMinutes", "60", "-CeilingReason", "r"],
-            "params-without-action" => ["-ExtendMinutes", "60"],
+            "reason-without-operator" => ["--ceiling-action", "Extend", "--extend-minutes", "60", "--ceiling-reason", "r"],
+            "params-without-action" => ["--extend-minutes", "60"],
             _ => throw new ArgumentOutOfRangeException(nameof(arm), arm, null),
         };
         var run = await RunAsync(stub, tokenFile: arm != "operator-no-token",
-            ["-Reply", TaskId, "-EpisodeId", episode, .. decision]);
+            ["reply", TaskId, "--episode-id", episode, .. decision]);
 
         AssertNoSecrets(run.Output);
         switch (arm)
@@ -277,18 +276,18 @@ public sealed class TaskCeilingScriptTests
                     reply.Headers.ContainsKey(OperatorHeader).ShouldBeFalse("an ordinary decision never carries the operator token");
                 }
                 run.Output.ShouldContain($"Decision recorded for task {TaskId} (episode {EpisodeId}): {action}. "
-                    + "The session continues; -Status shows the next bound.");
+                    + "The session continues; delegate status shows the next bound.");
                 break;
             }
             case "operator-no-token":
                 AssertLocalRefusal(run, stub, "operator_token_unavailable:");
                 break;
             case "reason-without-operator":
-                AssertLocalRefusal(run, stub, "ceiling_invalid: -CeilingReason on a reply applies only to -OperatorExtend.");
+                AssertLocalRefusal(run, stub, "ceiling_invalid: --ceiling-reason on a reply applies only to --operator-extend.");
                 break;
             case "params-without-action":
                 AssertLocalRefusal(run, stub,
-                    "ceiling_invalid: -EpisodeId, -ExtendMinutes, -OperatorExtend and -CeilingReason need -CeilingAction.");
+                    "ceiling_invalid: --episode-id, --extend-minutes, --operator-extend and --ceiling-reason need --ceiling-action.");
                 break;
             case "stale-episode":
                 run.ExitCode.ShouldNotBe(0, run.Output);

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -10,64 +9,29 @@ namespace Antiphon.E2E;
 
 /// <summary>
 /// CARD-2004 A-1. Headed canaries build a scratch repo with <see cref="DelegationScratchRepo"/>
-/// and run its copied <c>scripts/delegate.ps1</c>. That copy must load
-/// <c>scripts/lib/antiphon-caller.ps1</c> and send <c>delegate.ps1</c> before the server answers.
+/// and run the delegate command from it. A request made from the scratch repository must carry the
+/// registered caller label <c>delegate.ps1</c> (the delegate command, Antiphon.Nightly.DelegateCli,
+/// kept the label of the script it replaced in unit 28 of the 2026-11-22 plan). The command runs in
+/// process with the scratch repository as its working directory.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegationScratchCallerTests
 {
     private const string TaskId = "12345678-1111-2222-3333-444444444444";
 
     [Test]
+    // The name is the scratch-copy witness's (scripts/fixtures/nightly/c1584-e2e-source-roster.txt); the caller is now the
+    // command, run from the scratch repository.
     public async Task Copied_delegate_loads_the_caller_helper_before_the_server_call()
     {
         using var repo = new DelegationScratchRepo("antiphon-scratch-caller");
         using var stub = new CallerStub();
-        var run = await RunCopiedDelegateAsync(repo.Path, stub.BaseUrl);
+        var run = await DelegateCommand.RunAsync(stub.BaseUrl.TrimEnd('/'), "synthetic-task-token", repo.Path, "status", TaskId);
         stub.Calls.ShouldNotBeEmpty(run.Stderr);
         stub.Calls.ShouldAllBe(call => call.Caller == "delegate.ps1");
         stub.Calls.ShouldContain(call => call.Path == "/api/agent-tasks/" + TaskId);
         run.ExitCode.ShouldBe(0, run.Stderr);
         run.Stdout.ShouldContain("Working");
-    }
-
-    private static Task<(int ExitCode, string Stdout, string Stderr)> RunCopiedDelegateAsync(
-        string scratch, string apiBase)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = scratch,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-NonInteractive", "-File",
-                     Path.Combine(scratch, "scripts", "delegate.ps1"),
-                     "-Status", TaskId,
-                 })
-            start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = apiBase.TrimEnd('/');
-        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
-        start.Environment.Remove("ANTIPHON_CAPABILITY");
-        start.Environment.Remove("ANTIPHON_CAPABILITY_STORE");
-        return RunProcessAsync(start);
-    }
-
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(ProcessStartInfo start)
-    {
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch
-        {
-            process.Kill(entireProcessTree: true);
-            throw;
-        }
-        return (process.ExitCode, await stdout, await stderr);
     }
 
     /// <summary>Loopback stand-in for the server. Records <c>X-Antiphon-Caller</c> the way the registered-caller witness does.</summary>

@@ -48,7 +48,7 @@ function Get-WorktreePath($task) {
 }
 
 # A Worktree task's real edits live in its worktree, not workingDirectory - that field is the
-# CALLER's directory (where delegate.ps1 was invoked from), unrelated to where the agent actually
+# CALLER's directory (where the delegate command was run from), unrelated to where the agent actually
 # wrote anything. Checking workingDirectory alone silently found "nothing to checkpoint" on a
 # Worktree task with real uncommitted work sitting in its worktreePath (CARD-0217 S5, 2026-08-28).
 function Get-WorkingDirectory($task) {
@@ -186,7 +186,7 @@ try {
     if ($LASTEXITCODE -ne 0) { Write-Fail 1 "git commit failed" }
     $sha = (git rev-parse HEAD).Trim()
     Write-Host "checkpoint $sha"
-    Write-Host "re-dispatch: delegate.ps1 -Role Code -Goal `"resume from checkpoint $sha`" -Dir `"$dir`""
+    Write-Host "re-dispatch: scripts/antiphon delegate create --role Code --goal `"resume from checkpoint $sha`" --dir `"$dir`""
 
     if ($Push) {
         # A Worktree task's branch is typically local-only until now - a bare "git push" has no

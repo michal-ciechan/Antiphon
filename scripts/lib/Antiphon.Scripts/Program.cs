@@ -143,7 +143,8 @@ namespace Antiphon.Scripts
             [OperatorCommands.KeepSix] = OperatorCommands.RunKeepSix,
             // The board API commands answer every input themselves (unit 24): exit 0 done, 1 a refused value or a failed request
             // (one stderr line; capability: also an unknown or ambiguous name, an answer without a token, or issue/rotate off
-            // Windows; schedule: also an unacknowledged spend; card (unit 27): also a missing file), 2 usage.
+            // Windows; schedule: also an unacknowledged spend; card (unit 27): also a missing file), 2 usage. delegate (unit 28):
+            // also 2 for the local refusals delegate.ps1 answered with 2 (ceiling_invalid, workspace_switch_conflict and others).
             [BoardCommands.Capability] = BoardCommands.RunCapability,
             [BoardCommands.ModelAvailability] = BoardCommands.RunModelAvailability,
             [BoardCommands.SpecialistRouting] = BoardCommands.RunSpecialistRouting,
@@ -153,6 +154,7 @@ namespace Antiphon.Scripts
             [BoardCommands.DispatchConcurrency] = BoardCommands.RunDispatchConcurrency,
             [BoardCommands.RoutingPin] = BoardCommands.RunRoutingPin,
             [BoardCommands.Card] = BoardCommands.RunCard,
+            [BoardCommands.Delegation] = BoardCommands.RunDelegate,
             // The repository child journal recovery answers every input itself (unit 23): exit 0 no record retained, 3 busy,
             // retained, unconfirmed or refused, 2 usage.
             [RecoverRepositoryChildrenCommand.Name] = RecoverRepositoryChildrenCommand.Run,

@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-0398 S2. The capability command (Antiphon.Nightly.CapabilityCli, which replaced scripts/capability.ps1 in unit 24 of
 /// the 2026-11-22 plan) in process, on a recording transport: it never prints the bearer, writes a DPAPI blob that
-/// ProtectedData reads back (what delegate.ps1 -Capability does), resolves a name to the one unrevoked capability, and
+/// ProtectedData reads back (what the delegate command's --capability does, through CapabilityCli.UnprotectCurrentUser), resolves a name to the one unrevoked capability, and
 /// refuses issue and rotate before any request when it has no protector (off Windows). Nothing leaves the process.
 /// </summary>
 [Category("Integration")]

@@ -10,7 +10,6 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CommitOnSettleScriptTests
 {
     [Test]
@@ -18,7 +17,7 @@ public sealed class CommitOnSettleScriptTests
     {
         using var server = new DelegateCreateStubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Docs", "-Goal", "x", "-NoCommit");
+            server.BaseUrl, "create", "--role", "Docs", "--goal", "x", "--no-commit");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -30,7 +29,7 @@ public sealed class CommitOnSettleScriptTests
     {
         using var server = new DelegateCreateStubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Docs", "-Goal", "x");
+            server.BaseUrl, "create", "--role", "Docs", "--goal", "x");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -41,10 +40,10 @@ public sealed class CommitOnSettleScriptTests
     public async Task Delegate_has_no_Always_or_Agent_switch()
     {
         using var server = new DelegateCreateStubApi();
-        foreach (var flag in new[] { "-CommitAlways", "-CommitAgent" })
+        foreach (var flag in new[] { "--commit-always", "--commit-agent" })
         {
             var run = await DelegateScriptRunner.RunAsync(
-                server.BaseUrl, "-Role", "Docs", "-Goal", "x", flag);
+                server.BaseUrl, "create", "--role", "Docs", "--goal", "x", flag);
             run.ExitCode.ShouldNotBe(0);
         }
 
@@ -143,7 +142,7 @@ public sealed class CommitOnSettleScriptTests
     [Test]
     public void Commit_on_settle_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "lib/Antiphon.Nightly/ProjectCli.cs", "delegate.ps1", "lib/Antiphon.Nightly/TaskCommit.cs" })
+        foreach (var name in new[] { "lib/Antiphon.Nightly/ProjectCli.cs", "lib/Antiphon.Nightly/DelegateCli.cs", "lib/Antiphon.Nightly/TaskCommit.cs" })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);
@@ -152,6 +151,7 @@ public sealed class CommitOnSettleScriptTests
             firstNonAscii.ShouldBe(-1, $"{name} has a non-ASCII byte at offset {firstNonAscii}");
         }
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "task-commit.ps1")).ShouldBeFalse("task-commit is a command");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1")).ShouldBeFalse("delegate is a command");
     }
 
     [Test]

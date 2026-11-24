@@ -19,7 +19,6 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public class DelegateScriptWorktreeBaseTests
 {
     [Test]
@@ -63,10 +62,10 @@ public class DelegateScriptWorktreeBaseTests
         using var relay = new ServiceRelay(provider, repo.Path);
         var args = new List<string>
         {
-            "-Role", "Code", "-Goal", "continue the card", "-Card", card.Id.ToString("D"),
-            "-Worktree",
+            "create", "--role", "Code", "--goal", "continue the card", "--card", card.Id.ToString("D"),
+            "--worktree",
         };
-        if (scenario == "fresh") args.Add("-FreshWorktree");
+        if (scenario == "fresh") args.Add("--fresh-worktree");
         var run = await DelegateScriptRunner.RunAsync(relay.BaseUrl, null, repo.Path, args);
         run.ExitCode.ShouldBe(0, run.Output);
         relay.LastFailure.ShouldBeNull();

@@ -1,13 +1,14 @@
 // The board API commands (unit 24 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): capability,
-// model-availability, specialist-routing, pipeline-definition, project, schedule, dispatch-concurrency and routing-pin, and
-// card (unit 27). Each replaced the scripts/<name>.ps1 of the same name (deleted 2026-11-23), with the same flags in kebab
-// case and the verb (and a schedule id, a project or a card) first, as the scripts took them. The behaviour is
-// Antiphon.Nightly's (CapabilityCli, ModelAvailabilityCli, SpecialistRoutingCli, PipelineDefinitionCli, ProjectCli,
-// ScheduleCli, DispatchConcurrencyCli, RoutingPinCli, CardCli) on the production host and an HTTP transport; this file reads
-// the environment and passes it in: ANTIPHON_API (default http://localhost:17202), ANTIPHON_TASK_TOKEN, ANTIPHON_AGENT_ID
-// (the schedule's default agent), ANTIPHON_CAPABILITY_STORE (else %LOCALAPPDATA%\Antiphon\capabilities) and, for card, the
-// working directory. The capability store is written with DPAPI on Windows only. Tokens are sent as headers and never
-// printed. ASCII only.
+// model-availability, specialist-routing, pipeline-definition, project, schedule, dispatch-concurrency and routing-pin, card
+// (unit 27) and delegate (unit 28). Each replaced the scripts/<name>.ps1 of the same name (deleted 2026-11-23; delegate.ps1
+// 2026-11-24), with the same flags in kebab case and the verb (and a schedule id, a project, a card or a task) first. The
+// behaviour is Antiphon.Nightly's (CapabilityCli, ModelAvailabilityCli, SpecialistRoutingCli, PipelineDefinitionCli, ProjectCli,
+// ScheduleCli, DispatchConcurrencyCli, RoutingPinCli, CardCli, DelegateCli) on the production host and an HTTP transport;
+// this file reads the environment and passes it in: ANTIPHON_API (default http://localhost:17202), ANTIPHON_TASK_TOKEN,
+// ANTIPHON_AGENT_ID (the schedule's default agent), ANTIPHON_CAPABILITY_STORE (else %LOCALAPPDATA%\Antiphon\capabilities)
+// and, for card and delegate, the working directory; delegate also reads ANTIPHON_CAPABILITY, ANTIPHON_OPERATOR_TOKEN_FILE,
+// ANTIPHON_VERSION_PROBE_TIMEOUT_SEC, X_LLM_PROJECT and X_LLM_KEY (DelegateEnvironment). The capability store is written and
+// read with DPAPI on Windows only. Tokens are sent as headers and never printed. ASCII only.
 using System;
 using System.IO;
 using System.IO.Abstractions;
@@ -27,10 +28,11 @@ namespace Antiphon.Scripts
         internal const string DispatchConcurrency = "dispatch-concurrency";
         internal const string RoutingPin = "routing-pin";
         internal const string Card = "card";
+        internal const string Delegation = "delegate";
 
         internal const string Usage = CapabilityCliOptions.Usage + " | " + ModelAvailabilityCliOptions.Usage + " | " + SpecialistRoutingCliOptions.Usage
             + " | " + PipelineDefinitionCliOptions.Usage + " | " + ProjectCliOptions.Usage + " | " + ScheduleCliOptions.Usage + " | " + DispatchConcurrencyCliOptions.Usage
-            + " | " + RoutingPinCliOptions.Usage + " | " + CardCliOptions.Usage;
+            + " | " + RoutingPinCliOptions.Usage + " | " + CardCliOptions.Usage + " | " + DelegateCliOptions.Usage;
 
         private static string Api => Environment.GetEnvironmentVariable("ANTIPHON_API");
 
@@ -78,7 +80,39 @@ namespace Antiphon.Scripts
         internal static int RunCard(string[] args) =>
             CardCli.Run(CardCliOptions.Parse(args.Skip(1).ToArray(), Api, TaskToken, Environment.CurrentDirectory), Host(), new FileSystem(), Http());
 
-        // ANTIPHON_CAPABILITY_STORE, else where delegate.ps1 -Capability reads it: %LOCALAPPDATA%\Antiphon\capabilities.
+        // Exit 0 done; 1 a refused value, a missing file or a failed request; 2 a local refusal the script also answered with 2
+        // (ceiling_invalid, workspace_switch_conflict, the runner, start-ref and base-override shapes, operator_token_unavailable).
+        internal static int RunDelegate(string[] args)
+        {
+            var options = DelegateCliOptions.Parse(args.Skip(1).ToArray(), DelegateEnvironment());
+            return DelegateCli.Run(options, Host(), new FileSystem(), NightlyReport.HttpTransport(timeout: DelegateCli.Deadline),
+                NightlyReport.HttpTransport(timeout: options.ProbeTimeout), OperatingSystem.IsWindows() ? new Func<byte[], byte[]>(CapabilityCli.UnprotectCurrentUser) : null);
+        }
+
+        // What delegate reads from the environment: the API, the task token, the capability name and store, the operator token
+        // file, the version probe deadline, the caller's X_LLM_PROJECT and X_LLM_KEY (only those set) and the working directory.
+        internal static DelegateCliEnvironment DelegateEnvironment()
+        {
+            var llm = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var name in new[] { "X_LLM_PROJECT", "X_LLM_KEY" })
+            {
+                var value = Environment.GetEnvironmentVariable(name);
+                if (value != null) llm[name] = value;
+            }
+            return new DelegateCliEnvironment
+            {
+                Api = Api ?? "",
+                TaskToken = TaskToken ?? "",
+                Capability = Environment.GetEnvironmentVariable("ANTIPHON_CAPABILITY") ?? "",
+                CapabilityStore = CapabilityStore(),
+                OperatorTokenFile = OperatorCommands.OperatorTokenFile(),
+                ProbeTimeoutSeconds = Environment.GetEnvironmentVariable("ANTIPHON_VERSION_PROBE_TIMEOUT_SEC") ?? "",
+                LlmEnvironment = llm,
+                WorkingDirectory = Environment.CurrentDirectory,
+            };
+        }
+
+        // ANTIPHON_CAPABILITY_STORE, else %LOCALAPPDATA%\Antiphon\capabilities (capability writes it, delegate --capability reads it).
         internal static string CapabilityStore()
         {
             var configured = Environment.GetEnvironmentVariable("ANTIPHON_CAPABILITY_STORE");

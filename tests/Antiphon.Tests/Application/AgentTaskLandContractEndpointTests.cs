@@ -352,7 +352,7 @@ public sealed class AgentTaskLandContractEndpointTests
         }
         jsonText.ShouldNotContain("synthetic-secret-marker");
         await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: jsonText);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", task.Id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", task.Id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.ShouldContain($"Land execution failure: landing_io_error; diagnostic {diagnostic}; exception {exceptionType}");
         status.Output.ShouldContain("Publication: Unconfirmed; cleanup: NotStarted");

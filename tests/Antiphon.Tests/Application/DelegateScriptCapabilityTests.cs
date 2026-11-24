@@ -10,18 +10,20 @@ using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0398 S2: delegate.ps1 -Capability sends the header and never assigns the env bearer.</summary>
+/// <summary>
+/// CARD-0398 S2: delegate --capability (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of the
+/// 2026-11-22 plan; in process) sends the header and never assigns the env bearer.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 [SupportedOSPlatform("windows")]
 public sealed class DelegateScriptCapabilityTests
 {
     [Test]
     public async Task delegate_Capability_sends_header_and_does_not_assign_env_token()
     {
-        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1"));
-        source.ShouldNotContain("$env:ANTIPHON_TASK_TOKEN =");
-        source.ShouldNotContain("$env:ANTIPHON_TASK_TOKEN=");
+        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DelegateCli.cs"));
+        source.ShouldNotContain("SetEnvironmentVariable");
+        source.ShouldNotContain("GetEnvironmentVariable");
 
         var token = NewToken();
         using var store = new TempDir("cap-store");
@@ -30,7 +32,7 @@ public sealed class DelegateScriptCapabilityTests
         var run = await DelegateScriptRunner.RunAsync(
             server.BaseUrl,
             new Dictionary<string, string?> { ["ANTIPHON_CAPABILITY_STORE"] = store.Path },
-            "-Role", "Docs", "-Goal", "do it", "-Capability", "chat-codex");
+            "create", "--role", "Docs", "--goal", "do it", "--capability", "chat-codex");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.RequestCount.ShouldBe(1);
@@ -53,7 +55,7 @@ public sealed class DelegateScriptCapabilityTests
                 ["ANTIPHON_CAPABILITY"] = "env-cap",
                 ["ANTIPHON_TASK_TOKEN"] = string.Empty,
             },
-            "-Role", "Docs", "-Goal", "do it");
+            "create", "--role", "Docs", "--goal", "do it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastTokenHeader.ShouldBe(token);
@@ -74,7 +76,7 @@ public sealed class DelegateScriptCapabilityTests
                 ["ANTIPHON_CAPABILITY_STORE"] = store.Path,
                 ["ANTIPHON_TASK_TOKEN"] = token,
             },
-            "-Role", "Docs", "-Goal", "do it", "-Capability", "both-cap");
+            "create", "--role", "Docs", "--goal", "do it", "--capability", "both-cap");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("not both");
@@ -90,7 +92,7 @@ public sealed class DelegateScriptCapabilityTests
         var run = await DelegateScriptRunner.RunAsync(
             server.BaseUrl,
             new Dictionary<string, string?> { ["ANTIPHON_CAPABILITY_STORE"] = store.Path },
-            "-Role", "Docs", "-Goal", "do it", "-Capability", "missing-cap");
+            "create", "--role", "Docs", "--goal", "do it", "--capability", "missing-cap");
 
         run.ExitCode.ShouldNotBe(0);
         server.RequestCount.ShouldBe(0);
@@ -109,7 +111,7 @@ public sealed class DelegateScriptCapabilityTests
         var run = await DelegateScriptRunner.RunAsync(
             server.BaseUrl,
             new Dictionary<string, string?> { ["ANTIPHON_CAPABILITY_STORE"] = store.Path },
-            "-Role", "Docs", "-Goal", "do it");
+            "create", "--role", "Docs", "--goal", "do it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.RequestCount.ShouldBe(1);
@@ -127,7 +129,7 @@ public sealed class DelegateScriptCapabilityTests
         var run = await DelegateScriptRunner.RunAsync(
             server.BaseUrl,
             new Dictionary<string, string?> { ["ANTIPHON_CAPABILITY_STORE"] = store.Path },
-            "-Role", "Docs", "-Goal", "do it", "-Capability", "err-cap");
+            "create", "--role", "Docs", "--goal", "do it", "--capability", "err-cap");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldNotContain(token);

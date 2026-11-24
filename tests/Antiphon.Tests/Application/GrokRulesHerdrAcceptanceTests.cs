@@ -156,17 +156,13 @@ public sealed class GrokRulesHerdrAcceptanceTests
             await File.WriteAllTextAsync(Path.Combine(root, "detection.json"), JsonSerializer.Serialize(new { began, sidecar.LaunchedAtUtc, elapsedUpperBoundSeconds = detectionUpperBound.TotalSeconds, configuredDeadlineSeconds = 60 }), ct);
             (await herdr.PaneGetAsync(paneId, ct)).Agent.ShouldBe("grok");
             await File.WriteAllTextAsync(Path.Combine(root, "sidecar.json"), await File.ReadAllTextAsync(sidecarPath, ct), ct);
-            var wrapper = Path.Combine(root, "dispatch.ps1");
-            await File.WriteAllTextAsync(wrapper, "param($Script,$GoalFile,$Repo,$AgentId)\n$goalText=Get-Content -LiteralPath $GoalFile -Raw\n& $Script Code -Kind Grok -Level High -Dir $Repo -Agent $AgentId -Shared -Goal $goalText -NoInheritEnv\nexit $LASTEXITCODE\n", ct);
-            var psi = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", wrapper, Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/delegate.ps1"), Path.Combine(root, "goal.md"), repo.RepoPath, agentId.ToString() }) psi.ArgumentList.Add(arg);
-            psi.Environment["ANTIPHON_API"] = forwarder.BaseUrl.TrimEnd('/'); psi.Environment["ANTIPHON_TASK_TOKEN"] = "";
-            using (var process = Process.Start(psi)!)
             {
-                var stdout = process.StandardOutput.ReadToEndAsync(ct); var stderr = process.StandardError.ReadToEndAsync(ct);
-                try { await process.WaitForExitAsync(ct); } finally { if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); } }
-                var output = await stdout + await stderr; await File.WriteAllTextAsync(Path.Combine(root, "delegate.log"), output, ct);
-                process.ExitCode.ShouldBe(0, output); output.ShouldContain("[Grok]");
+                // The delegate command in process; the goal crosses as a file (--goal-file).
+                var (exitCode, output) = await DelegateScriptRunner.RunAsync(forwarder.BaseUrl, null, null,
+                    ["create", "--role", "Code", "--kind", "Grok", "--level", "High", "--dir", repo.RepoPath, "--agent", agentId.ToString(), "--shared",
+                     "--goal-file", Path.Combine(root, "goal.md"), "--no-inherit-env"]);
+                await File.WriteAllTextAsync(Path.Combine(root, "delegate.log"), output, ct);
+                exitCode.ShouldBe(0, output); output.ShouldContain("[Grok]");
             }
             await using (var db = factory.Db()) taskId = (await db.AgentTasks.SingleAsync(t => t.AgentId == agentId, ct)).Id;
             using (var scope = factory.Services.CreateScope()) await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);

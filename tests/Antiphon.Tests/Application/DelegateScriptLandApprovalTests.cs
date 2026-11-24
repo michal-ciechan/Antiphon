@@ -6,7 +6,6 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptLandApprovalTests
 {
     [Test]
@@ -18,8 +17,8 @@ public sealed class DelegateScriptLandApprovalTests
         await using var server = LandApiStub.Compatible(
             new string('a', 40),
             v2Body: JsonSerializer.Serialize(new { requestId = owner, status = "queued", notification = "tracked" }));
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", owner.ToString(),
-            "-ExpectedSourceSha", sha, "-ReviewEvidenceId", evidence.ToString(), "-Verify", "/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "land", owner.ToString(),
+            "--expected-source-sha", sha, "--review-evidence-id", evidence.ToString(), "--verify", "/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
         result.ExitCode.ShouldBe(0, result.Output);
         server.LegacyLandPosts.ShouldBe(0);
         server.Requests.Count.ShouldBe(2);
@@ -60,7 +59,7 @@ public sealed class DelegateScriptLandApprovalTests
             new string('e', 40),
             v2Body: JsonSerializer.Serialize(new { requestId = id, status = "queued" }),
             taskStatusBody: body);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.ShouldContain("Approved original: " + approved);
         status.Output.ShouldContain("approved " + approved);
@@ -92,9 +91,9 @@ public sealed class DelegateScriptLandApprovalTests
             ("true", "True", (bool?)true),
         })
         {
-            var args = new List<string> { "-Finding", task.ToString("D"), "-Stage", "Review", "-Clean",
-                "-ReviewedSourceSha", sha };
-            if (option is not null) args.Add("-ReviewedSourceClean:$" + option.ToLowerInvariant());
+            var args = new List<string> { "finding", task.ToString("D"), "--stage", "Review", "--clean",
+                "--reviewed-source-sha", sha };
+            if (option is not null) args.AddRange(["--reviewed-source-clean", option.ToLowerInvariant()]);
             var result = await DelegateScriptRunner.RunAsync(server.Url, args.ToArray());
             result.ExitCode.ShouldBe(0, label + ": " + result.Output);
             var call = server.Requests.Last(request => request.Path.EndsWith("/finding", StringComparison.Ordinal));
@@ -105,7 +104,7 @@ public sealed class DelegateScriptLandApprovalTests
             if (expected.HasValue) clean.GetBoolean().ShouldBe(expected.Value, label + "-value");
         }
 
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", task.ToString("D"));
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", task.ToString("D"));
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.ShouldContain("clean False", Case.Sensitive, "status-false-visible");
         server.LegacyLandPosts.ShouldBe(0, "no-fallback-land-post");

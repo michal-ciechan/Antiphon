@@ -5,14 +5,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0644 V-2. The REAL <c>scripts/delegate.ps1</c> under pwsh against a loopback stub. An
+/// CARD-0644 V-2. The delegate command (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of
+/// the 2026-11-22 plan) in process against a loopback stub. An
 /// omitted workspace switch stays omitted on the wire - the server's fresh default (V-1) is what
 /// gives it meaning, and an existing-agent pin must stay distinguishable from an explicit
-/// <c>-Worktree</c>. Two workspace switches are ambiguous and never POST. StartRef and Interim
-/// Code no longer demand a spelled-out <c>-Worktree</c>: the default already is one.
+/// <c>--worktree</c>. Two workspace switches are ambiguous and never POST. StartRef and Interim
+/// Code no longer demand a spelled-out <c>--worktree</c>: the default already is one.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptWorkspaceDefaultTests
 {
     private const string FullSha = "2be807d0ed2633a7a9bd9846c3755e1f0019fbd6";
@@ -24,12 +24,12 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     {
         foreach (var (row, args) in new (string, string[])[]
                  {
-                     ("worker", ["-Role", "Code"]),
-                     ("orchestrator", ["-Orchestrator"]),
+                     ("worker", ["--role", "Code"]),
+                     ("orchestrator", ["--orchestrator"]),
                  })
         {
             using var server = new DelegateCreateStubApi();
-            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, [.. args, "-Goal", "fresh work"]);
+            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["create", .. args, "--goal", "fresh work"]);
 
             run.ExitCode.ShouldBe(0, $"{row}: {run.Output}");
             server.RequestCount.ShouldBe(1, row);
@@ -43,14 +43,14 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     {
         foreach (var (switchName, expected) in new[]
                  {
-                     ("-Worktree", "Worktree"),
-                     ("-Shared", "Shared"),
-                     ("-ReadOnly", "ReadOnly"),
+                     ("--worktree", "Worktree"),
+                     ("--shared", "Shared"),
+                     ("--read-only", "ReadOnly"),
                  })
         {
             using var server = new DelegateCreateStubApi();
             var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-                "-Role", "Review", switchName, "-Goal", "explicit " + expected);
+                "create", "--role", "Review", switchName, "--goal", "explicit " + expected);
 
             run.ExitCode.ShouldBe(0, $"{switchName}: {run.Output}");
             server.RequestCount.ShouldBe(1, switchName);
@@ -64,16 +64,16 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     {
         foreach (var pair in new[]
                  {
-                     new[] { "-Worktree", "-Shared" },
-                     new[] { "-Shared", "-ReadOnly" },
-                     new[] { "-Worktree", "-ReadOnly" },
-                     new[] { "-Worktree", "-Shared", "-ReadOnly" },
+                     new[] { "--worktree", "--shared" },
+                     new[] { "--shared", "--read-only" },
+                     new[] { "--worktree", "--read-only" },
+                     new[] { "--worktree", "--shared", "--read-only" },
                  })
         {
             var row = string.Join(" ", pair);
             using var server = new DelegateCreateStubApi();
             var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-                ["-Role", "Code", .. pair, "-Goal", "ambiguous"]);
+                ["create", "--role", "Code", .. pair, "--goal", "ambiguous"]);
 
             run.ExitCode.ShouldNotBe(0, $"{row}: {run.Output}");
             run.Output.ShouldContain("workspace_switch_conflict", Case.Sensitive, row);
@@ -86,7 +86,7 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     {
         using var server = new DelegateCreateStubApi();
         var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-            "-Role", "Code", "-StartRef", FullSha, "-Goal", "continue from a retained commit");
+            "create", "--role", "Code", "--start-ref", FullSha, "--goal", "continue from a retained commit");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.RequestCount.ShouldBe(1);
@@ -95,11 +95,11 @@ public sealed class DelegateScriptWorkspaceDefaultTests
         body.GetProperty("workspace").GetString().ShouldBe("Worktree");
 
         // The explicit incompatible modes are still refused locally.
-        foreach (var mode in new[] { "-Shared", "-ReadOnly" })
+        foreach (var mode in new[] { "--shared", "--read-only" })
         {
             using var refusing = new DelegateCreateStubApi();
             var refused = await DelegateScriptRunner.RunAsync(refusing.BaseUrl,
-                "-Role", "Code", mode, "-StartRef", FullSha, "-Goal", "refused");
+                "create", "--role", "Code", mode, "--start-ref", FullSha, "--goal", "refused");
             refused.ExitCode.ShouldNotBe(0, refused.Output);
             refused.Output.ShouldContain("worktree_start_ref_mode");
             refusing.RequestCount.ShouldBe(0, mode);
@@ -115,12 +115,12 @@ public sealed class DelegateScriptWorkspaceDefaultTests
             $$"""{"artifactPath":"docs/plans/c644.md","artifactCommitSha":"{{FullSha}}","section":"S1"}""");
         string[] interim =
         [
-            "-VerificationRound", "Interim", "-VerificationSubject", Subject.ToString("D"),
-            "-VerificationBaselineOutcome", Baseline.ToString("D"), "-VerificationSelectionFile", selectionFile,
+            "--verification-round", "Interim", "--verification-subject", Subject.ToString("D"),
+            "--verification-baseline-outcome", Baseline.ToString("D"), "--verification-selection-file", selectionFile,
         ];
 
         using var server = new DelegateCreateStubApi();
-        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["-Role", "Code", .. interim, "-Goal", "interim code"]);
+        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["create", "--role", "Code", .. interim, "--goal", "interim code"]);
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.RequestCount.ShouldBe(1);
@@ -131,12 +131,12 @@ public sealed class DelegateScriptWorkspaceDefaultTests
         // Interim Code with explicit Shared, and Interim Review without -ReadOnly, stay refused.
         foreach (var (row, args) in new (string, string[])[]
                  {
-                     ("code-shared", ["-Role", "Code", "-Shared"]),
-                     ("review-default", ["-Role", "Review"]),
+                     ("code-shared", ["--role", "Code", "--shared"]),
+                     ("review-default", ["--role", "Review"]),
                  })
         {
             using var refusing = new DelegateCreateStubApi();
-            var refused = await DelegateScriptRunner.RunAsync(refusing.BaseUrl, [.. args, .. interim, "-Goal", "refused"]);
+            var refused = await DelegateScriptRunner.RunAsync(refusing.BaseUrl, ["create", .. args, .. interim, "--goal", "refused"]);
             refused.ExitCode.ShouldNotBe(0, $"{row}: {refused.Output}");
             refused.Output.ShouldContain("verification_round_role", Case.Sensitive, row);
             refusing.RequestCount.ShouldBe(0, row);
@@ -150,12 +150,12 @@ public sealed class DelegateScriptWorkspaceDefaultTests
     {
         foreach (var (row, args, field) in new (string, string[], string)[]
                  {
-                     ("standing-agent", ["-Role", "Code", "-Agent", "nightwatch"], "agent"),
-                     ("on-agent", ["-Role", "Code", "-OnAgent", "1234abcd"], "followUpOnTask"),
+                     ("standing-agent", ["--role", "Code", "--agent", "nightwatch"], "agent"),
+                     ("on-agent", ["--role", "Code", "--on-agent", "1234abcd"], "followUpOnTask"),
                  })
         {
             using var server = new DelegateCreateStubApi();
-            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, [.. args, "-Goal", "existing process"]);
+            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["create", .. args, "--goal", "existing process"]);
 
             run.ExitCode.ShouldBe(0, $"{row}: {run.Output}");
             server.RequestCount.ShouldBe(1, row);
@@ -169,7 +169,7 @@ public sealed class DelegateScriptWorkspaceDefaultTests
         using (var server = new DelegateCreateStubApi())
         {
             var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-                "-Role", "Code", "-Kind", "Grok", "-Runner", "server2", "-Goal", "remote");
+                "create", "--role", "Code", "--kind", "Grok", "--runner", "server2", "--goal", "remote");
             run.ExitCode.ShouldBe(0, run.Output);
             server.LastBody.ShouldNotBeNull().RootElement.GetProperty("workspace").GetString().ShouldBe("Worktree");
         }

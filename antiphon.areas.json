@@ -43,7 +43,7 @@
         "server/Application/Services/Scope*.cs",
         "server/Application/Services/AreaMap*.cs",
         "server/Application/Settings/DelegationSettings.cs",
-        "scripts/delegate.ps1",
+        "scripts/lib/Antiphon.Nightly/DelegateCli.cs",
         ".claude/skills/antiphon-delegate/**",
         "antiphon.areas.json"
       ]

@@ -1,7 +1,7 @@
 // CARD-1753: refresh the land-graph records for one landing batch, then notify, as an antiphon-scripts command:
 //   land-graph-land-refresh --base <sha> [--repo <dir>] [--card <id>] [--note-path <file>]
 // It replaced scripts/land-graph-land-refresh.ps1 (deleted 2026-11-23, unit 11 of
-// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). Run it before delegate.ps1 -Land. It never asks. A
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). Run it before scripts/antiphon delegate land. It never asks. A
 // bare land-graph-audit --update stays forbidden; --land-refresh on the audit is only for this command. The owner
 // document is the land-graph refresh rule of docs/orchestration-loop.md (#land-graph-refresh).
 //

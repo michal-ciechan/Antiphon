@@ -165,20 +165,11 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
 
     public async Task<Guid> RequestAsync(bool initial = true, string? expectedSha = null, Guid? reviewEvidenceId = null)
     {
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"),
-                     "-Land", TaskId.ToString(), "-ExpectedSourceSha", expectedSha ?? SourceSha }) start.ArgumentList.Add(arg);
-        if (reviewEvidenceId is Guid evidence)
-        {
-            start.ArgumentList.Add("-ReviewEvidenceId");
-            start.ArgumentList.Add(evidence.ToString("D"));
-        }
-        start.Environment["ANTIPHON_API"] = _address; start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
-        process.ExitCode.ShouldBe(0, await stderr);
-        var output = await stdout;
+        // The delegate command in process (it replaced scripts/delegate.ps1 in unit 28 of the 2026-11-22 plan).
+        var args = new List<string> { "land", TaskId.ToString(), "--expected-source-sha", expectedSha ?? SourceSha };
+        if (reviewEvidenceId is Guid evidence) args.AddRange(["--review-evidence-id", evidence.ToString("D")]);
+        var (exitCode, output, stderr) = await DelegateCommand.RunAsync(_address, _token, null, [.. args]).WaitAsync(TimeSpan.FromSeconds(60));
+        exitCode.ShouldBe(0, stderr);
         await File.WriteAllTextAsync(Path.Combine(Root, "script-acceptance.txt"), output);
         output.ShouldContain("Publication pending");
         await using var db = CreateContext();
@@ -196,14 +187,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
 
     public async Task<string> StatusAsync()
     {
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"), "-Status", TaskId.ToString() }) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = _address; start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
-        process.ExitCode.ShouldBe(0, await error);
-        var text = await output;
+        var (exitCode, text, error) = await DelegateCommand.RunAsync(_address, _token, null, "status", TaskId.ToString()).WaitAsync(TimeSpan.FromSeconds(60));
+        exitCode.ShouldBe(0, error);
         await File.AppendAllTextAsync(Path.Combine(Root, "status-polls.txt"), text + "\n");
         return text;
     }

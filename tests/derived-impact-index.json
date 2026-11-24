@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 360,
+      "classes": 358,
       "reason": "allowlist"
     },
     {
@@ -2099,11 +2099,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 147,
+      "classes": 145,
       "reason": "cap",
-      "owed": 122,
+      "owed": 120,
       "first": [
-        "AgentContextCheckTests",
+        "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
         "LinuxServerRestartGateTests",
@@ -3756,13 +3756,6 @@
       ]
     },
     {
-      "path": "scripts/delegate.ps1",
-      "classes": [
-        "GrokRulesHerdrAcceptanceTests",
-        "RunnerBranchContractDocumentationTests"
-      ]
-    },
-    {
       "path": "scripts/deploy-server2-server.ps1",
       "classes": [
         "C1744G1DesktopWinComposeTests",
@@ -4028,6 +4021,12 @@
       "path": "scripts/lib/Antiphon.Nightly/ClassCostRefresh.cs",
       "classes": [
         "ClassCostMeasurementTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/DelegateCli.cs",
+      "classes": [
+        "RunnerBranchContractDocumentationTests"
       ]
     },
     {
@@ -21607,6 +21606,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.E2E/Fixtures/DelegateCommand.cs",
+      "classes": [
+        "DelegationScratchCallerTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.E2E/Fixtures/DelegationScratchRepo.cs",
       "classes": [
         "DelegationPipelineE2ETests",
@@ -23916,13 +23921,13 @@
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
       "classes": [
+        "AgentContextCheckTests",
         "AntiphonCliLauncherTests",
         "C1008PlatformContractTests",
         "CommitOnSettleScriptTests",
         "DelegatePlatformScriptTests",
         "DelegateScriptAdoptTests",
         "DelegateScriptCapabilityTests",
-        "DelegateScriptKindTests",
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
@@ -25618,6 +25623,14 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/DelegateCommandRun.cs",
+      "classes": [
+        "DelegateCommandTests",
+        "DelegateScriptInterruptSwitchTests",
+        "DelegateScriptRunnerSwitchTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs",
       "classes": [
         "DerivedImpactIndexTests",
@@ -26137,6 +26150,9 @@
         "CapabilityScriptTests",
         "CardCommandTests",
         "CommitOnSettleScriptTests",
+        "DelegateCommandTests",
+        "DelegateScriptInterruptSwitchTests",
+        "DelegateScriptRunnerSwitchTests",
         "DispatchConcurrencyScriptTests",
         "GithubSyncScriptTests",
         "HangfireDashboardCommandTests",
@@ -26375,12 +26391,6 @@
       "path": "tests/Antiphon.Tests/Scripts/StatusSnapshotScriptTests.cs",
       "classes": [
         "RegisteredCallerScriptTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/TaskCeilingScriptTests.cs",
-      "classes": [
-        "ProcessSpawnLimitTests"
       ]
     },
     {

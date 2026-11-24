@@ -6,14 +6,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0544 V-2 / G-10. The real <c>scripts/delegate.ps1</c> under pwsh against loopback stubs, and
-/// the card command (<c>Antiphon.Nightly.CardCli</c>, which replaced <c>scripts/card.ps1</c> in unit 27
+/// CARD-0544 V-2 / G-10. The delegate command (<c>Antiphon.Nightly.DelegateCli</c>, which replaced
+/// <c>scripts/delegate.ps1</c> in unit 28) in process against loopback stubs, and the card command (<c>Antiphon.Nightly.CardCli</c>, which replaced <c>scripts/card.ps1</c> in unit 27
 /// of the 2026-11-22 plan) in process against a stub transport: the exact camelCase wire body, full
 /// GUIDs, the selection file's JSON object (never its path), local refusal before any POST, and server
 /// refusals surviving to a nonzero exit. The stubs prove the CLI contract, not server admission.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptVerificationRoundTests
 {
     private static readonly Guid Subject = Guid.Parse("c5440000-1111-2222-3333-4444444444aa");
@@ -29,16 +28,16 @@ public sealed class DelegateScriptVerificationRoundTests
             $$"""{"artifactPath":"docs/plans/c544.md","artifactCommitSha":"{{Sha}}","section":"Round selection"}""");
         foreach (var (row, roleArgs) in new[]
                  {
-                     ("code-worktree", new[] { "-Role", "Code", "-Worktree", "-RepairSource", Subject.ToString("D") }),
-                     ("review-readonly", new[] { "-Role", "Review", "-ReadOnly" }),
+                     ("code-worktree", new[] { "--role", "Code", "--worktree", "--repair-source", Subject.ToString("D") }),
+                     ("review-readonly", new[] { "--role", "Review", "--read-only" }),
                  })
         {
             using var server = new DelegateCreateStubApi();
             var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-                [.. roleArgs, "-Goal", "repair round", "-VerificationRound", "Interim",
-                    "-VerificationSubject", Subject.ToString("D").ToUpperInvariant(),
-                    "-VerificationBaselineOutcome", Baseline.ToString("D"),
-                    "-VerificationSelectionFile", selectionFile]);
+                ["create", .. roleArgs, "--goal", "repair round", "--verification-round", "Interim",
+                    "--verification-subject", Subject.ToString("D").ToUpperInvariant(),
+                    "--verification-baseline-outcome", Baseline.ToString("D"),
+                    "--verification-selection-file", selectionFile]);
             run.ExitCode.ShouldBe(0, $"{row}: {run.Output}");
             server.RequestCount.ShouldBe(1, row);
             var body = server.LastBody.ShouldNotBeNull(row).RootElement;
@@ -63,13 +62,13 @@ public sealed class DelegateScriptVerificationRoundTests
     {
         foreach (var (row, args, expected) in new (string, string[], string?)[]
                  {
-                     ("code-omitted", ["-Role", "Code", "-Worktree"], null),
-                     ("review-omitted", ["-Role", "Review", "-ReadOnly"], null),
-                     ("code-explicit-final", ["-Role", "Code", "-Worktree", "-VerificationRound", "Final"], "Final"),
+                     ("code-omitted", ["--role", "Code", "--worktree"], null),
+                     ("review-omitted", ["--role", "Review", "--read-only"], null),
+                     ("code-explicit-final", ["--role", "Code", "--worktree", "--verification-round", "Final"], "Final"),
                  })
         {
             using var server = new DelegateCreateStubApi();
-            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, [.. args, "-Goal", "full round"]);
+            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["create", .. args, "--goal", "full round"]);
             run.ExitCode.ShouldBe(0, $"{row}: {run.Output}");
             var body = server.LastBody.ShouldNotBeNull(row).RootElement;
             if (expected is null)
@@ -92,29 +91,29 @@ public sealed class DelegateScriptVerificationRoundTests
         var array = Path.Combine(temp.Path, "array.json");
         await File.WriteAllTextAsync(array, "[\"docs/plans/c544.md\"]");
         string[] Interim(string subject, string baseline, string file) =>
-            ["-VerificationRound", "Interim", "-VerificationSubject", subject, "-VerificationBaselineOutcome", baseline,
-                "-VerificationSelectionFile", file];
+            ["--verification-round", "Interim", "--verification-subject", subject, "--verification-baseline-outcome", baseline,
+                "--verification-selection-file", file];
         var full = Subject.ToString("D");
         var rows = new (string Row, string[] Args, string Needle)[]
         {
-            ("invalid-role", ["-Role", "Docs", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
-            ("orchestrator", ["-Role", "Code", "-Orchestrator", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
-            ("mutation-final", ["-Role", "Mutation", "-Worktree", "-VerificationRound", "Final"], "verification_round_role"),
+            ("invalid-role", ["--role", "Docs", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
+            ("orchestrator", ["--role", "Code", "--orchestrator", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
+            ("mutation-final", ["--role", "Mutation", "--worktree", "--verification-round", "Final"], "verification_round_role"),
             // CARD-0644 D-5: Interim Code runs in the default Worktree; an explicit Shared is the invalid shape.
-            ("code-shared", ["-Role", "Code", "-Shared", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
-            ("review-worktree", ["-Role", "Review", "-Worktree", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
-            ("short-subject", ["-Role", "Review", "-ReadOnly", .. Interim(full[..8], Baseline.ToString("D"), good)], "verification_baseline_invalid"),
-            ("short-baseline", ["-Role", "Review", "-ReadOnly", .. Interim(full, Baseline.ToString("N"), good)], "verification_baseline_invalid"),
-            ("malformed-json", ["-Role", "Review", "-ReadOnly", .. Interim(full, Baseline.ToString("D"), malformed)], "verification_selection_invalid"),
-            ("array-json", ["-Role", "Review", "-ReadOnly", .. Interim(full, Baseline.ToString("D"), array)], "verification_selection_invalid"),
-            ("missing-file", ["-Role", "Review", "-ReadOnly", .. Interim(full, Baseline.ToString("D"), Path.Combine(temp.Path, "absent.json"))], "verification_selection_invalid"),
-            ("fields-without-interim", ["-Role", "Review", "-ReadOnly", "-VerificationSubject", full], "verification_round_role"),
-            ("bad-enum", ["-Role", "Review", "-ReadOnly", "-VerificationRound", "Partial"], "VerificationRound"),
+            ("code-shared", ["--role", "Code", "--shared", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
+            ("review-worktree", ["--role", "Review", "--worktree", .. Interim(full, Baseline.ToString("D"), good)], "verification_round_role"),
+            ("short-subject", ["--role", "Review", "--read-only", .. Interim(full[..8], Baseline.ToString("D"), good)], "verification_baseline_invalid"),
+            ("short-baseline", ["--role", "Review", "--read-only", .. Interim(full, Baseline.ToString("N"), good)], "verification_baseline_invalid"),
+            ("malformed-json", ["--role", "Review", "--read-only", .. Interim(full, Baseline.ToString("D"), malformed)], "verification_selection_invalid"),
+            ("array-json", ["--role", "Review", "--read-only", .. Interim(full, Baseline.ToString("D"), array)], "verification_selection_invalid"),
+            ("missing-file", ["--role", "Review", "--read-only", .. Interim(full, Baseline.ToString("D"), Path.Combine(temp.Path, "absent.json"))], "verification_selection_invalid"),
+            ("fields-without-interim", ["--role", "Review", "--read-only", "--verification-subject", full], "verification_round_role"),
+            ("bad-enum", ["--role", "Review", "--read-only", "--verification-round", "Partial"], "--verification-round"),
         };
         foreach (var (row, args, needle) in rows)
         {
             using var server = new DelegateCreateStubApi();
-            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, [.. args, "-Goal", "invalid"]);
+            var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, ["create", .. args, "--goal", "invalid"]);
             run.ExitCode.ShouldNotBe(0, $"{row}: {run.Output}");
             run.Output.ShouldContain(needle, Case.Insensitive, row);
             server.RequestCount.ShouldBe(0, row + ": no POST and no server-side admission");
@@ -131,9 +130,9 @@ public sealed class DelegateScriptVerificationRoundTests
         {
             using var server = new DelegateCreateStubApi($$"""{"code":"{{code}}","title":"Conflict","detail":"refused {{code}}"}""", 409);
             var run = await DelegateScriptRunner.RunAsync(server.BaseUrl,
-                "-Role", "Review", "-ReadOnly", "-Goal", "interim", "-VerificationRound", "Interim",
-                "-VerificationSubject", Subject.ToString("D"), "-VerificationBaselineOutcome", Baseline.ToString("D"),
-                "-VerificationSelectionFile", file);
+                "create", "--role", "Review", "--read-only", "--goal", "interim", "--verification-round", "Interim",
+                "--verification-subject", Subject.ToString("D"), "--verification-baseline-outcome", Baseline.ToString("D"),
+                "--verification-selection-file", file);
             run.ExitCode.ShouldNotBe(0, code);
             run.Output.ShouldContain(code, Case.Sensitive, code);
             server.RequestCount.ShouldBe(1, code + ": exactly one attempt, no silent Final resubmission");

@@ -28,8 +28,8 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0084 S6 — the whole card in one pass, on FakeGrok: the caller's <c>-Kind Grok</c> choice
-/// travels from <c>scripts/delegate.ps1</c> through task creation, dispatch, a REAL launched
+/// CARD-0084 S6 — the whole card in one pass, on FakeGrok: the caller's <c>--kind Grok</c> choice
+/// travels from the delegate command (<c>scripts/antiphon delegate create</c>) through task creation, dispatch, a REAL launched
 /// process, brief delivery, turn settlement and pricing, and every one of those stages is the
 /// production object, not a stand-in for it.
 ///
@@ -42,7 +42,7 @@ namespace Antiphon.Tests.Application;
 /// the launched process never hears about, a settlement that reads the right rows and prices them
 /// off the wrong ladder.</para>
 ///
-/// <para><b>What is real here.</b> The script is the real <c>delegate.ps1</c> over real HTTP; the
+/// <para><b>What is real here.</b> The command is the real <c>DelegateCli</c>, in process, over real HTTP; the
 /// request it posts is deserialized and handed to the real <see cref="AgentTaskService"/>; the
 /// dispatch is <see cref="AgentTaskDispatcher.TickAsync"/>; the launch goes through
 /// <see cref="AgentSessionLaunchQueue"/> into <see cref="AgentSessionService"/> and really starts
@@ -105,7 +105,7 @@ public class GrokDelegateEndToEndTests
         using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
         var title = "unsafe-raw-" + Guid.NewGuid().ToString("N");
         var run = await DelegateScriptRunner.RunAsync(relay.BaseUrl,
-            "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", title, "-Goal", MultilineGoal, "-Dir", workspace.Path);
+            "create", "--role", "Code", "--shared", "--kind", "Grok", "--title", title, "--goal", MultilineGoal, "--dir", workspace.Path);
         run.ExitCode.ShouldBe(0, run.Output);
         using (var scope = harness.Provider.CreateScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
@@ -152,8 +152,8 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0084 S6", "-Goal", MultilineGoal,
-                "-Dir", workspace.Path);
+                "create", "--role", "Code", "--shared", "--kind", "Grok", "--title", "CARD-0084 S6", "--goal", MultilineGoal,
+                "--dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
             run.Output.ShouldContain("[Grok]", customMessage:
@@ -276,7 +276,7 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0329 unmarked nudge", "-Goal", MultilineGoal, "-Dir", workspace.Path);
+                "create", "--role", "Code", "--shared", "--kind", "Grok", "--title", "CARD-0329 unmarked nudge", "--goal", MultilineGoal, "--dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
 
@@ -420,7 +420,7 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", "CARD-0353 boot stall", "-Goal", MultilineGoal, "-Dir", workspace.Path);
+                "create", "--role", "Code", "--shared", "--kind", "Grok", "--title", "CARD-0353 boot stall", "--goal", MultilineGoal, "--dir", workspace.Path);
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
 
             Guid taskId;
@@ -623,8 +623,8 @@ public class GrokDelegateEndToEndTests
         {
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
-                relay.BaseUrl, "-Role", "Code", "-Shared", "-Title", "CARD-0084 S6 control", "-Goal", MultilineGoal,
-                "-Dir", workspace.Path);
+                relay.BaseUrl, "create", "--role", "Code", "--shared", "--title", "CARD-0084 S6 control", "--goal", MultilineGoal,
+                "--dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
             run.Output.ShouldContain("queued task");
@@ -762,8 +762,8 @@ public class GrokDelegateEndToEndTests
             const string title = "CARD-0491 interrupt";
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", title,
-                "-Goal", "Finish this slice.", "-Dir", workspace.Path);
+                "create", "--role", "Code", "--shared", "--kind", "Grok", "--title", title,
+                "--goal", "Finish this slice.", "--dir", workspace.Path);
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
 
             await using var created = CreateContext();
@@ -1286,7 +1286,7 @@ internal sealed class RecordingRunnerClient : ISessionRunnerClient, IAsyncDispos
 /// <see cref="AgentTaskService.CreateAsync"/>.
 ///
 /// <para>An <see cref="HttpListener"/> rather than a test host because the point is to run
-/// <c>delegate.ps1</c> exactly as an agent runs it — and because booting the whole application would
+/// the delegate command exactly as an agent runs it — and because booting the whole application would
 /// bring its hosted dispatcher with it, which would race this test for its own task.</para>
 ///
 /// <para>The one thing this relay decides for itself is the CALLER, and it decides it the way the
@@ -1357,7 +1357,7 @@ internal sealed class DelegateTaskApiRelay : IDisposable
         using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
         var raw = await reader.ReadToEndAsync();
         var request = JsonSerializer.Deserialize<CreateAgentTaskRequest>(raw, Json)
-            ?? throw new InvalidOperationException($"delegate.ps1 posted a body that is not a create request: {raw}");
+            ?? throw new InvalidOperationException($"the delegate command posted a body that is not a create request: {raw}");
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var service = new AgentTaskService(

@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// Path-aware loopback stub for <c>delegate.ps1 -Land</c> (CARD-0495). Distinguishes
+/// Path-aware loopback stub for the delegate command's <c>land</c> (CARD-0495; DelegateCli). Distinguishes
 /// <c>/api/version</c>, task status, <c>/land/v2</c> and legacy <c>/land</c> so a silent
 /// fallback is observable as <see cref="LegacyLandPosts"/>.
 /// </summary>

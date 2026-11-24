@@ -6,10 +6,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptLandStatusTests
 {
-    /// <summary>CARD-1136 / F5 V-15: render the real status command against the task-detail wire.</summary>
+    /// <summary>CARD-1136 / F5 V-15: render the delegate status command (in process) against the task-detail wire.</summary>
     [Test]
     [Arguments("pending-with-debt")]
     [Arguments("pending-without-debt")]
@@ -51,7 +50,7 @@ public sealed class DelegateScriptLandStatusTests
         });
         await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: body);
 
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
 
         status.ExitCode.ShouldBe(0, status.Output);
         // Compare complete output lines, with independent expected values. In particular,
@@ -109,7 +108,7 @@ public sealed class DelegateScriptLandStatusTests
             new string('e', 40),
             v2Body: JsonSerializer.Serialize(new { requestId = id, status = "queued", notification = scenario == "none" ? "not-required" : "tracked" }),
             taskStatusBody: body);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output); status.Output.ShouldContain("Delegate: Succeeded");
         status.Output.ShouldContain("Publication: " + publication);
         status.Output.IndexOf("Publication:", StringComparison.Ordinal).ShouldBeLessThan(status.Output.IndexOf("EXACT REPORT AFTER FACTS", StringComparison.Ordinal));
@@ -117,7 +116,7 @@ public sealed class DelegateScriptLandStatusTests
         else { status.Output.ShouldContain("Land: " + state); status.Output.ShouldContain("attempt 0"); status.Output.ShouldContain("Notification: Outcome " + receipt); }
         if (state == "Held") { status.Output.ShouldContain(holder.ToString()); status.Output.ShouldContain("(Blocked)"); }
         if (scenario == "legacy") status.Output.ShouldContain("LegacyUnverified");
-        var acceptance = await DelegateScriptRunner.RunAsync(server.Url, "-Land", id.ToString());
+        var acceptance = await DelegateScriptRunner.RunAsync(server.Url, "land", id.ToString());
         acceptance.ExitCode.ShouldBe(0, acceptance.Output); acceptance.Output.ShouldContain(id.ToString());
         acceptance.Output.ShouldContain("Publication pending"); acceptance.Output.ShouldNotContain("receipt confirmed");
         if (scenario == "none") acceptance.Output.ShouldContain("notification=not-required");
@@ -168,7 +167,7 @@ public sealed class DelegateScriptLandStatusTests
             new string('e', 40),
             v2Body: JsonSerializer.Serialize(new { requestId = id, status = "queued" }),
             taskStatusBody: body);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.IndexOf("EXACT REPORT AFTER FACTS", StringComparison.Ordinal).ShouldBeGreaterThan(0);
         if (scenario == "exception-only")
@@ -229,7 +228,7 @@ public sealed class DelegateScriptLandStatusTests
             progressEvidence = progress,
         });
         await using var server = LandApiStub.Compatible(commit, taskStatusBody: body);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         if (kind == "observed")
             status.Output.ShouldContain($"Progress: repair-source; owner {owner}; commit {commit}");
@@ -275,7 +274,7 @@ public sealed class DelegateScriptLandStatusTests
             },
         });
         await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: body);
-        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "status", id.ToString());
         status.ExitCode.ShouldBe(0, status.Output);
         status.Output.ShouldContain("Land: Completed");
         status.Output.ShouldContain("attempt 0");

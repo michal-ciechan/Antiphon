@@ -20,7 +20,6 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class PostLandMutationAdmissionTests
 {
     [Test]
@@ -432,8 +431,8 @@ public sealed class PostLandMutationAdmissionTests
         using var server = new StubApi();
         var operation = Guid.NewGuid();
         var card = Guid.NewGuid();
-        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", "Mutation", "-Worktree",
-            "-SourceLanding", operation.ToString("D"), "-Card", card.ToString("D"), "-Goal", "post-land battery");
+        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "create", "--role", "Mutation", "--worktree",
+            "--source-landing", operation.ToString("D"), "--card", card.ToString("D"), "--goal", "post-land battery");
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastCreateBody.ShouldNotBeNull().RootElement;
         body.GetProperty("sourceLandingOperationId").GetString().ShouldBe(operation.ToString("D"));
@@ -450,7 +449,7 @@ public sealed class PostLandMutationAdmissionTests
     {
         using var server = new StubApi();
         var taskId = Guid.NewGuid();
-        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "-CleanupVerification", taskId.ToString("D"));
+        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "cleanup-verification", taskId.ToString("D"));
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("POST");
         server.LastPath.ShouldBe($"/api/agent-tasks/{taskId:D}/cleanup-verification");

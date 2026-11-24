@@ -10,7 +10,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0493 S1: every role <c>delegate.ps1</c> will send must bind through the real
+/// CARD-0493 S1: every role the delegate command (<c>DelegateCliOptions.Roles</c>) will send must bind through the real
 /// <c>Program</c> JSON options. An empty goal is refused at the first statement of
 /// <c>CreateAsync</c>, so these POSTs create nothing.
 /// </summary>
@@ -23,7 +23,7 @@ public class AgentTaskRoleBindingTests(AntiphonWebAppFactory factory)
     public async Task C493_every_scripted_role_binds_on_create()
     {
         using var client = factory.CreateClient();
-        foreach (var role in ScriptedRoles("delegate.ps1"))
+        foreach (var role in Antiphon.Nightly.DelegateCliOptions.Roles)
         {
             foreach (var name in new[] { role, role.ToLowerInvariant() })
             {
@@ -61,26 +61,14 @@ public class AgentTaskRoleBindingTests(AntiphonWebAppFactory factory)
         var expected = Enum.GetNames<AgentTaskRole>()
             .Where(name => !AgentTaskRoles.IsSpecialist(Enum.Parse<AgentTaskRole>(name)))
             .ToArray();
-        ScriptedRoles("delegate.ps1").ShouldBe(expected, ignoreOrder: true);
+        // The delegate command (unit 28) replaced delegate.ps1 and its Role ValidateSet.
+        Antiphon.Nightly.DelegateCliOptions.Roles.ShouldBe(expected, ignoreOrder: true);
         // The routing-pin command (unit 24 of the 2026-11-22 plan) replaced routing-pin.ps1 and its Role ValidateSet.
         Antiphon.Nightly.RoutingPinCliOptions.Roles.ShouldBe(expected, ignoreOrder: true);
         // The complexity-chain command (unit 26) replaced complexity-chain.ps1 and its Role ValidateSet; Any is the any-role row.
         Antiphon.Nightly.ComplexityChainCliOptions.Roles.ShouldBe(expected.Append("Any").ToArray(), ignoreOrder: true);
         // The migration command (unit 26) migrates every stage role's pin.
         Antiphon.Nightly.StagePinMigration.Roles.ShouldBe(expected, ignoreOrder: true);
-    }
-
-    internal static IReadOnlyList<string> ScriptedRoles(string script)
-    {
-        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script);
-        var lines = File.ReadAllLines(path)
-            .Select(static l => l.Trim())
-            .Where(static l => l.StartsWith("[ValidateSet('Investigate'", StringComparison.Ordinal))
-            .ToArray();
-        lines.Length.ShouldBe(1, script + " must have exactly one Role ValidateSet line starting [ValidateSet('Investigate'");
-        return Regex.Matches(lines[0], @"'(\w+)'")
-            .Select(static m => m.Groups[1].Value)
-            .ToArray();
     }
 
     private static async Task<HttpResponseMessage> PostRoleAsync(HttpClient client, string role)

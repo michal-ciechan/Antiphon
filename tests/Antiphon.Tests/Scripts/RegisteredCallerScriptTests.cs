@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-2004. The registered scripts send their own <c>X-Antiphon-Caller</c> label.
 /// <c>scripts/lib/antiphon-caller.ps1</c> (and its compiled reading, <c>Antiphon.Nightly.AntiphonCaller</c>, used by the
-/// status-snapshot and card commands) refuses any other value and does not copy it into the header or the error. The server
+/// status-snapshot, card and delegate commands) refuses any other value and does not copy it into the header or the error. The server
 /// list is <see cref="AgentTaskGetPollMetrics.RegisteredLabels"/>.
 /// </summary>
 [Category("Integration")]
@@ -28,10 +28,13 @@ public sealed class RegisteredCallerScriptTests
     {
         using var stub = new HeaderStub(_ => new(200,
             """{"summary":{"status":"Working","title":"caller","kind":"Grok","role":"Code","modelLevel":"High"}}"""));
-        var run = await RunAsync(stub, "delegate.ps1", "-Status", TaskId);
+        // The delegate command (in-process since unit 28) keeps the registered label of the script it replaced.
+        var run = await DelegateScriptRunner.RunAsync(stub.BaseUrl,
+            new Dictionary<string, string?> { ["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token" }, "status", TaskId);
+        Antiphon.Nightly.DelegateCli.CallerLabel.ShouldBe("delegate.ps1");
         AssertRegisteredCaller(stub, "delegate.ps1");
         stub.Calls.ShouldContain(c => c.Path == "/api/agent-tasks/" + TaskId);
-        run.ExitCode.ShouldBe(0, run.Stderr);
+        run.ExitCode.ShouldBe(0, run.Output);
     }
 
     [Test]

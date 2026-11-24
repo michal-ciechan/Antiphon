@@ -305,7 +305,7 @@ Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
 Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
 # CARD-0442: downgrade/upgrade of isolated PostgreSQL task rows.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
-# CARD-0442: real delegate.ps1 POST and service-backed worktree preview.
+# CARD-0442: real delegate command POST and service-backed worktree preview.
 Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests
 # CARD-0807: real Git, isolated database and reply settlement matrix.
 Antiphon.Tests.Application.ReviewEvidenceSettlementTests
@@ -446,9 +446,6 @@ Antiphon.Tests.Application.CapacityObsoleteStandingTests
 
 # CARD-1609: shared owned Docker image, kernel namespace and durable real-volume retirement witnesses; provisional phase collection.
 Antiphon.Tests.Scripts.VolumeRetirementDockerTests
-
-# CARD-1610 S4a: spawns pwsh per case against a loopback stub (33 cases, about 4 min).
-Antiphon.Tests.Scripts.TaskCeilingScriptTests
 
 # CARD-2006: mutation shapes build a classic project; clean-build stays SDK. Linux f64e04774 18 tests 3m 25s; 4285cbfd3 18 tests 1m 53s. No numeric budget.
 Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests

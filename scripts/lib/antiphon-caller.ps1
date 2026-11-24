@@ -1,8 +1,8 @@
 # ASCII-only. Registered X-Antiphon-Caller labels (CARD-2004).
 # Match is trim then lowercase, the same rule as AgentTaskGetPollMetrics.RegisteredLabels.
 # An unregistered value is refused. It is not copied into the header or the error.
-# 'card.ps1' and 'status-snapshot.ps1' are sent by the card and status-snapshot commands (Antiphon.Nightly.AntiphonCaller),
-# which kept the labels of the scripts they replaced.
+# 'card.ps1', 'delegate.ps1' and 'status-snapshot.ps1' are sent by the card, delegate and status-snapshot commands
+# (Antiphon.Nightly.AntiphonCaller), which kept the labels of the scripts they replaced.
 
 $script:AntiphonRegisteredCallers = @(
     'board-watch',

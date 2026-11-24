@@ -9,7 +9,7 @@
 //
 // The CLI is the only writer of the capability store: the server answers the raw token once on issue and rotate, and this
 // command writes it, DPAPI-protected for the current Windows user, to <store>\<name>.dpapi and prints the name, the path and
-// the roots, never the token. delegate.ps1 -Capability <name> reads it (ProtectedData, CurrentUser, no entropy). The store is
+// the roots, never the token. The delegate command (--capability <name>) reads it back (UnprotectCurrentUser, what ProtectedData CurrentUser reads). The store is
 // ANTIPHON_CAPABILITY_STORE, else %LOCALAPPDATA%\Antiphon\capabilities (the CLI passes it in). DPAPI is Windows only: off
 // Windows the CLI passes no protector and issue and rotate refuse before any request, so no token is issued that cannot be
 // stored. No task token is sent (the script sent none). Exit 0 done; 1 a failed request, an unknown or ambiguous name, an
@@ -254,6 +254,41 @@ namespace Antiphon.Nightly
             }
         }
 
+        /// <summary>
+        /// Opens what ProtectCurrentUser sealed (CryptUnprotectData, no entropy, no UI): what ProtectedData.Unprotect(data, null,
+        /// DataProtectionScope.CurrentUser) answers. The delegate command reads a capability's token with it. Windows only;
+        /// a blob another user sealed, or one that is not DPAPI, throws.
+        /// </summary>
+        public static byte[] UnprotectCurrentUser(byte[] data)
+        {
+            if (data == null) throw new ArgumentNullException(nameof(data));
+            if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("DPAPI is Windows only.");
+            var input = new DataBlob { Size = data.Length, Data = Marshal.AllocHGlobal(Math.Max(1, data.Length)) };
+            try
+            {
+                Marshal.Copy(data, 0, input.Data, data.Length);
+                var output = new DataBlob();
+                if (!CryptUnprotectData(ref input, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, UiForbidden, ref output))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                try
+                {
+                    var plain = new byte[output.Size];
+                    Marshal.Copy(output.Data, plain, 0, output.Size);
+                    return plain;
+                }
+                finally
+                {
+                    // The plain token does not outlive the call in unmanaged memory.
+                    Marshal.Copy(new byte[output.Size], 0, output.Data, output.Size);
+                    LocalFree(output.Data);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(input.Data);
+            }
+        }
+
         private const int UiForbidden = 0x1;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -265,6 +300,9 @@ namespace Antiphon.Nightly
 
         [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern bool CryptProtectData(ref DataBlob dataIn, string description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, ref DataBlob dataOut);
+
+        [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CryptUnprotectData(ref DataBlob dataIn, IntPtr description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, ref DataBlob dataOut);
 
         [DllImport("kernel32.dll")]
         private static extern IntPtr LocalFree(IntPtr memory);

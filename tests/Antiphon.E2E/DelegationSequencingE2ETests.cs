@@ -73,7 +73,7 @@ public class DelegationSequencingE2ETests
             await orchestrator.SubmitAsync(
                 "You are orchestrating: do not do any work yourself and do not read or write any files. "
                 + "Run exactly this command once, then stop and end your turn: "
-                + $"pwsh -NoProfile -File scripts/delegate.ps1 -Role Docs -Goal \"Create a file named "
+                + $"scripts/antiphon delegate create --role Docs --goal \"Create a file named "
                 + $"step1.txt in the current directory whose entire contents are the single line "
                 + $"{StepOneToken} then report what you did\"");
 
@@ -104,7 +104,7 @@ public class DelegationSequencingE2ETests
             await orchestrator.SubmitAsync(
                 "Now delegate the follow-up, which depends on what that delegate produced. "
                 + "Run exactly this command once, then stop and end your turn: "
-                + "pwsh -NoProfile -File scripts/delegate.ps1 -Role Test -Goal \"Read the file "
+                + "scripts/antiphon delegate create --role Test --goal \"Read the file "
                 + "step1.txt in the current directory and report its exact contents verbatim\"");
 
             var second = await runner.WaitForNewTaskAsync(

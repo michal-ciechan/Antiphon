@@ -98,8 +98,7 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests),
         typeof(AgentTaskLandHalfResetWindowsTests),
         typeof(AgentTaskLandHoldVisibilityTests),
-        // CARD-1610 S4a: runs scripts/delegate.ps1 under pwsh per case.
-        typeof(TaskCeilingScriptTests),
+        // Unit 28 (2026-11-22 plan): TaskCeilingScriptTests runs the delegate command in process (no pwsh child) and left this floor.
         // CARD-1745: each witness starts pwsh for the Linux SHA gate harness.
         typeof(LinuxServerRestartGateTests),
     ];

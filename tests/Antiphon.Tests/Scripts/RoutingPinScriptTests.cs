@@ -11,12 +11,11 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-0305 S4: the routing-pin command (Antiphon.Nightly.RoutingPinCli, which replaced scripts/routing-pin.ps1 in unit 24 of
-/// the 2026-11-22 plan) in process on a recording transport, and <c>delegate.ps1</c>'s two pin flags driven as the REAL
-/// script under pwsh against a stub API. A string match on the source would pass just as happily if the flag never reached
-/// the request body.
+/// the 2026-11-22 plan) in process on a recording transport, and the delegate command's two pin flags (Antiphon.Nightly.DelegateCli,
+/// which replaced scripts/delegate.ps1 in unit 28) in process over real HTTP against a stub API. A string match on the source
+/// would pass just as happily if the flag never reached the request body.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RoutingPinScriptTests
 {
     [Test]
@@ -44,8 +43,8 @@ public sealed class RoutingPinScriptTests
             + "\nartifact: docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md"
             + "\nPC-1a..PC-13 (17 variants); review-required: yes; restart: server\n"
             + File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "server/Bundles/stage-mutation.md"));
-        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", role, "-Shared", "-Dir", directory,
-            "-Card", "CARD-0470", "-Goal", goal);
+        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "create", "--role", role, "--shared", "--dir", directory,
+            "--card", "CARD-0470", "--goal", goal);
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastCreateBody.ShouldNotBeNull().RootElement;
         body.GetProperty("role").GetString().ShouldBe(role);
@@ -209,7 +208,7 @@ public sealed class RoutingPinScriptTests
     {
         using var server = new StubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Plan", "-Goal", "plan it", "-IgnoreRoutingPin");
+            server.BaseUrl, "create", "--role", "Plan", "--goal", "plan it", "--ignore-routing-pin");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastCreateBody.ShouldNotBeNull();
@@ -221,7 +220,7 @@ public sealed class RoutingPinScriptTests
     {
         using var server = new StubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Plan", "-Goal", "plan it");
+            server.BaseUrl, "create", "--role", "Plan", "--goal", "plan it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastCreateBody.ShouldNotBeNull();
@@ -234,14 +233,14 @@ public sealed class RoutingPinScriptTests
     {
         using var server = new StubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Code", "-Goal", "build it", "-Card", "CARD-0305", "-Pin");
+            server.BaseUrl, "create", "--role", "Code", "--goal", "build it", "--card", "CARD-0305", "--pin");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var pin = server.LastPinBody.ShouldNotBeNull();
         pin.RootElement.GetProperty("provenance").GetString().ShouldBe("Human");
         pin.RootElement.GetProperty("strength").GetString().ShouldBe("Required");
         pin.RootElement.GetProperty("role").GetString().ShouldBe("Code");
-        // The RESOLVED kind, not the typed one: a caller who passed no -Kind and got Grok from the
+        // The RESOLVED kind, not the typed one: a caller who passed no --kind and got Grok from the
         // role policy still means "next time, the same".
         pin.RootElement.GetProperty("agentKind").GetString().ShouldBe("Grok");
         pin.RootElement.GetProperty("card").GetString()
@@ -253,7 +252,7 @@ public sealed class RoutingPinScriptTests
     [Test]
     public void Delegate_and_routing_pin_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "delegate.ps1", "lib/Antiphon.Nightly/RoutingPinCli.cs", "lib/Antiphon.Nightly/CapabilityCli.cs", "lib/Antiphon.Nightly/BoardCli.cs" })
+        foreach (var name in new[] { "lib/Antiphon.Nightly/DelegateCli.cs", "lib/Antiphon.Nightly/RoutingPinCli.cs", "lib/Antiphon.Nightly/CapabilityCli.cs", "lib/Antiphon.Nightly/BoardCli.cs" })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);
@@ -268,7 +267,7 @@ public sealed class RoutingPinScriptTests
     {
         using var server = new StubApi();
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Code", "-Goal", "build it", "-Pin");
+            server.BaseUrl, "create", "--role", "Code", "--goal", "build it", "--pin");
 
         // A stage-wide pin changes routing for every card; it must not fall out of one dispatch.
         run.ExitCode.ShouldNotBe(0);
@@ -328,7 +327,7 @@ public sealed class RoutingPinScriptTests
           ],"available":[],"walked":true,"role":"Code","chainRole":null}}
         """;
 
-    // The loopback API delegate.ps1 runs against (it is still a script): agent-task creates, routing pin reads and writes.
+    // The loopback API the delegate command runs against: agent-task creates, routing pin reads and writes.
     private sealed class StubApi : IDisposable
     {
         private readonly HttpListener _listener;

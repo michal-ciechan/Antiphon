@@ -3,10 +3,11 @@ using Antiphon.Tests.TestHelpers;
 namespace Antiphon.E2E;
 
 /// <summary>
-/// A throwaway git repo carrying the REAL antiphon-delegate skill and delegate.ps1, so a live Claude
-/// discovers them from its cwd exactly as an agent would in production. Copying the real files (not
-/// stubs) is the point: if the skill's wording or the script's argument handling regresses, these
-/// tests are what notices.
+/// A throwaway git repo carrying the REAL antiphon-delegate skill and the delegate command's launchers, so a live
+/// Claude discovers them from its cwd exactly as an agent would in production. The skill is copied (not stubbed): if its
+/// wording regresses, these tests are what notices. scripts/antiphon and scripts\antiphon.cmd forward to this checkout's
+/// launchers, so the command (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of the
+/// 2026-11-22 plan) is the real one and runs with the scratch repository as its working directory.
 /// </summary>
 public sealed class DelegationScratchRepo : IDisposable
 {
@@ -23,19 +24,18 @@ public sealed class DelegationScratchRepo : IDisposable
             System.IO.Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"),
             System.IO.Path.Combine(skillDir, "SKILL.md"));
 
+        // The launchers forward to this checkout's (which build and run antiphon-scripts); the working directory stays the
+        // scratch repository, so the command resolves its checkout there.
         var scriptDir = System.IO.Path.Combine(Path, "scripts");
         Directory.CreateDirectory(scriptDir);
-        var delegateSource = System.IO.Path.Combine(root, "scripts", "delegate.ps1");
-        File.Copy(delegateSource, System.IO.Path.Combine(scriptDir, "delegate.ps1"));
-        // delegate.ps1 dot-sources each lib from its own directory. A lone copy exits
-        // before HTTP because scripts/lib/antiphon-caller.ps1 is not in the scratch repo.
-        foreach (var relative in DotSourcedLibraries(delegateSource))
-        {
-            var source = System.IO.Path.Combine(root, "scripts", ToPlatformRelative(relative));
-            var destination = System.IO.Path.Combine(scriptDir, ToPlatformRelative(relative));
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination)!);
-            File.Copy(source, destination);
-        }
+        var shLauncher = System.IO.Path.Combine(scriptDir, "antiphon");
+        File.WriteAllText(shLauncher,
+            "#!/bin/sh\nexec \"" + System.IO.Path.Combine(root, "scripts", "antiphon").Replace('\\', '/') + "\" \"$@\"\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(shLauncher, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        File.WriteAllText(System.IO.Path.Combine(scriptDir, "antiphon.cmd"),
+            "@echo off\r\ncall \"" + System.IO.Path.Combine(root, "scripts", "antiphon.cmd") + "\" %*\r\nexit /b %errorlevel%\r\n");
 
         File.WriteAllText(
             System.IO.Path.Combine(Path, "README.md"),
@@ -48,7 +48,7 @@ public sealed class DelegationScratchRepo : IDisposable
 
     /// <summary>
     /// The env contract a delegate is launched with. Identity lives here, never in arguments — which
-    /// is exactly why the delegate script never has to be told who is calling it.
+    /// is exactly why the delegate command never has to be told who is calling it.
     /// </summary>
     public static Dictionary<string, string> EnvFor(
         string apiBaseUrl, Guid sessionId, Guid taskId, string? token)
@@ -86,39 +86,6 @@ public sealed class DelegationScratchRepo : IDisposable
         using var process = System.Diagnostics.Process.Start(psi);
         process?.WaitForExit(30_000);
     }
-
-    private static IEnumerable<string> DotSourcedLibraries(string scriptPath)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in File.ReadLines(scriptPath))
-        {
-            var relative = TryDotSourcedLibrary(line);
-            if (relative is not null && seen.Add(relative))
-                yield return relative;
-        }
-    }
-
-    private static string? TryDotSourcedLibrary(string line)
-    {
-        var trimmed = line.Trim();
-        const string marker = "(Join-Path $PSScriptRoot '";
-        var start = trimmed.IndexOf(marker, StringComparison.Ordinal);
-        if (start < 0 || !trimmed.StartsWith('.'))
-            return null;
-        start += marker.Length;
-        var end = trimmed.IndexOf('\'', start);
-        if (end <= start)
-            return null;
-        var relative = trimmed[start..end].Replace('\\', '/');
-        if (!relative.StartsWith("lib/", StringComparison.Ordinal)
-            || relative.Contains("..", StringComparison.Ordinal)
-            || relative.Contains(':', StringComparison.Ordinal))
-            return null;
-        return relative;
-    }
-
-    private static string ToPlatformRelative(string relative) =>
-        relative.Replace('/', System.IO.Path.DirectorySeparatorChar);
 
     private static string FindRepoRoot()
     {

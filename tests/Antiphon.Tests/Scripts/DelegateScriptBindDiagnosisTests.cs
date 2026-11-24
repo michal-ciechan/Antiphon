@@ -8,11 +8,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0493 S2: <c>delegate.ps1</c> prints a <c>diagnosis:</c> line on a JSON bind 400
+/// CARD-0493 S2: the delegate command (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of the
+/// 2026-11-22 plan; in process, real git on a scratch repository) prints a <c>diagnosis:</c> line on a JSON bind 400
 /// relating the served SHA to checkout HEAD. Exit code and retry behaviour stay unchanged.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptBindDiagnosisTests
 {
     private const string IncidentRoleBody =
@@ -29,7 +29,7 @@ public sealed class DelegateScriptBindDiagnosisTests
             CreateBody = """{"code":"validation_failed","errors":{"Goal":["A goal is required."]}}""",
         };
         var run = await DelegateScriptRunner.RunAsync(
-            server.BaseUrl, "-Role", "Mutation", "-Goal", "x");
+            server.BaseUrl, "create", "--role", "Mutation", "--goal", "x");
 
         run.ExitCode.ShouldNotBe(0, run.Output);
         run.Output.ShouldContain("validation_failed");
@@ -43,13 +43,13 @@ public sealed class DelegateScriptBindDiagnosisTests
     {
         using var repo = await CreateRepoAsync();
         using var server = Bind400(IncidentRoleBody, VersionJson(UnknownServedSha));
-        var run = await RunInAsync(server, repo, "-Role", "Mutation", "-Goal", "x");
+        var run = await RunInAsync(server, repo, "--role", "Mutation", "--goal", "x");
 
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("diagnosis: served build aaaaaaa rejected 'Mutation' for 'role'");
         run.Output.ShouldContain("is not a commit this checkout knows");
         run.Output.ShouldContain("restart-apphost.ps1");
-        run.Output.ShouldContain("do not re-dispatch under a different -Role");
+        run.Output.ShouldContain("do not re-dispatch under a different --role");
         run.Output.ShouldContain("could not be converted");
         server.CreateCalls.ShouldBe(1);
         server.VersionCalls.ShouldBe(1);
@@ -60,7 +60,7 @@ public sealed class DelegateScriptBindDiagnosisTests
     {
         using var repo = await CreateRepoAsync();
         using var server = Bind400(IncidentRoleBody, VersionJson(repo.C1));
-        var run = await RunInAsync(server, repo, "-Role", "Mutation", "-Goal", "x");
+        var run = await RunInAsync(server, repo, "--role", "Mutation", "--goal", "x");
 
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("HEAD " + repo.C2[..7] + " is 1 commit(s) ahead of the served build");
@@ -71,7 +71,7 @@ public sealed class DelegateScriptBindDiagnosisTests
     {
         using var repo = await CreateRepoAsync();
         using var server = Bind400(IncidentRoleBody, VersionJson(repo.C2));
-        var run = await RunInAsync(server, repo, "-Role", "Mutation", "-Goal", "x");
+        var run = await RunInAsync(server, repo, "--role", "Mutation", "--goal", "x");
 
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("HEAD equals the served build; the value is genuinely unknown to this source");
@@ -84,7 +84,7 @@ public sealed class DelegateScriptBindDiagnosisTests
         var body =
             "The JSON value could not be converted to Antiphon.Server.Application.Dtos.CreateAgentTaskRequest. Path: $.workspace | LineNumber: 0 | BytePositionInLine: 18.";
         using var server = Bind400(body, VersionJson(UnknownServedSha));
-        var run = await RunInAsync(server, repo, "-Role", "Code", "-Worktree", "-Goal", "x");
+        var run = await RunInAsync(server, repo, "--role", "Code", "--worktree", "--goal", "x");
 
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("rejected 'Worktree' for 'workspace'");
@@ -101,7 +101,7 @@ public sealed class DelegateScriptBindDiagnosisTests
             VersionStatus = 404,
             VersionBody = "",
         };
-        var run = await RunInAsync(server, repo, "-Role", "Mutation", "-Goal", "x");
+        var run = await RunInAsync(server, repo, "--role", "Mutation", "--goal", "x");
 
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("GET " + server.BaseUrl.TrimEnd('/') + "/api/version failed (404)");
@@ -121,10 +121,11 @@ public sealed class DelegateScriptBindDiagnosisTests
     private static string VersionJson(string sha) =>
         "{\"version\":\"" + sha + "\",\"capabilities\":[\"land-v2\"]}";
 
+    // A create run in the scratch repository; args are the create flags.
     private static Task<(int ExitCode, string Output)> RunInAsync(
         StubApi server, TwoCommitRepo repo, params string[] args) =>
         DelegateScriptRunner.RunAsync(
-            server.BaseUrl, environment: null, workingDirectory: repo.Path, args);
+            server.BaseUrl, environment: null, workingDirectory: repo.Path, ["create", .. args]);
 
     private static async Task<TwoCommitRepo> CreateRepoAsync()
     {

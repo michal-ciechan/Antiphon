@@ -110,23 +110,13 @@ public sealed class GrokRulesDispatchAcceptanceTests
         try
         {
             using var relay = new DelegateTaskApiRelay(git.RepoPath, h.Delegation);
-            var wrapper = Path.Combine(root, "dispatch.ps1");
-            // Paths alone cross native argv. The complete goal is read and supplied in-process.
-            await File.WriteAllTextAsync(wrapper, "param($Script,$GoalFile,$Repo)\n$goalText=Get-Content -LiteralPath $GoalFile -Raw\n& $Script Code -Kind Grok -Level High -Dir $Repo -Worktree -ReadOnly -Goal $goalText -Title 'CARD-0395 wire acceptance' -NoInheritEnv\nexit $LASTEXITCODE\n", ct);
-            var psi = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-File", wrapper,
-                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1"), goalPath, git.RepoPath }) psi.ArgumentList.Add(a);
-            psi.Environment["ANTIPHON_API"] = relay.BaseUrl.TrimEnd('/');
-            psi.Environment["ANTIPHON_TASK_TOKEN"] = "";
-            using (var process = Process.Start(psi)!)
+            // The delegate command in process; the complete goal crosses as a file (--goal-file), as an agent sends a long brief.
             {
-                var stdout = process.StandardOutput.ReadToEndAsync(ct); var stderr = process.StandardError.ReadToEndAsync(ct);
-                try { await process.WaitForExitAsync(ct); }
-                finally { if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); } }
-                var output = await stdout + await stderr;
+                var (exitCode, output) = await DelegateScriptRunner.RunAsync(relay.BaseUrl, null, null,
+                    ["create", "--role", "Code", "--kind", "Grok", "--level", "High", "--dir", git.RepoPath, "--worktree", "--read-only",
+                     "--goal-file", goalPath, "--title", "CARD-0395 wire acceptance", "--no-inherit-env"]);
                 await File.WriteAllTextAsync(Path.Combine(root, "delegate.log"), output, ct);
-                process.ExitCode.ShouldBe(0, output + relay.LastFailure);
+                exitCode.ShouldBe(0, output + relay.LastFailure);
                 output.ShouldContain("[Grok]");
             }
             await using (var db = Db())

@@ -57,7 +57,7 @@ public sealed partial class LandDeliveryFixture
         // CARD-1305: the four same-card branches above are intentionally divergent so the dispatcher
         // observes and reduces them into sibling warnings. CARD-0442 refuses automatic base selection
         // on divergent tips, so the queued task records the -FreshWorktree intent (explicit Target
-        // mode, AgentTaskService.cs) exactly as a delegate.ps1 dispatch would.
+        // mode, AgentTaskService.cs) exactly as a delegate --fresh-worktree dispatch would.
         db.AgentTasks.Add(new AgentTask { Id = TaskId, RootTaskId = TaskId, CardId = card.Id, ProjectId = project.Id,
             Title = "C540 native queued dispatch", Goal = "Complete this owned fixture turn.", Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok, Workspace = WorkspaceMode.Worktree,

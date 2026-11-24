@@ -10,17 +10,16 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0084 S2's caller-facing half: <c>scripts/delegate.ps1 -Kind</c>. The script is what an
-/// agent actually runs, so these drive the REAL script under pwsh against a stub server and assert
-/// on the JSON body it posts — a string-match on the source would pass just as happily if the flag
+/// CARD-0084 S2's caller-facing half: <c>scripts/antiphon delegate create --kind</c> (Antiphon.Nightly.DelegateCli,
+/// which replaced scripts/delegate.ps1 in unit 28 of the 2026-11-22 plan). The command is what an agent actually runs, so
+/// these drive it in process over real HTTP against a stub server and assert on the JSON body it posts — a string-match on the source would pass just as happily if the flag
 /// never reached the request.
 ///
 /// <para>The one thing that must not regress is the omitted case: a caller who never heard of
-/// -Kind must produce byte-for-byte the request they produced before the flag existed, because the
+/// --kind must produce byte-for-byte the request they produced before the flag existed, because the
 /// server would then resolve a kind from the role policy that the caller did not choose.</para>
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptKindTests
 {
     [Test]
@@ -37,20 +36,20 @@ public sealed class DelegateScriptKindTests
     {
         using var server = mode == "ambiguous_response"
             ? new StubApi(createJson:
-                """{"title":"Conflict","status":409,"code":"worktree_base_ambiguous","detail":"worktree_base_ambiguous: tasks aaaaaaaa on feat/card-task-aaaaaaaa @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa and bbbbbbbb on feat/card-task-bbbbbbbb @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; choose -BaseTask or -FreshWorktree."}""",
+                """{"title":"Conflict","status":409,"code":"worktree_base_ambiguous","detail":"worktree_base_ambiguous: tasks aaaaaaaa on feat/card-task-aaaaaaaa @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa and bbbbbbbb on feat/card-task-bbbbbbbb @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; choose --base-task or --fresh-worktree."}""",
                 createStatusCode: 409)
             : new StubApi();
-        var args = new List<string> { "-Role", "Code", "-Goal", "build it", "-Card", "CARD-0442" };
+        var args = new List<string> { "create", "--role", "Code", "--goal", "build it", "--card", "CARD-0442" };
         switch (mode)
         {
-            case "base_task": args.AddRange(["-Worktree", "-BaseTask", "1234abcd"]); break;
-            case "fresh": args.AddRange(["-Worktree", "-FreshWorktree"]); break;
-            case "both_flags": args.AddRange(["-BaseTask", "1234abcd", "-FreshWorktree"]); break;
-            case "shared": args.AddRange(["-Shared", "-BaseTask", "1234abcd"]); break;
-            case "readonly": args.AddRange(["-ReadOnly", "-FreshWorktree"]); break;
-            case "onagent_task": args.AddRange(["-OnAgent", "1234abcd", "-BaseTask", "1234abcd"]); break;
-            case "onagent_fresh": args.AddRange(["-OnAgent", "1234abcd", "-FreshWorktree"]); break;
-            case "ambiguous_response": args.Add("-Worktree"); break;
+            case "base_task": args.AddRange(["--worktree", "--base-task", "1234abcd"]); break;
+            case "fresh": args.AddRange(["--worktree", "--fresh-worktree"]); break;
+            case "both_flags": args.AddRange(["--base-task", "1234abcd", "--fresh-worktree"]); break;
+            case "shared": args.AddRange(["--shared", "--base-task", "1234abcd"]); break;
+            case "readonly": args.AddRange(["--read-only", "--fresh-worktree"]); break;
+            case "onagent_task": args.AddRange(["--on-agent", "1234abcd", "--base-task", "1234abcd"]); break;
+            case "onagent_fresh": args.AddRange(["--on-agent", "1234abcd", "--fresh-worktree"]); break;
+            case "ambiguous_response": args.Add("--worktree"); break;
         }
 
         var run = await RunDelegateAsync(server, [.. args]);
@@ -68,8 +67,8 @@ public sealed class DelegateScriptKindTests
             run.Output.ShouldContain("worktree_base_ambiguous");
             run.Output.ShouldContain("aaaaaaaa");
             run.Output.ShouldContain("bbbbbbbb");
-            run.Output.ShouldContain("-BaseTask");
-            run.Output.ShouldContain("-FreshWorktree");
+            run.Output.ShouldContain("--base-task");
+            run.Output.ShouldContain("--fresh-worktree");
             return;
         }
         run.ExitCode.ShouldBe(0, run.Output);
@@ -84,8 +83,8 @@ public sealed class DelegateScriptKindTests
         if (mode == "base_task")
         {
             body.GetProperty("workspace").GetString().ShouldBe("Worktree");
-            var workspaceRun = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "build it",
-                "-Card", "CARD-0442", "-Workspace", "Worktree", "-BaseTask", "1234abcd");
+            var workspaceRun = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", "build it",
+                "--card", "CARD-0442", "--workspace", "Worktree", "--base-task", "1234abcd");
             workspaceRun.ExitCode.ShouldBe(0, workspaceRun.Output);
             server.RequestCount.ShouldBe(2);
             server.LastBody!.RootElement.GetProperty("workspace").GetString().ShouldBe("Worktree");
@@ -97,7 +96,7 @@ public sealed class DelegateScriptKindTests
     public async Task Kind_Grok_is_posted_as_agentKind()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Grok");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite", "--kind", "Grok");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -111,7 +110,7 @@ public sealed class DelegateScriptKindTests
         // Absent, not "ClaudeCode": the field being missing is what lets the role policy decide,
         // and it is the difference between "the caller chose Claude" and "the caller said nothing".
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -124,15 +123,15 @@ public sealed class DelegateScriptKindTests
     {
         using var omitted = new StubApi();
         var plain = await RunDelegateAsync(
-            omitted, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex", "-Level", "High");
+            omitted, "create", "--role", "Test", "--goal", "run the suite", "--kind", "Codex", "--level", "High");
         plain.ExitCode.ShouldBe(0, plain.Output);
         omitted.LastBody.ShouldNotBeNull().RootElement.TryGetProperty("model", out _)
             .ShouldBeFalse("an omitted -Model must not appear on the create body");
 
         using var chosen = new StubApi();
         var explicitModel = await RunDelegateAsync(
-            chosen, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex", "-Level", "High",
-            "-Model", "gpt-6.2-astra");
+            chosen, "create", "--role", "Test", "--goal", "run the suite", "--kind", "Codex", "--level", "High",
+            "--model", "gpt-6.2-astra");
         explicitModel.ExitCode.ShouldBe(0, explicitModel.Output);
         chosen.LastBody.ShouldNotBeNull().RootElement.GetProperty("model").GetString()
             .ShouldBe("gpt-6.2-astra");
@@ -145,7 +144,7 @@ public sealed class DelegateScriptKindTests
         // refused kind — the ValidateSet is the caller-facing half of the allowlist, so widening one
         // without the other leaves the flag rejected at the prompt no matter what the server admits.
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite", "--kind", "Codex");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -159,7 +158,7 @@ public sealed class DelegateScriptKindTests
         // ValidateSet is the cheap half of the allowlist: a typo costs nothing, and the caller
         // finds out at the prompt rather than through a 422 the server had to compose.
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "OpenCode");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite", "--kind", "OpenCode");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("OpenCode");
@@ -167,24 +166,20 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
-    public async Task the_scripts_ValidateSet_is_exactly_the_servers_allowlist()
+    public void the_commands_kind_choices_are_exactly_the_servers_allowlist()
     {
-        // The two halves are separate files in separate languages, and CARD-0099 is the second time
-        // they had to move together. A ValidateSet narrower than the server silently makes a kind
-        // undispatchable; a ValidateSet wider than it turns a clean refusal into a 422 round trip.
-        var lines = await File.ReadAllLinesAsync(
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1"));
-        var line = lines
-            .Select(l => l.Trim())
-            .First(l => l.StartsWith("[ValidateSet('ClaudeCode'", StringComparison.Ordinal));
+        // The two halves are separate projects, and CARD-0099 is the second time they had to move
+        // together. A choice list narrower than the server silently makes a kind undispatchable; one
+        // wider than it turns a clean refusal into a 422 round trip.
+        var kinds = Antiphon.Nightly.DelegateCliOptions.Kinds;
 
         foreach (var kind in AgentTaskService.DelegatableKinds)
-            line.ShouldContain($"'{kind}'");
+            kinds.ShouldContain(kind.ToString());
         foreach (var kind in Enum.GetValues<AgentKind>())
         {
             if (AgentTaskService.DelegatableKinds.Contains(kind))
                 continue;
-            line.ShouldNotContain($"'{kind}'");
+            kinds.ShouldNotContain(kind.ToString());
         }
     }
 
@@ -194,7 +189,7 @@ public sealed class DelegateScriptKindTests
         // The caller may have chosen nothing and still be running on Grok (a role promoted in
         // config), so the ECHO comes from the server's answer, not from the flag.
         using var server = new StubApi(agentKind: "Grok");
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "write it");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", "write it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("Grok");
@@ -204,7 +199,7 @@ public sealed class DelegateScriptKindTests
     public async Task a_ClaudeCode_task_is_announced_exactly_as_it_always_was()
     {
         using var server = new StubApi(agentKind: "ClaudeCode");
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("queued task");
@@ -216,7 +211,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+            server, "create", "--role", "Plan", "--goal", "plan it", "--complexity", "Hard");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -229,7 +224,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_Complexity_sends_nothing_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Plan", "-Goal", "plan it");
+        var run = await RunDelegateAsync(server, "create", "--role", "Plan", "--goal", "plan it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -253,7 +248,7 @@ public sealed class DelegateScriptKindTests
                ]}}
             """);
         var run = await RunDelegateAsync(
-            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+            server, "create", "--role", "Plan", "--goal", "plan it", "--complexity", "Hard");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("routed Plan/Hard -> grok-4.7 (candidate 2/2; via any-role Hard chain)");
@@ -275,7 +270,7 @@ public sealed class DelegateScriptKindTests
                ]}}
             """);
         var run = await RunDelegateAsync(
-            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+            server, "create", "--role", "Plan", "--goal", "plan it", "--complexity", "Hard");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("routed Plan/Hard -> grok-4.7 (candidate 1/1)");
@@ -287,7 +282,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard", "-Kind", "Grok");
+            server, "create", "--role", "Plan", "--goal", "plan it", "--complexity", "Hard", "--kind", "Grok");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("never silently");
@@ -300,8 +295,8 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Reroute", "11111111-1111-1111-1111-111111111111",
-            "-Kind", "Grok", "-Level", "Frontier");
+            server, "reroute", "11111111-1111-1111-1111-111111111111",
+            "--kind", "Grok", "--level", "Frontier");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastPath.ShouldBe("/api/agent-tasks/11111111-1111-1111-1111-111111111111/reroute");
@@ -316,7 +311,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Easy", "-RefuseIfExhausted");
+            server, "create", "--role", "Plan", "--goal", "plan it", "--complexity", "Easy", "--refuse-if-exhausted");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -329,8 +324,8 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Code", "-Goal", "do the remaining epics",
-            "-Authority", "start the remaining Coesite downloader epics one after another");
+            server, "create", "--role", "Code", "--goal", "do the remaining epics",
+            "--authority", "start the remaining Coesite downloader epics one after another");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -342,7 +337,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_Authority_sends_nothing_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "do the remaining epics");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", "do the remaining epics");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -354,7 +349,7 @@ public sealed class DelegateScriptKindTests
     public async Task Continue_posts_to_continue_and_prints_the_success_line()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Continue", "1234abcd");
+        var run = await RunDelegateAsync(server, "continue", "1234abcd");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastPath.ShouldBe("/api/agent-tasks/1234abcd/continue");
@@ -368,7 +363,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Test", "-Goal", "run anyway", "-IgnoreSubscriptionQuota");
+            server, "create", "--role", "Test", "--goal", "run anyway", "--ignore-subscription-quota");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -379,9 +374,8 @@ public sealed class DelegateScriptKindTests
     public async Task EnvOverride_is_posted_as_launchEnvOverride()
     {
         using var server = new StubApi();
-        var run = await RunDelegateCommandAsync(
-            server,
-            "-Role Test -Goal 'run the suite' -EnvOverride @{ ANTHROPIC_BASE_URL = 'http://proxy:8080'; ANTHROPIC_API_KEY = '{{key:proxy-key}}' }");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite",
+            "--env-override", "ANTHROPIC_BASE_URL=http://proxy:8080,ANTHROPIC_API_KEY={{key:proxy-key}}");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -394,12 +388,12 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_EnvOverride_sends_no_launchEnvOverride_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
         body.RootElement.TryGetProperty("launchEnvOverride", out _)
-            .ShouldBeFalse("an omitted -EnvOverride must leave the request exactly as it was before the flag existed");
+            .ShouldBeFalse("an omitted --env-override must leave the request exactly as it was before the flag existed");
     }
 
     [Test]
@@ -413,7 +407,7 @@ public sealed class DelegateScriptKindTests
                 ["X_LLM_PROJECT"] = "PredictionMarkets",
                 ["X_LLM_KEY"] = "pm-key",
             },
-            "-Role", "Test", "-Goal", "run the suite");
+            "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -429,7 +423,7 @@ public sealed class DelegateScriptKindTests
         var run = await DelegateScriptRunner.RunAsync(
             server.BaseUrl,
             new Dictionary<string, string?> { ["X_LLM_PROJECT"] = "PredictionMarkets" },
-            "-Role", "Test", "-Goal", "run the suite", "-NoInheritEnv");
+            "create", "--role", "Test", "--goal", "run the suite", "--no-inherit-env");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -440,14 +434,14 @@ public sealed class DelegateScriptKindTests
     public async Task EnvOverride_keeps_its_own_LLM_project_out_of_inheritedLlmEnv()
     {
         using var server = new StubApi();
-        var run = await RunDelegateCommandAsync(
-            server,
-            "-Role Test -Goal 'run the suite' -EnvOverride @{ X_LLM_PROJECT = 'override' }",
+        var run = await DelegateScriptRunner.RunAsync(
+            server.BaseUrl,
             new Dictionary<string, string?>
             {
                 ["X_LLM_PROJECT"] = "from-shell",
                 ["X_LLM_KEY"] = "pm-key",
-            });
+            },
+            "create", "--role", "Test", "--goal", "run the suite", "--env-override", "X_LLM_PROJECT=override");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -461,7 +455,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_IgnoreSubscriptionQuota_sends_no_ignoreSubscriptionQuota_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -474,8 +468,8 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Code", "-Kind", "Grok", "-Goal", "queue anyway",
-            "-AllowUnauthenticatedProvider");
+            server, "create", "--role", "Code", "--kind", "Grok", "--goal", "queue anyway",
+            "--allow-unauthenticated-provider");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -486,7 +480,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_AllowUnauthenticatedProvider_sends_no_flag()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -499,7 +493,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Test", "-Goal", "queue anyway", "-IgnoreModelDisabled");
+            server, "create", "--role", "Test", "--goal", "queue anyway", "--ignore-model-disabled");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -510,7 +504,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_IgnoreModelDisabled_sends_no_ignoreModelDisabled_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -523,7 +517,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Test", "-Goal", "run in parallel", "-IgnoreConcurrencyLimit");
+            server, "create", "--role", "Test", "--goal", "run in parallel", "--ignore-concurrency-limit");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -534,7 +528,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_IgnoreConcurrencyLimit_sends_no_ignoreConcurrencyLimit_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -546,7 +540,7 @@ public sealed class DelegateScriptKindTests
     public async Task WorktreeHealth_posts_and_prints_findings_without_pruning()
     {
         using var server = new StubApi(mode: StubApi.Mode.WorktreeHealth);
-        var run = await RunDelegateAsync(server, "-WorktreeHealth");
+        var run = await RunDelegateAsync(server, "worktree-health");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastPath.ShouldBe("/api/agent-tasks/worktree-health");
@@ -562,7 +556,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Debug", "-Goal", "verify the diagnosis", "-Stage", "Verify");
+            server, "create", "--role", "Debug", "--goal", "verify the diagnosis", "--stage", "Verify");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -573,7 +567,7 @@ public sealed class DelegateScriptKindTests
     public async Task an_omitted_Stage_sends_no_stage_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Review", "-Goal", "judge it");
+        var run = await RunDelegateAsync(server, "create", "--role", "Review", "--goal", "judge it");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -586,7 +580,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Role", "Debug", "-Goal", "verify", "-Stage", "PlanReview");
+            server, "create", "--role", "Debug", "--goal", "verify", "--stage", "PlanReview");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("PlanReview");
@@ -598,7 +592,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Finding", "abcd1234", "-Stage", "Review", "-Found", "hole in X");
+            server, "finding", "abcd1234", "--stage", "Review", "--found", "hole in X");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("POST");
@@ -615,7 +609,7 @@ public sealed class DelegateScriptKindTests
     {
         using var server = new StubApi();
         var run = await RunDelegateAsync(
-            server, "-Finding", "abcd1234", "-Stage", "Review", "-Clean");
+            server, "finding", "abcd1234", "--stage", "Review", "--clean");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -628,7 +622,7 @@ public sealed class DelegateScriptKindTests
     public async Task WorktreeHealth_with_no_findings_says_so()
     {
         using var server = new StubApi(mode: StubApi.Mode.WorktreeHealthEmpty);
-        var run = await RunDelegateAsync(server, "-WorktreeHealth");
+        var run = await RunDelegateAsync(server, "worktree-health");
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastPath.ShouldBe("/api/agent-tasks/worktree-health");
@@ -637,52 +631,14 @@ public sealed class DelegateScriptKindTests
 
     // ---- harness -------------------------------------------------------------------------------
 
-    // The script runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes
-    // delegate.ps1 exactly the way this one does — same host flags, same environment, same
-    // argument-list quoting.
+    // The runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes the
+    // delegate command exactly the way this one does - same parse, same transports, same environment.
     private static Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args) =>
         DelegateScriptRunner.RunAsync(server.BaseUrl, args);
 
     /// <summary>
-    /// <c>-File</c> cannot bind a hashtable literal (every argument is a string). An agent at a
-    /// prompt writes <c>-EnvOverride @{ ... }</c>, so this path drives the script via
-    /// <c>-Command</c> the same way.
-    /// </summary>
-    private static async Task<(int ExitCode, string Output)> RunDelegateCommandAsync(
-        StubApi server,
-        string argumentTail,
-        IReadOnlyDictionary<string, string?>? environment = null)
-    {
-        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1");
-        var startInfo = new System.Diagnostics.ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-Command");
-        startInfo.ArgumentList.Add($"& '{scriptPath}' {argumentTail}");
-        startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-        if (environment is not null)
-        {
-            foreach (var (name, value) in environment)
-                startInfo.Environment[name] = value;
-        }
-
-        using var process = System.Diagnostics.Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
-    }
-
-    /// <summary>
     /// The smallest thing that can answer POST /api/agent-tasks and keep what it was sent.
-    /// HttpListener rather than a test host: the point is to exercise the SCRIPT, over real HTTP,
+    /// HttpListener rather than a test host: the point is to exercise the command over real HTTP,
     /// exactly as an agent runs it.
     /// </summary>
     private sealed class StubApi : IDisposable

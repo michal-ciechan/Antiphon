@@ -6,8 +6,11 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+/// <summary>
+/// CARD-0495: the delegate command's land (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28 of the
+/// 2026-11-22 plan) in process against <see cref="LandApiStub"/>: the version probe gates the land-v2 POST.
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 [Category("Slow")]
 public sealed class DelegateScriptLandCompatibilityTests
 {
@@ -149,9 +152,9 @@ public sealed class DelegateScriptLandCompatibilityTests
         await using var stub = LandApiStub.Compatible(
             VersionSha,
             v2Body: LandApiStub.DefaultQueuedBody(requestId, "queued", "tracked"));
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString(),
-            "-ExpectedSourceSha", ApprovalSha, "-ReviewEvidenceId", evidence.ToString(),
-            "-Verify", "/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "land", id.ToString(),
+            "--expected-source-sha", ApprovalSha, "--review-evidence-id", evidence.ToString(),
+            "--verify", "/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
         result.ExitCode.ShouldBe(0, result.Output);
         stub.Requests.Count.ShouldBe(2);
         stub.Requests[0].Method.ShouldBe("GET");
@@ -178,8 +181,8 @@ public sealed class DelegateScriptLandCompatibilityTests
             sha64,
             capabilities: ["x", "land-v2"],
             extraJsonFields: "\"extra\":true,\"build\":1");
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString(),
-            "-ExpectedSourceSha", ApprovalSha);
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "land", id.ToString(),
+            "--expected-source-sha", ApprovalSha);
         result.ExitCode.ShouldBe(0, result.Output);
         stub.Requests[1].Path.ShouldEndWith("/land/v2");
         stub.LegacyLandPosts.ShouldBe(0);
@@ -193,7 +196,7 @@ public sealed class DelegateScriptLandCompatibilityTests
         await using var stub = LandApiStub.Compatible(
             VersionSha,
             v2Body: LandApiStub.DefaultQueuedBody(requestId, "requeued", "tracked"));
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString());
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "land", id.ToString());
         result.ExitCode.ShouldBe(0, result.Output);
         stub.Requests.Count.ShouldBe(2);
         stub.Requests[0].Method.ShouldBe("GET");
@@ -255,10 +258,10 @@ public sealed class DelegateScriptLandCompatibilityTests
             VersionBody = LandApiStub.CompatibleVersion(VersionSha, ["land-v2"], null),
             V2AbortAfterRead = true,
         });
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString(),
-            "-ExpectedSourceSha", ApprovalSha);
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "land", id.ToString(),
+            "--expected-source-sha", ApprovalSha);
         result.ExitCode.ShouldBe(1, result.Output);
-        result.Output.ShouldContain($"-Status {id}");
+        result.Output.ShouldContain($"scripts/antiphon delegate status {id}");
         result.Output.ShouldContain("did not complete");
         result.Output.ShouldContain("outcome is uncertain");
         result.Output.ShouldNotContain("Queued land");
@@ -280,10 +283,10 @@ public sealed class DelegateScriptLandCompatibilityTests
             V2Status = 200,
             V2Body = v2Body,
         });
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString(),
-            "-ExpectedSourceSha", ApprovalSha);
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "land", id.ToString(),
+            "--expected-source-sha", ApprovalSha);
         result.ExitCode.ShouldBe(1, result.Output);
-        result.Output.ShouldContain($"-Status {id}");
+        result.Output.ShouldContain($"scripts/antiphon delegate status {id}");
         result.Output.ShouldContain("outcome is uncertain");
         result.Output.ShouldNotContain("Queued land");
     }
@@ -310,7 +313,7 @@ public sealed class DelegateScriptLandCompatibilityTests
             summary = new { status = "Succeeded", title = "owned", kind = "Worker", role = "Code", modelLevel = "High" },
         });
         await using var stub = LandApiStub.Compatible(VersionSha, taskStatusBody: body);
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Status", id.ToString());
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "status", id.ToString());
         result.ExitCode.ShouldBe(0, result.Output);
         stub.Requests.Count.ShouldBe(1);
         stub.Requests[0].Method.ShouldBe("GET");
@@ -323,7 +326,7 @@ public sealed class DelegateScriptLandCompatibilityTests
     {
         var id = Guid.NewGuid();
         await using var stub = LandApiStub.Compatible(VersionSha);
-        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Reply", id.ToString(), "the answer");
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "reply", id.ToString(), "the answer");
         result.ExitCode.ShouldBe(0, result.Output);
         stub.Requests.Count.ShouldBe(1);
         stub.Requests[0].Method.ShouldBe("POST");
@@ -332,7 +335,7 @@ public sealed class DelegateScriptLandCompatibilityTests
     }
 
     private static string[] LandArgs() =>
-        ["-Land", Guid.NewGuid().ToString(), "-ExpectedSourceSha", ApprovalSha];
+        ["land", Guid.NewGuid().ToString(), "--expected-source-sha", ApprovalSha];
 
     private static async Task AssertRefusedAsync(LandApiStub stub, string[] args, string? observed = null)
     {

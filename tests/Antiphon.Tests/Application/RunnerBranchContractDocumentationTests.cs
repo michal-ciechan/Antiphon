@@ -87,10 +87,12 @@ public class RunnerBranchContractDocumentationTests
         var api = Read("docs/antiphon-api.md");
         foreach (var sentence in ApiSentences)
             api.ShouldContain(sentence);
-        var script = Read("scripts/delegate.ps1");
-        script.ShouldContain("Runner sync: Pending $($r.reason); origin=$($r.observedSha)");
+        // The delegate command's status lines (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in unit 28);
+        // DelegateScriptLandStatusTests renders them.
+        var script = Read("scripts/lib/Antiphon.Nightly/DelegateCli.cs");
+        script.ShouldContain("\"Runner sync: Pending \" + T(sync, \"reason\") + \"; origin=\" + T(sync, \"observedSha\")");
         script.ShouldContain("Desktop sync debt:");
-        script.ShouldContain(
+        Antiphon.Nightly.DelegateCli.PendingWithoutDebt.ShouldStartWith(
             "Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, then reply.");
         Read("server/Application/Services/SettlementSyncDebtAttention.cs").ShouldContain(
             "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded.");
@@ -118,8 +120,7 @@ public class RunnerBranchContractDocumentationTests
         var ops = Line(Read("docs/ops-http.md").Replace("\r\n", "\n"), "| Settlement sync debt (CARD-1082) |", "c1802-ops");
         var runtime = Line(Read("docs/session-runtime-invariants.md").Replace("\r\n", "\n"),
             "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1802-runtime");
-        var script = Line(Read("scripts/delegate.ps1").Replace("\r\n", "\n"),
-            "Write-Output 'Pending evidence without a debt row", "c1802-script");
+        var script = Antiphon.Nightly.DelegateCli.PendingWithoutDebt;
 
         foreach (var (text, label) in new[]
         {
@@ -131,7 +132,7 @@ public class RunnerBranchContractDocumentationTests
             text.ShouldNotContain(stale, Case.Sensitive, label + "-stale");
         }
         foreach (var relative in new[] { "docs/orchestration-loop.md", "docs/ops-http.md",
-            "docs/session-runtime-invariants.md", "scripts/delegate.ps1" })
+            "docs/session-runtime-invariants.md", "scripts/lib/Antiphon.Nightly/DelegateCli.cs" })
             Read(relative).ShouldNotContain(stale, Case.Sensitive, "c1802-stale-" + relative);
 
         // Rule 6 names the reason a Pending complete report still blocks on, and every runner_sync_
@@ -150,7 +151,7 @@ public class RunnerBranchContractDocumentationTests
     /// <summary>
     /// CARD-1805 (A-1..A-3). The CARD-1802 sentences cover a correlated complete report only. Bind-refusal
     /// recovery has no correlated report and keeps its lease-busy block (rule 6, the design, ops, the
-    /// runtime invariants and the delegate.ps1 status line say so); the unfetched arm's unverified claim
+    /// runtime invariants and the delegate command's status line say so); the unfetched arm's unverified claim
     /// is a documented residual; and the unfetched gate's presence read separates absence from an error.
     /// </summary>
     [Test]
@@ -172,8 +173,7 @@ public class RunnerBranchContractDocumentationTests
         var ops = Line(Read("docs/ops-http.md").Replace("\r\n", "\n"), "| Settlement sync debt (CARD-1082) |", "c1805-ops");
         var runtime = Line(Read("docs/session-runtime-invariants.md").Replace("\r\n", "\n"),
             "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1805-runtime");
-        var script = Line(Read("scripts/delegate.ps1").Replace("\r\n", "\n"),
-            "Write-Output 'Pending evidence without a debt row", "c1805-script");
+        var script = Antiphon.Nightly.DelegateCli.PendingWithoutDebt;
 
         foreach (var (text, label) in new[] { (rule6, "c1805-rule-6"), (design, "c1805-design"), (ops, "c1805-ops"),
             (runtime, "c1805-runtime") })

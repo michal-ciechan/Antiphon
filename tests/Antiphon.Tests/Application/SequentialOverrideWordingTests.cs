@@ -63,13 +63,13 @@ public sealed class SequentialOverrideWordingTests
     [Test]
     public void delegate_comments_name_the_axis_rule_not_sequential_by_default()
     {
-        var script = Read("scripts", "delegate.ps1");
+        var script = Read("scripts", "lib", "Antiphon.Nightly", "DelegateCli.cs");
         script.ShouldNotContain("sequential-by-default");
         script.ShouldNotContain("user asked for parallel work");
         script.ShouldContain(DelegateAxis);
         script.ShouldContain(DelegateDefer);
         foreach (var ch in script)
-            ((int)ch).ShouldBeLessThan(128, "delegate.ps1 stays ASCII");
+            ((int)ch).ShouldBeLessThan(128, "DelegateCli.cs stays ASCII");
         var infected = script.Replace(
             DelegateAxis,
             "sequential-by-default and only when the user asked for parallel work",

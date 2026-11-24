@@ -6,7 +6,6 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptAdoptTests
 {
     [Test]
@@ -16,8 +15,8 @@ public sealed class DelegateScriptAdoptTests
         var review = Guid.NewGuid();
         var sha = new string('a', 40);
         await using var server = LandApiStub.Compatible(new string('b', 40));
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", owner.ToString("D"),
-            "-ExpectedSourceSha", sha, "-ReviewEvidenceId", review.ToString("D"), "-RecoverReviewedSource");
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "land", owner.ToString("D"),
+            "--expected-source-sha", sha, "--review-evidence-id", review.ToString("D"), "--recover-reviewed-source");
         result.ExitCode.ShouldBe(0, result.Output);
         server.Requests.Count.ShouldBe(2);
         server.Requests[0].Method.ShouldBe("GET");
@@ -48,7 +47,7 @@ public sealed class DelegateScriptAdoptTests
                 reviewEvidence = new { id = evidence, subjectTaskId = subject, reviewedSourceSha = sha,
                     reviewedSourceClean = true, reviewedSourceRef = "refs/heads/repair", outcome = "Clean" },
             }));
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", review.ToString());
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "status", review.ToString());
         result.ExitCode.ShouldBe(0, result.Output);
         result.Output.ShouldContain($"Review evidence: {evidence}; subject {subject}; reviewed {sha}; clean True; ref refs/heads/repair; outcome Clean");
     }
@@ -72,7 +71,7 @@ public sealed class DelegateScriptAdoptTests
                     recoveryMode = "AdoptReviewedSource", recoveryUncontainedPatches = $"{one},{two}",
                     recoveryPatchesContained = false },
             }));
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", owner.ToString());
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "status", owner.ToString());
         result.ExitCode.ShouldBe(0, result.Output);
         result.Output.ShouldContain($"Uncontained owner patches: {one},{two}");
         result.Output.Split("Uncontained owner patches:").Length.ShouldBe(3);
@@ -87,9 +86,9 @@ public sealed class DelegateScriptAdoptTests
         await using var server = LandApiStub.Compatible(new string('a', 40),
             taskStatusBody: JsonSerializer.Serialize(new { summary = new { id = source } }));
 
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", owner.ToString(),
-            "-FromTask", source.ToString()[..8], "-ExpectedSourceSha", sha,
-            "-ReviewEvidenceId", review.ToString());
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "land", owner.ToString(),
+            "--from-task", source.ToString()[..8], "--expected-source-sha", sha,
+            "--review-evidence-id", review.ToString());
 
         result.ExitCode.ShouldBe(0, result.Output);
         server.Requests.Count.ShouldBe(3);
@@ -107,8 +106,8 @@ public sealed class DelegateScriptAdoptTests
     public async Task C753_InvalidRecoveryArgsSendNoPost()
     {
         await using var server = LandApiStub.Compatible(new string('a', 40));
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", Guid.NewGuid().ToString(),
-            "-RecoverReviewedSource", "-ExpectedSourceSha", "abcd", "-ReviewEvidenceId", Guid.NewGuid().ToString());
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "land", Guid.NewGuid().ToString(),
+            "--recover-reviewed-source", "--expected-source-sha", "abcd", "--review-evidence-id", Guid.NewGuid().ToString());
         result.ExitCode.ShouldBe(1);
         server.Requests.ShouldNotContain(r => r.Method == "POST");
     }
@@ -134,7 +133,7 @@ public sealed class DelegateScriptAdoptTests
                     recoveryOwnerRemoteBeforeSha = new string('b', 40), recoveryOwnerRemoteAfterSha = sha },
             }));
 
-        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", owner.ToString());
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "status", owner.ToString());
 
         result.ExitCode.ShouldBe(0, result.Output);
         result.Output.ShouldContain($"Recovery: AdoptReviewedSource; source task {source}");

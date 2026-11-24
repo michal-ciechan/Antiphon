@@ -212,7 +212,7 @@ public class AgentTaskAgentKindTests
     [Test]
     public async Task an_orchestrator_cannot_be_asked_to_run_on_Grok()
     {
-        // An orchestrator's contract — the PreToolUse deny hook, delegate.ps1, the check
+        // An orchestrator's contract — the PreToolUse deny hook, the delegate command, the check
         // interpreter — has only ever been exercised on Claude. Grok starts as a worker kind.
         await using var db = CreateContext();
         using var workspace = new TempWorkspace();
@@ -236,7 +236,7 @@ public class AgentTaskAgentKindTests
     public async Task an_orchestrator_cannot_be_asked_to_run_on_Codex()
     {
         // Same rule, same reason, and the reason is not "Grok specifically" — Codex cannot execute
-        // Claude's PreToolUse deny hook at all, and the check interpreter and delegate.ps1 usage
+        // Claude's PreToolUse deny hook at all, and the check interpreter and delegate command usage
         // patterns have only ever run on Claude. CARD-0099 widens the WORKER list, never this one.
         await using var db = CreateContext();
         using var workspace = new TempWorkspace();
@@ -396,7 +396,7 @@ public class AgentTaskAgentKindTests
     [Test]
     public async Task the_created_response_carries_the_kind_as_a_string()
     {
-        // delegate.ps1 compares $created.agentKind against 'ClaudeCode' — an int on the wire would
+        // The delegate command compares the created agentKind against 'ClaudeCode' — an int on the wire would
         // make that comparison silently true forever.
         var json = JsonSerializer.Serialize(
             new AgentTaskCreatedDto(

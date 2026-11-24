@@ -318,7 +318,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                     break;
                 case "startref-queued" or "startref-queued-origin" or "startref-queued-heads" or "startref-queued-peeled"
                     or "startref-queued-remotes" or "startref-queued-case":
-                    // Review 1dcb8d90 D-1: a queued delegate.ps1 -StartRef holds only WorktreeBaseRequestedRef until it is
+                    // Review 1dcb8d90 D-1: a queued delegate --start-ref holds only WorktreeBaseRequestedRef until it is
                     // provisioned, and a branch-name start ref must still resolve locally then (CARD-0613). Review 4ed13efe
                     // A-3 (CARD-1701): every spelling git resolves to that branch names it; refs are case-insensitive in a
                     // Windows loose-ref store.

@@ -454,23 +454,10 @@ public sealed partial class LandDeliveryFixture
     {
         var stale = (await GitAsync(Repository, "rev-parse", "HEAD")).Trim();
         stale.ShouldNotBe(receipt.ReviewedSha);
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"),
-                     "-Land", TaskId.ToString(), "-ExpectedSourceSha", stale, "-ReviewEvidenceId", receipt.EvidenceId.ToString("D"),
-                 })
-            start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_API"] = _address;
-        start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
-        using var process = System.Diagnostics.Process.Start(start)!;
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
-        process.ExitCode.ShouldNotBe(0, stdout);
+        // The delegate command in process (it replaced scripts/delegate.ps1 in unit 28 of the 2026-11-22 plan).
+        var (exitCode, stdout, stderr) = await DelegateCommand.RunAsync(_address, _token, null,
+            "land", TaskId.ToString(), "--expected-source-sha", stale, "--review-evidence-id", receipt.EvidenceId.ToString("D")).WaitAsync(TimeSpan.FromSeconds(60));
+        exitCode.ShouldNotBe(0, stdout);
         var text = stdout + "\n" + stderr;
         text.ShouldContain("review_evidence_sha_mismatch");
         await File.WriteAllTextAsync(Path.Combine(Root, "stale-refusal.txt"),

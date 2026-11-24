@@ -8,19 +8,19 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0351: <c>scripts/delegate.ps1 -Title</c> is capped at 80 locally, refused rather than
+/// CARD-0351: <c>scripts/antiphon delegate create --title</c> is capped at 80 locally, refused rather than
 /// clamped, and omitted titles warn when the Goal first line would become a giant excerpt.
-/// Driven against the REAL script under pwsh — a source match would pass if the cap never ran.
+/// Driven through the delegate command in process (Antiphon.Nightly.DelegateCli, which replaced scripts/delegate.ps1 in
+/// unit 28 of the 2026-11-22 plan) - a source match would pass if the cap never ran.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptTitleTests
 {
     [Test]
     public async Task Title_is_posted_as_title()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Title", "add Fizz", "-Goal", "add Fizz(int) in Calc.cs");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--title", "add Fizz", "--goal", "add Fizz(int) in Calc.cs");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -31,7 +31,7 @@ public sealed class DelegateScriptTitleTests
     public async Task an_omitted_Title_sends_no_title_at_all()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Test", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -45,7 +45,7 @@ public sealed class DelegateScriptTitleTests
     {
         var title = new string('a', 80);
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Title", title, "-Goal", "do the work");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--title", title, "--goal", "do the work");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -57,7 +57,7 @@ public sealed class DelegateScriptTitleTests
     {
         var title = new string('a', 81);
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Title", title, "-Goal", "do the work");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--title", title, "--goal", "do the work");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("80");
@@ -68,7 +68,7 @@ public sealed class DelegateScriptTitleTests
     public async Task a_multiline_Title_is_refused_before_any_request()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Title", "a\n b", "-Goal", "do the work");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--title", "a\n b", "--goal", "do the work");
 
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldContain("single line");
@@ -80,7 +80,7 @@ public sealed class DelegateScriptTitleTests
     {
         var firstLine = new string('x', 90);
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", firstLine);
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", firstLine);
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -94,7 +94,7 @@ public sealed class DelegateScriptTitleTests
     public async Task a_padded_Title_is_posted_trimmed()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Title", "  short  ", "-Goal", "do the work");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--title", "  short  ", "--goal", "do the work");
 
         run.ExitCode.ShouldBe(0, run.Output);
         var body = server.LastBody.ShouldNotBeNull();
@@ -110,7 +110,7 @@ public sealed class DelegateScriptTitleTests
              "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode",
              "titleDiagnosisQueued":true}
             """);
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", new string('x', 90));
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", new string('x', 90));
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldContain("title: pending");
@@ -126,7 +126,7 @@ public sealed class DelegateScriptTitleTests
              "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode",
              "titleDiagnosisQueued":false}
             """);
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", new string('x', 90));
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", new string('x', 90));
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldNotContain("title: pending");
@@ -136,7 +136,7 @@ public sealed class DelegateScriptTitleTests
     public async Task an_absent_titleDiagnosisQueued_does_not_print_title_pending()
     {
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "run the suite");
+        var run = await RunDelegateAsync(server, "create", "--role", "Code", "--goal", "run the suite");
 
         run.ExitCode.ShouldBe(0, run.Output);
         run.Output.ShouldNotContain("title: pending");
