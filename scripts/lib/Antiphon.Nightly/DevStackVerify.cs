@@ -73,16 +73,18 @@ namespace Antiphon.Nightly
                 return 1;
             }
             var simple = options.SimpleMode;
+            var skipPostgres = DevPostgresCheck.SkipLocal(host);
             var backend = simple ? "http://localhost:17281" : "http://localhost:17202";
             var frontend = simple ? "http://localhost:17282" : "http://localhost:17203";
             const string runner = "http://localhost:17204";
             var corePorts = simple ? new[] { 17280, 17281, 17282 } : new[] { 17200, 17202, 17203, 17204, 17205, 17206 };
             var dashboard = simple ? null : "http://localhost:17205";
-            var results = new List<(string Check, bool Ok, string Detail)>();
-            void Add(string name, bool ok, string detail)
+            var results = new List<(string Check, bool? Ok, string Detail)>();
+            void Add(string name, bool? ok, string detail)
             {
                 results.Add((name, ok, detail));
-                host.Out.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-28} {1,-5} {2}", name, ok ? "OK" : "FAIL", detail));
+                var status = ok switch { true => "OK", false => "FAIL", null => "SKIP" };
+                host.Out.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-28} {1,-5} {2}", name, status, detail));
             }
 
             host.Out.WriteLine("");
@@ -102,6 +104,13 @@ namespace Antiphon.Nightly
                     var hnsOk = !created.TimedOut;
                     if (hnsOk) platform.Run("docker", new[] { "network", "rm", network }, 0);
                     Add("Docker network (HNS)", hnsOk, hnsOk ? "create OK" : "HANGS - restart Docker Desktop (Windows HNS broken)");
+                }
+                if (skipPostgres)
+                {
+                    Add("Postgres container", null, DevPostgresCheck.SkipReason);
+                }
+                else if (dockerUp)
+                {
                     // The always-on external container (docker-compose.dev.yml, restart: unless-stopped).
                     var postgres = platform.Run("docker", new[] { "ps", "--filter", "name=antiphon-postgres", "--format", "{{.Status}}" }, 0);
                     var up = AppHostWorktree.Lines(postgres.Output).Where(line => line.StartsWith("Up", StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -109,12 +118,24 @@ namespace Antiphon.Nightly
                 }
             }
 
+            if (skipPostgres)
+            {
+                var result = DevPostgresCheck.Probe(host, platform.Files, options.RepoRoot, simple, DevPostgresCheck.TcpOpen);
+                Add("Database endpoint", result.Ok, result.Detail);
+            }
+
             // 2. Listening ports.
             var listening = platform.ListeningPorts();
             foreach (var port in corePorts)
             {
+                var check = "Port " + port.ToString(CultureInfo.InvariantCulture);
+                if (skipPostgres && port == 17280)
+                {
+                    Add(check, null, DevPostgresCheck.SkipReason);
+                    continue;
+                }
                 var open = listening.Contains(port);
-                Add("Port " + port.ToString(CultureInfo.InvariantCulture), open, open ? "listening" : "closed");
+                Add(check, open, open ? "listening" : "closed");
             }
 
             // 3. HTTP endpoints.
@@ -165,7 +186,7 @@ namespace Antiphon.Nightly
             else if (indexLock.Stale) Add("Git index lock", false, "stale (" + indexLock.AgeMinutes.ToString("N1", CultureInfo.InvariantCulture) + " min) at " + indexLock.Path + " - Remove-Item '" + indexLock.Path + "'");
             else Add("Git index lock", true, "fresh (" + indexLock.AgeMinutes.ToString("N1", CultureInfo.InvariantCulture) + " min)");
 
-            var failed = results.Where(row => !row.Ok && row.Check != "Git index lock").ToList();
+            var failed = results.Where(row => row.Ok == false && row.Check != "Git index lock").ToList();
             host.Out.WriteLine("");
             if (failed.Count > 0)
             {
