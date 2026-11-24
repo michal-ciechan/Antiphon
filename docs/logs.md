@@ -26,12 +26,13 @@ writer that first caused the conflict. `unknown` and `unavailable` are deliberat
 do not infer a writer from elapsed time or a nearby Merge event. Keep paths, exception text,
 SQL parameters and credentials out of shared incident notes.
 
-## Desktop Postgres query statistics
+## PostgreSQL query statistics
 
-`docker-compose.dev.yml` preloads `pg_stat_statements` for the desktop's
-`antiphon-postgres` only. The server migration creates the extension in the
-`antiphon` database. From the canonical desktop checkout, list the top 20
-normalized queries by cumulative execution time:
+For a local development checkout, `docker-compose.dev.yml` preloads
+`pg_stat_statements` in the optional `antiphon-postgres` container. The server
+migration creates the extension in the `antiphon` database. With that local
+container running, list the top 20 normalized queries by cumulative execution
+time:
 
 ```powershell
 docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT query, calls, round(total_exec_time::numeric, 2) AS total_exec_ms, round(mean_exec_time::numeric, 2) AS mean_exec_ms FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;'

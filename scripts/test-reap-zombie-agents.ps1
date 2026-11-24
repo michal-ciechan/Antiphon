@@ -682,10 +682,22 @@ esac
 '@
         & chmod +x $docker
         function Start-Sleep { param([int]$Seconds) if ($Seconds -ne 10) { throw 'Unexpected sleep in database fixture.' } }
+        function Invoke-FixtureQps {
+            $originalOut = [Console]::Out
+            $writer = [IO.StringWriter]::new()
+            try {
+                [Console]::SetOut($writer)
+                & (Join-Path $here 'pg-qps.ps1') -Seconds 10 -Json
+                return @{ ExitCode = $LASTEXITCODE; Text = $writer.ToString() }
+            } finally {
+                [Console]::SetOut($originalOut)
+                $writer.Dispose()
+            }
+        }
 
-        $qps = & (Join-Path $here 'pg-qps.ps1') -Seconds 10 -Json
-        Assert-Eq $LASTEXITCODE 0 'pg-qps samples the production endpoint without desktop Postgres'
-        Assert-True ([bool](($qps | ConvertFrom-Json).windowSeconds -gt 0)) 'pg-qps emits valid rate JSON'
+        $qps = Invoke-FixtureQps
+        Assert-Eq $qps.ExitCode 0 'pg-qps samples the production endpoint without desktop Postgres'
+        Assert-True ([bool](($qps.Text | ConvertFrom-Json).windowSeconds -gt 0)) 'pg-qps emits valid rate JSON'
 
         # A report fixture has a source migration and deliberately no restart or stack verifier.
         $fixtureScripts = Join-Path $fixture 'scripts'
@@ -739,8 +751,8 @@ esac
         Assert-Eq $record[-1].ExitCode 0 'zombie reaper accepts a successful production database census'
 
         Save-Json $secretsFile @{ 'ConnectionStrings:DefaultConnection' = $connection.Replace('5433', '17280') }
-        $qps = & (Join-Path $here 'pg-qps.ps1') -Seconds 10
-        Assert-True ($LASTEXITCODE -eq 3 -and ($qps -join "`n") -match 'must publish the endpoint' -and ($qps -join "`n") -notmatch 'fixture-private') 'pg-qps refuses an AppHost endpoint that does not match server2'
+        $qps = Invoke-FixtureQps
+        Assert-True ($qps.ExitCode -eq 3 -and $qps.Text -match 'must publish the endpoint' -and $qps.Text -notmatch 'fixture-private') 'pg-qps refuses an AppHost endpoint that does not match server2'
         $argv = Get-Content -LiteralPath (Join-Path $fixture 'argv') -Raw
         Assert-True ($argv -notmatch 'fixture-private|\bantiphon-postgres\b') 'Docker arguments contain neither the password nor the desktop container'
     } finally {

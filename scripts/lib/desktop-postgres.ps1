@@ -69,7 +69,7 @@ function Resolve-DesktopPostgresTarget {
         $flatKey = $config.PSObject.Properties['ConnectionStrings:DefaultConnection']
         $connectionString = if ($flatKey) { $flatKey.Value } else { $config.ConnectionStrings.DefaultConnection }
         $connection = New-Object Data.Common.DbConnectionStringBuilder
-        $connection.ConnectionString = $connectionString
+        $connection.PSBase.ConnectionString = $connectionString
         $hostName = [string]$connection['Host']
         $port = if ($connection.ContainsKey('Port')) { [int]$connection['Port'] } else { 5432 }
         $User = foreach ($key in @('Username', 'User ID', 'UserId', 'User Name', 'User', 'UID')) {
