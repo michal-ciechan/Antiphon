@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Design.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Scaffolding;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Design.Internal;
 
@@ -19,10 +20,22 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Design.Internal;
 // written only when it matches the runtime model (ProbeModelComparison); otherwise this exits 3 and writes no dll.
 // The parent test process runs this once per probe build (ProbeGeneratedModel in Antiphon.Tests) and passes the dll to
 // each probe (ProbeConfig.CompiledModelPath, ProbeModel), which then does not build the model itself.
-internal static class ProbeModelGenerator
+public static class ProbeModelGenerator
 {
     public const string Namespace = ProbeModel.GeneratedNamespace;
     public const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
+
+    private static readonly Lazy<IRelationalTypeMappingSource> ElementMappings = new(() =>
+    {
+        using var db = new DbContext(new DbContextOptionsBuilder().UseNpgsql("Host=unused").Options);
+        return db.GetService<IRelationalTypeMappingSource>();
+    });
+
+    // The generated assembly calls this during initialization. Npgsql supplies its conventional
+    // mapping and comparer without building AppDbContext's model or opening a connection.
+    public static RelationalTypeMapping ResolveElementMapping(Type clrType, string storeType) =>
+        ElementMappings.Value.FindMapping(clrType, storeType)
+        ?? throw new InvalidOperationException($"No Npgsql mapping for {clrType} as {storeType}.");
 
     public static int Run(string outDir)
     {
@@ -84,7 +97,7 @@ internal static class ProbeModelGenerator
     }
 
     // EF 9 scaffolds the property without its primitive collection element metadata. Supply that metadata
-    // for conventional arrays using the element mapping from the same Npgsql mapping as the column.
+    // for conventional arrays and let Npgsql resolve the mappings with its original comparers.
     private sealed class PrimitiveCollectionCodeGenerator(
         CSharpRuntimeAnnotationCodeGeneratorDependencies dependencies,
         RelationalCSharpRuntimeAnnotationCodeGeneratorDependencies relationalDependencies)
@@ -96,21 +109,19 @@ internal static class ProbeModelGenerator
             if (parameters.IsRuntime || !property.IsPrimitiveCollection || property.GetElementType() is not { } element)
                 return;
 
-            var mapping = property.GetTypeMapping();
             // Leave additional element configuration to the parity check, which refuses missing metadata.
-            if (element.GetAnnotations().Any() || mapping.ElementTypeMapping is null
-                || !ReferenceEquals(element.FindTypeMapping(), mapping.ElementTypeMapping))
+            if (element.GetAnnotations().Any()
+                || element.FindTypeMapping() is not RelationalTypeMapping mapping
+                || !ReferenceEquals(mapping, property.GetTypeMapping().ElementTypeMapping))
                 return;
 
             var code = Dependencies.CSharpHelper;
-            var target = parameters.TargetName;
-            parameters.MainBuilder.Append($"{target}.TypeMapping = ");
-            Create(mapping, parameters);
-            parameters.MainBuilder.AppendLine(";");
             parameters.MainBuilder.AppendLine(
-                $"{target}.SetElementType({code.Literal(element.ClrType, fullName: true)}, "
+                $"{parameters.TargetName}.SetElementType({code.Literal(element.ClrType, fullName: true)}, "
                 + $"nullable: {code.Literal(element.IsNullable)}, "
-                + $"typeMapping: {target}.TypeMapping.ElementTypeMapping, primitiveCollection: true);");
+                + $"typeMapping: global::ProbeModelGenerator.ResolveElementMapping("
+                + $"{code.Literal(mapping.ClrType, fullName: true)}, {code.Literal(mapping.StoreType)}), "
+                + "primitiveCollection: true);");
         }
     }
 }
