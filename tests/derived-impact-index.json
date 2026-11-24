@@ -2277,9 +2277,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 69,
+      "classes": 70,
       "reason": "cap",
-      "owed": 44,
+      "owed": 45,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -2366,9 +2366,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 586,
+      "classes": 587,
       "reason": "cap",
-      "owed": 561,
+      "owed": 562,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2950,42 +2950,6 @@
         "PlanCatalogServiceTests",
         "ProcessSpawnLimitTests",
         "ZombieCensusServiceTests"
-      ]
-    },
-    {
-      "path": "dev-backup.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "dev-fresh.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "dev-restore.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "dev-start.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "dev-stop.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "dev-upgrade.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -3646,27 +3610,6 @@
         "RunnerPushCredentialDocsTests",
         "Server2StagingServerContractTests",
         "StableBuildOutputDocumentationTests"
-      ]
-    },
-    {
-      "path": "restart-server.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "NightlyScriptsTests",
-        "ToolchainFloorWarningTests"
-      ]
-    },
-    {
-      "path": "restart-session-runner.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "DockerStackDocumentationTests"
-      ]
-    },
-    {
-      "path": "restart.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -4931,6 +4874,12 @@
       "classes": [
         "HangfireStartupSafetyTests",
         "OperatorDashboardLoginTests"
+      ]
+    },
+    {
+      "path": "server/Api/Endpoints/ReviewAuthEndpoints.cs",
+      "classes": [
+        "ReviewSignInApiTests"
       ]
     },
     {
@@ -6624,7 +6573,9 @@
     {
       "path": "server/Application/Interfaces/IClaudeCli.cs",
       "classes": [
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewMirrorCheckoutGitTests",
+        "ReviewMirrorCheckoutTests"
       ]
     },
     {
@@ -6781,7 +6732,8 @@
     {
       "path": "server/Application/Interfaces/IReviewAgentRunner.cs",
       "classes": [
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewMirrorCheckoutTests"
       ]
     },
     {
@@ -6939,7 +6891,9 @@
     {
       "path": "server/Application/Review/CliReviewAgentRunner.cs",
       "classes": [
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewMirrorCheckoutGitTests",
+        "ReviewMirrorCheckoutTests"
       ]
     },
     {
@@ -6996,6 +6950,12 @@
       "path": "server/Application/Review/ReviewRoundsPolicy.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewSignIn.cs",
+      "classes": [
+        "ReviewSignInApiTests"
       ]
     },
     {
@@ -13438,7 +13398,14 @@
       "path": "server/Application/Settings/ReviewAgentSettings.cs",
       "classes": [
         "ClaudeCliLiveTests",
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewMirrorCheckoutTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ReviewAuthSettings.cs",
+      "classes": [
+        "ReviewSignInApiTests"
       ]
     },
     {
@@ -13463,7 +13430,8 @@
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
         "ReviewLiveGitHubTests",
-        "ReviewPollingApiTests"
+        "ReviewPollingApiTests",
+        "ReviewSignInApiTests"
       ]
     },
     {
@@ -13478,7 +13446,8 @@
       "path": "server/Application/Settings/ReviewPollingSettings.cs",
       "classes": [
         "ReviewLiveGitHubTests",
-        "ReviewPollingApiTests"
+        "ReviewPollingApiTests",
+        "ReviewSignInApiTests"
       ]
     },
     {
@@ -17111,7 +17080,9 @@
       "path": "server/Infrastructure/Review/ClaudeCliProcess.cs",
       "classes": [
         "ClaudeCliLiveTests",
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewMirrorCheckoutGitTests",
+        "ReviewMirrorCheckoutTests"
       ]
     },
     {
@@ -17125,6 +17096,12 @@
       "classes": [
         "GitHubCodeHostTests",
         "GitHubThreadResolutionTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Review/GitHubReviewGitCredentials.cs",
+      "classes": [
+        "ReviewMirrorCheckoutTests"
       ]
     },
     {
@@ -21148,12 +21125,6 @@
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "C1896TempSweepPolicyTests"
-      ]
-    },
-    {
-      "path": "stop-server.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests"
       ]
     },
     {
