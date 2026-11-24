@@ -23,9 +23,9 @@ run page, with evidence:
 |---|---|
 | **Case** | One recorded situation that can be replayed: the frozen inputs of a stage, the original output, why the case exists, and what to expect |
 | **Expectation** | A pass criterion on a trial's output. A case has one or more |
-| **Variant** | A named set of overrides: model or chain, prompt text, checks, policy values, agent kind and level |
+| **Variant** | A named graph setup: the workflow graph plus each step's model, prompt, checks and settings. An A/B test compares two or more |
 | **Suite** | A named list of cases, with a tuning part and a held-out part |
-| **Experiment** | Cases × variants, for any selection of steps |
+| **Experiment** | Cases × variants, each run from a start step to the end of the graph |
 | **Trial** | One execution of one case under one variant. It stores the output, cost, time and each expectation's result |
 | **Baseline** | The variant "as recorded" (the original run) or "current settings". Every experiment has one |
 
@@ -83,8 +83,8 @@ explainable.
   listed with real runs, never polled.
 - The sandbox code host serves reads from the case and **captures writes** (review, comments,
   statuses, approvals) as trial output without sending them.
-- **Scope is any selection of steps, from the whole workflow down to one step** (section 6a). Steps
-  outside the selection are served from the case or left out. `publish` in a sandbox produces "what
+- **A run starts at any step, or at the workflow's input, and goes to the end of the graph**
+  (section 6a). Steps before the start are served from the case. `publish` in a sandbox produces "what
   would have been posted".
 - Run state a step reads (categories, blast radius, open findings, steer, round number) is part of
   the case, and a sandbox run starts with a copy of it.
@@ -145,7 +145,7 @@ A case records enough to replay cleanly and to understand later:
 |---|---|
 | Origin | The run, iteration and node it came from, the PR link, who captured it and when |
 | Context | A title and "why this case exists" in plain words, with links: the human comment that caught the miss, the dismissal, the incident |
-| Inputs | The manifest of frozen inputs for the first targeted step, the run state, and the workspace record (section 2a) |
+| Inputs | The manifest of frozen inputs for the start step, the run state, and the workspace record (section 2a) |
 | Original | The original output of each node in scope, and the settings and prompts in force |
 | Expectations | One or more (below) |
 | Tags | Stage, language, category, "missed", "false-positive", "regression" |
@@ -194,7 +194,7 @@ run would and stores the same output. Nothing about judging is added to the step
 **Judging then happens in three parts:**
 
 1. **Both outputs.** The judge always receives the original output and the trial's output for each
-   targeted step, plus the case's context and expectations.
+   step that ran, plus the case's context and expectations.
 2. **A gather script (optional).** A Python or C# script runs in the trial's container after the
    step. It gets the case, both outputs and the workspace path, and prints extra data as JSON: a
    build or test result, a diff of files changed, counts, whether a named line was touched, anything
@@ -222,7 +222,7 @@ run would and stores the same output. Nothing about judging is added to the step
 ```yaml
 # .antiphon/review/scenarios/suite.yaml
 suite: demo-review
-targets: [categorise, select, group, packs, review, collate, verify]   # or one step, or `all`
+start: categorise                      # or `input` for the whole workflow; runs to the end of the graph
 gates: { human-approve: approve }      # only needed when a gate is on the path
 judge:
   kind: model                  # or: agent
@@ -234,23 +234,36 @@ judge:
     described in the case, with fewer findings a maintainer would ignore. Wording does not matter.
 ```
 
-### 5. Variants
+### 5. Variants: a graph setup
 
-A variant overrides any of:
+Decided 2026-11-24: **a variant is a graph setup.** An A/B test compares two (or more) setups of the
+workflow, and a setup can differ in anything the graph holds:
 
-- the chain or a single provider and model for a decision or completion node;
-- the agent kind, level, model and transport for the reviewer;
-- a prompt by key (full text or a patch on the current text);
-- the checks in play (add, remove, replace a check's text);
-- policy values (thresholds, posting bar, group sizes);
-- a whole workflow revision, for chain-scoped experiments.
+- **the graph itself:** steps added, removed or reordered, edges and routing changed, a fan-out's
+  policy, an extra verify pass, a step skipped;
+- **a step's settings:** the chain or a single provider and model; the agent kind, level, model and
+  transport; policy values such as thresholds, the posting bar and group sizes;
+- **a step's prompt,** by key (full text or a patch on the current text), and its instruction text;
+- **the checks in play** (add, remove, replace a check's text).
 
-Variants are saved and named ("opus reviewer", "haiku verify, stricter rubric"), so the same one can
-be run against new cases. A variant records the exact resolved values each trial used.
+Each variant is stored as a workflow revision plus its per-step settings, with its own hash. The
+baseline is the graph and settings the original run used ("as recorded") or today's ("current").
+
+**Seeing and customising it.** Before a run, the page shows each variant as a graph:
+
+- the steps that will run are highlighted, and the ones fed from the record are dimmed;
+- a step that differs from the baseline carries a badge, and its panel shows the difference;
+- **Customise** opens the variant in the workflow editor: change a step's settings in its panel, or
+  change the graph. It is saved as a new variant; the live workflow is never touched;
+- two variants can be shown side by side with the differing steps and edges marked;
+- the graph is validated (the cycle rule, missing inputs) before the run can start.
+
+Variants are saved and named ("opus reviewer", "two verify passes"), so the same one can be run
+against new cases. A variant records the exact resolved values each trial used.
 
 ### 6. Experiments and scoring
 
-- An experiment is: a suite (which sets the targets, section 6a) or picked cases, variants including a baseline. Each
+- An experiment is: a suite (which sets the start step, section 6a) or picked cases, variants including a baseline. Each
   cell runs **once** by default (decided 2026-11-24). The same case with the same settings is never
   run twice: its stored trial is reused (section 2). **Repeats are optional**, for one purpose: a
   model can answer differently to the same input, so a person who doubts a result can ask for more
@@ -274,45 +287,46 @@ be run against new cases. A variant records the exact resolved values each trial
 
 ### 6a. Targeting steps and per-run instructions
 
-**The suite picks what runs** (decided 2026-11-24). Targets are part of the suite, so every case in
+**The suite picks what runs** (decided 2026-11-24). The start step is part of the suite, so every case in
 it is exercised the same way and results stay comparable over time. An experiment runs a suite as
 defined; **Try another setting** on the graph makes a one-case, unsaved suite from the picked steps,
 which can be saved.
 
-**What is picked then runs as the graph says.** The sandbox run uses the real executor on the run's
-workflow revision (or the variant's), entering at the first target and following the graph's edges:
+**The run goes from the earliest picked step to the end of the graph** (decided 2026-11-24). No
+stage is special and none comes first in the build: every kind of step is replayable from the start.
 
-- order, fan-outs and joins come from the graph, never from the order steps are listed in;
-- a step on the path between two targets runs too, because the graph puts it there;
-- routing follows the step's real output, so a variant that changes `route` from `clean` to
-  `findings` takes the other edge, and the comparison shows it;
-- a gate or wait on the path is answered from the case's recorded decision or event, or from an
-  answer the suite scripts (`gates: { human-approve: approve }`); with neither, the run stops there;
-- back edges are followed only as far as the case recorded (a second round runs if the case has
-  one), within the graph's own iteration limits;
-- the run ends when it leaves the targets.
+- The suite picks a **start**: the workflow's input (the whole graph), or any step. When several
+  steps are picked, the run starts at the earliest of them in graph order.
+- Steps before the start are not run; their recorded outputs feed it.
+- From the start, the sandbox runs the real executor on the variant's graph and follows its edges
+  **until the graph ends**: a terminal step, a wait or gate with no answer, or the stop rule.
+- Order, fan-outs and joins come from the graph, never from the order steps are listed in.
+- Routing follows each step's real output, so a variant that changes `route` from `clean` to
+  `findings` takes the other edge, and the comparison shows it.
+- A gate or wait on the path is answered from the case's recorded decision or event, or from an
+  answer the suite scripts (`gates: { human-approve: approve }`); with neither, the run ends there.
+- Back edges are followed only as far as the case recorded (a second round runs if the case has
+  one), within the graph's own iteration limits.
+- Writes to the code host (`publish`, approvals, branch updates) are captured, never sent.
 
-**Targets: from many steps to one:**
-
-| Target | Example | What runs |
+| Start | Example | What runs |
 |---|---|---|
-| The whole workflow | intake → route | Every step, in the sandbox |
-| A section | "Review" | Its steps; earlier outputs come from the case |
-| A chain | `categorise` → `verify` | Those steps in order, each fed by the one before |
-| Several separate parts | `categorise`, and `verify` | Each part is its own entry into the graph, from recorded inputs |
-| One step | `verify` | That step only |
-| One item of a fan-out | reviewer group `correctness` | That reviewer only |
+| The workflow's input | a PR | Every step, to the end |
+| A step | `categorise` | That step and everything after it, to the end |
+| A late step | `verify` | `verify`, `publish` (captured), `route` and what follows |
+| One item of a fan-out | reviewer group `correctness` | That reviewer, then the join and on to the end |
 
-- Steps are picked on the graph (click, shift-click, or a section header) when building a suite, or
-  listed in the suite file as `targets:`.
-- Steps before the first target are not run: their recorded outputs feed it. Steps after the last
-  target are not run.
+- The start is picked on the graph when building a suite, or set in the suite file as `start:`.
+- The preview (section 5) shows exactly which steps will run for each variant before anything
+  starts.
+- When two variants have different graphs, steps are compared by id. A step that exists in only one
+  is shown as added or removed, and the outputs at the end of the run are always compared.
 - Expectations attach to a step (`at: verify`) or to the end of the run. Results and the comparison
-  view are per step, so a chain shows where two variants first diverge.
+  view are per step, so they show where two variants first diverge.
 
 **Instructions per run.** Every run of an experiment carries instructions, recorded with it:
 
-- **Per step settings:** the variant's overrides are given per targeted step (this model for
+- **Per step settings:** the variant's overrides are given per step (this model for
   `categorise`, this prompt for `reviewer`, that threshold for `verify`).
 - **Per step instruction text:** optional plain words added to that step's prompt for this run only,
   like a gate's steer ("pay particular attention to concurrency"). It is stored as part of the
@@ -320,7 +334,7 @@ workflow revision (or the variant's), entering at the first target and following
 - **Run note:** what this run is for and what to look at ("does Haiku still catch the swapped
   operands when the pack is half the size?"). It is shown on the history page and the A/B view, and
   is never sent to a model.
-- **Stop rule:** run to the end of the targets, stop at the first failed expectation, or stop at a
+- **Stop rule:** run to the end of the graph (the default), stop after a named step, stop at the first failed expectation, or stop at a
   cost bound.
 
 The same experiment can be run again with different instructions; each run is its own history row.
@@ -368,7 +382,7 @@ with new cases over time so candidates cannot slowly fit it.
 | Route | Shows |
 |---|---|
 | `/experiments` | History: every experiment with its scope, suite, variants, result line, cost, who ran it and when. Filters by stage, repo and model |
-| `/experiments/new` | Targets and per-step instructions (section 6a), cases or suite, variants, repeats, the cost estimate and the budget (an amount or none) |
+| `/experiments/new` | The start step, each variant's graph with the steps that will run, **Customise**, per-step instructions (sections 5 and 6a), cases or suite, variants, repeats, the cost estimate and the budget (an amount or none) |
 | `/experiments/:id` | The A/B view |
 | `/experiments/cases`, `/cases/:id` | Cases: context, origin, inputs, expectations, and every trial ever run on the case |
 | `/experiments/suites`, `/variants` | Saved suites and variants |
@@ -401,7 +415,7 @@ why: >
   PR #2 added a /done endpoint that sets the status directly and skips Board.Move, so the
   timestamps and the allowed-transition rule are bypassed. A reviewer must catch this.
 source: { repo: michal-ciechan/antiphon-demo, base: e737fb3, head: b511da6 }
-suite: demo-review          # the suite sets the targets, the judge and the gate answers
+suite: demo-review          # the suite sets the start step, the judge and the gate answers
 expect:
   all:
     - finding-present:
@@ -471,13 +485,13 @@ Each phase lands on its own and is useful alone.
 |---|---|---|
 | **1. See a node** | `review_blob`, `InputsJson` and `InputsHash` on every node, `llm_call`, raw answers kept, settings snapshot, `OutputJson` in the DTO; node panel Inputs / Output / Calls tabs | An API test: after a scripted run, every node has a manifest whose blobs exist; a client test for the panel |
 | **2. Prompts as data** | The prompt registry with today's text as defaults; rendered prompt and hashes recorded; Prompt tab | A test that the default registry renders byte-identical text to today's strings |
-| **3. Replay one node** | `IStepInputs` live and replay; the sandbox run and code host; cases captured from a node; `unchanged` and `field` expectations; replay of decision and completion nodes (categorise, select, verify) | A test: capture a case from a scripted run, replay with the same scripted model, expect `unchanged`; replay with a changed answer, expect a fail; assert the sandbox sent nothing to the code host |
-| **4. Experiments and the A/B view** | Variants, experiments, estimate and budget, trial reuse; the history page, A/B grid and comparison; graph actions and badge; the workspace record, and reviewer (agent) trials in a rebuilt workspace, one container per trial (section 2a); `finding-present`, `finding-absent`, `budget`; the finding matcher | Matcher unit tests; an API test for a 2×2 experiment; a test that a rebuilt workspace has the recorded commit, tree hash and path, and that a mismatch fails the trial; a story and a test for the grid |
+| **3. Replay the graph** | `IStepInputs` live and replay for every step; the sandbox run and code host with captured writes; the workspace record, rebuilt workspaces and one container per trial (section 2a); cases captured from a node; a run from any start step to the end of the graph, for every kind of step; `unchanged` and `field` expectations | A test: capture a case from a scripted run, replay from the input and from a middle step with the same scripted models, expect `unchanged`; replay with a changed answer, expect a fail and the other route taken; assert the sandbox sent nothing to the code host; a test that a rebuilt workspace has the recorded commit, tree hash and path, and that a mismatch fails the trial |
+| **4. Experiments and the A/B view** | Variants as graph setups, the preview and **Customise** in the workflow editor, side-by-side graphs; experiments, estimate and budget, trial reuse; the history page, A/B grid and comparison, including variants with different graphs; graph actions and badge; `finding-present`, `finding-absent`, `budget`; the finding matcher | Matcher unit tests; an API test for a 2×2 experiment where one variant has an extra step; a story and a test for the grid and the preview |
 | **5. Scenarios and ground truth** | Scenario files and the guide; `script`, `prompt` and combined expectations; the judge setting, gather scripts and the agent judge (section 4a); suites with held-out; human comments read back, **Bot missed this**; demo-repo scenarios; the CLI | Parser tests; one live run of the demo suite on server2 comparing two reviewer models |
 | **6. Self-improvement gate, and other workflows** | The learn loop's candidate gate (section 7) with the generality lint and judge; pipeline-stage cases | A test that a candidate naming a file from its target case is rejected; a test that a regression blocks a candidate |
 
-Phases 1 to 3 are about two to three Code tasks each; phase 4 is the largest and is mostly client
-work. Testing stays minimal: the checks above, with scripted models, and one live run in phase 5.
+Phases 1 and 2 are about two to three Code tasks each. Phase 3 is the largest server piece, because
+it covers every kind of step and the containers; phase 4 is mostly client work. Testing stays minimal: the checks above, with scripted models, and one live run in phase 5.
 
 ## Risks
 
@@ -494,8 +508,9 @@ work. Testing stays minimal: the checks above, with scripted models, and one liv
 ## Decisions for the operator
 
 1. **Name and place:** decided 2026-11-24: a top-level "Experiments" area.
-2. **First stages:** this plan replays categorise, select and verify first (cheap, fast), then the
-   reviewer. Reverse it if comparing reviewer models matters most.
+2. **First stages:** decided 2026-11-24: none. A run goes from the earliest picked step to the end
+   of the graph, every kind of step is replayable from phase 3, and a variant is a graph setup that
+   the person sees and can customise (sections 5 and 6a).
 3. **Repeats:** decided 2026-11-24: one run per cell, repeats optional. Spend: decided 2026-11-24: an estimate and a
    budget; no confirmation until the budget is breached; no budget or a high budget is allowed.
 4. **Scenario files location:** decided 2026-11-24: the same repo, `.antiphon/review/scenarios/`.
