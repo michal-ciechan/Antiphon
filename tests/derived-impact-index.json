@@ -2212,9 +2212,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 60,
+      "classes": 61,
       "reason": "cap",
-      "owed": 35,
+      "owed": 36,
       "first": [
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
@@ -2244,18 +2244,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "NightlyScriptsTests",
         "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "OrchestratorWorkspaceCommandTests",
         "QualificationEtaTests",
         "QualificationSupervisorTests",
-        "RcRunEvidenceTests",
-        "ReleaseGatePlatformTests"
+        "RcRunEvidenceTests"
       ]
     },
     {
@@ -2505,18 +2505,18 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
+        "ContractSnapshotTests",
         "DelegateCheckProbeTests",
         "DevAspireTests",
         "DindRunnerContractTests",
         "GitDiffSpikeTests",
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
-        "MechanicalPcRehearsalTests",
-        "NightlyRunTests"
+        "MechanicalPcRehearsalTests"
       ]
     },
     {
@@ -4745,7 +4745,8 @@
     {
       "path": "scripts/run-daemon.ps1",
       "classes": [
-        "AntiphonCliLauncherTests"
+        "AntiphonCliLauncherTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -26182,6 +26183,7 @@
         "AntiphonLogsTests",
         "AutostartInstallTests",
         "C1744G3PhoneHomeSupervisionTests",
+        "Card0490BootDiskTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
@@ -26197,7 +26199,6 @@
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
         "NightlyRunTests",
-        "NightlyScriptsTests",
         "NightlyTestHelpersTests",
         "NightlyTestsRunTests",
         "QualificationTimingTests",
@@ -26552,7 +26553,6 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
         "C1514HostLoadScriptTests",
-        "C487ReadOnlyCleanupWitnessTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
@@ -27264,6 +27264,7 @@
         "AgentTaskLandHalfResetWindowsTests",
         "AgentTaskLandHoldVisibilityTests",
         "AnchoredPathDeleteWitnessTests",
+        "C487ReadOnlyCleanupWitnessTests",
         "ChannelOutboundStorageTests",
         "ChannelReplyAttachmentReaderWindowsTests",
         "CheckpointWindowsAnchoredDeleteTests",
@@ -29223,12 +29224,12 @@
         "C1441RunnerGitMaintenanceTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "C1818GcOwnerRobustnessTests",
+        "C487ReadOnlyCleanupWitnessTests",
         "CardCliE2ETests",
         "CardReviewServiceIntegrationTests",
         "CheckpointTaskScriptTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CompletedCardWorkspaceRemovalTests",
-        "ContractSnapshotTests",
         "LandGraphAuditCleanupTests",
         "LandNonCodeSkipTests",
         "OutputCleanupTests",
