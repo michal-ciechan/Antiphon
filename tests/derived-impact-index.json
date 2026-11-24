@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 349,
+      "classes": 352,
       "reason": "allowlist"
     },
     {
@@ -2099,17 +2099,17 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 144,
       "reason": "cap",
-      "owed": 117,
+      "owed": 119,
       "first": [
-        "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
         "LinuxServerRestartGateTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
+        "RunnerLinuxCompilerPolicyTests",
         "VerifyDindRunnerScriptTests"
       ]
     },
@@ -2189,28 +2189,29 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
         "NightlyTestHelpersTests",
+        "BuildSlotScriptTests",
         "NightlyTestsParityTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 55,
+      "classes": 58,
       "reason": "cap",
-      "owed": 30,
+      "owed": 33,
       "first": [
+        "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests",
         "AwayDigestSendTests",
         "C599SnapshotTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
-        "TestSelectionExecutionTests",
-        "TestTimingReportTests"
+        "TestSelectionExecutionTests"
       ]
     },
     {
@@ -3633,8 +3634,10 @@
     {
       "path": "scripts/build-slot.ps1",
       "classes": [
+        "BuildSlotScriptTests",
         "CheckpointManifestDocumentationTests",
         "IncrementalSelectionSoundnessTests",
+        "ProcessSpawnLimitTests",
         "RcInputOwnersMapTests",
         "RunnerLinuxCompilerPolicyTests",
         "StableBuildOutputDocumentationTests"
@@ -3947,7 +3950,8 @@
     {
       "path": "scripts/fixtures/c589-slot-shim.ps1",
       "classes": [
-        "RunnerLinuxCompilerPolicyTests"
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4041,6 +4045,13 @@
       "path": "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs",
       "classes": [
         "AwayDigestSendTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/BuildSlot.cs",
+      "classes": [
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4151,6 +4162,13 @@
         "LandGraphLandRefreshTests",
         "LandNonCodeSkipTests",
         "ReleaseImpactEvaluationTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/LinuxCompilerMeasure.cs",
+      "classes": [
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4393,6 +4411,13 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Scripts/BuildSlotCommands.cs",
+      "classes": [
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/LandGraphLandRefreshCommand.cs",
       "classes": [
         "LandGraphLandRefreshTests"
@@ -4426,12 +4451,22 @@
       "path": "scripts/lib/antiphon-cli.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
-        "ReleaseImpactScriptTests"
+        "ReleaseImpactScriptTests",
+        "RunnerLinuxCompilerPolicyTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/build-driver-environment.ps1",
+      "classes": [
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
       "path": "scripts/lib/build-slot.ps1",
       "classes": [
+        "BuildSlotScriptTests",
+        "ProcessSpawnLimitTests",
         "StableBuildOutputDocumentationTests"
       ]
     },
@@ -19579,6 +19614,7 @@
         "BuildSlotBrokerTests",
         "BuildSlotMaxHoldTests",
         "BuildSlotMetricsTests",
+        "BuildSlotScriptTests",
         "BuildSlotSettingsTests",
         "C1514HostLoadApiTests",
         "C1514HostLoadAuthorityTests"
@@ -23925,6 +23961,7 @@
         "DelegatePlatformScriptTests",
         "DelegateScriptAdoptTests",
         "DelegateScriptCapabilityTests",
+        "DelegateScriptKindTests",
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
@@ -23937,7 +23974,6 @@
         "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "RoutingPinScriptTests",
-        "RunnerLinuxCompilerPolicyTests",
         "VerifyPhoneHomeGrokScriptTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementReceiptTests",
@@ -24958,6 +24994,7 @@
       "path": "tests/Antiphon.Tests/Checkpoints/BuildSlotBrokerFixture.cs",
       "classes": [
         "AppHostWatchdogStateAttentionServiceTests",
+        "BuildSlotScriptTests",
         "CheckpointAdmissionContractTests",
         "CheckpointSlotContractTests",
         "CheckpointSlotExecutorTests"
@@ -25772,6 +25809,7 @@
         "DaemonSupervisorTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
+        "LinuxCompilerMeasureTests",
         "MeasureSessionStateCacheScriptTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
@@ -25857,6 +25895,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
       "classes": [
         "AntiphonCliLauncherTests",
+        "BuildSlotScriptTests",
         "ClassCostMeasurementTests",
         "ClientChecksTests",
         "LandAuditToolResolverTests",
@@ -25879,8 +25918,7 @@
         "ReleaseGatePolicyTests",
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
-        "RunnerRestartOsTests",
-        "TestTimingsTwinTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -26324,7 +26362,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
       "classes": [
-        "BuildSlotScriptTests",
         "C1744G3PhoneHomeSupervisionTests",
         "CheckpointOwnedOutputScriptTests",
         "ClaudeEffortFixtureTraceTests",
