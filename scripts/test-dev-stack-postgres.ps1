@@ -36,7 +36,7 @@ function Get-NetTCPConnection { @{ LocalPort = 17200, 17202, 17203, 17204, 17205
 function Invoke-WebRequest { @{ StatusCode = 200; Content = 'Healthy' } }
 
 function Invoke-CheckScript {
-    param([string]$Path, [string[]]$Arguments)
+    param([string]$Path, [hashtable]$Arguments)
     $script:dockerCalls.Clear()
     $output = (& $Path @Arguments *>&1 | Out-String)
     return @{ Code = $LASTEXITCODE; Text = $output; Docker = $script:dockerCalls -join "`n" }
@@ -85,13 +85,13 @@ try {
 
     $env:ANTIPHON_SKIP_DEV_POSTGRES = '1'
     $env:ConnectionStrings__DefaultConnection = $null
-    $verify = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @('-SkipBrowser')
+    $verify = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @{ SkipBrowser = $true }
     Assert-Check 'Aspire verify skips the container and probes the AppHost user-secrets endpoint' (
         $verify.Code -eq 0 -and $verify.Text -match 'Postgres container\s+SKIP\s+.*ANTIPHON_SKIP_DEV_POSTGRES=1' -and
         $verify.Text.Contains("TCP $endpoint open") -and $verify.Docker -notmatch '(?m)^ps ' -and
         $verify.Text -notmatch 'dummy;Host=') $verify
 
-    $bootstrap = Invoke-CheckScript "$fixture/scripts/bootstrap-check.ps1" @('-NoStack')
+    $bootstrap = Invoke-CheckScript "$fixture/scripts/bootstrap-check.ps1" @{ NoStack = $true }
     Assert-Check 'bootstrap skips Docker Postgres probes and probes the AppHost user-secrets endpoint' (
         $bootstrap.Code -eq 0 -and $bootstrap.Text -match '\[SKIP\] docker / postgres\s+.*ANTIPHON_SKIP_DEV_POSTGRES=1' -and
         $bootstrap.Text -match '\[SKIP\] docker / volume\s+.*ANTIPHON_SKIP_DEV_POSTGRES=1' -and
@@ -99,13 +99,13 @@ try {
         $bootstrap.Text -notmatch 'docker compose .* up|dummy;Host=') $bootstrap
 
     $env:ConnectionStrings__DefaultConnection = $connectionString
-    $simple = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @('-SimpleMode', '-SkipBrowser')
+    $simple = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @{ SimpleMode = $true; SkipBrowser = $true }
     Assert-Check 'compose verify skips the local port and probes the configured endpoint' (
         $simple.Code -eq 0 -and $simple.Text -match 'Port 17280\s+SKIP\s+.*ANTIPHON_SKIP_DEV_POSTGRES=1' -and
         $simple.Text.Contains("TCP $endpoint open")) $simple
 
     $env:ConnectionStrings__DefaultConnection = 'Password=invalid;Port=bad'
-    $invalid = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @('-SkipBrowser')
+    $invalid = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @{ SkipBrowser = $true }
     Assert-Check 'explicit invalid database configuration fails without disclosing the string or falling back' (
         $invalid.Code -eq 1 -and $invalid.Text -match 'Database endpoint\s+FAIL' -and
         $invalid.Text -notmatch 'Password=invalid|docker compose .* up' -and -not $invalid.Text.Contains("TCP $endpoint open")) $invalid
@@ -115,8 +115,8 @@ try {
     if ([Environment]::GetEnvironmentVariable('ANTIPHON_SKIP_DEV_POSTGRES', 'User') -eq '1') {
         $env:ANTIPHON_SKIP_DEV_POSTGRES = '0'
     }
-    $verify = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @('-SkipBrowser')
-    $bootstrap = Invoke-CheckScript "$fixture/scripts/bootstrap-check.ps1" @('-NoStack')
+    $verify = Invoke-CheckScript "$fixture/verify-dev-stack.ps1" @{ SkipBrowser = $true }
+    $bootstrap = Invoke-CheckScript "$fixture/scripts/bootstrap-check.ps1" @{ NoStack = $true }
     Assert-Check 'Aspire verify still fails on an absent container with the flag disabled' (
         $verify.Code -eq 1 -and $verify.Text -match 'Postgres container\s+FAIL' -and $verify.Docker -match '(?m)^ps ') $verify
     Assert-Check 'bootstrap still checks the container and volume with the flag disabled' (
