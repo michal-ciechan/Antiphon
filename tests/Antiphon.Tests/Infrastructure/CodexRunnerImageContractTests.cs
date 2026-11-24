@@ -12,7 +12,8 @@ namespace Antiphon.Tests.Infrastructure;
 // runner-owned Codex home without ever replacing an existing file; and the runner service names
 // that same home twice (CODEX_HOME for the CLI, PhoneHome__CodexHome for the auth probe). These
 // are text contracts over files only a Docker build or a root process on server2 ever reads.
-// scripts/verify-card0660-codex-image.ps1 (Q-1/2) executes them.
+// The verify-card0660-codex-image command (Q-1/2; scripts/lib/Antiphon.Nightly/CodexImageQualification.cs,
+// which replaced scripts/verify-card0660-codex-image.ps1 in unit 48 of the 2026-11-22 plan) executes them.
 //
 // Amended by operator decision ("put the codex auth file somewhere in server2 and mount it in"):
 // the home is a DIRECTORY on the server2 host beside the other identity files, bind-mounted
@@ -235,7 +236,6 @@ public sealed class CodexRunnerImageContractTests
         dockerfile.ShouldContain("dotnet --list-sdks | grep -E '^10\\.'");
 
         var probe = Read("docker/session-runner-grok/verify-codex-image.sh");
-        var wrapper = Read("scripts/verify-card0660-codex-image.ps1");
         probe.ShouldContain("<FrameworkReference Include=\"Microsoft.AspNetCore.App\"", customMessage: "aspnet-framework-reference");
         probe.ShouldContain("net9-offline)");
         probe.ShouldContain("need_uid 1654");
@@ -243,7 +243,14 @@ public sealed class CodexRunnerImageContractTests
         probe.ShouldContain("<fallbackPackageFolders><clear/></fallbackPackageFolders>");
         probe.ShouldContain("<UseAppHost>true</UseAppHost>");
         probe.ShouldContain("dotnet build \"$root/project/Offline.csproj\" --no-restore");
-        wrapper.ShouldContain("$rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654'");
+        // The qualification grades the row for session-testing only, as uid 1654 (the command in process, CodexImageWorld).
+        var qualification = new CodexImageWorld();
+        qualification.Run().Lines[0].ShouldEndWith(" net9-offline=ok");
+        var net9 = qualification.ProbeCall("net9-offline");
+        net9[Array.IndexOf(net9, "--user") + 1].ShouldBe("1654:1654");
+        var runtime = new CodexImageWorld();
+        runtime.Run("runtime").Lines[0].ShouldNotContain("net9-offline");
+        runtime.DockerCalls.ShouldNotContain(call => call.Contains("net9-offline"));
         var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" archive \"$repo\"\n", "repo");
         output.ShouldContain("PASS archive-digest-gates-extraction");
         output.ShouldContain("PASS host-pack-public-executable");
@@ -259,14 +266,57 @@ public sealed class CodexRunnerImageContractTests
         output.ShouldNotContain("FAIL ");
     }
 
+    // CARD-0849 C913 (V-8, PC-8 to PC-13 and PC-28 to PC-31): the image wrapper's boundaries. Until unit 48 of the 2026-11-22
+    // plan this ran scripts/fixtures/c913-image-wrapper.ps1 under WSL pwsh, which faked docker and git around
+    // scripts/verify-card0660-codex-image.ps1. It now runs the verify-card0660-codex-image command in process against the same
+    // fake (CodexImageWorld), one world per fault, and each message keeps the fixture's case label and witness.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
     public void C913_Image_wrapper_isolates_mounts_and_qualifies_receipts()
     {
-        var output = LinuxShell("pwsh -NoProfile -File \"$repo/scripts/fixtures/c913-image-wrapper.ps1\" -Repo \"$repo\"\n", "repo");
-        output.ShouldContain("PASS package-mount-contract", customMessage: "package-mount-contract");
-        output.ShouldContain("PASS wrapper-boundaries-complete");
-        output.ShouldNotContain("FAIL ");
+        static string Fail(string witness, string label) => "FAIL " + witness + " [case=" + label + "]";
+
+        var world = new CodexImageWorld();
+        var run = world.Run();
+        run.Exit.ShouldBe(0, Fail("wrapper-success", "wrapper-success") + "\n" + run.Output);
+
+        var probe = world.ProbeCall("net9-offline");
+        var mounts = CodexImageWorld.Mounts(probe);
+        mounts.Count(mount => Regex.IsMatch(mount, @"^type=volume,source=c660q-[a-zA-Z0-9-]+-packages,target=/home/app/\.nuget/packages,volume-nocopy$"))
+            .ShouldBe(1, Fail("package-mount-contract", "package-mount-contract"));
+        mounts.Count(mount => Regex.IsMatch(mount, @"^type=volume,source=c660q-[a-zA-Z0-9-]+-scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy$"))
+            .ShouldBe(1, Fail("private-scratch-contract", "private-scratch-contract"));
+        probe[Array.IndexOf(probe, "--network") + 1].ShouldBe("none", Fail("network-none", "network-none"));
+        probe[Array.IndexOf(probe, "--user") + 1].ShouldBe("1654:1654", Fail("uid-1654", "uid-1654"));
+        (probe.Contains("PhoneHome__Enabled=false") && !Regex.IsMatch(string.Join(" ", probe), "(docker.sock|/state/codex|target=/state[, ]|target=/work[, ])"))
+            .ShouldBeTrue(Fail("isolated-child-allowlist", "no-sensitive-child-mounts"));
+
+        var initializers = world.DockerCalls.Where(call => Regex.IsMatch(string.Join(" ", call), "chown 1654:1654", RegexOptions.IgnoreCase)).ToArray();
+        (initializers.Length == 1 && initializers[0][^1] == "set -eu; for p in /home/app/.nuget/packages /var/cache/antiphon/nuget-scratch; do test -d \"$p\"; "
+            + "test -z \"$(find \"$p\" -mindepth 1 -print -quit)\"; chown 1654:1654 \"$p\"; chmod 0700 \"$p\"; done")
+            .ShouldBeTrue(Fail("owned-roots-only", "owned-roots-only"));
+        var initMounts = CodexImageWorld.Mounts(initializers[0]);
+        var createdPair = world.Created.Where(volume => Regex.IsMatch(volume, "-(packages|scratch)$")).ToArray();
+        (createdPair.Length == 2 && initMounts.Length == 2
+            && initMounts[0] == "type=volume,source=" + createdPair[0] + ",target=/home/app/.nuget/packages,volume-nocopy"
+            && initMounts[1] == "type=volume,source=" + createdPair[1] + ",target=/var/cache/antiphon/nuget-scratch,volume-nocopy")
+            .ShouldBeTrue(Fail("owned-init-only", "owned-init-only"));
+
+        foreach (var fault in new[] { "child-exit", "wrong-row", "duplicate-row", "image-id", "partial-create", "revision", "dirty" })
+        {
+            var refusedWitness = fault switch
+            {
+                "revision" => "revision-mismatch-refused",
+                "child-exit" => "child-exit-required",
+                "wrong-row" or "duplicate-row" => "matching-row-required",
+                _ => fault + "-refused",
+            };
+            var faulted = new CodexImageWorld { Fault = fault };
+            faulted.Run(skipBuild: fault == "revision").Exit.ShouldNotBe(0, Fail(refusedWitness, fault + "-refused"));
+            if (fault == "dirty") faulted.DockerCalls.ShouldBeEmpty(Fail("dirty-source-no-docker", "dirty-source-no-docker"));
+            var created = faulted.Created.ToArray();
+            if (fault == "partial-create") created = created.Take(1).ToArray();
+            string.Join(",", faulted.Removed).ShouldBe(string.Join(",", created), Fail("cleanup-owned-volumes-only", fault + "-owned-cleanup"));
+        }
     }
 
     [Test]

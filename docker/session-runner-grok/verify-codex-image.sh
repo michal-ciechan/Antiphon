@@ -1,6 +1,6 @@
 #!/bin/bash
 # CARD-0660 V-9 in-image probe (qualification tooling, not product). Never COPYed into an image:
-# scripts/verify-card0660-codex-image.ps1 bind-mounts it read-only into a throwaway container of
+# the verify-card0660-codex-image command bind-mounts it read-only into a throwaway container of
 # the image under test, with no network, no published port, no Docker socket and throwaway
 # volumes at /state (runner-state) and /work. One row per invocation; each prints exactly one
 # line "C660_ROW <row> ok|fail <detail>" and exits 0 for ok, 1 for fail, 2 for a usage error.

@@ -43,9 +43,17 @@ public sealed class JqRunnerImageContractTests
     [Test]
     public void Qualification_grades_the_jq_row_for_both_targets()
     {
-        var wrapper = Read("scripts/verify-card0660-codex-image.ps1");
-        wrapper.ShouldContain("'jq-version' = 'unknown'");
-        wrapper.ShouldContain("$rows['jq-version'] = Invoke-Probe 'jq-version' '1654:1654' @()");
+        // The image qualification is the verify-card0660-codex-image command since unit 48 (2026-11-22 plan), run in process
+        // against CodexImageWorld: both targets grade the row, probed as uid 1654 with no extra argument.
+        foreach (var target in new[] { "runtime", "session-testing" })
+        {
+            Antiphon.Nightly.CodexImageQualification.Rows(target).ShouldContain("jq-version");
+            var qualification = new Antiphon.Tests.Scripts.CodexImageWorld();
+            qualification.Run(target).Lines[0].ShouldContain(" jq-version=ok", customMessage: target);
+            var jq = qualification.ProbeCall("jq-version");
+            jq[Array.IndexOf(jq, "--user") + 1].ShouldBe("1654:1654", target);
+            jq[^2..].ShouldBe(["/c660/verify-codex-image.sh", "jq-version"], target);
+        }
         Read("docker/session-runner-grok/verify-codex-image.sh").ShouldContain("JQ_VERSION=" + Version + "\n");
     }
 

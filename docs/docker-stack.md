@@ -1614,7 +1614,8 @@ archive, pinned to the SHA-512 in
 the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
 and checked before extraction. Archive ownership is discarded and the native apphost
 template is set to 0755 so uid 1654 can execute it. Only those three packs are copied into the final image;
-the .NET 9 SDK is not installed alongside SDK 10. `scripts/verify-card0660-codex-image.ps1`
+the .NET 9 SDK is not installed alongside SDK 10. `scripts/antiphon verify-card0660-codex-image`
+(`--target`, `--image`, `--source-revision`, `--results-root`, `--skip-build`)
 checks eight Codex rows, Grok, jq and, for `session-testing`, `net9-offline`:
 **11 rows**. The native row runs as uid 1654 with `--network none`, fresh task-owned
 package and scratch volumes mounted at the production cache destinations with

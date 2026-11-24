@@ -1256,4 +1256,13 @@ public sealed class AntiphonCliLauncherTests
         foreach (var gone in new[] { "test-docker.ps1", "test-docker-container.ps1", "verify-card0604-dind-runner.ps1" })
             File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", gone)).ShouldBeFalse(gone);
     }
+
+    // Unit 48: nothing started the CARD-0660 image qualification by path, so the verify-card0660-codex-image command has no
+    // launcher, and its W10 fixture went with it (the owner's approval); its checks run in process (CodexRunnerImageContractTests).
+    [Test]
+    public void Codex_image_verifier_and_its_fixture_are_gone()
+    {
+        foreach (var gone in new[] { Path.Combine("scripts", "verify-card0660-codex-image.ps1"), Path.Combine("scripts", "fixtures", "c913-image-wrapper.ps1") })
+            File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, gone)).ShouldBeFalse(gone);
+    }
 }

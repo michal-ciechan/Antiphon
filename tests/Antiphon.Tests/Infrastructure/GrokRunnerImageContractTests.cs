@@ -60,9 +60,14 @@ public sealed class GrokRunnerImageContractTests
         row.ShouldContain("env HOME=$PROBE_HOME GROK_HOME=$PROBE_HOME/grok /usr/local/bin/grok --version");
         row.ShouldContain("[ $code -eq 0 ] || result fail");
         row.ShouldContain("[ ! -s \"$PROBE_HOME/grok-version.err\" ] || result fail");
-        var wrapper = Read("scripts/verify-card0660-codex-image.ps1");
-        wrapper.ShouldContain("'grok-version' = 'unknown'");
-        wrapper.ShouldContain("$rows['grok-version'] = Invoke-Probe 'grok-version' '1654:1654' @()");
+        // The image qualification is the verify-card0660-codex-image command since unit 48 (2026-11-22 plan): it grades the row,
+        // probed as uid 1654 with no extra argument (run in process against CodexImageWorld).
+        Antiphon.Nightly.CodexImageQualification.Rows("runtime").ShouldContain("grok-version");
+        var qualification = new CodexImageWorld();
+        qualification.Run("runtime").Lines[0].ShouldContain(" grok-version=ok ");
+        var grok = qualification.ProbeCall("grok-version");
+        grok[Array.IndexOf(grok, "--user") + 1].ShouldBe("1654:1654");
+        grok[^2..].ShouldBe(["/c660/verify-codex-image.sh", "grok-version"]);
     }
 
     [Test]

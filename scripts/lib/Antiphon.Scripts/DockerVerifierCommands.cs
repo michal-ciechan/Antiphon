@@ -3,11 +3,13 @@
 // stays as the launcher the owner-gated deploy and server2 scripts start by path: its head keeps the c590-real.ps1 live bridge and
 // hands everything else here), test-docker (scripts/test-docker.ps1), test-docker-container (scripts/test-docker-container.ps1)
 // and verify-card0604-dind-runner (scripts/verify-card0604-dind-runner.ps1); nothing started the last three by path, so none keeps
-// a launcher. The behaviour is Antiphon.Nightly's (DockerStackVerify, DockerTestEntry, DockerTestContainer, DindRunnerHarness) on
-// the production host and the real file system. This file passes in what the core may not read itself: the checkout the CLI was
-// built in (the e2e-staged-apphost consumer, c590-remote.sh, the harness's build context and evidence root), the environment the
-// live throwaway entry's child inherits, and the harness's HTTP. ANTIPHON_C590_STUB and ANTIPHON_C590_SINK are read through the
-// host's variables. ASCII only.
+// a launcher. Unit 48 added verify-card0660-codex-image (scripts/verify-card0660-codex-image.ps1, with the owner's approval to
+// delete its fixture scripts/fixtures/c913-image-wrapper.ps1; nothing else started it by path, so no launcher either). The
+// behaviour is Antiphon.Nightly's (DockerStackVerify, DockerTestEntry, DockerTestContainer, DindRunnerHarness,
+// CodexImageQualification) on the production host and the real file system. This file passes in what the core may not read
+// itself: the checkout the CLI was built in (the e2e-staged-apphost consumer, c590-remote.sh, the harnesses' build context and
+// evidence root, the image qualification's init and probe scripts), the environment the live throwaway entry's child inherits,
+// and the harness's HTTP. ANTIPHON_C590_STUB and ANTIPHON_C590_SINK are read through the host's variables. ASCII only.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -23,9 +25,10 @@ namespace Antiphon.Scripts
         internal const string TestDocker = "test-docker";
         internal const string TestDockerContainer = "test-docker-container";
         internal const string VerifyDindRunner = "verify-card0604-dind-runner";
+        internal const string VerifyCodexImage = "verify-card0660-codex-image";
 
         internal const string Usage = DockerStackVerifyOptions.Usage + " | " + DockerTestOptions.Usage + " | " + DockerTestContainerOptions.Usage
-            + " | " + DindRunnerOptions.Usage;
+            + " | " + DindRunnerOptions.Usage + " | " + CodexImageOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -52,5 +55,9 @@ namespace Antiphon.Scripts
         internal static int RunVerifyDindRunner(string[] args) =>
             DindRunnerHarness.Run(DindRunnerOptions.Parse(args.Skip(1).ToArray(), Checkout), Host(), new FileSystem(),
                 new DindRunnerSeams { Http = DindRunnerHarness.Http() });
+
+        // CARD-0660 V-9: exit 0 every applicable row ok, 1 one or more not, 2 setup failed or usage.
+        internal static int RunVerifyCodexImage(string[] args) =>
+            CodexImageQualification.Run(CodexImageOptions.Parse(args.Skip(1).ToArray(), Checkout), Host(), new FileSystem(), new CodexImageSeams());
     }
 }
