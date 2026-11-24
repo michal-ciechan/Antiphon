@@ -435,6 +435,30 @@ variables inside the command."
 
 ---
 
+## 2026-11-24 - Receipt validator budget: a longer limit, not a startup warm-up
+
+**Context:** Unit 20 made `scripts/validate-checkpoint-receipt.ps1` a launcher of the checkpoint tool's validate verb.
+The server's `CheckpointReceipts:ValidatorScript` setting names that script. Its first call after the tool's sources
+change builds the CLI and the tool: 19 s cold and 2.4 s warm on the laptop. That build has to fit inside the
+validator's 30 s budget. A kill at 30 s would end the build every time.
+
+**What the agent recommended:** A background warm-up at server start: one launcher call with a long budget. Receipt
+checks would keep 30 s and normally meet a built tool.
+
+**Why the agent picked it:** It left the land path's 30 s bound untouched and took the build cost off the request
+path.
+
+**What the owner preferred:** "Longer limit for the launcher". The `.ps1` form gets minutes (5), and a built DLL keeps
+30 s.
+
+**Principle (the agent's reading):** Change the one number at the point of failure rather than add a moving part.
+One slow call after a tool change is acceptable. A new process at server start is one more thing to own.
+
+**Candidate guidance:** "When a launcher's first call may build, size the caller's timeout for that build instead of
+adding warm-up machinery."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
