@@ -37,7 +37,10 @@ One file per page or panel, under `docs/agent-help/`, served by the site and rea
 
 ```
 docs/agent-help/
+  index.md                      # the top index: every area, and how to use this folder
+  placeholders.md               # every placeholder: meaning, where its value comes from, an example
   _common.md                    # authentication, conventions, errors; included by every file
+  experiments/index.md          # one index per area: its pages, actions and files
   experiments/suite.md
   experiments/variant.md
   experiments/experiment.md
@@ -93,6 +96,30 @@ A variant is a graph setup: the workflow graph plus each step's model, prompt an
 (the error shapes for this area and what each means)
 ```
 
+**Indexes, so someone can point an agent at the folder**
+
+Decided 2026-11-24. The folder explains itself, so a person can give an agent just its address (the
+repo path, or `{{BASE_URL}}/api/agent-help`) and the agent can find its own way:
+
+- `index.md` says what the folder is, how to read a help file, how to fill placeholders, and lists
+  every area with one line each and a link to its index.
+- Each area's `index.md` lists its pages and panels, the actions each file covers, the scopes
+  needed, and the placeholders each file uses.
+- `placeholders.md` is the reference for every placeholder: what it means, where a person or agent
+  gets the value (which page shows it, which request returns it), its format, and an example.
+- The indexes are **generated from the files' headers** and checked in, so they cannot drift; the
+  lint test fails when they are out of date.
+- **They can be queried:**
+  - `GET /api/agent-help` returns the index as JSON or Markdown;
+  - `GET /api/agent-help?q=<words>` searches titles, actions and routes ("approve a gate", "run a
+    suite");
+  - `GET /api/agent-help?route=/experiments/variants/123` returns the files for a page address;
+  - `GET /api/agent-help?placeholder=VARIANT_ID` returns what the placeholder is and which files
+    use it;
+  - `GET /api/agent-help/placeholders` returns the placeholder reference.
+- Reading the indexes and raw files needs no key. Filled text for a person's own items needs their
+  sign-in or key.
+
 **Placeholders**
 
 | Placeholder | Filled from |
@@ -121,17 +148,26 @@ keys**:
   than they can.
 - **Scoped** to areas and to read, write or run (`experiments.run`, `reviews.write`, …), and
   optionally to one item.
-- **Short-lived by default** (8 hours from the help drawer), with longer ones made on a Keys page in
-  the user menu. Listed, named and revocable there. The key is shown once; only its hash is stored.
+- **Lifetime by default** (decided 2026-11-24): a key does not expire unless its owner revokes it.
+  The default lifetime is an instance setting (`AgentKeys:DefaultLifetime`: none, or a duration),
+  with an optional maximum an instance can enforce, and a person can pick a shorter one when making
+  a key. Keys are listed, named and revocable on a Keys page in the user menu, with when each was
+  last used. The key is shown once; only its hash is stored.
 - Every request made with a key is recorded with the key's name and marked "via agent" in history,
   audit and the PR attribution, next to the person's name.
+- **A key can approve** (decided 2026-11-24): gate decisions, approvals and dismissals are allowed
+  with the `….approve` scope, as the person. They are recorded "via agent".
+- **The help text tells the agent not to approve on its own.** `_common.md` and every file with an
+  approving action carry this rule: *do not approve, decide a gate, dismiss a blocker or merge
+  unless the person asked for that action or gave you standing permission for it; when unsure, say
+  what you would approve and why, and wait.* The API also returns a `hint` on approving endpoints
+  repeating it.
 - **Kept out of reach of a key:** making or widening keys, sign-in and identity settings, secrets,
-  trust adjustments, and deciding a human approval gate. A gate decision by an agent key is refused
-  unless the instance turns that on.
+  and trust adjustments.
 - Rate limited, and an experiment started by a key follows the same budget rules as one started by
   hand.
 
-The copied text states the key's scopes and expiry, and tells the agent to keep the key in an
+The copied text states the key's scopes and expiry (or that it has none), and tells the agent to keep the key in an
 environment variable and never write it to a file, a commit or its output.
 
 ## Keeping the files true
@@ -149,14 +185,15 @@ environment variable and never write it to a file, a commit or its output.
 
 | Phase | Delivers | Checked by |
 |---|---|---|
-| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the placeholder filler and the two endpoints; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
-| **2. Keys** | Personal agent keys: scopes, expiry, the Keys page, "via agent" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked or expired key is refused; the key is never returned after creation |
+| **1. Frame** | The Help drawer and button in the layout; the file format, `_common.md`, the generated indexes and `placeholders.md`, the placeholder filler, and the endpoints with search; the lint test; help files for Reviews (run, node, finding) and the review queue, working with the existing sign-in for reads | The lint test; a client test that the drawer fills ids from the route; one file's examples run in an API test |
+| **2. Keys** | Personal agent keys: scopes, expiry, the Keys page, "via agent" in audit, **Include a key** in the drawer | API tests: a key cannot exceed its scopes or its owner; a revoked key is refused, and an expired one when a lifetime is set; an approval needs the approve scope; the key is never returned after creation |
 | **3. Experiments** | Help files for suite, variant, experiment and case, written with that feature (experiments plan, phase 4), including "customise a variant" and "run a suite" | The examples run against the scripted server |
 | **4. The rest of the site** | Files for boards and cards, agents and sessions, hosts and settings; the route-coverage test turned on | The coverage test |
 
 ## Decisions for the operator
 
-1. **Key lifetime from the drawer:** 8 hours as planned, or shorter?
-2. **Gate decisions by an agent key:** refused by default, as planned?
+1. **Key lifetime:** decided 2026-11-24: lifetime by default, configurable in settings.
+2. **Approvals by an agent key:** decided 2026-11-24: allowed, with a rule in the help text not to
+   approve unless asked or given permission.
 3. **Where the files live:** `docs/agent-help/` as planned (one place, easy to lint), or beside each
    feature's client code?
