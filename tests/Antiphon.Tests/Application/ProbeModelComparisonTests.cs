@@ -32,9 +32,8 @@ public sealed class ProbeModelComparisonTests
         // A provider annotation the runtime model keeps. Design-time-only ones (a column comment) never reach a
         // runtime model, so no probe can see them.
         ["provider-annotation"] = b => b.Entity<Child>().Property(c => c.Id).UseIdentityAlwaysColumn(),
-        // Element-level differences of a primitive collection, whose element type the model text cannot show
-        // (ElementType). An element converter, even one that keeps the store type (uuid[]), changes the array's own
-        // mapping; element nullability changes only the elements, so only Element() finds it (checked by removing it).
+        // An element converter can change an array mapping without changing its store type (uuid[]).
+        // Element nullability can change independently of the array column's nullability.
         ["element-converter"] = b => b.Entity<Child>().PrimitiveCollection(c => c.Tags)
             .ElementType(e => e.HasConversion(new ValueConverter<Guid, Guid>(g => g, g => g))),
         ["element-nullability"] = b => b.Entity<Child>().PrimitiveCollection(c => c.Labels)
