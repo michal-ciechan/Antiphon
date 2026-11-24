@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 354,
+      "classes": 353,
       "reason": "allowlist"
     },
     {
@@ -142,18 +142,18 @@
     },
     {
       "path": "README.md",
-      "classes": 132,
+      "classes": 133,
       "reason": "cap",
-      "owed": 107,
+      "owed": 108,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
+        "AppHostWorktreeGuardTests",
         "ChannelE2ETests",
         "InterimVerificationPolicyTests",
         "PostLandEarlyWarningTests",
         "RunnerWorkspaceBindingTests",
         "RunnerWorkspaceServiceTests",
-        "StartRefAvailabilityTests",
-        "TaskProgressPolicyFileArmTests"
+        "StartRefAvailabilityTests"
       ]
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 144,
+      "classes": 143,
       "reason": "cap",
-      "owed": 119,
+      "owed": 118,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2333,9 +2333,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 139,
+      "classes": 140,
       "reason": "cap",
-      "owed": 114,
+      "owed": 115,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -2493,18 +2493,18 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "DelegateCheckProbeTests",
         "DindRunnerContractTests",
         "GitDiffSpikeTests",
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
         "MechanicalPcRehearsalTests",
         "NightlyRunTests",
-        "OsWitnessCheckTests",
-        "PhoneHomeMirrorJoinTests"
+        "OsWitnessCheckTests"
       ]
     },
     {
@@ -2924,6 +2924,9 @@
     {
       "path": "dev-aspire.ps1",
       "classes": [
+        "AppHostRestartTests",
+        "AppHostWatchdogTests",
+        "AppHostWorktreeGuardTests",
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests",
         "SourceRevisionStampContractTests"
@@ -2938,6 +2941,7 @@
     {
       "path": "docker-compose.dev.yml",
       "classes": [
+        "AppHostWatchdogTests",
         "DockerStackContractTests",
         "Server2ProductionServerContractTests"
       ]
@@ -3608,14 +3612,21 @@
     {
       "path": "scripts/apphost-common.ps1",
       "classes": [
+        "AntiphonCliLauncherTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
-        "SourceRevisionStampContractTests"
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/apphost-watchdog-state-observer.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {
       "path": "scripts/autostart-apphost.ps1",
       "classes": [
+        "AntiphonCliLauncherTests",
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
       ]
@@ -4040,6 +4051,29 @@
       "path": "scripts/github-sync.ps1",
       "classes": [
         "GithubSyncScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
+      "classes": [
+        "LinuxServerRestartGateTests",
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/AppHostCommon.cs",
+      "classes": [
+        "LinuxServerRestartGateTests",
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/AppHostRestart.cs",
+      "classes": [
+        "LinuxServerRestartGateTests",
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4580,11 +4614,10 @@
     {
       "path": "scripts/restart-apphost.ps1",
       "classes": [
-        "DockerStackDocumentationTests",
+        "AntiphonCliLauncherTests",
         "ImpactedClassesSelectorTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
-        "SourceRevisionStampContractTests"
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4632,10 +4665,9 @@
       ]
     },
     {
-      "path": "scripts/start-apphost.ps1",
+      "path": "scripts/set-apphost-maintenance.ps1",
       "classes": [
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -4666,6 +4698,12 @@
       "path": "scripts/test-checkpoint-output-inventory.ps1",
       "classes": [
         "CheckpointFreshOutputSealTests"
+      ]
+    },
+    {
+      "path": "scripts/test-checkpoint-owned-output.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -4721,12 +4759,6 @@
       ]
     },
     {
-      "path": "scripts/test-longpaths-checkout.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
       "path": "scripts/validate-checkpoint-receipt.ps1",
       "classes": [
         "CheckpointTerminalReceiptTests"
@@ -4765,6 +4797,12 @@
       "classes": [
         "CodexRootExecContractTests",
         "GrokRunnerImageContractTests"
+      ]
+    },
+    {
+      "path": "scripts/watchdog-apphost.ps1",
+      "classes": [
+        "AntiphonCliLauncherTests"
       ]
     },
     {
@@ -25539,6 +25577,17 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/AppHostWorld.cs",
+      "classes": [
+        "AppHostCommonTests",
+        "AppHostRestartTests",
+        "AppHostWatchdogStateObserverScriptTests",
+        "AppHostWatchdogTests",
+        "AppHostWorktreeGuardTests",
+        "VerifyDevStackSmokeTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/BoardCommandRun.cs",
       "classes": [
         "CapabilityScriptTests",
@@ -26370,7 +26419,6 @@
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "LongPathsCheckoutScriptTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
       ]
@@ -26392,7 +26440,6 @@
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "LongPathsCheckoutScriptTests",
         "ProcessSpawnLimitTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
@@ -29054,6 +29101,7 @@
         "AgentTaskLandBareRepositoryCleanupTests",
         "AgentTaskLandStageOutcomeTests",
         "AgentTaskWorktreeContinuityTests",
+        "AppHostWorktreeGuardTests",
         "C1441RunnerGitMaintenanceTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "C1818GcOwnerRobustnessTests",
@@ -29063,7 +29111,6 @@
         "CheckpointWindowsAnchoredDeleteTests",
         "CompletedCardWorkspaceRemovalTests",
         "ContractSnapshotTests",
-        "DelegateCheckProbeTests",
         "LandGraphAuditCleanupTests",
         "LandNonCodeSkipTests",
         "OutputCleanupTests",
@@ -29325,7 +29372,7 @@
     {
       "path": "verify-dev-stack.ps1",
       "classes": [
-        "VerifyDevStackSmokeTests"
+        "AntiphonCliLauncherTests"
       ]
     }
   ]
