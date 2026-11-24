@@ -2510,9 +2510,9 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "ContractSnapshotTests",
         "DelegateCheckProbeTests",
@@ -25657,12 +25657,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Review/ReviewMirrorCheckoutTests.cs",
-      "classes": [
-        "TestFixtureCleanupGuardTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Scripts/AppHostWorld.cs",
       "classes": [
         "AppHostCommonTests",
@@ -26528,6 +26522,13 @@
         "LiveLaneRunnerTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessHandleProbe.cs",
+      "classes": [
+        "ScriptHarnessHandleProbeTests",
+        "ScriptHarnessWindowsOwnershipTests"
       ]
     },
     {
