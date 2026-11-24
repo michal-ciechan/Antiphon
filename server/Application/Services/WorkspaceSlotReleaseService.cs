@@ -62,7 +62,7 @@ public sealed class WorkspaceSlotReleaseService(
             PhoneHomeWorkspaceSlotReleaseResponse response;
             try
             {
-                response = await remote.ReleaseSlotAsync(task, ct);
+                response = await remote.ReleaseSlotAsync(task, ct, taskSettled: true);
             }
             catch (ConflictException ex) when (IsUnknownSlot(ex))
             {

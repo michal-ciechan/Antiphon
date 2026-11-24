@@ -217,7 +217,7 @@ public sealed class C0824WorkspaceSlotRehomeTests
         var closed = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
         closed.IsOpen.ShouldBeFalse("a settled, holder-free, published and clean directory must close without an operator");
         closed.Disposition.ShouldBe("Pushed");
-        closed.Outcome.ShouldContain("automatic");
+        closed.Outcome.ShouldNotBeNull().ShouldContain("automatic");
         holderOutcome.ShouldStartWith("automatic: holders");
         unpublishedOutcome.ShouldStartWith("automatic: unpushed");
         dirtyOutcome.ShouldStartWith("automatic: dirty");
@@ -226,10 +226,18 @@ public sealed class C0824WorkspaceSlotRehomeTests
         File.ReadAllText(Path.Combine(pool.RetainedRoot, TaskA.ToString("N"), lease.Generation.ToString(),
             ".antiphon", "reports", "task.md")).ShouldBe("task evidence");
         pool.Ledger().Attention.ShouldContain(entry => entry.Detail != null && entry.Detail.Contains(dirId)
-            && entry.Key == "workspace_slot_quarantine_auto_released");
+            && entry.Key == WorkspaceSlotCodes.QuarantineAutoReleased);
         var next = await pool.LeaseAsync(scratch.RequestB(), ct);
         next.SlotId.ShouldBe(lease.SlotId);
         next.Path.ShouldNotBe(lease.Path);
+
+        // A drain or an old server can release a lease without certifying terminal settlement.
+        scratch.Processes.Holders = path => path == next.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await Release(pool, next, TaskB)).Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+        await pool.MaintainAsync(ct);
+        pool.Ledger().QuarantinedDirectories.Single(entry => entry.TaskId == TaskB).IsOpen.ShouldBeTrue();
+        Directory.Exists(next.Path).ShouldBeTrue();
     }
 
     [Test]

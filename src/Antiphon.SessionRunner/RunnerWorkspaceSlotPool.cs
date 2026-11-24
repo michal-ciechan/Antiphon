@@ -25,6 +25,8 @@ public sealed class RunnerWorkspaceSlotPool
 {
     private const long GiB = 1024L * 1024 * 1024;
     private const int ErrorLimit = 4096;
+    private const int QuarantineChecksPerPass = 4;
+    private const string AutomaticQuarantineReason = "automatic settled-task recheck";
     private static readonly Regex SlotLeaf = new(@"^ws-(?<n>[0-9]{2,})(-d(?<k>[0-9]+))?$", RegexOptions.Compiled);
     private static readonly JsonSerializerOptions StampJson = new(JsonSerializerDefaults.Web);
 
@@ -40,13 +42,14 @@ public sealed class RunnerWorkspaceSlotPool
     // Repository-level git (fetch, worktree add/remove/lock) is serialized; per-slot git is not.
     private readonly SemaphoreSlim _repository = new(1, 1);
     private readonly RunnerRepositoryActivity? _activity;
+    private readonly ILogger? _logger;
     private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public RunnerWorkspaceSlotPool(
         RunnerWorkspaceService service, PhoneHomeWorkspaceSlotSettings settings, int capacity,
         TimeProvider? clock = null, IWorkspaceSlotFileSystem? fileSystem = null,
         IWorkspaceSlotProcessProbe? processes = null, IWorkspaceSlotDiskProbe? disk = null,
-        RunnerRepositoryActivity? activity = null, IWorkspaceSlotFence? fence = null)
+        RunnerRepositoryActivity? activity = null, IWorkspaceSlotFence? fence = null, ILogger? logger = null)
     {
         _service = service;
         Settings = settings;
@@ -58,6 +61,7 @@ public sealed class RunnerWorkspaceSlotPool
             : new ProcWorkspaceSlotProcessProbe());
         _disk = disk ?? new PhysicalWorkspaceSlotDiskProbe();
         _activity = activity;
+        _logger = logger;
         _fence = fence ?? new WorkspaceSlotFenceFile(settings.RcFencePath);
         _ledger = new RunnerWorkspaceSlotLedger(service.AllowedRoot + "/workspace-slots");
     }
@@ -99,8 +103,13 @@ public sealed class RunnerWorkspaceSlotPool
             && slot.TaskId == request.TaskId && slot.PreparationId == request.PreparationId);
         if (replay is not null && Directory.Exists(replay.Path))
             return new WorkspaceSlotLease(replay.Id, replay.LeaseGeneration, replay.Path);
-        if (current.QuarantinedDirectories.Count(entry => entry.IsOpen) > Settings.MaxQuarantinedDirectories)
+        var openQuarantines = current.QuarantinedDirectories.Count(entry => entry.IsOpen);
+        if (openQuarantines > Settings.MaxQuarantinedDirectories)
+        {
+            _logger?.LogWarning("Workspace slot pool degraded: {OpenQuarantines} open quarantined directories exceed {Maximum}",
+                openQuarantines, Settings.MaxQuarantinedDirectories);
             throw Refuse(WorkspaceSlotCodes.PoolDegraded);
+        }
         if (BranchCheckedOut(request.Branch, except: null))
             throw Refuse(WorkspaceSlotCodes.BranchCheckedOut + ": " + request.Branch + " is checked out in another worktree.");
         await FetchExactAsync(request.Branch, request.Sha, ct);
@@ -214,6 +223,7 @@ public sealed class RunnerWorkspaceSlotPool
                     picked.LingerAttempts = 0;
                     picked.NextLingerAt = null;
                     picked.ReleaseRequested = false;
+                    picked.SettledRelease = false;
                     picked.Detail = null;
                     _ledger.Write(state);
                     return (Clone(picked), created);
@@ -364,13 +374,15 @@ public sealed class RunnerWorkspaceSlotPool
                 return new PhoneHomeWorkspaceSlotReleaseResponse("deferred", slot.Id, slot.LeaseGeneration, "release in progress");
             if (slot.State != WorkspaceSlotStates.Leased)
                 throw Refuse("Slot " + slot.Id + " is " + slot.State + ", not leased.");
-            if (slot.ReleaseRequested && slot.NextLingerAt > _clock.GetUtcNow())
-                immediate = slot.LingerAttempts.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            else
+            var waiting = slot.ReleaseRequested && slot.NextLingerAt > _clock.GetUtcNow();
+            if (!waiting || (request.TaskSettled && !slot.SettledRelease))
             {
+                slot.SettledRelease |= request.TaskSettled;
                 slot.ReleaseRequested = true;
                 _ledger.Write(state);
             }
+            if (waiting)
+                immediate = slot.LingerAttempts.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
         {
@@ -507,6 +519,7 @@ public sealed class RunnerWorkspaceSlotPool
         record.LingerAttempts = 0;
         record.NextLingerAt = null;
         record.ReleaseRequested = false;
+        record.SettledRelease = false;
         record.Detail = null;
     }
 
@@ -576,7 +589,7 @@ public sealed class RunnerWorkspaceSlotPool
     /// registration's <c>gitdir</c> back-pointer names this directory's <c>.git</c> (never a sibling's); and the
     /// pool's owner stamp there names this slot id and directory generation. Any doubt is a failure.
     /// </summary>
-    private (Owned? Owned, Failure? Failure) ProveOwnership(WorkspaceSlotRecord slot)
+    private (Owned? Owned, Failure? Failure) ProveOwnership(WorkspaceSlotRecord slot, bool requireLease = false)
     {
         static (Owned?, Failure?) Broken(string detail) => (null, new Failure("filesystem", "identity", detail));
         try
@@ -627,6 +640,11 @@ public sealed class RunnerWorkspaceSlotPool
                 || !root.TryGetProperty("directoryGeneration", out var generation) || generation.ValueKind != JsonValueKind.Number
                 || !generation.TryGetInt32(out var stamped) || stamped != slot.DirectoryGeneration)
                 return Broken("owner stamp " + stamp + " does not name " + slot.Id + " directory generation " + slot.DirectoryGeneration);
+            if (requireLease && (!root.TryGetProperty("leaseGeneration", out var lease) || lease.ValueKind != JsonValueKind.Number
+                || !lease.TryGetInt32(out var leaseGeneration) || leaseGeneration != slot.LeaseGeneration
+                || !root.TryGetProperty("taskId", out var task) || task.ValueKind != JsonValueKind.String
+                || !task.TryGetGuid(out var taskId) || taskId != slot.TaskId))
+                return Broken("owner stamp does not name the released task and lease generation");
             return (new Owned(path, Normalize(realAdmin)), null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
@@ -756,7 +774,8 @@ public sealed class RunnerWorkspaceSlotPool
     /// branch tip) must be reachable from an origin head. The reflog is expired at every release, so its
     /// entries all belong to this lease.
     /// </summary>
-    private async Task<string?> UnpushedAsync(string path, string? branch, CancellationToken ct, bool fetch = true)
+    private async Task<string?> UnpushedAsync(
+        string path, string? branch, CancellationToken ct, bool fetch = true, string? quarantineHead = null)
     {
         // Without a fetch the origin heads are older, never newer: the check can only grow stricter.
         if (fetch && branch is not null)
@@ -770,6 +789,12 @@ public sealed class RunnerWorkspaceSlotPool
         var head = await SlotGitAsync(path, ct, "rev-parse", "HEAD");
         if (head.ExitCode == 0)
             shas.Add(head.Stdout.Trim());
+        if (quarantineHead is not null)
+        {
+            if (reflog.ExitCode != 0 || head.ExitCode != 0 || !IsFullSha(head.Stdout.Trim()) || !IsFullSha(quarantineHead))
+                return "quarantine commit history is unreadable";
+            shas.Add(quarantineHead);
+        }
         if (branch is not null)
         {
             var tip = await SlotGitAsync(path, ct, "rev-parse", "-q", "--verify", "refs/heads/" + branch);
@@ -780,12 +805,21 @@ public sealed class RunnerWorkspaceSlotPool
         shas.RemoveWhere(sha => sha.Length == 0);
         if (shas.Count == 0)
             return null;
-        var missing = await SlotGitAsync(path, ct, ["rev-list", "--max-count=1", .. shas.Order(StringComparer.Ordinal), "--not", "--remotes=origin"]);
+        string[] args = ["rev-list", "--max-count=1", .. shas.Order(StringComparer.Ordinal), "--not", "--remotes=origin"];
+        if (quarantineHead is not null)
+        {
+            if (shas.Any(sha => !IsFullSha(sha)))
+                return "quarantine commit history is unreadable";
+            args = ["--no-replace-objects", .. args];
+        }
+        var missing = await SlotGitAsync(path, ct, args);
         if (missing.ExitCode != 0)
             return "unpushed check failed: " + Bound(missing.Stderr);
         var commit = missing.Stdout.Trim();
         return commit.Length == 0 ? null : "commit " + commit + " is not on origin";
     }
+
+    private static bool IsFullSha(string value) => value.Length == 40 && value.All(Uri.IsHexDigit);
 
     private async Task<string?> DirtAsync(string path, CancellationToken ct)
     {
@@ -938,9 +972,11 @@ public sealed class RunnerWorkspaceSlotPool
                 Class = cls,
                 Reason = reason,
                 Error = error.Length > ErrorLimit ? error[..ErrorLimit] : error,
-                Branch = branch ?? slot.Branch,
+                Branch = slot.SettledRelease ? slot.Branch ?? branch : branch ?? slot.Branch,
                 Head = head,
                 TaskId = slot.TaskId,
+                SettledLeaseGeneration = slot.SettledRelease && cls == "custody" && reason == "lingering"
+                    ? slot.LeaseGeneration : null,
                 Bytes = bytes,
                 Locked = locked.ExitCode == 0,
                 LockError = locked.ExitCode == 0 ? null : Bound(locked.Stderr),
@@ -1028,8 +1064,15 @@ public sealed class RunnerWorkspaceSlotPool
                 throw Refuse("Disposition must be Pushed, AcceptLoss or Removed.");
         }
 
+        return await RemoveQuarantineAsync(entry, request.Disposition, request.Reason, ct);
+    }
+
+    private async Task<PhoneHomeWorkspaceSlotQuarantineReleaseResponse> RemoveQuarantineAsync(
+        QuarantinedDirectoryRecord entry, string disposition, string reason, CancellationToken ct, bool automatic = false)
+    {
         PhaseCut?.Invoke("before-quarantine-removal");
-        await RepositoryGitAsync(ct, "worktree", "unlock", entry.Path);
+        if (!automatic)
+            await RepositoryGitAsync(ct, "worktree", "unlock", entry.Path);
         var remove = await RepositoryGitAsync(ct, "worktree", "remove", "--force", "--force", entry.Path);
         if (remove.ExitCode != 0 || Directory.Exists(entry.Path))
         {
@@ -1039,15 +1082,127 @@ public sealed class RunnerWorkspaceSlotPool
             return new(entry.DirId, "removal_failed", detail);
         }
 
-        await RepositoryGitAsync(ct, "worktree", "prune");
-        await MutateAsync(state =>
+        if (!automatic)
+            await RepositoryGitAsync(ct, "worktree", "prune");
+        await CloseQuarantineAsync(entry, disposition, reason, automatic);
+        return new(entry.DirId, "removed");
+    }
+
+    private Task CloseQuarantineAsync(QuarantinedDirectoryRecord entry, string disposition, string reason, bool automatic) =>
+        MutateAsync(state =>
         {
             var record = state.QuarantinedDirectories.First(item => item.DirId == entry.DirId);
-            record.Disposition = request.Disposition;
+            record.Disposition = disposition;
             record.ClosedAt = _clock.GetUtcNow();
-            record.Outcome = "removed: " + request.Reason;
+            record.Outcome = "removed: " + reason;
+            if (automatic)
+                Attention(state, WorkspaceSlotCodes.QuarantineAutoReleased, entry.SlotId, entry.Path, entry.DirId);
         });
-        return new(entry.DirId, "removed");
+
+    private async Task RecheckSettledQuarantinesAsync(CancellationToken ct)
+    {
+        var entries = _ledger.Read().QuarantinedDirectories
+            .Where(entry => entry.IsOpen && entry.SettledLeaseGeneration > 0 && entry.TaskId.HasValue
+                && entry.Class == "custody" && entry.Reason == "lingering")
+            .OrderBy(entry => entry.LastAutoCheckAt).ThenBy(entry => entry.At)
+            .Take(QuarantineChecksPerPass).ToList();
+        foreach (var entry in entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            string? held;
+            try
+            {
+                held = await CheckAndRemoveSettledQuarantineAsync(entry, ct);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                held = "filesystem_unreadable";
+            }
+
+            if (held is not null)
+                await MutateAsync(state =>
+                {
+                    var record = state.QuarantinedDirectories.First(item => item.DirId == entry.DirId);
+                    record.LastAutoCheckAt = _clock.GetUtcNow();
+                    record.Outcome = "automatic: " + held;
+                });
+            _logger?.LogInformation(
+                "Workspace slot quarantine {DirId} slot {SlotId} task {TaskId} automatic recheck: {Outcome}",
+                entry.DirId, entry.SlotId, entry.TaskId, held ?? "removed");
+        }
+    }
+
+    // Null is confirmed removal. Any other result leaves the quarantine open with a stable reason.
+    private async Task<string?> CheckAndRemoveSettledQuarantineAsync(QuarantinedDirectoryRecord entry, CancellationToken ct)
+    {
+        if (_ledger.Read().Slots.Any(slot => WorkspaceSlotStates.IsActive(slot.State)
+            && RunnerWorkspaceService.PathsEqual(slot.Path, entry.Path)))
+            return "active_slot";
+
+        var gate = _service.WorkspaceUseGate;
+        await using var admission = gate is null ? null : await gate.TryAcquireSlotQuarantineRemovalAsync(entry.Path, ct);
+        if (gate is not null && admission is null)
+            return "workspace_in_use_or_unknown";
+
+        if (entry.AutoRemovalStarted && !Path.Exists(entry.Path))
+        {
+            // The previous process may have removed the directory and registration before recording the outcome.
+            var registration = await RepositoryGitAsync(ct, "worktree", "list", "--porcelain", "-z");
+            if (registration.ExitCode == 0
+                && !registration.Stdout.Split('\0').Any(field => field.StartsWith("worktree ", StringComparison.Ordinal)
+                    && RunnerWorkspaceService.PathsEqual(field["worktree ".Length..], entry.Path))
+                && !Directory.EnumerateFileSystemEntries(_service.WorktreeRoot).Any(path =>
+                    RunnerWorkspaceService.PathsEqual(path, entry.Path)))
+            {
+                await CloseQuarantineAsync(entry, "Pushed", AutomaticQuarantineReason, automatic: true);
+                return null;
+            }
+        }
+
+        var lease = new WorkspaceSlotRecord
+        {
+            Id = entry.SlotId,
+            Path = entry.Path,
+            TaskId = entry.TaskId,
+            DirectoryGeneration = entry.DirectoryGeneration,
+            LeaseGeneration = entry.SettledLeaseGeneration!.Value,
+        };
+        if (ProveOwnership(lease, requireLease: true).Owned is not { } owned)
+            return "identity";
+        var scan = ScanHolders(entry.Path);
+        if (!scan.Complete || scan.Holders.Count > 0)
+            return scan.Complete ? "holders" : "holder_scan_incomplete";
+
+        // Refresh the same origin head namespace used by Pushed. A failed fetch or a deleted origin
+        // ref must not let a stale remote-tracking ref supply automatic removal authority.
+        using var refreshBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        refreshBudget.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            var fetch = await RepositoryGitAsync(refreshBudget.Token, "fetch", "--atomic", "--prune", "--no-tags", "origin",
+                "+refs/heads/*:refs/remotes/origin/*");
+            if (fetch.ExitCode != 0)
+                return "origin_unavailable";
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return "origin_unavailable";
+        }
+
+        if (entry.Head is null || await UnpushedAsync(entry.Path, entry.Branch, ct, fetch: false, quarantineHead: entry.Head) is not null)
+            return "unpushed_or_history_unknown";
+        if (MarkerIn(owned.AdminDir) is not null || await DirtAsync(entry.Path, ct) is not null)
+            return "dirty_or_status_unknown";
+
+        try { RetainEvidence(lease, entry.TaskId!.Value); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "evidence_retention_failed"; }
+
+        scan = ScanHolders(entry.Path);
+        if (!scan.Complete || scan.Holders.Count > 0)
+            return scan.Complete ? "holders" : "holder_scan_incomplete";
+        await MutateAsync(state => state.QuarantinedDirectories.First(item => item.DirId == entry.DirId).AutoRemovalStarted = true);
+        var result = await RemoveQuarantineAsync(entry, "Pushed", AutomaticQuarantineReason, ct, automatic: true);
+        return result.Outcome == "removed" ? null : result.Outcome;
     }
 
     private async Task<(string Diff, string Untracked, string Commits)> LossAsync(QuarantinedDirectoryRecord entry, CancellationToken ct)
@@ -1185,7 +1340,7 @@ public sealed class RunnerWorkspaceSlotPool
 
     // ---------------------------------------------------------------- maintenance and recovery
 
-    /// <summary>Pool maintenance (at start and every 15 min): schedule marks, deferred releases, idle retirement.</summary>
+    /// <summary>Pool maintenance on slot operations: schedule marks, deferred releases, quarantine rechecks, idle retirement.</summary>
     public async Task MaintainAsync(CancellationToken ct)
     {
         await MarkScheduleAsync();
@@ -1193,6 +1348,7 @@ public sealed class RunnerWorkspaceSlotPool
         foreach (var slot in _ledger.Read().Slots.Where(slot => slot.State == WorkspaceSlotStates.Leased
                      && slot.ReleaseRequested && slot.NextLingerAt <= now).ToList())
             await SettleAsync(slot.Id, allowDefer: true, ct);
+        await RecheckSettledQuarantinesAsync(ct);
         await RetireIdleAsync(ct);
         PruneRetained();
     }

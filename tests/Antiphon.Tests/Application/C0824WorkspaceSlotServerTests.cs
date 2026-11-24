@@ -270,7 +270,7 @@ public sealed class C0824WorkspaceSlotServerTests
 
         var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceSlotRelease, 1);
         var sent = request.Payload!.Value.Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json)!;
-        sent.ShouldBe(new PhoneHomeWorkspaceSlotReleaseRequest("ws-02", 3, taskId));
+        sent.ShouldBe(new PhoneHomeWorkspaceSlotReleaseRequest("ws-02", 3, taskId, TaskSettled: true));
         (await rig.ReadTaskAsync(taskId)).RemoteWorktreePath.ShouldNotBeNull("the path is cleared only after the reply");
         await rig.Peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceSlotReleaseResponse("released", "ws-02", 3), PhoneHomeFraming.Json)));

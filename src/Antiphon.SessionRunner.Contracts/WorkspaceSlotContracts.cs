@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.SessionRunner.Contracts;
 
 /// <summary>CARD-0824 S1. Typed refusal details for workspace slot operations.</summary>
@@ -21,6 +23,7 @@ public static class WorkspaceSlotCodes
 
     public const string Overflow = "workspace_slot_overflow";
     public const string Quarantined = "workspace_slot_quarantined";
+    public const string QuarantineAutoReleased = "workspace_slot_quarantine_auto_released";
     public const string Rehomed = "workspace_slot_rehomed";
     public const string RehomeFailed = "workspace_slot_rehome_failed";
     public const string Retired = "workspace_slot_retired";
@@ -70,8 +73,10 @@ public static class WorkspaceSlotCodes
     }
 }
 
-/// <summary>CARD-0824 S1 D-B. The server reconciler's release of one leased slot.</summary>
-public sealed record PhoneHomeWorkspaceSlotReleaseRequest(string SlotId, int Generation, Guid TaskId);
+/// <summary>Release of one leased slot. Only the terminal-task reconciler sets <c>TaskSettled</c>.</summary>
+public sealed record PhoneHomeWorkspaceSlotReleaseRequest(
+    string SlotId, int Generation, Guid TaskId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool TaskSettled = false);
 
 /// <summary><c>Outcome</c> is released, already_free, deferred or quarantined.</summary>
 public sealed record PhoneHomeWorkspaceSlotReleaseResponse(string Outcome, string SlotId, int Generation, string? Detail = null);
