@@ -278,6 +278,12 @@ namespace Antiphon.Scripts
             [DevStackCommands.StopServer] = DevStackCommands.RunStopServer,
             [DevStackCommands.AssertDevPortsClear] = DevStackCommands.RunAssertDevPortsClear,
             [DevStackCommands.BootstrapCheckName] = DevStackCommands.RunBootstrapCheck,
+            // The review engine's operator commands answer every input themselves (unit 42). review-standalone: exit 0 started or
+            // stopped, 1 refused or failed. review-github-setup: 0 written or a dry run, 1 refused or failed. review-live-github: the
+            // test run's code (the build slot's 4 or 130 among them), 1 refused or failed. Usage is 2 for each.
+            [ReviewEngineCommands.Standalone] = ReviewEngineCommands.RunStandalone,
+            [ReviewEngineCommands.GitHubSetup] = ReviewEngineCommands.RunGitHubSetup,
+            [ReviewEngineCommands.LiveGitHub] = ReviewEngineCommands.RunLiveGitHub,
         };
 
         public static int Main(string[] args)
@@ -316,7 +322,7 @@ namespace Antiphon.Scripts
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
-                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage);
+                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage);
             return Usage;
         }
 

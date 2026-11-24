@@ -507,7 +507,8 @@ public sealed class QualificationSupervisorTests
     }
 
     // The production detached start (QualificationOs): the child's stdout and stderr are its own files, its stdin the null
-    // device, the added variable is in its environment, and its pid, start and exit code are read back.
+    // device, the added variable is in its environment, it runs in the directory given (review-standalone, unit 42), and its
+    // pid, start and exit code are read back.
     [Test]
     public void DetachedStartWritesItsOwnFilesAndExitCode()
     {
@@ -516,10 +517,10 @@ public sealed class QualificationSupervisorTests
         var stdout = Path.Combine(dir, "child-stdout.log");
         var stderr = Path.Combine(dir, "child-stderr.log");
         var start = OperatingSystem.IsWindows()
-            ? new QualificationStart(Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "echo bound run=%ANTIPHON_QUALIFICATION_RUN_ID%& echo fake launch done& echo to-stderr 1>&2& exit /b 7"],
-                stdout, stderr, SameSession: true, Environment: new Dictionary<string, string> { [QualificationSupervise.RunIdVariable] = "c1667e2e" })
-            : new QualificationStart("/bin/sh", ["-c", "echo bound run=$ANTIPHON_QUALIFICATION_RUN_ID; echo fake launch done; echo to-stderr 1>&2; exit 7"],
-                stdout, stderr, SameSession: true, Environment: new Dictionary<string, string> { [QualificationSupervise.RunIdVariable] = "c1667e2e" });
+            ? new QualificationStart(Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "echo bound run=%ANTIPHON_QUALIFICATION_RUN_ID%& echo fake launch done& echo cwd=%CD%& echo to-stderr 1>&2& exit /b 7"],
+                stdout, stderr, SameSession: true, Environment: new Dictionary<string, string> { [QualificationSupervise.RunIdVariable] = "c1667e2e" }, WorkingDirectory: dir)
+            : new QualificationStart("/bin/sh", ["-c", "echo bound run=$ANTIPHON_QUALIFICATION_RUN_ID; echo fake launch done; echo cwd=$PWD; echo to-stderr 1>&2; exit 7"],
+                stdout, stderr, SameSession: true, Environment: new Dictionary<string, string> { [QualificationSupervise.RunIdVariable] = "c1667e2e" }, WorkingDirectory: dir);
         var before = DateTime.UtcNow.AddSeconds(-5);
         using (var child = new QualificationOs().Start(start))
         {
@@ -532,6 +533,7 @@ public sealed class QualificationSupervisorTests
         var text = File.ReadAllText(stdout);
         text.ShouldContain("bound run=c1667e2e", customMessage: "the run id is in the child's environment");
         text.ShouldContain("fake launch done", customMessage: "launch child output goes to its own file");
+        text.ShouldContain("cwd=" + Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar), customMessage: "the child starts in the directory given");
         File.ReadAllText(stderr).ShouldContain("to-stderr");
         new QualificationOs().CommandLine(Environment.ProcessId).ShouldNotBeNullOrWhiteSpace("this process's command line is readable");
     }

@@ -53,8 +53,8 @@ dependencies, not categories). Witness: CP-4 filter 85/85, 0 skipped, at the fix
 - The class was pushed straight to master by an operator-session commit, not through a
   Code/Review/land pipeline whose CP rows or Merge short tests would have run the lane guards.
 - The author ran only the class's own filter (`/*/*/ReviewLiveGitHubTests/*`, via
-  `scripts/review-live-github.ps1`), which skips without credentials and never touches the
-  census guards.
+  `scripts/review-live-github.ps1`, now the `review-live-github` command), which skips without
+  credentials and never touches the census guards.
 - The follow-up impact-index regeneration (`001f2f3a4`) selects classes by source dependency.
   The lane census reads every test source file by text, so it is not an impacted class of a
   new test file and was not selected.

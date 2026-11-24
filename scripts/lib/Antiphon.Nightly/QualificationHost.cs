@@ -30,8 +30,9 @@ namespace Antiphon.Nightly
 {
     /// <summary>
     /// One detached child: the file and its arguments (separate argv entries), its stdout and stderr files (created or
-    /// truncated), whether it shares this process's session (Unix: no setsid; Windows always gets its own console), and the
-    /// variables added to this process's environment for it (null: none).
+    /// truncated), whether it shares this process's session (Unix: no setsid; Windows always gets its own console), the
+    /// variables added to this process's environment for it (null: none) and the directory it starts in (null or empty: this
+    /// process's; the review-standalone command's server and client, unit 42).
     /// </summary>
     public sealed record QualificationStart(
         string FileName,
@@ -39,7 +40,8 @@ namespace Antiphon.Nightly
         string StandardOutput,
         string StandardError,
         bool SameSession = false,
-        IReadOnlyDictionary<string, string> Environment = null);
+        IReadOnlyDictionary<string, string> Environment = null,
+        string WorkingDirectory = null);
 
     /// <summary>A started child: its id and start, and its exit once it has exited.</summary>
     public interface IQualificationChild : IDisposable
@@ -242,8 +244,9 @@ namespace Antiphon.Nightly
         public IQualificationChild Start(QualificationStart start)
         {
             var plan = QualificationDetach.Plan(start, Platform);
-            if (OperatingSystem.IsWindows()) return WindowsChild.Start(plan, start.Environment);
-            var info = new ProcessStartInfo(plan.FileName) { UseShellExecute = false };
+            var directory = string.IsNullOrEmpty(start.WorkingDirectory) ? null : start.WorkingDirectory;
+            if (OperatingSystem.IsWindows()) return WindowsChild.Start(plan, start.Environment, directory);
+            var info = new ProcessStartInfo(plan.FileName) { UseShellExecute = false, WorkingDirectory = directory ?? "" };
             foreach (var argument in plan.Arguments) info.ArgumentList.Add(argument);
             foreach (var pair in start.Environment ?? new Dictionary<string, string>()) info.Environment[pair.Key] = pair.Value;
             var process = Process.Start(info) ?? throw new InvalidOperationException("the child did not start: " + start.FileName);
@@ -430,8 +433,8 @@ namespace Antiphon.Nightly
             }
 
             // CreateProcess with the three handles alone inherited (PROC_THREAD_ATTRIBUTE_HANDLE_LIST), its own hidden
-            // console, and this process's environment with the additions.
-            public static IQualificationChild Start(QualificationDetachPlan plan, IReadOnlyDictionary<string, string> additions)
+            // console, this process's environment with the additions, and the directory (null: this process's).
+            public static IQualificationChild Start(QualificationDetachPlan plan, IReadOnlyDictionary<string, string> additions, string directory)
             {
                 using var input = File.OpenHandle("NUL", FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var output = File.OpenHandle(plan.StandardOutput, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
@@ -469,7 +472,7 @@ namespace Antiphon.Nightly
                     var application = Path.IsPathRooted(plan.FileName) ? plan.FileName : null;
                     // CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT
                     Check(CreateProcessW(application, new StringBuilder(plan.CommandLine), IntPtr.Zero, IntPtr.Zero, true, 0x10 | 0x400 | 0x80000,
-                        block, null, ref startup, out var info), "CreateProcess " + plan.FileName);
+                        block, directory, ref startup, out var info), "CreateProcess " + plan.FileName);
                     CloseHandle(info.Thread);
                     var started = GetProcessTimes(info.Process, out var creation, out _, out _, out _) ? DateTime.FromFileTimeUtc(creation) : DateTime.UtcNow;
                     return new WindowsChild(info.Process, (int)info.Pid, started);

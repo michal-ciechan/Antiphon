@@ -5,9 +5,9 @@ or corpus questions found while implementing. Each row says what to test and why
 
 ## Verified live against GitHub (2026-11-23)
 
-`ReviewLiveGitHubTests` (opt-in, `scripts/review-live-github.ps1`) ran on the scratch PR #52 with the
-real GitHub adapter signed in as the `antiphon-review` app, with the decision model, reviewer and
-verifier scripted. These now work on real GitHub:
+`ReviewLiveGitHubTests` (opt-in, then `scripts/review-live-github.ps1`, now the `review-live-github`
+command) ran on the scratch PR #52 with the real GitHub adapter signed in as the `antiphon-review` app,
+with the decision model, reviewer and verifier scripted. These now work on real GitHub:
 
 - **Sign-in:** installation tokens.
 - **Intake:** reads the PR, its files and its diff.
@@ -29,10 +29,10 @@ The run found two bugs that the fakes hid:
 
 ### Real reviews from the standalone instance (2026-11-23)
 
-`scripts/review-standalone.ps1` ran a review-only server on the laptop. It had no session runner,
-used the app, polled the repo, and ran reviewers, verifier and decisions through one-shot `claude -p`
-(section 7.7). Polling picked up three real PRs, #53, #54 and #55; #52 was skipped by its label.
-Each was reviewed end to end:
+`scripts/review-standalone.ps1` (now the `review-standalone` command) ran a review-only server on the
+laptop. It had no session runner, used the app, polled the repo, and ran reviewers, verifier and
+decisions through one-shot `claude -p` (section 7.7). Polling picked up three real PRs, #53, #54 and
+#55; #52 was skipped by its label. Each was reviewed end to end:
 
 - **Decisions:** Haiku classified each PR (category `test`, blast radius 1-2) and selected 3-4 seed
   checks, for about $0.002 per call.
@@ -58,6 +58,20 @@ The run found four bugs that the scripted tests could not:
 
 Still not live: delegation reviewers on session runners (G-1, G-2, G-6, G-7) and verifier seats (G-11).
 Those need the desktop instance; the claude -p transport covers the standalone case.
+
+### Operator commands
+
+The live check, the standalone instance and the desktop setup are `antiphon-scripts` commands
+(`scripts/antiphon <command>`, or `scripts\antiphon.cmd <command>` on Windows); the PowerShell
+scripts went in unit 42 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`. Each reads
+the `antiphon-review` app from Bitwarden (`BW_SESSION` or `~/.bw-session`).
+
+- `review-live-github --pr <n>`: runs `ReviewLiveGitHubTests` against a scratch PR labelled
+  `antiphon:live-check`, with the app in the test run's environment only. Without that environment
+  the class skips.
+- `review-standalone`: the review-only server and its client on this machine; `--stop` stops them.
+- `review-github-setup`: the app and the review settings into the desktop server's user-secrets;
+  `--dry-run` prints them with the key redacted.
 
 ## ABF parser (`server/Application/Review/Abf/`)
 

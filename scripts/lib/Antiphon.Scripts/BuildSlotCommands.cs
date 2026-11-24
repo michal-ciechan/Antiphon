@@ -68,7 +68,8 @@ namespace Antiphon.Scripts
         }
 
         // The signal no longer ends this process: the command sees the cancellation, stops its child and releases the lease.
-        private static IDisposable Register(PosixSignal signal, CancellationTokenSource cancellation)
+        // review-live-github (ReviewEngineCommands) registers the same two around its in-process slot.
+        internal static IDisposable Register(PosixSignal signal, CancellationTokenSource cancellation)
         {
             try
             {

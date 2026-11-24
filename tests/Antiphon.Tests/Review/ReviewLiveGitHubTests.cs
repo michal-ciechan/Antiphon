@@ -18,9 +18,9 @@ namespace Antiphon.Tests.Review;
 /// The review flow against real GitHub (design 8): the real GitHub adapter signed in as the
 /// antiphon-review GitHub App, over a real PR, with the decision model, reviewer and verifier
 /// scripted so the run is deterministic and free. It posts a real review, a real thread reply and
-/// real commit statuses, so it runs only on request:
-/// <c>scripts/review-live-github.ps1</c> reads the app key from Bitwarden into this process's
-/// environment and runs this class. Without those variables every test is skipped.
+/// real commit statuses, so it runs only on request: the <c>review-live-github</c> command
+/// (<c>scripts/antiphon review-live-github --pr &lt;n&gt;</c>) reads the app key from Bitwarden into this
+/// test run's environment and runs this class. Without those variables every test is skipped.
 /// Use a scratch PR labelled <c>antiphon:live-check</c> (and <c>antiphon:skip</c>, so a live
 /// instance's poller leaves it alone); the findings it posts are scripted, not a real review.
 /// </summary>
@@ -51,7 +51,7 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
     {
         if (!Configured)
         {
-            Skip.Test($"Set {AppIdVariable}, {KeyVariable}, {RepoVariable} and {PrVariable} (scripts/review-live-github.ps1) to run against GitHub.");
+            Skip.Test($"Set {AppIdVariable}, {KeyVariable}, {RepoVariable} and {PrVariable} (the review-live-github command) to run against GitHub.");
             return;
         }
 
@@ -116,7 +116,7 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
     {
         if (!Configured)
         {
-            Skip.Test($"Set {AppIdVariable}, {KeyVariable}, {RepoVariable} and {PrVariable} (scripts/review-live-github.ps1) to run against GitHub.");
+            Skip.Test($"Set {AppIdVariable}, {KeyVariable}, {RepoVariable} and {PrVariable} (the review-live-github command) to run against GitHub.");
             return;
         }
 
@@ -264,7 +264,7 @@ public class ReviewLiveGitHubTests(ReviewLiveGitHubTests.Factory factory)
                 s.Chains["completions-cheap"] = [new ReviewDecisionChainEntry { Provider = "scripted-verifier" }];
             });
             services.PostConfigure<ReviewExecutorSettings>(s => s.PollSeconds = 1);
-            // The merge gate stays on whatever user-secrets say (review-github-setup.ps1 turns it off for
+            // The merge gate stays on whatever user-secrets say (the review-github-setup command turns it off for
             // the repo on the desktop): a live check must never merge the scratch PR.
             services.PostConfigure<ReviewPolicySettings>(s => s.GatesOff.Clear());
             // Manual passes only (the timer stays off), and only the labelled scratch PR, draft or not.
