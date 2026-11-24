@@ -1526,10 +1526,11 @@
             "Disposal_closes_all_used_streams",
             "Existing_marker_factory_observes_live_then_empty_membership",
             "Termination_kills_reparented_member_before_rescue",
+            "Unrelated_foreign_uid_git_does_not_prevent_join",
             "A_child_born_during_signaling_is_joined_by_a_later_pass"
           ],
           "platform": "windows",
-          "reason": "Linux-only by construction: native managed pipes, setsid orphan and late-fork containment; Windows transport is owed by S3.",
+          "reason": "Linux-only by construction: native managed pipes, setsid orphan, procfs UID permissions and late-fork containment; Windows transport is owed by S3.",
           "owner": "CARD-1850"
         },
         {

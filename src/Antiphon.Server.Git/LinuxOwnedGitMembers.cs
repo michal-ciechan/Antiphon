@@ -17,6 +17,7 @@ internal interface ILinuxProcOperations
     bool HidesProcesses();
     IEnumerable<string> EnumerateEntries();
     LinuxProcIdentity? ReadIdentity(int pid);
+    bool HasDisjointUserIds(int pid);
     ValueTask<byte[]> ReadEnvironmentAsync(int pid, CancellationToken token);
     ValueTask SignalAsync(int pid, CancellationToken token);
 }
@@ -26,6 +27,7 @@ internal interface ILinuxProcOperations
 /// exec with a replacement environment can remove the marker. On legacy kernels there is
 /// still a non-atomic check-to-kill PID-reuse interval; a managed Process does not pin a PID.
 /// Reachable unmarked children use a freshly validated ancestry chain, never an image/path.
+/// Detached marker discovery is cooperative within the invoking user's credential scope.
 /// </summary>
 internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwnedGitMembers
 {
@@ -109,7 +111,16 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
                     if (identity.Pid != pid || identity.StartTicks < 0) { unknown = true; continue; }
                     if (root?.LinuxStartTicks is long lower && identity.StartTicks < lower) continue;
                     rows[pid] = identity;
-                    var environment = await io.ReadEnvironmentAsync(pid, token).ConfigureAwait(false);
+                    byte[] environment;
+                    try { environment = await io.ReadEnvironmentAsync(pid, token).ConfigureAwait(false); }
+                    catch (UnauthorizedAccessException) when (root is { Pid: > 1, LinuxStartTicks: >= 0 })
+                    {
+                        // Keep the identity in rows so a foreign-UID descendant with a root chain
+                        // still counts. Marker-only repository probes with no root PID stay strict.
+                        if (!io.HasDisjointUserIds(pid) || !SameInstance(io.ReadIdentity(pid), identity, checkParent: true))
+                            unknown = true;
+                        continue;
+                    }
                     if (!Within(deadline, token)) { unknown = true; break; }
                     if (environment.Length > MaxEnvironmentBytes
                         || (environment.Length > 0 && environment[^1] != 0)) { unknown = true; continue; }
@@ -235,6 +246,35 @@ internal sealed class LinuxProcOperations(Func<string, byte[]>? readEnvironment 
         }
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
+    }
+
+    public bool HasDisjointUserIds(int pid)
+    {
+        try
+        {
+            var observer = ReadUserIds("/proc/self/status");
+            var candidate = ReadUserIds("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/status");
+            return !candidate.Any(observer.Contains);
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
+    private static uint[] ReadUserIds(string path)
+    {
+        foreach (var line in File.ReadLines(path))
+        {
+            if (!line.StartsWith("Uid:", StringComparison.Ordinal)) continue;
+            // Linux reports real, effective, saved-set and filesystem UIDs in this order.
+            var fields = line[4..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length != 4) break;
+            var ids = new uint[fields.Length];
+            for (var index = 0; index < ids.Length; index++)
+                if (!uint.TryParse(fields[index], NumberStyles.None, CultureInfo.InvariantCulture, out ids[index]))
+                    throw new InvalidDataException("owned_git_status_uid_invalid");
+            return ids;
+        }
+        throw new InvalidDataException("owned_git_status_uid_invalid");
     }
 
     public async ValueTask<byte[]> ReadEnvironmentAsync(int pid, CancellationToken token)
