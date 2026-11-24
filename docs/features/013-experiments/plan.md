@@ -344,9 +344,11 @@ its gate:
    over a per-repo check).
 5. The proposal PR links the experiment as its evidence. A human still approves it.
 
-Scenarios live in the same repo as the code. The agent that drafts a candidate works in a
-workspace where the held-out scenario files are removed before it starts, and its sandbox code host
-does not serve them, so it cannot read the cases it will be scored on.
+Scenarios live in the same repo as the code. **A trial cannot see them:** its workspace is rebuilt
+at the original run's commits (section 2a), and a scenario is written after that run, so the file is
+not in that checkout. Review config is also read at the base commit, never from the head. The one
+agent that works on a current checkout is the one drafting a candidate change; the held-out scenario
+files are removed from its workspace before it starts.
 
 Suites split tuning and held-out by case, stably (by case id), and the held-out part is refreshed
 with new cases over time so candidates cannot slowly fit it.
