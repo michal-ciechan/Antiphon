@@ -26639,6 +26639,7 @@
         "RcManifestRecoveryTests",
         "RcManifestScaleTests",
         "ReleaseAuthorityTests",
+        "TestDurationTripwireTests",
         "TestPhaseSummaryTests",
         "TestPhaseSupervisorTests",
         "TestTimingChokePointTests",

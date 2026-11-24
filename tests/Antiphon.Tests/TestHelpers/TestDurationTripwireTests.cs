@@ -228,6 +228,18 @@ public sealed class TestDurationTripwireTests
         return 0;
     }
 
+    // Unit 33: the four verification tools are commands whose sources are ASCII (scripts/lib's rule), and their scripts are gone.
+    [Test]
+    public void The_verification_tool_commands_are_ascii_and_replace_their_scripts()
+    {
+        var root = C1514Support.RepoRoot();
+        foreach (var file in new[] { "Antiphon.Nightly/DurationTripwire.cs", "Antiphon.Nightly/MechanicalPc.cs", "Antiphon.Nightly/SessionStateCacheMeasure.cs",
+                     "Antiphon.Nightly/AgentTuiProfileSmoke.cs", "Antiphon.Scripts/VerificationToolCommands.cs" })
+            File.ReadAllBytes(Path.Combine(root, "scripts", "lib", file)).ShouldAllBe(b => b < 128, file);
+        foreach (var script in new[] { "test-duration-tripwire.ps1", "test-mechanical-pc-contract.ps1", "measure-session-state-cache.ps1", "verify-agent-tui-profile.ps1" })
+            File.Exists(Path.Combine(root, "scripts", script)).ShouldBeFalse(script);
+    }
+
     // The tripwire in process (DurationTripwire.Run, the test-duration-tripwire command) on a temporary TRX and allowlist.
     private static async Task<(int ExitCode, string Output)> InvokeAsync(string trxXml, string allowlist)
     {
