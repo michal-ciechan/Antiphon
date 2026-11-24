@@ -222,6 +222,8 @@ run would and stores the same output. Nothing about judging is added to the step
 ```yaml
 # .antiphon/review/scenarios/suite.yaml
 suite: demo-review
+targets: [categorise, select, group, packs, review, collate, verify]   # or one step, or `all`
+gates: { human-approve: approve }      # only needed when a gate is on the path
 judge:
   kind: model                  # or: agent
   provider: anthropic          # for agent: kind: ClaudeCode, level: High
@@ -248,7 +250,7 @@ be run against new cases. A variant records the exact resolved values each trial
 
 ### 6. Experiments and scoring
 
-- An experiment is: targets (section 6a), cases or a suite, variants including a baseline. Each
+- An experiment is: a suite (which sets the targets, section 6a) or picked cases, variants including a baseline. Each
   cell runs **once** by default (decided 2026-11-24). The same case with the same settings is never
   run twice: its stored trial is reused (section 2). **Repeats are optional**, for one purpose: a
   model can answer differently to the same input, so a person who doubts a result can ask for more
@@ -265,23 +267,39 @@ be run against new cases. A variant records the exact resolved values each trial
 
 ### 6a. Targeting steps and per-run instructions
 
-**Targets: from many steps to one.** An experiment names the steps it exercises:
+**The suite picks what runs** (decided 2026-11-24). Targets are part of the suite, so every case in
+it is exercised the same way and results stay comparable over time. An experiment runs a suite as
+defined; **Try another setting** on the graph makes a one-case, unsaved suite from the picked steps,
+which can be saved.
+
+**What is picked then runs as the graph says.** The sandbox run uses the real executor on the run's
+workflow revision (or the variant's), entering at the first target and following the graph's edges:
+
+- order, fan-outs and joins come from the graph, never from the order steps are listed in;
+- a step on the path between two targets runs too, because the graph puts it there;
+- routing follows the step's real output, so a variant that changes `route` from `clean` to
+  `findings` takes the other edge, and the comparison shows it;
+- a gate or wait on the path is answered from the case's recorded decision or event, or from an
+  answer the suite scripts (`gates: { human-approve: approve }`); with neither, the run stops there;
+- back edges are followed only as far as the case recorded (a second round runs if the case has
+  one), within the graph's own iteration limits;
+- the run ends when it leaves the targets.
+
+**Targets: from many steps to one:**
 
 | Target | Example | What runs |
 |---|---|---|
 | The whole workflow | intake → route | Every step, in the sandbox |
 | A section | "Review" | Its steps; earlier outputs come from the case |
 | A chain | `categorise` → `verify` | Those steps in order, each fed by the one before |
-| Several separate steps | `categorise` and `verify` | Each replayed alone from its recorded inputs |
+| Several separate parts | `categorise`, and `verify` | Each part is its own entry into the graph, from recorded inputs |
 | One step | `verify` | That step only |
 | One item of a fan-out | reviewer group `correctness` | That reviewer only |
 
-- Steps are picked on the graph (click, shift-click, or a section header), or listed in a scenario
-  file as `targets:`.
-- For each step not targeted, the run says what happens to it: **recorded** (serve the original
-  output, the default for steps before a target), **rerun** (run it with current settings, the
-  default for steps between two targets of a chain), or **skip** (the default for steps after the
-  last target).
+- Steps are picked on the graph (click, shift-click, or a section header) when building a suite, or
+  listed in the suite file as `targets:`.
+- Steps before the first target are not run: their recorded outputs feed it. Steps after the last
+  target are not run.
 - Expectations attach to a step (`at: verify`) or to the end of the run. Results and the comparison
   view are per step, so a chain shows where two variants first diverge.
 
@@ -370,7 +388,7 @@ why: >
   PR #2 added a /done endpoint that sets the status directly and skips Board.Move, so the
   timestamps and the allowed-transition rule are bypassed. A reviewer must catch this.
 source: { repo: michal-ciechan/antiphon-demo, base: e737fb3, head: b511da6 }
-targets: [categorise, select, group, packs, review, collate, verify]   # or one step, or `all`
+suite: demo-review          # the suite sets the targets, the judge and the gate answers
 expect:
   all:
     - finding-present:
