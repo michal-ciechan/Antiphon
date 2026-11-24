@@ -5,7 +5,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// The land-graph commands (land-graph-audit, land-graph-precheck, land-graph-land-refresh; unit 11 of
-/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md) in process, over real children. The production CLI lets
+/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md), and regenerate-derived-impact-index (unit 41), in
+/// process, over real children. The production CLI lets
 /// the audit tool write to this process's own streams; here that output lands in the host's writers instead, so a test
 /// reads what an operator would see. git, dotnet and the tool are real processes (WatchedLauncher).
 /// </summary>

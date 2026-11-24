@@ -1,5 +1,6 @@
 using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -170,6 +171,105 @@ public class LandGeneratedArtifactTests
         (await RequiredGitAsync(world.Remote.Path, "show", sha + ":tests/derived-impact-index.json")).ShouldBe("base-index\n");
     }
 
+    // Unit 41 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the production regenerator probes only the
+    // checkout's dotnet, builds the driver once at the slot's CPU grant, then runs the built driver itself until it prints
+    // unchanged, every child in the land worktree. No pwsh child and no regenerate-derived-impact-index.ps1.
+    [Test]
+    public async Task Regenerator_runs_the_built_driver_until_it_prints_unchanged()
+    {
+        using var land = new TemporaryDirectory("antiphon-ft5-argv");
+        SeedDriverProject(land.Path);
+        var children = new RecordingChildren("derived-impact windowsOnly count=1 linuxOnly count=0\nderived-impact-index changed\n",
+            "derived-impact windowsOnly count=1 linuxOnly count=0\nderived-impact-index unchanged\n");
+        var slots = new GrantingSlots();
+
+        var result = await new DerivedImpactIndexRegenerator(slots, children.RunAsync).RegenerateAsync(land.Path, CancellationToken.None);
+
+        (result.Succeeded, result.Changed, result.Reason, result.ToolchainUnavailable).ShouldBe((true, true, (string?)null, false));
+        const string project = "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj";
+        var driver = "dotnet run --project " + project + " --no-build -p:UseAppHost=false -- " + Path.GetFullPath(land.Path);
+        children.Lines.ShouldBe([
+            "dotnet --version",
+            "dotnet build " + project + " -p:UseAppHost=false --nologo -maxcpucount:2",
+            driver,
+            driver,
+        ]);
+        children.Directories.ShouldAllBe(directory => directory == land.Path);
+        (slots.Acquires, slots.Releases).ShouldBe((1, 1));
+    }
+
+    [Test]
+    [Arguments("derived-impact-index changed\n", "still-changed", 2)]
+    [Arguments("derived-impact windowsOnly count=1 linuxOnly count=0\n", "unexpected-output", 1)]
+    public async Task Regenerator_refuses_a_driver_that_does_not_settle(string stdout, string reason, int runs)
+    {
+        using var land = new TemporaryDirectory("antiphon-ft5-settle");
+        SeedDriverProject(land.Path);
+        var children = new RecordingChildren(stdout);
+
+        var result = await new DerivedImpactIndexRegenerator(new GrantingSlots(), children.RunAsync).RegenerateAsync(land.Path, CancellationToken.None);
+
+        (result.Succeeded, result.Changed, result.Reason).ShouldBe((false, false, reason));
+        children.Lines.Count(line => line.StartsWith("dotnet run ", StringComparison.Ordinal)).ShouldBe(runs);
+    }
+
+    [Test]
+    public async Task Regenerator_without_the_driver_project_is_missing_generator()
+    {
+        using var land = new TemporaryDirectory("antiphon-ft5-nodriver");
+        var children = new RecordingChildren("derived-impact-index unchanged\n");
+
+        var result = await new DerivedImpactIndexRegenerator(new GrantingSlots(), children.RunAsync).RegenerateAsync(land.Path, CancellationToken.None);
+
+        (result.Succeeded, result.Reason, result.ToolchainUnavailable).ShouldBe((false, "missing-generator", false));
+        children.Lines.ShouldBeEmpty();
+    }
+
+    private static void SeedDriverProject(string land)
+    {
+        var project = Path.Combine(land, DerivedImpactIndexRegen.ProjectRelative);
+        Directory.CreateDirectory(Path.GetDirectoryName(project)!);
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+    }
+
+    // The children of one regeneration: each recorded as "<file> <argv>" with its directory; every child exits 0, and the
+    // driver runs print the given outputs in turn (the last one repeats).
+    private sealed class RecordingChildren(params string[] driverOutputs)
+    {
+        private int _runs;
+
+        public List<string> Lines { get; } = [];
+
+        public List<string> Directories { get; } = [];
+
+        public Task<DerivedImpactRegenProcess> RunAsync(string cwd, string file, IReadOnlyList<string> args, CancellationToken ct)
+        {
+            Lines.Add(file + " " + string.Join(" ", args));
+            Directories.Add(cwd);
+            var stdout = args[0] == "run" ? driverOutputs[Math.Min(_runs++, driverOutputs.Length - 1)] : "";
+            return Task.FromResult(new DerivedImpactRegenProcess(true, stdout));
+        }
+    }
+
+    private sealed class GrantingSlots : IBuildSlotGate
+    {
+        public int Acquires { get; private set; }
+
+        public int Releases { get; private set; }
+
+        public Task<BuildSlotHold> AcquireAsync(string label, Action<string> report, CancellationToken ct)
+        {
+            Acquires++;
+            return Task.FromResult(new BuildSlotHold(BuildSlotHoldOutcome.Granted, Guid.NewGuid(), 2, TimeSpan.Zero));
+        }
+
+        public Task ReleaseAsync(BuildSlotHold hold, Action<string> report, CancellationToken ct)
+        {
+            Releases++;
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class BuilderRegenerator : IDerivedImpactIndexRegenerator
     {
         public int Calls { get; private set; }
@@ -236,7 +336,6 @@ public class LandGeneratedArtifactTests
                     await repo.CommitFileAsync("global.json", """{"sdk":{"version":"99.0.100","rollForward":"disable"}}""");
                     Directory.CreateDirectory(Path.Combine(repo.Path, Path.GetDirectoryName(DerivedImpactIndexRegen.ProjectRelative)!));
                     await repo.CommitFileAsync(DerivedImpactIndexRegen.ProjectRelative, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
-                    await repo.CommitFileAsync(DerivedImpactIndexRegen.ScriptRelative, "throw 'PowerShell ran without the selected .NET SDK'\n");
                 }
                 await repo.GitAsync("remote", "add", "origin", remote.Path);
                 await repo.GitAsync("push", "-u", "origin", "master");

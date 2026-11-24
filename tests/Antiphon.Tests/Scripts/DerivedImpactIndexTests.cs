@@ -192,10 +192,11 @@ public sealed class DerivedImpactIndexTests
         Edge(index, AuditCommandPath).ShouldContain("LandGraphEvaluationTests");
     }
 
-    // CARD-1838. A stale committed index is rewritten by the Merge script, and a second run
-    // is a no-op. The script itself does not commit.
+    // CARD-1838. A stale committed index is rewritten by the Merge command, and a second run
+    // is a no-op. The command itself does not commit. Unit 41: the command runs in this process
+    // and starts this checkout's built driver (dotnet run --no-build), as scripts/antiphon does.
     [Test]
-    public async Task regenerate_script_reports_changed_then_unchanged()
+    public async Task regenerate_command_reports_changed_then_unchanged()
     {
         using var fixture = new Fixture();
         fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
@@ -223,7 +224,7 @@ public sealed class DerivedImpactIndexTests
         Should.Throw<ShouldAssertException>(() => AssertChanged(mutant));
     }
 
-    // CARD-1838. The Merge process names the regenerate script as the last step before
+    // CARD-1838. The Merge process names the regenerate command as the last step before
     // DerivedImpactIndexTests and the push, and the Merge guard union names the two missed rows.
     [Test]
     public void merge_process_names_the_regenerate_step()
@@ -232,9 +233,10 @@ public sealed class DerivedImpactIndexTests
         var loop = File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"));
         var guide = File.ReadAllText(Path.Combine(root, "docs", "testing-and-build.md"));
         AssertRegenDocs(loop, guide);
+        File.Exists(Path.Combine(root, "scripts", "regenerate-derived-impact-index.ps1")).ShouldBeFalse("the regeneration is a command (unit 41)");
 
         var blinded = loop.Replace(
-            "The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1.",
+            RegenStep,
             "The last step before the push is a hand edit of tests/derived-impact-index.json.",
             StringComparison.Ordinal);
         blinded.ShouldNotBe(loop);
@@ -248,8 +250,8 @@ public sealed class DerivedImpactIndexTests
         Should.Throw<ShouldAssertException>(() => AssertRegenDocs(loop, guardBlind));
     }
 
-    // rc run ae84478d g131. regenerate_script_reports_changed_then_unchanged runs the driver with
-    // -NoBuild. The qualification builds only Antiphon.sln, and the Merge step builds the driver
+    // rc run ae84478d g131. regenerate_command_reports_changed_then_unchanged runs the driver with
+    // --no-build. The qualification builds only Antiphon.sln, and the Merge step builds the driver
     // itself, so only this read sees a driver that the solution build does not produce.
     [Test]
     public void solution_build_produces_the_regenerate_driver()
@@ -283,6 +285,10 @@ public sealed class DerivedImpactIndexTests
         stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
     }
 
+    // Unit 41: the step is the CLI command; scripts/regenerate-derived-impact-index.ps1 is gone.
+    private const string RegenStep =
+        "The last step before DerivedImpactIndexTests and the push is `scripts/antiphon regenerate-derived-impact-index`";
+
     private static void AssertRegenDocs(string loop, string guide)
     {
         const string heading = "### Merge process (CARD-1783)";
@@ -290,15 +296,14 @@ public sealed class DerivedImpactIndexTests
         start.ShouldBeGreaterThanOrEqualTo(0);
         var end = loop.IndexOf("\n### ", start + heading.Length, StringComparison.Ordinal);
         var section = end < 0 ? loop[start..] : loop[start..end];
-        const string step = "The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1.";
-        section.ShouldContain(step, Case.Sensitive);
+        section.ShouldContain(RegenStep, Case.Sensitive);
         section.ShouldContain("DerivedImpactIndexBuilder.Build", Case.Sensitive);
         section.ShouldContain("DerivedImpactIndexBuilder.Write", Case.Sensitive);
         section.ShouldContain("commits nothing", Case.Sensitive);
         section.ShouldContain(
             "DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare",
             Case.Sensitive);
-        section.ShouldContain("so a Merge that skips the script still fails", Case.Sensitive);
+        section.ShouldContain("so a Merge that skips the command still fails", Case.Sensitive);
 
         const string guard = "A Merge brief adds DerivedImpactIndexTests and C1584_E2EExpandedBudget to that standing guard union";
         guide.ShouldContain(guard, Case.Sensitive);
@@ -1273,38 +1278,18 @@ public sealed class DerivedImpactIndexTests
     private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
         ImpactedClassesRun.SelectAsync(RepoRoot(), ["--repo", root, .. args]);
 
+    // The regenerate-derived-impact-index command in this process, as `scripts/antiphon regenerate-derived-impact-index
+    // --repo <fixture> --no-build` runs it: this checkout's driver, already built by the solution build, over the fixture.
+    // The driver is a real child (dotnet run); its output lands in the host's writers instead of this process's console.
     private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
     {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = RepoRoot(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(RepoRoot(), "scripts", "regenerate-derived-impact-index.ps1"));
-        start.ArgumentList.Add("--repo");
-        start.ArgumentList.Add(fixtureRoot);
-        start.ArgumentList.Add("-NoBuild");
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException("regenerate-derived-impact-index exceeded 180s");
-        }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        return (process.ExitCode, stdout, stdout + stderr);
+        var options = Antiphon.Nightly.ImpactIndexRegenerationOptions.Parse(["--repo", fixtureRoot, "--no-build"], RepoRoot(), RepoRoot(), null);
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var host = Antiphon.Tests.Application.LandGraphCommandHost.Create(output, error);
+        var exit = await Task.Run(() => Antiphon.Nightly.ImpactIndexRegeneration.Run(options, host, new System.IO.Abstractions.FileSystem()));
+        var stdout = output.ToString();
+        return (exit, stdout, stdout + error);
     }
 
     private static string RepoRoot()

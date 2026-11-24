@@ -62,6 +62,9 @@ namespace Antiphon.Scripts
             // The impacted-classes selector answers every input itself: exit 0 selected, 1 the table, catalog or index refused
             // or the audit failed, 2 usage, git failed or a release-evidence refusal.
             [ImpactedClassesCommand.Name] = ImpactedClassesCommand.Run,
+            // The derived impact index regeneration answers every input itself (unit 41): exit 0 the index was written (changed
+            // or unchanged), 1 the driver project is missing or the build or the driver failed, 2 usage.
+            [DerivedImpactIndexCommand.Name] = DerivedImpactIndexCommand.Run,
             // The qualification ETA answers every input itself: exit 0 printed, 1 refused or unreadable (one stderr line), 2 usage.
             [QualificationEtaCommand.Name] = QualificationEtaCommand.Run,
             // The qualification watcher answers every input itself: exit 0 the window or the run ended, 1 the state file cannot be
@@ -299,7 +302,7 @@ namespace Antiphon.Scripts
             Console.Error.WriteLine("usage: antiphon-scripts live-lane-evidence <case> [<context.json>] | " + LiveLaneScanGatesUsage + " | " + LiveLaneRosterUsage + " | " + LiveLaneBindManifestUsage
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
-                + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
+                + " | " + DerivedImpactIndexCommand.Usage + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
                 + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
                 + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage
                 + " | " + RcQualificationStatusCommand.Usage

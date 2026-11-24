@@ -6,8 +6,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// One land-worktree regeneration of <c>tests/derived-impact-index.json</c>.
-/// The production path builds the repo's own driver under one build-slot hold, then runs
-/// <c>scripts/regenerate-derived-impact-index.ps1 -NoBuild</c> until it prints unchanged.
+/// The production path builds the repo's own driver under one build-slot hold, then runs it
+/// (<c>dotnet run --project &lt;driver&gt; --no-build</c>) until it prints unchanged. No PowerShell.
 /// </summary>
 internal interface IDerivedImpactIndexRegenerator
 {
@@ -24,9 +24,25 @@ internal static class DerivedImpactIndexRegen
     internal const string CommitMessage = "chore(land): regenerate the derived impact index";
     internal const string FailurePrefix = "index-regen-failed:";
     internal const string UnavailablePrefix = "index-regen-unavailable:";
-    internal const string ScriptRelative = "scripts/regenerate-derived-impact-index.ps1";
     internal const string ProjectRelative = "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj";
     internal const int BudgetSeconds = 180;
+
+    /// <summary>The driver build, in the land worktree: the checkout's SDK, no apphost, the slot's CPU grant when it has one.</summary>
+    internal static IReadOnlyList<string> BuildArguments(int maxCpuCount)
+    {
+        var args = new List<string> { "build", ProjectRelative, "-p:UseAppHost=false", "--nologo" };
+        if (maxCpuCount > 0)
+            args.Add("-maxcpucount:" + maxCpuCount);
+        return args;
+    }
+
+    /// <summary>
+    /// One driver run over the land worktree, as <c>scripts/antiphon regenerate-derived-impact-index --no-build</c> runs it:
+    /// <c>dotnet run</c> rather than <c>dotnet exec</c> of a fixed dll path, so the worktree's own project decides the output
+    /// path (its target framework and configuration can differ from the ones this server was built with).
+    /// </summary>
+    internal static IReadOnlyList<string> RunArguments(string landWorktree) =>
+        ["run", "--project", ProjectRelative, "--no-build", "-p:UseAppHost=false", "--", Path.GetFullPath(landWorktree)];
 
     /// <summary>Exactly one conflict, and it is the derived-impact index. Any other shape stays a rebase conflict.</summary>
     internal static bool IsOnlyIndex(IReadOnlyList<string> paths)
@@ -37,20 +53,29 @@ internal static class DerivedImpactIndexRegen
     }
 }
 
+/// <summary>What one child did: whether it exited 0, and its standard output.</summary>
+internal readonly record struct DerivedImpactRegenProcess(bool Ok, string StdOut);
+
 /// <summary>
 /// Runs the checkout's generator in the land worktree. A missing slot refuses; this path never builds unleased.
-/// One hold covers the driver build and at most two <c>-NoBuild</c> runs. No second solution build.
+/// One hold covers the driver build and at most two <c>--no-build</c> driver runs. No second solution build.
+/// <paramref name="run"/> starts one child (null: a real process); a test records the argv instead.
 /// </summary>
-internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDerivedImpactIndexRegenerator
+internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots, DerivedImpactIndexRegenerator.ChildRunner? run = null)
+    : IDerivedImpactIndexRegenerator
 {
+    /// <summary>Starts <paramref name="file"/> with <paramref name="args"/> in <paramref name="cwd"/> and waits for it.</summary>
+    internal delegate Task<DerivedImpactRegenProcess> ChildRunner(string cwd, string file, IReadOnlyList<string> args, CancellationToken ct);
+
+    private readonly ChildRunner _run = run ?? RunAsync;
+
     public async Task<DerivedImpactRegenResult> RegenerateAsync(string landWorktree, CancellationToken ct)
     {
         var started = Environment.TickCount64;
         long Elapsed() => Environment.TickCount64 - started;
 
-        var script = Path.Combine(landWorktree, DerivedImpactIndexRegen.ScriptRelative);
         var project = Path.Combine(landWorktree, DerivedImpactIndexRegen.ProjectRelative);
-        if (!File.Exists(script) || !File.Exists(project))
+        if (!File.Exists(project))
             return new(false, false, "missing-generator", Elapsed());
 
         // Use the checkout's SDK selection. The dotnet host can be present in a runtime-only image.
@@ -61,8 +86,6 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
             {
                 if (!await ToolAvailableAsync(landWorktree, "dotnet", "--version", probeBudget.Token))
                     return new(false, false, "dotnet-sdk", Elapsed(), ToolchainUnavailable: true);
-                if (!await ToolAvailableAsync(landWorktree, "pwsh", "-Version", probeBudget.Token))
-                    return new(false, false, "pwsh", Elapsed(), ToolchainUnavailable: true);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -91,23 +114,17 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
                 DerivedImpactIndexRegen.BudgetSeconds * 1000 - probeMilliseconds)));
             try
             {
-                var buildArgs = new List<string>
-                {
-                    "build", DerivedImpactIndexRegen.ProjectRelative, "-p:UseAppHost=false", "--nologo",
-                };
-                if (slot.MaxCpuCount > 0)
-                    buildArgs.Add("-maxcpucount:" + slot.MaxCpuCount);
-                var build = await RunAsync(landWorktree, budget.Token, "dotnet", buildArgs);
+                var build = await _run(landWorktree, "dotnet", DerivedImpactIndexRegen.BuildArguments(slot.MaxCpuCount), budget.Token);
                 if (budget.IsCancellationRequested && !ct.IsCancellationRequested)
                     return new(false, false, "timeout", Elapsed());
                 if (!build.Ok)
                     return new(false, false, "build-failed", Elapsed());
 
                 var changed = false;
-                for (var run = 1; run <= 2; run++)
+                var driverArgs = DerivedImpactIndexRegen.RunArguments(landWorktree);
+                for (var attempt = 1; attempt <= 2; attempt++)
                 {
-                    var result = await RunAsync(landWorktree, budget.Token, "pwsh",
-                        ["-NoProfile", "-File", DerivedImpactIndexRegen.ScriptRelative, "-NoBuild"]);
+                    var result = await _run(landWorktree, "dotnet", driverArgs, budget.Token);
                     if (budget.IsCancellationRequested && !ct.IsCancellationRequested)
                         return new(false, false, "timeout", Elapsed());
                     if (!result.Ok)
@@ -140,12 +157,12 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
         }
     }
 
-    private static async Task<bool> ToolAvailableAsync(string cwd, string file, string arg, CancellationToken ct)
+    private async Task<bool> ToolAvailableAsync(string cwd, string file, string arg, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         try
         {
-            var outcome = await RunAsync(cwd, ct, file, [arg]);
+            var outcome = await _run(cwd, file, [arg], ct);
             ct.ThrowIfCancellationRequested();
             return outcome.Ok;
         }
@@ -156,7 +173,7 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
         }
     }
 
-    private static async Task<ProcessOutcome> RunAsync(string cwd, CancellationToken ct, string file, IReadOnlyList<string> args)
+    private static async Task<DerivedImpactRegenProcess> RunAsync(string cwd, string file, IReadOnlyList<string> args, CancellationToken ct)
     {
         var start = new ProcessStartInfo
         {
@@ -188,8 +205,6 @@ internal sealed class DerivedImpactIndexRegenerator(IBuildSlotGate? slots) : IDe
             throw;
         }
         await Task.WhenAll(stdout, stderr);
-        return new ProcessOutcome(process.ExitCode == 0, await stdout);
+        return new DerivedImpactRegenProcess(process.ExitCode == 0, await stdout);
     }
-
-    private readonly record struct ProcessOutcome(bool Ok, string StdOut);
 }

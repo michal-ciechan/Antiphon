@@ -739,7 +739,7 @@ Patterns below are ordinal and case-sensitive. The first match wins for a path. 
 1. **I-1.** Classify with `git diff --name-only origin/master...<branch>` against the tables above before dispatch. Any NORMAL path means the normal pipeline. Write the lane in the brief and put `[fast]` in the title only when the lane is fast. Record the lane and class on the card revision.
 2. **I-2. FAST-DOC.** Docs task, no checkpoint rows and no Code build. Automated check only: `scripts/antiphon evidence-diff --base <base>`, `git merge-tree --write-tree origin/master HEAD`, and `checkpoint import --plan` when a `### Checkpoints` table changed. No Opus Review and no Review task. Report `next: land`. Plain `land`. The land still builds until FT-2.
 3. **I-3. FAST-DOC-CONTRACT.** Same as I-2, plus one row: the reader classes from `scripts/antiphon impacted-classes --range <base>..<tip>` (one build of `tests/Antiphon.Tests`). A capped path runs its first 25 classes and defers the rest (D-9).
-4. **I-4. FAST-TEST.** Code builds the touched test project and runs the touched classes (standing rule 8: one red witness plus one narrow green). Do not run `regenerate-derived-impact-index.ps1`, do not commit `tests/derived-impact-index.json`, and do not run the guard batch or DerivedImpactIndexTests. Review is a short Sonnet diff-only review, 15 minutes, no checkpoint rerun, aimed at whether the test can fail. Repairs of existing failing tests follow the fixture-only precedent and have no Review. The land build stays (D-6).
+4. **I-4. FAST-TEST.** Code builds the touched test project and runs the touched classes (standing rule 8: one red witness plus one narrow green). Do not run `scripts/antiphon regenerate-derived-impact-index`, do not commit `tests/derived-impact-index.json`, and do not run the guard batch or DerivedImpactIndexTests. Review is a short Sonnet diff-only review, 15 minutes, no checkpoint rerun, aimed at whether the test can fail. Repairs of existing failing tests follow the fixture-only precedent and have no Review. The land build stays (D-6).
 5. **I-5.** After each landing wave, and always before an rc cut or a Merge batch, one small Code task runs the regenerator and DerivedImpactIndexTests and lands the index alone. That one regeneration replaces one replay per branch. Between waves, DerivedImpactIndexTests is red on master: declare it inherited in Merge and rc briefs.
 6. **I-6.** A branch that already committed the index and now conflicts joins a Merge batch with its peers. The batch regenerates once. It does not get a per-branch replay.
 7. **I-7.** At most 8 fast lands between post-land early-warning runs (O-5). Any red on master from a fast land stops fast lands until its Debug lands.
@@ -844,7 +844,7 @@ No row needs an Environment cell. `AntiphonAppFixture` keeps every Windows-path 
 | CP-merge-subset-e2e | batch | tests/Antiphon.E2E -> bin-merge-e2e/ | merge-high-radius | `/*/*/(ContractSnapshotTests*)/*` | CARD-1783 fixed subset, E2E contract snapshots | 0 failed | 5 | 10 | true | n/a |
 | CP-merge-subset-messaging | batch | tests/Antiphon.Messaging.Tests -> bin-merge-messaging/ | merge-high-radius | `/*/*/(InboxConversationMigrationTests*)/*` | CARD-1783 migration diff only | 0 failed | 1 | 5 | true | n/a |
 
-The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1. The script calls DerivedImpactIndexBuilder.Build and DerivedImpactIndexBuilder.Write, prints whether the bytes changed, and commits nothing. Exit 0 either way; exit 1 on build failure. DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare, so a Merge that skips the script still fails. Commit the regenerated tests/derived-impact-index.json when the script prints changed, then run DerivedImpactIndexTests, then push.
+The last step before DerivedImpactIndexTests and the push is `scripts/antiphon regenerate-derived-impact-index` (`scripts\antiphon.cmd regenerate-derived-impact-index` on Windows). The command builds and runs the driver project `scripts/regenerate-derived-impact-index`, which calls DerivedImpactIndexBuilder.Build and DerivedImpactIndexBuilder.Write; it prints whether the bytes changed and commits nothing. Exit 0 either way; exit 1 on build failure. `--no-build` runs an already-built driver, and under a build-slot lease the build takes `-maxcpucount:$ANTIPHON_BUILD_SLOT_MAXCPUCOUNT`. DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare, so a Merge that skips the command still fails. Commit the regenerated tests/derived-impact-index.json when the command prints changed, then run DerivedImpactIndexTests, then push.
 
 <a id="review-rounds"></a>
 ### Review rounds: at most three, diff-only after the first, then a human (operator, 2026-11-01; CARD-1635)
@@ -2116,14 +2116,17 @@ existing operation and evidence.
 ### Landing toolchain recovery and FT-2 rollback (CARD-2022, CARD-2036)
 
 The server Dockerfile ships the ASP.NET runtime and pinned Git. The SDK stays in the
-publish stage, and the runtime has no PowerShell. An index-only conflict on that server
-leaves the request in `NeedsResolution`. Read `landing.reason` or the conflict receipt
-for `index-regen-unavailable:dotnet-sdk`, `index-regen-unavailable:pwsh`, or
-`index-regen-unavailable:toolchain-check-timeout`. Use the normal Merge conflict path
-on an SDK and PowerShell-equipped runner. After resolving the source conflicts, build
-the index driver under a build slot and regenerate in the merged worktree. Run the
-generator again and require `derived-impact-index unchanged`. Review the resulting
-source SHA before retrying the land through the original owner.
+publish stage. An index-only conflict on that server leaves the request in
+`NeedsResolution`. Read `landing.reason` or the conflict receipt for
+`index-regen-unavailable:dotnet-sdk` or
+`index-regen-unavailable:toolchain-check-timeout`. The regeneration starts only dotnet
+(the driver build, then `dotnet run --no-build` of the driver), so it needs no
+PowerShell; a server before unit 41 of the PowerShell-to-C# plan also reported
+`index-regen-unavailable:pwsh`. Use the normal Merge conflict path on an SDK-equipped
+runner. After resolving the source conflicts, run
+`scripts/antiphon regenerate-derived-impact-index` in the merged worktree under a build
+slot. Run it again with `--no-build` and require `derived-impact-index unchanged`.
+Review the resulting source SHA before retrying the land through the original owner.
 
 Carry the FT-2 policy and the `docs-skip-target-manifest` state-machine literal together
 when porting to rc. Before rolling back to a server older than FT-2, pause new land
