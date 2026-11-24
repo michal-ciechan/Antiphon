@@ -2,7 +2,7 @@
 // (unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; they replaced the bodies of
 // scripts/set-apphost-maintenance.ps1 and scripts/apphost-watchdog-state-observer.ps1, which stay thin launchers:
 // scripts/cutover-postgres-server2.ps1 starts the first by path, and the per-user Scheduled Task "Antiphon AppHost Watchdog
-// State Observer" (scripts/install-autostart.ps1) the second). The CLI runs them as
+// State Observer" (the install-autostart command) the second). The CLI runs them as
 //
 //   antiphon-scripts set-apphost-maintenance [--clear | --enter-if-absent] [--root <dir>] [--watchdog-task-name <name>]
 //   antiphon-scripts apphost-watchdog-state-observer [--task-name <name>] [--root <dir>] [--state-file <path>] [--marker-file <path>]

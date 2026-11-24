@@ -23,7 +23,7 @@ Start-ScheduledTask -TaskName 'Antiphon AppHost'
 The registered action is `scripts/autostart-apphost.ps1` (a thin launcher of `scripts\antiphon.cmd autostart-apphost`), which waits for Docker
 and Postgres, then invokes `dev-aspire.ps1 -NoBrowser`. Task Scheduler starts it
 outside the shell that requested the start. If the task is missing, register it
-with `pwsh -File scripts/install-autostart.ps1 -AppHostOnly` under an account
+with `scripts\antiphon.cmd install-autostart --apphost-only` under an account
 permitted to register tasks; do not improvise a tool-session launch.
 
 For the usual case, where AppHost may already be running:
@@ -130,7 +130,8 @@ re-read `C:\Antiphon\runner\phone-home.json`. The file write, the `--hard`
 restart, and the rollback order are the
 [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
 S4 (`e1b42f895`, in serving rc `bd34a7ff6da9`) makes
-`scripts/autostart-session-runner.ps1` check that path at supervisor startup.
+`scripts/autostart-session-runner.ps1` (since unit 36 the launcher of
+`scripts\antiphon.cmd autostart-session-runner`) check that path at supervisor startup.
 If present, it reads and validates the config for phone-home on 17204. If
 absent, the default launch is direct on 17204. An unreadable or invalid config
 is refused. The explicit `-PhoneHomeConfigPath` selects the phase-1 file on
@@ -274,8 +275,8 @@ rolled back.
 
 ## Scheduled Tasks and deliberate downtime
 
-- `install-autostart.ps1` Unregister+Registers tasks and terminates a running
-  instance. Use `-AppHostOnly` to refresh AppHost-side tasks without killing a
+- `scripts\antiphon.cmd install-autostart` deletes and re-registers tasks and terminates a running
+  instance. Use `--apphost-only` to refresh AppHost-side tasks without killing a
   healthy runner supervisor.
 - Prefer `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` for task actions;
   version-pinned MSIX paths disappear on PowerShell updates. Keep daemon and
@@ -311,7 +312,7 @@ Once the CARD-1744 window has completed, maintenance on the desktop is the end s
 4. Retrying after exit 1 or 4 killed a DCP still starting; the log blamed podman:
    inspect locks, launch logs and `docker ps` before another teardown.
 5. Re-registering tasks while the runner was up killed its supervisor, leaving
-   an unsupervised daemon: refresh AppHost tasks with `-AppHostOnly`.
+   an unsupervised daemon: refresh AppHost tasks with `install-autostart --apphost-only`.
 
 ## Dead-launch recovery and outage evidence (CARD-1527)
 

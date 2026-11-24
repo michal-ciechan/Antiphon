@@ -130,7 +130,7 @@ contract or a claim that the task is installed or running on every clone. The pl
 environment did not have a matching task. This Slack sidecar does not establish Telegram support.
 
 AppHost owns FakeGateway, not the real Slack/Telegram gateways. Its health or restart does
-not prove sidecar health or restart the sidecar. `scripts/install-autostart.ps1` does not
+not prove sidecar health or restart the sidecar. `scripts\antiphon.cmd install-autostart` does not
 provision this task. Begin with read-only discovery:
 
 ```powershell

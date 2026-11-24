@@ -7,7 +7,7 @@
     unreadable watchdog. Detection only: it never restarts, re-enables, or writes Antiphon's database.
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because the per-user Scheduled Task
-    "Antiphon AppHost Watchdog State Observer" (scripts/install-autostart.ps1) starts this file by path every two minutes.
+    "Antiphon AppHost Watchdog State Observer" (`scripts\antiphon.cmd install-autostart`) starts this file by path every two minutes.
     Delete it when that registration names the command. Agents run `scripts/antiphon apphost-watchdog-state-observer`.
 
     The parameters are the script's, passed when given: -TaskName, -Root, -StateFile, -MarkerFile, -LogFile. The command's

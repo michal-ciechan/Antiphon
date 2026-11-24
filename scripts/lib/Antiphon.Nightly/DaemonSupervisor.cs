@@ -1,7 +1,7 @@
 // CARD-0043, CARD-0420: the long-lived supervisor of one Antiphon service (unit 30 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). It replaced the body of scripts/run-daemon.ps1, which
-// stays as a thin launcher because the AppHost starts it by path (DaemonProcessService: a detached pwsh -File) and the
-// logon task's scripts/autostart-session-runner.ps1 calls it. The CLI runs it as
+// stays as a thin launcher because the AppHost starts it by path (DaemonProcessService: a detached pwsh -File). The logon
+// task's autostart-session-runner command (SessionRunnerAutostart, unit 36) runs it in process. The CLI runs it as
 //
 //   antiphon-scripts run-daemon --name <n> --work-dir <dir> --exe <path> [--exe-args <text>] --log-file <path>
 //       --service-pid-file <path> --state-file <path> [--build-project-dir <dir>] [--log-max-mb 20]
@@ -85,6 +85,12 @@ namespace Antiphon.Nightly
 
         /// <summary>The supervisor the records name; null: this process.</summary>
         public int? SupervisorPid { get; init; }
+
+        /// <summary>
+        /// Variables added to the service's environment on every launch, in order (no flag: an in-process caller's, the
+        /// autostart-session-runner command's phone-home variables, which the build does not see). Empty: none.
+        /// </summary>
+        public IReadOnlyList<KeyValuePair<string, string>> ServiceEnvironment { get; init; } = Array.Empty<KeyValuePair<string, string>>();
 
         /// <summary>The service's arguments, split at whitespace.</summary>
         public IReadOnlyList<string> ExeArgList => (ExeArgs ?? "").Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
@@ -320,6 +326,7 @@ namespace Antiphon.Nightly
                 var argumentList = _options.ExeArgList;
                 WriteLog("Starting " + _options.Exe + " " + string.Join(" ", argumentList));
                 var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in _options.ServiceEnvironment ?? Array.Empty<KeyValuePair<string, string>>()) environment[pair.Key] = pair.Value ?? "";
                 if (_options.Name == "session-runner")
                 {
                     environment["ANTIPHON_STARTUP_ATTEMPT"] = _attempt;

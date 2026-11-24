@@ -117,7 +117,7 @@ public sealed class BuildSlotLauncherTests
         }
     }
 
-    // Called from a PowerShell session (dev-aspire.ps1, start-windows-phone-home-runner.ps1 call it with &), the launcher
+    // Called from a PowerShell session (dev-aspire.ps1 calls it with &), the launcher
     // reads $args: an unsplatted array stays one token per element, an empty element included; the CLI runs at the caller's
     // pushed location; the caller's earlier $LASTEXITCODE does not leak; the caller's process holds the lease.
     [Test]

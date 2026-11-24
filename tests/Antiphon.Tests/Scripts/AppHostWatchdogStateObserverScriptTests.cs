@@ -15,7 +15,8 @@ namespace Antiphon.Tests.Scripts;
 /// set-apphost-maintenance commands (AppHostWatchdogStateObserver, AppHostMaintenance) and run in process: the document,
 /// episode and maintenance rows on AppHostWorld's task table (the scripts ran against throwaway tasks under pwsh), and the
 /// Task Scheduler itself (AppHostTasks: a missing name, and a throwaway task created from XML with schtasks.exe, read,
-/// disabled and enabled, then deleted; never run). Detection only: nothing touches the live AppHost watchdog.
+/// disabled and enabled, then deleted; never run). Detection only: nothing touches the live AppHost watchdog. The installer's
+/// observer selection row is AutostartInstallTests' since the installer became the install-autostart command (unit 36).
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -95,19 +96,6 @@ public sealed class AppHostWatchdogStateObserverScriptTests
         state.GetProperty("maintenance").GetBoolean().ShouldBeTrue();
         state.GetProperty("state").GetString().ShouldBe("Missing");
         world.Trace.ShouldNotContain(row => row.StartsWith("enable", StringComparison.Ordinal) || row.StartsWith("disable", StringComparison.Ordinal));
-    }
-
-    [Test]
-    public void Installer_keeps_observer_when_NoWatchdog_and_skips_it_only_for_NoAppHost()
-    {
-        var installer = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "install-autostart.ps1"));
-        installer.ShouldContain("NoWatchdogStateObserver");
-        installer.ShouldContain("Antiphon AppHost Watchdog State Observer");
-        installer.ShouldContain("set-apphost-maintenance.ps1");
-        installer.ShouldContain("if (-not $NoWatchdogStateObserver -and -not $NoAppHost)");
-        installer.ShouldNotContain("Disable-ScheduledTask -TaskName `\"$WatchdogTaskName`\"");
-        // -NoWatchdog must not gate the observer registration.
-        installer.ShouldNotContain("if (-not $NoWatchdog -and -not $NoWatchdogStateObserver");
     }
 
     [Test]

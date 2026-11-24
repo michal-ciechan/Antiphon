@@ -47,9 +47,10 @@ public sealed class GrokRunnerImageContractTests
 
         Read("docs/agent-kinds.md").ShouldContain("120x30 Grok Build " + Version);
         Read("tests/fixtures/card0490-linux/card0490-live.example.json").ShouldContain("\"grokVersion\": \"" + Version + "\"");
-        var phoneHome = Read("scripts/verify-phone-home-grok.ps1");
-        phoneHome.ShouldContain("grokVersion = '" + Version + "'");
-        phoneHome.ShouldContain("'1\\.0\\.41'");
+        // The CARD-0490 harness is the verify-phone-home-grok command since unit 36 (2026-11-22 plan).
+        var phoneHome = Read("scripts/lib/Antiphon.Nightly/PhoneHomeGrokVerify.cs");
+        phoneHome.ShouldContain("public const string GrokVersion = \"" + Version + "\";");
+        phoneHome.ShouldContain("new Regex(@\"1\\.0\\.41\"");
         phoneHome.ShouldNotContain("1.0.40");
 
         var probe = Read("docker/session-runner-grok/verify-codex-image.sh");

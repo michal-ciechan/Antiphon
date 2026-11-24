@@ -144,7 +144,7 @@ task's assertion leads; whole unproved clauses remain pending.
 | 48 | Checkpoint sweep limits / Ten-minute creation grace, five-minute interval, 512 index entries, 10,000 descendants/root, | PENDING: assertion absent | No |
 | 49 | CARD-0669 / Board Backlog; owns source-recheck refs, land pins and verify retention. / Ref/pin deletion stays there. D | PENDING: assertion absent | No |
 | 50 | Runner mirrors / 'RunnerWorkspaceService.RemoveAsync' checks confinement, dirty status and optional PublishedSha, then | PENDING: assertion absent | No |
-| 54 | Legacy installer / 'scripts/install-cleanup-task.ps1' can still register a Windows Scheduled Task. / Make install refu | PENDING: assertion absent | No |
+| 54 | Legacy installer / the install-cleanup-task command (formerly 'scripts/install-cleanup-task.ps1') can still register a Windows Scheduled Task. / Make install refu | PENDING: assertion absent | No |
 | 62 | Windmill owns 'u/lndcobra/antiphon_host_cleanup_server2' for server2 **host-only** roots through the existing trusted  | PENDING: assertion absent | No |
 | 70 | Invariant: daily planning/execution never acquires 'IRepositoryMutationLease' or 'RepositoryMutationLease', opens/acqu | PENDING: assertion absent | No |
 | 74 | 'Worktrees=InventoryOnly' is a fixed behavior of this implementation, not a deletion mode unlocked by Execute. Invento | PENDING: assertion absent | No |

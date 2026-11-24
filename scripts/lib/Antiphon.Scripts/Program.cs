@@ -240,6 +240,15 @@ namespace Antiphon.Scripts
             [AppHostCommands.WatchdogStateObserver] = AppHostCommands.RunObserver,
             [AppHostCommands.AutostartAppHost] = AppHostCommands.RunAutostart,
             [AppHostCommands.VerifyDevStack] = AppHostCommands.RunVerifyDevStack,
+            // The phone-home runner and the autostart installers answer every input themselves (unit 36). autostart-session-runner:
+            // exit 2 a refused or unreadable phone-home configuration (one line in logs/session-runner.log), else 0 once supervision
+            // ends. start-windows-phone-home-runner: the runner's exit code, 1 refused. verify-phone-home-grok: 0 done, 2 blockers
+            // remain, 1 a failure. install-autostart and install-cleanup-task: 0 done, 1 a failure or not Windows. Usage is 2 for each.
+            [PhoneHomeCommands.AutostartSessionRunner] = PhoneHomeCommands.RunAutostartSessionRunner,
+            [PhoneHomeCommands.StartWindowsPhoneHomeRunner] = PhoneHomeCommands.RunStartWindowsPhoneHomeRunner,
+            [PhoneHomeCommands.VerifyPhoneHomeGrok] = PhoneHomeCommands.RunVerifyPhoneHomeGrok,
+            [PhoneHomeCommands.InstallAutostart] = PhoneHomeCommands.RunInstallAutostart,
+            [PhoneHomeCommands.InstallCleanupTask] = PhoneHomeCommands.RunInstallCleanupTask,
         };
 
         public static int Main(string[] args)
@@ -278,7 +287,7 @@ namespace Antiphon.Scripts
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
-                + " | " + AppHostCommands.Usage);
+                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage);
             return Usage;
         }
 

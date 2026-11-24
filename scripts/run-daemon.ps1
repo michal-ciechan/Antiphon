@@ -6,11 +6,12 @@
     appended to LogFile, restart on exit, the desired-state file, log rotation at relaunch).
 
     Unit 30 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because the AppHost starts this file by
-    path (Antiphon.AppHost/Supervisor/DaemonProcessService.cs, a detached pwsh -File) and the logon task's
-    scripts/autostart-session-runner.ps1 calls it. The parameters are the script's; ExeArgs stays one space-joined string
-    (PowerShell -File drops extra values from a [string[]]) and the command splits it.
+    path (Antiphon.AppHost/Supervisor/DaemonProcessService.cs, a detached pwsh -File). The logon task's
+    scripts/autostart-session-runner.ps1 no longer calls it: its autostart-session-runner command runs the supervisor in
+    process (unit 36). The parameters are the script's; ExeArgs stays one space-joined string (PowerShell -File drops extra
+    values from a [string[]]) and the command splits it.
 
-    This process is the supervisor the AppHost and the logon task record in logs/<name>.supervisor.pid, so it passes its
+    This process is the supervisor the AppHost records in logs/<name>.supervisor.pid, so it passes its
     own PID as --supervisor-pid: the startup records and the session runner name it, and the command stops supervising
     once it is gone. The command's exit code is returned; 9 when the CLI cannot be built or started (one stderr line).
     ASCII-only: parseable under Windows PowerShell 5.1.

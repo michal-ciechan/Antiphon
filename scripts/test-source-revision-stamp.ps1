@@ -162,12 +162,13 @@ if ($Case -eq 'audit') {
         'dev-start.ps1' = 1
         'dev-upgrade.ps1' = 2
         'restart-server.ps1' = 1
-        'scripts/start-windows-phone-home-runner.ps1' = 1
     }
     # The watchdog publish is C# since unit 10 of 2026-11-22-remaining-ps1-to-csharp.md (NightlyWatchdogDeploy.cs, which
     # refuses an unreadable HEAD); NightlyVerificationContractTests.C545_DeployCommandLines pins its stamped argv.
     # The daemon build is C# since unit 30 (DaemonSupervisor.cs, which builds unstamped when HEAD is unreadable);
     # DaemonSupervisorTests pins its stamped argv. scripts/run-daemon.ps1, its launcher, is still scanned for a build.
+    # The phone-home runner's build is C# since unit 36 (PhoneHomeRunnerStart.cs, which refuses an unreadable HEAD);
+    # PhoneHomeRunnerStartTests pins its stamped argv.
     $surfaces = @($expected.Keys | Where-Object { $_ -notlike 'scripts/*' })
     $surfaces += @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'scripts') -File -Filter '*.ps1' |
         Where-Object { $_.Name -match '^(restart|deploy|publish|release|promote)-|^run-daemon\.ps1$|^start-.*-runner\.ps1$' } |

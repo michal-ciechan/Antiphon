@@ -171,7 +171,7 @@ public sealed class CodexRootExecContractTests
             "docker exec -u 1654:1654 -e HOME=/home/app -e CODEX_HOME=/state/codex \"$c\" codex --version");
         docs.ShouldContain(
             "Codex must never be exec'd as root in the server2 runner container: use uid 1654, because a root exec leaves root-owned names under `/state/codex/tmp` that the session user cannot remove (CARD-1174).");
-        Read("scripts/verify-phone-home-grok.ps1").ShouldContain(
+        Read("scripts/lib/Antiphon.Nightly/PhoneHomeGrokVerify.cs").ShouldContain(
             "exec -T --user 1654:1654 session-runner-grok grok --version");
     }
 

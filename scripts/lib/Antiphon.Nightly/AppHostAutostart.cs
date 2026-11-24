@@ -1,6 +1,6 @@
 // The logon auto-start of the desktop Aspire AppHost (server 17202, client 17203, dashboard 17205, control API 17207; unit 31 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced the body of scripts/autostart-apphost.ps1, which
-// stays a thin launcher because the per-user Scheduled Task "Antiphon AppHost" (scripts/install-autostart.ps1) starts it by
+// stays a thin launcher because the per-user Scheduled Task "Antiphon AppHost" (the install-autostart command) starts it by
 // path). The CLI runs it as
 //
 //   antiphon-scripts autostart-apphost [--no-build] [--docker-timeout-sec 300] [--health-timeout-sec 180]

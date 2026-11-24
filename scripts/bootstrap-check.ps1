@@ -473,13 +473,13 @@ if ($taskAppHost -and $taskRunner) {
     $missing = @()
     if (-not $taskAppHost) { $missing += 'Antiphon AppHost' }
     if (-not $taskRunner) { $missing += 'Antiphon Session Runner' }
-    $remedial = 'pwsh -File scripts/install-autostart.ps1'
+    $remedial = 'scripts\antiphon.cmd install-autostart'
     if ($taskRunner -and -not $taskAppHost) {
-        $remedial = 'pwsh -File scripts/install-autostart.ps1 -AppHostOnly   (use -AppHostOnly so a live session-runner is not killed by re-register)'
+        $remedial = 'scripts\antiphon.cmd install-autostart --apphost-only   (use --apphost-only so a live session-runner is not killed by re-register)'
     } elseif ($taskAppHost -and -not $taskRunner) {
-        $remedial = 'pwsh -File scripts/install-autostart.ps1   (full install; -AppHostOnly leaves the runner task alone)'
+        $remedial = 'scripts\antiphon.cmd install-autostart   (full install; --apphost-only leaves the runner task alone)'
     } else {
-        $remedial = 'pwsh -File scripts/install-autostart.ps1   (re-register kills a running session-runner; afterwards use -AppHostOnly to refresh only the AppHost task)'
+        $remedial = 'scripts\antiphon.cmd install-autostart   (re-register kills a running session-runner; afterwards use --apphost-only to refresh only the AppHost task)'
     }
     Write-Check 'scheduled tasks' 'WARN' ('not registered: {0}' -f ($missing -join ', ')) $remedial
 }

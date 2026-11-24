@@ -6,7 +6,7 @@
     (reversible) is the default and -Action Delete is not what a scheduled run should use.
 
     Recurring cleanup is a Windmill schedule on server2 (u/lndcobra/claude_session_cleanup),
-    not a local Windows Scheduled Task - do not add one. scripts/install-cleanup-task.ps1 is
+    not a local Windows Scheduled Task - do not add one. The install-cleanup-task command is
     the superseded local-task installer for a different job and must not gain a sibling.
 
     Unit 22 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: a Windows

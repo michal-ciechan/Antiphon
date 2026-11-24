@@ -46,7 +46,7 @@ namespace Antiphon.Nightly
         /// <summary>The canonical session runner port.</summary>
         public const int RunnerPort = 17204;
 
-        /// <summary>The logon task scripts/install-autostart.ps1 registers.</summary>
+        /// <summary>The logon task the install-autostart command registers.</summary>
         public const string TaskName = "Antiphon Session Runner";
 
         private static readonly Regex Digits = new Regex(@"^\d+$", RegexOptions.CultureInvariant);

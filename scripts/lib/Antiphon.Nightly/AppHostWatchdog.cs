@@ -1,6 +1,6 @@
 // CARD-0075, CARD-0310, CARD-0543, CARD-1527: the health-triggered desktop AppHost watchdog (unit 31 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced the body of scripts/watchdog-apphost.ps1, which
-// stays a thin launcher because the per-user Scheduled Task "Antiphon AppHost Watchdog" (scripts/install-autostart.ps1) starts
+// stays a thin launcher because the per-user Scheduled Task "Antiphon AppHost Watchdog" (the install-autostart command) starts
 // it by path every two minutes). The CLI runs it as
 //
 //   antiphon-scripts watchdog-apphost [--probe-only] [--cooldown-minutes 15] [--max-restarts-per-window 3] [--interval-seconds 15]

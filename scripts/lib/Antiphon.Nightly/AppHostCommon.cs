@@ -44,10 +44,10 @@ namespace Antiphon.Nightly
         /// <summary>The dashboard's pinned port (AppHost launchSettings.json).</summary>
         public const int DashboardPort = 17205;
 
-        /// <summary>The logon task scripts/install-autostart.ps1 registers for the AppHost.</summary>
+        /// <summary>The logon task the install-autostart command registers for the AppHost.</summary>
         public const string LogonTaskName = "Antiphon AppHost";
 
-        /// <summary>The watchdog task scripts/install-autostart.ps1 registers.</summary>
+        /// <summary>The watchdog task the install-autostart command registers.</summary>
         public const string WatchdogTaskName = "Antiphon AppHost Watchdog";
 
         /// <summary>Everything the AppHost owns. 17204 (session runner) is deliberately excluded; 17209 is Storybook.</summary>

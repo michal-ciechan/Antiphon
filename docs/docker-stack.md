@@ -1463,7 +1463,7 @@ owner card stay as named there.
 | SourceLanding custody | Not supported on the live contract | The Linux backend exists (`VerificationCustody.cs:29`, probe at `LinuxCgroupCustodyProbe.cs:24-38`) and stays unadvertised unless delegated root, cgroup v1, the custody root, `NoNewPrivs=0`, and both sudo helpers succeed. On 2026-10-13 the server2 runner reported `verificationCustodyBackend=null` (readiness report). That observation was not repeated. The decision records CARD-0604 in Review. CARD-0634 (Backlog) still records the native containment and egress gap. | CARD-0634, after CARD-0604. Ordinary sessions do not need it. |
 | Orchestrator deny hook | Supported | Windows placement keeps `powershell -NoProfile -Command` (Windows PowerShell 5.1, `DelegationWorktreeService.DenyHookSettingsJson`). Linux placement (`ObservedPlatform` `linux`, or `RequiredPlatform.Linux` when nothing was observed) writes the same script as `pwsh -NoProfile -Command`. The Linux runner image installs `pwsh`, not `powershell`. | CARD-1225. |
 | Delivery ceilings | Supported on Linux | Fake-agent oracle `card-1224-unixpty`: markers survived. Single write 86400 bytes, brief inline 43200 bytes, reply inline 14400 chars. A cached `UnixPty` phone-home report selects that arm. Any other report stays on the inbox triple. | CARD-1224. |
-| Windows-only deployment pieces | Supported only on the desktop control plane | AppHost exe paths (`Antiphon.AppHost/Program.cs:34` and `:47`). Scheduled Tasks via `scripts/install-autostart.ps1` (`docs/bootstrap.md:251-259`). `deploy-server2.ps1` default API and "run from the desktop" (`:1`, `:44`). | CARD-1744 retargets the API when the control plane moves. CARD-1745 replaces the AppHost SHA gate. The Windows runner and Scheduled Tasks stay for the desktop rollback path and for Windows-platform work. |
+| Windows-only deployment pieces | Supported only on the desktop control plane | AppHost exe paths (`Antiphon.AppHost/Program.cs:34` and `:47`). Scheduled Tasks via `scripts\antiphon.cmd install-autostart` (`docs/bootstrap.md:251-259`). `deploy-server2.ps1` default API and "run from the desktop" (`:1`, `:44`). | CARD-1744 retargets the API when the control plane moves. CARD-1745 replaces the AppHost SHA gate. The Windows runner and Scheduled Tasks stay for the desktop rollback path and for Windows-platform work. |
 
 CARD-1226 is a Windows CI assertion fix. It is not a deployment feature.
 
@@ -2288,11 +2288,11 @@ unconfigured name keeps the Linux behaviour (Codex pinned to `/usr/local/bin/cod
    `Enabled=true`, `DisplayName=Laptop`, `AllowDelegatedTasks=true`,
    `HostWorkspaceRoot=C:\src\Antiphon`, `RunnerWorkspace=C:/Antiphon/runner/work`,
    `RunnerRepository=C:/Antiphon/runner/work/repos/antiphon`, `MaxCapacity=2`, the laptop's
-   `ChildClaudeHome`/`ChildCodexHome`/`ChildGrokHome` and `RawExeAllowList:0` (the start script
+   `ChildClaudeHome`/`ChildCodexHome`/`ChildGrokHome` and `RawExeAllowList:0` (the start command
    prints all of them), `CallbackOrigin=https://antiphon.desktop.codeperf.net` and `SharedSecret`.
    Restart with `scripts\antiphon.cmd restart-apphost`; `GET /api/session-runners` then lists the id.
 2. **Laptop.** Write the same secret to `C:\Antiphon\runner\secrets\phone-home` and run
-   `pwsh -NoProfile -File scripts/start-windows-phone-home-runner.ps1 -RunnerId laptop` from a normal
+   `scripts\antiphon.cmd start-windows-phone-home-runner --runner-id laptop` from a normal
    terminal (an agent shell's Job Object would kill the detached pty hosts). The runner clones its
    own checkout into `RunnerRepository` on the first workspace mirror. `GET
    /api/session-runners/laptop/status` reports `available` and `dispatchEligible` once connected.

@@ -24,8 +24,8 @@ AppHost service. It publishes no runner port. `PHONE_HOME_SERVER_ORIGIN` is requ
 and must be an isolated Antiphon URL, never 17202–17205. Local Docker uses
 `http://host.docker.internal:<port>`; a server2 container must use the desktop Tailscale
 IPv4 (`http://100.79.51.37:<port>`, MagicDNS `desktop-ktlkpif`) because `host.docker.internal`
-on server2 is server2. `scripts/verify-phone-home-grok.ps1 -Placement server2` writes that
-origin into `.antiphon/card0490-live.json`. The image pins Grok 1.0.41 and Claude Code 2.1.327. The script starts an
+on server2 is server2. `scripts\antiphon.cmd verify-phone-home-grok --evidence-root <dir> --placement server2` writes that
+origin into `.antiphon/card0490-live.json`. The image pins Grok 1.0.41 and Claude Code 2.1.327. The command starts an
 isolated local SessionRunner for the standing-start liveness probe, copies `auth.json` from
 the operator primary `GROK_HOME` into a throwaway directory and mounts that copy read-only;
 it never live-mounts `~/.grok`. The first standing Grok start is `fresh: true`.
@@ -261,29 +261,30 @@ when any `client/src` file is newer than `client/dist/index.html`. Build
 ### 6. Always-on Scheduled Tasks
 
 ```
-pwsh -File scripts/install-autostart.ps1
+scripts\antiphon.cmd install-autostart
 ```
 
 Registers **Antiphon Session Runner** (port 17204), **Antiphon AppHost**
 (server 17202, client 17203, dashboard 17205, control API 17207), the
 **Antiphon AppHost Watchdog**, and the independent **Antiphon AppHost
-Watchdog State Observer** (CARD-0245). Caveats already in the script
-header / AGENTS.md:
+Watchdog State Observer** (CARD-0245), each running its kept launcher
+(`scripts/autostart-session-runner.ps1`, `autostart-apphost.ps1`, `watchdog-apphost.ps1`,
+`apphost-watchdog-state-observer.ps1`) by path. Caveats:
 
 - Re-running the installer Unregister+Registers, which **terminates a
-  running session-runner**. Use `-AppHostOnly` to refresh AppHost-side
+  running session-runner**. Use `--apphost-only` to refresh AppHost-side
   tasks (logon AppHost + watchdog + watchdog-state observer) without
   touching a healthy runner.
-- `-NoWatchdog` skips the restarting watchdog only. The state observer
+- `--no-watchdog` skips the restarting watchdog only. The state observer
   stays registered so a disabled watchdog is still visible. Skip the
-  observer with `-NoWatchdogStateObserver`. `-NoAppHost` skips all
+  observer with `--no-watchdog-state-observer`. `--no-apphost` skips all
   AppHost-side tasks including the observer.
 - The installer prefers the version-independent
   `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` alias. Never hand-register
   a `WindowsApps\Microsoft.PowerShell_<version>_…\pwsh.exe` path.
 - Leave the stack down on purpose with
   `scripts\antiphon.cmd set-apphost-maintenance` (writes
-  `logs/apphost.down-on-purpose`, then disables the watchdog). `-Clear`
+  `logs/apphost.down-on-purpose`, then disables the watchdog). `--clear`
   re-enables then removes the marker. Direct `Disable-ScheduledTask` still
   works and is what the observer detects as unintentional.
 
@@ -297,7 +298,7 @@ Start-ScheduledTask -TaskName "Antiphon AppHost Watchdog State Observer"
 
 Real messaging gateways have an independent lifecycle. The card-recorded
 [desktop Slack sidecar](slack-bot-ops.md#desktop-slack-sidecar) is separately managed
-by `Antiphon MikeysBot Slack Gateway`; `install-autostart.ps1` does not install it.
+by `Antiphon MikeysBot Slack Gateway`; `install-autostart` does not install it.
 A fresh clone is not evidence that this task or real chat is configured.
 
 ### 7. Start the Aspire stack
@@ -586,14 +587,14 @@ Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antip
 
 ## Always-on backend (auto-start)
 
-So agents can run without launching the AppHost, four pieces auto-start at login (set up once via `scripts/install-autostart.ps1`; remove with `-Uninstall`):
+So agents can run without launching the AppHost, four pieces auto-start at login (set up once via `scripts\antiphon.cmd install-autostart`; remove with `--uninstall`):
 
 - **PostgreSQL** — standalone container `antiphon-postgres` (`docker-compose.dev.yml`, `restart: unless-stopped`) on host port **17280**. Returns on boot via that restart policy + Docker Desktop "AutoStart". It is **no longer Aspire-managed**: the AppHost references it with `AddConnectionString("DefaultConnection")` (value in `Antiphon.AppHost/appsettings.json` = the same `localhost:17280` string the server uses).
-- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` → `scripts/run-daemon.ps1` (the launcher of the `run-daemon` command). It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (`run-daemon --build-project-dir` rebuilds first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
+- **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` (the launcher of the `autostart-session-runner` command, which runs the `run-daemon` supervisor in process and records the launcher as the supervisor). It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (the supervisor rebuilds the project first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
 
-- **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire.ps1 -NoBrowser`. It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire.ps1` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire.ps1`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart.ps1 -NoAppHost`.
-- **AppHost watchdog** — per-user Scheduled Task **"Antiphon AppHost Watchdog"**, every **2 minutes**. `scripts/watchdog-apphost.ps1` probes `http://localhost:17202/health` and `http://localhost:17203/` over HTTP (not TCP listen: Aspire's `dcpctrl` owns both published ports), confirms three **down** rounds ~15 s apart, then calls `scripts\antiphon.cmd restart-apphost` so the session-runner on 17204 is never touched. A probe of `client=200` plus `/health` HttpClient timeout is **not** a down round (loaded or coming-up, not a corpse; CARD-0310). Cooldown **15 min** (the same number as `LockMaxAgeMinutes`) / flap cap 3 restarts per 60 min; cooldown is **not** a substitute for the lock — it only tracks watchdog-stamped restarts, so a manual `restart-apphost` is invisible to it. Log `logs/watchdog-apphost.log` (includes restart-apphost's last ~40 lines and named exit: `0=healthy`, `1=timeout/build`, `3=refused`, `4=DCP timeout`, `5=server build unverified` — `exited N` alone is no longer the record). Health/outage observation precedes recovery guards. Recovery normally skips while **either** lock **stamp** is younger than 15 min, even if the holding PID has exited; the early restart-lock exception requires the [two-fire dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) (CARD-1527). It re-checks both **immediately before** restarting (the check at the top of a fire is up to ~60 s of probing old), and does not stamp a restart when `restart-apphost` exits 3 — a refusal killed nothing and must not spend flap budget (CARD-0075). Delayed 15 minutes after logon so it does not kill the logon launch. Each fire runs the current `scripts/watchdog-apphost.ps1` from the registering checkout; an AppHost restart does not reload it, and script-only updates need no task re-registration. The runbook also documents the independent Event Log/marker sinks and optional `ANTIPHON_WATCHDOG_ALERT_WEBHOOK` (HTTPS only, five-second bound, no redirects; URL and response body never logged). Opt out of registration with `install-autostart.ps1 -NoWatchdog`.
-- **Watchdog-state observer** (CARD-0245) — per-user Scheduled Task **"Antiphon AppHost Watchdog State Observer"**, every **2 minutes**, independent of the watchdog. `scripts/apphost-watchdog-state-observer.ps1` samples whether that watchdog task is Disabled / Missing / unreadable and writes `logs/apphost-watchdog-state.json`. Detection only: it never restarts, re-enables, or writes the database. `-NoWatchdog` does not remove it; skip with `-NoWatchdogStateObserver`. Skip only with `-NoAppHost`. Leave the stack down on purpose with `scripts\antiphon.cmd set-apphost-maintenance` (creates `logs/apphost.down-on-purpose` **before** disabling the watchdog; `-Clear` re-enables then removes the marker). Direct `Disable-ScheduledTask` / Task Scheduler / `schtasks.exe` edits still work and are exactly what the observer detects.
+- **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire.ps1 -NoBrowser`. It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire.ps1` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire.ps1`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart --no-apphost`.
+- **AppHost watchdog** — per-user Scheduled Task **"Antiphon AppHost Watchdog"**, every **2 minutes**. `scripts/watchdog-apphost.ps1` probes `http://localhost:17202/health` and `http://localhost:17203/` over HTTP (not TCP listen: Aspire's `dcpctrl` owns both published ports), confirms three **down** rounds ~15 s apart, then calls `scripts\antiphon.cmd restart-apphost` so the session-runner on 17204 is never touched. A probe of `client=200` plus `/health` HttpClient timeout is **not** a down round (loaded or coming-up, not a corpse; CARD-0310). Cooldown **15 min** (the same number as `LockMaxAgeMinutes`) / flap cap 3 restarts per 60 min; cooldown is **not** a substitute for the lock — it only tracks watchdog-stamped restarts, so a manual `restart-apphost` is invisible to it. Log `logs/watchdog-apphost.log` (includes restart-apphost's last ~40 lines and named exit: `0=healthy`, `1=timeout/build`, `3=refused`, `4=DCP timeout`, `5=server build unverified` — `exited N` alone is no longer the record). Health/outage observation precedes recovery guards. Recovery normally skips while **either** lock **stamp** is younger than 15 min, even if the holding PID has exited; the early restart-lock exception requires the [two-fire dead-launch proof](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527) (CARD-1527). It re-checks both **immediately before** restarting (the check at the top of a fire is up to ~60 s of probing old), and does not stamp a restart when `restart-apphost` exits 3 — a refusal killed nothing and must not spend flap budget (CARD-0075). Delayed 15 minutes after logon so it does not kill the logon launch. Each fire runs the current `scripts/watchdog-apphost.ps1` from the registering checkout; an AppHost restart does not reload it, and script-only updates need no task re-registration. The runbook also documents the independent Event Log/marker sinks and optional `ANTIPHON_WATCHDOG_ALERT_WEBHOOK` (HTTPS only, five-second bound, no redirects; URL and response body never logged). Opt out of registration with `install-autostart --no-watchdog`.
+- **Watchdog-state observer** (CARD-0245) — per-user Scheduled Task **"Antiphon AppHost Watchdog State Observer"**, every **2 minutes**, independent of the watchdog. `scripts/apphost-watchdog-state-observer.ps1` samples whether that watchdog task is Disabled / Missing / unreadable and writes `logs/apphost-watchdog-state.json`. Detection only: it never restarts, re-enables, or writes the database. `--no-watchdog` does not remove it; skip with `--no-watchdog-state-observer`. Skip only with `--no-apphost`. Leave the stack down on purpose with `scripts\antiphon.cmd set-apphost-maintenance` (creates `logs/apphost.down-on-purpose` **before** disabling the watchdog; `--clear` re-enables then removes the marker). Direct `Disable-ScheduledTask` / Task Scheduler / `schtasks.exe` edits still work and are exactly what the observer detects.
 
 On the production desktop, the November 18 handoff reports AppHost switched to
 server2 Postgres. Confirm the writer, the retained `antiphon_pgdata` volume, the
@@ -614,9 +615,9 @@ and [AppHost maintenance](apphost-runbook.md#maintenance-is-the-end-state-after-
 
 Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session Runner"` / `-TaskName "Antiphon AppHost"` / `-TaskName "Antiphon AppHost Watchdog"` / `-TaskName "Antiphon AppHost Watchdog State Observer"`.
 
-> ⚠️ **`install-autostart.ps1` re-registers tasks by Unregister+Register, which TERMINATES a running instance.** Re-running it plainly while the session-runner is up kills its live supervisor (the daemon is left unsupervised until next logon). Use **`-AppHostOnly`** to add/refresh the AppHost-side tasks (logon AppHost + watchdog) without touching a healthy session-runner.
+> ⚠️ **`install-autostart` re-registers tasks by delete + register, which TERMINATES a running instance.** Re-running it plainly while the session-runner is up kills its live supervisor (the daemon is left unsupervised until next logon). Use **`--apphost-only`** to add/refresh the AppHost-side tasks (logon AppHost + watchdog) without touching a healthy session-runner.
 >
-> ⚠️ **Never bake a version-pinned MSIX `pwsh.exe` path into a Scheduled Task.** pwsh 7 is MSIX-installed here, so `Get-Command pwsh.exe` resolves to `C:\Program Files\WindowsApps\Microsoft.PowerShell_<version>_x64__…\pwsh.exe` when the installer itself runs under it — that path vanishes on the next PowerShell update and the task silently stops firing. `install-autostart.ps1` now filters those out and prefers the version-independent app-exec alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`.
+> ⚠️ **Never bake a version-pinned MSIX `pwsh.exe` path into a Scheduled Task.** pwsh 7 is MSIX-installed here, so `Get-Command pwsh.exe` resolves to `C:\Program Files\WindowsApps\Microsoft.PowerShell_<version>_x64__…\pwsh.exe` when the installer itself runs under it — that path vanishes on the next PowerShell update and the task silently stops firing. `install-autostart` filters those out and prefers the version-independent app-exec alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`.
 
 > **PowerShell 7 (pwsh 7.6+) is installed** (winget MSIX — runs via the per-user WindowsApps app-exec alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, not `Program Files`). The Scheduled Task and AppHost daemon supervisors use it. Keep **Windows PowerShell 5.1** (`powershell.exe`) in mind as the fallback: it reads no-BOM `.ps1` files as CP1252, so a non-ASCII char (em-dash `—`, arrows, box-drawing) can inject a smart-quote and break parsing. **Keep daemon/auto-start scripts ASCII-only** so they work under either host.
 

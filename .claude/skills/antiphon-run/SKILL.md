@@ -101,12 +101,12 @@ Follow [docs/bootstrap.md](../../../docs/bootstrap.md). Short form:
 1. Start Docker Desktop (wait for tray icon)
 2. `docker compose -f docker-compose.dev.yml up -d` (Postgres on 17280)
 3. Put LLM keys in `dotnet user-secrets` (`--id antiphon-server`) or the Settings UI after start. Do **not** copy `appsettings.json.example` over the tracked `server/appsettings.json`.
-4. `pwsh -File scripts/install-autostart.ps1`
+4. `scripts/antiphon install-autostart`
 5. `scripts/antiphon restart-apphost` (or `Start-Process pwsh … dev-aspire.ps1 -WindowStyle Normal` if nothing is listening)
 6. `pwsh -File scripts/bootstrap-check.ps1`
 
 ### Every day
-1. Aspire is already always-on after `install-autostart.ps1`. If it is down: `scripts/antiphon restart-apphost`
+1. Aspire is already always-on after `scripts/antiphon install-autostart`. If it is down: `scripts/antiphon restart-apphost`
 2. Work in the browser at http://localhost:17203 (dashboard http://localhost:17205)
 3. Postgres stays up. Do not run a second `dev-aspire.ps1`.
 

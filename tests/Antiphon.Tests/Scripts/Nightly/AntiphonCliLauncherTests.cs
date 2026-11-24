@@ -904,6 +904,49 @@ public sealed class AntiphonCliLauncherTests
             "    [int]$LogRetainDays = 5,", "    [int]$LogRetainCount = 10");
     }
 
+    // ---- unit 36: scripts/autostart-session-runner.ps1, the launcher the logon task "Antiphon Session Runner" (and the phase 1
+    // clone, by hand) starts by path ----
+
+    [Test]
+    public async Task Autostart_session_runner_launcher_names_itself_the_supervisor_and_passes_an_explicit_config_only()
+    {
+        using var fixture = CleanupCheckout("autostart-session-runner.ps1");
+        var entry = fixture.PathOf("scripts", "autostart-session-runner.ps1");
+        const string phase1 = @"C:\Antiphon\runner\phone-home.phase1.json";
+        // The task's action: -NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File <launcher>, no parameters.
+        async Task<(LauncherRun Run, int Launcher)> Start(params string[] parameters)
+        {
+            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", entry }.Concat(parameters))
+                start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedEcho;
+            start.Environment["CLI_ECHO_COMMAND"] = "autostart-session-runner";
+            var process = Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start");
+            var launcher = process.Id;
+            return (await Finish(process), launcher);
+        }
+        var (logon, logonPid) = await Start();
+        logon.Exit.ShouldBe(0, logon.Stderr);
+        Arguments(logon.Echo()).ShouldBe(["--supervisor-pid", logonPid.ToString()], "the default path is not passed: it is not explicit");
+        logon.Echo().GetProperty("pid").GetInt32().ShouldNotBe(logonPid, "the command runs in a child of the launcher, which stays the recorded supervisor");
+        var options = SessionRunnerAutostartOptions.Parse(Arguments(logon.Echo()), "root");
+        (options.SupervisorPid, options.ExplicitConfigPath, options.ConfigPath).ShouldBe((logonPid, false, WindowsPhoneHome.DefaultConfigPath));
+
+        var (explicitRun, explicitPid) = await Start("-PhoneHomeConfigPath", phase1);
+        explicitRun.Exit.ShouldBe(0, explicitRun.Stderr);
+        Arguments(explicitRun.Echo()).ShouldBe(["--supervisor-pid", explicitPid.ToString(), "--phone-home-config-path", phase1]);
+        var explicitOptions = SessionRunnerAutostartOptions.Parse(Arguments(explicitRun.Echo()), "root");
+        (explicitOptions.ExplicitConfigPath, explicitOptions.ConfigPath).ShouldBe((true, phase1));
+
+        var missing = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root,
+            environment: new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        missing.ExitCode.ShouldBe(9, missing.Stderr);
+        AssertThinLauncher("autostart-session-runner.ps1", @"    [string]$PhoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'");
+    }
+
     [Test]
     public async Task Run_daemon_launcher_that_cannot_start_the_cli_exits_9()
     {
@@ -994,7 +1037,7 @@ public sealed class AntiphonCliLauncherTests
 
     // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
     // (scripts/cutover-postgres-server2.ps1 and scripts/deploy-local.ps1 start them by path), scripts/watchdog-apphost.ps1,
-    // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks install-autostart.ps1
+    // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks the install-autostart command
     // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1, restart.ps1 and
     // bootstrap-check.ps1 run it by path) ----
 
@@ -1108,7 +1151,7 @@ public sealed class AntiphonCliLauncherTests
     {
         if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
-        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
+        string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/lib/windows-phone-home-env.ps1",
             "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1", "scripts/restart-apphost.ps1", "scripts/set-apphost-maintenance.ps1",
             "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1", "scripts/apphost-common.ps1", "verify-dev-stack.ps1"];
         foreach (var file in files)

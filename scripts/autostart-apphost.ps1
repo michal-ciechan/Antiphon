@@ -7,7 +7,7 @@
     the desktop Postgres stopped), runs dev-aspire.ps1 -NoBrowser and waits for /health. Logs to logs/autostart-apphost.log.
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because the per-user Scheduled Task
-    "Antiphon AppHost" (scripts/install-autostart.ps1) starts this file by path at logon. Delete it when that registration
+    "Antiphon AppHost" (`scripts\antiphon.cmd install-autostart`) starts this file by path at logon. Delete it when that registration
     names the command.
 
     The parameters are the script's, passed when given: -NoBuild, -DockerTimeoutSec, -HealthTimeoutSec. The command's exit

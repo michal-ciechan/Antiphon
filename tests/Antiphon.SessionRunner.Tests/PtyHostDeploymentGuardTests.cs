@@ -14,17 +14,24 @@ public class PtyHostDeploymentGuardTests
 {
     private static string RepoRoot => FindRepoRoot();
 
+    // Unit 36 (2026-11-22 plan): scripts/autostart-session-runner.ps1 is the logon task's launcher of the
+    // autostart-session-runner command (Antiphon.Nightly.SessionRunnerAutostart), which supervises the BUILT executable and
+    // rebuilds its project before each launch; Antiphon.Tests C1744G3PhoneHomeSupervisionTests run it.
     [Test]
     public async Task Autostart_script_launches_the_built_exe_not_dotnet_run()
     {
         var script = await File.ReadAllTextAsync(
             Path.Combine(RepoRoot, "scripts", "autostart-session-runner.ps1"));
+        var autostart = await File.ReadAllTextAsync(
+            Path.Combine(RepoRoot, "scripts", "lib", "Antiphon.Nightly", "SessionRunnerAutostart.cs"));
 
-        script.ShouldNotContain(
-            "run --urls",
-            customMessage: "autostart must NOT use 'dotnet run' - it creates the kill-on-close job that kills pty-hosts.");
-        script.ShouldContain("Antiphon.SessionRunner.exe");
-        script.ShouldContain("-BuildProjectDir");
+        foreach (var text in new[] { script, autostart })
+            text.ShouldNotContain(
+                "run --urls",
+                customMessage: "autostart must NOT use 'dotnet run' - it creates the kill-on-close job that kills pty-hosts.");
+        script.ShouldContain("Invoke-AntiphonCli -Command 'autostart-session-runner'");
+        autostart.ShouldContain("\"Antiphon.SessionRunner.exe\"");
+        autostart.ShouldContain("BuildProjectDir = runnerDir,");
     }
 
     [Test]
@@ -54,7 +61,7 @@ public class PtyHostDeploymentGuardTests
         var supervisor = await File.ReadAllTextAsync(
             Path.Combine(RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DaemonSupervisor.cs"));
         supervisor.ShouldContain("new List<string> { \"build\", _options.BuildProjectDir, \"-c\", \"Debug\", \"--nologo\" }");
-        supervisor.ShouldContain("\"--\", \"dotnet\"");
+        supervisor.ShouldContain("var command = new List<string> { \"dotnet\" };");
         supervisor.ShouldNotContain("\"run\"");
     }
 

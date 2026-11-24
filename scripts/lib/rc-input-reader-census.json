@@ -24,6 +24,11 @@
       ]
     },
     {
+      "group": "autostart-session-runner",
+      "paths": ["scripts/autostart-session-runner.ps1", "scripts/lib/Antiphon.Nightly/SessionRunnerAutostart.cs", "scripts/lib/Antiphon.Nightly/DaemonSupervisor.cs"],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
       "group": "runner-restart",
       "paths": ["restart-session-runner.ps1", "restart.ps1"],
       "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
