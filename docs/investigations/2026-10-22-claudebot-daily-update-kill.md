@@ -221,6 +221,13 @@ diff --git a/scripts/daily-update.ps1 b/scripts/daily-update.ps1
 
 ### Witness: proves the patch without killing anything
 
+> The witness scripts (`run-witness.ps1`, `test/harness.ps1`, `test/run-case.ps1` and the stub
+> `launch-claude.ps1`) were deleted on 2026-11-24 by the owner's decision, in unit 45 of
+> docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md. They are in git at `19e2d15ac`. To
+> rerun the witness, restore them with
+> `git restore --source 19e2d15ac -- docs/investigations/evidence/card-1477`. The patch and the
+> rest of the evidence stay in this folder.
+
 ```powershell
 pwsh -NoProfile -NonInteractive -File docs\investigations\evidence\card-1477\run-witness.ps1
 ```
