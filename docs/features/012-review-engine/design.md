@@ -3,7 +3,8 @@
 Status: draft for operator review, 2026-11-22, with the operator's second- and third-round
 decisions (D-18 to D-39). No card is bound yet. Phase cards are filed only once card claims exist (section 22, D-36).
 Companion spec: [Antiphon Block Format v1](../../specs/block-format/v1.md) (a draft: breaking changes
-are allowed until v1 is declared settled).
+are allowed until v1 is declared settled). To install and configure an instance, read
+[getting-started.md](getting-started.md), which describes what the code does today.
 
 Scope: a server-run, multi-stage code review for pull requests and commit ranges in **any registered
 repository**, Antiphon included. Cheap models categorise the change and choose which checks apply.
