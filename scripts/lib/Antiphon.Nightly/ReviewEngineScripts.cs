@@ -99,7 +99,8 @@ namespace Antiphon.Nightly
     {
         /// <summary>The CLI's usage line.</summary>
         public const string Usage = "review-standalone [--port 17262] [--client-port 17263] [--postgres-port 17290] [--repo <owner/name>] [--mirror-path <dir>]"
-            + " [--vault-item <name>] [--viewer-login <login>] [--poll-seconds 120] [--public-base-url <url>] [--no-auto-merge] [--no-client] [--no-polling] [--stop]";
+            + " [--vault-item <name>] [--viewer-login <login>] [--poll-seconds 120] [--public-base-url <url>] [--no-auto-merge] [--sign-in] [--no-client] [--no-polling]"
+            + " [--stop]";
 
         /// <summary>The server's port.</summary>
         public int Port { get; init; } = 17262;
@@ -131,6 +132,13 @@ namespace Antiphon.Nightly
         /// <summary>Keep the repo's merge gate on (the product default) instead of merging approved PRs here.</summary>
         public bool NoAutoMerge { get; init; }
 
+        /// <summary>
+        /// Sign-in with GitHub (Review:Auth, getting-started 7.1): the vault item also needs a 'Client secret' field (the App's
+        /// Settings, Client secrets), and the App's callback URL must be &lt;PublicBaseUrl&gt;/api/review-auth/callback. ViewerLogin
+        /// becomes an allowed login. Needs PublicBaseUrl.
+        /// </summary>
+        public bool SignIn { get; init; }
+
         /// <summary>Start no Vite client.</summary>
         public bool NoClient { get; init; }
 
@@ -154,7 +162,7 @@ namespace Antiphon.Nightly
         {
             var flags = NightlyArgs.Parse(arguments,
                 new[] { "--port", "--client-port", "--postgres-port", "--repo", "--mirror-path", "--vault-item", "--viewer-login", "--poll-seconds", "--public-base-url" },
-                new[] { "--no-auto-merge", "--no-client", "--no-polling", "--stop" });
+                new[] { "--no-auto-merge", "--sign-in", "--no-client", "--no-polling", "--stop" });
             var defaults = new ReviewStandaloneOptions();
             return new ReviewStandaloneOptions
             {
@@ -168,6 +176,7 @@ namespace Antiphon.Nightly
                 PollSeconds = flags.Int("--poll-seconds", defaults.PollSeconds),
                 PublicBaseUrl = flags.Value("--public-base-url", ""),
                 NoAutoMerge = flags.Switch("--no-auto-merge"),
+                SignIn = flags.Switch("--sign-in"),
                 NoClient = flags.Switch("--no-client"),
                 NoPolling = flags.Switch("--no-polling"),
                 Stop = flags.Switch("--stop"),
@@ -444,6 +453,9 @@ namespace Antiphon.Nightly
         /// <summary>The server environment's key variable: the server alone gets it.</summary>
         public const string KeyVariable = "Review__Secrets__GitHubAppPrivateKey";
 
+        /// <summary>The sign-in OAuth client secret (with --sign-in): the server alone gets it too.</summary>
+        public const string OAuthSecretVariable = "Review__Secrets__GitHubOAuthClientSecret";
+
         /// <summary>How long Postgres has to answer pg_isready.</summary>
         public static readonly TimeSpan ReadyWithin = TimeSpan.FromSeconds(60);
 
@@ -463,12 +475,13 @@ namespace Antiphon.Nightly
         /// <summary>
         /// The server's environment, in the script's order (the vault's fields read in that order): the isolation, the database, the
         /// workspace under work, and the review engine. A null value removes the variable (the merge gate with NoAutoMerge).
+        /// With SignIn, GitHub sign-in follows (it refuses without PublicBaseUrl, where the script did: after the vault read).
         /// </summary>
         public static IReadOnlyList<KeyValuePair<string, string>> ServerEnvironment(ReviewStandaloneOptions options, ReviewAppItem item, string work, IFileSystem files)
         {
             var o = options;
             var repo = o.Repo;
-            return new List<KeyValuePair<string, string>>
+            var environment = new List<KeyValuePair<string, string>>
             {
                 Pair("ASPNETCORE_ENVIRONMENT", "Development"),
                 Pair("ASPNETCORE_URLS", "http://127.0.0.1:" + Number(o.Port)),
@@ -513,6 +526,16 @@ namespace Antiphon.Nightly
                 Pair("Review__Polling__IntervalSeconds", Number(o.PollSeconds)),
                 Pair("Review__Polling__Repos__0__Repo", repo),
             };
+            if (o.SignIn)
+            {
+                if (string.IsNullOrEmpty(o.PublicBaseUrl))
+                    throw new ReviewEngineFailure("--sign-in needs --public-base-url: GitHub returns the browser to <PublicBaseUrl>/api/review-auth/callback.");
+                environment.Add(Pair("Review__Auth__Mode", "GitHub"));
+                environment.Add(Pair("Review__Auth__ClientId", item.Field("Client ID")));
+                environment.Add(Pair(OAuthSecretVariable, item.Field("Client secret")));
+                environment.Add(Pair("Review__Auth__AllowedLogins__0", o.ViewerLogin));
+            }
+            return environment;
         }
 
         private static int Body(ReviewStandaloneOptions options, NightlyHost host, IFileSystem files, IReviewEngineSeams seams)
@@ -582,9 +605,11 @@ namespace Antiphon.Nightly
             int? client = null;
             if (!options.NoClient)
             {
-                // The client inherits the settings without the key, and learns the server's address and its own port.
+                // The client inherits the settings without the key or the sign-in secret (the script dropped only the key), and
+                // learns the server's address and its own port.
                 var environment = Variables(settings);
                 environment[KeyVariable] = null;
+                environment[OAuthSecretVariable] = null;
                 environment["services__server__http__0"] = "http://127.0.0.1:" + Number(options.Port);
                 environment["VITE_PORT"] = Number(options.ClientPort);
                 client = seams.Start(new ReviewDetachedStart("cmd.exe", new[] { "/c", "npx", "vite", "--host", "127.0.0.1" }, files.Path.Combine(root, "client"),

@@ -114,6 +114,7 @@ public sealed class ReviewEngineScriptsTests
         var clientExpected = new Dictionary<string, string?>(expected)
         {
             ["Review__Secrets__GitHubAppPrivateKey"] = null,
+            ["Review__Secrets__GitHubOAuthClientSecret"] = null,
             ["services__server__http__0"] = "http://127.0.0.1:17262",
             ["VITE_PORT"] = "17263",
         };
@@ -152,6 +153,41 @@ public sealed class ReviewEngineScriptsTests
         server["Review__Agents__Repos__0__Repo"].ShouldBe("owner/repo");
         Pids(machine).ShouldBe((4101, (int?)null));
         run.Output.ShouldNotContain("Client pid");
+    }
+
+    [Test]
+    public void Standalone_sign_in_gives_the_server_github_auth_and_keeps_the_client_secret_from_the_client()
+    {
+        var machine = new Machine { Item = Item(fields: [("Client ID", "Iv23liFixture"), ("Installation ID", "424242"), ("Client secret", "oauth-fixture-secret")]) };
+        var run = Standalone(machine, "--mirror-path", Mirror, "--sign-in", "--public-base-url", "https://review.laptop.codeperf.net", "--viewer-login", "someone");
+
+        run.Exit.ShouldBe(0, run.Error);
+        machine.Starts.Count.ShouldBe(2);
+        var server = machine.Starts[0].Environment;
+        server["Review__Auth__Mode"].ShouldBe("GitHub");
+        server["Review__Auth__ClientId"].ShouldBe("Iv23liFixture");
+        server["Review__Secrets__GitHubOAuthClientSecret"].ShouldBe("oauth-fixture-secret");
+        server["Review__Auth__AllowedLogins__0"].ShouldBe("someone");
+        var client = machine.Starts[1].Environment;
+        client["Review__Secrets__GitHubOAuthClientSecret"].ShouldBeNull("the client never gets the sign-in secret");
+        client["Review__Secrets__GitHubAppPrivateKey"].ShouldBeNull();
+        run.Output.ShouldNotContain("oauth-fixture-secret");
+    }
+
+    [Test]
+    public void Standalone_sign_in_refuses_without_a_public_url_or_a_client_secret_and_starts_nothing()
+    {
+        var noUrl = new Machine();
+        var run = Standalone(noUrl, "--mirror-path", Mirror, "--sign-in");
+        (run.Exit, run.Error).ShouldBe((1, "--sign-in needs --public-base-url: GitHub returns the browser to <PublicBaseUrl>/api/review-auth/callback.\n"));
+        noUrl.Starts.ShouldBeEmpty();
+
+        var noSecret = new Machine();
+        run = Standalone(noSecret, "--mirror-path", Mirror, "--sign-in", "--public-base-url", "https://review.laptop.codeperf.net");
+        (run.Exit, run.Error).ShouldBe((1, $"Bitwarden item '{VaultItem}' has no 'Client secret' field.\n"));
+        noSecret.Starts.ShouldBeEmpty();
+
+        Standalone(new Machine(), "--mirror-path", Mirror).Exit.ShouldBe(0, "without --sign-in the item needs no client secret");
     }
 
     [Test]
