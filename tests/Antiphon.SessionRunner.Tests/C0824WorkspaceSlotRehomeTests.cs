@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
@@ -156,6 +157,79 @@ public sealed class C0824WorkspaceSlotRehomeTests
         pool.Ledger().QuarantinedDirectories.Count(entry => entry.IsOpen).ShouldBe(5);
         var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => pool.LeaseAsync(scratch.RequestB(), ct));
         refusal.Message.ShouldBe(WorkspaceSlotCodes.PoolDegraded);
+    }
+
+    [Test]
+    public async Task C2061_SettledLingeringQuarantineReleasesOnlyWhenPublishedAndClean(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var settings = Settings(settings =>
+        {
+            settings.LingerRetries = 0;
+            settings.MaxQuarantinedDirectories = 0;
+        });
+        var pool = scratch.Pool(settings);
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(lease.Path, "result.txt", "task result");
+        Git(lease.Path, "add", "result.txt");
+        Git(lease.Path, "commit", "-m", "task result");
+        Git(lease.Path, "push", "origin", BranchA);
+        Plant(lease.Path, ".antiphon/reports/task.md", "task evidence");
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            slotId = lease.SlotId,
+            generation = lease.Generation,
+            taskId = TaskA,
+            taskSettled = true,
+        });
+        var release = payload.Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json)!;
+        (await pool.ReleaseAsync(release, ct)).Outcome.ShouldBe("quarantined");
+        (await pool.ReleaseAsync(release, ct)).Outcome.ShouldBe("already_free");
+        var dirId = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().DirId;
+
+        // A fresh runner must retain both the release authority and the work while holders remain.
+        pool = scratch.Pool(settings);
+        await pool.StartAsync(ct);
+        Directory.Exists(lease.Path).ShouldBeTrue();
+        var holderOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+        scratch.Processes.Holders = _ => [];
+
+        Plant(lease.Path, "local.txt", "only copy");
+        Git(lease.Path, "add", "local.txt");
+        Git(lease.Path, "commit", "-m", "local result");
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        File.ReadAllText(Path.Combine(lease.Path, "local.txt")).ShouldBe("only copy");
+        var unpublishedOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+
+        Git(lease.Path, "push", "origin", BranchA);
+        Plant(lease.Path, "dirty.txt", "untracked work");
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        File.ReadAllText(Path.Combine(lease.Path, "dirty.txt")).ShouldBe("untracked work");
+        var dirtyOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+        File.Delete(Path.Combine(lease.Path, "dirty.txt"));
+
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        var closed = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        closed.IsOpen.ShouldBeFalse("a settled, holder-free, published and clean directory must close without an operator");
+        closed.Disposition.ShouldBe("Pushed");
+        closed.Outcome.ShouldContain("automatic");
+        holderOutcome.ShouldStartWith("automatic: holders");
+        unpublishedOutcome.ShouldStartWith("automatic: unpushed");
+        dirtyOutcome.ShouldStartWith("automatic: dirty");
+        Directory.Exists(lease.Path).ShouldBeFalse();
+        Git(scratch.Clone, "worktree", "list", "--porcelain").ShouldNotContain("worktree " + lease.Path + "\n");
+        File.ReadAllText(Path.Combine(pool.RetainedRoot, TaskA.ToString("N"), lease.Generation.ToString(),
+            ".antiphon", "reports", "task.md")).ShouldBe("task evidence");
+        pool.Ledger().Attention.ShouldContain(entry => entry.Detail != null && entry.Detail.Contains(dirId)
+            && entry.Key == "workspace_slot_quarantine_auto_released");
+        var next = await pool.LeaseAsync(scratch.RequestB(), ct);
+        next.SlotId.ShouldBe(lease.SlotId);
+        next.Path.ShouldNotBe(lease.Path);
     }
 
     [Test]
