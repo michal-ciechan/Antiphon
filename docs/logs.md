@@ -46,13 +46,13 @@ docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT pg_stat_st
 ```
 
 To read the production rate without resetting, run
-`pwsh -File scripts/pg-qps.ps1 -Seconds 60` from the desktop checkout.
+`scripts\antiphon.cmd pg-qps --seconds 60` from the desktop checkout (`scripts/antiphon pg-qps` on sh).
 It uses the `antiphon-server2` SSH Docker context after matching the running
 container's published endpoint to the AppHost `ConnectionStrings:DefaultConnection`
-user secret. Pass `-Container <name>` for a local test container or
-`-ConnectionEnv <VAR>` for a direct `psql` connection using the Npgsql or
-libpq connection string in the named environment variable. `-Json` writes one
-object. The server samples the same statistics once a minute and serves them
+user secret. Pass `--container <name>` for a local test container or
+`--connection-env <VAR>` for a direct `psql` connection using the Npgsql or
+libpq connection string in the named environment variable. `--json` writes one
+object. Exit 3 means the database could not be reached, 4 a partial window (a reset or deallocation). The server samples the same statistics once a minute and serves them
 at `GET /api/diagnostics/db-rate`.
 
 ## Agent-task detail pollers (CARD-1972)

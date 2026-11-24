@@ -1253,7 +1253,7 @@ The runner restart cases run in process (unit 30 of the 2026-11-22 plan): `Runne
 
 ### Application Postgres JIT (CARD-1886)
 
-`TestDbFixture` publishes the shared application connection with startup `jit=off`. The maintenance connection (database `postgres`, pooling off) is derived from the raw container string before that policy, so `SHOW jit` stays `on` there. A `psql` session inside the container can still report `on`. Production uses `Postgres:DisableJit` (default true) on the server EF and health-check connection only. Changing it needs a process recycle so pools renew. Do not reset `pg_stat_statements`. After qualification run `97150a0b` ends, record a window with `pwsh -NoProfile -File scripts/postgres-jit-window.ps1 -Execute -Container <observed-postgres-container> -OutDir <owned-dir>`. The default invocation prints the plan and does not call docker.
+`TestDbFixture` publishes the shared application connection with startup `jit=off`. The maintenance connection (database `postgres`, pooling off) is derived from the raw container string before that policy, so `SHOW jit` stays `on` there. A `psql` session inside the container can still report `on`. Production uses `Postgres:DisableJit` (default true) on the server EF and health-check connection only. Changing it needs a process recycle so pools renew. Do not reset `pg_stat_statements`. After qualification run `97150a0b` ends, record a window with `scripts\antiphon.cmd postgres-jit-window --execute --container <observed-postgres-container> --out-dir <owned-dir>` (`scripts/antiphon` on sh). The default invocation prints the plan and does not call docker.
 
 ### dotnet-ef from the repo tool manifest (CARD-0677)
 

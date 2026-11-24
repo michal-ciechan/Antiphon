@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 357,
+      "classes": 359,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 144,
+      "classes": 146,
       "reason": "cap",
-      "owed": 119,
+      "owed": 121,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2179,33 +2179,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 32,
+      "classes": 35,
       "reason": "cap",
-      "owed": 7,
+      "owed": 10,
       "first": [
+        "QualificationEtaTests",
+        "RcStoppedRunSeedTests",
         "ReleaseStatusTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
+        "ServerDockerInputsTests",
         "TestDataPruneCommandTests",
-        "WatchedTestRunTests",
-        "ZombieAgentReaperTests",
-        "VerifyPhoneHomeGrokScriptTests"
+        "WatchedTestRunTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 38,
+      "classes": 41,
       "reason": "cap",
-      "owed": 13,
+      "owed": 16,
       "first": [
+        "ReleaseGatePlatformTests",
+        "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
+        "ServerDockerInputsTests",
         "StageValueReportTests",
-        "TestDataPruneCommandTests",
-        "ToolchainFloorWarningTests",
-        "VerifyPhoneHomeGrokScriptTests",
-        "WatchedTestRunTests"
+        "TestDataPruneCommandTests"
       ]
     },
     {
@@ -2242,18 +2243,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 48,
+      "classes": 51,
       "reason": "cap",
-      "owed": 23,
+      "owed": 26,
       "first": [
+        "ImpactIndexRegenerationTests",
+        "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
         "NightlyRunTests",
         "NightlyScriptsTests",
-        "NightlyTestsParityTests",
-        "NightlyVerificationContractTests",
-        "OrchestrationWatcherTests"
+        "NightlyTestsParityTests"
       ]
     },
     {
@@ -2618,7 +2619,8 @@
     {
       "path": ".dockerignore",
       "classes": [
-        "DockerStackContractTests"
+        "DockerStackContractTests",
+        "ServerDockerInputsTests"
       ]
     },
     {
@@ -2664,7 +2666,8 @@
       "path": ".github/workflows/ci.yml",
       "classes": [
         "IncrementalSelectionSoundnessTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "ServerDockerInputsTests"
       ]
     },
     {
@@ -2799,6 +2802,7 @@
         "IncrementalSelectionSoundnessTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
+        "ServerDockerInputsTests",
         "ServerImagePushCredentialTests",
         "SourceRevisionStampContractTests"
       ]
@@ -16291,7 +16295,7 @@
     {
       "path": "server/Infrastructure/Data/PgStatStatementsSnapshot.sql",
       "classes": [
-        "DesktopPostgresPowerShellTests"
+        "PgQpsTests"
       ]
     },
     {
@@ -25910,9 +25914,9 @@
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
+        "PgQpsTests",
+        "PostgresJitWindowTests",
         "PtyHostReaperTests",
-        "QualificationEtaTests",
-        "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
         "StageValueReportTests"
       ]
@@ -25940,11 +25944,11 @@
         "NightlyScriptsTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
+        "PgQpsTests",
+        "PostgresJitWindowTests",
         "PtyHostReaperTests",
         "QualificationEtaTests",
-        "RcRunEvidenceTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseGateRunTests"
+        "RcRunEvidenceTests"
       ]
     },
     {
@@ -26122,13 +26126,13 @@
         "DaemonSupervisorTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
-        "ImpactIndexRegenerationTests",
-        "KeepSixCommandTests",
         "LandGraphCommandTests",
         "LongPathsCheckoutScriptTests",
         "MeasureSessionStateCacheScriptTests",
         "NightlyTestHelpersTests",
         "NightlyTestsRunTests",
+        "PgQpsTests",
+        "PostgresJitWindowTests",
         "QualificationTimingTests",
         "ReleaseGateLibraryTests",
         "RunnerRestartOsTests"

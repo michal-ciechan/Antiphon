@@ -288,6 +288,13 @@ namespace Antiphon.Scripts
             [ReviewEngineCommands.Standalone] = ReviewEngineCommands.RunStandalone,
             [ReviewEngineCommands.GitHubSetup] = ReviewEngineCommands.RunGitHubSetup,
             [ReviewEngineCommands.LiveGitHub] = ReviewEngineCommands.RunLiveGitHub,
+            // The W8 read-only and static tools answer every input themselves (unit 46). check-server-docker-inputs: exit 0 every
+            // linked input copied, 1 an input missing, 2 an error. pg-qps: 0 done, 2 bad arguments, 3 unreachable or no extension,
+            // 4 partial, 1 the signal file could not be written. postgres-jit-window: 0 the plan or the window written, 1 failed.
+            // Usage is 2 for each.
+            [InfrastructureToolCommands.CheckServerDockerInputs] = InfrastructureToolCommands.RunCheckServerDockerInputs,
+            [InfrastructureToolCommands.PgQpsName] = InfrastructureToolCommands.RunPgQps,
+            [InfrastructureToolCommands.PostgresJitWindowName] = InfrastructureToolCommands.RunPostgresJitWindow,
         };
 
         public static int Main(string[] args)
@@ -327,7 +334,8 @@ namespace Antiphon.Scripts
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
                 + " | " + CheckpointsCommand.Usage
-                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage);
+                + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
+                + " | " + InfrastructureToolCommands.Usage);
             return Usage;
         }
 

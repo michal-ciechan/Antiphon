@@ -8,11 +8,14 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-2065: deploy-local.ps1 (W8 slice C, still PowerShell) resolves its database through scripts/lib/desktop-postgres.ps1.
+/// The pg-qps rows moved to PgQpsTests when unit 46 replaced scripts/pg-qps.ps1 with the pg-qps command.
+/// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DesktopPostgresPowerShellTests
 {
-    private const string Qps = "pg-qps.ps1";
     private const string Deploy = "deploy-local.ps1";
     private const string Diagnostic = "synthetic PostgreSQL stderr";
     private const string Migration = "20261124000000_Fixture";
@@ -23,14 +26,6 @@ public sealed class DesktopPostgresPowerShellTests
     public enum Scenario { Match, WrongHost, WrongPort, Stopped, MissingContainer, MissingSecret, QueryFailure, Override }
 
     [Test]
-    [Arguments(Qps, Scenario.Match)]
-    [Arguments(Qps, Scenario.WrongHost)]
-    [Arguments(Qps, Scenario.WrongPort)]
-    [Arguments(Qps, Scenario.Stopped)]
-    [Arguments(Qps, Scenario.MissingContainer)]
-    [Arguments(Qps, Scenario.MissingSecret)]
-    [Arguments(Qps, Scenario.QueryFailure)]
-    [Arguments(Qps, Scenario.Override)]
     [Arguments(Deploy, Scenario.Match)]
     [Arguments(Deploy, Scenario.WrongHost)]
     [Arguments(Deploy, Scenario.WrongPort)]
@@ -71,24 +66,17 @@ public sealed class DesktopPostgresPowerShellTests
         }
 
         var trace = Path.Combine(root, "docker.jsonl");
-        var signal = Path.Combine(root, "qps-ready");
-        var qps = script == Qps;
         var user = local ? "fixture_user" : "observer";
         var database = local ? "fixture_database" : "operations";
         var start = new ProcessStartInfo(ResolvePowerShell())
         {
             WorkingDirectory = root,
         };
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(root, "scripts", script) })
-            start.ArgumentList.Add(argument);
-        string[] mode = qps ? ["-Seconds", "10", "-SignalFile", signal] : ["-Report"];
-        foreach (var argument in mode)
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(root, "scripts", script), "-Report" })
             start.ArgumentList.Add(argument);
         if (local)
         {
-            string[] target = qps ? ["-Container", LocalContainer, "-User", user, "-Database", database]
-                : ["-PgContainer", LocalContainer, "-PgUser", user, "-PgDatabase", database];
-            foreach (var argument in target)
+            foreach (var argument in new[] { "-PgContainer", LocalContainer, "-PgUser", user, "-PgDatabase", database })
                 start.ArgumentList.Add(argument);
         }
 
@@ -107,10 +95,10 @@ public sealed class DesktopPostgresPowerShellTests
         start.Environment["C2065_INSPECT"] = $$"""{{ContainerId}}|{{running}}|[{"HostIp":"{{host}}","HostPort":"{{port}}"}]""";
         start.Environment["C2065_INSPECT_EXIT"] = scenario == Scenario.MissingContainer ? "1" : "0";
         var success = scenario is Scenario.Match or Scenario.Override;
-        start.Environment["C2065_QUERY"] = qps ? (success ? "160000|16.0|0|2026-01-01||0|0|0" : "") : Migration;
+        start.Environment["C2065_QUERY"] = Migration;
         start.Environment["C2065_QUERY_EXIT"] = scenario == Scenario.QueryFailure ? "9" : "0";
 
-        var result = CheckpointFixtureProcess.Run(start, success && qps ? 25_000 : 10_000);
+        var result = CheckpointFixtureProcess.Run(start, 10_000);
         AssertPrivateTextAbsent(result.Stdout, password, "stdout");
         AssertPrivateTextAbsent(result.Stderr, password, "stderr");
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
@@ -129,7 +117,7 @@ public sealed class DesktopPostgresPowerShellTests
             calls.Any(call => call.Arguments.Contains("psql")).ShouldBeFalse("an unverified endpoint must never start psql");
 
         var expectsInspect = !local && hasSecret;
-        var queryCount = expectsQuery ? (success && qps ? 2 : 1) : 0;
+        var queryCount = expectsQuery ? 1 : 0;
         calls.Length.ShouldBe((expectsInspect ? 1 : 0) + queryCount, result.Stdout + result.Stderr);
         if (expectsInspect)
         {
@@ -148,16 +136,14 @@ public sealed class DesktopPostgresPowerShellTests
         foreach (var call in calls.Skip(expectsInspect ? 1 : 0))
         {
             call.Arguments.ShouldBe(query);
-            var sql = qps
-                ? "-- rt.diag.pgss\n" + ReadCounterSql(root)
-                : """SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";""";
-            call.Stdin.TrimEnd().ReplaceLineEndings("\n").ShouldBe(sql.ReplaceLineEndings("\n"));
+            call.Stdin.TrimEnd().ReplaceLineEndings("\n")
+                .ShouldBe("""SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";""");
         }
 
-        result.Exit.ShouldBe(success ? 0 : qps ? 3 : 1, result.Stdout + result.Stderr);
+        result.Exit.ShouldBe(success ? 0 : 1, result.Stdout + result.Stderr);
         var expectedOutput = scenario switch
         {
-            Scenario.Match or Scenario.Override => qps ? "windowSeconds=" : "DEPLOY VERDICT: ok",
+            Scenario.Match or Scenario.Override => "DEPLOY VERDICT: ok",
             Scenario.MissingSecret => "Could not resolve the production PostgreSQL connection",
             Scenario.MissingContainer => "Production PostgreSQL lookup via the antiphon-server2 Docker context failed (exit 1)",
             Scenario.QueryFailure => "PostgreSQL query failed (exit 9)",
@@ -165,14 +151,8 @@ public sealed class DesktopPostgresPowerShellTests
         };
         result.Stdout.ShouldContain(expectedOutput);
         if (!success)
-            result.Stdout.ShouldContain(qps ? "database unreachable or extension not loaded" : "DEPLOY VERDICT: failed");
-        File.Exists(signal).ShouldBe(success && qps);
-        if (success && qps)
-            File.ReadAllText(signal).ShouldBe("ready");
+            result.Stdout.ShouldContain("DEPLOY VERDICT: failed");
     }
-
-    private static string ReadCounterSql(string root) => File.ReadAllText(Path.Combine(root,
-        "server/Infrastructure/Data/PgStatStatementsSnapshot.sql")).Split("-- @@split@@", 2)[0].Trim();
 
     private static void AssertPrivateTextAbsent(string text, string password, string channel)
     {
@@ -183,19 +163,15 @@ public sealed class DesktopPostgresPowerShellTests
 
     private static void CopyScriptInputs(string root, string script)
     {
-        string[] inputs = [$"scripts/{script}", "scripts/lib/desktop-postgres.ps1", "scripts/lib/antiphon-cli.ps1",
-            script == Qps ? "server/Infrastructure/Data/PgStatStatementsSnapshot.sql" : "scripts/apphost-common.ps1"];
+        string[] inputs = [$"scripts/{script}", "scripts/lib/desktop-postgres.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/apphost-common.ps1"];
         foreach (var input in inputs)
         {
             var destination = Path.Combine(root, input);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, input), destination);
         }
-        if (script == Deploy)
-        {
-            var migrations = Directory.CreateDirectory(Path.Combine(root, "server", "Migrations")).FullName;
-            File.WriteAllText(Path.Combine(migrations, Migration + ".cs"), "");
-        }
+        var migrations = Directory.CreateDirectory(Path.Combine(root, "server", "Migrations")).FullName;
+        File.WriteAllText(Path.Combine(migrations, Migration + ".cs"), "");
     }
 
     private static string InstallFakeDocker(string root, ProcessStartInfo start)

@@ -182,11 +182,14 @@ public sealed class PostgresJitPolicyTestsSetup
     [Test]
     public void measurement_script_records_statement_time_and_never_resets()
     {
-        var text = DockerStackDocuments.Read("scripts/postgres-jit-window.ps1");
-        text.Contains("total_exec_time", StringComparison.Ordinal).ShouldBeTrue("statement time column missing");
-        text.Contains("jit_", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
+        // The postgres-jit-window command (unit 46 replaced scripts/postgres-jit-window.ps1); PostgresJitWindowTests runs it on fakes.
+        var snapshot = Antiphon.Nightly.PostgresJitWindow.SnapshotSql(["jit_functions"]);
+        snapshot.Contains("total_exec_time", StringComparison.Ordinal).ShouldBeTrue("statement time column missing");
+        snapshot.Contains("jit_functions", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
+        Antiphon.Nightly.PostgresJitWindow.JitColumnsSql.Contains("'jit_%'", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
+        var text = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/PostgresJitWindow.cs");
         text.Contains("pg_stat_statements_reset", StringComparison.Ordinal).ShouldBeFalse();
-        text.Contains("docker stats", StringComparison.Ordinal).ShouldBeTrue("container sample missing");
+        text.Contains("new[] { \"stats\", \"--no-stream\"", StringComparison.Ordinal).ShouldBeTrue("container sample missing");
     }
 
     private static void SameOptions(string options)
