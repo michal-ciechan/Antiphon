@@ -64,7 +64,8 @@ function Test-ConfiguredDevPostgres {
     $missing = @{ Ok = $false; Detail = 'ConnectionStrings:DefaultConnection has no usable TCP host and port' }
     try {
         $builder = New-Object System.Data.Common.DbConnectionStringBuilder
-        $builder.ConnectionString = Get-DevPostgresConnectionString -RepoRoot $RepoRoot -SimpleMode:$SimpleMode
+        # The PowerShell dictionary adapter interprets ordinary assignment as a key.
+        $builder.PSBase.ConnectionString = Get-DevPostgresConnectionString -RepoRoot $RepoRoot -SimpleMode:$SimpleMode
         $serverName = ([string]$builder['Host']).Trim().Trim('[', ']')
         $hostKind = [Uri]::CheckHostName($serverName)
         if ($hostKind -eq 'Unknown') { return $missing }
