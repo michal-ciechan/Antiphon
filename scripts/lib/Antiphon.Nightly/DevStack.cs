@@ -1,7 +1,7 @@
 // The desktop dev stack's simple (compose) mode and its database tools (unit 37 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): dev-start, dev-stop, dev-fresh, dev-backup, dev-restore and
-// dev-upgrade. Each replaced the body of the repository root's script of the same name, which stays a thin launcher so the
-// runbooks' `.\dev-start.ps1` still works. The CLI runs them as
+// dev-upgrade. Each replaced the body of the repository root's script of the same name; the scripts stayed as thin launchers
+// until unit 43 deleted them (nothing started them by path). Operators run `scripts\antiphon.cmd dev-start`. The CLI runs them as
 //
 //   antiphon-scripts dev-start [--no-client] [--no-browser] [--server-only]
 //   antiphon-scripts dev-stop [--include-postgres]
@@ -74,7 +74,7 @@ namespace Antiphon.Nightly
         DevStackProcess Describe(int pid);
     }
 
-    /// <summary>The dev-start command's options (dev-start.ps1 -NoClient -NoBrowser -ServerOnly).</summary>
+    /// <summary>The dev-start command's options (--no-client --no-browser --server-only).</summary>
     public sealed class DevStartOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -109,7 +109,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The dev-stop command's options (dev-stop.ps1 -IncludePostgres).</summary>
+    /// <summary>The dev-stop command's options (--include-postgres).</summary>
     public sealed class DevStopOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -129,7 +129,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The dev-fresh command's options (dev-fresh.ps1 -Yes).</summary>
+    /// <summary>The dev-fresh command's options (--yes).</summary>
     public sealed class DevFreshOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -152,7 +152,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The dev-backup command's options (dev-backup.ps1 -BackupDir -Retain).</summary>
+    /// <summary>The dev-backup command's options (--backup-dir --retain).</summary>
     public sealed class DevBackupOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -175,7 +175,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The dev-restore command's options (dev-restore.ps1 -BackupFile -BackupDir -Yes).</summary>
+    /// <summary>The dev-restore command's options (--backup-file --backup-dir --yes).</summary>
     public sealed class DevRestoreOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -207,7 +207,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The dev-upgrade command's options (dev-upgrade.ps1 -NoBrowser).</summary>
+    /// <summary>The dev-upgrade command's options (--no-browser).</summary>
     public sealed class DevUpgradeOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -408,7 +408,7 @@ namespace Antiphon.Nightly
             Say("  localhost:17280         <- PostgreSQL");
             Say("");
             Say("  Logs  : " + logDir + files.Path.DirectorySeparatorChar);
-            Say("  Backup: .\\dev-backup.ps1");
+            Say("  Backup: scripts\\antiphon.cmd dev-backup");
             Say("  Aspire: .\\dev-aspire.ps1  (dashboard + daemon mode)");
             if (!options.NoBrowser && !options.ServerOnly)
             {
@@ -600,7 +600,7 @@ namespace Antiphon.Nightly
                     : null;
                 if (backup == null)
                 {
-                    host.Error.WriteLine("No backups found in " + backupDir + ". Run .\\dev-backup.ps1 first.");
+                    host.Error.WriteLine("No backups found in " + backupDir + ". Run scripts\\antiphon.cmd dev-backup first.");
                     return 1;
                 }
                 Say("Using latest backup: " + backup);
@@ -672,7 +672,7 @@ namespace Antiphon.Nightly
             }
             Say("");
             Say("Restore complete.");
-            Say("Run .\\dev-start.ps1 to restart the server.");
+            Say("Run scripts\\antiphon.cmd dev-start to restart the server.");
             return 0;
         }
 

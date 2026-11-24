@@ -245,9 +245,9 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "Antiphon.Nightly", "DaemonBuildCheck.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "RunnerDaemonCommands.cs"),
                      "run-daemon.ps1",
-                     // Unit 37: the dev stack (the server restart runs the floor warnings in process) and its kept launcher.
+                     // Unit 37: the dev stack (the server restart runs the floor warnings in process; unit 43 deleted the
+                     // root launchers).
                      Path.Combine("lib", "Antiphon.Nightly", "DevRestart.cs"),
-                     Path.Combine("..", "restart-server.ps1"),
                  })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);

@@ -166,8 +166,8 @@ only in `claude-home` / the user profile. Named so the absence is visible:
   that dump — see [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md).
   Do not inline `pg_dump`. `scripts\antiphon.cmd dev-fresh` is the nuclear reset (volume +
   `C:\Antiphon\worktrees`), not a bootstrap step. (The repo-root `.\dev-*.ps1`,
-  `.\restart.ps1`, `.\restart-server.ps1` and `.\stop-server.ps1` are thin launchers of these
-  commands since 2026-11-24, with their PowerShell parameter names.)
+  `.\restart.ps1`, `.\restart-server.ps1` and `.\stop-server.ps1` launchers are gone; run
+  the commands. Only `.\dev-aspire.ps1` remains.)
 
 ## Card files and private-note custody
 
@@ -361,7 +361,7 @@ Never print a secret value. Config keys stay empty in the tracked file.
 | `Llm:Providers:anthropic:ApiKey` / `openai:ApiKey` | Database (Settings UI). Tracked config empty. `dotnet user-secrets list --id antiphon-server` empty. No matching Bitwarden item on 2026-08-19. | `dotnet user-secrets set "Llm:Providers:anthropic:ApiKey" … --id antiphon-server` (preferred) or Settings UI after first start. Seeder copies a non-empty config key into the DB. Also accepted: gitignored `server/appsettings.Development.json`. Never the tracked `server/appsettings.json`. Empty keys do not block a TUI agent. |
 | `GitHub:PersonalAccessToken` | Tracked file empty, `Enabled: false`. | Optional. Same user-secrets id if wanted. |
 | Agent TUI wrapper auth | `~/.claude` (Claude), `~/.grok/auth.json` (Grok). | Log the TUI in as the Windows user. |
-| Agent TUI managed secrets + Data Protection ring | DB ciphertext + `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`. | Fresh ring is expected; re-enter managed secrets. On a migration, back up the ring *with* the `dev-backup.ps1` output ([ai-agent-tui-configuration.md](ai-agent-tui-configuration.md)). |
+| Agent TUI managed secrets + Data Protection ring | DB ciphertext + `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`. | Fresh ring is expected; re-enter managed secrets. On a migration, back up the ring *with* the `dev-backup` output ([ai-agent-tui-configuration.md](ai-agent-tui-configuration.md)). |
 | Telegram bot token | Bitwarden item **Telegram Bot Tokens (Antiphon / School Revision)** (type: Secure Note). Fields include `antiphon_assistant_bot`, `school_revision_bot`, `antiphon_test_bot`, `school_revision_test_bot`. Stand-up is [telegram-bot-ops.md](telegram-bot-ops.md). | Only if standing up channels. Env / user-secrets on the *gateway*, not the desktop `appsettings.json`. |
 | `AntiphonMessaging:BootstrapServers` | Optional per-machine override in AppHost user-secrets (id `aspire-antiphon-apphost`) or its gitignored development overlay; forwarded only to the server. [Channel ops](telegram-bot-ops.md#per-bot-deployment-model) requires an explicitly confirmed broker. | Leave unset for the local path: `localhost:19092` from `server/appsettings.json`. Real gateways are provisioned separately; local does not establish test isolation. |
 

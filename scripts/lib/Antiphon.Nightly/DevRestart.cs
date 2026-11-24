@@ -1,9 +1,9 @@
 // The dev stack's restart tools behind an external Aspire control endpoint (unit 37 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): restart-dev-stack, restart-server, restart-client,
 // stop-server and assert-dev-ports-clear. They replaced the bodies of the repository root's restart.ps1, restart-server.ps1,
-// restart-client.ps1, stop-server.ps1 and assert-dev-ports-clear.ps1; restart.ps1, restart-server.ps1 and stop-server.ps1 stay
-// thin launchers (the runbooks name them), restart-client.ps1 and assert-dev-ports-clear.ps1 (only restart*.ps1 ran them) are
-// gone. The CLI runs them as
+// restart-client.ps1, stop-server.ps1 and assert-dev-ports-clear.ps1. restart-client.ps1 and assert-dev-ports-clear.ps1 (only
+// restart*.ps1 ran them) went in unit 37; restart.ps1, restart-server.ps1 and stop-server.ps1 stayed thin launchers until unit
+// 43 deleted them (nothing started them by path). The CLI runs them as
 //
 //   antiphon-scripts restart-dev-stack [--endpoint https://localhost:22025] [--stop-port-owners] [--restart-runner] [--skip-verify]
 //   antiphon-scripts restart-server [--endpoint https://localhost:22025] [--stop-port-owners]
@@ -72,7 +72,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The restart-dev-stack command's options (restart.ps1 -Endpoint -StopPortOwners -RestartRunner -SkipVerify).</summary>
+    /// <summary>The restart-dev-stack command's options (--endpoint --stop-port-owners --restart-runner --skip-verify).</summary>
     public sealed class DevRestartOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -108,7 +108,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>The assert-dev-ports-clear command's options (assert-dev-ports-clear.ps1 -Ports -StopPortOwners).</summary>
+    /// <summary>The assert-dev-ports-clear command's options (--ports --stop-port-owners).</summary>
     public sealed class DevPortsOptions
     {
         /// <summary>The CLI's usage line.</summary>
@@ -161,7 +161,7 @@ namespace Antiphon.Nightly
 
         private static string Num(int value) => value.ToString(CultureInfo.InvariantCulture);
 
-        /// <summary>restart.ps1's body: the runner (optional), the server, the client and the verification.</summary>
+        /// <summary>restart-dev-stack (it replaced restart.ps1's body): the runner (optional), the server, the client and the verification.</summary>
         public static int Restart(DevRestartOptions options, NightlyHost host, IAppHostPlatform platform, IDevStackSeams seams, DevRestartSteps steps)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
@@ -184,7 +184,7 @@ namespace Antiphon.Nightly
             return 0;
         }
 
-        /// <summary>restart-server.ps1's body (see the file header).</summary>
+        /// <summary>restart-server (it replaced restart-server.ps1's body; see the file header).</summary>
         public static int RestartServer(DevServerRestartOptions options, NightlyHost host, IAppHostPlatform platform, IDevStackSeams seams)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
@@ -234,7 +234,7 @@ namespace Antiphon.Nightly
             return 0;
         }
 
-        /// <summary>restart-client.ps1's body (see the file header).</summary>
+        /// <summary>restart-client (it replaced restart-client.ps1's body; see the file header).</summary>
         public static int RestartClient(DevServerRestartOptions options, NightlyHost host, IAppHostPlatform platform, IDevStackSeams seams)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
@@ -265,7 +265,7 @@ namespace Antiphon.Nightly
             return 0;
         }
 
-        /// <summary>stop-server.ps1's body: the stop, then 3 s for the file locks. Always 0 (the stop's exit is not checked).</summary>
+        /// <summary>stop-server (it replaced stop-server.ps1's body): the stop, then 3 s for the file locks. Always 0 (the stop's exit is not checked).</summary>
         public static int StopServer(DevServerRestartOptions options, NightlyHost host, IDevStackSeams seams)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
@@ -278,7 +278,7 @@ namespace Antiphon.Nightly
             return 0;
         }
 
-        /// <summary>assert-dev-ports-clear.ps1's body: 0 when no listener holds a port (after stopping them with StopPortOwners), else 1.</summary>
+        /// <summary>assert-dev-ports-clear (it replaced assert-dev-ports-clear.ps1's body): 0 when no listener holds a port (after stopping them with StopPortOwners), else 1.</summary>
         public static int AssertPortsClear(DevPortsOptions options, NightlyHost host, IAppHostPlatform platform, IDevStackSeams seams)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));

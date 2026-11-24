@@ -30,7 +30,7 @@
     },
     {
       "group": "runner-restart",
-      "paths": ["restart-session-runner.ps1", "restart.ps1"],
+      "paths": ["scripts/lib/Antiphon.Nightly/RunnerRestart.cs", "scripts/lib/Antiphon.Nightly/DevRestart.cs"],
       "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     },
     {

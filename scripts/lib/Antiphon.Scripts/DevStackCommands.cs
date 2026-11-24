@@ -1,8 +1,8 @@
 // The desktop dev stack's commands (unit 37 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): dev-aspire and
 // its detached AppHost wrapper run-apphost, dev-start, dev-stop, dev-fresh, dev-backup, dev-restore, dev-upgrade,
 // restart-dev-stack, restart-server, restart-client, stop-server and assert-dev-ports-clear. Each replaced the body of the
-// repository root's script of the same name (restart-dev-stack: restart.ps1), which stays a thin launcher where the runbooks
-// name it. The behaviour is Antiphon.Nightly's (DevAspire, DevStack, DevRestart) on the production host, AppHostOs and
+// repository root's script of the same name (restart-dev-stack: restart.ps1); of those only dev-aspire.ps1 is still a thin
+// launcher (unit 43 deleted the rest). The behaviour is Antiphon.Nightly's (DevAspire, DevStack, DevRestart) on the production host, AppHostOs and
 // DevStackOs (the build slot in this process, BuildSlotCommands.Runner; the confirmation prompt on this console); this file
 // binds them. restart-dev-stack runs restart-session-runner and verify-dev-stack in process. The checkout is the one this
 // executable was built in, else the current directory. Every command runs on Windows only (the desktop stack: its ports,

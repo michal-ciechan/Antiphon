@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-1698 slice 1, in-process. The Test-C1698_* cases of the deleted scripts/test-toolchain-floor.ps1 (plan
 /// 2026-11-22-remaining-ps1-to-csharp.md, unit 1) call ToolchainFloor.Warnings with an injected version source and
 /// ToolchainFloor.Run (the toolchain-floor command) on a fake host; the runner restart (the restart-session-runner command
-/// since unit 30) and the server restart (the restart-server command since unit 37; restart-server.ps1 is its launcher) run
+/// since unit 30) and the server restart (the restart-server command since unit 37; its root launcher went in unit 43) run
 /// the warnings in process. The nightly run and tests cases below it were already in-process.
 /// Not ported: the cases that ran restart-server.ps1 and restart-session-runner.ps1 with a fake git and dotnet
 /// (launching a .ps1; what they proved, the warning text and an unchanged exit and call sequence, is the command's output
@@ -156,7 +156,7 @@ public sealed class ToolchainFloorWarningTests
     }
 
     /// <summary>
-    /// Unit 37: the restart-server command (DevRestart.RestartServer; restart-server.ps1 is its launcher) prints the floor
+    /// Unit 37: the restart-server command (DevRestart.RestartServer; unit 43 deleted the root launcher) prints the floor
     /// warnings in process before it stops the server, and restarts anyway: a tool below its floor never refuses the restart
     /// or changes its exit code. (restart-server.ps1 ran the toolchain-floor command through Invoke-AntiphonCli in a block that
     /// only warned; session-runner-restart-health.ps1 had the same block, C1698_RunnerRestartWarnsInProcess.)
@@ -173,7 +173,6 @@ public sealed class ToolchainFloorWarningTests
         warning.ShouldBeLessThan(text.IndexOf("Stopping server...", StringComparison.Ordinal), "the warning precedes the stop");
         text.ShouldContain("Server restarted.");
         world.Launches.Count.ShouldBe(3, "stop, build and start all ran");
-        File.ReadAllText(Path.Combine(Repo, "restart-server.ps1")).ShouldNotContain("toolchain-floor");
         File.Exists(Path.Combine(Repo, "scripts", "lib", "toolchain-floor.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(Repo, "scripts", "test-toolchain-floor.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(Repo, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();

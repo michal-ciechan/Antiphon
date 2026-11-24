@@ -55,8 +55,8 @@ scripts/antiphon dev-aspire
 ```
 
 - The dev stack scripts are C# commands since 2026-11-24 (unit 37 of
-  docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). The repo-root `.\dev-*.ps1`, `.\restart.ps1`,
-  `.\restart-server.ps1` and `.\stop-server.ps1` stay as thin launchers for operators; agents run the commands.
+  docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). Unit 43 deleted the repo-root launchers except
+  `.\dev-aspire.ps1`; everyone runs the commands (`scripts\antiphon.cmd <command>` on Windows).
 - The command exits once the dashboard is ready (90 s at most); the AppHost runs on in a detached wrapper
   (`run-apphost`: the stamped build, then the AppHost, output in `logs/apphost.log`). A shell whose Job Object kills its
   children at command end still takes the wrapper with it (docs/apphost-runbook.md).
@@ -80,8 +80,7 @@ scripts/antiphon dev-aspire
 | `dev-restore`        | Restore DB from latest (or `--backup-file`) backup. Prompts to confirm. |
 | `restart-dev-stack`, `restart-server`, `stop-server` | Restart through the external Aspire control endpoint (Mikey.AspireCommand, `--endpoint`). |
 
-Operators may run the repo-root launchers instead (`.\dev-start.ps1 -NoClient`, `.\dev-backup.ps1 -BackupDir ...`): same
-behaviour, PowerShell parameter names.
+On Windows run them as `scripts\antiphon.cmd dev-start --no-client`, `scripts\antiphon.cmd dev-backup --backup-dir ...`.
 
 ---
 

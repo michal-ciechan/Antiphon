@@ -277,7 +277,7 @@ public sealed class DevStackTests
     {
         using var none = World();
         DevStack.Restore(DevRestoreOptions.Parse([], none.Root), Host(none), none, none).ShouldBe(1);
-        Text(none).ShouldContain("No backups found in " + none.PathOf("backups") + ". Run .\\dev-backup.ps1 first.");
+        Text(none).ShouldContain("No backups found in " + none.PathOf("backups") + ". Run scripts\\antiphon.cmd dev-backup first.");
 
         using var missing = World();
         DevStack.Restore(DevRestoreOptions.Parse(["--backup-file", missing.PathOf("nope.sql")], missing.Root), Host(missing), missing, missing).ShouldBe(1);

@@ -134,8 +134,6 @@
         "Antiphon.AppHost/**",
         "docker-compose*.yml",
         "dev-*.ps1",
-        "restart*.ps1",
-        "stop-server.ps1",
         "verify-dev-stack.ps1",
         "Directory.Build.props",
         "global.json",

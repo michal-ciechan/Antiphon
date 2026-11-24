@@ -112,7 +112,7 @@ namespace Antiphon.Nightly
         public const string StartTask = "start-task";
     }
 
-    /// <summary>The restart-session-runner command's options (restart-session-runner.ps1 -Hard -KillSessions -WaitOnly -TimeoutSec).</summary>
+    /// <summary>The restart-session-runner command's options (--hard --kill-sessions --wait-only --timeout-sec).</summary>
     public sealed class RunnerRestartOptions
     {
         /// <summary>The CLI's usage line.</summary>
