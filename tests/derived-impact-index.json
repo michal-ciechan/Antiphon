@@ -2932,20 +2932,6 @@
       ]
     },
     {
-      "path": "dev-aspire.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "AppHostWorktreeGuardTests",
-        "C1744G3PhoneHomeSupervisionTests",
-        "HerdrPaneDisposalGuardedLiveTests",
-        "LinuxServerRestartGateTests",
-        "PhoneHomeBackpressureTests",
-        "PlanCatalogServiceTests",
-        "ProcessSpawnLimitTests",
-        "ZombieCensusServiceTests"
-      ]
-    },
-    {
       "path": "docker-compose.delivery-fixture.yml",
       "classes": [
         "DockerStackContractTests"
