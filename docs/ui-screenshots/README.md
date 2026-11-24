@@ -129,3 +129,67 @@ here before anyone opens the app.
 ## Proposals/Plan reader — Section open
 
 ![proposals-plan-reader--section-open](./proposals-plan-reader--section-open.png)
+
+## Proposals/BYOA/Bring your own agent — A · Help drawer
+
+![proposals-byoa-bring-your-own-agent--drawer](./proposals-byoa-bring-your-own-agent--drawer.png)
+
+## Proposals/BYOA/Bring your own agent — B · Help drawer with a key
+
+![proposals-byoa-bring-your-own-agent--drawer-with-key](./proposals-byoa-bring-your-own-agent--drawer-with-key.png)
+
+## Proposals/BYOA/Bring your own agent — C · BYOA keys
+
+![proposals-byoa-bring-your-own-agent--keys](./proposals-byoa-bring-your-own-agent--keys.png)
+
+## Proposals/BYOA/Bring your own agent — D · BYOA guide
+
+![proposals-byoa-bring-your-own-agent--guide-page](./proposals-byoa-bring-your-own-agent--guide-page.png)
+
+## Proposals/BYOA/Bring your own agent — E · Icon and README line
+
+![proposals-byoa-bring-your-own-agent--icon](./proposals-byoa-bring-your-own-agent--icon.png)
+
+## Proposals/Experiments/Cases and suites — A · Step panel on the graph
+
+![proposals-experiments-cases-and-suites--step-panel-on-graph](./proposals-experiments-cases-and-suites--step-panel-on-graph.png)
+
+## Proposals/Experiments/Cases and suites — B · Case
+
+![proposals-experiments-cases-and-suites--case](./proposals-experiments-cases-and-suites--case.png)
+
+## Proposals/Experiments/Cases and suites — C · Suite
+
+![proposals-experiments-cases-and-suites--suite-page](./proposals-experiments-cases-and-suites--suite-page.png)
+
+## Proposals/Experiments/Cases and suites — D · Comments the bot missed
+
+![proposals-experiments-cases-and-suites--human-comments](./proposals-experiments-cases-and-suites--human-comments.png)
+
+## Proposals/Experiments/Experiments — A · History
+
+![proposals-experiments-experiments--history-list](./proposals-experiments-experiments--history-list.png)
+
+## Proposals/Experiments/Experiments — B · New experiment
+
+![proposals-experiments-experiments--new](./proposals-experiments-experiments--new.png)
+
+## Proposals/Experiments/Experiments — C · Customise a variant
+
+![proposals-experiments-experiments--customise-variant](./proposals-experiments-experiments--customise-variant.png)
+
+## Proposals/Experiments/Experiments — D · A/B view
+
+![proposals-experiments-experiments--ab-grid](./proposals-experiments-experiments--ab-grid.png)
+
+## Proposals/Experiments/Experiments — E · Comparison: a different model
+
+![proposals-experiments-experiments--cell-comparison](./proposals-experiments-experiments--cell-comparison.png)
+
+## Proposals/Experiments/Experiments — F · Comparison: a different graph
+
+![proposals-experiments-experiments--cell-comparison-graph](./proposals-experiments-experiments--cell-comparison-graph.png)
+
+## Proposals/Experiments/Experiments — G · Paused at the budget
+
+![proposals-experiments-experiments--paused-at-budget](./proposals-experiments-experiments--paused-at-budget.png)
