@@ -120,8 +120,7 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         // V-12 (G-2, G-16, G-17, P-B). After "none", a new task gets the legacy mirror, and an already-leased slot is still
         // released by a direct pass and by the hosted loop (whose IOptions also says "none").
         var monitor = new MutableDelegationMonitor("Plan");
-        var probe = new WindowsWorkspaceSlotProcessProbe(_ => new HolderScan(pass != "reconcile-pass", []));
-        await using var world = await C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor), slotProcesses: probe);
+        await using var world = await StartHolderFreeWorldAsync(monitor);
         var a = await SeedAsync(world, AgentTaskRole.Plan);
         await PrepareAsync(world);
         var leased = LeasedFor(world, a).ShouldHaveSingleItem();
@@ -138,21 +137,9 @@ public sealed class C0824WorkspaceSlotRoleGateTests
 
         if (pass == "reconcile-pass")
         {
-            PhoneHomeWorkspaceSlotReleaseResponse? reply = null;
-            world.Intercept = frame =>
-            {
-                if (frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease)
-                    return null;
-                var response = world.Deliver(frame);
-                reply = response.Payload?.Deserialize<PhoneHomeWorkspaceSlotReleaseResponse>(PhoneHomeFraming.Json);
-                return response;
-            };
             using var scope = world.Rig.Provider.CreateScope();
-            var released = await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>()
-                .ReconcileAsync(CancellationToken.None).WaitAsync(Bound);
-            var slot = world.Pool.Ledger().Slot(leased.Id)!;
-            released.ShouldBe(1, $"outcome={reply?.Outcome} state={slot.State} requested={slot.ReleaseRequested} "
-                + $"attempts={slot.LingerAttempts} detail={slot.Detail}");
+            (await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>()
+                .ReconcileAsync(CancellationToken.None).WaitAsync(Bound)).ShouldBe(1);
         }
         else
         {
@@ -183,7 +170,7 @@ public sealed class C0824WorkspaceSlotRoleGateTests
     {
         // V-13 (G-18). Removing a role from the list does not strand the slots that role already holds.
         var monitor = new MutableDelegationMonitor("Plan,Docs");
-        await using var world = await C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor));
+        await using var world = await StartHolderFreeWorldAsync(monitor);
         var taskId = await SeedAsync(world, AgentTaskRole.Plan);
         await PrepareAsync(world);
         var leased = LeasedFor(world, taskId).ShouldHaveSingleItem();
@@ -417,6 +404,11 @@ public sealed class C0824WorkspaceSlotRoleGateTests
 
     private static RunnerCapabilitiesDto SlotRunner() =>
         new("InboxConhost", "inbox", "test", false, Features: [RunnerCapabilityFeatures.WorkspaceSlotV1], VerificationCustodyBackend: null);
+
+    // The role cases require a clean slot. An incomplete host-wide scan can defer that slot independently of roles.
+    private static Task<C0824SlotTransportWorld> StartHolderFreeWorldAsync(MutableDelegationMonitor monitor) =>
+        C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor),
+            slotProcesses: new WindowsWorkspaceSlotProcessProbe(static _ => new HolderScan(true, [])));
 
     private static Action<IServiceCollection> WithMonitor(MutableDelegationMonitor monitor) => services =>
     {
