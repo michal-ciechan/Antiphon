@@ -78,7 +78,7 @@ try {
     foreach ($name in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'WINDIR')) {
         [Environment]::SetEnvironmentVariable($name, $fixture)
     }
-    [Environment]::SetEnvironmentVariable('ConnectionStrings:DefaultConnection', $null)
+    [Environment]::SetEnvironmentVariable('ConnectionStrings:DefaultConnection', [NullString]::Value)
     Set-Variable -Name IsWindows -Value $true -Scope Local -Force
 
     $listener.Start()
@@ -137,7 +137,11 @@ try {
 }
 finally {
     $listener.Stop()
-    foreach ($name in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
+    foreach ($name in $savedEnv.Keys) {
+        $value = $savedEnv[$name]
+        if ($null -eq $value) { $value = [NullString]::Value }
+        [Environment]::SetEnvironmentVariable($name, $value)
+    }
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }
 
