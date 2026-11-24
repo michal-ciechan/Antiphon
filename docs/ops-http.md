@@ -66,7 +66,7 @@ is in [antiphon-api.md](antiphon-api.md#4-the-session-runners-own-api-internal).
 
 Run `scripts/antiphon delegate create --capability <name> …` from the approved checkout (add `--kind Codex` while Claude is held). Do not read capability files, do not dump env looking for tokens, do not edit `Delegation:AllowedRoots`. Reports land on the bound card; poll `scripts/antiphon delegate status <id>` or the card thread.
 
-The operator issues the capability on Windows with `scripts\antiphon.cmd capability issue --name <n> --roots <checkout>`. That command writes a DPAPI blob and prints the name and store path — never the token; off Windows issue and rotate refuse before any request. `-Orchestrator -Kind Codex` stays 422. Codex remote control stays `409 remote_control_refused`. A Claude usage hold still `409 model_disabled` unless the caller passed `-Kind Codex`; quota-exhausted is `409 subscription_quota_low`. The complementary fallback is a named Codex AlwaysOn plus `POST /api/sessions/{id}/messages` — still do not widen `AllowedRoots`.
+The operator issues the capability on Windows with `scripts\antiphon.cmd capability issue --name <n> --roots <checkout>`. That command writes a DPAPI blob and prints the name and store path — never the token; off Windows issue and rotate refuse before any request. `--orchestrator --kind Codex` stays 422. Codex remote control stays `409 remote_control_refused`. A Claude usage hold still `409 model_disabled` unless the caller passed `--kind Codex`; quota-exhausted is `409 subscription_quota_low`. The complementary fallback is a named Codex AlwaysOn plus `POST /api/sessions/{id}/messages` — still do not widen `AllowedRoots`.
 
 ### Claude held
 
@@ -812,7 +812,7 @@ that names the reason, ref and last confirmed tip when available.
 registered checkout while it was off its expected ref, detached, or on a branch reset into a
 divergent lineage; `observedRef` is the ref it was actually on, or null for a detached HEAD.
 An alternate positive prevents a false `CompletedWithoutProgress` settlement and authorizes
-nothing else - it never merges the branch back, and landing stays the explicit `-Land` path.
+nothing else - it never merges the branch back, and landing stays the explicit `land` path.
 
 `POST /api/agent-tasks` answers 400 `…could not be converted… Path: $.role` only for a name the served build's enum lacks; on master every scripted role binds (`AgentTaskRoleBindingTests`), so that 400 means the served build predates the value: check `GET /api/version` against HEAD and restart (CARD-0493).
 
@@ -1001,7 +1001,7 @@ Answer a hold with a typed decision, never an ordinary reply:
 [--extend-minutes 1..720]`. The body is exactly `ceilingAction`, `episodeId` and
 optional `extendMinutes`, with no `origin`, `message` or `round`. The decision
 is recorded and the session continues; nothing is typed into it. A moved episode
-is 409 `ceiling_episode_stale`: run `-Status` again. At the final 720-minute hold,
+is 409 `ceiling_episode_stale`: run `status` again. At the final 720-minute hold,
 Continue and Extend refuse. An operator may add `--operator-extend --extend-minutes
 1..240 --ceiling-reason "..."`. That reads the owner-only token through
 `scripts/lib/runner-operator-token.ps1` (`ANTIPHON_OPERATOR_TOKEN_FILE`) for that

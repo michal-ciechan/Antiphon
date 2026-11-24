@@ -572,7 +572,7 @@ public class DelegationReportFormatterTests
         bits.ShouldContain("reason: question-line");
         bits.ShouldContain("asks: Should I accept negatives?");
         bits.ShouldContain("authority: none given at dispatch");
-        bits.ShouldContain("-Reply 7f3a2b91");
+        bits.ShouldContain("next: reply 7f3a2b91");
         bits.ShouldNotContain("delegate continue");
     }
 

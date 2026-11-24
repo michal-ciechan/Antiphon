@@ -21,9 +21,9 @@ internal static class MergeHelperOutcome
         if (request is null) return;
 
         var detail = $"Merge helper {DelegationReportFormatter.Short(helper.Id)} ended {helper.Status}; "
-            + $"land request {request.Id:N} stays NeedsResolution. Resolve with -Land "
-            + $"{DelegationReportFormatter.Short(owner.Id)} -ExpectedSourceSha <sha> "
-            + "-FromTask <task>, retry the helper, or cancel the owner.";
+            + $"land request {request.Id:N} stays NeedsResolution. Resolve with land "
+            + $"{DelegationReportFormatter.Short(owner.Id)} --expected-source-sha <sha> "
+            + "--from-task <task>, retry the helper, or cancel the owner.";
         db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(), AgentTaskId = owner.Id, Type = AgentTaskEventType.Warning,

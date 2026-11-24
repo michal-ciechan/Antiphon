@@ -48,7 +48,7 @@ public sealed class OrchestratorInstructionsRendererTests
         body.ShouldContain("## 8. Operator standing instructions");
         body.ShouldContain("recommended in-flight");
         body.ShouldContain("| Code |");
-        body.ShouldContain("-IgnoreConcurrencyLimit");
+        body.ShouldContain("--ignore-concurrency-limit");
         body.ShouldContain("GET /api/agent-tasks/pipeline");
         body.ShouldContain("desktop:");
         body.ShouldContain("server2:");
@@ -63,7 +63,7 @@ public sealed class OrchestratorInstructionsRendererTests
         body.ShouldContain("haiku");
         body.ShouldContain("prefer the live file");
         body.ShouldContain("CARD-0262");
-        body.ShouldContain("Tier names are never -Kind values.");
+        body.ShouldContain("Tier names are never --kind values.");
         body.ShouldNotContain("occupied");
     }
 
@@ -129,7 +129,7 @@ public sealed class OrchestratorInstructionsRendererTests
         Encoding.UTF8.GetByteCount(body).ShouldBeLessThanOrEqualTo(16_384);
         body.ShouldContain("## 1. Pipeline caps");
         body.ShouldContain("| Code |");
-        body.ShouldContain("-IgnoreConcurrencyLimit");
+        body.ShouldContain("--ignore-concurrency-limit");
         var pinsAt = body.IndexOf("more: GET /api/routing-pins", StringComparison.Ordinal);
         var holdsAt = body.IndexOf("more: GET /api/model-availability", StringComparison.Ordinal);
         var standingAt = body.IndexOf("more: GET /api/orchestrator-instructions", StringComparison.Ordinal);

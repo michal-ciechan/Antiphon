@@ -477,7 +477,7 @@ POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of
                                              `reviewedSourceClean` requires an explicit
                                              `reviewedSourceSha` and never copies a prior
                                              assertion. `scripts/antiphon delegate finding <id>
-                                             -Stage … -Found "…"` / `-Clean`
+                                             --stage … --found "…"` / `--clean`
                                              [`--reviewed-source-sha`]
                                              [`--reviewed-source-clean <bool>`]. Status and
                                              stage-outcome DTOs expose the nullable field.

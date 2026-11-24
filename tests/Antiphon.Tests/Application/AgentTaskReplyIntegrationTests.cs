@@ -839,7 +839,7 @@ public partial class AgentTaskReplyIntegrationTests
         var parentNote = await verify.SessionQueuedMessages.SingleAsync(
             m => m.AgentSessionId == parentSessionId);
         parentNote.Body.ShouldContain($"[task {shortId} waiting]");
-        parentNote.Body.ShouldContain($"authority on file — `-Continue {shortId}`");
+        parentNote.Body.ShouldContain($"authority on file — `continue {shortId}`");
     }
 
     [Test]
@@ -1241,7 +1241,7 @@ public partial class AgentTaskReplyIntegrationTests
         var refused = await Should.ThrowAsync<ConflictException>(() =>
             CreateService().ContinueWithAuthorityAsync(task.Id, AnswerOrigin.Web, CancellationToken.None));
         refused.Code.ShouldBe("no_authority");
-        refused.Message.ShouldContain("-Reply");
+        refused.Message.ShouldContain("Answer it with reply instead.");
     }
 
     [Test]
@@ -1298,7 +1298,7 @@ public partial class AgentTaskReplyIntegrationTests
         parentNote.Body.ShouldContain("reason: marked-blocked");
         parentNote.Body.ShouldContain($"asks: {report}");
         parentNote.Body.ShouldContain("authority: none given at dispatch");
-        parentNote.Body.ShouldContain("-Reply");
+        parentNote.Body.ShouldContain("next: reply ");
         parentNote.Body.ShouldNotContain("delegate continue");
     }
 

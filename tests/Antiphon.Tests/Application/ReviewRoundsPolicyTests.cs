@@ -157,7 +157,7 @@ public sealed class ReviewRoundsPolicyTests
         block.ShouldContain(l => l.StartsWith("reviewedRange: <", StringComparison.Ordinal), "stage-review evidence block names reviewedRange");
 
         var parsed = ReviewEvidence.TryParse(string.Join('\n', new[] { ReviewEvidence.Heading }.Concat(block))
-            .Replace("<reviewed source task's full GUID: owner unless brief names -FromTask>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+            .Replace("<reviewed source task's full GUID: owner unless brief names --from-task>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
             .Replace("<full SHA actually reviewed>", new string('a', 40))
             .Replace("<Full|Interim|None>", "Full"));
         parsed.Usable.ShouldBeTrue("the round lines leave the evidence block parseable");

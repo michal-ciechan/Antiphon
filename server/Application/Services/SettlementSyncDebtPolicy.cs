@@ -86,7 +86,7 @@ public static class SettlementSyncDebtPolicy
             + ". Origin " + result.FullRef + " is at " + sha
             + "; the desktop checkout " + task.WorktreePath
             + " will be fast-forwarded by the settlement sync sweep (synced later). "
-            + "No reply is needed; Review and -Land use the pushed branch at " + sha + "."
+            + "No reply is needed; Review and land use the pushed branch at " + sha + "."
             + (result.SourceDescends is null
                 ? " The pushed objects are not yet in the desktop repository; the settlement sync sweep "
                   + "fetches them under the lease before the fast-forward."

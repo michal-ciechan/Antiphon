@@ -464,7 +464,7 @@ public sealed class ProjectSetupService
                 ReadinessLevel.Recommended,
                 ReadinessStatus.Warning,
                 $"'{project.LocalRepositoryPath}' is not a git repository — worktree tasks will not be available.",
-                "A plain directory is allowed. Card worktrees and -Worktree tasks need `git init` (or a clone) first.",
+                "A plain directory is allowed. Card worktrees and --worktree tasks need `git init` (or a clone) first.",
                 null);
         }
 

@@ -197,7 +197,7 @@ public sealed class LandEvidenceWarningDeliveryTests
                 && e.Type == AgentTaskEventType.LandRefused);
             refusal.Detail.ShouldContain(_evidence.ToString("D"), Case.Sensitive, row);
             refusal.Detail.ShouldContain(_sha, Case.Sensitive, row);
-            refusal.Detail.ShouldContain(_mode == "adoption" ? "-FromTask" : "-RecoverReviewedSource", Case.Sensitive, row);
+            refusal.Detail.ShouldContain(_mode == "adoption" ? "--from-task" : "--recover-reviewed-source", Case.Sensitive, row);
             var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
                 n.TaskId == Land.Fixture.TaskId && n.SourceEventId == refusal.Id);
             note.ParentSessionId.ShouldBe(Caller.SessionId, row);

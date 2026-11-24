@@ -73,7 +73,7 @@ Every repo place that names a model or a CLI version (check all of them in the s
 | Place | What it holds |
 |---|---|
 | `server/Application/Services/ModelLevelAliases.cs` | The ladder (`ForCodexEntry`, `ForClaude`, `ForGrok`) and `MinimumCodexCliVersion` floors. The runner uses the shared GPT-6.2 catalog floor at cold launch when the selected launcher has a fresh, matching version observation. |
-| `server/Application/Core/ModelAlias.cs` | Slug constants, `DelegatableAliases` (what `-Model` and holds accept), `Normalize`, `CanonicalHoldAlias`. |
+| `server/Application/Core/ModelAlias.cs` | Slug constants, `DelegatableAliases` (what `--model` and holds accept), `Normalize`, `CanonicalHoldAlias`. |
 | `server/Application/Services/AgentTuiRunnerCatalog.cs` | Curated profile model lists per kind. |
 | `GET /api/model-availability` / `scripts/antiphon model-availability` | Live holds (verbs `get`, `hold`, `clear`). |
 | `GET /api/complexity-chains` | The role x complexity matrix (cells, not pins). |
@@ -293,7 +293,7 @@ refusal, exit 5 a SHA mismatch with the lock retained ([apphost-runbook.md](apph
 Two canaries, then one real-work task. Each is a sanctioned spend of one launch.
 
 ```powershell
-# Ladder: no -Model. High resolves through ForCodex.
+# Ladder: no --model. High resolves through ForCodex.
 scripts/antiphon delegate create --role Custom --kind Codex --level High --runner server2 --no-commit --title '<ver> ladder canary' --goal 'Reply with one line ready. Do not edit files.'
 # Explicit slug.
 scripts/antiphon delegate create --role Custom --kind Codex --level High --model <new slug> --runner server2 --no-commit --title '<ver> explicit canary' --goal 'Reply with one line ready. Do not edit files.'
@@ -315,8 +315,8 @@ Confirm, for every canary:
   grep -o '"model":"[^"]*"' "$f" | sort -u
   ```
 
-- Validation probes: `-Model <unknown text>` is 422 `model_alias_unknown`; the new slug on the
-  wrong kind (for example `-Kind ClaudeCode -Model <codex slug>`) is also 422
+- Validation probes: `--model <unknown text>` is 422 `model_alias_unknown`; the new slug on the
+  wrong kind (for example `--kind ClaudeCode --model <codex slug>`) is also 422
   `model_alias_unknown` (`AgentTaskService.ExplicitDelegatableAlias`; a standing-model conflict is
   `model_alias_conflict`).
 

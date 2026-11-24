@@ -109,7 +109,7 @@ internal static class AgentTaskCardBinder
             var resolution = await ResolveAsync(db, titleIdentifiers[0], context, ct);
             var extras = titleIdentifiers.Count > 1
                 ? $"Title names {string.Join(", ", titleIdentifiers.Skip(1))} as well; "
-                  + $"bound to {titleIdentifiers[0]} — pass -Card to choose."
+                  + $"bound to {titleIdentifiers[0]} — pass --card to choose."
                 : null;
 
             if (resolution.CardId is Guid titleCardId)

@@ -108,7 +108,7 @@ public class AgentTaskLandApprovalRequestTests
         error.Message.ShouldContain(FullRef(other.WorktreeBranch));
         error.Message.ShouldContain(FullRef(owner.WorktreeBranch));
         error.Message.ShouldContain("Land " + DelegationReportFormatter.Short(other.Id));
-        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(other.Id));
+        error.Message.ShouldContain("--from-task " + DelegationReportFormatter.Short(other.Id));
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
     }
 
@@ -144,7 +144,7 @@ public class AgentTaskLandApprovalRequestTests
                 AdoptFromTaskId: source.Id), CancellationToken.None));
         error.Code.ShouldBe("review_evidence_subject_mismatch");
         error.Message.ShouldContain("required AdoptionSource subjectTaskId=" + DelegationReportFormatter.Short(source.Id));
-        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(source.Id));
+        error.Message.ShouldContain("--from-task " + DelegationReportFormatter.Short(source.Id));
         error.Message.ShouldContain(FullRef(source.WorktreeBranch));
         error.Message.ShouldContain(FullRef(owner.WorktreeBranch));
     }
@@ -174,10 +174,10 @@ public class AgentTaskLandApprovalRequestTests
         error.Code.ShouldBe("adopt_source_invalid");
         error.Message.ShouldContain("RepairSourceTaskId");
         error.Message.ShouldContain("can never be an adoption source");
-        error.Message.ShouldContain("-StartRef");
-        error.Message.ShouldContain("no -RepairSource");
+        error.Message.ShouldContain("--start-ref");
+        error.Message.ShouldContain("no --repair-source");
         error.Message.ShouldContain("at least one commit");
-        error.Message.ShouldContain("-FromTask");
+        error.Message.ShouldContain("--from-task");
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
     }
 
@@ -195,8 +195,8 @@ public class AgentTaskLandApprovalRequestTests
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
         error.Code.ShouldBe("review_evidence_subject_mismatch");
         error.Message.ShouldContain("Land " + DelegationReportFormatter.Short(sibling.Id) + " directly");
-        error.Message.ShouldContain("-Land " + DelegationReportFormatter.Short(owner.Id));
-        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(sibling.Id));
+        error.Message.ShouldContain("adopt it with land " + DelegationReportFormatter.Short(owner.Id));
+        error.Message.ShouldContain("--from-task " + DelegationReportFormatter.Short(sibling.Id));
     }
 
     [Test]

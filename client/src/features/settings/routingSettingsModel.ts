@@ -88,14 +88,14 @@ export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
 export function unsetCellLabel(tier: TaskComplexity, governsDefault: boolean): string {
   return governsDefault
     ? 'Unset — default dispatch falls back to RolePolicy'
-    : `Unset — a -Complexity ${tier} dispatch blocks`
+    : `Unset — a --complexity ${tier} dispatch blocks`
 }
 
 export function nonComplexityBoundary(tier: TaskComplexity | undefined): string {
   if (tier === undefined) {
-    return 'RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.'
+    return 'RolePolicy still resolves work that is not launched with --complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.'
   }
-  return `An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the ${tier} row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.`
+  return `An ordinary Worker dispatch without --complexity, --kind/--level, --agent or ignoreModelDisabled walks the ${tier} row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.`
 }
 
 export function cardPinCountLabel(role: AgentTaskRole, pins: RoutingPinDto[]): string | null {
@@ -278,7 +278,7 @@ export const INHERITED_REPLACE_WARNING =
   'Saving writes an own rule for this cell. It replaces the inherited list as a whole; it does not append.'
 
 export const UNSET_CELL_EDITOR_NOTE =
-  'This cell is currently Unset — a -Complexity dispatch will block until a row is saved.'
+  'This cell is currently Unset — a --complexity dispatch will block until a row is saved.'
 
 /**
  * The editor's view of the cell's failed reads. The Any role row comes from the list read,
@@ -398,7 +398,7 @@ export function clearOverrideCopy(input: {
     return {
       title: `Clear Any role ${input.complexity} fallback?`,
       body:
-        `Clearing the Any role ${input.complexity} row removes the fallback used by every role that inherits this cell. Roles without their own rule will fall back to configuration if one exists, otherwise become Unset — a -Complexity dispatch will block until an operator sets a row.`,
+        `Clearing the Any role ${input.complexity} row removes the fallback used by every role that inherits this cell. Roles without their own rule will fall back to configuration if one exists, otherwise become Unset — a --complexity dispatch will block until an operator sets a row.`,
       confirm,
     }
   }
@@ -406,7 +406,7 @@ export function clearOverrideCopy(input: {
   const cell = `${input.role}/${input.complexity}`
   if (input.chainUnknown) {
     const after = input.fallbackResolvedFrom === 'none'
-      ? 'is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.'
+      ? 'is Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.'
       : input.fallbackResolvedFrom === 'config'
         ? 'falls back to the configuration default.'
         : 'falls back to the Any role list.'
@@ -425,7 +425,7 @@ export function clearOverrideCopy(input: {
     return {
       title: `Clear ${cell} override?`,
       body:
-        `Clearing this ${cell} override leaves this cell Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.${unreadMetadata}`,
+        `Clearing this ${cell} override leaves this cell Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.${unreadMetadata}`,
       confirm,
     }
   }

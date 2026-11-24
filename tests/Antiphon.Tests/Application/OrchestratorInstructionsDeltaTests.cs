@@ -38,7 +38,7 @@ public sealed class OrchestratorInstructionsDeltaTests
             notice.ShouldContain(known);
             notice.ShouldContain(path);
             notice.ShouldContain("GET /api/orchestrator-instructions");
-            notice.ShouldContain("-Refine");
+            notice.ShouldContain("with refine");
             notice.ShouldContain("NO_REPLY");
             notice.ShouldContain(delta.Split('\n')[0]);
         }
@@ -170,7 +170,7 @@ public sealed class OrchestratorInstructionsDeltaTests
         body.ShouldContain("v5e6f7a8b");
         body.ShouldContain(path);
         body.ShouldContain("GET /api/orchestrator-instructions");
-        body.ShouldContain("-Refine");
+        body.ShouldContain("with refine");
         body.ShouldContain("NO_REPLY");
         body.Length.ShouldBeLessThanOrEqualTo(700);
 

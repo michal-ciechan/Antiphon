@@ -98,7 +98,7 @@ public sealed class CommitOnSettlePolicyTests
             CancellationToken.None);
 
         created.Warning.ShouldNotBeNull();
-        created.Warning.ShouldContain("pass -NoCommit");
+        created.Warning.ShouldContain("pass --no-commit");
         (await db.AgentTasks.SingleAsync(t => t.Id == created.Id)).CommitOnSettle.ShouldBeNull();
     }
 
@@ -114,7 +114,7 @@ public sealed class CommitOnSettlePolicyTests
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
-        (created.Warning ?? "").ShouldNotContain("pass -NoCommit");
+        (created.Warning ?? "").ShouldNotContain("pass --no-commit");
         (await db.AgentTasks.SingleAsync(t => t.Id == created.Id))
             .CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
     }
@@ -131,7 +131,7 @@ public sealed class CommitOnSettlePolicyTests
             ManualCaller(workspace.Path),
             CancellationToken.None);
 
-        (created.Warning ?? "").ShouldNotContain("pass -NoCommit");
+        (created.Warning ?? "").ShouldNotContain("pass --no-commit");
     }
 
     [Test]

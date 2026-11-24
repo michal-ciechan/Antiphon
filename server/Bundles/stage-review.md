@@ -6,14 +6,14 @@ INVARIANTS: Read-only, including PCs; fix nothing. PCs stay pending. Reject miss
 Audit producer/recipient, storage/recovery, receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt transcript evidence; queue/Sent/ack is insufficient. Reject a missing producer-to-recipient test.
 Before next-stage, emit one bare block (unfenced, unindented, not quoted):
 --- review evidence ---
-subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>
+subjectTaskId: <reviewed source task's full GUID: owner unless brief names --from-task>
 reviewedSourceSha: <full SHA actually reviewed>
 reviewedSourceClean: ?
 ordinaryScopeCompleted: <Full|Interim|None>
 reviewRound: <1|2|3>
 reviewedRange: <a>..<tip>
-Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
-Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
+Full only when the whole required selection ran. The caller lands that owner with --expected-source-sha from this evidence.
+Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.
 next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide for a blocking human choice.
 MIGRATION: run downgrade selector; report its count. +impacted rows
 scripts/antiphon evidence-diff --base <candidate base>

@@ -112,7 +112,7 @@ public partial class DelegationWorktreeTests
         operation.Phase.ShouldBe(LandPhase.Refused);
         var terminal = await AssertTerminalAsync(db, task.Id, request.RequestId, operation.Id, AgentTaskEventType.LandRefused);
         terminal.Detail.ShouldContain("shared.md");
-        terminal.Detail.ShouldContain($"-StartRef {targetSha}");
+        terminal.Detail.ShouldContain($"--start-ref {targetSha}");
         terminal.Detail.ShouldNotContain("already contains");
         terminal.Detail.ShouldContain("new Review");
         (await db.AgentTasks.AsNoTracking().CountAsync(t => t.ParentTaskId == task.Id)).ShouldBe(0);

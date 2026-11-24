@@ -141,7 +141,7 @@ public class AgentNamePinTests
 
         var message = string.Join(" ", ex.Errors.Values.SelectMany(v => v));
         message.ShouldContain("pool delegate");
-        message.ShouldContain("-OnAgent");
+        message.ShouldContain("--on-agent");
     }
 
     [Test]

@@ -15,7 +15,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
         "at most six",
         "effective-settings route",
         "server2",
-        "-Runner server2",
+        "--runner server2",
         "absolutely requires",
         "use the lower effective stage cap",
         "CARD-0881",

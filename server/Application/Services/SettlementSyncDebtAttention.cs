@@ -82,7 +82,7 @@ public static class SettlementSyncDebtAttention
         RemoteSettlementSyncReasons.TipNotReported =>
             "Origin moved past the recorded source; the sweep does not follow it.",
         RemoteSettlementSyncReasons.Diverged =>
-            "Review that exact pushed S in a Worktree Review with -StartRef",
+            "Review that exact pushed S in a Worktree Review with --start-ref",
         RemoteSettlementSyncReasons.Dirty =>
             "The desktop checkout is dirty. This debt stays Held.",
         _ => "The sweep left this debt Held.",

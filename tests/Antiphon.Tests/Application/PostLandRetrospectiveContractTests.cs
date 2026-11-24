@@ -30,8 +30,8 @@ public sealed class PostLandRetrospectiveContractTests
         var loop = RetrospectiveSection();
         foreach (var phrase in new[]
         {
-            "-Role Investigate -Worktree -Card <companion-guid>",
-            "-Role Docs -Kind ClaudeCode -Level Low", "-post-land-retrospective.md",
+            "--role Investigate --worktree --card <companion-guid>",
+            "--role Docs --kind ClaudeCode --level Low", "-post-land-retrospective.md",
             "not-designed", "designed-not-asserted", "asserted-wrong-layer", "bundle-gap",
             "reviewer-deviation", "environment-only", "no-instruction-change", "doc-change",
             "bundle-change", "escalate", "Instruction gap:", "label `instruction-gap`",

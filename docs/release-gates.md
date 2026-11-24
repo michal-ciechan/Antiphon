@@ -23,7 +23,7 @@ The release line is a long-lived `rc/YYYY-MM-DD` branch. The current line is
 `rc/2026-10-18` (it succeeded `rc/2026-10-15` on 2026-10-18). Bug and test fixes for code already on that line land on it.
 Features and refactors, including CARD-1311, are master-only. Every rc-line land
 is merged to master with a merge commit. That merge commit is an explicit
-exception to rebase-only landing, and `-Land` does not create it.
+exception to rebase-only landing, and `land` does not create it.
 
 Releases are cut from the rc line. `scripts\antiphon.cmd publish-release` writes
 `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release. `scripts\antiphon.cmd promote-release`
@@ -42,7 +42,7 @@ readiness stay as written below.
 ### Merging the rc line into master (Merge role)
 
 The rc-to-master merge, and the merge of a reviewed fix branch into the rc line, is a
-`Merge`-role Worktree task, not a `-Land`. What that task needs: dispatch it with `-StartRef` at
+`Merge`-role Worktree task, not a `land`. What that task needs: dispatch it with `--start-ref` at
 the **target's** current tip (the master tip for an rc-to-master merge; the rc tip when a fix
 branch is merged into the rc line), have it `git merge` the source on its own assigned task
 branch, and have it publish with `git push origin HEAD:refs/heads/<target>`. That push is a
@@ -53,7 +53,7 @@ examples: `feat/card-task-5d75d6f6` started at master, merged `df6b422c71b0` and
 fast-forwarded to `d5dec9555bd726ad11bb30073c1733d6b3e7bb0e`; `feat/card-task-a7accc73` started
 at the rc tip `df6b422c71b0`, merged the reviewed smoke-pin branch `feat/card-task-c8c9f3c5`, and
 `rc/2026-10-18` fast-forwarded to `81cfb267a0af5c0ddb65e8b238af355067bee9cc`. The merge commit is
-the explicit exception to rebase-only landing named above; an ordinary `-Land` rebases and
+the explicit exception to rebase-only landing named above; an ordinary `land` rebases and
 cannot produce it.
 
 ## Two lanes, two kinds of credit

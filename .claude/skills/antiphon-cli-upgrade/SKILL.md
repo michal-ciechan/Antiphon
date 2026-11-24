@@ -46,8 +46,8 @@ first real screen of the new CLI.
    1654 on temp and on old; then the desktop `npm install -g`. `MinimumCodexCliVersion` is not
    enforced at launch, so an AppHost on the new ladder against an old CLI fails every launch.
 6. **AppHost restart** onto the rc tip with `-ExpectedServerSha`.
-7. **Real turns.** Ladder canary (`-Kind Codex -Level High`, no `-Model`), explicit canary
-   (`-Model <slug>`), a real-work task with a checkable answer; confirm the slug in the rollout
+7. **Real turns.** Ladder canary (`--kind Codex --level High`, no `--model`), explicit canary
+   (`--model <slug>`), a real-work task with a checkable answer; confirm the slug in the rollout
    file, `requestedModelAlias`, a `UserPrompt` in the transcript, and the 422 probes.
 8. **Routing last.** Ladder cells and holds, recorded with the operator date.
 

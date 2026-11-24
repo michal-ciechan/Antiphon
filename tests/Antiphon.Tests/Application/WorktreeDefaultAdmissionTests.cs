@@ -99,8 +99,8 @@ public sealed class WorktreeDefaultAdmissionTests
                 refused.Code.ShouldBe("workspace_default_not_git", row);
                 refused.Errors.Keys.ShouldContain(nameof(CreateAgentTaskRequest.Workspace), row);
                 var message = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.Workspace)]);
-                message.ShouldContain("-Shared", Case.Sensitive, row);
-                message.ShouldContain("-ReadOnly", Case.Sensitive, row);
+                message.ShouldContain("--shared", Case.Sensitive, row);
+                message.ShouldContain("--read-only", Case.Sensitive, row);
                 (await world.TaskCountAsync()).ShouldBe(before, row + ": a refusal must insert nothing");
             }
 

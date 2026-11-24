@@ -57,7 +57,7 @@ internal static class StandingAgentResolver
             throw new ValidationException(
                 fieldName,
                 $"'{agent.Name}' is a pool delegate, not a standing agent. For a follow-up on "
-                + "the delegate that ran an earlier task, use followUpOnTask (-OnAgent <taskId>).");
+                + "the delegate that ran an earlier task, use followUpOnTask (--on-agent <taskId>).");
         }
 
         return agent;

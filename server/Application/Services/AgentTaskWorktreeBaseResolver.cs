@@ -355,7 +355,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
             {
                 warnings.Insert(0, $"Same-card branch {string.Join(", ", unreadable)} cannot be read here, so this "
                     + $"dispatch will not start from {fallback} without it. Sync or push the branch and retry, or recreate "
-                    + "with -StartRef <its pushed sha> to continue it, or -FreshWorktree to start from the target.");
+                    + "with --start-ref <its pushed sha> to continue it, or --fresh-worktree to start from the target.");
                 return Result(CardWorktreeBaseDecision.Unknown, reason: "source_unreadable") with
                     { UnreadableBranches = unreadable.ToArray() };
             }
@@ -479,7 +479,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
         var settled = debt.SourceSha!.ToLowerInvariant();
         return $"Task {Short(row.Id)} branch {row.WorktreeBranch} owes a settlement sync to {settled} (sync debt {debt.State}) "
             + $"and the local branch is at {commits.GetValueOrDefault(row.WorktreeBranch!) ?? "no local commit"}; "
-            + $"that source cannot be verified here. Retry after the sync, or recreate with -StartRef {settled}.";
+            + $"that source cannot be verified here. Retry after the sync, or recreate with --start-ref {settled}.";
     }
 
     /// <summary>CARD-1640 D-1: the remote-tracking tips this task's create fetched and recorded in its preview.</summary>

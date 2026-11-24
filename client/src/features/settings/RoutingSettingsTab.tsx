@@ -392,7 +392,7 @@ function MatrixSectionBody({
                 {complexities.map((complexity) => (
                   <Table.Th key={complexity}>
                     {complexity}{complexity === defaultComplexity
-                      ? ' (default for an ordinary Worker dispatch without -Complexity)'
+                      ? ' (default for an ordinary Worker dispatch without --complexity)'
                       : ''}
                   </Table.Th>
                 ))}

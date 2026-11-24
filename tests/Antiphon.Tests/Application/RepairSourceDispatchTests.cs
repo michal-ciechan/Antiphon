@@ -40,7 +40,7 @@ public class RepairSourceDispatchTests
             ? "repair_source_owner_remote_ahead" : "repair_source_owner_diverged");
         repair.FailureReason.ShouldContain(world.OwnerSha);
         repair.FailureReason.ShouldContain(remote);
-        repair.FailureReason.ShouldContain("-StartRef");
+        repair.FailureReason.ShouldContain("--start-ref");
         repair.WorktreePath.ShouldBeNull();
         var after = await world.Snapshot();
         after.LocalOwnerTip.ShouldBe(before.LocalOwnerTip);

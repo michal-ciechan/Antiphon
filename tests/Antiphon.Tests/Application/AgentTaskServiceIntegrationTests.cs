@@ -394,7 +394,7 @@ public class AgentTaskServiceIntegrationTests
         var detail = ex.Errors[nameof(CreateAgentTaskRequest.WorkingDirectory)][0];
         detail.ShouldContain("outside the allowed roots");
         detail.ShouldContain("Delegation:AllowedRoots");
-        detail.ShouldContain("-Dir <repo> -Worktree");
+        detail.ShouldContain("--dir <repo> --worktree");
         detail.ShouldContain(stranger.Path);
     }
 
@@ -414,7 +414,7 @@ public class AgentTaskServiceIntegrationTests
                 CancellationToken.None));
 
         ex.Errors[nameof(CreateAgentTaskRequest.WorkingDirectory)][0]
-            .ShouldNotContain("-Dir <repo> -Worktree");
+            .ShouldNotContain("--dir <repo> --worktree");
     }
 
     // ---- CARD-0256 / CARD-0286: launch-failure repeat guard ----------------------------------
@@ -1589,7 +1589,7 @@ public class AgentTaskServiceIntegrationTests
         var message = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.FollowUpOnTask)]);
         message.ShouldContain(DelegationReportFormatter.Short(prior.Id));
         message.ShouldContain(tip, Case.Sensitive);
-        message.ShouldContain("-StartRef", Case.Sensitive);
+        message.ShouldContain("--start-ref", Case.Sensitive);
         (await db.AgentTasks.CountAsync()).ShouldBe(before, "the refusal must insert nothing");
 
         var shared = await CreateService(db).CreateAsync(

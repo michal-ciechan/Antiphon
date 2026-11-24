@@ -30,7 +30,7 @@ public sealed class PostLandMutationContractTests
                      "external executor", "irreversible task seal", "every accepted attempt", "SOURCELANDING MUTATION EXCEPTION" })
             mutation.ShouldContain(contract, Case.Insensitive);
         mutation.ShouldNotContain("next: land after");
-        mutation.ShouldNotContain("-Role Mutation -Shared");
+        mutation.ShouldNotContain("--role Mutation --shared");
     }
 
     [Test]
@@ -48,7 +48,7 @@ public sealed class PostLandMutationContractTests
                      "never PC-clean", "Failed/Canceled", "external executor", "NeedsDecision", "O2/L2",
                      "No force or recursive deletion", "health alone is insufficient" })
             text.ShouldContain(contract, Case.Insensitive);
-        foreach (var obsolete in new[] { "-Role Mutation -Shared", "next: mutation even for zero-PC",
+        foreach (var obsolete in new[] { "--role Mutation --shared", "next: mutation even for zero-PC",
                      "Review — after Mutation", "Code requested Review through Mutation", "retained Code Shared" })
             text.ShouldNotContain(obsolete);
     }

@@ -15,4 +15,4 @@ next: test-design when verification is a separate stage; code only when the veri
 
 Checklist, only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins. A plan's checkpoints name the lane.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins. A plan's checkpoints name the lane.

@@ -124,7 +124,7 @@ internal static class BlockedNote
 
         var next = authority is null
             ? $"""
-              next: -Reply {shortId} "<answer>" if you can answer it; otherwise put `asks:` in your reply to
+              next: reply {shortId} "<answer>" if you can answer it; otherwise put `asks:` in your reply to
                     the chat now — do not answer this note with NO_REPLY
               """
             : $"""
@@ -144,7 +144,7 @@ internal static class BlockedNote
     public static string WaitingNoteAuthorityLine(AgentTask task)
     {
         var shortId = DelegationReportFormatter.Short(task.Id);
-        return $"authority on file — `-Continue {shortId}` becomes available if it Blocks; `-Refine` now if you want it typed sooner.";
+        return $"authority on file — `continue {shortId}` becomes available if it Blocks; `refine` now if you want it typed sooner.";
     }
 
     private static string LastNonEmptyLine(string report)

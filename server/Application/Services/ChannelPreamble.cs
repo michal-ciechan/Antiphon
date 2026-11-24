@@ -115,7 +115,7 @@ public static class ChannelPreamble
         + delta
         + ". Your conversation is intact and the new instructions are in your system prompt now; "
         + "where they differ from what you told a delegate before this note, the new instructions win — "
-        + "steer that delegate with -Refine rather than assuming it knows. Re-read AGENTS.md before "
+        + "steer that delegate with refine rather than assuming it knows. Re-read AGENTS.md before "
         + "your next dispatch. Do not re-execute completed work. Reply "
         + ChannelContracts.NoReplyToken
         + " unless you have something for the user.]";
@@ -162,7 +162,7 @@ public static class ChannelPreamble
                 + path
                 + ", or GET /api/orchestrator-instructions"
                 + where
-                + ") before dispatch; steer affected delegates with -Refine. Reply "
+                + ") before dispatch; steer affected delegates with refine. Reply "
                 + ChannelContracts.NoReplyToken
                 + " unless you have something for the user.]";
             if (body.Length <= 700 || kept.Length == 0)

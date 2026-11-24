@@ -110,8 +110,8 @@ public sealed class OrchestratorBundleOwnershipTests
 
         policy.ShouldContain("Each pipeline stage at up to four; at most six tasks on server2 across all stages.", Case.Sensitive, "c1332-owner-pipeline-defaults");
         policy.ShouldContain("Antiphon's enforced limits are the ceiling, so use the lower effective stage cap", Case.Sensitive, "c1332-owner-pipeline-lower-cap");
-        policy.ShouldContain("each task in its own `-Worktree`, never more tasks in one stage than its cap", Case.Sensitive, "c1332-owner-pipeline-worktrees");
-        policy.ShouldContain("Prefer server2 (`-Runner server2`) while it is eligible", Case.Sensitive, "c1332-owner-pipeline-host-preference");
+        policy.ShouldContain("each task in its own `--worktree`, never more tasks in one stage than its cap", Case.Sensitive, "c1332-owner-pipeline-worktrees");
+        policy.ShouldContain("Prefer server2 (`--runner server2`) while it is eligible", Case.Sensitive, "c1332-owner-pipeline-host-preference");
         policy.ShouldContain("is an operator-only setting; the orchestrator does not write it on its own initiative", Case.Sensitive, "c1332-owner-pipeline-host-authority");
         policy.ShouldContain("Count Code rows that are in flight, queued or `ready`", Case.Sensitive, "c1332-owner-pipeline-code-depth");
         policy.ShouldContain("At the cap, start no new Plan toward Code", Case.Sensitive, "c1332-owner-pipeline-no-plan-at-cap");
@@ -148,11 +148,11 @@ public sealed class OrchestratorBundleOwnershipTests
         var placement = Window(owner, at, NextBoldTopic(owner, at + heading.Length), "c1332-owner-placement");
 
         placement.ShouldContain("Read `GET /api/runner-defaults` and `GET /api/session-runners`", Case.Sensitive, "c1332-owner-placement-routes");
-        placement.ShouldContain("Normally omit `-Runner`; the runtime default places the task.", Case.Sensitive, "c1332-owner-runtime-placement");
+        placement.ShouldContain("Normally omit `--runner`; the runtime default places the task.", Case.Sensitive, "c1332-owner-runtime-placement");
         placement.ShouldContain("a follow-up inherits its predecessor's platform", Case.Sensitive, "c1332-owner-inherit-predecessor");
         placement.ShouldContain("a stage inherits the card's platform", Case.Sensitive, "c1332-owner-inherit-card");
         placement.ShouldContain("else the task is unpinned (`Any`) and the runtime default places it", Case.Sensitive, "c1332-owner-inherit-any");
-        placement.ShouldContain("To unpin a stage on a pinned card pass `-Platform Any` explicitly.", Case.Sensitive, "c1332-owner-any-unpins");
+        placement.ShouldContain("To unpin a stage on a pinned card pass `--platform Any` explicitly.", Case.Sensitive, "c1332-owner-any-unpins");
         placement.ShouldContain("Pass a specific platform only when that piece of work requires it", Case.Sensitive, "c1332-owner-os-requirement");
         placement.ShouldContain("an OS-only test or probe", Case.Sensitive, "c1332-owner-os-probe");
         placement.ShouldContain("Habit, a stage name, \"Review always on X\", or preferring the current host are not requirements.", Case.Sensitive, "c1332-owner-no-habit-pins");

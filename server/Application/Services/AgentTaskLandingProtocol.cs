@@ -1341,11 +1341,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var path = containsTarget
             ? $"The branch already contains {target} {op.TargetBeforeSha}, so a Merge-role task can publish the reviewed commit "
                 + $"unchanged as a fast-forward: git push origin {source}:refs/heads/{target}."
-            : $"Integrate it through a Merge-role task dispatched with -StartRef {op.TargetBeforeSha} that runs git merge {source} "
+            : $"Integrate it through a Merge-role task dispatched with --start-ref {op.TargetBeforeSha} that runs git merge {source} "
                 + $"and pushes HEAD:refs/heads/{target} (docs/release-gates.md, Merge role).";
         string Text(string list) =>
-            $"{op.SourceFullRef} carries merge commits; a plain -Land rebases and flattens them, and that rebase conflicted in "
-            + $"{list}. {path} A rebased linear successor is a new SHA and needs a new Review before -Land. "
+            $"{op.SourceFullRef} carries merge commits; a plain land rebases and flattens them, and that rebase conflicted in "
+            + $"{list}. {path} A rebased linear successor is a new SHA and needs a new Review before land. "
             + "No rebase resolver was spawned.";
         var budget = Math.Min(ConflictListMaxLength, MergeRoleDetailMaxLength - Text("").Length);
         var detail = Text(ConflictFileSummary(files, Math.Max(budget, ConflictListSuffixReserve)));
@@ -1509,7 +1509,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             $"(land operation {latest.Id:N}, task {latest.TaskId:N}, {latest.UpdatedAt:u}), and this diff changes none of " +
             "those projects, their references or the build inputs, so no build ran. The record stops refusing " +
             $"{settings.KnownBrokenTargetMaxAgeMinutes} minutes after it was written. To build anyway, land with " +
-            "-IgnoreKnownBrokenTarget (request body ignoreKnownBrokenTarget: true), or set Landing:RefuseKnownBrokenTarget=false. " +
+            "--ignore-known-broken-target (request body ignoreKnownBrokenTarget: true), or set Landing:RefuseKnownBrokenTarget=false. " +
             "The saved build output follows.";
         op.VerificationFailureStep = "target_build_broken";
         op.VerificationFailureOutput = LandVerificationFailure.WithHeader(header, latest.VerificationFailureOutput,

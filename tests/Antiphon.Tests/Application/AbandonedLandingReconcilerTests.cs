@@ -65,7 +65,7 @@ public sealed class AbandonedLandingReconcilerTests
             events[0].Type.ShouldBe(AgentTaskEventType.Warning);
             events[0].LandingOperationId.ShouldBe(opId);
             events[0].Detail.ShouldStartWith("landing_abandoned: operation " + opId.ToString("N") + " refused push_rejected at PushStarted on ");
-            events[0].Detail.ShouldContain("no resume within 7 days; the next -Land starts a fresh operation");
+            events[0].Detail.ShouldContain("no resume within 7 days; the next land starts a fresh operation");
         }
 
         await using (var db = new AppDbContext(options))

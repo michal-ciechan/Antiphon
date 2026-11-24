@@ -576,7 +576,7 @@ public sealed class AgentTaskLandAdoptionTests
         refusal.Detail.ShouldContain(wrongSubject.ToString("N")[..8], Case.Sensitive, row + ": actual subject retained");
         refusal.Detail.ShouldContain(subjectId.ToString("N")[..8], Case.Sensitive, row + ": required subject retained");
         refusal.Detail.ShouldContain(expected, Case.Sensitive, row + ": expected SHA retained");
-        refusal.Detail.ShouldContain(mode == "adoption" ? "-FromTask" : "-RecoverReviewedSource",
+        refusal.Detail.ShouldContain(mode == "adoption" ? "--from-task" : "--recover-reviewed-source",
             Case.Sensitive, row + ": corrective mode retained");
         (await verify.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == h.Fixture.TaskId).ToListAsync())
             .ShouldAllBe(o => !new AgentTaskLandingState().HasPublication(o), row + ": no publication");

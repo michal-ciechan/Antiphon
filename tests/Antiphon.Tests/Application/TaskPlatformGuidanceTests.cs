@@ -25,12 +25,12 @@ public sealed class TaskPlatformGuidanceTests
         foreach (var name in new[] { "stage-code.md", "stage-review.md", "stage-mutation.md", "stage-plan.md" })
         {
             var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name));
-            text.ShouldContain("Omit -Runner unless pinning one host.");
-            text.ShouldContain("Omit -Platform unless OS needed");
-            text.ShouldContain("-Platform Any unpins.");
+            text.ShouldContain("Omit --runner unless pinning one host.");
+            text.ShouldContain("Omit --platform unless OS needed");
+            text.ShouldContain("--platform Any unpins.");
             text.ShouldContain("GET /api/runner-defaults");
             text.ShouldContain("/api/session-runners");
-            text.ShouldNotContain("pass -Platform Any explicitly");
+            text.ShouldNotContain("pass --platform Any explicitly");
             if (name is "stage-code.md" or "stage-mutation.md")
                 text.ShouldContain("Do not embed a fleet location.");
         }
@@ -57,10 +57,10 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("a follow-up inherits its predecessor's platform");
         text.ShouldContain("a stage inherits the card's platform");
         text.ShouldContain("else the task is unpinned (`Any`)");
-        text.ShouldContain("pass `-Platform Any` explicitly");
+        text.ShouldContain("pass `--platform Any` explicitly");
         text.ShouldContain("Pass a specific platform only");
         text.ShouldContain("scope a platform-pinned task to just the OS-specific part");
-        text.ShouldContain("Normally omit `-Runner`; the runtime default places the task.");
+        text.ShouldContain("Normally omit `--runner`; the runtime default places the task.");
         text.ShouldContain("the runtime default places");
         text.ShouldContain("To unpin a stage on a pinned card");
         text.ShouldContain("Habit, a stage name");
@@ -79,9 +79,9 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("confine the resolved target to the scratch root before `rm`");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("Before next-stage, emit one bare block (unfenced, unindented, not quoted):");
-        text.ShouldContain("subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>");
+        text.ShouldContain("subjectTaskId: <reviewed source task's full GUID: owner unless brief names --from-task>");
         text.ShouldContain("Carry the original Code landing owner.");
-        text.ShouldContain("The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.");
+        text.ShouldContain("The caller lands that owner with --expected-source-sha from this evidence.");
         var ownerDoc = File.ReadAllText(Path.Combine(RepoRoot(), "docs", "orchestration-loop.md"));
         ownerDoc.ShouldContain("| Adopt another eligible task's reviewed branch | Source task named by `--from-task` |");
         ownerDoc.ShouldContain("A follow-up Review must name its `FollowUpOfTaskId`");
@@ -131,11 +131,11 @@ public sealed class TaskPlatformGuidanceTests
             "Audit producer/recipient, storage/recovery, receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt transcript evidence; queue/Sent/ack is insufficient. Reject a missing producer-to-recipient test.",
             "Before next-stage, emit one bare block (unfenced, unindented, not quoted):",
             "--- review evidence ---",
-            "subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>",
+            "subjectTaskId: <reviewed source task's full GUID: owner unless brief names --from-task>",
             "reviewedSourceSha: <full SHA actually reviewed>",
             "ordinaryScopeCompleted: <Full|Interim|None>",
-            "Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.",
-            "Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.",
+            "Full only when the whole required selection ran. The caller lands that owner with --expected-source-sha from this evidence.",
+            "Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.",
             "next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide for a blocking human choice.",
         })
             text.ShouldContain(baseLine, Case.Sensitive, $"Missing base Review instruction: {baseLine}");
@@ -159,7 +159,7 @@ public sealed class RunnerDefaultGuidanceTests
         var orchestrator = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "orchestrator.md"));
         orchestrator.ShouldContain("GET /api/runner-defaults");
         orchestrator.ShouldContain("GET /api/session-runners");
-        orchestrator.ShouldNotContain("always pass -Runner server2");
+        orchestrator.ShouldNotContain("always pass --runner server2");
     }
 
     [Test]
@@ -173,9 +173,9 @@ public sealed class RunnerDefaultGuidanceTests
         foreach (var name in new[] { "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
         {
             var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
-            text.ShouldContain("Omit -Platform unless OS needed");
-            text.ShouldContain("-Platform Any unpins.");
-            text.ShouldContain("Omit -Runner unless pinning one host.");
+            text.ShouldContain("Omit --platform unless OS needed");
+            text.ShouldContain("--platform Any unpins.");
+            text.ShouldContain("Omit --runner unless pinning one host.");
             text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
             text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
@@ -188,7 +188,7 @@ public sealed class RunnerDefaultGuidanceTests
         orchestrator.ShouldContain("docs/orchestration-loop.md#runner-placement");
         var owner = File.ReadAllText(Path.Combine(Root(), "docs", "orchestration-loop.md"));
         owner.ShouldContain("inherits its predecessor's platform");
-        owner.ShouldContain("pass `-Platform Any` explicitly");
+        owner.ShouldContain("pass `--platform Any` explicitly");
         owner.ShouldContain("an OS-only test or probe");
     }
 

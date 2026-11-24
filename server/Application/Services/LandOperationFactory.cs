@@ -141,7 +141,7 @@ internal static class LandOperationFactory
     private static string TargetAheadDetail(string targetRef, string local, string remote, string remoteName) =>
         $"local `{targetRef}` `{local}` is ahead of `{remoteName}` `{remote}`; in the main checkout run "
         + "`git fetch origin && git reset --hard origin/master` (after committing or stashing any operator work), "
-        + "then run `-Land` again; rebasing a fetched origin carries the stray commit forward (CARD-0711 request 524311c6)";
+        + "then run `land` again; rebasing a fetched origin carries the stray commit forward (CARD-0711 request 524311c6)";
 
     internal static bool IsLegacyDerivation(AgentTaskLanding? previous, string local, string expected) =>
         previous is { SchemaVersion: 2, Active: true, RebasedSourceSha: { } prepared }

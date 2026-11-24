@@ -29,7 +29,7 @@ decision and blocks automatic handoff admission. A different role alone is not a
 Notice delivery remains WhenIdle and requires a complete correlated UserPrompt; an unknown
 or reused recipient keeps visible debt and is never replaced with another recipient.
 
-An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
+An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use `continue` only for a Blocked question with standing authority; `refine` returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
 
 An attributable provider usage-limit API error blocks its delegated task with
 `SubscriptionQuotaExceeded` (CARD-0719). It keeps the session and worktree and leaves

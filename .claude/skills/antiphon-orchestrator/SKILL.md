@@ -24,7 +24,7 @@ Review task, not a Code task requiring new attributed progress (CARD-0779).
 
 A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat. Answer it within the session or surface the missing decision before leaving; do not leave one overnight. At capacity, read GET /api/session-runners/{id}/slots: orphan=true is not a count of free seats; a live Blocked owner reads orphan=false with its park field. BlockedTaskParking:Enabled and TerminalRunnerSeatRelease:AutomaticEnabled default to false; do not count a live Blocked seat free until its release is confirmed. An Exited or Failed status, or absence from a listed catalogue, drops that seat. Parking never stops a Working session (CARD-1083).
 
-Use -Reply for a Blocked answer, -Continue only for a question with standing authority, and -Refine only for Queued, Dispatched or Working tasks. Follow docs/session-runtime-invariants.md for released-park admission and prerequisite publication.
+Use `reply` for a Blocked answer, `continue` only for a question with standing authority, and `refine` only for Queued, Dispatched or Working tasks. Follow docs/session-runtime-invariants.md for released-park admission and prerequisite publication.
 
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
@@ -43,12 +43,12 @@ For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-
   `remaining`; `runners` carries seats and eligibility; `runnerDefaults` carries placement. Use its
   limits; changing a host budget is an operator-only setting, never an orchestrator-initiated
   write. Antiphon's enforced limits are the ceiling; use the lower effective stage cap. Run stages
-  in parallel, never more tasks in one stage than its cap. Prefer server2 (`-Runner server2`); use
+  in parallel, never more tasks in one stage than its cap. Prefer server2 (`--runner server2`); use
   desktop/Windows only when work absolutely requires it, scoped to that piece. Live operating
   settings: read the file at ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions)
   at session start, after compaction and when a settings-changed note arrives; it outranks the
   numbers in AGENTS.md.
-- **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
+- **`--worktree` by default on every dispatch.** Shared checkout only when explicitly told to
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).
 - **One stage transition per completion.** Read `next=`/`handoff:` off the header and dispatch
@@ -103,7 +103,7 @@ Migration changes (`server/Migrations/**`) follow the operator rule (2026-11-07,
 
 ## 2. A delegate's base is chosen at dispatch; it stays on its own branch
 
-A fresh `-Worktree` task works on its own recorded `WorktreeBranch`; git-common forbids switching
+A fresh `--worktree` task works on its own recorded `WorktreeBranch`; git-common forbids switching
 branches, and a branch under Review is frozen. Do not tell a delegate to fetch or check out a
 sibling's branch. To continue a sibling's work, select the sibling's tip as the creation base:
 `--start-ref <full SHA>` (owner: Continuing a sibling's work (CARD-0613) in
@@ -190,7 +190,7 @@ in `docs/orchestration-loop.md`.
 5. A `Conflicted` outcome (master moved since the branch's base) usually auto-spawns a `Merge`-role
    task to resolve it — check for one (`role=Merge`, `status=Dispatched`) before manually retrying;
    don't duplicate it.
-6. A batch's own land-graph mismatch refreshes and never asks. Before `-Land`, run
+6. A batch's own land-graph mismatch refreshes and never asks. Before `land`, run
    `scripts/antiphon land-graph-land-refresh --base <batch-base>` (`scripts\antiphon.cmd` on
    Windows) when `land-graph-audit --check` fails solely on that batch's records. See [land-graph refresh](../../../docs/orchestration-loop.md#land-graph-refresh).
    A bare `-Update` outside that land path stays forbidden. After a confirmed `Landed` outcome, restart AppHost only when the landed commit is the
@@ -202,7 +202,7 @@ in `docs/orchestration-loop.md`.
    **Then** close the card with a reason summarizing the whole stage history (defects found, how
    fixed, final verified counts) — this is the last thing anyone reads about the card.
 7. A stale `.git/index.lock` holds the land as `git_index_lock_stale` or
-   `git_index_lock_held` (path and `Remove-Item` in the hold/`-Status` `Reason:`
+   `git_index_lock_held` (path and `Remove-Item` in the hold/`status` `Reason:`
    detail) instead of `target_advance_failed`. Confirm with `Get-Process git` that
    nothing older than the lock is running, then `Remove-Item` that path; the 5 s
    sweep resumes the land. Do not delete a lock a live git process still owns.
@@ -221,7 +221,7 @@ Mutation batteries (PC/positive-control red-restore-green cycles) run against a 
 per-round verification was too slow. A Mutation task needs a companion card (title `Post-land
 verification: <original identifier>`, label `post-land-verification`) distinct from the original
 landed card, and a confirmed `AgentTaskLanding` row (a manual git-push land via a Merge-conflict
-task usually has none — retry `-Land` once master already has the content to get one, or accept
+task usually has none — retry `land` once master already has the content to get one, or accept
 the card can't be sourced-Mutation-verified until CARD-0552's backfill endpoint covers it).
 
 ## 8. Usage/provider ceilings

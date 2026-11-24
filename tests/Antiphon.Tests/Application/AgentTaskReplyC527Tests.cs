@@ -279,7 +279,7 @@ public partial class AgentTaskReplyIntegrationTests
         (await verify.AgentTasks.AnyAsync(t => t.ParentTaskId == seeded.Task.Id)).ShouldBeFalse();
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == seeded.Parent);
         note.NoteHeader.ShouldContain("git=uncommitted:1 (no-commit)");
-        note.Body.ShouldContain("1 file(s) left uncommitted as requested (-NoCommit).");
+        note.Body.ShouldContain("1 file(s) left uncommitted as requested (--no-commit).");
         note.Body.ShouldNotContain("Commit before building on it");
     }
 

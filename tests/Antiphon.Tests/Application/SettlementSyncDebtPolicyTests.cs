@@ -106,7 +106,7 @@ public sealed class SettlementSyncDebtPolicyTests
             + ". Origin " + FullRef + " is at " + Sha
             + "; the desktop checkout " + Checkout
             + " will be fast-forwarded by the settlement sync sweep (synced later). "
-            + "No reply is needed; Review and -Land use the pushed branch at " + Sha + ".");
+            + "No reply is needed; Review and land use the pushed branch at " + Sha + ".");
         warning.ShouldContain("synced later");
         warning.ShouldContain("No reply is needed");
         warning.ShouldNotContain("then reply");
@@ -364,7 +364,7 @@ public sealed class SettlementSyncDebtPolicyTests
         (RemoteSettlementSyncReasons.TipNotReported,
             "Origin moved past the recorded source; the sweep does not follow it."),
         (RemoteSettlementSyncReasons.Diverged,
-            "Review that exact pushed S in a Worktree Review with -StartRef"),
+            "Review that exact pushed S in a Worktree Review with --start-ref"),
         (RemoteSettlementSyncReasons.Dirty,
             "The desktop checkout is dirty. This debt stays Held."),
     ];

@@ -217,7 +217,7 @@ public class RunnerBranchContractDocumentationTests
     {
         const string reply =
             "An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. "
-            + "Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. "
+            + "Use `continue` only for a Blocked question with standing authority; `refine` returns 409 on Blocked. "
             + "While parking is disabled, do not assume an automatic release deadline.";
         const string timing =
             "Do not infer a release deadline from the 120-second idle proof, the 120-second reclaim interval, "
@@ -279,8 +279,8 @@ public class RunnerBranchContractDocumentationTests
             + "An Exited or Failed status, or absence from a listed catalogue, drops that seat.";
         const string working = "Parking never stops a Working session (CARD-1083).";
         const string verbs =
-            "Use -Reply for a Blocked answer, -Continue only for a question with standing authority, "
-            + "and -Refine only for Queued, Dispatched or Working tasks. "
+            "Use `reply` for a Blocked answer, `continue` only for a question with standing authority, "
+            + "and `refine` only for Queued, Dispatched or Working tasks. "
             + "Follow docs/session-runtime-invariants.md for released-park admission and prerequisite publication.";
 
         var skill = Collapse(Read(".claude/skills/antiphon-orchestrator/SKILL.md"));
@@ -387,7 +387,7 @@ public class RunnerBranchContractDocumentationTests
         "synced later",
         "No reply is needed",
         "the report's next= is kept",
-        "-Land uses the pushed branch the same way it does for a synchronized owner.",
+        "`land` uses the pushed branch the same way it does for a synchronized owner.",
         "backoff is 1, 2, 4, then 5 minutes",
         "An empty debt table is 1 statement per tick.",
         "A synchronized settle is 30 statements and debtSql 0.",
@@ -400,7 +400,7 @@ public class RunnerBranchContractDocumentationTests
         "syncDebt",
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
         "The desktop checkout is dirty. This debt stays Held.",
-        "Review that exact pushed S in a Worktree Review with -StartRef",
+        "Review that exact pushed S in a Worktree Review with --start-ref",
         "A Held debt is re-checked every 60 minutes by restamping NextAttemptAt 60 minutes ahead. Every Held reason except `settlement_sync_attempts_exhausted` reads no filesystem and matches no path, runs no Git, fast-forwards nothing, and does not supersede, because AgentTaskSyncDebts has no registration id that a complete retirement can be bound to, and its attention warning stays. A debt held `settlement_sync_attempts_exhausted` is re-checked on that same hour by reading the desktop worktree HEAD only; when that HEAD is the recorded source and the episode still matches, the row becomes Ready (`settlement_sync_ready`) and the attention warning clears. That recheck does not fetch, merge, or fast-forward.",
     ];
 
@@ -413,7 +413,7 @@ public class RunnerBranchContractDocumentationTests
         "Dirty, diverged and rewound Code stay Blocked",
         "then reply",
         "backoff is 1, 2, 4, then 5 minutes",
-        "-Land does not read RemoteSync.",
+        "`land` does not read RemoteSync.",
         "syncDebt",
         "A Held debt is re-checked hourly. Every reason except `settlement_sync_attempts_exhausted` stays Held: that re-check does not read the worktree and does not supersede the row. An exhausted debt is re-checked by reading the desktop worktree HEAD, and becomes Ready when that HEAD is the recorded source.",
     ];

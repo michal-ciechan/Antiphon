@@ -355,8 +355,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         blocked.WorktreeBasePreviewJson.ShouldContain(sourceSha);
         blocked.FailureReason.ShouldContain(scenario == "auto_diverges"
             ? "worktree_base_ambiguous" : "requested_source_invalid");
-        blocked.FailureReason.ShouldContain("-BaseTask");
-        blocked.FailureReason.ShouldContain("-FreshWorktree");
+        blocked.FailureReason.ShouldContain("--base-task");
+        blocked.FailureReason.ShouldContain("--fresh-worktree");
         (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",
             $"refs/heads/feat/card-task-{DelegationReportFormatter.Short(created.Id)}")).Ok.ShouldBeFalse();
         if (scenario == "task_deleted")
@@ -555,8 +555,8 @@ public partial class AgentTaskDispatchBaseGuardTests
             _ => "candidate_limit",
         });
         result.FailureReason.ShouldContain(DelegationReportFormatter.Short(a.Id));
-        result.FailureReason.ShouldContain("-BaseTask");
-        result.FailureReason.ShouldContain("-StartRef");
+        result.FailureReason.ShouldContain("--base-task");
+        result.FailureReason.ShouldContain("--start-ref");
         if (deadlineGit is not null) deadlineGit.Fired.ShouldBeTrue();
     }
 
@@ -862,8 +862,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         conflict.Code.ShouldBe("worktree_base_ambiguous");
         conflict.Message.ShouldContain(DelegationReportFormatter.Short(a.Id));
         conflict.Message.ShouldContain(DelegationReportFormatter.Short(x.Id));
-        conflict.Message.ShouldContain("-BaseTask");
-        conflict.Message.ShouldContain("-FreshWorktree");
+        conflict.Message.ShouldContain("--base-task");
+        conflict.Message.ShouldContain("--fresh-worktree");
         (await db.AgentTasks.CountAsync(t => t.CardId == card.Id, ct)).ShouldBe(before);
 
         var selected = await service.CreateAsync(request with
@@ -1239,8 +1239,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         blocked.AgentSessionId.ShouldBeNull();
         blocked.FailureReason.ShouldContain("source_unreadable");
         blocked.FailureReason.ShouldContain(sibling.WorktreeBranch!);
-        blocked.FailureReason.ShouldContain("-StartRef");
-        blocked.FailureReason.ShouldContain("-FreshWorktree");
+        blocked.FailureReason.ShouldContain("--start-ref");
+        blocked.FailureReason.ShouldContain("--fresh-worktree");
     }
 
     [Test]

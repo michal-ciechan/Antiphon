@@ -169,7 +169,7 @@ public class ChannelContractsTests
         policy.ShouldContain(delta);
         policy.ShouldContain("relaunch");
         policy.ShouldContain("AGENTS.md");
-        policy.ShouldContain("-Refine");
+        policy.ShouldContain("with refine");
         policy.ShouldContain(ChannelContracts.NoReplyToken);
         foreach (var bundle in InstructionBundles.All.Values)
             policy.ShouldNotContain(bundle.Text);

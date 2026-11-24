@@ -278,7 +278,7 @@ public sealed class LandWarmArtifactsTests
             .OrderBy(e => e.At).ToListAsync();
         refused.Last().Detail.ShouldContain(marker);
         refused.Last().Detail.ShouldNotContain(early);
-        refused.Last().Detail.ShouldContain("-IgnoreKnownBrokenTarget", Case.Sensitive, "the refusal names the request override");
+        refused.Last().Detail.ShouldContain("--ignore-known-broken-target", Case.Sensitive, "the refusal names the request override");
         refused.Last().Detail.ShouldContain("Landing:RefuseKnownBrokenTarget", Case.Sensitive, "the refusal names the setting");
     }
 

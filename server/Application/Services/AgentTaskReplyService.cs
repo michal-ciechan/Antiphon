@@ -632,14 +632,14 @@ public sealed partial class AgentTaskReplyService
         if (kind != BlockedKind.Question)
         {
             throw new ConflictException(
-                $"Task {DelegationReportFormatter.Short(taskId)} is not waiting on a question. Use -Reply only when it is, or resolve the {kind} another way.",
+                $"Task {DelegationReportFormatter.Short(taskId)} is not waiting on a question. Use reply only when it is, or resolve the {kind} another way.",
                 "not_a_question");
         }
 
         if (string.IsNullOrWhiteSpace(task.StandingAuthority))
         {
             throw new ConflictException(
-                $"Task {DelegationReportFormatter.Short(taskId)} has no standing authority. Answer it with -Reply instead.",
+                $"Task {DelegationReportFormatter.Short(taskId)} has no standing authority. Answer it with reply instead.",
                 "no_authority");
         }
 
@@ -4845,7 +4845,7 @@ public sealed partial class AgentTaskReplyService
             {
                 return new CommitOnSettleNote(
                     $"uncommitted:{dirtyPaths.Length} (no-commit)",
-                    $"{dirtyPaths.Length} file(s) left uncommitted as requested (-NoCommit).");
+                    $"{dirtyPaths.Length} file(s) left uncommitted as requested (--no-commit).");
             }
 
             var offWarning =

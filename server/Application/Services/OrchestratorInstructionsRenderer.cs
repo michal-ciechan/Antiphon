@@ -145,7 +145,7 @@ public static class OrchestratorInstructionsRenderer
 
         builder.AppendLine();
         builder.AppendLine(
-            "Create refuses at the recommended in-flight number unless -IgnoreConcurrencyLimit. Live counts: "
+            "Create refuses at the recommended in-flight number unless --ignore-concurrency-limit. Live counts: "
             + PipelineRoute + ".");
         builder.AppendLine();
 
@@ -190,7 +190,7 @@ public static class OrchestratorInstructionsRenderer
         builder.AppendLine("Owner: " + MatrixRoute + ".");
         var matrixSection = snapshot.Matrix ?? new MatrixSection("Medium", []);
         builder.AppendLine($"default {matrixSection.DefaultComplexity}; ordinary Worker dispatch uses a resolved default-tier row.");
-        builder.AppendLine("Explicit -Kind/-Level bypasses the row; see the create warning. Card pins are exceptions in section 6.");
+        builder.AppendLine("Explicit --kind/--level bypasses the row; see the create warning. Card pins are exceptions in section 6.");
         ReadSection("matrix", () =>
         {
             if (!matrix)
@@ -233,7 +233,7 @@ public static class OrchestratorInstructionsRenderer
         builder.AppendLine("## 7. Model levels");
         foreach (var level in snapshot.Levels)
             builder.AppendLine($"- {level.Kind} {level.Level}: {level.Alias}");
-        builder.AppendLine("Tier names are never -Kind values.");
+        builder.AppendLine("Tier names are never --kind values.");
         builder.AppendLine();
 
         builder.AppendLine("## 8. Operator standing instructions");

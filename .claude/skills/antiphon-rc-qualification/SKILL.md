@@ -100,9 +100,9 @@ These directions override the cited standing rules in
 
    Brief a Linux fixer with the Windows run identity, exact failure evidence,
    Windows hypotheses, sibling exclusions and the following rules. Use Codex High
-   (`-Kind Codex -Level High -Runner server2 -Worktree`). Debug cap is 4; use Custom
+   (`--kind Codex --level High --runner server2 --worktree`). Debug cap is 4; use Custom
    for this repair when Debug is full, subject to effective host/project limits.
-   A failure in the same family as an in-flight Debug is a `-Refine` of that task,
+   A failure in the same family as an in-flight Debug is a `refine` of that task,
    not a duplicate dispatch. Resolve the **current remote rc tip** and pass it as
    `--start-ref <full-sha>`; a default master-based worktree can block an rc fixer.
 
@@ -135,7 +135,7 @@ These directions override the cited standing rules in
    files one Backlog card when a cause repeats.
 
 4. **Integrate repairs through a serial fix pipeline.** Debug fix -> Opus Review
-   (`-Kind ClaudeCode -Level High`) for product/dispatcher/watchdog changes -> Merge.
+   (`--kind ClaudeCode --level High`) for product/dispatcher/watchdog changes -> Merge.
    Test-only and other Debug repairs go directly to rc under this operator workflow;
    a Debug label never exempts a product-code change from Review. An Interim Review
    cannot approve a land; Final/Full needs the whole affected sweep, with missing
@@ -184,7 +184,7 @@ These directions override the cited standing rules in
 5. **Maintain routing and seats.** Authors, fixers and Merges use Codex High (Sol)
    about as often as Grok; keep Opus (ClaudeCode High) for Review so author and
    reviewer are different companies. Use Astra (`Codex`, `Frontier`) for Plan and
-   Investigate. Model tiers are `-Level`, never `-Kind`. Prefer `-Runner server2`;
+   Investigate. Model tiers are `--level`, never `--kind`. Prefer `--runner server2`;
    reserve desktop work for Windows-native needs or scratchpad access. Aim for
    5 to 7 server2 tasks and refill after every completion, capped by live effective
    settings and seats. Snapshot role caps: Debug 4, Plan 3, Merge 1 (serial).
@@ -192,7 +192,7 @@ These directions override the cited standing rules in
    unscoped dispatch) and live orchestrator instructions; lower effective limits
    win. Do not silently reroute a pin, quota or sign-in refusal.
 
-6. **Resolve Blocked and Failed tasks without losing work.** `-Reply` a genuinely
+6. **Resolve Blocked and Failed tasks without losing work.** `reply` a genuinely
    Blocked task when standing authority answers its question. Exception: never
    Reply to a complete report blocked only by runner sync; use its pushed branch.
    If the report is missing, request the full report, including its closing token.

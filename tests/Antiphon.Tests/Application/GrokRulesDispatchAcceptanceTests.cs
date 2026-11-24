@@ -111,9 +111,11 @@ public sealed class GrokRulesDispatchAcceptanceTests
         {
             using var relay = new DelegateTaskApiRelay(git.RepoPath, h.Delegation);
             // The delegate command in process; the complete goal crosses as a file (--goal-file), as an agent sends a long brief.
+            // One workspace switch (CARD-0644 refuses two): the original -Worktree -ReadOnly pair ran as a Worktree, since the
+            // script's -Worktree won then.
             {
                 var (exitCode, output) = await DelegateScriptRunner.RunAsync(relay.BaseUrl, null, null,
-                    ["create", "--role", "Code", "--kind", "Grok", "--level", "High", "--dir", git.RepoPath, "--worktree", "--read-only",
+                    ["create", "--role", "Code", "--kind", "Grok", "--level", "High", "--dir", git.RepoPath, "--worktree",
                      "--goal-file", goalPath, "--title", "CARD-0395 wire acceptance", "--no-inherit-env"]);
                 await File.WriteAllTextAsync(Path.Combine(root, "delegate.log"), output, ct);
                 exitCode.ShouldBe(0, output + relay.LastFailure);

@@ -220,8 +220,8 @@ public class AgentTaskWorktreeBaseCreateTests
             conflict.Message.ShouldContain(tip.WorktreeBranch!);
             conflict.Message.ShouldContain((await repo.GitReadAsync("rev-parse", tip.WorktreeBranch!)).Trim());
         }
-        conflict.Message.ShouldContain("-BaseTask");
-        conflict.Message.ShouldContain("-FreshWorktree");
+        conflict.Message.ShouldContain("--base-task");
+        conflict.Message.ShouldContain("--fresh-worktree");
         (await db.AgentTasks.CountAsync()).ShouldBe(before);
         foreach (var tip in maxima)
         {
@@ -486,8 +486,8 @@ public class AgentTaskWorktreeBaseCreateTests
             caller, CancellationToken.None));
         error.Code.ShouldBe("worktree_base_unreadable");
         error.Message.ShouldContain(branch);
-        error.Message.ShouldContain("-StartRef");
-        error.Message.ShouldContain("-FreshWorktree");
+        error.Message.ShouldContain("--start-ref");
+        error.Message.ShouldContain("--fresh-worktree");
         (await db.AgentTasks.CountAsync()).ShouldBe(before);
         var fresh = await service.CreateAsync(Request(card.Id) with { FreshWorktree = true }, caller, CancellationToken.None);
         fresh.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);

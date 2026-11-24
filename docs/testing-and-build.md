@@ -883,7 +883,7 @@ witness not executed stays pending, never a passed skip. A Windows-native test
 Linux rc exclusion row; `[SupportedOSPlatform("windows")]` only satisfies the CA1416
 analyzer and still runs, and fails, on Linux (CARD-1811). Read runtime placement
 from `GET /api/runner-defaults` and `GET /api/session-runners`; leave portable work
-unpinned and use `-Platform Windows` only for the native Windows piece.
+unpinned and use `--platform Windows` only for the native Windows piece.
 
 Code records the following declaration in ignored JSON, then runs:
 
@@ -1170,9 +1170,9 @@ fast-forwards the desktop worktree (`--ff-only`; a divergence or a dirty desktop
 never a reset). Landing, retirement and residue accounting are unchanged. Card-backed starts,
 OnAgent, Shared, ReadOnly, pins and SourceLanding are all refused at create.
 
-An explicit `-Runner server2` may also carry `-Kind Codex` for a Worker task (CARD-0660).
+An explicit `--runner server2` may also carry `--kind Codex` for a Worker task (CARD-0660).
 
-CARD-0812 permits `-Worktree` for another project when its desktop checkout's `origin` is under
+CARD-0812 permits `--worktree` for another project when its desktop checkout's `origin` is under
 the runner's `PhoneHome:AllowedCloneSources` prefix (default `https://github.com/michal-ciechan/`)
 and fetchable. The runner clones it under `/work/repos/<repository-name>` and
 advertises `workspaceRepositoryV1`. Before making a secondary mirror, the default probe uses

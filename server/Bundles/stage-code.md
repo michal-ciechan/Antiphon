@@ -19,5 +19,5 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 next: code; decide for a blocking human choice. Never next: land/deploy. Caller commissions SourceLanding Mutation.
 
 MIGRATION: additive, sorted after master's latest; Down fails safely. Run migrations row (downgrade selector, model classes); report red/green counts
-Platform: GET /api/runner-defaults, /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
+Platform: GET /api/runner-defaults, /api/session-runners. Do not embed a fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.
 Apply docs/testing-and-build.md#os-branch-witnesses.

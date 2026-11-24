@@ -90,7 +90,7 @@ public class AgentTaskWorktreeBaseSyncDebtTests
         selected.Reason.ShouldBe("source_sync_unverified");
         selected.SourceTaskId.ShouldBe(world.Owner.Id);
         selected.SourceSha.ShouldBe(settled);
-        selected.CandidateWarnings.ShouldContain(w => w.Contains("-StartRef " + settled, StringComparison.Ordinal)
+        selected.CandidateWarnings.ShouldContain(w => w.Contains("--start-ref " + settled, StringComparison.Ordinal)
             && w.Contains(world.B, StringComparison.Ordinal) && w.Contains(state.ToString(), StringComparison.Ordinal));
     }
 

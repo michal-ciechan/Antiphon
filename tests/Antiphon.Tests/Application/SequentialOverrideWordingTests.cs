@@ -32,7 +32,7 @@ public sealed class SequentialOverrideWordingTests
 
     private const string StageWorktree = "each in its own --worktree.";
 
-    private const string OptInWorktree = "pass -Worktree so they cannot overwrite";
+    private const string OptInWorktree = "pass --worktree so they cannot overwrite";
 
     private static string Read(params string[] relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, Path.Combine(relative)));

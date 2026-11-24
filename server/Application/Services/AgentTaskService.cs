@@ -500,8 +500,8 @@ public sealed class AgentTaskService
                 throw new ValidationException(
                     nameof(request.Agent),
                     "Agent and FollowUpOnTask are two different \"run it on that agent\" idioms — "
-                    + "a follow-up already pins to the agent that ran the prior task. Use one or "
-                    + "the other.");
+                    + "a follow-up already pins to the agent that ran the prior task. Use --agent or "
+                    + "--on-agent, not both.");
             }
 
             var resolvedAgent = await ResolveStandingAgentAsync(request.Agent, ct);
@@ -688,7 +688,7 @@ public sealed class AgentTaskService
             await RecordRejectionAsync(caller.Task!, "A worker attempted to delegate.", ct);
             throw new ForbiddenException(
                 "Workers cannot delegate. Do the work and report back, or ask the caller to send a "
-                + "sub-orchestrator (-Orchestrator) for a chunk that needs decomposing.");
+                + "sub-orchestrator (--orchestrator) for a chunk that needs decomposing.");
         }
 
         var parent = caller.Task;
@@ -755,7 +755,7 @@ public sealed class AgentTaskService
             throw new ValidationException(
                 nameof(request.Workspace),
                 $"'{resolved.WorkingDirectory}' is not a git repository, so there is nothing to branch. "
-                + "Choose -Shared or -ReadOnly explicitly instead.");
+                + "Choose --shared or --read-only explicitly instead.");
         }
 
         // CARD-0644 D-1. Omission is only a default for a FRESH process; a configured routing pin
@@ -838,7 +838,7 @@ public sealed class AgentTaskService
                     nameof(request.Complexity),
                     "complexity cannot be combined with agentKind or modelLevel. An explicit pair "
                     + "is a single candidate the caller chose and is never silently rerouted. Pass "
-                    + "-Complexity without -Kind/-Level, or pass the pair without -Complexity.");
+                    + "--complexity without --kind/--level, or pass the pair without --complexity.");
             }
 
             if (!string.IsNullOrWhiteSpace(request.Model))
@@ -846,8 +846,8 @@ public sealed class AgentTaskService
                 throw new ValidationException(
                     "model",
                     "complexity cannot be combined with model. An explicit alias is a single candidate "
-                    + "the caller chose and is never silently rerouted. Pass -Complexity without -Model, "
-                    + "or pass -Model without -Complexity.");
+                    + "the caller chose and is never silently rerouted. Pass --complexity without --model, "
+                    + "or pass --model without --complexity.");
             }
 
             if (request.IgnoreModelDisabled)
@@ -856,7 +856,7 @@ public sealed class AgentTaskService
                     nameof(request.IgnoreModelDisabled),
                     "ignoreModelDisabled cannot be combined with complexity: a chain skips a held "
                     + "candidate, so there is nothing to ignore. Omit the flag, or pass an explicit "
-                    + "-Kind/-Level instead of -Complexity.");
+                    + "--kind/--level instead of --complexity.");
             }
 
             if (_complexityRouting is null)
@@ -1012,7 +1012,7 @@ public sealed class AgentTaskService
         if (workspaceDefaulted && workspace == WorkspaceMode.Worktree && resolved.RepoPath is null)
         {
             var message = $"'{resolved.WorkingDirectory}' is not a git repository, so the default fresh "
-                + "Worktree has nothing to branch. Choose -Shared (workspace: Shared) or -ReadOnly "
+                + "Worktree has nothing to branch. Choose --shared (workspace: Shared) or --read-only "
                 + "(workspace: ReadOnly) explicitly.";
             if (parent is not null)
                 await RecordRejectionAsync(parent, message, ct);
@@ -1028,7 +1028,7 @@ public sealed class AgentTaskService
         {
             throw new ValidationException(
                 "model",
-                "model requires agentKind and modelLevel. Pass -Kind and -Level with -Model.",
+                "model requires agentKind and modelLevel. Pass --kind and --level with --model.",
                 "model_requires_kind_and_level");
         }
 
@@ -1372,7 +1372,7 @@ public sealed class AgentTaskService
                 != CommitOnSettleEffective.Off)
             {
                 const string advisory =
-                    "Goal text mentions not committing, but commit-on-settle is on for this project; pass -NoCommit if the tree must stay uncommitted.";
+                    "Goal text mentions not committing, but commit-on-settle is on for this project; pass --no-commit if the tree must stay uncommitted.";
                 warning = warning is null ? advisory : warning + " " + advisory;
             }
         }
@@ -2039,7 +2039,7 @@ public sealed class AgentTaskService
             throw new ConflictException(
                 "Same-card worktree histories diverge: "
                 + string.Join(" ", basePreview.CandidateWarnings)
-                + " Choose -BaseTask or -FreshWorktree.",
+                + " Choose --base-task or --fresh-worktree.",
                 "worktree_base_ambiguous");
         if (basePreview?.Reason == "source_unreadable")
             throw new ConflictException(
@@ -2671,7 +2671,7 @@ public sealed class AgentTaskService
                 && sharesCallersDirectory
                     ? "This orchestrator runs directly in its caller's directory. Its delegates and "
                       + "its caller can overwrite each other's files; prefer the default worktree, "
-                      + "or give it its own -Dir."
+                      + "or give it its own --dir."
                     : null;
             return (explicitMode, warned);
         }
@@ -2731,7 +2731,7 @@ public sealed class AgentTaskService
         var message =
             $"Task {shortId} ran in a Worktree on {namedRef}, but its tip cannot be proven ({why}). "
             + "No other ref was substituted for that missing local tip. "
-            + $"Pass -Worktree -StartRef {namedRef} to start a fresh task at a commit you choose.";
+            + $"Pass --worktree --start-ref {namedRef} to start a fresh task at a commit you choose.";
         if (caller.Task is not null)
             await RecordRejectionAsync(caller.Task, message, ct);
         throw new ValidationException(
@@ -5164,9 +5164,9 @@ public sealed class AgentTaskService
     /// valid shape so a caller who pointed <c>-Dir</c> at the worktree path itself can recover.
     /// </summary>
     internal const string WorktreeSourceRepositoryGuidance =
-        " A Worktree task takes the source repository as -Dir (or inherits it), and Antiphon "
-        + "creates a new worktree at dispatch. Use -Dir <repo> -Worktree rather than pointing "
-        + "-Dir at the worktree path itself.";
+        " A Worktree task takes the source repository as --dir (or inherits it), and Antiphon "
+        + "creates a new worktree at dispatch. Use --dir <repo> --worktree rather than pointing "
+        + "--dir at the worktree path itself.";
 
     private static string AugmentWorktreeRejection(CreateAgentTaskRequest request, string message)
     {

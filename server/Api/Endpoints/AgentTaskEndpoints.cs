@@ -472,7 +472,7 @@ public static class AgentTaskEndpoints
                 && caller.Task.Role != AgentTaskRole.Commit)
             {
                 throw new ForbiddenException(
-                    "This task asked not to commit (-NoCommit).", "commit_on_settle_never");
+                    "This task asked not to commit (--no-commit).", "commit_on_settle_never");
             }
 
             // Null is the internal Worktree sweep's whole-tree mode, never an HTTP default.

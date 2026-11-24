@@ -650,8 +650,8 @@ public class AgentTaskWorktreeBaseResolverTests
             auto.SyncUnverified.ShouldBeTrue();
             auto.SourceSha.ShouldBeNull();
             auto.CandidateWarnings[0].ShouldContain(source.WorktreeBranch!);
-            auto.CandidateWarnings[0].ShouldContain("-StartRef");
-            auto.CandidateWarnings[0].ShouldContain("-FreshWorktree");
+            auto.CandidateWarnings[0].ShouldContain("--start-ref");
+            auto.CandidateWarnings[0].ShouldContain("--fresh-worktree");
             auto.CandidateWarnings.ShouldContain(w => w.Contains(source.WorktreeBranch!, StringComparison.Ordinal)
                 && w.Contains(scenario == "git_error" ? "unknown" : "no local commit", StringComparison.Ordinal));
             explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);

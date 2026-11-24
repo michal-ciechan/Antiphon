@@ -102,7 +102,7 @@ public sealed class WorktreeResiduePublicationLaneTests
         abandoned.Detail.ShouldContain("after 3 refused retries");
         abandoned.Detail.ShouldContain(reason);
         abandoned.Detail.ShouldContain(op.WorktreePath);
-        abandoned.Detail.ShouldContain("-Land");
+        abandoned.Detail.ShouldContain("an explicit land retries cleanup");
     }
 
     private static async Task<int> CountAbandonEventsAsync(LandingSafetyHarness h)

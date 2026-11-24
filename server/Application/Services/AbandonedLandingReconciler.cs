@@ -130,7 +130,7 @@ public sealed class AbandonedLandingReconciler(
                 Id = Guid.NewGuid(),
                 AgentTaskId = op.TaskId,
                 Type = AgentTaskEventType.Warning,
-                Detail = $"landing_abandoned: operation {op.Id:N} refused {previousReason ?? "(none)"} at {previousPhase} on {previousUpdatedAt:O}; no resume within {days} days; the next -Land starts a fresh operation",
+                Detail = $"landing_abandoned: operation {op.Id:N} refused {previousReason ?? "(none)"} at {previousPhase} on {previousUpdatedAt:O}; no resume within {days} days; the next land starts a fresh operation",
                 At = now,
                 LandingOperationId = op.Id,
                 LandingPublication = LandPublicationOutcome.Refused,

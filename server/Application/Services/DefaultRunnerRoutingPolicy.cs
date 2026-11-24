@@ -34,7 +34,7 @@ public sealed record DefaultRunnerDecision(
 
     public string? Warning => Warn
         ? $"Default runner '{DefaultRunnerId}' was not used ({Reason}); this task runs on the desktop. "
-          + "Pass -Runner to require a runner, or -Local to choose the desktop explicitly."
+          + "Pass --runner to require a runner, or --runner local to choose the desktop explicitly."
         : null;
 }
 

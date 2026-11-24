@@ -14,4 +14,4 @@ Carry original Code task ID, verification card, C/O/L/R and evidence through tri
 
 next: none only when all PCs/variants and discovery complete cleanly after restoration. Actionable findings use next: decide for caller triage and linked remediation. Incomplete evidence is failed/blocked with remaining IDs, never clean.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.

@@ -84,8 +84,8 @@ public class InstructionBundleTests
         var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
         text.ShouldContain("OS needs do not authorize --ignore-routing-pin.", customMessage: "os-pin");
         var omitted = System.Text.RegularExpressions.Regex.Match(text, @"Normally omit (.*?) to preserve").Groups[1].Value;
-        omitted.ShouldContain("-Kind", customMessage: "omit-kind");
-        omitted.ShouldContain("-Level", customMessage: "omit-level");
+        omitted.ShouldContain("--kind", customMessage: "omit-kind");
+        omitted.ShouldContain("--level", customMessage: "omit-level");
         text.ShouldContain("docs/orchestration-loop.md#windows-review-and-debug-routing", customMessage: "owner-pointer");
         C1011Read(".claude/skills/antiphon-orchestrator/SKILL.md")
             .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", customMessage: "orchestrator-skill-pointer");
@@ -120,7 +120,7 @@ public class InstructionBundleTests
         var recoveryAt = owner.IndexOf("### Explicit startup recovery", StringComparison.Ordinal);
         recoveryAt.ShouldBeGreaterThanOrEqualTo(0);
         var recovery = owner[recoveryAt..];
-        recovery.ShouldContain("-Platform Windows", customMessage: "recovery-platform");
+        recovery.ShouldContain("--platform Windows", customMessage: "recovery-platform");
         recovery.ShouldContain("--kind ClaudeCode --level High");
         recovery.ShouldContain("no --ignore-routing-pin", customMessage: "recovery-no-bypass");
     }
@@ -185,7 +185,7 @@ public class InstructionBundleTests
     public void C807_ShippedReviewExampleParses()
     {
         var text = InstructionBundles.TextOf(InstructionBundles.StageReview);
-        const string subjectPlaceholder = "<reviewed source task's full GUID: owner unless brief names -FromTask>";
+        const string subjectPlaceholder = "<reviewed source task's full GUID: owner unless brief names --from-task>";
         const string shaPlaceholder = "<full SHA actually reviewed>";
         const string scopePlaceholder = "<Full|Interim|None>";
         foreach (var placeholder in new[] { subjectPlaceholder, shaPlaceholder, scopePlaceholder })

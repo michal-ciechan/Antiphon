@@ -218,8 +218,8 @@ public sealed class AgentTaskLandService
                         if (source.RepairSourceTaskId is not null)
                             throw new ConflictException(
                                 "A task with RepairSourceTaskId set can never be an adoption source. " +
-                                "Dispatch a fresh Code -Worktree -StartRef <full-sha> task with no -RepairSource " +
-                                "that records at least one commit, Final-review that carrier, then land the owner with -FromTask.",
+                                "Dispatch a fresh Code --worktree --start-ref <full-sha> task with no --repair-source " +
+                                "that records at least one commit, Final-review that carrier, then land the owner with --from-task.",
                                 "adopt_source_invalid");
                         if (source.Workspace != WorkspaceMode.Worktree || source.Role != AgentTaskRole.Code
                             || source.SourceLandingOperationId is not null
@@ -375,7 +375,7 @@ public sealed class AgentTaskLandService
         op.UpdatedAt = now;
         op.ConcurrencyToken = Guid.NewGuid();
         var detail = WorktreeCleanupPresentation.Clip(
-            $"cleanup abandoned after {refusedRetries} refused retries ({op.LastReason ?? "no reason recorded"}); worktree kept at {op.WorktreePath}; an explicit -Land retries cleanup",
+            $"cleanup abandoned after {refusedRetries} refused retries ({op.LastReason ?? "no reason recorded"}); worktree kept at {op.WorktreePath}; an explicit land retries cleanup",
             WorktreeCleanupPresentation.DetailLimit);
         var abandoned = Event(taskId, AgentTaskEventType.LandingCleanup, detail, now);
         abandoned.LandingOperationId = op.Id;
@@ -835,7 +835,7 @@ public sealed class AgentTaskLandService
             var reason = result.Reason ?? "publication_unconfirmed";
             var detail = reason == "remote_changed_before_push" && GitObjectId.IsFull(result.Detail) ? null : result.Detail;
             var line = raceRetries > 0 && op is not null && state.IsTargetRaceRefusal(op)
-                ? $"{reason}; after {raceRetries} automatic rebases (Delegation:LandTargetRaceRetries={budget}); run -Land again"
+                ? $"{reason}; after {raceRetries} automatic rebases (Delegation:LandTargetRaceRetries={budget}); run land again"
                 : AppendDetail(reason, detail);
             if (op is { Phase: LandPhase.PushStarted } && reason is
                 "source_remote_changed" or "source_remote_missing" or "source_remote_unreadable" or
@@ -1327,7 +1327,7 @@ public sealed class AgentTaskLandService
             {
                 var last = row.LandStartedAt?.ToString("u") ?? "unknown";
                 await RefuseAsync(row,
-                    $"land interrupted {row.LandAttempt} times without finishing (last started {last}); not retried automatically — run -Land again",
+                    $"land interrupted {row.LandAttempt} times without finishing (last started {last}); not retried automatically — run land again",
                     ct);
                 continue;
             }

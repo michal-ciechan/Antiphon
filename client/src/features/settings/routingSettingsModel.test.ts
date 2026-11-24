@@ -72,16 +72,16 @@ describe('effective matrix cell', () => {
   })
 
   it.each([
-    ['Easy', false, 'Unset — a -Complexity Easy dispatch blocks'],
-    ['Hard', false, 'Unset — a -Complexity Hard dispatch blocks'],
+    ['Easy', false, 'Unset — a --complexity Easy dispatch blocks'],
+    ['Hard', false, 'Unset — a --complexity Hard dispatch blocks'],
     ['Medium', true, 'Unset — default dispatch falls back to RolePolicy'],
   ] as const)('C097M V-C2 unset %s', (tier, governsDefault, expected) => {
     expect(unsetCellLabel(tier, governsDefault)).toBe(expected)
   })
 
   it('C097M V-C2 ordinary-worker-boundary', () => {
-    expect(nonComplexityBoundary('Medium')).toBe('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
-    expect(nonComplexityBoundary('Hard')).toBe('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Hard row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
+    expect(nonComplexityBoundary('Medium')).toBe('An ordinary Worker dispatch without --complexity, --kind/--level, --agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
+    expect(nonComplexityBoundary('Hard')).toBe('An ordinary Worker dispatch without --complexity, --kind/--level, --agent or ignoreModelDisabled walks the Hard row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
   })
 
   it.each([
@@ -287,7 +287,7 @@ describe('C1270 D-2 clear copy after a failed read', () => {
   it.each([
     { fallback: 'any', tail: 'Without an own rule this cell falls back to the Any role list.' },
     { fallback: 'config', tail: 'Without an own rule this cell falls back to the configuration default.' },
-    { fallback: 'none', tail: 'Without an own rule this cell is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+    { fallback: 'none', tail: 'Without an own rule this cell is Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.' },
   ] as const)('C1270 D-2 clear copy after a chain read failure falls back to $fallback', ({ fallback, tail }) => {
     const copy = clearOverrideCopy({
       isAnyRoleRow: false, role: 'Plan', complexity: 'Easy', fallbackResolvedFrom: fallback,
@@ -302,7 +302,7 @@ describe('C1270 D-2 clear copy after a failed read', () => {
   it.each([
     { fallback: 'any', head: 'Clearing this Plan/Easy override falls back to the Any role list. This cell currently replaces Any role as a whole; it does not append.' },
     { fallback: 'config', head: 'Clearing this Plan/Easy override falls back to the configuration default. This cell currently replaces the inherited list as a whole; it does not append.' },
-    { fallback: 'none', head: 'Clearing this Plan/Easy override leaves this cell Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+    { fallback: 'none', head: 'Clearing this Plan/Easy override leaves this cell Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.' },
   ] as const)('C1270 D-2 clear copy after a chain metadata read failure names the unread reason and expiry ($fallback)', ({ fallback, head }) => {
     const copy = clearOverrideCopy({
       isAnyRoleRow: false, role: 'Plan', complexity: 'Easy', fallbackResolvedFrom: fallback,

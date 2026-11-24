@@ -629,7 +629,7 @@ const c1270D1Reads: Record<string, C1270D1Read> = {
     populated: listDto, empty: { ...listDto, roles: [], chains: [] },
     loading: 'Complexity chains loading.', paused: 'Complexity chains unknown (read paused offline).',
     failed: 'Could not load complexity chains.',
-    shown: ['Any role rule'], emptyShown: 'Unset — a -Complexity Hard dispatch blocks', configure: true,
+    shown: ['Any role rule'], emptyShown: 'Unset — a --complexity Hard dispatch blocks', configure: true,
   },
   'Plan effective cells': {
     url: '/api/complexity-chains', role: 'Plan', key: complexityChainKeys.effective('Plan'), surface: 'routing-matrix-row-Plan',
@@ -637,7 +637,7 @@ const c1270D1Reads: Record<string, C1270D1Read> = {
     empty: { ...planEffective, chains: (['Hard', 'Medium', 'Easy'] as const).map(tier => chain(tier, { role: 'Plan' })) },
     loading: 'Plan effective cells loading.', paused: 'Plan effective cells unknown (read paused offline).',
     failed: 'Could not load Plan effective cells.',
-    shown: ['Own rule', 'Inherits Any role'], emptyShown: 'Unset — a -Complexity Hard dispatch blocks', configure: true,
+    shown: ['Own rule', 'Inherits Any role'], emptyShown: 'Unset — a --complexity Hard dispatch blocks', configure: true,
   },
   'routing pins': {
     url: '/api/routing-pins', key: routingPinKeys.all, surface: 'routing-card-pins',
@@ -875,7 +875,7 @@ describe('C1270 D-1 offline reads and the cell editor', () => {
 describe('C1270 D-2 clear confirmation after a failed read', () => {
   it.each([
     { tier: 'Medium' as const, tail: 'Without an own rule this cell falls back to the Any role list.' },
-    { tier: 'Easy' as const, tail: 'Without an own rule this cell is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+    { tier: 'Easy' as const, tail: 'Without an own rule this cell is Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.' },
   ])('C1270 D-2 clear confirmation after a chain read failure on $tier', async ({ tier, tail }) => {
     serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270Cell('chain', 'Required', tier)] } } })
     renderWithProviders(<RoutingSettingsTab />)
@@ -986,13 +986,13 @@ describe('RoutingSettingsTab', () => {
       ],
     } } })
     renderWithProviders(<RoutingSettingsTab />)
-    expect(await screen.findByRole('columnheader', { name: 'Medium (default for an ordinary Worker dispatch without -Complexity)' })).toBeInTheDocument()
+    expect(await screen.findByRole('columnheader', { name: 'Medium (default for an ordinary Worker dispatch without --complexity)' })).toBeInTheDocument()
     const medium = await screen.findByTestId('routing-matrix-cell-Plan-Medium')
     expect(await within(medium).findByText('Falls back to RolePolicy → ClaudeCode/Frontier (fable)')).toBeInTheDocument()
     expect(within(medium).getByText('held until 2026-09-04T00:00:00Z (manual)')).toBeInTheDocument()
     expect(medium).not.toHaveTextContent('dispatch blocks')
     const easy = screen.getByTestId('routing-matrix-cell-Plan-Easy')
-    expect(within(easy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
+    expect(within(easy).getByText('Unset — a --complexity Easy dispatch blocks')).toBeInTheDocument()
     expect(easy).not.toHaveTextContent('Falls back to RolePolicy')
   })
 
@@ -1023,16 +1023,16 @@ describe('RoutingSettingsTab', () => {
     expect(within(hard).getByText('1. Codex/Frontier (gpt-6-astra)')).toBeInTheDocument()
     expect(within(matrix).queryByRole('columnheader', { name: /\(default/ })).not.toBeInTheDocument()
     expect(within(matrix).getByRole('columnheader', { name: 'Medium' })).toBeInTheDocument()
-    expect(within(matrix).getByTestId('routing-boundary')).toHaveTextContent('RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.')
+    expect(within(matrix).getByTestId('routing-boundary')).toHaveTextContent('RolePolicy still resolves work that is not launched with --complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.')
     expect(matrix).not.toHaveTextContent('walks the Medium row')
-    expect(within(matrix).getByTestId('routing-matrix-cell-Plan-Medium')).toHaveTextContent('Unset — a -Complexity Medium dispatch blocks')
+    expect(within(matrix).getByTestId('routing-matrix-cell-Plan-Medium')).toHaveTextContent('Unset — a --complexity Medium dispatch blocks')
   })
 
   it.each([
     { name: 'policy-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
     { name: 'empty-read-failure', tier: 'Easy', governsDefault: false, candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
     { name: 'default-policy-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
-    { name: 'non-default-availability-failure', tier: 'Easy', governsDefault: false, candidates: [{ ...codex, availableNow: false, unavailableReason: 'availability read failed (NpgsqlException)' }], reason: 'availability read failed (NpgsqlException)', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+    { name: 'non-default-availability-failure', tier: 'Easy', governsDefault: false, candidates: [{ ...codex, availableNow: false, unavailableReason: 'availability read failed (NpgsqlException)' }], reason: 'availability read failed (NpgsqlException)', label: 'Unset — a --complexity Easy dispatch blocks', stored: null },
     { name: 'non-default-pin-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
     { name: 'default-pin-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
     { name: 'default-empty-pin-read-failure', tier: 'Medium', governsDefault: true, candidates: [], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
@@ -1040,7 +1040,7 @@ describe('RoutingSettingsTab', () => {
     { name: 'non-default-required-pin-banner-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Required', banner: 'Required Human pin: Plan → Grok/Frontier. Overrides the Plan cells while this pin is active.' },
     { name: 'default-preferred-pin-banner-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Preferred', banner: 'Preferred Human pin: Plan → Grok/Frontier. Tried before each Plan cell.' },
     { name: 'non-default-preferred-pin-banner-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Preferred', banner: 'Preferred Human pin: Plan → Grok/Frontier. Tried before each Plan cell.' },
-    { name: 'non-default-unlaunchable-policy', tier: 'Easy', governsDefault: false, candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+    { name: 'non-default-unlaunchable-policy', tier: 'Easy', governsDefault: false, candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Unset — a --complexity Easy dispatch blocks', stored: null },
   ] satisfies Array<{ name: string; tier: TaskComplexity; governsDefault: boolean; candidates: ComplexityCandidateDto[]; reason: string; label: string; stored: string | null; pinStrength?: 'Required' | 'Preferred'; banner?: string }>)('C097M V-C4 diagnostic $name', async (row) => {
     serveRouting({ pins: row.pinStrength ? [pin({ role: 'Plan', strength: row.pinStrength, agentKind: 'Grok', modelLevel: 'Frontier' })] : [], effective: { Plan: {
       ...planEffective,
@@ -1190,9 +1190,9 @@ describe('RoutingSettingsTab', () => {
     expect(within(codeHard).getByText('Configuration fallback')).toBeInTheDocument()
 
     const planEasy = screen.getByTestId('routing-matrix-cell-Plan-Easy')
-    expect(within(planEasy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
+    expect(within(planEasy).getByText('Unset — a --complexity Easy dispatch blocks')).toBeInTheDocument()
     const anyEasy = screen.getByTestId('routing-matrix-cell-any-Easy')
-    expect(within(anyEasy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
+    expect(within(anyEasy).getByText('Unset — a --complexity Easy dispatch blocks')).toBeInTheDocument()
   })
 
   it('renders an unavailable candidate reason from the server and does not invent a fallback', async () => {
@@ -1287,7 +1287,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(boundary).getByText(/New complexity-routed dispatches read the saved cell immediately/)).toBeInTheDocument()
     expect(within(boundary).getByText(/Running sessions keep the model they started with/)).toBeInTheDocument()
     expect(within(boundary).getByText(/never interrupts, replaces, or migrates a mid-turn delegate/)).toBeInTheDocument()
-    expect(within(boundary).getByText('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')).toBeInTheDocument()
+    expect(within(boundary).getByText('An ordinary Worker dispatch without --complexity, --kind/--level, --agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')).toBeInTheDocument()
   })
 
   it('keeps a role row error from blanking the rest of the grid', async () => {

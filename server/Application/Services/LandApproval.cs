@@ -96,11 +96,11 @@ internal static class LandApproval
             var actualName = row.SubjectTaskId is Guid id ? id.ToString("N")[..8] : "none";
             var requiredName = subject.Id.ToString("N")[..8];
             var guidance = identity == EvidenceIdentity.AdoptionSource
-                ? $"-FromTask {requiredName} needs evidence whose subjectTaskId is {requiredName}; commission a fresh same-card Review naming {requiredName} at {expectedSha}."
+                ? $"--from-task {requiredName} needs evidence whose subjectTaskId is {requiredName}; commission a fresh same-card Review naming {requiredName} at {expectedSha}."
                 : identity == EvidenceIdentity.RecoveryOwner
-                    ? $"Commission a fresh same-card Review naming recovery owner {requiredName} at {expectedSha}, then use -RecoverReviewedSource. A -RepairSource task must be reviewed on its owner's ref."
+                    ? $"Commission a fresh same-card Review naming recovery owner {requiredName} at {expectedSha}, then use --recover-reviewed-source. A --repair-source task must be reviewed on its owner's ref."
                     : actual is { CardId: not null } && actual.CardId == subject.CardId
-                        ? $"Land {actualName} directly, or adopt it with -Land {requiredName} -FromTask {actualName} when its pushed tip is the reviewed SHA."
+                        ? $"Land {actualName} directly, or adopt it with land {requiredName} --from-task {actualName} when its pushed tip is the reviewed SHA."
                         : $"Commission a fresh same-card Review naming landing owner {requiredName} at {expectedSha}.";
             return $"Review evidence {evidenceId:D} {issue}. Recorded subjectTaskId={actualName}, ref={row.ReviewedSourceRef ?? "none"}, SHA={row.ReviewedSourceSha}; required {identity} subjectTaskId={requiredName}, ref={sourceRef ?? "none"}, expected SHA={expectedSha}. {guidance}";
         }

@@ -6135,8 +6135,8 @@ public sealed partial class AgentTaskDispatcher
                         + (previewedSource is { } source
                             ? $"Previewed source {DelegationReportFormatter.Short(source.Id)} @ {source.Sha}. "
                             : "")
-                        + "Resolve histories then retry, or cancel and recreate with -BaseTask <previewed task> "
-                        + "/ -StartRef <previewed sha> / -FreshWorktree.", ct);
+                        + "Resolve histories then retry, or cancel and recreate with --base-task <previewed task> "
+                        + "/ --start-ref <previewed sha> / --fresh-worktree.", ct);
                     await CommitClaimWithoutLaunchAsync(claimed, ct);
                     LogCommittedBlock(claimed, selected.TotalCandidates, selected.InspectedCandidates, selected.GitCommands);
                     await ReleaseTaskConsumersAsync(claimed);
@@ -8219,8 +8219,8 @@ public sealed partial class AgentTaskDispatcher
 
     private static string RepairSourceCurrencyReason(string code, Guid ownerId, string local, string remote,
         string relationship) => $"{code}: owner {DelegationReportFormatter.Short(ownerId)} local={local} remote={remote}. "
-            + $"The desktop mirror is {relationship}; dispatch -Worktree -StartRef {remote} and land it with "
-            + $"-Land <owner> -FromTask <repair> after Review.";
+            + $"The desktop mirror is {relationship}; dispatch --worktree --start-ref {remote} and land it with "
+            + $"land <owner> --from-task <repair> after Review.";
 
     private sealed record BaselineCapture(string? Json, string? Warning, string? FailureReason);
 

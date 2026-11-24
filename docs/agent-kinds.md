@@ -25,14 +25,14 @@ The operator accepted live run #4 as S2 evidence for published `d07c7e07`, with 
 deviation: the operator's existing auth was copied/used in place of a separate login in the isolated Codex home.
 Named Codex agents, Codex orchestrators, specialists, and Codex SourceLanding stay refused.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision. Windows evidence
-is commissioned with `-Platform Windows`; it is not inferred from the runner's name.
+is commissioned with `--platform Windows`; it is not inferred from the runner's name.
 
 CARD-0604 widens that lane on the production `server2` runner from one pinned agent to a bounded
 pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, Claude Code, or
 **Raw** with an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`,
 `/usr/local/bin/pwsh`) — the runner keeps that list itself and refuses any other path, including a
-host path that ends in the same name. **Runner-bound delegated Worktree tasks** (`scripts/antiphon delegate
--Runner server2`) are Grok or Claude Code (CARD-0628). Card-backed starts, OnAgent, Shared,
+host path that ends in the same name. **Runner-bound delegated Worktree tasks** (`scripts/antiphon delegate create
+--runner server2`) are Grok or Claude Code (CARD-0628). Card-backed starts, OnAgent, Shared,
 ReadOnly, pins, Herdr and custom wrappers stay refused, and SourceLanding is refused until CARD-0604
 Cut B ships the Linux custody backend. Grok and Claude Code are the agents the image carries (Claude
 Code 2.1.327, pinned by SHA-256 `343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9`); Codex is not installed there and stays refused.
@@ -224,10 +224,10 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 **Model-tier names are not `AgentKind` values.** Fable (Frontier), Opus (High), Sonnet
 (Medium), and Haiku (Low) are tiers within `ClaudeCode`; Astra (Frontier), Sol (High),
 Sol (Medium), and Luna (Low) are tiers within `Codex`. `scripts/antiphon delegate` accepts
-`-Kind ClaudeCode|Grok|Codex` and `-Level Frontier|High|Medium|Low`; model-tier names
-are not accepted by either parameter. Optional `-Model` names one delegatable alias,
-for example `gpt-6.2-astra`, and is sent only when set. An omitted `-Model` keeps the
-table. `-Model` does not move Frontier, High, Medium, Low, or Review; the level still
+`--kind ClaudeCode|Grok|Codex` and `--level Frontier|High|Medium|Low`; model-tier names
+are not accepted by either parameter. Optional `--model` names one delegatable alias,
+for example `gpt-6.2-astra`, and is sent only when set. An omitted `--model` keeps the
+table. `--model` does not move Frontier, High, Medium, Low, or Review; the level still
 sets reasoning effort. Unknown text, `*`, or a slug the resolved kind does not delegate
 is HTTP 422, and a hold refuses that alias only. For example:
 
@@ -238,8 +238,8 @@ scripts/antiphon delegate create --role Review --kind ClaudeCode --level Frontie
 scripts/antiphon delegate create --role Review --kind Codex --level Frontier --goal "Review the change; Frontier requested"
 ```
 
-Use the corresponding `-Level` from the table for the other tiers, never `-Kind Fable`,
-`-Kind Opus`, or `-Kind Astra`. The [orchestrator bundle](../server/Bundles/orchestrator.md)
+Use the corresponding `--level` from the table for the other tiers, never `--kind Fable`,
+`--kind Opus`, or `--kind Astra`. The [orchestrator bundle](../server/Bundles/orchestrator.md)
 carries the same dispatch rule. The mappings above come from `ModelLevelAliases.ForClaude`
 and `ForCodex`; Codex's short family names describe the tiers but are not CLI model IDs.
 
@@ -271,7 +271,7 @@ Three things worth knowing about that table:
   at deeper effort. Low→Medium and High→Frontier change models. Earlier `gpt-6.1-sol`,
   `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile model ids and recognized historical
   aliases; bare `sol` still normalizes to `gpt-6-sol` and bare `astra` still normalizes to
-  `gpt-6-astra`. A caller can still select `-Model gpt-6-astra` (create field `model`).
+  `gpt-6-astra`. A caller can still select `--model gpt-6-astra` (create field `model`).
   Explicit aliases are recorded and keep the selected level's `model_reasoning_effort`.
   They use a fresh pool process even when the slug matches the ladder. A warm Codex Frontier
   process must have the current Frontier slug recorded at launch.
