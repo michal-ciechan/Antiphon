@@ -67,7 +67,7 @@ public static class Program
         var context = runtime.CleanupContext;
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
-            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|coverage|row|clean|execute|hold|--version");
+            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|coverage|row|clean|execute|inspect-temp|hold|--version");
             return ExitCodes.Green;
         }
 
@@ -89,6 +89,8 @@ public static class Program
         var options = Parse(args.Skip(1).ToArray());
         // validate reads only the receipt (the server starts its launcher from a directory that need not be a checkout); a
         // placement skip asks git at the receipt's commit in this repository, else in the current directory.
+        if (verb == "inspect-temp")
+            return InspectTempCommand.Run(options, runtime.Output ?? Console.Out);
         if (verb == "validate")
             return Validate(options, options.Get("repo-root") ?? runtime.RepoRoot ?? TryFindRoot(context) ?? context.Io.CurrentDirectory, runtime);
         var repo = options.Get("repo-root") ?? runtime.RepoRoot ?? RepoPaths.FindRoot(context: context);

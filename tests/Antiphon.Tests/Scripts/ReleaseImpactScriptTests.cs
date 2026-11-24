@@ -21,7 +21,7 @@ public sealed class ReleaseImpactScriptTests
     private const string Project = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
     private const string Tests = "tests/Antiphon.Tests/Scripts/";
     private const string CoreDriver = Project + "::Antiphon.Tests.Scripts.LiveLaneFingerprintTests";
-    private const string HarnessDriver = Project + "::Antiphon.Tests.Scripts.CheckpointOwnedOutputScriptTests";
+    private const string HarnessDriver = Project + "::Antiphon.Tests.Scripts.LiveLaneOutcomeTests";
     private const string Launcher = Project + "::Antiphon.Tests.Scripts.Nightly.AntiphonCliLauncherTests";
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
@@ -73,7 +73,7 @@ public sealed class ReleaseImpactScriptTests
         foreach (var (identity, file, driver) in new[]
                  {
                      (CoreDriver, "LiveLaneFingerprintTests.cs", "scripts/test-live-lane-fingerprint.ps1"),
-                     (HarnessDriver, "CheckpointOwnedOutputScriptTests.cs", "scripts/test-checkpoint-owned-output.ps1"),
+                     (HarnessDriver, "LiveLaneOutcomeTests.cs", "scripts/test-live-lane-outcome.ps1"),
                  })
             Chain(result, "scripts/lib/c487-harness.ps1", identity).ShouldBe([Tests + file, driver, "scripts/lib/c487-harness.ps1"], identity);
         // Fixture: constant foreach imports, multi-hop dot-source, Import-Module and two cycles.
@@ -375,7 +375,7 @@ public sealed class ReleaseImpactScriptTests
         foreach (var path in new[]
         {
             Project, Tests + "ScriptHarness.cs",
-            Tests + "LiveLaneFingerprintTests.cs", Tests + "CheckpointOwnedOutputScriptTests.cs",
+            Tests + "LiveLaneFingerprintTests.cs", Tests + "LiveLaneOutcomeTests.cs",
             Tests + "Nightly/AntiphonCliLauncherTests.cs",
         })
             files[path] = File.ReadAllText(Path.Combine(root, path));
@@ -385,7 +385,7 @@ public sealed class ReleaseImpactScriptTests
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
             Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
         };
-        foreach (var name in new[] { "LiveLaneFingerprintTests", "CheckpointOwnedOutputScriptTests" })
+        foreach (var name in new[] { "LiveLaneFingerprintTests", "LiveLaneOutcomeTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
         consumers.Add(Consumer(Launcher, Tests + "Nightly/AntiphonCliLauncherTests.cs"));
         return new ClosureCase("real", files, consumers, 0);

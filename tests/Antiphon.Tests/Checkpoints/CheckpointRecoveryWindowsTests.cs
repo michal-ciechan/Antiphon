@@ -239,86 +239,22 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task allocation_sample_fails_on_access_denied_subfolder()
-    {
-        if (!Windows()) return;
-        // The usage observer samples the test child's TEMP tree. Keep the deliberately
-        // unreadable fixture outside that tree so its fail-closed sample can continue.
-        var work = Path.Combine(CheckpointFixtures.RepoRoot, ".antiphon",
-            "c804-denied-sample-" + Guid.NewGuid().ToString("N"));
-        var sampled = Path.Combine(work, "sampled");
-        var locked = Path.Combine(sampled, "locked");
-        Directory.CreateDirectory(locked);
-        var directory = new DirectoryInfo(locked);
-        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
-        var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
-            System.Security.AccessControl.FileSystemRights.ListDirectory,
-            System.Security.AccessControl.AccessControlType.Deny);
-        var denyApplied = false;
-        try
-        {
-            File.WriteAllBytes(Path.Combine(locked, "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
-            var body = $"Get-Allocated {UsageLibrary.Quote(sampled)}";
-            var readable = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
-            readable.Exit.ShouldBe(0, readable.Error);
-            long.Parse(readable.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture)
-                .ShouldBeGreaterThanOrEqualTo(128 * 1024);
-            var restrictedAcl = directory.GetAccessControl();
-            restrictedAcl.AddAccessRule(deny);
-            directory.SetAccessControl(restrictedAcl);
-            denyApplied = true;
-            var denied = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
-            denied.Exit.ShouldNotBe(0, "an unreadable subfolder must fail the sample, not read as zero: " + denied.Output);
-            denied.Error.ShouldContain("Allocated-byte sample failed");
-            denied.Output.Trim().ShouldBeEmpty();
-        }
-        finally
-        {
-            // Writing back an earlier ACL snapshot leaves the deny in place; remove the rule itself.
-            try
-            {
-                if (denyApplied)
-                {
-                    var acl = directory.GetAccessControl();
-                    acl.RemoveAccessRule(deny).ShouldBeTrue("the deny rule this test added must be removable");
-                    directory.SetAccessControl(acl);
-                }
-            }
-            finally { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); }
-        }
-        Directory.Exists(work).ShouldBeFalse("the access-denied fixture must not outlive its test");
-    }
-
-    [Test]
-    public async Task allocation_sample_does_not_follow_junction_root()
-    {
-        if (!Windows()) return;
-        var work = TempDir();
-        var target = Path.Combine(work, "target");
-        Directory.CreateDirectory(target);
-        File.WriteAllBytes(Path.Combine(target, "payload.bin"), RandomNumberGenerator.GetBytes(132 * 1024));
-        var link = Path.Combine(work, "c723-" + Guid.NewGuid().ToString("N"));
-        DirectoryLinkHelper.Create(link, target);
-        try
-        {
-            using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, work,
-                $"@{{ link = Get-Allocated {UsageLibrary.Quote(link)}; target = Get-Allocated {UsageLibrary.Quote(target)} }} | ConvertTo-Json");
-            result.RootElement.GetProperty("target").GetInt64().ShouldBeGreaterThanOrEqualTo(132 * 1024);
-            result.RootElement.GetProperty("link").GetInt64().ShouldBe(0);
-        }
-        finally { Directory.Delete(link); }
-    }
-
-    [Test]
     public async Task drifted_boot_reading_is_still_the_local_boot()
     {
         if (!Windows()) return;
         var probe = new ProcessIdentityProbe();
         var current = probe.Current();
         // The recorded boot is the kernel's boot time (CIM LastBootUpTime), not now minus uptime.
-        var work = TempDir();
-        var (exit, output, error) = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work,
-            "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('yyyyMMddHHmm')");
+        var cim = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command",
+            "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('yyyyMMddHHmm')" })
+            cim.ArgumentList.Add(arg);
+        using var reader = Process.Start(cim)!;
+        RegisterCheckpointChild(reader);
+        var outputTask = reader.StandardOutput.ReadToEndAsync();
+        var errorTask = reader.StandardError.ReadToEndAsync();
+        await reader.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+        var (exit, output, error) = (reader.ExitCode, await outputTask, await errorTask);
         exit.ShouldBe(0, error);
         current.Boot.ShouldBe(output.Trim());
         var boot = DateTime.ParseExact(current.Boot, "yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture,

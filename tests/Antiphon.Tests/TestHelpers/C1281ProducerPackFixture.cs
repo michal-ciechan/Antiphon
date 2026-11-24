@@ -7,8 +7,8 @@ namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
 /// Deterministic stand-in for the untracked CARD-1281 producer pack (CARD-1425). It writes the
-/// minimal set of files the real CheckpointReceiptValidator and validate-checkpoint-receipt.ps1
-/// read, and a one-commit selection repository that owns the pack's source commit, so the
+/// minimal set of files the real CheckpointReceiptValidator and the checkpoints validate verb
+/// (validate-checkpoint-receipt.ps1 launches it) read, and a one-commit selection repository that owns the pack's source commit, so the
 /// correction tests run on every clone. Every byte is fixed, so the inventory digest is a pin.
 /// </summary>
 internal static class C1281ProducerPackFixture

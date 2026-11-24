@@ -797,20 +797,6 @@ public static class BuildConfinement
 
     private readonly record struct StatusResult(List<string> Paths, string? Error);
 
-    /// <summary>
-    /// For run-checkpoint.ps1 when its run names this build (ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY, CheckpointToolReads.cs):
-    /// a confinement read this tool answers in process, as the git stdout it stands for; null when git must answer
-    /// (another command form, a declined layout). The script parses it exactly as it parses git's.
-    /// </summary>
-    public static string? ScriptRead(string workingDirectory, string[] args) =>
-        InProcessRead(workingDirectory, args) is { } answered ? answered.Stdout : null;
-
-    /// <summary>
-    /// For run-checkpoint.ps1 (see <see cref="ScriptRead"/>): the tracked paths
-    /// <c>git status --porcelain=v2 -z --untracked-files=no</c> lists, in ordinal order; null when git must answer.
-    /// </summary>
-    public static string[]? ScriptTrackedStatus(string repository) => InProcessStatus(repository)?.ToArray();
-
     private static List<string>? InProcessStatus(string repository)
     {
         // The tracked paths status lists (renames as both paths, conflicts included), read in process; null for a
@@ -856,7 +842,7 @@ public static class BuildConfinement
                 paths.Add(parts[i]);
             }
         }
-        // Ordinal order, as the in-process answer and run-checkpoint.ps1's two readers list them.
+        // Ordinal order, as the in-process answer lists them.
         return new StatusResult(paths.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList(), null);
     }
 
@@ -878,13 +864,23 @@ public static class BuildConfinement
             psi.ArgumentList.Add(arg);
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
             psi.Environment.Remove(name);
-        CheckpointProcessRunner.Result result;
-        try { result = CheckpointProcessRunner.Run(psi, 30_000, true); }
+        CheckpointProcessRunner.BytesResult result;
+        try { result = CheckpointProcessRunner.RunBytes(psi, 30_000, true); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         { return new GitResult(128, "", "git-unavailable"); }
         if (result.TimedOut) return new GitResult(128, "", "git-timeout");
-        return result.Exit == 0 ? new GitResult(0, result.Stdout, null) : new GitResult(result.Exit, "", "git-failed");
+        if (result.Exit != 0) return new GitResult(result.Exit, "", "git-failed");
+        // CARD-1608: -z paths are raw UTF-8 bytes, read whatever the console code page. A replacement character would
+        // rename a path and its content stamp would miss it, so invalid bytes fail closed (run-checkpoint.ps1's wording).
+        try { return new GitResult(0, StrictUtf8.GetString(result.Stdout), null); }
+        catch (System.Text.DecoderFallbackException)
+        {
+            return new GitResult(128, "", args.Count > 0 && args[0] == "ls-files"
+                ? "git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)" : "git-encoding");
+        }
     }
+
+    private static readonly System.Text.UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>
     /// The confinement's git reads answered in process by libgit2 (GitInProcess), so a confined build starts no

@@ -18,6 +18,8 @@ if (args.Length == 2 && args[0] == "claude-effort-deaf")
     return ClaudeEffortDialog.RunDeaf(args[1]);
 if (args.Length == 1 && args[0] == "claude-effort-trace-contract")
     return ClaudeEffortDialog.RunTraceContract();
+if (CheckpointProbes.Matches(args))
+    return CheckpointProbes.Run(args);
 if (args.Length >= 1 && args[0] == "cli-echo")
     return CliEcho(args);
 // W2-nightly S17: a named command echoed as cli-echo is (CLI_ECHO_COMMAND, e.g. nightly-tests), so a launcher test sees the argv a production hop hands the CLI.

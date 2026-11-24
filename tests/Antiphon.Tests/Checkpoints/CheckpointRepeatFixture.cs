@@ -1,18 +1,18 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Xml.Linq;
-using Antiphon.Tests.TestHelpers;
-using TUnit.Core;
+using Antiphon.Checkpoints;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Starts pwsh with the shared checkout as its working directory. The test classes that call it
-// already carry the strict limiter; the marker is what the source census requires of this class.
-[ParallelLimiter<ProcessSpawnLimit>]
-[SharedCheckoutChild]
+// CARD-0885 repeat fixtures: a native-repeat TRX template and the row verb (scripts/run-checkpoint.ps1's body since unit
+// 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md) run in process over a temporary repository whose
+// TUnit project stands in for tests/Antiphon.Checkpoints.RepeatHost. A FakeDriver plays dotnet: the build succeeds and the
+// run writes the template with the row's own nonce, so no build, test host or PowerShell runs.
 internal static class CheckpointRepeatFixture
 {
-    internal sealed record ScriptResult(int ExitCode, string Text, string[] Calls, string? Evidence, string? Trx);
+    internal const string Project = "tests/Antiphon.Checkpoints.RepeatHost";
+
+    internal sealed record RowResult(int ExitCode, string Text, string[] Calls, string? Evidence, string? Trx);
 
     // Temp roots are "c723-" plus a 32-digit guid. Keeping that whole name makes the
     // deepest FilterHost artifacts file 270 characters on the release checkout. Windows
@@ -24,9 +24,6 @@ internal static class CheckpointRepeatFixture
         var tail = name.Length <= 12 ? name : name[^12..];
         return "bin-c885-script-" + tail;
     }
-
-    internal static string OutputDirectory(string root) =>
-        Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.RepeatHost", OutputName(root));
 
     public static string WriteTemplate(string root, int requested = 5, int? failingOrdinal = null, string[]? methods = null)
     {
@@ -70,66 +67,54 @@ internal static class CheckpointRepeatFixture
         return path;
     }
 
-    public static string WriteShim(string root)
+    /// <summary>The temporary repository a fixture row runs in: one TUnit project at <see cref="Project"/>.</summary>
+    public static string WriteRepository(string root)
     {
-        var path = Path.Combine(root, "shim.ps1");
-        File.WriteAllText(path, """
-            $ErrorActionPreference = 'Stop'
-            [System.IO.File]::AppendAllText($env:C885_SHIM_LOG, ($args -join ' ') + [Environment]::NewLine)
-            if ($args[0] -eq 'build') { exit 0 }
-            $index = [array]::IndexOf($args, '--results-directory')
-            if ($index -lt 0) { exit 36 }
-            $directory = $args[$index + 1]
-            [System.IO.Directory]::CreateDirectory($directory) | Out-Null
-            $text = [System.IO.File]::ReadAllText($env:C885_TRX_TEMPLATE).Replace('__NONCE__', [string]$env:ANTIPHON_CHECKPOINT_NONCE)
-            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($directory, 'run.trx'), $text)
-            exit 0
-            """);
-        return path;
+        var project = Path.Combine(root, "repo", Project);
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "Antiphon.Checkpoints.RepeatHost.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"TUnit\" Version=\"1.44.0\" /></ItemGroup></Project>");
+        return Path.Combine(root, "repo");
     }
 
-    public static async Task<ScriptResult> RunScriptAsync(string root, int repeat, string template,
-        CancellationToken cancellationToken, bool noBuild = false, string? expectedSha = null,
-        string? property = null)
+    /// <summary>
+    /// One row over the repository WriteRepository made under root: --repeat repeat, --min-executed 3, the template as the
+    /// run's TRX. Calls are the dotnet argument lines, Evidence the row's report.json and Trx its run.trx.
+    /// </summary>
+    public static async Task<RowResult> RunRowAsync(string root, int repeat, string template, CancellationToken cancellationToken,
+        bool noBuild = false, string? expectedSha = null, string? property = null)
     {
-        var shim = WriteShim(root);
-        var calls = Path.Combine(root, "calls.log");
+        var repo = Path.Combine(root, "repo");
+        if (!Directory.Exists(repo)) WriteRepository(root);
         var results = Path.Combine(root, "results");
-        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
-        var psi = new ProcessStartInfo("pwsh")
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
         {
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
+            var nonce = request.Environment is not null && request.Environment.TryGetValue("ANTIPHON_CHECKPOINT_NONCE", out var value) ? value : "";
+            File.WriteAllText(CheckpointFixtures.TrxFile(request), File.ReadAllText(template).Replace("__NONCE__", nonce, StringComparison.Ordinal));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var arguments = new List<string>
+        {
+            "row", "--repo-root", repo, "--name", "CP-1", "--project", Project, "--output-path", OutputName(root) + "/",
+            "--filter", "/*/*/SampleTests*/*", "--min-executed", "3", "--repeat", repeat.ToString(), "--results-root", results, "--no-slot",
         };
-        foreach (var argument in new[] { "-NoProfile", "-File", script, "-Name", "CP-1", "-Project",
-                     "tests/Antiphon.Checkpoints.RepeatHost", "-OutputPath", OutputName(root) + "/", "-Filter",
-                     "/*/*/SampleTests*/*", "-MinExecuted", "3", "-Repeat", repeat.ToString(),
-                     "-ResultsRoot", results, "-DotnetShim", shim, "-NoSlot" })
-            psi.ArgumentList.Add(argument);
-        if (noBuild) psi.ArgumentList.Add("-NoBuild");
-        if (expectedSha is not null)
+        if (noBuild) arguments.Add("--no-build");
+        if (expectedSha is not null) arguments.AddRange(["--expected-source-sha", expectedSha]);
+        if (property is not null) arguments.AddRange(["--msbuild-property", property]);
+        var before = Directory.Exists(results) ? Directory.GetDirectories(results, "CP-1-*") : [];
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(arguments.ToArray(), new CheckpointApp.Runtime
         {
-            psi.ArgumentList.Add("-ExpectedSourceSha");
-            psi.ArgumentList.Add(expectedSha);
-        }
-        if (property is not null)
-        {
-            psi.ArgumentList.Add("-MsBuildProperty");
-            psi.ArgumentList.Add(property);
-        }
-        psi.Environment["C885_SHIM_LOG"] = calls;
-        psi.Environment["C885_TRX_TEMPLATE"] = template;
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        var dirs = Directory.Exists(results) ? Directory.GetDirectories(results, "CP-1-*") : [];
-        var directory = dirs.OrderByDescending(item => item).FirstOrDefault();
-        return new ScriptResult(process.ExitCode, await stdout + "\n" + await stderr,
-            File.Exists(calls) ? File.ReadAllLines(calls) : [],
-            directory is null ? null : Path.Combine(directory, "source.json"),
+            Output = output, Driver = driver, Platform = new FakePlatform { IsWindows = true },
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), EnvironmentLookup = _ => null, CancellationToken = cancellationToken,
+        });
+        // This row's own results directory: the one that was not there before it.
+        var directory = Directory.Exists(results) ? Directory.GetDirectories(results, "CP-1-*").Except(before).SingleOrDefault() : null;
+        return new RowResult(exit, output.ToString(),
+            driver.Calls.Select(call => string.Join(" ", call.Arguments)).ToArray(),
+            directory is null ? null : Path.Combine(directory, "report.json"),
             directory is null ? null : Path.Combine(directory, "run.trx"));
     }
 }

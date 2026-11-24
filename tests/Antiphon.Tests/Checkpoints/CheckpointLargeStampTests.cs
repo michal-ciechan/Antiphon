@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
@@ -219,6 +220,89 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
             node.Bytes.ShouldBe(bytes);
         }
     }
+
+    // C1532 (the deleted large-stamp driver's last stamp case): a covered file deleted after the baseline is tampered and
+    // named.
+    [Test]
+    public void C1532_deleted_covered_file_is_tampered()
+    {
+        var root = Repo();
+        var empty = Path.Combine(root, "App/obj/empty.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(empty)!);
+        File.WriteAllBytes(empty, []);
+        var baseline = Prepare(root, Capture(root));
+        baseline.Untracked["App/obj/empty.bin"].ShouldBe("file|0|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        BuildConfinement.Settle(baseline).Kind.ShouldBeNull();
+        File.Delete(empty);
+        AssertTampered(BuildConfinement.Settle(baseline), "App/obj/empty.bin");
+    }
+
+    // C1363 (the deleted reader-deadline driver's ledger modes): an entry the reader refuses after capture, its bytes
+    // unchanged, is unreadable with no restore; beside a changed entry it is listed between the TAMPERED entries and the
+    // restore line, and takes no command. A second hard link outside the repository makes it unprovable without changing
+    // its bytes, privileges or sharing.
+    [Test]
+    [Arguments("unreadable")]
+    [Arguments("tampered-beside-unreadable")]
+    public void C1363_unprovable_entry_is_unreadable_apart_from_tampered(string mode)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Hard-link ledger qualification requires Linux or Windows");
+        var root = Repo();
+        var keep = Path.Combine(root, "App/obj/keep.bin");
+        var pinned = Path.Combine(root, "App/obj/pinned.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(keep)!);
+        File.WriteAllText(keep, "KEEP-ORIGINAL");
+        var pinnedBytes = Enumerable.Range(0, 4096).Select(i => (byte)((i * 31 + (i >> 10)) & 0xFF)).ToArray();
+        File.WriteAllBytes(pinned, pinnedBytes);
+        var index = CheckpointFixtureProcess.Git(root, "ls-files", "-s");
+        var baseline = Prepare(root, Capture(root));
+        baseline.Untracked["App/obj/pinned.bin"].ShouldStartWith("file|4096|", Case.Sensitive, "readable at capture");
+        BuildConfinement.Settle(baseline).Kind.ShouldBeNull("healthy control");
+        var link = Path.Combine(Path.GetDirectoryName(root)!, "pinned-link.bin");
+        if (OperatingSystem.IsWindows()) CreateHardLink(link, pinned, IntPtr.Zero).ShouldBeTrue(Marshal.GetLastPInvokeError().ToString());
+        else HardLinkUnix(pinned, link).ShouldBe(0, Marshal.GetLastPInvokeError().ToString());
+        try
+        {
+            if (mode == "tampered-beside-unreadable") File.WriteAllText(keep, "KEEP-CHANGED");
+            var result = BuildConfinement.Settle(baseline);
+            var lines = result.Detail.TrimEnd('\n').Split('\n');
+            const string unreadable = "UNREADABLE App/obj/pinned.bin: selected file has multiple links";
+            if (mode == "unreadable")
+            {
+                result.Kind.ShouldBe("unreadable", result.Detail);
+                lines[0].ShouldBe("refused: unreadable");
+                lines.ShouldContain(unreadable);
+                result.Detail.ShouldNotContain("TAMPERED");
+                result.Detail.ShouldNotContain("manual command");
+                lines[^1].ShouldBe("no content difference was observed; nothing in the worktree or index was changed; no restore is needed; repeat the run.");
+            }
+            else
+            {
+                result.Kind.ShouldBe("tampered", result.Detail);
+                lines[0].ShouldBe("refused: tampered");
+                var tampered = Array.IndexOf(lines, "TAMPERED App/obj/keep.bin");
+                tampered.ShouldBeGreaterThanOrEqualTo(0, result.Detail);
+                lines[tampered + 1].ShouldContain("status --short -- ", Case.Sensitive, "the untracked entry's manual command");
+                lines[tampered + 1].ShouldEndWith("; inspect and recover user bytes from your backup");
+                var unprovable = Array.IndexOf(lines, unreadable);
+                unprovable.ShouldBeGreaterThan(tampered, result.Detail);
+                result.Detail.ShouldNotContain("TAMPERED App/obj/pinned.bin");
+                result.Detail.ShouldNotContain("pinned.bin'", Case.Sensitive, "an unprovable entry takes no command");
+                lines[^1].ShouldBe("manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.");
+            }
+            CheckpointFixtureProcess.Git(root, "ls-files", "-s").ShouldBe(index, "index unchanged");
+            File.ReadAllBytes(pinned).ShouldBe(pinnedBytes, "settlement leaves the unprovable entry as it was");
+        }
+        finally { File.Delete(link); }
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string link, string existing, IntPtr security);
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int HardLinkUnix(string existing, string link);
 
     private sealed class PacedBytes(byte[] bytes, Action beforeRead) : MemoryStream(bytes, false)
     {

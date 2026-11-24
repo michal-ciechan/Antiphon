@@ -64,8 +64,8 @@ public sealed class SourceReadException(string code) : Exception(code)
 /// status --porcelain=v2 prints (ignored files excluded) in git's byte order of paths, a path's tracked record
 /// before its untracked one: the path, its HEAD mode and id, its index mode and id (empty when absent) and its
 /// work-tree content (<see cref="WorkTreeToken"/>). The checkout is read with libgit2 in process (no git child),
-/// or through git for a layout libgit2 declines; scripts/lib/checkpoint-source.ps1 reads the same facts from
-/// <c>git status --porcelain=v2</c> and must produce the same identity. Captured twice; any difference is
+/// or through git for a layout libgit2 declines, which reads the same facts from <c>git status --porcelain=v2</c>
+/// and must produce the same identity. Captured twice; any difference is
 /// <c>capture_changed</c>.
 /// </summary>
 public sealed class SourceSnapshot
@@ -171,7 +171,7 @@ public sealed class SourceSnapshot
     }
 
     /// <summary>
-    /// The script's reading (scripts/lib/checkpoint-source.ps1), through hardened git: toplevel, then
+    /// The git reading (once also scripts/lib/checkpoint-source.ps1's, deleted in unit 20), through hardened git: toplevel, then
     /// <c>status --porcelain=v2 --branch</c> for HEAD and each record's modes and ids, and <c>ls-files -v</c> for
     /// index flags that hide edits. One filter/textconv driver lookup for the three reads.
     /// </summary>

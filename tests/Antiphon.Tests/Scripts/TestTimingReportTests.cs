@@ -192,7 +192,7 @@ public sealed class TestTimingReportTests : CheckpointTestBase
     }
 
     /// <summary>
-    /// run-checkpoint.ps1's Write-WrapperTiming runs `test-timing-event --root --event`: the event's members in order on one
+    /// `test-timing-event --root --event` (run-checkpoint.ps1's Write-WrapperTiming ran it until unit 20; the row verb records its own): the event's members in order on one
     /// journal line, a replay of it a no-op, another payload under its eventId refused, and nothing on stdout.
     /// </summary>
     [Test]

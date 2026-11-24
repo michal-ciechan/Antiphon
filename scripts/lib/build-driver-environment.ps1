@@ -1,7 +1,7 @@
 # CARD-1506: adapter only; all policy values and opt-out live in the shared C# source.
 # ASCII and C# 5 compatible for Windows PowerShell 5.1 callers. Its callers are the still-PowerShell ones:
-# scripts/run-checkpoint.ps1 and scripts/test-checkpoint-bounded-reader.ps1 (W5, owner-gated), lib/nightly-owned-process.ps1
-# and lib/c487-nightly-tests.ps1 (W1). build-slot moved to C# (unit 34 of
+# lib/nightly-owned-process.ps1 and lib/c487-nightly-tests.ps1 (W1); run-checkpoint.ps1's body moved to the checkpoints row
+# verb (unit 20), whose ProcessDriver prepares its children with BuildDriverEnvironment directly. build-slot moved to C# (unit 34 of
 # docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md), which prepares its children with BuildDriverEnvironment and
 # LeaseTempDirectory directly; the process-wide Enter/Exit pair went with it.
 function Set-AntiphonBuildDriverEnvironment {

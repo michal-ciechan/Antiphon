@@ -87,8 +87,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             var detail = await waiter.StandardOutput.ReadToEndAsync(cancellationToken);
             waiter.ExitCode.ShouldBe(exit, detail);
             File.Exists(Path.Combine(run, "report.md")).ShouldBeTrue("the receipt must exist when wait returns");
-            AssertReceipt(run, exit, mode == "cancel" ? "caller-requested" : null,
-                forgedScriptReason: mode == "build-failure" ? "row_failed" : "report_failed");
+            AssertReceipt(run, exit, mode == "cancel" ? "caller-requested" : null);
             if (mode.StartsWith("build-", StringComparison.Ordinal))
             {
                 var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
@@ -238,7 +237,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             await Task.Delay(50, limit.Token);
     }
 
-    private static void AssertReceipt(string run, int exit, string? reason, string forgedScriptReason = "report_failed")
+    private static void AssertReceipt(string run, int exit, string? reason)
     {
         var state = new RunStateStore().TryRead(Path.Combine(run, "state.json")).ShouldNotBeNull();
         state.Phase.ShouldBe("done"); state.ExitCode.ShouldBe(exit); state.EndedAt.ShouldNotBeNull();
@@ -253,24 +252,25 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         report.Rows.Single().Executed.ShouldBeNull("a command has no test counts");
         if (reason is not null) report.Reason.ShouldBe(reason);
         ReportValidator.Validate(report, report.Commit).ShouldBe("report_failed");
-        ValidateScript(Path.Combine(run, "report.json"), report.Commit);
+        ValidateVerb(Path.Combine(run, "report.json"), report.Commit);
         // Forging the top-level result must not turn unknown/unrun rows into green.
         report.ExitCode = 0; report.Verdict = "GREEN";
         ReportValidator.Validate(report, report.Commit).ShouldNotBeNull();
         var forged = Path.Combine(Path.GetDirectoryName(run)!, Path.GetFileName(run) + "-forged.json");
         File.WriteAllText(forged, ReportWriter.JsonText(report));
-        ValidateScript(forged, report.Commit, forgedScriptReason);
+        ValidateVerb(forged, report.Commit);
     }
 
-    private static void ValidateScript(string evidence, string sha, string reason = "report_failed")
+    // The validate verb (validate-checkpoint-receipt.ps1's body since unit 20), in process: exit 2 with the library's reason.
+    private static void ValidateVerb(string evidence, string sha)
     {
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
-        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot,
-            "scripts/validate-checkpoint-receipt.ps1"), "-Evidence", evidence, "-ExpectedSourceSha", sha })
-            start.ArgumentList.Add(arg);
-        var result = CheckpointFixtureProcess.Run(start, 30_000);
-        result.Exit.ShouldBe(2, result.Stdout + result.Stderr);
-        result.Stdout.ShouldContain("reason=" + reason);
+        var output = new StringWriter();
+        var exit = Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", evidence, "--expected-source-sha", sha],
+            new CheckpointApp.Runtime { Output = output }).GetAwaiter().GetResult();
+        exit.ShouldBe(2, output.ToString());
+        var reason = ReportValidator.Validate(ReceiptJson.Parse<ReportModel>(File.ReadAllText(evidence), ReportWriter.Json)!, sha);
+        reason.ShouldNotBeNull();
+        output.ToString().ShouldContain("CHECKPOINT SOURCE INVALID reason=" + reason);
     }
 
     private static async Task Join(Process process)

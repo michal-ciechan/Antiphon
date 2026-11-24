@@ -542,7 +542,10 @@ public sealed class C1514LandingSplitBudgetTests
             // Task 44a6e14e merged 702 measured rows into the same listing; the independent sum is 106343.8397645542 s,
             // 150 listing launches plus the four suffix probes (154). See scripts/test-nightly-tests.ps1 history.
             if (launches != 154) reasons.Add("launch-count");
-            if (Math.Abs(suiteSeconds - 106343.8397645542) > 0.11) reasons.Add("suite-hours");
+            // Unit 20 of the 2026-11-22 plan: +30 s. The rc Windows rows of three deleted Linux-only classes left the policy
+            // (CheckpointFixtureRoutingTests 4, CheckpointInheritedFileTests 4, CheckpointVerifierBoundsTests 2 listing nodes,
+            // Slow in a Check type: 3 s each), so the fixed listing's nodes for them now count.
+            if (Math.Abs(suiteSeconds - 106373.8397645542) > 0.11) reasons.Add("suite-hours");
             if (maxSeconds >= watchdogSeconds) reasons.Add("watchdog-budget");
             if (overTarget.Count != 0) reasons.Add("target");
             if (missing != 0 || doubled != 0 || extra != 0) reasons.Add("census");

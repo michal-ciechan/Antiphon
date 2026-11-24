@@ -7,8 +7,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Detect only: the build's resulting bytes and index must survive both entry points.
-// Each row guards against automatic restore/delete or a false preservation claim.
+// Detect only: the build's resulting bytes and index must survive the row verb (scripts/run-checkpoint.ps1's body since
+// unit 20). Each row guards against automatic restore/delete or a false preservation claim.
 [Category("Unit")]
 [Category("Slow")]
 [ParallelLimiter<CheckpointToolSpawnLimit>]
@@ -126,34 +126,19 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         {
             root = BeginRepo(shape);
             PlaceUser(root, shape);
-            var tool = await RunToolAsync(root, shape + "-tool", shape, cancellationToken);
-            var toolReceipt = ReadReceipt(Path.Combine(root, ".antiphon/tool-results"), shape + "-tool", tool.Exit, GitOut(root, "rev-parse", "HEAD").Trim());
-            var toolNote = Judge(shape, tool, root, toolReceipt);
-            if (shape == "symlink-on-file") new FileInfo(Path.Combine(root, "tracked.txt")).Delete();
-            if (shape == "existing-output-symlink") new DirectoryInfo(Path.Combine(root, "App/bin-probe")).Delete();
-            root = BeginRepo(shape);
-            PlaceUser(root, shape);
-            var script = await RunScriptAsync(root, shape + "-script", shape, cancellationToken);
-            RunResult? receipt = null;
-            if (shape != "clean-build")
+            var head = GitOut(root, "rev-parse", "HEAD").Trim();
+            var row = await RunToolAsync(root, shape + "-tool", shape, cancellationToken);
+            var receipt = ReadReceipt(Path.Combine(root, ".antiphon/tool-results"), shape + "-tool", row.Exit, head);
+            if (receipt.Exit == 2)
             {
-                var receiptPath = Path.Combine(root, ".antiphon", "script-results", shape + "-script-fixed", "source.json");
-                var head = GitOut(root, "rev-parse", "HEAD").Trim();
-                receipt = ReadReceipt(Path.GetDirectoryName(receiptPath)!, shape + "-script", script.Exit, head);
-                if (receipt.Exit == 2)
-                {
-                    var validation = await ValidateReceiptAsync(receiptPath, head, cancellationToken);
-                    validation.Exit.ShouldBe(2, validation.Output);
-                    validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=source_ineligible");
-                }
+                // The receipt the row wrote is refused by the validate verb (validate-checkpoint-receipt.ps1's body since unit 20).
+                var validation = await ValidateReceiptAsync(
+                    Directory.GetFiles(Path.Combine(root, ".antiphon/tool-results"), "report.json", SearchOption.AllDirectories).Single(), head);
+                validation.Exit.ShouldBe(2, validation.Output);
+                validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=");
             }
-
-            var scriptNote = Judge(shape, script, root, receipt);
-            var report = "tool: " + toolNote + "\n--- tool output ---\n" + tool.Output
-                + "\nscript: " + scriptNote + "\n--- script output ---\n" + script.Output
-                + (receipt is null ? "" : "\nreceiptExit=" + receipt.Exit + "\n" + receipt.Output);
-            toolNote.ShouldBe("ok", report);
-            scriptNote.ShouldBe("ok", report);
+            var note = Judge(shape, row, root, receipt);
+            note.ShouldBe("ok", "row: " + note + "\n--- row output ---\n" + row.Output + "\nreceiptExit=" + receipt.Exit + "\n" + receipt.Output);
         }
         finally
         {
@@ -546,66 +531,12 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         return new RunResult(exit, output.ToString());
     }
 
-    private async Task<RunResult> RunScriptAsync(string root, string name, string shape, CancellationToken cancellationToken)
+    private static async Task<RunResult> ValidateReceiptAsync(string receipt, string head)
     {
-        var filter = shape == "clean-build" ? "/*/*/ShapeCleanProbe/*" : "/*/*/Unused/*";
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment["C585_STAMP"] = "fixed";
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", OutputPath,
-            "-Filter", filter, "-ResultsRoot", ".antiphon/script-results",
-            "-MinExecuted", "1", "-NoSlot",
-        })
-            start.ArgumentList.Add(arg);
-        // The untracked and ignored listings are where git and libgit2 could part: those shapes keep the script's
-        // git reader end to end, so this matrix still compares the tool against git there.
-        if (!GitReaderShapes.Contains(shape))
-            CheckpointFixtures.UseToolReads(start);
-        _git.Apply(start);
-        return await WaitAsync(start, cancellationToken);
-    }
-
-    private static readonly HashSet<string> GitReaderShapes = new(StringComparer.Ordinal)
-    {
-        "untracked-descendant", "ignored-descendant", "staged-untracked", "deleted-untracked", "changed-untracked",
-    };
-
-    private async Task<RunResult> ValidateReceiptAsync(string receipt, string head, CancellationToken cancellationToken)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-            "-Evidence", receipt, "-ExpectedSourceSha", head,
-        })
-            start.ArgumentList.Add(arg);
-        CheckpointFixtures.UseToolReads(start);
-        _git.Apply(start);
-        return await WaitAsync(start, cancellationToken);
-    }
-
-    internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
-    {
-        using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "shape-pwsh");
-        var result = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
-        return new RunResult(result.Exit, result.Stdout + result.Stderr);
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", receipt, "--expected-source-sha", head],
+            new Antiphon.Checkpoints.CheckpointApp.Runtime { Output = output });
+        return new RunResult(exit, output.ToString());
     }
 
     private static void Write(string root, string relative, string content)

@@ -78,7 +78,7 @@ public class ProcessSpawnLimitTests
         typeof(TestDbFixtureLazyInitializationTests),
         typeof(CheckCompactionCrashTests),
         typeof(CheckNoteDeliveryHandoffTests),
-        typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests),
+        // Unit 20: RunCheckpointScriptTests (test-run-checkpoint.ps1) is deleted; its cases run in process (RowVerbTests).
         typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
         // W2-nightly S27: NativeLinuxPolicyMatcherParityTests runs in-process (no pwsh child) and left this floor.
@@ -133,9 +133,9 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.RollingProductionMountTests),
         typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleCensusChurnTests),
         typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests),
-        // Every child (run-checkpoint.ps1, its pwsh dotnet shim, the receipt validator, git) runs in the case's own
-        // seeded repository; the checkout is only read for script paths. No port, no change to this process's
-        // environment or directory, and no file this process wrote is exec'd (the shims are pwsh -File scripts).
+        // Its only children are git (the seeded repositories and the HEAD and restore drift), each in the case's own
+        // repository; the row and validate verbs run in process (unit 20). No port, no change to this process's directory,
+        // and no file this process wrote is exec'd.
         typeof(Antiphon.Tests.Scripts.RunCheckpointSourceScriptTests),
     ];
 
@@ -364,16 +364,14 @@ public class ProcessSpawnLimitTests
             string.Join(Environment.NewLine, misses));
     }
 
-    // The seven classes the old roster named. The source walk must still find each of them, and every
-    // class it finds — these seven and any later one — keeps the marker and the strict limiter.
+    // Of the seven classes the old roster named, the source walk must still find these, and every class it finds keeps
+    // the marker and the strict limiter. Unit 20 of the 2026-11-22 plan moved the other five off a ProcessStartInfo in the
+    // checkout: their run-checkpoint.ps1 and validate-checkpoint-receipt.ps1 children became the row and validate verbs in
+    // process. CheckpointRepeatBuildIsolationTests keeps its marker by hand (its real leg's row verb builds in the
+    // checkout through the ProcessDriver, which the walk does not see); PhaseJournalKillDiagnosticTests starts no child.
     private static readonly string[] SharedCheckoutFloor =
     [
-        "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests",
         "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests",
-        "Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests",
-        "Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests",
-        "Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests",
-        "Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests",
         "Antiphon.Tests.Checkpoints.RerunFilterHostTests",
     ];
 
@@ -432,7 +430,7 @@ public class ProcessSpawnLimitTests
             {
                 private static void Run()
                 {
-                    var path = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
+                    var path = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "build-slot.ps1");
                     var request = new SchedulerRequest { WorkingDirectory = CheckpointFixtures.RepoRoot };
                     var root = Path.GetTempPath();
                     var other = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
@@ -795,7 +793,7 @@ public class ProcessSpawnLimitTests
         StrictClasses.Intersect(GitOnlyClasses).ShouldBeEmpty("a class belongs to one roster");
         StrictClasses.Intersect(ScriptModelClasses).ShouldBeEmpty("a class belongs to one roster");
         GitOnlyClasses.Intersect(ScriptModelClasses).ShouldBeEmpty("a class belongs to one roster");
-        StrictClasses.ShouldContain(typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests));
+        StrictClasses.ShouldContain(typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests));
         var seen = new HashSet<Type>();
         var both = new List<string>();
         foreach (var type in StrictClasses.Concat(GitOnlyClasses).Concat(ScriptModelClasses).Concat(CheckpointCandidateTypes()))

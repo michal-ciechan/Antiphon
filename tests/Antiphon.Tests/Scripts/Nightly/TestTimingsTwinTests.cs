@@ -14,8 +14,8 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// <summary>
 /// The antiphon-test-timing-v1 journal of TestTimings.cs (CARD-1313). From W2-nightly S03 until 2026-11-22 this class held
 /// the compiled writer and reader to their PowerShell twin, scripts/lib/test-timings.ps1, byte for byte; the ps1 is deleted
-/// (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 2) and its last writer, run-checkpoint.ps1, runs the compiled one
-/// through `antiphon-scripts test-timing-event`. The outcomes, lines, layout and reads the twins agreed on are stated here.
+/// (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 2); its last writer, run-checkpoint.ps1, ran the compiled one through
+/// `antiphon-scripts test-timing-event` until unit 20 made it a launcher of the row verb, which records its own. The outcomes, lines, layout and reads the twins agreed on are stated here.
 /// One difference from the ps1 stays recorded: an identical replay of an event whose ISO timestamp carries trailing zero
 /// fraction digits is a no-op (the ps1 re-serialized the stored line through a DateTime and reported event-conflict).
 /// </summary>

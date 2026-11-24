@@ -6,7 +6,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Real builds must detect changes and preserve resulting user bytes and index.
+// Real builds through the row verb (scripts/run-checkpoint.ps1's body since unit 20) must detect changes and preserve
+// resulting user bytes and index.
 [Category("Unit")]
 [Category("Slow")]
 [ParallelLimiter<CheckpointToolSpawnLimit>]
@@ -172,11 +173,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var tool = await RunToolAsync(root, "dirty-tool", cancellationToken);
         AssertDirtyRefused(tool.Output, keep, dirty, marker, markerBytes);
         tool.Exit.ShouldBe(2, tool.Output);
-
-        File.WriteAllBytes(keep, dirty);
-        var script = await RunScriptAsync(root, "dirty-script", cancellationToken);
-        AssertDirtyRefused(script.Output, keep, dirty, marker, markerBytes);
-        script.Exit.ShouldBe(2, script.Output);
     }
 
     [Test]
@@ -203,12 +199,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         tool.Output.ShouldNotContain("refused: dirty-tracked", Case.Sensitive);
         tool.Output.ShouldContain("no TRX", Case.Sensitive);
         Directory.Exists(Path.Combine(root, "App", "bin-probe")).ShouldBeTrue(tool.Output);
-
-        var script = await RunScriptAsync(root, "clean-script", cancellationToken);
-        File.ReadAllBytes(Path.Combine(root, "keep.txt")).ShouldBe(keep, script.Output);
-        script.Output.ShouldNotContain("refused: tampered", Case.Sensitive);
-        script.Output.ShouldNotContain("refused: dirty-tracked", Case.Sensitive);
-        script.Output.ShouldContain("DOTNET build EXIT CODE: 0", Case.Sensitive);
+        tool.Output.ShouldContain("Build succeeded", Case.Sensitive, "the build's own output reaches the row's console");
     }
 
     [Test]
@@ -236,59 +227,29 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         tool.Exit.ShouldBe(0, tool.Output);
         tool.Output.ShouldContain("executed=1", Case.Sensitive);
         tool.Output.ShouldContain("buildSource=verified", Case.Sensitive);
-
-        var script = await RunScriptAsync(root, "fresh-script", "/*/*/FreshProbe/*", "1", cancellationToken);
-        script.Exit.ShouldBe(0, script.Output);
-        script.Output.ShouldContain("executed=1", Case.Sensitive);
-        script.Output.ShouldContain("buildSource=verified", Case.Sensitive);
+        var report = Directory.GetFiles(Path.Combine(root, ".antiphon", "tool-results"), "report.json", SearchOption.AllDirectories).Single();
+        (await ValidateReceiptAsync(report, GitOut(root, "rev-parse", "HEAD").Trim())).Exit.ShouldBe(0, "a fresh green row qualifies");
     }
 
+    // The confined build's baseline is the whole tracked set, not the project's folder (BuildConfinement.Prepare).
     [Test]
-    [Timeout(60_000)]
-    public async Task tracked_snapshot_contains_committed_files(CancellationToken cancellationToken)
+    [Timeout(120_000)]
+    public void tracked_snapshot_contains_committed_files(CancellationToken cancellationToken)
     {
         var root = BeginRepo();
-        foreach (var relative in new[] { "App/App.csproj", "App/Marker.cs", "App/keep.txt", "outside.txt", "notes/readme.txt" })
+        foreach (var relative in new[] { "App/Marker.cs", "App/keep.txt", "outside.txt", "notes/readme.txt" })
             Write(root, relative, relative + "\n");
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+            </Project>
+            """);
         Commit(root);
-        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
-        var probe = await RunPwshAsync(root, $$"""
-            $ErrorActionPreference = 'Stop'
-            . {{Quote(Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-process-runner.ps1"))}}
-            $tokens = $null
-            $parseErrors = $null
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$parseErrors)
-            if ($parseErrors -and @($parseErrors).Count -gt 0) { throw ($parseErrors | Out-String) }
-            $names = @(
-                'Get-CheckpointTrackedSnapshot',
-                'Get-CheckpointUntrackedManifest',
-                'Join-CheckpointRepoPath',
-                'Get-CheckpointContentStamp',
-                'Get-CheckpointStampLink',
-                'Get-CheckpointSha256',
-                'Get-CheckpointRepoRelative',
-                'Invoke-CheckpointGit',
-                'Resolve-CheckpointProjectDirectory',
-                'Test-CheckpointProjectExtension')
-            $buffer = New-Object System.Text.StringBuilder
-            foreach ($name in $names) {
-                $fn = $null
-                foreach ($candidate in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
-                    if ($candidate.Name -eq $name) { $fn = $candidate; break }
-                }
-                if ($null -eq $fn) { throw "missing $name" }
-                [void]$buffer.AppendLine($fn.Extent.Text)
-            }
-            Invoke-Expression $buffer.ToString()
-            $root = {{Quote(root)}}
-            $project = Join-Path $root 'App/App.csproj'
-            $shot = Get-CheckpointTrackedSnapshot -Projects @($project)
-            if ($null -ne $shot.Error) { throw $shot.Error }
-            @($shot.Hashes.Keys) | Sort-Object | ConvertTo-Json -Compress
-            """, cancellationToken);
-        probe.Exit.ShouldBe(0, probe.Output);
-        foreach (var relative in new[] { "App/App.csproj", "App/Marker.cs", "App/keep.txt", "outside.txt", "notes/readme.txt" })
-            probe.Output.ShouldContain(relative, Case.Sensitive);
+        var prepared = Antiphon.Checkpoints.BuildConfinement.Prepare(root, ["build", "App/App.csproj", "--property:OutputPath=" + OutputPath],
+            null, cancellationToken);
+        prepared.Baseline.ShouldNotBeNull(prepared.Refusal + " " + prepared.Detail);
+        foreach (var relative in new[] { "App/App.csproj", "App/Marker.cs", "App/keep.txt", "outside.txt", "notes/readme.txt", ".gitignore" })
+            prepared.Baseline!.Entries.Keys.ShouldContain(relative);
     }
 
     [Test]
@@ -356,24 +317,12 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var head = GitOut(root, "rev-parse", "HEAD").Trim();
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
         var toolNote = DescribeKept(tool, full, bytes, root, relative);
-        if (!File.Exists(full) || !File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
-            File.WriteAllBytes(full, bytes);
-        var marker = Path.Combine(root, "App", "Marker.cs");
-        File.SetLastWriteTimeUtc(marker, DateTime.UtcNow);
-        var built = Path.Combine(root, "App", "bin-probe");
-        if (Directory.Exists(built))
-            Directory.Delete(built, true);
-        Git(root, "restore", "--staged", "--", relative);
-        var script = await RunScriptAsync(root, name + "-script", cancellationToken);
-        var scriptNote = DescribeKept(script, full, bytes, root, relative);
-        var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
-        File.Exists(receipt).ShouldBeTrue(script.Output);
-        var validation = await ValidateReceiptAsync(receipt, head, cancellationToken);
-        var report = "tool: " + toolNote + "\nscript: " + scriptNote + "\nreceiptExit=" + validation.Exit + "\n" + validation.Output;
+        var receipt = Directory.GetFiles(Path.Combine(root, ".antiphon", "tool-results"), "report.json", SearchOption.AllDirectories).Single();
+        var validation = await ValidateReceiptAsync(receipt, head);
+        var report = "row: " + toolNote + "\nreceiptExit=" + validation.Exit + "\n" + validation.Output;
         toolNote.ShouldBe("kept", report);
-        scriptNote.ShouldBe("kept", report);
         validation.Exit.ShouldBe(2, report);
-        validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=source_ineligible");
+        validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=report_failed");
     }
 
     private string DescribeKept(RunResult result, string full, byte[] bytes, string root, string relative)
@@ -430,15 +379,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
         AssertDetected(tool, victim, head);
         var report = Directory.GetFiles(Path.Combine(root, ".antiphon", "tool-results"), "report.json", SearchOption.AllDirectories).Single();
-        (await ValidateReceiptAsync(report, head, cancellationToken)).Exit.ShouldBe(2);
-        // Reset this fixture ourselves so the second entry sees the same clean baseline.
-        File.WriteAllBytes(victim.FullPath, victim.Bytes);
-        File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
-        var script = await RunScriptAsync(root, name + "-script", cancellationToken);
-        AssertDetected(script, victim, head);
-        var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
-        File.Exists(receipt).ShouldBeTrue(script.Output);
-        (await ValidateReceiptAsync(receipt, head, cancellationToken)).Exit.ShouldBe(2);
+        (await ValidateReceiptAsync(report, head)).Exit.ShouldBe(2);
     }
 
     private static void AssertDetected(RunResult result, Victim victim, string head)
@@ -455,8 +396,9 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         else System.Text.Encoding.UTF8.GetString(bytes).ShouldContain(victim.Relative.EndsWith(".txt") ? "generated version 1" : "AssemblyVersion");
     }
 
-    // case: source.json collides with a directory made during a passing build;
+    // case: report.json collides with a directory made during a passing build;
     // mutation: log receipt failure but preserve exit 0; red: missing receipt reports green.
+    // The name is the CARD-1199 roster's (C1323 c1199-roster-37, CP-10/CP-20 filters); the row verb is the script's body.
     [Test]
     [Timeout(420_000)]
     public async Task passing_script_requires_writable_source_receipt(CancellationToken cancellationToken)
@@ -467,16 +409,17 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
               <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
               <ItemGroup><PackageReference Include="TUnit" Version="1.44.0" /></ItemGroup>
               <Target Name="ReceiptCollision" BeforeTargets="Build">
-                <MakeDir Directories="$(MSBuildProjectDirectory)/../.antiphon/script-results/receipt-script-fixed/source.json" />
+                <MakeDir Directories="$(MSBuildProjectDirectory)/../.antiphon/tool-results/receipt-row-fixed/report.json" />
               </Target>
             </Project>
             """);
         Write(root, "App/Probe.cs", "public sealed class ReceiptProbe { [TUnit.Core.Test] public void one() {} }");
         Commit(root);
-        var result = await RunScriptAsync(root, "receipt-script", "/*/*/ReceiptProbe/*", "1", cancellationToken);
+        var result = await RunToolAsync(root, "receipt-row", "/*/*/ReceiptProbe/*", "1", cancellationToken, stamp: "fixed");
         result.Exit.ShouldBe(2, result.Output);
-        result.Output.ShouldContain("source.json", Case.Sensitive);
-        File.Exists(Path.Combine(root, ".antiphon/script-results/receipt-script-fixed/source.json")).ShouldBeFalse();
+        result.Output.ShouldContain("refused: report.json receipt-write-failed", Case.Sensitive);
+        result.Output.ShouldContain("CHECKPOINT receipt-row EXIT CODE: 2", Case.Sensitive);
+        File.Exists(Path.Combine(root, ".antiphon/tool-results/receipt-row-fixed/report.json")).ShouldBeFalse();
     }
 
     private static void AssertDirtyRefused(string output, string keep, byte[] dirty, string marker, byte[] markerBytes)
@@ -488,26 +431,14 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         output.ShouldNotContain("buildSource=verified", Case.Sensitive);
     }
 
-    private async Task<RunResult> ValidateReceiptAsync(string receipt, string head, CancellationToken cancellationToken)
+    // The validate verb, validate-checkpoint-receipt.ps1's body since unit 20, in process.
+    private static async Task<RunResult> ValidateReceiptAsync(string receipt, string head)
     {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-            "-Evidence", receipt, "-ExpectedSourceSha", head,
-        })
-            start.ArgumentList.Add(arg);
-        CheckpointFixtures.UseToolReads(start);
-        _git.Apply(start);
-        return await WaitAsync(start, cancellationToken);
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", receipt, "--expected-source-sha", head],
+            new Antiphon.Checkpoints.CheckpointApp.Runtime { Output = output });
+        return new RunResult(exit, output.ToString());
     }
-
     private Victim Plant(string root, string relative)
     {
         var bytes = Encoding.ASCII.GetBytes(OriginalText);
@@ -536,69 +467,21 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     private async Task<RunResult> RunToolAsync(string root, string name, CancellationToken cancellationToken) =>
         await RunToolAsync(root, name, "/*/*/Unused/*", "1", cancellationToken);
 
-    private async Task<RunResult> RunToolAsync(string root, string name, string filter, string minExecuted, CancellationToken cancellationToken)
+    private async Task<RunResult> RunToolAsync(string root, string name, string filter, string minExecuted, CancellationToken cancellationToken,
+        string? stamp = null)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "checkpoint-tool");
         var output = new StringWriter();
+        var runtime = _git.ToolRuntime(output);
         var exit = await Antiphon.Checkpoints.Program.RunAsync(
         [
             "row", "--repo-root", root, "--slots", "off",
             "--name", name, "--project", "App/App.csproj",
             "--output-path", OutputPath, "--filter", filter,
             "--results-root", ".antiphon/tool-results", "--min-executed", minExecuted,
-        ], _git.ToolRuntime(output));
+        ], stamp is null ? runtime : new Antiphon.Checkpoints.CheckpointApp.Runtime { Output = output, Driver = runtime.Driver, RowStamp = () => stamp });
         cancellationToken.ThrowIfCancellationRequested();
         return new RunResult(exit, output.ToString());
-    }
-
-    private async Task<RunResult> RunScriptAsync(string root, string name, CancellationToken cancellationToken) =>
-        await RunScriptAsync(root, name, "/*/*/Unused/*", "1", cancellationToken);
-
-    private async Task<RunResult> RunScriptAsync(string root, string name, string filter, string minExecuted, CancellationToken cancellationToken)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment["C585_STAMP"] = "fixed";
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", "bin-script-probe/",
-            "-Filter", filter, "-ResultsRoot", ".antiphon/script-results",
-            "-MinExecuted", minExecuted, "-NoSlot",
-        })
-            start.ArgumentList.Add(arg);
-        CheckpointFixtures.UseToolReads(start);
-        _git.Apply(start);
-        return await WaitAsync(start, cancellationToken);
-    }
-
-    private async Task<RunResult> RunPwshAsync(string root, string command, CancellationToken cancellationToken)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command })
-            start.ArgumentList.Add(arg);
-        _git.Apply(start);
-        return await WaitAsync(start, cancellationToken);
-    }
-
-    internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
-    {
-        var result = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
-        return new RunResult(result.Exit, result.Stdout + result.Stderr);
     }
 
     private static string WriteBytes(string root, string relative, byte[] bytes)
@@ -622,7 +505,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         _ = GitOut(root, args);
     }
 
-    private static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
     private sealed record Victim(string Relative, string FullPath, byte[] Bytes);
 

@@ -185,7 +185,9 @@ internal static class RowCommand
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 console.WriteLine($"CHECKPOINT {name} driver interruption: {ex.GetType().Name}");
+                // No observed end: the source is unknown, never clean.
                 source.End = null;
+                source.State = "unknown";
                 return row.Fail(ExitCodes.Invalid, "source_unknown");
             }
 

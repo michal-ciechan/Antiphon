@@ -6,8 +6,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 /// <summary>
-/// CARD-1608. The production tamper check must name a non-ASCII path after a legacy code page
-/// decodes git output, and invalid UTF-8 from git must be refused rather than replaced.
+/// CARD-1608. The checkpoint tool's confinement (the row verb's, which scripts/run-checkpoint.ps1 launches since unit 20)
+/// must name a non-ASCII path whatever the console code page, and invalid UTF-8 from git must be refused rather than
+/// replaced. Each case runs the tool's own readers in the staged script harness host (checkpoint-git-encoding), a process
+/// of its own because each sets what is process-wide: git answers every read (ANTIPHON_GIT_INPROCESS=off), and for the
+/// encoding cases a stub git first on PATH writes a byte that is not UTF-8.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<CheckpointToolSpawnLimit>]
@@ -26,25 +29,25 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
     {
         var root = TempDir();
         var invocationLog = Path.Combine(root, "git-invocations.txt");
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var arg in new[]
-        {
-            "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-git-encoding.ps1"),
-            "-Root", root, "-Repository", CheckpointFixtures.RepoRoot, "-Mode", mode,
-        })
+        var host = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
+        var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in new[] { host, "checkpoint-git-encoding", typeof(Antiphon.Checkpoints.Program).Assembly.Location, mode, Path.Combine(root, "fixture") })
             psi.ArgumentList.Add(arg);
+        psi.Environment["ANTIPHON_GIT_INPROCESS"] = "off";
         if (mode == "encoding")
         {
-            var executable = Path.Combine(AppContext.BaseDirectory, "checkpoint-git-fixture",
-                "Antiphon.Checkpoints.GitFixture" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+            // The staged native fixture under the name git, first on the probe's PATH.
+            var staged = Path.Combine(AppContext.BaseDirectory, "checkpoint-git-fixture");
+            var executable = Path.Combine(staged, "Antiphon.Checkpoints.GitFixture" + (OperatingSystem.IsWindows() ? ".exe" : ""));
             File.Exists(executable).ShouldBeTrue("native git fixture must be staged by the build");
-            psi.ArgumentList.Add("-GitExecutable");
-            psi.ArgumentList.Add(executable);
+            var bin = Path.Combine(root, "fake-git");
+            Directory.CreateDirectory(bin);
+            foreach (var file in Directory.GetFiles(staged))
+                File.Copy(file, Path.Combine(bin, Path.GetFileName(file)));
+            var git = Path.Combine(bin, "git" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+            File.Move(Path.Combine(bin, Path.GetFileName(executable)), git);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            psi.Environment["PATH"] = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
             psi.Environment["C1608_GIT_LOG"] = invocationLog;
         }
         using var process = Process.Start(psi)!;
@@ -57,7 +60,7 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
         {
             process.Kill(true);
             await process.WaitForExitAsync();
-            throw new ShouldAssertException("checkpoint git encoding harness exceeded 120 seconds");
+            throw new ShouldAssertException("checkpoint git encoding probe exceeded 120 seconds");
         }
         process.ExitCode.ShouldBe(0, await stdout + await stderr);
         (await stdout).ShouldContain("C1608 " + mode + " PASS");

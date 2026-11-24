@@ -228,29 +228,28 @@ public sealed class CheckpointSourceStateTests
         hash.AppendData(bytes);
     }
 
+    // The script half of these cases (checkpoint-source.ps1's Get-CheckpointSource, compared field by field) went with
+    // run-checkpoint.ps1's body in unit 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; the tool's
+    // snapshot, which the row verb takes, keeps every shape.
     [Test]
-    public void script_and_tool_snapshots_agree()
+    public void tool_snapshot_is_known_from_a_nested_folder_and_a_linked_worktree()
     {
         using var repo = new GitFixture();
         var nested = Path.Combine(repo.Root, "nested folder");
         Directory.CreateDirectory(nested);
         var reader = new SourceSnapshot();
+        string? previous = null;
         foreach (var kind in new[] { "clean", "tracked", "untracked" })
         {
             if (kind == "tracked") repo.Write("seed.txt", "edited");
             if (kind == "untracked") repo.Write("new-\u00e9.txt", "bytes");
             var tool = reader.Capture(nested);
             tool.CaptureStatus.ShouldBe("known", kind);
-            var source = System.IO.Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
-            var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
-                nested.Replace("'", "''") + "' | ConvertTo-Json -Compress";
-            var result = GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command);
-            using var json = JsonDocument.Parse(result);
-            var script = json.RootElement;
-            script.GetProperty("captureStatus").GetString().ShouldBe("known", kind);
-            script.GetProperty("commit").GetString().ShouldBe(tool.Commit, kind);
-            script.GetProperty("dirtyFiles").GetInt32().ShouldBe(tool.DirtyFiles!.Value, kind);
-            script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, kind);
+            tool.Commit.ShouldBe(repo.Git("rev-parse", "HEAD").Trim(), kind);
+            tool.DirtyFiles.ShouldBe(kind switch { "clean" => 0, "tracked" => 1, _ => 2 }, kind);
+            tool.Fingerprint.ShouldNotBe(previous, kind + " changes the fingerprint");
+            reader.Capture(repo.Root).Fingerprint.ShouldBe(tool.Fingerprint, kind + ": a nested folder names its repository");
+            previous = tool.Fingerprint;
         }
 
         repo.Git("restore", "--staged", "--worktree", "seed.txt");
@@ -263,14 +262,8 @@ public sealed class CheckpointSourceStateTests
             var linkedNested = Path.Combine(linked, "nested folder");
             Directory.CreateDirectory(linkedNested);
             var tool = reader.Capture(linkedNested);
-            var root = reader.Capture(repo.Root);
-            tool.Fingerprint.ShouldBe(root.Fingerprint, "linked-root-equality");
-            var source = System.IO.Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
-            var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
-                linkedNested.Replace("'", "''") + "' | ConvertTo-Json -Compress";
-            using var script = JsonDocument.Parse(GitFixture.Run("pwsh", linked, "-NoProfile", "-Command", command));
-            script.RootElement.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint,
-                "linked-script-tool-parity");
+            tool.CaptureStatus.ShouldBe("known");
+            tool.Fingerprint.ShouldBe(reader.Capture(repo.Root).Fingerprint, "linked-root-equality");
         }
         finally
         {
@@ -283,7 +276,7 @@ public sealed class CheckpointSourceStateTests
     [Arguments("directory-to-file")]
     [Arguments("intent-to-add")]
     [Arguments("index-version-4")]
-    public void script_and_tool_agree_where_git_status_is_special(string shape)
+    public void tool_snapshot_is_known_where_git_status_is_special(string shape)
     {
         using var repo = new GitFixture();
         switch (shape)
@@ -303,7 +296,7 @@ public sealed class CheckpointSourceStateTests
                 repo.Git("add", "folder");
                 break;
             case "intent-to-add":
-                // A version 3 index: libgit2 declines and the tool reads through git, as the script does.
+                // A version 3 index: libgit2 declines and the tool reads through git.
                 repo.Write("planned.txt", "planned\n");
                 repo.Git("add", "-N", "planned.txt");
                 break;
@@ -314,58 +307,41 @@ public sealed class CheckpointSourceStateTests
         }
         var tool = new SourceSnapshot().Capture(repo.Root);
         tool.CaptureStatus.ShouldBe("known", shape);
-        var source = Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
-        var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
-            repo.Root.Replace("'", "''") + "' | ConvertTo-Json -Compress";
-        using var json = JsonDocument.Parse(GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command));
-        var script = json.RootElement;
-        script.GetProperty("captureStatus").GetString().ShouldBe("known", shape);
-        script.GetProperty("dirtyFiles").GetInt32().ShouldBe(tool.DirtyFiles!.Value, shape);
-        script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, shape);
+        tool.DirtyFiles.ShouldNotBeNull(shape);
+        tool.DirtyFiles!.Value.ShouldBeGreaterThan(0, shape);
+        new SourceSnapshot().Capture(repo.Root).Fingerprint.ShouldBe(tool.Fingerprint, shape + ": stable across captures");
         if (shape == "rm-cached") tool.DirtyFiles.ShouldBe(2, "a staged deletion and an untracked file");
     }
 
     [Test]
-    public void assume_unchanged_edit_is_unknown_in_both_readers() => HiddenIndexEditIsUnknown("--assume-unchanged", "--no-assume-unchanged");
+    public void assume_unchanged_edit_is_unknown() => HiddenIndexEditIsUnknown("--assume-unchanged", "--no-assume-unchanged");
 
     [Test]
-    public void skip_worktree_edit_is_unknown_in_both_readers() => HiddenIndexEditIsUnknown("--skip-worktree", "--no-skip-worktree");
+    public void skip_worktree_edit_is_unknown() => HiddenIndexEditIsUnknown("--skip-worktree", "--no-skip-worktree");
 
     private static void HiddenIndexEditIsUnknown(string setFlag, string clearFlag)
     {
         using var repo = new GitFixture();
         var reader = new SourceSnapshot();
-        void BothReaders(string status, string? code)
+        var label = setFlag == "--assume-unchanged" ? "assume-unchanged-tool-hidden" : "skip-worktree-tool-hidden";
+        void Capture(string status, string? code)
         {
             var tool = reader.Capture(repo.Root);
-            tool.CaptureStatus.ShouldBe(status, setFlag == "--assume-unchanged"
-                ? "assume-unchanged-tool-hidden" : "skip-worktree-tool-hidden");
-        tool.ErrorCode.ShouldBe(code, setFlag == "--assume-unchanged"
-            ? "assume-unchanged-tool-hidden" : "skip-worktree-tool-hidden");
-            var source = Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
-            var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
-                repo.Root.Replace("'", "''") + "' | ConvertTo-Json -Compress";
-            using var json = JsonDocument.Parse(GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command));
-            var script = json.RootElement;
-            script.GetProperty("captureStatus").GetString().ShouldBe(status, setFlag == "--assume-unchanged"
-                ? "assume-unchanged-script-hidden" : "skip-worktree-script-hidden");
-            script.GetProperty("errorCode").GetString().ShouldBe(code, setFlag == "--assume-unchanged"
-                ? "assume-unchanged-script-hidden" : "skip-worktree-script-hidden");
+            tool.CaptureStatus.ShouldBe(status, label);
+            tool.ErrorCode.ShouldBe(code, label);
         }
 
-        BothReaders("known", null); // Positive control for each reader.
+        Capture("known", null); // Positive control.
         repo.Git("update-index", setFlag, "seed.txt");
         repo.Write("seed.txt", "hidden edit\n");
         repo.Git("status", "--porcelain=v1", "--", "seed.txt").ShouldBeEmpty("git-hides-edit");
-        BothReaders("unknown", "indexed_path_hidden");
+        Capture("unknown", "indexed_path_hidden");
         repo.Git("update-index", clearFlag, "seed.txt");
         repo.Git("restore", "--worktree", "seed.txt");
-        BothReaders("known", null); // Clearing the flag restores certification.
+        Capture("known", null); // Clearing the flag restores certification.
     }
-
     private sealed class GitFixture : IDisposable
     {
-        public static string ProjectRoot { get; } = FindProjectRoot();
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c835-git-" + Guid.NewGuid().ToString("N"));
 
         public GitFixture()
@@ -414,13 +390,5 @@ public sealed class CheckpointSourceStateTests
         }
 
         public void Dispose() => GitFixtureCleanup.Delete(Root);
-
-        private static string FindProjectRoot()
-        {
-            var path = new DirectoryInfo(Environment.CurrentDirectory);
-            while (path is not null && !File.Exists(Path.Combine(path.FullName, "scripts", "run-checkpoint.ps1")))
-                path = path.Parent;
-            return path?.FullName ?? throw new DirectoryNotFoundException("checkpoint repository root");
-        }
     }
 }

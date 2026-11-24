@@ -19,7 +19,7 @@ public sealed class CheckpointColdBuildTests : CheckpointTestBase
 
     [Test]
     [Arguments("tool")]
-    [Arguments("script")]
+    [Arguments("row")]
     [Timeout(180_000)]
     public async Task C1734_Cold_build_preserves_native_obj_and_terminal_receipt(string entry, CancellationToken cancellationToken)
     {
@@ -37,7 +37,7 @@ public sealed class CheckpointColdBuildTests : CheckpointTestBase
 
         var result = entry == "tool"
             ? await RunToolAsync(fixture, cancellationToken)
-            : await RunScriptAsync(fixture, cancellationToken);
+            : await RunRowAsync(fixture, cancellationToken);
         // Check custody before success: ignoring obj differences cannot satisfy this witness.
         Snapshot(native).ShouldBe(before, result.Detail);
         result.Exit.ShouldBe(0, result.Detail);
@@ -98,23 +98,26 @@ public sealed class CheckpointColdBuildTests : CheckpointTestBase
         return (exit, detail, report);
     }
 
-    private async Task<(int Exit, string Detail, ReportModel? Report)> RunScriptAsync(Fixture fixture, CancellationToken cancellationToken)
+    // The row verb, which scripts/run-checkpoint.ps1 launches (unit 20): the same build in process, its receipt in report.json.
+    private async Task<(int Exit, string Detail, ReportModel? Report)> RunRowAsync(Fixture fixture, CancellationToken cancellationToken)
     {
-        var start = fixture.Git.Command("pwsh", fixture.Root);
-        foreach (var arg in new[]
+        var output = new StringWriter();
+        var runtime = new CheckpointApp.Runtime
         {
-            "-NoProfile", "-NonInteractive", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/run-checkpoint.ps1"),
-            "-Name", "CP-1", "-Project", Project, "-OutputPath", "bin-c1734/", "-Filter", Filter,
-            "-ResultsRoot", ".antiphon/cold-script", "-MinExecuted", "1", "-Expect", "ColdBuildProbe", "-NoSlot",
-            "-ExpectedSourceSha", fixture.Git.Git(fixture.Root, "rev-parse", "HEAD").Trim(),
-        }) start.ArgumentList.Add(arg);
-        var result = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
-        var receipt = Directory.GetFiles(Path.Combine(fixture.Root, ".antiphon/cold-script"), "source.json", SearchOption.AllDirectories).Single();
-        using var source = JsonDocument.Parse(File.ReadAllText(receipt));
-        var line = source.RootElement.GetProperty("receipt").GetString()!;
-        (result.Stdout + result.Stderr).ShouldContain(line);
-        Console.WriteLine(result.Stdout + result.Stderr);
-        return (result.Exit, result.Stdout + result.Stderr, null);
+            Driver = fixture.Git.ToolRuntime(output).Driver, Output = output, EnvironmentLookup = _ => null,
+            CancellationToken = cancellationToken,
+        };
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(
+        [
+            "row", "--repo-root", fixture.Root, "--name", "CP-1", "--project", Project, "--output-path", "bin-c1734/", "--filter", Filter,
+            "--results-root", ".antiphon/cold-row", "--min-executed", "1", "--expect", "ColdBuildProbe", "--no-slot",
+            "--expected-source-sha", fixture.Git.Git(fixture.Root, "rev-parse", "HEAD").Trim(),
+        ], runtime);
+        var receipt = Directory.GetFiles(Path.Combine(fixture.Root, ".antiphon/cold-row"), "report.json", SearchOption.AllDirectories).Single();
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(receipt), CheckpointApp.Json)!;
+        output.ToString().ShouldContain(report.Rows.Single().Line!);
+        Console.WriteLine(output);
+        return (exit, output.ToString(), report);
     }
 
     private Fixture CreateFixture(bool tamper = false)

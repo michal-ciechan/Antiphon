@@ -19,7 +19,7 @@ internal static class CheckpointNativeDiagnostics
         if (!Enabled || fixture is not (nameof(CheckpointLargeStampTests) or nameof(BaselineComparerTests)
             or nameof(CheckpointBuildBindingPathTests) or nameof(CheckpointTempUsageTests)
             or nameof(CheckpointAdmissionContractTests) or nameof(CheckpointAppTests)
-            or nameof(CheckpointLargeStampScriptTests) or nameof(C1307CliCancellationTests)
+            or nameof(C1307CliCancellationTests)
             or nameof(RerunPolicyTests) or nameof(EvidenceFolderTests) or nameof(PlanCoverageBindingTests)
             or nameof(CheckpointRepeatBuildIsolationTests) or nameof(CheckpointToolSourceTests))) return;
         try

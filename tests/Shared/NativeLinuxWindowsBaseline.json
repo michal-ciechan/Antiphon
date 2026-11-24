@@ -94,24 +94,6 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests",
-      "Signature": "C1233_ScriptSource(System.Threading.CancellationToken)",
-      "RowClass": "CheckpointSourceGitBoundsTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|C1233_ScriptSource(System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests",
-      "Signature": "C1233_VerifierGit(System.String,System.Threading.CancellationToken)",
-      "RowClass": "CheckpointVerifierBoundsTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests|Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests|C1233_VerifierGit(System.String,System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests",
       "Declaring": "Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests",
       "Signature": "fixture_git_blocked_opening_its_config_fails_within_the_limit(System.Threading.CancellationToken)",
@@ -1297,24 +1279,6 @@
       "RowClass": "CheckpointRecoveryLinuxTests",
       "RowMethods": [],
       "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests|Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests|launch_unknown_survives_until_late_ack()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests",
-      "Signature": "C1233_TokenCallers(System.String,System.Threading.CancellationToken)",
-      "RowClass": "CheckpointFixtureRoutingTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests|Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests|C1233_TokenCallers(System.String,System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests",
-      "Signature": "C1233_FileCallers(System.String,System.Threading.CancellationToken)",
-      "RowClass": "CheckpointInheritedFileTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests|Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests|C1233_FileCallers(System.String,System.Threading.CancellationToken)"
     },
     {
       "Suite": "antiphon",
@@ -4111,12 +4075,12 @@
       "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests",
       "Declaring": "Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests",
-      "Signature": "tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String,System.String)",
+      "Signature": "tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String)",
       "RowClass": "CheckpointStampSafetyTests",
       "RowMethods": [
         "tracked_stamp_shapes_are_bounded_and_leave_results_in_place"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String,System.String)"
+      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String)"
     },
     {
       "Suite": "antiphon",
@@ -4413,30 +4377,6 @@
       "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointSourceGitBoundsTests.cs:21",
       "Via": "C1233_ToolSource",
       "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|C1233_ToolSource(System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests",
-      "Signature": "C1233_ScriptSource(System.Threading.CancellationToken)",
-      "Reason": "Linux inherited-pipe custody proof",
-      "ReasonSha256": "e193d529844c051ee0240b745f6108dc1904231ef24dc0682653e92a89705859",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointSourceGitBoundsTests.cs:52",
-      "Via": "C1233_ScriptSource",
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests|C1233_ScriptSource(System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests",
-      "Signature": "C1233_VerifierGit(System.String,System.Threading.CancellationToken)",
-      "Reason": "Linux inherited-pipe custody proof",
-      "ReasonSha256": "e193d529844c051ee0240b745f6108dc1904231ef24dc0682653e92a89705859",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointVerifierBoundsTests.cs:21",
-      "Via": "C1233_VerifierGit",
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests|Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests|C1233_VerifierGit(System.String,System.Threading.CancellationToken)"
     },
     {
       "Suite": "antiphon",
@@ -6024,30 +5964,6 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests",
-      "Signature": "C1233_TokenCallers(System.String,System.Threading.CancellationToken)",
-      "Reason": "CARD-1233 S8 requires Linux process identities and FIFO probes.",
-      "ReasonSha256": "3fd03824de709cf6aa43be5e527f6ac86a66c7e15032a5345a71b674e6a12268",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureRoutingTests.cs:22",
-      "Via": "C1233_TokenCallers",
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests|Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests|C1233_TokenCallers(System.String,System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests",
-      "Declaring": "Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests",
-      "Signature": "C1233_FileCallers(System.String,System.Threading.CancellationToken)",
-      "Reason": "Linux FIFO admission proof",
-      "ReasonSha256": "c91c2d525d670040e4ba15b8cfd7a0f9ca84fbea3e151e41de29bcc0038ac6ab",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointInheritedFileTests.cs:25",
-      "Via": "C1233_FileCallers",
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests|Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests|C1233_FileCallers(System.String,System.Threading.CancellationToken)"
-    },
-    {
-      "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests",
       "Declaring": "Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests",
       "Signature": "C1032_TransportQueueRecipientReplay()",
@@ -7118,13 +7034,13 @@
       "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests",
       "Declaring": "Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests",
-      "Signature": "tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String,System.String)",
+      "Signature": "tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String)",
       "Reason": "Linux source-shape qualification",
       "ReasonSha256": "00af105b019b2deff08f9a213e9c1ce080e4a0dc7b568d2b80c98cd1638abb14",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/Checkpoints/CheckpointStampSafetyTests.cs:27",
       "Via": "tracked_stamp_shapes_are_bounded_and_leave_results_in_place",
-      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String,System.String)"
+      "Identity": "antiphon|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|Antiphon.Tests.Checkpoints.CheckpointStampSafetyTests|tracked_stamp_shapes_are_bounded_and_leave_results_in_place(System.String)"
     },
     {
       "Suite": "antiphon",
@@ -7374,14 +7290,6 @@
       "Methods": [],
       "Placement": "class",
       "Reason": "Linux inherited-pipe custody proof",
-      "Proved": 2
-    },
-    {
-      "Suite": "antiphon",
-      "Class": "CheckpointVerifierBoundsTests",
-      "Methods": [],
-      "Placement": "class",
-      "Reason": "Linux inherited-pipe custody proof",
       "Proved": 1
     },
     {
@@ -7511,22 +7419,6 @@
       "Placement": "class",
       "Reason": "native Linux custody proof requires Linux",
       "Proved": 10
-    },
-    {
-      "Suite": "antiphon",
-      "Class": "CheckpointFixtureRoutingTests",
-      "Methods": [],
-      "Placement": "class",
-      "Reason": "CARD-1233 S8 requires Linux process identities and FIFO probes.",
-      "Proved": 1
-    },
-    {
-      "Suite": "antiphon",
-      "Class": "CheckpointInheritedFileTests",
-      "Methods": [],
-      "Placement": "class",
-      "Reason": "Linux FIFO admission proof",
-      "Proved": 1
     },
     {
       "Suite": "antiphon",

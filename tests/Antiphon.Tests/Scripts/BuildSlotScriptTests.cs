@@ -323,11 +323,11 @@ public sealed class BuildSlotScriptTests
     {
         foreach (var file in new[]
                  {
-                     "scripts/build-slot.ps1", "scripts/lib/build-slot.ps1", "scripts/lib/build-driver-environment.ps1", "scripts/fixtures/c589-slot-shim.ps1",
+                     "scripts/build-slot.ps1", "scripts/lib/build-driver-environment.ps1", "scripts/fixtures/c589-slot-shim.ps1",
                      "scripts/lib/Antiphon.Nightly/BuildSlot.cs", "scripts/lib/Antiphon.Nightly/LinuxCompilerMeasure.cs", "scripts/lib/Antiphon.Scripts/BuildSlotCommands.cs",
                  })
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).Count(b => b > 127).ShouldBe(0, "C589 WrapperAsciiOnly " + file + " is ASCII-only");
-        foreach (var gone in new[] { "scripts/test-build-slot.ps1", "scripts/fixtures/c589-command-shim.ps1", "scripts/measure-linux-shared-compiler.ps1", "scripts/lib/linux-compiler-evidence.ps1" })
+        foreach (var gone in new[] { "scripts/test-build-slot.ps1", "scripts/lib/build-slot.ps1", "scripts/fixtures/c589-command-shim.ps1", "scripts/measure-linux-shared-compiler.ps1", "scripts/lib/linux-compiler-evidence.ps1" })
             File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, gone)).ShouldBeFalse(gone + " moved to C#");
     }
 

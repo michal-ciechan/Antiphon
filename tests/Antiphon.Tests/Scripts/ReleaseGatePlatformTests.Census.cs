@@ -25,7 +25,7 @@ public sealed partial class ReleaseGatePlatformTests
     public void LinuxOnlyWindowsExclusionPolicy()
     {
         var rows = new NightlyCaseRows();
-        string[] decisionClasses = ["ClaudeDialogWatchdogCanaryTests", "CheckpointOwnedOutputTests", "CheckpointScriptReaderDeadlineTests", "CheckpointShapeConflictTests",
+        string[] decisionClasses = ["ClaudeDialogWatchdogCanaryTests", "CheckpointOwnedOutputTests", "CheckpointLargeStampTests", "CheckpointShapeConflictTests",
             "CheckpointTrackedBaselineTests", "CheckpointOutputConfinementTests", "RunnerWorkspaceBindingTests"];
         string[] decisionMethods =
         [
@@ -64,7 +64,7 @@ public sealed partial class ReleaseGatePlatformTests
             ("antiphon", "ClaudeDialogWatchdogCanaryTests", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs"),
             ("antiphon", "OutputCleanupTests", "parent_symlink_does_not_delete_a_tracked_stamp"),
             ("antiphon", "CheckpointOwnedOutputTests", "changed_inventory_is_refused"),
-            ("antiphon", "CheckpointScriptReaderDeadlineTests", "script_reader_re_arms_its_stall_window_and_the_stamp_reports_unreadable_apart_from_tampered"),
+            ("antiphon", "CheckpointLargeStampTests", "C1363_unprovable_entry_is_unreadable_apart_from_tampered"),
             ("session-runner", "CompletedCardWorkspaceRemovalTests", "C1032_InspectionHoldShapes"),
             ("antiphon", "CheckpointShapeConflictTests", "shape_directory_on_file"),
             ("antiphon", "CheckpointTrackedBaselineTests", "local_output_property_tampering_is_reported"),

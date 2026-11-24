@@ -69,12 +69,18 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         return root;
     }
 
-    // case -> unrecorded addition/change/link -> red if cleanup removes user residue.
+    // case -> unrecorded addition/change/link -> red if cleanup removes user residue. appended, truncated, swapped (same size,
+    // mtime restored) and reused (deleted and recreated at the same size and mtime, the inode often reused on Linux) are the
+    // seal-time mutation cases of the deleted output-inventory driver: the creation record's on-disk digest recheck refuses each.
     [Test]
     [Arguments("file")]
     [Arguments("changed")]
     [Arguments("directory")]
     [Arguments("link")]
+    [Arguments("appended")]
+    [Arguments("truncated")]
+    [Arguments("swapped")]
+    [Arguments("reused")]
     public void changed_inventory_is_refused(string variant)
     {
         var root = InitRepo();
@@ -85,6 +91,16 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         var extra = Path.Combine(output, "user.txt");
         if (variant == "file") File.WriteAllText(extra, "USER");
         if (variant == "changed") File.WriteAllText(Path.Combine(output, "compiler.dll"), "USER");
+        var compiler = Path.Combine(output, "compiler.dll");
+        var modified = File.GetLastWriteTimeUtc(compiler);
+        if (variant == "appended") File.AppendAllText(compiler, "USER");
+        if (variant == "truncated") { using var stream = File.Open(compiler, FileMode.Open, FileAccess.Write, FileShare.ReadWrite); stream.SetLength(3); }
+        if (variant is "swapped" or "reused")
+        {
+            if (variant == "reused") File.Delete(compiler);
+            File.WriteAllText(compiler, "USERUSER");
+            File.SetLastWriteTimeUtc(compiler, modified);
+        }
         if (variant == "directory") Directory.CreateDirectory(extra);
         if (variant == "link" && !OperatingSystem.IsWindows()) File.CreateSymbolicLink(extra, Path.Combine(root, "outside.txt"));
         var junctionTarget = Path.Combine(root, "outside");
@@ -107,6 +123,9 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
             Directory.Exists(output).ShouldBeTrue();
             if (variant == "file") File.ReadAllText(extra).ShouldBe("USER");
             if (variant == "changed") File.ReadAllText(Path.Combine(output, "compiler.dll")).ShouldBe("USER");
+            if (variant == "appended") File.ReadAllText(compiler).ShouldBe("COMPILERUSER");
+            if (variant == "truncated") File.ReadAllText(compiler).ShouldBe("COM");
+            if (variant is "swapped" or "reused") File.ReadAllText(compiler).ShouldBe("USERUSER");
             if (variant == "directory") Directory.Exists(extra).ShouldBeTrue();
             if (variant == "link" && OperatingSystem.IsWindows())
             {
@@ -124,6 +143,27 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
             }
             else if (variant == "link") new FileInfo(extra).Delete();
         }
+    }
+
+    // CARD-0987 (the deleted owned-output driver's native cases, now on the library type the row verb uses): the exclusive
+    // create makes the directory once, private on Unix; a second create is pre-existing-output and leaves the directory, its
+    // contents and its identity as they were; a missing parent is output-create-failed.
+    [Test]
+    public void exclusive_directory_is_created_once_and_a_collision_changes_nothing()
+    {
+        var root = TempDir();
+        var child = Path.Combine(root, "native-" + Guid.NewGuid().ToString("N"));
+        ExclusiveDirectory.Create(child).ShouldBeNull();
+        Directory.Exists(child).ShouldBeTrue();
+        if (!OperatingSystem.IsWindows()) File.GetUnixFileMode(child).ShouldBe((UnixFileMode)448);
+        var sentinel = Path.Combine(child, "sentinel");
+        File.WriteAllBytes(sentinel, [1, 2, 3, 4, 5]);
+        var io = CheckpointCleanupDefaults.Context.Io;
+        var identity = Antiphon.HostCleanup.Checkpoints.FilesystemIdentityReader.Read(io, child);
+        ExclusiveDirectory.Create(child).ShouldBe("pre-existing-output");
+        File.ReadAllBytes(sentinel).ShouldBe(new byte[] { 1, 2, 3, 4, 5 });
+        identity.SameAs(Antiphon.HostCleanup.Checkpoints.FilesystemIdentityReader.Read(io, child)).ShouldBeTrue("the collision left the directory");
+        ExclusiveDirectory.Create(Path.Combine(root, "absent-parent", "child")).ShouldStartWith("output-create-failed:");
     }
 
     // case -> valid ledger -> red if cleanup cannot reclaim its own unchanged payload.

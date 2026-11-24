@@ -298,13 +298,11 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
             output.ToString().ShouldContain("receipt-write-failed");
             attempts.ShouldBe(6);
             Directory.Exists(Path.Combine(repo, "sample", "bin-c1370-fixture")).ShouldBeTrue("retain outputs on publication failure");
-            var start = new System.Diagnostics.ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
-            foreach (var argument in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot,
-                "scripts", "validate-checkpoint-receipt.ps1"), "-Evidence", Path.Combine(run, "report.json"),
-                "-ExpectedSourceSha", source.Commit! }) start.ArgumentList.Add(argument);
-            var validation = CheckpointFixtureProcess.Run(start, 30_000);
-            validation.Exit.ShouldBe(2, validation.Stdout + validation.Stderr);
-            validation.Stdout.ShouldContain(corrective ? "cleanup_refused" : "report_failed");
+            // The validate verb (validate-checkpoint-receipt.ps1's body since unit 20), in process.
+            var validation = new StringWriter();
+            (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", Path.Combine(run, "report.json"),
+                "--expected-source-sha", source.Commit!], new CheckpointApp.Runtime { Output = validation })).ShouldBe(2, validation.ToString());
+            validation.ToString().ShouldContain(corrective ? "cleanup_refused" : "report_failed");
             var dead = new ProcessIdentityProbe(context).Current() with { Pid = int.MaxValue, StartUtcTicks = 1 };
             ExecutorOwnershipStore.Write(run, dead, context);
             var waited = new StringWriter();

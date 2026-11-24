@@ -24,15 +24,15 @@ if(mode==='project') {
  const stub='#!/bin/sh\n'+(held?`/bin/cat '${fifo}' &\nprintf '%s' "$!" > '${pidfile}'\n`:'')+`printf '%s\\n' '${payload}'\nexit 0\n`;
  fs.writeFileSync(path.join(fixture,'bin',mode.includes('eval')?'dotnet':'git'),stub,{mode:0o700});
 }
-const args=['-NoProfile','-File',path.join(repo,'scripts/test-checkpoint-bounded-reader.ps1'),'-Repository',repo,'-ToolDll',dll,'-Mode',mode,'-Fixture',fixture];
-if(held) args.push('-Held');
-if(delayArgument!==undefined) args.push('-PreReadDelayMs',String(preReadDelayMs));
-if(mode==='project') args.push('-TimingNonce',nonce);
-const child=cp.spawn('pwsh',args,{detached:true,stdio:['ignore','pipe','pipe']});
+// The probe is the staged script harness host beside the tool build (checkpoint-bounded-reader); unit 20 deleted the
+// pwsh probe and run-checkpoint.ps1's own readers with it.
+const host=path.join(path.dirname(dll),'script-harness-host','Antiphon.ScriptHarnessHost.dll');
+const args=['exec',host,'checkpoint-bounded-reader',dll,mode,fixture,held?'held':'ordinary',String(preReadDelayMs),mode==='project'?nonce:'-'];
+const child=cp.spawn('dotnet',args,{detached:true,stdio:['ignore','pipe','pipe']});
 let stdout='',stderr='',expired=false;
 child.stdout.on('data',d=>stdout+=d); child.stderr.on('data',d=>stderr+=d);
 function killDescendant(){if(fs.existsSync(pidfile)){try{process.kill(Number(fs.readFileSync(pidfile,'utf8')),'SIGKILL')}catch(e){if(e.code!=='ESRCH')throw e}}}
-const bound=mode==='project'?4000:mode.includes('eval')?125000:mode==='script-git'?20000:35000;
+const bound=mode==='project'?4000:mode.includes('eval')?125000:35000;
 // Project acceptance times only the real read; this separate ceiling rescues a stuck child.
 const watchdogMs=mode==='project'?30000:bound;
 const start=Date.now();

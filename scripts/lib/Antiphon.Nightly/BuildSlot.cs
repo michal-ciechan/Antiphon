@@ -1,6 +1,7 @@
 // CARD-0589 D-6, CARD-0800, CARD-0845, CARD-1048, CARD-1627, CARD-1981: one build or test command under a host build slot
 // (unit 34 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). It replaced the body of scripts/build-slot.ps1
-// and the wrapper half of scripts/lib/build-slot.ps1. build-slot.ps1 stays as a thin launcher because agents, the delegate
+// and the wrapper half of scripts/lib/build-slot.ps1 (deleted in unit 20 with run-checkpoint.ps1's body, its last caller;
+// the row verb's BuildSlotClient takes its leases). build-slot.ps1 stays as a thin launcher because agents, the delegate
 // bundle and other checkouts on this machine run it by path; it passes its own PID as --holder-pid, so the lease keeps
 // naming the process its caller started. The CLI runs it as
 //

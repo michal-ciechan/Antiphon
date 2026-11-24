@@ -665,7 +665,6 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    [ParallelLimiter<Antiphon.Tests.TestHelpers.CheckpointToolSpawnLimit>]
     public void parent_symlink_does_not_delete_a_tracked_stamp()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
@@ -686,7 +685,6 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         if (!OperatingSystem.IsWindows())
             Directory.CreateSymbolicLink(link, output);
         var via = Path.Combine(link, "checkpoint-build-source.json");
-        var probe = Path.Combine(Path.GetTempPath(), "c1199-stamp-" + Guid.NewGuid().ToString("N") + ".ps1");
         try
         {
             if (OperatingSystem.IsWindows())
@@ -694,25 +692,14 @@ public sealed class OutputCleanupTests : CheckpointTestBase
                 Junction(link, output);
                 File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
             }
-            File.WriteAllText(probe, StampProbe);
-            var scriptPath = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
-            var start = new ProcessStartInfo("pwsh");
-            start.ArgumentList.Add("-NoProfile");
-            start.ArgumentList.Add("-File");
-            start.ArgumentList.Add(probe);
-            start.Environment["CARD1199_SCRIPT"] = scriptPath;
-            start.Environment["CARD1199_STAMP"] = via;
-            var result = CheckpointFixtureProcess.Run(start, 30_000);
-            result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
-            File.ReadAllText(stamp).ShouldBe("original-stamp");
-            result.Stdout.ShouldContain("REFUSED:reparse-point");
-
-            var script = File.ReadAllText(scriptPath);
-            script.ShouldNotContain("if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }");
-            var check = script.IndexOf("$replaceRefusal = Test-CheckpointStampRefusal $stampPath", StringComparison.Ordinal);
-            var makeDir = script.IndexOf("New-CheckpointDirectory $stampDirectory", StringComparison.Ordinal);
-            check.ShouldBeGreaterThanOrEqualTo(0);
-            makeDir.ShouldBeGreaterThan(check);
+            // The row's build-source stamp (CheckpointBuildBinding, the row verb's since unit 20) written through a parent
+            // link: refused before any byte moves, so the tracked stamp behind the link keeps its bytes.
+            var binding = new CheckpointBuildBinding { RepositoryRoot = root, Project = Path.Combine(root, "proj"), OutputPath = link };
+            binding.PathName.ShouldBe(via);
+            var refused = binding.Write();
+            refused.ShouldNotBeNull();
+            binding.Invalidate().ShouldNotBeNull("a reuse check through the link is refused too");
+            File.ReadAllText(stamp).ShouldBe("original-stamp", refused);
         }
         finally
         {
@@ -720,8 +707,6 @@ public sealed class OutputCleanupTests : CheckpointTestBase
                 Directory.Delete(link);
             if (Directory.Exists(linkRoot))
                 Directory.Delete(linkRoot, recursive: true);
-            if (File.Exists(probe))
-                File.Delete(probe);
         }
     }
 
@@ -1025,41 +1010,25 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CommitAll(root);
         var outside = Path.Combine(Path.GetTempPath(), "c1199-wrap-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(outside);
-        var shim = Path.Combine(outside, "dotnet-shim.ps1");
-        var called = Path.Combine(outside, "called.txt");
-        File.WriteAllText(shim, """
-            param()
-            Set-Content -LiteralPath $env:CARD1199_CALLED -Value ($args -join ' ')
-            if ($args -contains 'build') {
-                [System.IO.File]::WriteAllText((Join-Path $env:CARD1199_REPO 'App/bin-wrap/App.dll'), 'OVERWRITTEN')
-            }
-            exit 0
-            """);
-        var output = new StringWriter();
-        var error = new StringWriter();
         try
         {
-            var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
-            foreach (var arg in new[]
+            // The row verb (run-checkpoint.ps1's body since unit 20) refuses the tracked output before any dotnet call.
+            var driver = new FakeDriver();
+            driver.When(_ => true, (_, _) =>
             {
-                "-NoProfile", "-NonInteractive", "-File",
-                Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-                "-Name", "wrapper-preflight", "-Project", "App/App.csproj", "-OutputPath", "bin-wrap/",
-                "-Filter", "/*/*/Unused/*", "-ResultsRoot", Path.Combine(outside, "results"),
-                "-MinExecuted", "1", "-NoSlot", "-DotnetShim", shim,
-            })
-                start.ArgumentList.Add(arg);
-            start.Environment["CARD1199_REPO"] = root;
-            start.Environment["CARD1199_CALLED"] = called;
-            var result = CheckpointFixtureProcess.Run(start, 90_000);
-            var stdout = result.Stdout;
-            var stderr = result.Stderr;
-            output.Write(stdout);
-            error.Write(stderr);
-            result.Exit.ShouldBe(ExitCodes.Invalid, stdout + stderr);
+                File.WriteAllText(dll, "OVERWRITTEN");
+                return Task.FromResult(new DriverResult(0, "", ""));
+            });
+            var output = new StringWriter();
+            var exit = await Antiphon.Checkpoints.Program.RunAsync(
+            [
+                "row", "--repo-root", root, "--name", "wrapper-preflight", "--project", "App/App.csproj", "--output-path", "bin-wrap/",
+                "--filter", "/*/*/Unused/*", "--results-root", Path.Combine(outside, "results"), "--min-executed", "1", "--no-slot",
+            ], new CheckpointApp.Runtime { Output = output, Driver = driver, SourceCapture = _ => CheckpointFixtures.CleanSource(), EnvironmentLookup = _ => null });
+            exit.ShouldBe(ExitCodes.Invalid, output.ToString());
             File.ReadAllBytes(dll).ShouldBe(original);
-            File.Exists(called).ShouldBeFalse(stdout + stderr);
-            stdout.ShouldContain("refused: tracked");
+            driver.Calls.ShouldBeEmpty(output.ToString());
+            output.ToString().ShouldContain("refused: tracked");
         }
         finally
         {
@@ -1250,31 +1219,6 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             return new(1, "", "fixture git failure", false);
         }
     }
-
-    private const string StampProbe = """
-        $ErrorActionPreference = 'Stop'
-        $tokens = $null
-        $errors = $null
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:CARD1199_SCRIPT, [ref]$tokens, [ref]$errors)
-        if ($errors -and @($errors).Count -gt 0) { throw (($errors | ForEach-Object { $_.ToString() }) -join "`n") }
-        $names = @('Test-CheckpointComponentLink','Find-CheckpointGitDir','Invoke-CheckpointGit','Test-CheckpointStampRefusal')
-        $chunks = New-Object System.Collections.Generic.List[string]
-        foreach ($name in $names) {
-            $fn = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true) | Select-Object -First 1
-            if ($null -ne $fn) { $chunks.Add($fn.Extent.Text) }
-        }
-        $invoke = ($chunks -join "`n") + @'
-
-        $reason = Test-CheckpointStampRefusal $env:CARD1199_STAMP
-        if ([string]::IsNullOrEmpty($reason)) {
-            if (Test-Path -LiteralPath $env:CARD1199_STAMP) { [System.IO.File]::Delete($env:CARD1199_STAMP) }
-            Write-Output 'DELETED'
-        } else {
-            Write-Output ('REFUSED:' + $reason)
-        }
-        '@
-        & ([scriptblock]::Create($invoke))
-        """;
 
     // CARD-1310: Windows seal must adopt a file the build overwrote before the observed exit, and must
     // still refuse a write after that exit, a second link, and a reparse point.

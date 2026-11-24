@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -24,16 +26,35 @@ internal static class EmbeddedCheckpointReader
         return match.Groups[1].Value;
     }
 
+    private static readonly Lazy<Assembly> Loaded = new(() => Load(source => source));
+
+    /// <summary>The embedded reader compiled once in memory and loaded in a context of its own: its type has the compiled
+    /// facade's name, and, as when the library compiles it, its assembly has no location.</summary>
+    internal static Type Reader => Loaded.Value.GetType(TypeName, throwOnError: true)!;
+
+    /// <summary>The embedded reader's source, transformed (a witness substitutes one call or adds a type), compiled in
+    /// memory and loaded in a fresh context.</summary>
+    internal static Assembly Load(Func<string, string> transform)
+    {
+        using var stream = new MemoryStream();
+        var emit = Compile(transform(Source())).Emit(stream);
+        emit.Success.ShouldBeTrue(string.Join("\n", emit.Diagnostics));
+        stream.Position = 0;
+        return new AssemblyLoadContext("embedded-checkpoint-reader-" + Guid.NewGuid().ToString("N")).LoadFromStream(stream);
+    }
+
+    private static CSharpCompilation Compile(string source) => CSharpCompilation.Create(
+        "ConfinedFileReader.Embedded",
+        [CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest))],
+        FrameworkReferences(),
+        new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
     /// <summary>Compiles the embedded reader into directory/ConfinedFileReader.dll and returns that path.</summary>
     internal static string EmitTo(string directory)
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "ConfinedFileReader.dll");
-        var compilation = CSharpCompilation.Create(
-            "ConfinedFileReader.Embedded",
-            [CSharpSyntaxTree.ParseText(Source(), new CSharpParseOptions(LanguageVersion.Latest))],
-            FrameworkReferences(),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var compilation = Compile(Source());
         using (var stream = File.Create(path))
         {
             var emit = compilation.Emit(stream);

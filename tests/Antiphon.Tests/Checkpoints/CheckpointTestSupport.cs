@@ -221,24 +221,6 @@ internal static class CheckpointFixtures
         }
     }
 
-    private static readonly Lazy<string> ToolAssembly =
-        new(() => Path.Combine(ToolOutputForStaging(), "Antiphon.Checkpoints.dll"));
-
-    /// <summary>
-    /// Has the run-checkpoint.ps1 child answer its git reads through this build (the tool leg's own libgit2 readers,
-    /// lib/checkpoint-tool-reads.ps1): its source snapshots and its confinement reads, about 30 fewer git processes
-    /// per script run. For end-to-end tests of what the script does with those answers. The git reader keeps: its
-    /// single snapshots pinned against the tool (CheckpointSourceStateTests), its failure bounds
-    /// (CheckpointSourceGitBoundsTests, CheckpointScriptReaderDeadlineTests), the test-run-checkpoint.ps1 cases,
-    /// end to end RunCheckpointSourceScriptTests.C835_DiagnosticReceipts and C835_DriftAndReuse's drift fixtures,
-    /// CheckpointShapeConflictTests.GitReaderShapes, and the end-to-end classes that never set it.
-    /// </summary>
-    public static void UseToolReads(System.Diagnostics.ProcessStartInfo start) =>
-        start.Environment["ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY"] = ToolAssembly.Value;
-
-    /// <summary>The tool build <see cref="UseToolReads"/> names, for a harness that passes its own environment.</summary>
-    public static string ToolAssemblyPath => ToolAssembly.Value;
-
     public static SourceObservation CleanSource() => new(new string('a', 40), 0, new string('1', 64),
         DateTimeOffset.UtcNow, "known");
 

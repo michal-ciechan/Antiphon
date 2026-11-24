@@ -65,7 +65,6 @@ public class StableBuildOutputDocumentationTests
     [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
     [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
     [Arguments("scripts/build-slot.ps1")]
-    [Arguments("scripts/lib/build-slot.ps1")]
     public void C1629_standing_guidance_does_not_teach_a_custom_output_for_direct_builds(string relative)
     {
         var text = Collapse(Read(relative));

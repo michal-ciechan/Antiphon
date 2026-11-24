@@ -51,7 +51,8 @@ public static class ReceiptQualification
         if (!FullObjectId.IsMatch(expectedSha)) return "expected_sha_invalid";
         if (expectedRepeat < 1) return "expected_repeat_invalid";
         using var document = JsonDocument.Parse(raw);
-        AssertUnique(document.RootElement);
+        try { AssertUnique(document.RootElement); }
+        catch (InvalidDataException duplicate) { return duplicate.Message; }
         var root = document.RootElement;
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("rows", out var listed) && listed.ValueKind != JsonValueKind.Null)
         {

@@ -7,6 +7,9 @@ using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+// CARD-1199/CARD-1381: the checkpoint tool's bounded readers (its static project read, its git child and its MSBuild
+// evaluation) over a FIFO or a stub whose descendant holds both pipes, each probed in the staged script harness host
+// (checkpoint-bounded-reader) under the node supervisor. run-checkpoint.ps1's own readers went with it (unit 20).
 [NativeLinuxOnly("Linux FIFO and process-group qualification")]
 [Category("Unit")]
 [ParallelLimiter<CheckpointToolSpawnLimit>]
@@ -17,12 +20,8 @@ public sealed class CheckpointBoundedReaderTests : CheckpointTestBase
     [Arguments("project", "held")]
     [Arguments("tool-git", "ordinary")]
     [Arguments("tool-git", "held")]
-    [Arguments("script-git", "ordinary")]
-    [Arguments("script-git", "held")]
     [Arguments("tool-eval", "ordinary")]
     [Arguments("tool-eval", "held")]
-    [Arguments("script-eval", "ordinary")]
-    [Arguments("script-eval", "held")]
     public async Task changed_readers_bound_fifo_and_exited_child_pipes(string mode, string shape)
     {
         await RunProbeAsync(mode, shape);

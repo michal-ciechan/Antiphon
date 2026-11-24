@@ -82,7 +82,6 @@ public static class NativeLinuxPolicyWitness
         "antiphon\nUnixDelegateLaunchArgvTests\n",
         "antiphon\nCheckpointBoundedReaderTests\n",
         "antiphon\nCheckpointSourceGitBoundsTests\n",
-        "antiphon\nCheckpointVerifierBoundsTests\n",
         "antiphon\nCheckpointFixtureProcessTests\n",
         "antiphon\nDetachedLauncherTests\n",
         "antiphon\nSafeDeleteProcessBoundaryTests\n",
@@ -99,8 +98,6 @@ public static class NativeLinuxPolicyWitness
         "antiphon\nRollingVolumeRecycleCensusChurnTests\n",
         "antiphon\nRollingProductionMountTests\n",
         "antiphon\nCheckpointRecoveryLinuxTests\n",
-        "antiphon\nCheckpointFixtureRoutingTests\n",
-        "antiphon\nCheckpointInheritedFileTests\n",
         "pty-host\nLinuxCgroupCustodyTests\n",
         "agents-pty\nUnixPtyArgvTests\n",
         "antiphon\nPhoneHomeCompletedCardTransportTests\nC1032_TransportQueueRecipientReplay",
@@ -209,7 +206,10 @@ public static class NativeLinuxPolicyWitness
     {
         var diagnostics = new List<WitnessDiagnostic>();
         var witnessed = new HashSet<string>(WitnessedRowKeys, StringComparer.Ordinal);
-        if (witnessed.Count != 45)
+        // Unit 20 of the 2026-11-22 PowerShell-to-C# plan: 45 to 42. The frozen keys of CheckpointVerifierBoundsTests,
+        // CheckpointFixtureRoutingTests and CheckpointInheritedFileTests left with those classes (their subjects, the usage
+        // verifiers and test-run-checkpoint.ps1, were deleted) and with their execution-policy rows.
+        if (witnessed.Count != 42)
             diagnostics.Add(Diag("witness-key-count", "", "", "", "", "", witnessed.Count.ToString()));
 
         JsonDocument policy;

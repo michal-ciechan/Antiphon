@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "1cf7d0d5f526f88fba88583a8f6278d809938be470b35162ef8c69816a0c3bf9",
+  "policyHash": "259e9888703af5fb7826351aeff12923e56d5d275de9967ab956c4de81e7deda",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -750,13 +750,6 @@
         },
         {
           "suite": "antiphon",
-          "class": "CheckpointVerifierBoundsTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: Linux inherited-pipe custody proof. The case remains required on Linux.",
-          "owner": "CARD-0590"
-        },
-        {
-          "suite": "antiphon",
           "class": "CheckpointFixtureProcessTests",
           "platform": "windows",
           "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
@@ -873,20 +866,6 @@
           "platform": "windows",
           "reason": "Linux-only by construction: native SIGINT, shell and executor/waiter receipt witnesses. The class remains required on Linux.",
           "owner": "CARD-1734"
-        },
-        {
-          "suite": "antiphon",
-          "class": "CheckpointFixtureRoutingTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: Linux process identities and FIFO probes. The case remains required on Linux.",
-          "owner": "CARD-1233"
-        },
-        {
-          "suite": "antiphon",
-          "class": "CheckpointInheritedFileTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: Linux FIFO admission proof. The case remains required on Linux.",
-          "owner": "CARD-0590"
         },
         {
           "suite": "pty-host",

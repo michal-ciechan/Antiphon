@@ -69,7 +69,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var evidence = Path.Combine(run, "report.json");
         (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--repo-root", repo,
             "--evidence", evidence, "--expected-source-sha", Sha])).ShouldBe(0);
-        var script = await ValidateFileWithScriptAsync(evidence);
+        var script = await ValidateFileWithVerbAsync(evidence);
         script.Exit.ShouldBe(0, script.Output);
     }
 
@@ -425,7 +425,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var root = TempDir();
         var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
         for (var i = 0; i < cases.Count; i++) File.WriteAllText(corpus[i].path, cases[i].Raw);
-        var records = await ValidateCorpusWithScriptAsync(root, corpus);
+        var records = await ValidateCorpusAsync(corpus);
         records.Select(r => r.GetProperty("key").GetString()).ShouldBe(cases.Select(c => c.Key));
         for (var i = 0; i < cases.Count; i++)
         {
@@ -445,37 +445,16 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         }
     }
 
-    private static async Task<JsonElement[]> ValidateCorpusWithScriptAsync(string root, object corpus, int expectedRepeat = 1)
+    // Each corpus case through the validate verb: one record of its key, exit code and output, in corpus order.
+    private static async Task<JsonElement[]> ValidateCorpusAsync(object corpus, int expectedRepeat = 1)
     {
-        var input = Path.Combine(root, "corpus.json");
-        var output = Path.Combine(root, "results.json");
-        var driver = Path.Combine(root, "validate.ps1");
-        File.WriteAllText(input, JsonSerializer.Serialize(corpus));
-        File.WriteAllText(driver, """
-            param($Corpus, $Result, $Validator, $Sha, $ExpectedRepeat, $Progress)
-            $ErrorActionPreference = 'Stop'
-            $records = @(foreach ($case in (Get-Content -Raw -LiteralPath $Corpus | ConvertFrom-Json)) {
-                $global:LASTEXITCODE = 99
-                $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha -ExpectedRepeat $ExpectedRepeat *>&1 | Out-String)
-                [pscustomobject]@{ key = $case.key; exit = $LASTEXITCODE; output = $text }
-                [IO.File]::AppendAllText($Progress, '.')
-            })
-            [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8 -EscapeHandling EscapeNonAscii))
-            """);
-        var progress = Path.Combine(root, "progress");
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
-        foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString(), progress })
-            start.ArgumentList.Add(token);
-        // rc run 97150a0b g109: one fixed 30 s over the whole corpus (326 validator calls for the XML
-        // parity corpus) expired on a saturated Windows host while the child was still progressing.
-        // 30 s now covers pwsh start, validator load and the first case; each later case gets 10 s
-        // (tens of ms when idle). A stall fails naming the case; success logs the observed timings.
-        var keys = JsonSerializer.SerializeToElement(corpus).EnumerateArray().Select(item => item.GetProperty("key").GetString() ?? "").ToArray();
-        var result = await CheckpointFixtureProcess.RunStepsAsync(start, progress, keys, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
-        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
-        using var document = JsonDocument.Parse(File.ReadAllText(output));
-        return document.RootElement.EnumerateArray().Select(record => record.Clone()).ToArray();
+        var records = new List<JsonElement>();
+        foreach (var item in JsonSerializer.SerializeToElement(corpus).EnumerateArray())
+        {
+            var (exit, output) = await ValidateFileWithVerbAsync(item.GetProperty("path").GetString()!, expectedRepeat: expectedRepeat);
+            records.Add(JsonSerializer.SerializeToElement(new { key = item.GetProperty("key").GetString(), exit, output }));
+        }
+        return records.ToArray();
     }
 
     [Test]
@@ -514,8 +493,8 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
                 .Replace("passed=3", "passed=2", StringComparison.Ordinal) + " repeat=2 repetitions=2/2 hostInvocations=1";
             File.WriteAllText(corpus[i].path, ReportWriter.JsonText(report));
         }
-        // One PowerShell host for the corpus, under the per-case deadline of ValidateCorpusWithScriptAsync.
-        var records = await ValidateCorpusWithScriptAsync(root, corpus, 2);
+        // The validate verb for every corpus case, in process (ValidateCorpusAsync).
+        var records = await ValidateCorpusAsync(corpus, 2);
         records.Select(record => record.GetProperty("key").GetString()).ShouldBe(cases.Select(item => item.Key));
         var disagreements = new List<string>();
         for (var i = 0; i < cases.Count; i++)
@@ -556,7 +535,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         cases.Add(("malformed-utf8", bytes, 2));
         var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
         for (var i = 0; i < cases.Count; i++) File.WriteAllBytes(corpus[i].path, cases[i].Bytes);
-        var records = await ValidateCorpusWithScriptAsync(root, corpus);
+        var records = await ValidateCorpusAsync(corpus);
         records.Select(r => r.GetProperty("key").GetString()).ShouldBe(cases.Select(c => c.Key));
         for (var i = 0; i < cases.Count; i++)
         {
@@ -588,15 +567,15 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var valid = ValidReport();
         async Task CheckScriptAsync(int expected, string label)
         {
-            var result = await ValidateWithScriptAsync(valid);
+            var result = await ValidateWithVerbAsync(valid);
             result.Exit.ShouldBe(expected, label + ": " + result.Output);
         }
         ReportValidator.Validate(valid, Sha).ShouldBeNull();
         await CheckScriptAsync(0, "script-tool-valid-parity");
         valid.SchemaVersion = 1;
         ReportValidator.Validate(valid, Sha).ShouldBe("report_source_ineligible", "legacy-report-ineligible");
-        var legacyScript = await ValidateWithScriptAsync(valid);
-        legacyScript.Output.ShouldContain("reason=legacy_report", Case.Sensitive, "script-tool-legacy-parity");
+        var legacyScript = await ValidateWithVerbAsync(valid);
+        legacyScript.Output.ShouldContain("reason=report_source_ineligible", Case.Sensitive, "verb-legacy-report");
         legacyScript.Exit.ShouldBe(2, "script-tool-legacy-parity");
         valid.SchemaVersion = 2;
         valid.Rows.Single().Source = Evidence(
@@ -609,8 +588,8 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("fingerprint-row-valid-alone");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "fingerprint-row-heading-disagreement");
-        var fingerprintScript = await ValidateWithScriptAsync(valid);
-        fingerprintScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
+        var fingerprintScript = await ValidateWithVerbAsync(valid);
+        fingerprintScript.Output.ShouldContain("reason=row_source_disagreement", Case.Sensitive,
             "script-fingerprint-row-heading-parity");
         fingerprintScript.Exit.ShouldBe(2, "script-fingerprint-row-heading-parity");
         valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "verified");
@@ -627,8 +606,8 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("build-row-valid-alone");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "build-row-heading-disagreement");
-        var bindingScript = await ValidateWithScriptAsync(valid);
-        bindingScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
+        var bindingScript = await ValidateWithVerbAsync(valid);
+        bindingScript.Output.ShouldContain("reason=row_source_disagreement", Case.Sensitive,
             "script-build-row-heading-parity");
         bindingScript.Exit.ShouldBe(2, "script-build-row-heading-parity");
         valid.Source.BuildSource = "verified";
@@ -646,7 +625,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         valid.Rows.Single().ExitCode = ExitCodes.FailedTests;
         ReportValidator.Validate(valid, Sha).ShouldBe("row_failed", "tool-row-failed");
-        var failedScript = await ValidateWithScriptAsync(valid);
+        var failedScript = await ValidateWithVerbAsync(valid);
         failedScript.Exit.ShouldBe(2, "script-tool-failed-verdict-parity: " + failedScript.Output);
         failedScript.Output.ShouldContain("reason=row_failed", Case.Sensitive, "script-tool-failed-verdict-parity");
 
@@ -656,9 +635,12 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             var report = ValidReport();
             change(report);
             ReportValidator.Validate(report, Sha).ShouldBe(toolReason, label + " tool");
-            var script = await ValidateWithScriptAsync(report);
-            script.Exit.ShouldBe(2, label + " script: " + script.Output);
-            script.Output.ShouldContain("reason=" + scriptReason, Case.Sensitive, label + " script reason");
+            // The verb, as the server's validator runs it, answers the library's reason (scriptReason was the deleted
+            // script's own wording for the same refusal).
+            var verb = await ValidateWithVerbAsync(report);
+            verb.Exit.ShouldBe(2, label + " verb: " + verb.Output);
+            verb.Output.ShouldContain("reason=" + toolReason, Case.Sensitive, label + " verb reason");
+            _ = scriptReason;
         }
         await RefusesAsync("report-heading-source", "report_source_ineligible", "source_ineligible",
             report => report.Source = Evidence(Observe(Sha, 0), "dirty", "notApplicable"));
@@ -675,13 +657,13 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
 
         var missing = ValidReport();
         ReportValidator.Validate(missing, Sha, ["CP-2"]).ShouldBe("selected_rows_missing", "tool-selected-rows-missing");
-        var missingScript = await ValidateWithScriptAsync(missing, "CP-2");
+        var missingScript = await ValidateWithVerbAsync(missing, "CP-2");
         missingScript.Exit.ShouldBe(2, "script-selected-rows-missing: " + missingScript.Output);
         missingScript.Output.ShouldContain("reason=selected_rows_missing", Case.Sensitive, "script-selected-rows-missing");
         var empty = ValidReport();
         empty.Rows = [];
         ReportValidator.Validate(empty, Sha).ShouldBe("selected_rows_missing", "tool-empty-rows-missing");
-        var emptyScript = await ValidateWithScriptAsync(empty);
+        var emptyScript = await ValidateWithVerbAsync(empty);
         emptyScript.Output.ShouldContain("reason=selected_rows_missing", Case.Sensitive, "script-empty-rows-missing");
         emptyScript.Exit.ShouldBe(2, "script-empty-rows-missing");
 
@@ -701,7 +683,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         ReportValidator.Validate(counts, Sha).ShouldBeNull("tool-count-control");
         counts.Rows.Single().Line = counts.Rows.Single().Line!.Replace("executed=1", "executed=2", StringComparison.Ordinal);
         ReportValidator.Validate(counts, Sha).ShouldBe("receipt_counts", "tool-receipt-count-disagreement");
-        var countScript = await ValidateWithScriptAsync(counts);
+        var countScript = await ValidateWithVerbAsync(counts);
         countScript.Exit.ShouldBe(2, "script-receipt-count-disagreement: " + countScript.Output);
         countScript.Output.ShouldContain("reason=receipt_counts", Case.Sensitive, "script-receipt-count-disagreement");
 
@@ -711,7 +693,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         badCounts.Rows.Single().Passed = 0;
         badCounts.Rows.Single().Failed = 1;
         ReportValidator.Validate(badCounts, Sha).ShouldBe("row_failed", "tool-tunit-failed-counts");
-        var badCountsScript = await ValidateWithScriptAsync(badCounts);
+        var badCountsScript = await ValidateWithVerbAsync(badCounts);
         badCountsScript.Output.ShouldContain("reason=row_failed", Case.Sensitive, "script-tunit-failed-counts");
         badCountsScript.Exit.ShouldBe(2, "script-tunit-failed-counts");
 
@@ -779,7 +761,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         Required(commandRun).ShouldBeNull("command-only-receipt-readable");
         var commandEvidence = Path.Combine(commandRun, "report.json");
         (await ToolValidateAsync(commandEvidence)).ShouldBe(0, "tool-validates-command-only");
-        var commandScript = await ValidateFileWithScriptAsync(commandEvidence);
+        var commandScript = await ValidateFileWithVerbAsync(commandEvidence);
         commandScript.Exit.ShouldBe(0, "script-validates-command-only: " + commandScript.Output);
 
         var builtRun = Start(["CP-1", "CP-2"]);
@@ -798,7 +780,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         Required(builtRun).ShouldBeNull("two-row-receipt-readable");
         var builtEvidence = Path.Combine(builtRun, "report.json");
         (await ToolValidateAsync(builtEvidence)).ShouldBe(0, "tool-validates-two-rows");
-        var builtScript = await ValidateFileWithScriptAsync(builtEvidence);
+        var builtScript = await ValidateFileWithVerbAsync(builtEvidence);
         builtScript.Exit.ShouldBe(0, "script-validates-two-rows: " + builtScript.Output);
 
         builtReport.OutputPaths = [];
@@ -815,10 +797,10 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         {
             var report = ValidReport();
             ReportValidator.Validate(report, Sha).ShouldBeNull();
-            (await ValidateWithScriptAsync(report, selection)).Exit.ShouldBe(0);
+            (await ValidateWithVerbAsync(report, selection)).Exit.ShouldBe(0);
             report.CleanupRefusals = ["output-ledger-mismatch: late-user.txt"];
             ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("cleanup_refused");
-            var refused = await ValidateWithScriptAsync(report, selection);
+            var refused = await ValidateWithVerbAsync(report, selection);
             refused.Exit.ShouldBe(2, refused.Output);
             refused.Output.ShouldContain("reason=cleanup_refused");
         }
@@ -846,7 +828,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         foreach (var selection in new string?[] { null, "CP-1" })
         {
             ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("report_failed");
-            var script = await ValidateFileWithScriptAsync(evidence, selection);
+            var script = await ValidateFileWithVerbAsync(evidence, selection);
             script.Exit.ShouldBe(2, script.Output);
             script.Output.ShouldContain("reason=report_failed");
         }
@@ -873,7 +855,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         foreach (var selection in new string?[] { null, "CP-1" })
         {
             ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("cleanup_refused");
-            var script = await ValidateFileWithScriptAsync(evidence, selection);
+            var script = await ValidateFileWithVerbAsync(evidence, selection);
             script.Exit.ShouldBe(2, script.Output);
             script.Output.ShouldContain("reason=cleanup_refused");
         }
@@ -929,38 +911,24 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         return (repo, output, run, driver, source);
     }
 
-    private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
+    // The validate verb (validate-checkpoint-receipt.ps1's body since unit 20 of the remaining-ps1 plan), in process.
+    private async Task<(int Exit, string Output)> ValidateWithVerbAsync(ReportModel report, string? rows = null)
     {
         var evidence = Path.Combine(TempDir(), "report.json");
+        // A written report always names its report.md digest; the verb reads the receipt's strict shape.
+        if (string.IsNullOrWhiteSpace(report.MarkdownSha256)) report.MarkdownSha256 = new string('0', 64);
         File.WriteAllText(evidence, ReportWriter.JsonText(report));
-        return await ValidateFileWithScriptAsync(evidence, rows);
+        return await ValidateFileWithVerbAsync(evidence, rows);
     }
 
-    private static async Task<(int Exit, string Output)> ValidateFileWithScriptAsync(string evidence, string? rows = null)
+    private static async Task<(int Exit, string Output)> ValidateFileWithVerbAsync(string evidence, string? rows = null, int expectedRepeat = 1)
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-        };
-        foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-            "-Evidence", evidence, "-ExpectedSourceSha", Sha })
-            process.StartInfo.ArgumentList.Add(token);
-        if (rows is not null)
-        {
-            process.StartInfo.ArgumentList.Add("-Rows");
-            process.StartInfo.ArgumentList.Add(rows);
-        }
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
+        var output = new StringWriter();
+        var arguments = new List<string> { "validate", "--evidence", evidence, "--expected-source-sha", Sha, "--expected-repeat", expectedRepeat.ToString() };
+        if (rows is not null) arguments.AddRange(["--rows", rows]);
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(arguments.ToArray(), new CheckpointApp.Runtime { Output = output });
+        return (exit, output.ToString());
     }
-
     private string NewRun(CheckpointManifest manifest, SourceObservation source) =>
         CheckpointApp.CreateRun(manifest, new RunRequest
         {

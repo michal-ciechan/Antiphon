@@ -346,8 +346,6 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.SessionRunner.Tests", "C0824WindowsSlotHolderTests", "Rm_lock_defers_release", 1, "CARD-0824 Windows Restart Manager file lock; the real probe runs on the desktop at S4"),
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
-        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "allocation_sample_does_not_follow_junction_root", 1, CheckpointNativeWindowsReason),
-        new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "allocation_sample_fails_on_access_denied_subfolder", 1, CheckpointNativeWindowsReason),
         new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "concurrent_sweepers_cannot_delete_new_registration", 1, CheckpointNativeWindowsReason),
         new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "dead_test_host_live_nested_executor_retains_root", 1, CheckpointNativeWindowsReason),
         new("Antiphon.Tests.Checkpoints", "CheckpointRecoveryWindowsTests", "detached_staged_copy_survives_starter_exit", 1, CheckpointNativeWindowsReason),

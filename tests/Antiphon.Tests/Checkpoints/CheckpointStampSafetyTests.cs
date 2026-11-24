@@ -14,24 +14,22 @@ public sealed class CheckpointStampSafetyTests : CheckpointTestBase
 {
     [NativeLinuxOnly("Linux source-shape qualification")]
     [Test]
-    [Arguments("tool", "fifo")]
-    [Arguments("script", "fifo")]
-    [Arguments("tool", "symlink")]
-    [Arguments("script", "symlink")]
-    [Arguments("tool", "directory")]
-    [Arguments("script", "directory")]
-    [Arguments("tool", "dangling")]
-    [Arguments("script", "dangling")]
-    [Arguments("tool", "regular")]
-    [Arguments("script", "regular")]
-    public async Task tracked_stamp_shapes_are_bounded_and_leave_results_in_place(string entry, string shape)
+    [Arguments("fifo")]
+    [Arguments("symlink")]
+    [Arguments("directory")]
+    [Arguments("dangling")]
+    [Arguments("regular")]
+    public async Task tracked_stamp_shapes_are_bounded_and_leave_results_in_place(string shape)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux source-shape qualification");
         var root = TempDir();
-        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-stamp.ps1");
-        var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, "-Root", root, "-Repository", CheckpointFixtures.RepoRoot,
-            "-ToolDll", typeof(Antiphon.Checkpoints.Program).Assembly.Location, "-Entry", entry, "-Shape", shape }) psi.ArgumentList.Add(arg);
+        // The staged script harness host (checkpoint-stamp) settles a hand-built baseline with the tool's confinement, in a
+        // process of its own so a read that blocked on the FIFO is killed at the bound instead of holding this one. The
+        // script half (run-checkpoint.ps1's own stamp) went with that script in unit 20.
+        var host = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
+        var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in new[] { "exec", host, "checkpoint-stamp", typeof(Antiphon.Checkpoints.Program).Assembly.Location, root, shape })
+            psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi)!;
         RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
@@ -43,6 +41,7 @@ public sealed class CheckpointStampSafetyTests : CheckpointTestBase
             throw new ShouldAssertException("HUNG: killed and awaited at four-second hard bound " + await stdout + await stderr);
         }
         process.ExitCode.ShouldBe(0, await stdout + await stderr);
+        (await stdout).ShouldContain("tool/" + shape + " PASS");
     }
 
     [Test]

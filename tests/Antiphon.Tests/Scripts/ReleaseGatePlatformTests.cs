@@ -578,40 +578,8 @@ public sealed partial class ReleaseGatePlatformTests
         rows.Check(PsValue.IsTrue(PsValue.Prop(complete, "coverageComplete")) && Num(complete, "passed") == 37
             && !completeReason.Contains("unexecuted-outcome", StringComparison.OrdinalIgnoreCase), "C1323 c1199-all-passed-complete", completeReason);
 
-        // The checkpoint namespace census (Get-NamespaceCensus in scripts/lib/checkpoint-usage.ps1) declares the residual
-        // runtime skips; its lists are read from the library's source, which no test runs here.
-        var (windowsSkips, linuxSkips) = CheckpointNamespaceSkips();
-        rows.Check(SameSet(windowsSkips,
-            [
-                "Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*",
-                "Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter",
-                "Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests.*",
-                "Antiphon.Tests.Checkpoints.SafeDeleteProcessBoundaryTests.*",
-                "Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests.*",
-                "Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests.unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted",
-            ]) && SameSet(linuxSkips,
-            [
-                "Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open",
-                "Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests.*",
-                "Antiphon.Tests.Checkpoints.TimeoutTests.windows_quick_row_finishes_beside_a_slow_row",
-                "Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact",
-                "Antiphon.Tests.Checkpoints.TimeoutTests.windows_chatty_row_drains_interleaved_stdout_and_stderr",
-                "Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_timeout_kills_the_start_b_grandchild",
-                "Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.windows_confined_build_leaves_use_app_host_unset",
-            ]), "C1323 c1199-residual-skips-exact", "windows=" + windowsSkips.Length + " linux=" + linuxSkips.Length);
-        rows.ShouldAllPass(6, "C1323 c1199-roster-37", "C1323 c1199-windows-required", "C1323 c1199-linux-required",
-            "C1323 c1199-each-gap-incomplete", "C1323 c1199-all-passed-complete", "C1323 c1199-residual-skips-exact");
-    }
-
-    // The windowsSkips and linuxSkips lists of Get-NamespaceCensus, read from scripts/lib/checkpoint-usage.ps1 (empty when
-    // the function or a list is not found, which fails the row).
-    private static (string[] Windows, string[] Linux) CheckpointNamespaceSkips()
-    {
-        var text = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "checkpoint-usage.ps1"));
-        var body = Regex.Match(text, @"(?ms)^function Get-NamespaceCensus \{(.*?)^\}").Groups[1].Value;
-        string[] List(string name) =>
-            Regex.Matches(Regex.Match(body, @"(?ms)^\s*" + name + @"\s*=\s*@\((.*?)^\s*\)").Groups[1].Value, "'([^']*)'").Select(m => m.Groups[1].Value).ToArray();
-        return (List("windowsSkips"), List("linuxSkips"));
+        rows.ShouldAllPass(5, "C1323 c1199-roster-37", "C1323 c1199-windows-required", "C1323 c1199-linux-required",
+            "C1323 c1199-each-gap-incomplete", "C1323 c1199-all-passed-complete");
     }
 
     private static readonly string[] ExpectedC1199Roster =

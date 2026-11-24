@@ -2493,7 +2493,6 @@ c849_seed() {
         --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-driver-environment.ps1,target=/work/repos/antiphon/scripts/lib/build-driver-environment.ps1,readonly" \
         "$image" infinity >/dev/null || c849_seed_failure "$donor" CacheSeedProbeStartFailed
     if ! (c849_smoke "$helper" seed); then
@@ -4229,7 +4228,6 @@ c849_fixture_restore_container() {
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "$work_mount" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-driver-environment.ps1,target=/scripts/lib/build-driver-environment.ps1,readonly" \
         "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-fixture-restore -- /bin/sh "/fixture/race/$1" "/fixture/race/$2" "$3"' \
         sh "$driver" "$project" "$go_deadline"
@@ -4883,7 +4881,6 @@ c849_fixture_apphost() {
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-driver-environment.ps1,target=/work/repos/antiphon/scripts/lib/build-driver-environment.ps1,readonly" \
         "$image" infinity >/dev/null || write_result false FixtureAppHostStartFailed 2
     docker start "$helper" >/dev/null || write_result false FixtureAppHostStartFailed 2
@@ -5278,7 +5275,6 @@ c849_fixture_refill() {
         --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-driver-environment.ps1,target=/work/repos/antiphon/scripts/lib/build-driver-environment.ps1,readonly" \
         "$image" infinity >/dev/null || write_result false CacheRefillProbeStartFailed 2
     printf '%s\n' "$helper" > "$CASE_DIR/.fixture-prune-smoke"
@@ -5408,7 +5404,6 @@ c849_fixture_warm_probe() {
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=bind,source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh,target=/probe.sh,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-driver-environment.ps1,target=/scripts/lib/build-driver-environment.ps1,readonly" \
         "$image" -c 'set -u; case "$1" in packages) p=/home/app/.nuget/packages;; scratch) p=/var/cache/antiphon/nuget-scratch;; home) p=/c660-home;; *) exit 2;; esac; printf warm > "$p/.warm"; code=0; pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c913-warm-control -- /bin/bash /probe.sh net9-offline || code=$?; rm -f "$p/.warm"; exit "$code"' bash "$kind" \
         > "$output" 2>&1 || code=$?
