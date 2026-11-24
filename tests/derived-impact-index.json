@@ -95,23 +95,23 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 227,
+      "classes": 228,
       "reason": "cap",
-      "owed": 202,
+      "owed": 203,
       "first": [
+        "BlockedTaskParkProjectionTests",
         "ChannelContractsTests",
         "CodexMcpBootProbeTests",
         "CommitOnSettleDocumentationTests",
         "CommitOnSettleScriptTests",
         "DockerStackDocumentationTests",
         "KeepSixDocumentationTests",
-        "LandGraphLandRefreshTests",
-        "PerTaskFinalUnitLaneWitnessTests"
+        "LandGraphLandRefreshTests"
       ]
     },
     {
       "path": "Antiphon.sln",
-      "classes": 353,
+      "classes": 355,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 33,
+      "classes": 34,
       "reason": "allowlist"
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 143,
+      "classes": 142,
       "reason": "cap",
-      "owed": 118,
+      "owed": 117,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2172,9 +2172,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 50,
+      "classes": 53,
       "reason": "cap",
-      "owed": 25,
+      "owed": 28,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
@@ -2188,26 +2188,30 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 26,
+      "classes": 29,
       "reason": "cap",
-      "owed": 1,
+      "owed": 4,
       "first": [
+        "TestDataPruneCommandTests",
+        "WatchedTestRunTests",
+        "ZombieAgentReaperTests",
         "VerifyPhoneHomeGrokScriptTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 32,
+      "classes": 35,
       "reason": "cap",
-      "owed": 7,
+      "owed": 10,
       "first": [
+        "StageValueReportTests",
+        "TestDataPruneCommandTests",
         "ToolchainFloorWarningTests",
         "VerifyPhoneHomeGrokScriptTests",
+        "WatchedTestRunTests",
         "ZombieAgentReaperTests",
         "LandGraphCommandTests",
-        "NightlyTestHelpersTests",
-        "BuildSlotScriptTests",
-        "NightlyTestsParityTests"
+        "NightlyTestHelpersTests"
       ]
     },
     {
@@ -2244,18 +2248,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 41,
+      "classes": 44,
       "reason": "cap",
-      "owed": 16,
+      "owed": 19,
       "first": [
+        "NightlyRunTests",
         "NightlyScriptsTests",
         "NightlyTestsParityTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "OrchestratorWorkspaceCommandTests",
-        "QualificationEtaTests",
-        "QualificationSupervisorTests",
-        "RcRunEvidenceTests"
+        "PtyHostReaperTests",
+        "QualificationEtaTests"
       ]
     },
     {
@@ -2708,7 +2712,7 @@
         "AgentContextContractTests",
         "AgentSystemPromptLaunchTests",
         "AgentWorkspaceProvisionerTests",
-        "BlockedTaskParkProjectionTests",
+        "BootstrapCheckTests",
         "CheckpointManifestDocumentationTests",
         "InstructionFileStampTests",
         "LiveLaneIsolationTests",
@@ -2994,6 +2998,7 @@
       "classes": [
         "AppHostWatchdogTests",
         "AutostartInstallTests",
+        "BootstrapCheckTests",
         "DevAspireTests",
         "DevStackTests",
         "DockerStackContractTests",
@@ -3694,12 +3699,6 @@
         "PhoneHomeBackpressureTests",
         "PlanCatalogServiceTests",
         "ZombieCensusServiceTests"
-      ]
-    },
-    {
-      "path": "scripts/bootstrap-check.ps1",
-      "classes": [
-        "CardFileBootstrapCheckTests"
       ]
     },
     {
@@ -24820,7 +24819,8 @@
         "InboundUnconsumedMonitorTests",
         "OwnedGitProcessContractTests",
         "SessionRunnerEventPumpTests",
-        "UnixPtyArgvTests"
+        "UnixPtyArgvTests",
+        "WatchedTestRunTests"
       ]
     },
     {
@@ -25965,6 +25965,7 @@
         "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
+        "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
         "CardCommandTests",
         "ClientChecksTests",
@@ -25979,14 +25980,13 @@
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
+        "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateLibraryTests",
         "ReleaseStatusTests",
         "RunnerRestartOsTests",
-        "StageValueReportTests",
-        "TestDataPruneCommandTests",
-        "ZombieAgentReaperTests"
+        "StageValueReportTests"
       ]
     },
     {
@@ -25995,6 +25995,7 @@
         "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
+        "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
         "ClientChecksTests",
         "ClientModeTests",
@@ -26009,14 +26010,13 @@
         "NightlyScriptsTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
+        "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
-        "RunnerRestartOsTests",
-        "StageValueReportTests",
-        "TestDataPruneCommandTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -26182,6 +26182,7 @@
         "AgentTuiSmokeScriptTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
+        "BootstrapCheckTests",
         "C1744G3PhoneHomeSupervisionTests",
         "Card0490BootDiskTests",
         "ClassCostMeasurementTests",
@@ -26198,7 +26199,6 @@
         "MeasureSessionStateCacheScriptTests",
         "NightlyDiscoveryParserTests",
         "NightlyNativeOwnershipTests",
-        "NightlyRunTests",
         "NightlyTestHelpersTests",
         "NightlyTestsRunTests",
         "QualificationTimingTests",
@@ -26277,6 +26277,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/QualificationSupervisorTests.cs",
       "classes": [
+        "BootstrapCheckTests",
         "VerifyPhoneHomeGrokScriptTests"
       ]
     },
