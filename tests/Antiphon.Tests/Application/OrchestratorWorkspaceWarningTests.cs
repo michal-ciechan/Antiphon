@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -102,6 +103,29 @@ public class OrchestratorWorkspaceWarningTests
         {
             Cleanup(temp);
         }
+    }
+
+    [Test]
+    [Arguments(@"C:/repos/Antiphon", @"c:\repos/antiphon\", 0)]
+    [Arguments(@"C:\repos\Orchestrator", "c:/repos/orchestrator", 0)]
+    [Arguments("C:/repos/Warnings", @"c:\repos\warnings\", 0)]
+    [Arguments(@"Z:\", "z:/", 0)]
+    [Arguments("Q:", @"q:\", 1)]
+    public async Task boardless_agent_uses_stored_windows_path_identity(
+        string projectPath, string workingDirectory, int expectedWarnings)
+    {
+        await SeedProjectAsync(projectPath, acknowledged: true);
+        var agent = await SeedAgentAsync(null, workingDirectory, alwaysOn: false);
+
+        await using var db = CreateContext();
+        var service = new OrchestratorWorkspaceWarningService(
+            db, new UnconfiguredWorkspaceProbe(), TimeProvider.System,
+            NullLogger<OrchestratorWorkspaceWarningService>.Instance);
+
+        await service.MaybeRaiseForOrchestratorTaskAsync(agent, null, CancellationToken.None);
+
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == agent.Id
+            && i.Kind == AgentIncidentKind.OrchestratorWorkspaceUnconfigured)).ShouldBe(expectedWarnings);
     }
 
     [Test]
@@ -213,7 +237,7 @@ public class OrchestratorWorkspaceWarningTests
         process.ExitCode.ShouldBe(0, await process.StandardError.ReadToEndAsync());
     }
 
-    private static async Task<Project> SeedProjectAsync(string localPath)
+    private static async Task<Project> SeedProjectAsync(string localPath, bool acknowledged = false)
     {
         var now = DateTime.UtcNow;
         var project = new Project
@@ -222,6 +246,7 @@ public class OrchestratorWorkspaceWarningTests
             Name = $"OWW {Guid.NewGuid():N}",
             GitRepositoryUrl = "https://example.test/repo.git",
             LocalRepositoryPath = localPath,
+            OrchestratorWorkspaceAcknowledgedAt = acknowledged ? now : null,
             BaseBranch = "master",
             CreatedAt = now,
             UpdatedAt = now,
@@ -250,7 +275,7 @@ public class OrchestratorWorkspaceWarningTests
         return board;
     }
 
-    private static async Task<Agent> SeedAgentAsync(Guid boardId, string workingDirectory, bool alwaysOn)
+    private static async Task<Agent> SeedAgentAsync(Guid? boardId, string workingDirectory, bool alwaysOn)
     {
         var now = DateTime.UtcNow;
         var slug = Guid.NewGuid().ToString("N");
@@ -278,5 +303,18 @@ public class OrchestratorWorkspaceWarningTests
         var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
         await AgentBundleAttachments.SetAsync(db, agent, keys, DateTime.UtcNow, CancellationToken.None);
         await db.SaveChangesAsync();
+    }
+
+    private sealed class UnconfiguredWorkspaceProbe : IOrchestratorWorkspaceProbe
+    {
+        public Task<OrchestratorWorkspaceDirectoryFacts> GatherAsync(
+            string directory, OrchestratorWorkspaceCli cli, CancellationToken cancellationToken) =>
+            Task.FromResult(new OrchestratorWorkspaceDirectoryFacts(
+                directory, Marker: null, ResolvedCheckout: null, CheckoutExists: false,
+                DirectoryGitToplevel: directory, CheckoutGitToplevel: null, ContextFileExists: false,
+                ContextFileNamesCheckoutAgents: false, GitRootHasInstructionArtifacts: false));
+
+        public OrchestratorWorkspaceHomeState ReadHomeFromProfile(string directory) =>
+            OrchestratorWorkspaceHomeState.None;
     }
 }
