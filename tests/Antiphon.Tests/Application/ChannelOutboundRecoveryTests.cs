@@ -1061,15 +1061,9 @@ public sealed class ChannelOutboundRecoveryTests
         }
     }
 
-    private static async Task<string> ReadNativeGateAsync(string path, CancellationToken cancellationToken,
-        Func<string, FileShare, Stream>? open = null)
-    {
-        if (open is null)
-            return await File.ReadAllTextAsync(path, cancellationToken);
-
-        using var reader = new StreamReader(open(path, FileShare.Read));
-        return await reader.ReadToEndAsync(cancellationToken);
-    }
+    private static Task<string> ReadNativeGateAsync(string path, CancellationToken cancellationToken,
+        Func<string, FileShare, Stream>? open = null) =>
+        LiveFixtureText.ReadPublishedAsync(path, open, cancellationToken);
 
     [Test]
     [Arguments("before-conversion-observation", ChannelOutboundDeliveryState.Published, 1)]
