@@ -34,6 +34,9 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
 {
+    /// <summary>The file name the <c>dotnet user-secrets</c> configuration source reads.</summary>
+    public const string UserSecretsFileName = "secrets.json";
+
     /// <summary>
     /// This host's own cloned database. It must NOT be the shared antiphon_test store, because
     /// booting the real app is not a read-only act: Program.cs runs AgentTuiProfileImporter.ImportAsync

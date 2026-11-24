@@ -5,6 +5,8 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -116,4 +118,34 @@ public class ProductionRunnerIsolationTests
         (await db.Agents.AnyAsync(a => a.Slug == slug)).ShouldBeFalse(
             $"the output distiller '{slug}' must not be provisioned in a test host");
     }
+
+    /// <summary>
+    /// rc run acca11ba (2026-11-24): the shared host booted in Development, whose defaults add the
+    /// server assembly's <c>dotnet user-secrets</c> store (<c>antiphon-server</c>). On the desktop that
+    /// store holds the operator's review settings (<c>scripts/review-github-setup.ps1</c> writes
+    /// <c>Review:Agents:Runner=local</c>), so a reviewer task request there carried RunnerId "local"
+    /// while server2, with no store, passed. A factory host reads no user-secrets source at all,
+    /// whatever machine it boots on.
+    /// </summary>
+    [Test]
+    public async Task The_shared_host_reads_no_user_secrets_store()
+    {
+        using var client = _factory.CreateClient();
+        (await client.GetAsync("/api/version")).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var root = (IConfigurationRoot)_factory.Services.GetRequiredService<IConfiguration>();
+        UserSecretsProviders(root.Providers).ShouldBeEmpty(
+            "the machine's user-secrets store must not configure a test host");
+        _factory.Services.GetRequiredService<IOptions<ReviewAgentSettings>>().Value.Runner.ShouldBeNull(
+            "no reviewer runner is configured for a test host");
+    }
+
+    private static IEnumerable<string> UserSecretsProviders(IEnumerable<IConfigurationProvider> providers) =>
+        providers.SelectMany(p => p switch
+        {
+            JsonConfigurationProvider { Source.Path: AntiphonWebAppFactory.UserSecretsFileName } json =>
+                new[] { json.Source.Path! },
+            ChainedConfigurationProvider { Configuration: IConfigurationRoot inner } => UserSecretsProviders(inner.Providers),
+            _ => Enumerable.Empty<string>(),
+        });
 }
