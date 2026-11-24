@@ -1180,6 +1180,7 @@ public class GitWorkspaceService
     }
 
     private bool? _inProcessReads;
+    private IReadOnlyDictionary<string, string?>? _childEnvironment;
 
     /// <summary>Whether this service's git children (the configured executable, the server's environment) read the
     /// repository libgit2 opens; worked out once per instance. Another executable than plain <c>git</c> never is.</summary>
@@ -1194,6 +1195,10 @@ public class GitWorkspaceService
             ServerGitProcess.DisableAutoMaintenance(probe);
             eligible = Antiphon.GitInProcess.InProcessGitReads.Enabled
                 && Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository(probe);
+            // The children's whole environment (RunCoreAsync adds only LC_ALL for one rev-parse): remote get-url reads
+            // config, so it is judged against what they would read.
+            _childEnvironment = new Dictionary<string, string?>(probe.Environment,
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         }
         catch (Exception) { eligible = false; }
         _inProcessReads = eligible;
@@ -1215,7 +1220,7 @@ public class GitWorkspaceService
         // Reads git answers without a word on stderr are answered in process when libgit2's answer is git's own
         // (InProcessGitReads, same rules as the land's runner; ANTIPHON_GIT_INPROCESS=off turns it off).
         if (stdin is null && InProcessReadsEligible()
-            && Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answered)
+            && Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args, _childEnvironment) is { } answered)
         {
             ct.ThrowIfCancellationRequested();
             span?.SetTag("git.spawned", false);

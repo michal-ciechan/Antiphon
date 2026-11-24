@@ -242,7 +242,9 @@ public class LandingGit : ILandingGit
     /// that redirects the repository, turns in-process reads off. Config differences (HOME,
     /// GIT_CONFIG_*) do not matter to the ref and object reads, which read no config; a status or
     /// ls-files --others answer is given only where the child's status config agrees with libgit2's
-    /// (<see cref="GitStatusConfigAgreement"/>, against the child environment kept here). A config that would make git
+    /// (<see cref="GitStatusConfigAgreement"/>, against the child environment kept here), and a
+    /// <c>remote get-url &lt;name&gt;</c> only where nothing in that child's config but the repository's one local URL
+    /// could decide it (<see cref="InProcessGitReads.TryAnswerRemoteUrl"/>). A config that would make git
     /// itself fail (broken file, safe.directory refusal) is then seen by the next git command instead,
     /// and every mutation is still a git process.
     /// </summary>
@@ -272,6 +274,9 @@ public class LandingGit : ILandingGit
             return AnswerWorkingTreeReadsInProcess
                 ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment,
                     GitTreeVerdict.IsVerdictOnly(arguments)) : null;
+        // remote get-url <name> reads config: judged against the child environment kept here, never this process's.
+        if (InProcessGitReads.IsRemoteGetUrl(arguments))
+            return _childEnvironment is { } child ? InProcessGitReads.TryAnswerRemoteUrl(repository, arguments, child) : null;
         return arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess
             ? InProcessGitReads.TryAnswer(repository, arguments) : null;
     }

@@ -13,6 +13,8 @@ namespace Antiphon.GitInProcess;
 /// value the child would use: the child's own system/global/command values, asked of git once per distinct
 /// config environment (and again whenever one of those files changes), with the repository's local and
 /// worktree levels between global and command, as git orders them.
+/// The same listing also carries the remote.*, url.* and include* key names of those levels, for
+/// <see cref="ChildRemoteKeys"/> (<c>remote get-url</c>, <see cref="InProcessGitReads.TryAnswerRemoteUrl"/>).
 /// </summary>
 internal static class GitStatusConfigAgreement
 {
@@ -44,7 +46,13 @@ internal static class GitStatusConfigAgreement
 
     private sealed record ChildConfig(
         IReadOnlyDictionary<string, string> Inherited, IReadOnlyDictionary<string, string> Command,
-        (string Path, long Length, DateTime Written)[] Stamps, string? DefaultIgnore, string? DefaultAttributes);
+        (string Path, long Length, DateTime Written)[] Stamps, string? DefaultIgnore, string? DefaultAttributes,
+        IReadOnlyList<string> RemoteKeys, bool SystemLocated);
+
+    /// <summary>Keys that can decide a remote's URL: remote.* keys, URL rewrites (url.*) and include/includeIf.</summary>
+    private static bool IsRemoteKey(string key) =>
+        key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase) || key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+        || key.StartsWith("include", StringComparison.OrdinalIgnoreCase);
 
     private static readonly ConcurrentDictionary<string, ChildConfig> Views = new(StringComparer.Ordinal);
     private const int ViewLimit = 256;
@@ -99,6 +107,19 @@ internal static class GitStatusConfigAgreement
         return null;
     }
 
+    /// <summary>
+    /// The remote.*, url.*, include.* and includeIf.* key names a git child with <paramref name="childEnvironment"/>
+    /// reads from its system, global (XDG included) and command levels, asked of git under that environment and cached
+    /// like the status view. Null when git could not list them, when the system file could not be located (a later
+    /// edit to it would go unseen), or when config comes from GIT_CONFIG_PARAMETERS or GIT_CONFIG, not modelled here.
+    /// </summary>
+    internal static IReadOnlyList<string>? ChildRemoteKeys(IReadOnlyDictionary<string, string?> childEnvironment)
+    {
+        string? Env(string name) => childEnvironment.TryGetValue(name, out var v) ? v : null;
+        if (!string.IsNullOrEmpty(Env("GIT_CONFIG_PARAMETERS")) || !string.IsNullOrEmpty(Env("GIT_CONFIG"))) return null;
+        return View(Env) is { SystemLocated: true } child ? child.RemoteKeys : null;
+    }
+
     private static string? Level(Configuration config, string key, ConfigurationLevel level)
     {
         try { return config.Get<string>(key, level)?.Value; }
@@ -148,11 +169,69 @@ internal static class GitStatusConfigAgreement
         return info.Exists ? (path, info.Length, info.LastWriteTimeUtc) : (path, -1, default);
     }
 
-    /// <summary>git's own non-repository config for the status keys, under the child's environment.</summary>
+    /// <summary>git's own non-repository config for the status and remote keys, under the child's environment.</summary>
     private static ChildConfig? Ask(Func<string, string?> env)
     {
         var probeDirectory = Path.Combine(Path.GetTempPath(), "antiphon-git-config-probe");
         Directory.CreateDirectory(probeDirectory);
+        if (Run(probeDirectory, env, ["config", "--show-origin", "--show-scope", "-z", "--get-regexp",
+                "^(core|index|extensions|remote|url|include|includeif)\\."]) is not ({ } output, 0 or 1))
+            return null;
+
+        var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var command = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var remoteKeys = new List<string>();
+        var origins = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var systemLocated = false;
+        var fields = output.Split('\0');
+        for (var i = 0; i + 2 < fields.Length; i += 3)
+        {
+            var (scope, origin, entry) = (fields[i], fields[i + 1], fields[i + 2]);
+            var newline = entry.IndexOf('\n');
+            var key = newline < 0 ? entry : entry[..newline];
+            var value = newline < 0 ? "true" : entry[(newline + 1)..]; // a bare key is boolean true
+            if (scope is "local" or "worktree") continue; // libgit2 reads those itself
+            if (origin.StartsWith("file:", StringComparison.Ordinal))
+            {
+                origins.Add(Path.GetFullPath(origin[5..]));
+                if (scope == "system") systemLocated = true;
+            }
+            if (IsRemoteKey(key)) { remoteKeys.Add(key); continue; }
+            (scope == "command" ? command : inherited)[key] = value;
+        }
+        var home = env("HOME") ?? env("USERPROFILE");
+        var xdg = env("XDG_CONFIG_HOME") is { Length: > 0 } x ? Path.Combine(x, "git")
+            : home is null ? null : Path.Combine(home, ".config", "git");
+        // Files that could start to matter: the child's global files and the system file, even while absent.
+        if (env("GIT_CONFIG_GLOBAL") is { Length: > 0 } global) origins.Add(Path.GetFullPath(global));
+        else
+        {
+            if (home is not null) origins.Add(Path.GetFullPath(Path.Combine(home, ".gitconfig")));
+            if (xdg is not null) origins.Add(Path.GetFullPath(Path.Combine(xdg, "config")));
+        }
+        if (env("GIT_CONFIG_SYSTEM") is { Length: > 0 } system) { origins.Add(Path.GetFullPath(system)); systemLocated = true; }
+        else if (IsTrue(env("GIT_CONFIG_NOSYSTEM"))) systemLocated = true;
+        else if (!systemLocated && Run(probeDirectory, env, ["var", "GIT_CONFIG_SYSTEM"]) is ({ } named, 0)
+            && named.TrimEnd('\n', '\r') is { Length: > 0 } systemFile && !systemFile.Contains('\n'))
+        {
+            // Nothing was listed from it (absent, or none of the keys above): git names its path, stamped so that a
+            // later edit is seen. Only the remote view needs it located (ChildRemoteKeys).
+            origins.Add(Path.GetFullPath(systemFile));
+            systemLocated = true;
+        }
+        var stamps = origins.Where(p => !p.EndsWith("NUL", StringComparison.OrdinalIgnoreCase) && p != "/dev/null")
+            .Select(Stamp).ToArray();
+        return new ChildConfig(inherited, command, stamps,
+            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "ignore")),
+            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")),
+            remoteKeys, systemLocated);
+    }
+
+    private static bool IsTrue(string? value) => value?.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+
+    /// <summary>One git command outside any repository, under the child's environment: its stdout and exit code.</summary>
+    private static (string Output, int ExitCode)? Run(string probeDirectory, Func<string, string?> env, string[] arguments)
+    {
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = probeDirectory, UseShellExecute = false, CreateNoWindow = true,
@@ -169,10 +248,7 @@ internal static class GitStatusConfigAgreement
                 start.Environment["GIT_CONFIG_VALUE_" + i] = env("GIT_CONFIG_VALUE_" + i);
             }
         start.Environment["GIT_CEILING_DIRECTORIES"] = Path.GetDirectoryName(probeDirectory);
-        foreach (var arg in new[] { "config", "--show-origin", "--show-scope", "-z", "--get-regexp", "^(core|index|extensions)\\." })
-            start.ArgumentList.Add(arg);
-        string output;
-        int exit;
+        foreach (var arg in arguments) start.ArgumentList.Add(arg);
         try
         {
             using var process = Process.Start(start)!;
@@ -180,41 +256,8 @@ internal static class GitStatusConfigAgreement
             var read = process.StandardOutput.ReadToEndAsync();
             _ = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(30_000)) { try { process.Kill(); } catch (InvalidOperationException) { } return null; }
-            output = read.GetAwaiter().GetResult();
-            exit = process.ExitCode;
+            return (read.GetAwaiter().GetResult(), process.ExitCode);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
-        if (exit is not (0 or 1)) return null;
-
-        var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var command = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var origins = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        var fields = output.Split('\0');
-        for (var i = 0; i + 2 < fields.Length; i += 3)
-        {
-            var (scope, origin, entry) = (fields[i], fields[i + 1], fields[i + 2]);
-            var newline = entry.IndexOf('\n');
-            var key = newline < 0 ? entry : entry[..newline];
-            var value = newline < 0 ? "true" : entry[(newline + 1)..]; // a bare key is boolean true
-            if (scope is "local" or "worktree") continue; // libgit2 reads those itself
-            (scope == "command" ? command : inherited)[key] = value;
-            if (origin.StartsWith("file:", StringComparison.Ordinal)) origins.Add(Path.GetFullPath(origin[5..]));
-        }
-        var home = env("HOME") ?? env("USERPROFILE");
-        var xdg = env("XDG_CONFIG_HOME") is { Length: > 0 } x ? Path.Combine(x, "git")
-            : home is null ? null : Path.Combine(home, ".config", "git");
-        // Files that could start to matter: the child's global files and the system file, even while absent.
-        if (env("GIT_CONFIG_GLOBAL") is { Length: > 0 } global) origins.Add(Path.GetFullPath(global));
-        else
-        {
-            if (home is not null) origins.Add(Path.GetFullPath(Path.Combine(home, ".gitconfig")));
-            if (xdg is not null) origins.Add(Path.GetFullPath(Path.Combine(xdg, "config")));
-        }
-        if (env("GIT_CONFIG_SYSTEM") is { Length: > 0 } system) origins.Add(Path.GetFullPath(system));
-        var stamps = origins.Where(p => !p.EndsWith("NUL", StringComparison.OrdinalIgnoreCase) && p != "/dev/null")
-            .Select(Stamp).ToArray();
-        return new ChildConfig(inherited, command, stamps,
-            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "ignore")),
-            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")));
     }
 }

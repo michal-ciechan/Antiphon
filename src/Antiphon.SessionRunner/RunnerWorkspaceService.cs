@@ -992,7 +992,8 @@ public sealed partial class RunnerWorkspaceService
     /// <summary>
     /// libgit2's answer to a read git would print without writing to stderr (the server's
     /// <c>InProcessGitReads.TryAnswerSilently</c>: rev-parse, symbolic-ref, merge-base --is-ancestor, a clean status,
-    /// ls-files -v, ls-remote of a local-path remote), or null to start git. Only for the real process starter (a test
+    /// ls-files -v, ls-remote of a local-path remote, remote get-url judged against this child's environment), or null
+    /// to start git. Only for the real process starter (a test
     /// that injects one to fault, hold or count git still sees every command) and only where the child would read
     /// the repository libgit2 opens. Inspection runs (isolated config, no replace objects) always start git.
     /// <c>ANTIPHON_GIT_INPROCESS=off</c> turns it off.
@@ -1003,7 +1004,13 @@ public sealed partial class RunnerWorkspaceService
         if (!Antiphon.GitInProcess.InProcessGitReads.Enabled || args.Length == 0
             || startProcess.Target is not null || startProcess.Method != ProcessStart
             || !Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository(psi)) return null;
-        return Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answer
+        // remote get-url <name> reads config: judged against this child's own environment (only the auto-maintenance
+        // keys are appended after this point, and they decide no URL).
+        var child = Antiphon.GitInProcess.InProcessGitReads.IsRemoteGetUrl(args)
+            ? new Dictionary<string, string?>(psi.Environment,
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+            : null;
+        return Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args, child) is { } answer
             ? (answer.ExitCode, answer.Output, "") : null;
     }
 

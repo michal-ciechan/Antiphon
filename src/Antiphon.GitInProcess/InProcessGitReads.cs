@@ -17,8 +17,11 @@ namespace Antiphon.GitInProcess;
 /// fallbacks are pinned against the real CLI by <c>LibGit2VsGitDifferentialTests</c>.
 /// </para>
 /// <list type="bullet">
-/// <item>Config is never read: <c>remote get-url</c> and anything else whose answer depends on config
-/// (includes, includeIf, worktree config, GIT_CONFIG_* environment, insteadOf) stays with git.</item>
+/// <item>Config is never read for an answer, with one narrow exception: <c>remote get-url &lt;name&gt;</c>, answered
+/// only when it is the repository's single local <c>remote.&lt;name&gt;.url</c> and nothing else could decide it (no
+/// insteadOf, include, includeIf, worktree config, legacy remotes/branches file, or remote key in the child's own
+/// system, global or command levels; see <see cref="TryAnswerRemoteUrl"/>), and only for a runner that passes its
+/// child's environment. Everything else whose answer depends on config stays with git.</item>
 /// <item>Paths are printed the way git prints them: the real path (on-disk case, links and subst
 /// drives resolved, <see cref="GitRealPath"/>) with forward slashes on Windows. UNC paths fall back.</item>
 /// <item>A repository with replace refs, grafts or a shallow file, or a reftable ref store, falls back
@@ -74,14 +77,12 @@ internal static partial class InProcessGitReads
     /// <summary>
     /// Whether a git child started from <paramref name="probe"/> (after the runner's own set-up) reads the repository
     /// libgit2 opens: the plain <c>git</c> executable and no variable that redirects the repository, its objects, refs
-    /// or discovery. Config differences (HOME, GIT_CONFIG_*) do not matter: no answered command reads config.
+    /// or discovery. Config differences (HOME, GIT_CONFIG_*) do not matter here: the one answer that reads config,
+    /// <c>remote get-url</c>, is judged against the child's environment itself (<see cref="TryAnswerRemoteUrl"/>).
     /// </summary>
     internal static bool ChildReadsSameRepository(System.Diagnostics.ProcessStartInfo probe)
     {
-        string[] redirects = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-            "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE"];
-        return probe.FileName == "git" && !redirects.Any(name =>
+        return probe.FileName == "git" && !RepositoryRedirects.Any(name =>
             !string.IsNullOrEmpty(probe.Environment.TryGetValue(name, out var v) ? v : Environment.GetEnvironmentVariable(name)));
     }
 
@@ -125,11 +126,17 @@ internal static partial class InProcessGitReads
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
     /// <c>symbolic-ref -q</c> (or <c>--quiet</c>), <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
+    /// <c>remote get-url &lt;name&gt;</c> only with <paramref name="childEnvironment"/>, the git child's whole environment:
+    /// its answer reads config, so it is judged against what that child would read (<see cref="TryAnswerRemoteUrl"/>).
     /// </summary>
-    internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
+    internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string?>? childEnvironment = null)
     {
         if (arguments.Count > 0 && arguments[0] == "--no-optional-locks") arguments = arguments.Skip(1).ToArray();
         if (arguments.Count == 0) return null;
+        if (IsRemoteGetUrl(arguments))
+            return childEnvironment is not null && TryAnswerRemoteUrl(repository, arguments, childEnvironment) is { } url
+                ? (url.ExitCode, url.Output) : null;
         // ls-remote exits 0, or 2 under --exit-code when nothing matches, without a word on stderr.
         if (arguments[0] == "ls-remote")
             return EndpointTakenLiterally(repository, arguments) && LsRemote(arguments) is { ExitCode: 0 or 2 } listed

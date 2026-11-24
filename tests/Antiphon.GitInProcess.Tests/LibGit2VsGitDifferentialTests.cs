@@ -485,6 +485,226 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Fallback, "worktree", "list", "--porcelain");
     }
 
+    /// <summary>
+    /// A git child's whole environment for the remote get-url cases: this process's, with no system config, an empty
+    /// global file and an empty XDG directory (what the libgit2 isolation reads), then <paramref name="changes"/>.
+    /// </summary>
+    private static Dictionary<string, string?> RemoteChild(LandingGitFixture fixture, params (string Name, string? Value)[] changes)
+    {
+        var env = new Dictionary<string, string?>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables()) env[(string)e.Key] = (string?)e.Value;
+        var emptyGlobal = Path.Combine(fixture.Root, "home", "remote-url-empty-global");
+        if (!File.Exists(emptyGlobal)) File.WriteAllText(emptyGlobal, "");
+        env["GIT_CONFIG_NOSYSTEM"] = "1";
+        env["GIT_CONFIG_GLOBAL"] = emptyGlobal;
+        env["XDG_CONFIG_HOME"] = LibGit2ConfigIsolation.EmptyDirectory;
+        foreach (var (name, value) in changes) env[name] = value;
+        return env;
+    }
+
+    /// <summary>git run with exactly <paramref name="env"/>: its result and stderr.</summary>
+    private static async Task<(LandingGitResult Result, string Error)> GitInAsync(string cwd, IReadOnlyDictionary<string, string?> env,
+        params string[] args)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment.Clear();
+        foreach (var (name, value) in env) if (value is not null) start.Environment[name] = value;
+        foreach (var a in args) start.ArgumentList.Add(a);
+        using var p = Process.Start(start)!;
+        var output = p.StandardOutput.ReadToEndAsync();
+        var error = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        return (new LandingGitResult(p.ExitCode, await output, ""), await error);
+    }
+
+    private static async Task ConfigAsync(string cwd, IReadOnlyDictionary<string, string?> env, params string[] args)
+    {
+        var (result, error) = await GitInAsync(cwd, env, args);
+        result.ExitCode.ShouldBe(0, string.Join(' ', args) + ": " + error);
+    }
+
+    /// <summary>
+    /// <c>remote get-url &lt;name&gt;</c> in process against git under the same child environment: answered means
+    /// git's exit 0, byte-identical stdout and an empty stderr. Returns git's own result (for cases that show git's
+    /// answer would differ from the plain local value). Never answered without a child environment.
+    /// </summary>
+    private static async Task<(LandingGitResult Result, string Error)> CompareRemoteUrlAsync(string cwd, Expect expect,
+        IReadOnlyDictionary<string, string?> env, string name)
+    {
+        string[] args = ["remote", "get-url", name];
+        var shape = "remote get-url " + name + " @ " + cwd;
+        var answer = InProcessGitReads.TryAnswerRemoteUrl(cwd, args, env);
+        var silent = InProcessGitReads.TryAnswerSilently(cwd, args, env);
+        (silent is null).ShouldBe(answer is null, shape);
+        InProcessGitReads.TryAnswer(cwd, args).ShouldBeNull("never without the child's environment: " + shape);
+        InProcessGitReads.TryAnswerSilently(cwd, args).ShouldBeNull("never without the child's environment: " + shape);
+        (InProcessGitReads.TryAnswerRemoteUrl(cwd, ["--no-optional-locks", .. args], env)?.Output).ShouldBe(answer?.Output, shape);
+        var git = await GitInAsync(cwd, env, args);
+        if (expect == Expect.Fallback) { answer.ShouldBeNull("must fall back to git: " + shape); return git; }
+        answer.ShouldNotBeNull("must be answered in process: " + shape);
+        answer.ExitCode.ShouldBe(git.Result.ExitCode, shape);
+        answer.Output.ShouldBe(git.Result.Output, shape);
+        silent!.Value.Output.ShouldBe(git.Result.Output, shape);
+        git.Error.ShouldBeEmpty("git wrote to stderr: " + shape);
+        return git;
+    }
+
+    [Test]
+    public async Task Remote_get_url_of_one_local_url_matches_git()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var env = RemoteChild(fixture);
+        // origin is the bare remote's Windows path: backslashes escaped in the file, printed as written.
+        var (origin, _) = await CompareRemoteUrlAsync(fixture.Repository, Expect.Answered, env, "origin");
+        origin.Output.ShouldBe(fixture.Remote + "\n");
+        // A linked worktree reads the common directory's config.
+        await CompareRemoteUrlAsync(fixture.Source, Expect.Answered, env, "origin");
+        await CompareRemoteUrlAsync(fixture.Observer, Expect.Answered, env, "origin");
+        // Spaces, quotes, comment characters and backslashes survive the file's quoting and escaping.
+        await ConfigAsync(fixture.Repository, env, "remote", "add", "odd", "https://example.invalid/a b;c#d\"e\\f'g");
+        var (odd, _) = await CompareRemoteUrlAsync(fixture.Repository, Expect.Answered, env, "odd");
+        odd.Output.ShouldBe("https://example.invalid/a b;c#d\"e\\f'g\n");
+        await File.AppendAllTextAsync(Path.Combine(fixture.Repository, ".git", "config"),
+            "[remote \"hand\"]\n\turl = \"ssh://h/x y\"   ; trailing comment\n\tfetch = +refs/heads/*:refs/remotes/hand/*\n");
+        await CompareRemoteUrlAsync(fixture.Repository, Expect.Answered, env, "hand");
+        // Auto-maintenance keys injected through GIT_CONFIG_COUNT (as the runners add them) decide no URL.
+        var maintenance = RemoteChild(fixture, ("GIT_CONFIG_COUNT", "2"), ("GIT_CONFIG_KEY_0", "gc.auto"), ("GIT_CONFIG_VALUE_0", "0"),
+            ("GIT_CONFIG_KEY_1", "maintenance.auto"), ("GIT_CONFIG_VALUE_1", "false"));
+        await CompareRemoteUrlAsync(fixture.Repository, Expect.Answered, maintenance, "origin");
+    }
+
+    [Test]
+    public async Task Remote_get_url_falls_back_for_repository_config_git_reads_otherwise()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var gitDir = Path.Combine(repo, ".git");
+        var config = Path.Combine(gitDir, "config");
+        var env = RemoteChild(fixture);
+        await ConfigAsync(repo, env, "remote", "add", "plain", "https://example.invalid/plain.git");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "plain");
+
+        // Names: missing (git's "No such remote", exit 2, on stderr), another case, options and patterns.
+        var (missing, missingError) = await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "nope");
+        missing.ExitCode.ShouldBe(2);
+        missingError.ShouldNotBeEmpty();
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "PLAIN");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "-plain");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "pl*");
+        InProcessGitReads.TryAnswerRemoteUrl(repo, ["remote", "get-url", "--push", "plain"], env).ShouldBeNull();
+        InProcessGitReads.TryAnswerRemoteUrl(repo, ["remote", "get-url", "--all", "plain"], env).ShouldBeNull();
+
+        // Two values: git prints the first.
+        await ConfigAsync(repo, env, "config", "--add", "remote.plain.url", "https://example.invalid/second.git");
+        var (two, _) = await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "plain");
+        two.Output.ShouldBe("https://example.invalid/plain.git\n");
+        // An empty value resets git's list: git then prints the name itself.
+        await ConfigAsync(repo, env, "remote", "add", "emptied", "https://example.invalid/emptied.git");
+        await File.AppendAllTextAsync(config, "[remote \"emptied\"]\n\turl =\n");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "emptied");
+        await File.AppendAllTextAsync(config, "[remote \"blank\"]\n\turl =\n");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "blank");
+
+        // insteadOf rewrites the URL git prints.
+        await ConfigAsync(repo, env, "remote", "add", "rewritten", "https://example.invalid/r.git");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "rewritten");
+        await ConfigAsync(repo, env, "config", "url.https://mirror.invalid/.insteadOf", "https://example.invalid/");
+        var (rewritten, _) = await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "rewritten");
+        rewritten.Output.ShouldBe("https://mirror.invalid/r.git\n");
+        await ConfigAsync(repo, env, "config", "--remove-section", "url.https://mirror.invalid/");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "rewritten");
+
+        // include / includeIf of a file only git finds (~ is the child's HOME, which libgit2 does not read): git's
+        // first URL comes from the included file, ahead of the local one.
+        var home = Path.Combine(fixture.Root, "child-home");
+        Directory.CreateDirectory(home);
+        await File.WriteAllTextAsync(Path.Combine(home, "remotes.inc"), "[remote \"rewritten\"]\n\turl = https://included.invalid/r.git\n");
+        var withHome = RemoteChild(fixture, ("HOME", home));
+        var original = await File.ReadAllTextAsync(config);
+        await File.WriteAllTextAsync(config, "[include]\n\tpath = ~/remotes.inc\n" + original);
+        var (included, _) = await CompareRemoteUrlAsync(repo, Expect.Fallback, withHome, "rewritten");
+        included.Output.ShouldBe("https://included.invalid/r.git\n");
+        var gitDirPattern = gitDir.Replace('\\', '/'); // no trailing slash: that would mean <gitdir>/**
+        await File.WriteAllTextAsync(config, $"[includeIf \"gitdir/i:{gitDirPattern}\"]\n\tpath = ~/remotes.inc\n" + original);
+        var (conditional, _) = await CompareRemoteUrlAsync(repo, Expect.Fallback, withHome, "rewritten");
+        conditional.Output.ShouldBe("https://included.invalid/r.git\n");
+        await File.WriteAllTextAsync(config, original);
+        await CompareRemoteUrlAsync(repo, Expect.Answered, withHome, "rewritten");
+
+        // Legacy remotes/<name> and branches/<name> files, in the git directory or (from a linked worktree) the common one.
+        foreach (var legacy in new[] { "remotes", "branches" })
+        {
+            var file = Path.Combine(gitDir, legacy, "rewritten");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            await File.WriteAllTextAsync(file, legacy == "remotes" ? "URL: https://legacy.invalid/r.git\n" : "https://legacy.invalid/r.git\n");
+            await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "rewritten");
+            await CompareRemoteUrlAsync(fixture.Source, Expect.Fallback, env, "rewritten");
+            File.Delete(file);
+        }
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "rewritten");
+
+        // Per-worktree config: a worktree-level remote.<name>.url comes after the local one, and config.worktree
+        // (with extensions.worktreeConfig) is git's to merge, for the main and a linked worktree alike.
+        await ConfigAsync(repo, env, "config", "extensions.worktreeConfig", "true");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "rewritten");
+        await ConfigAsync(repo, env, "config", "--worktree", "remote.wt.url", "https://worktree.invalid/wt.git");
+        File.Exists(Path.Combine(gitDir, "config.worktree")).ShouldBeTrue();
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "wt");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "rewritten");
+        await CompareRemoteUrlAsync(fixture.Source, Expect.Fallback, env, "rewritten");
+        await ConfigAsync(repo, env, "config", "--unset", "extensions.worktreeConfig");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "rewritten"); // config.worktree still there
+        File.Delete(Path.Combine(gitDir, "config.worktree"));
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "rewritten");
+    }
+
+    [Test]
+    public async Task Remote_get_url_falls_back_for_config_only_the_child_reads()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var env = RemoteChild(fixture);
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin");
+
+        // A global file the child sees through GIT_CONFIG_GLOBAL: its remote comes first in git's order.
+        var global = Path.Combine(fixture.Root, "home", "remote-url-global");
+        await File.WriteAllTextAsync(global, "[remote \"origin\"]\n\turl = https://global.invalid/origin.git\n");
+        var globalEnv = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", global));
+        var (fromGlobal, _) = await CompareRemoteUrlAsync(repo, Expect.Fallback, globalEnv, "origin");
+        fromGlobal.Output.ShouldBe("https://global.invalid/origin.git\n");
+        // ... and a remote defined only there: no local URL at all (git: not configured in the repository, exit 2).
+        await File.WriteAllTextAsync(global, "[remote \"onlyglobal\"]\n\turl = https://global.invalid/only.git\n");
+        var (onlyGlobal, onlyGlobalError) = await CompareRemoteUrlAsync(repo, Expect.Fallback, globalEnv, "onlyglobal");
+        onlyGlobal.ExitCode.ShouldBe(2);
+        onlyGlobalError.ShouldNotBeEmpty();
+        // The same file rewriting URLs; edited after the child's view was cached, so the stamp must catch it.
+        await File.WriteAllTextAsync(global, "[url \"https://mirror.invalid/\"]\n\tinsteadOf = " + fixture.Remote[..2] + "\n");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, globalEnv, "origin");
+        await File.WriteAllTextAsync(global, "[include]\n\tpath = nowhere.inc\n");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, globalEnv, "origin");
+        await File.WriteAllTextAsync(global, "[core]\n\tautocrlf = false\n");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, globalEnv, "origin");
+
+        // Config injected through the environment.
+        var injected = RemoteChild(fixture, ("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "remote.origin.url"),
+            ("GIT_CONFIG_VALUE_0", "https://command.invalid/origin.git"));
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, injected, "origin");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback,
+            RemoteChild(fixture, ("GIT_CONFIG_PARAMETERS", "'url.https://p.invalid/.insteadof'='x'")), "origin");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG", global)), "origin");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG_COUNT", "x")), "origin");
+        // A system file the child reads (GIT_CONFIG_SYSTEM, NOSYSTEM cleared) with a rewrite.
+        var systemFile = Path.Combine(fixture.Root, "home", "remote-url-system");
+        await File.WriteAllTextAsync(systemFile, "[url \"https://mirror.invalid/\"]\n\tinsteadOf = x\n");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback,
+            RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", systemFile)), "origin");
+        // A child pointed at another repository.
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_DIR", Path.Combine(fixture.Observer, ".git"))), "origin");
+    }
+
     [Test]
     public async Task A_land_scope_answers_reads_in_process_and_counts_them()
     {
