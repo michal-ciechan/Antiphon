@@ -13,11 +13,11 @@ namespace Antiphon.Tests.Application;
 internal static class LandGraphCommandHost
 {
     /// <summary>A host on the system clock, real git and the real process table, writing to output and error.</summary>
-    public static NightlyHost Create(TextWriter output, TextWriter error) => new()
+    public static NightlyHost Create(TextWriter output, TextWriter error, Func<NightlyLaunch, NightlyLaunch>? prepareLaunch = null) => new()
     {
         Clock = TimeProvider.System,
         Git = NightlyNativeGit.Run,
-        Launcher = new StreamCapturingLauncher(output, error),
+        Launcher = new StreamCapturingLauncher(output, error, prepareLaunch),
         Processes = new NightlyProcessTable(),
         Probe = new NightlyHostProbe(),
         Out = output,
@@ -42,12 +42,14 @@ internal static class LandGraphCommandHost
     /// WatchedLauncher, except that a launch sharing this process's streams (no CaptureOutput) is captured and its stdout
     /// and stderr are written to the host's writers once it has exited.
     /// </summary>
-    private sealed class StreamCapturingLauncher(TextWriter output, TextWriter error) : INightlyLauncher
+    private sealed class StreamCapturingLauncher(
+        TextWriter output, TextWriter error, Func<NightlyLaunch, NightlyLaunch>? prepareLaunch) : INightlyLauncher
     {
         private readonly WatchedLauncher _inner = new();
 
         public NightlyLaunchResult Run(NightlyLaunch launch)
         {
+            launch = prepareLaunch?.Invoke(launch) ?? launch;
             if (launch.CaptureOutput) return _inner.Run(launch);
             var result = _inner.Run(launch with { CaptureOutput = true });
             lock (output)

@@ -193,8 +193,7 @@ public sealed class DerivedImpactIndexTests
     }
 
     // CARD-1838. A stale committed index is rewritten by the Merge command, and a second run
-    // is a no-op. The command itself does not commit. Unit 41: the command runs in this process
-    // and starts this checkout's built driver (dotnet run --no-build), as scripts/antiphon does.
+    // is a no-op. The command runs in this process and starts the driver staged by the test build.
     [Test]
     public async Task regenerate_command_reports_changed_then_unchanged()
     {
@@ -1278,15 +1277,23 @@ public sealed class DerivedImpactIndexTests
     private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
         ImpactedClassesRun.SelectAsync(RepoRoot(), ["--repo", root, .. args]);
 
-    // The regenerate-derived-impact-index command in this process, as `scripts/antiphon regenerate-derived-impact-index
-    // --repo <fixture> --no-build` runs it: this checkout's driver, already built by the solution build, over the fixture.
-    // The driver is a real child (dotnet run); its output lands in the host's writers instead of this process's console.
+    // Check the command's invocation before redirecting it to the same driver's staged DLL.
+    // A test-project or checkpoint build may have no output in the driver's native bin directory.
     private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
     {
-        var options = Antiphon.Nightly.ImpactIndexRegenerationOptions.Parse(["--repo", fixtureRoot, "--no-build"], RepoRoot(), RepoRoot(), null);
+        var checkout = RepoRoot();
+        var project = Antiphon.Nightly.ImpactIndexRegeneration.ProjectPath(checkout);
+        var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
+        File.Exists(driver).ShouldBeTrue($"The test build must stage the index driver at {driver}.");
+        var options = Antiphon.Nightly.ImpactIndexRegenerationOptions.Parse(["--repo", fixtureRoot, "--no-build"], checkout, checkout, null);
         var output = new StringWriter();
         var error = new StringWriter();
-        var host = Antiphon.Tests.Application.LandGraphCommandHost.Create(output, error);
+        var host = Antiphon.Tests.Application.LandGraphCommandHost.Create(output, error, launch =>
+        {
+            launch.FileName.ShouldBe("dotnet");
+            launch.Arguments.ShouldBe(["run", "--project", project, "--no-build", "-p:UseAppHost=false", "--", fixtureRoot]);
+            return launch with { Arguments = [driver, fixtureRoot] };
+        });
         var exit = await Task.Run(() => Antiphon.Nightly.ImpactIndexRegeneration.Run(options, host, new System.IO.Abstractions.FileSystem()));
         var stdout = output.ToString();
         return (exit, stdout, stdout + error);
