@@ -4,7 +4,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// The observer document at <c>logs/apphost-watchdog-state.json</c> (CARD-0245 S1).
-/// Written by <c>scripts/apphost-watchdog-state-observer.ps1</c>; the server never writes it.
+/// Written by the <c>apphost-watchdog-state-observer</c> command (<c>scripts/antiphon apphost-watchdog-state-observer</c>; its Scheduled Task starts the <c>scripts/apphost-watchdog-state-observer.ps1</c> launcher); the server never writes it.
 /// </summary>
 public sealed record AppHostWatchdogStateDocument(
     DateTimeOffset ObservedAtUtc,

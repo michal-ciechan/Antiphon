@@ -1,11 +1,11 @@
 // The SessionRunner restart chain's commands (unit 30 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md):
 // restart-session-runner (it replaced scripts/restart-session-runner.ps1 and scripts/session-runner-restart-health.ps1),
 // run-daemon (the body of scripts/run-daemon.ps1, which the AppHost and the logon task still start by path: a thin launcher)
-// and check-daemon-build (the body of scripts/check-daemon-build.ps1, which restart-apphost.ps1 and dev-aspire.ps1 still run
-// by path: a thin launcher). The behaviour is Antiphon.Nightly's RunnerRestart (on RunnerRestartOs), DaemonSupervisor and
-// DaemonBuildCheck on the production host; this file binds them (run-daemon's build runs under the build slot in this
-// process, BuildSlotCommands.Runner). Each command's checkout (the runner's logs and Debug executable, the history compared)
-// is the one this executable was built in, else the current directory. ASCII only.
+// and check-daemon-build (the body of scripts/check-daemon-build.ps1, which dev-aspire.ps1 still runs by path: a thin launcher;
+// restart-apphost runs DaemonBuildCheck in process). The behaviour is Antiphon.Nightly's RunnerRestart (on RunnerRestartOs),
+// DaemonSupervisor and DaemonBuildCheck on the production host; this file binds them (run-daemon's build runs under the build
+// slot in this process, BuildSlotCommands.Runner). Each command's checkout (the runner's logs and Debug executable, the
+// history compared) is the one this executable was built in, else the current directory. ASCII only.
 using System;
 using System.Diagnostics;
 using System.IO;

@@ -219,7 +219,7 @@ public sealed class DelegateScriptLandCompatibilityTests
         stub.LegacyLandPosts.ShouldBe(0);
         result.Output.ShouldContain("land-v2");
         result.Output.ShouldContain("404");
-        result.Output.ShouldContain("restart-apphost.ps1");
+        result.Output.ShouldContain("scripts/antiphon restart-apphost");
         result.Output.ShouldNotContain("Queued land");
     }
 
@@ -350,7 +350,7 @@ public sealed class DelegateScriptLandCompatibilityTests
         result.Output.ShouldContain(baseUrl);
         result.Output.ShouldContain("land-v2");
         result.Output.ShouldContain("/api/version");
-        result.Output.ShouldContain("restart-apphost.ps1");
+        result.Output.ShouldContain("scripts/antiphon restart-apphost");
         result.Output.ShouldContain(observed ?? VersionSha);
         result.Output.ShouldNotContain("Queued land");
         result.Output.ShouldNotContain("Publication pending");

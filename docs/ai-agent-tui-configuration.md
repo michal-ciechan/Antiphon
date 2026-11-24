@@ -253,14 +253,14 @@ scripts\antiphon.cmd verify-agent-tui-profile `
   --model-id "maven/grok-4.5" `
   --expected-reply "Atlas OpenCode explicit model verified."
 
-.\verify-dev-stack.ps1 -SimpleMode
+scripts\antiphon.cmd verify-dev-stack --simple-mode
 ```
 
 The smoke fails at once when a retained evidence file, or the metrics text, contains the `--canary` secret.
 
 ## Deployment scope
 
-This checkout has no separate DEV, production, GitOps, or CI deployment target. The Mikeys.Tools-hosted simple stack is the accepted local DEV-equivalent and release installation for this feature. Run the two OpenCode probes above and `verify-dev-stack.ps1 -SimpleMode` after a restart; retain only their sanitized evidence. A future deployed target must name its key-ring custody and release owner before it is treated as a production deployment.
+This checkout has no separate DEV, production, GitOps, or CI deployment target. The Mikeys.Tools-hosted simple stack is the accepted local DEV-equivalent and release installation for this feature. Run the two OpenCode probes above and `verify-dev-stack --simple-mode` after a restart; retain only their sanitized evidence. A future deployed target must name its key-ring custody and release owner before it is treated as a production deployment.
 
 ## Observability
 

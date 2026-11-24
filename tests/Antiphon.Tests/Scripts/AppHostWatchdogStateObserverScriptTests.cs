@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -8,97 +10,91 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0245 S1a — <c>scripts/apphost-watchdog-state-observer.ps1</c>. Drives the real
-/// script against a throwaway Scheduled Task (or a missing name) and a temp logs dir.
-/// Detection only: the script never Enable/Disable's the live AppHost watchdog.
+/// CARD-0245 S1a: the watchdog-state observer and the maintenance helper. Since unit 31 of
+/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md they are the apphost-watchdog-state-observer and
+/// set-apphost-maintenance commands (AppHostWatchdogStateObserver, AppHostMaintenance) and run in process: the document,
+/// episode and maintenance rows on AppHostWorld's task table (the scripts ran against throwaway tasks under pwsh), and the
+/// Task Scheduler itself (AppHostTasks: a missing name, and a throwaway task created from XML with schtasks.exe, read,
+/// disabled and enabled, then deleted; never run). Detection only: nothing touches the live AppHost watchdog.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AppHostWatchdogStateObserverScriptTests
 {
-    [Test]
-    public async Task Missing_task_writes_unhealthy_json_and_a_stable_episode()
-    {
-        using var dir = new TempRoot();
-        var taskName = $"Antiphon-CARD0245-missing-{Guid.NewGuid():N}"[..40];
+    private const string Watchdog = "Antiphon-CARD0245-fixture";
 
-        var first = await RunObserverAsync(dir.Path, taskName);
-        first.ExitCode.ShouldBe(0, first.Output);
-        var a = ReadState(dir.StateFile);
+    private static JsonElement ReadState(AppHostWorld world)
+    {
+        var path = world.LogPath("apphost-watchdog-state.json");
+        File.Exists(path).ShouldBeTrue(path);
+        return JsonDocument.Parse(File.ReadAllText(path)).RootElement;
+    }
+
+    private static int Observe(AppHostWorld world) =>
+        AppHostWatchdogStateObserver.Run(AppHostObserverOptions.Parse(["--task-name", Watchdog], world.Root), world.Host(), world);
+
+    private static (int Exit, string Text) Maintain(AppHostWorld world, params string[] flags)
+    {
+        var before = world.Out.ToString().Length;
+        var exit = AppHostMaintenance.Run(AppHostMaintenanceOptions.Parse(flags.Concat(["--watchdog-task-name", Watchdog]).ToArray(), world.Root), world.Host(), world);
+        return (exit, world.Out.ToString()[before..]);
+    }
+
+    [Test]
+    public void Missing_task_writes_unhealthy_json_and_a_stable_episode()
+    {
+        using var world = new AppHostWorld();
+        Observe(world).ShouldBe(0);
+        var a = ReadState(world);
         a.GetProperty("state").GetString().ShouldBe("Missing");
         a.GetProperty("healthy").GetBoolean().ShouldBeFalse();
         a.GetProperty("maintenance").GetBoolean().ShouldBeFalse();
+        a.GetProperty("taskName").GetString().ShouldBe(Watchdog);
         var episode = a.GetProperty("episodeId").GetString();
-        episode.ShouldNotBeNullOrWhiteSpace();
+        Guid.TryParse(episode, out _).ShouldBeTrue(episode);
         a.GetProperty("disabledSinceUtc").GetString().ShouldNotBeNullOrWhiteSpace();
-
-        var second = await RunObserverAsync(dir.Path, taskName);
-        second.ExitCode.ShouldBe(0, second.Output);
-        var b = ReadState(dir.StateFile);
-        b.GetProperty("state").GetString().ShouldBe("Missing");
+        world.Clock.Advance(TimeSpan.FromMinutes(2));
+        Observe(world).ShouldBe(0);
+        var b = ReadState(world);
         b.GetProperty("episodeId").GetString().ShouldBe(episode);
         b.GetProperty("disabledSinceUtc").GetString().ShouldBe(a.GetProperty("disabledSinceUtc").GetString());
+        b.GetProperty("observedAtUtc").GetString().ShouldNotBe(a.GetProperty("observedAtUtc").GetString());
+        world.Out.ToString().ShouldContain("[watchdog-state] [INFO] state=Missing healthy=False maintenance=False episode=" + episode);
+        File.ReadAllText(world.LogPath("apphost-watchdog-state-observer.log")).ShouldContain("state=Missing");
+        Antiphon.Server.Application.Services.AppHostWatchdogStateDocument.TryParse(File.ReadAllText(world.LogPath("apphost-watchdog-state.json")), out var document).ShouldBeTrue();
+        document!.IsUnhealthy.ShouldBeTrue();
     }
 
     [Test]
-    public async Task Disabled_throwaway_task_is_recorded_as_disabled()
+    public void Disabled_and_healthy_tasks_are_recorded_and_a_new_condition_gets_a_new_episode()
     {
-        using var dir = new TempRoot();
-        var taskName = $"Antiphon-CARD0245-{Guid.NewGuid():N}"[..40];
-        try
-        {
-            RegisterDisabledTask(taskName, dir.Path);
-            var run = await RunObserverAsync(dir.Path, taskName);
-            run.ExitCode.ShouldBe(0, run.Output);
-            var state = ReadState(dir.StateFile);
-            state.GetProperty("state").GetString().ShouldBe("Disabled");
-            state.GetProperty("healthy").GetBoolean().ShouldBeFalse();
-            state.GetProperty("episodeId").GetString().ShouldNotBeNullOrWhiteSpace();
-        }
-        finally
-        {
-            UnregisterTask(taskName);
-        }
+        using var world = new AppHostWorld();
+        Observe(world);
+        var missingEpisode = ReadState(world).GetProperty("episodeId").GetString();
+        world.Tasks[Watchdog] = new AppHostTaskInfo("Disabled", "State=Disabled");
+        Observe(world);
+        var disabled = ReadState(world);
+        disabled.GetProperty("state").GetString().ShouldBe("Disabled");
+        disabled.GetProperty("detail").GetString().ShouldBe("State=Disabled");
+        disabled.GetProperty("episodeId").GetString().ShouldNotBe(missingEpisode);
+        world.Tasks[Watchdog] = new AppHostTaskInfo("Enabled", "State=Ready");
+        Observe(world);
+        var healthy = ReadState(world);
+        healthy.GetProperty("healthy").GetBoolean().ShouldBeTrue();
+        healthy.GetProperty("episodeId").ValueKind.ShouldBe(JsonValueKind.Null);
+        healthy.GetProperty("disabledSinceUtc").ValueKind.ShouldBe(JsonValueKind.Null);
     }
 
     [Test]
-    public async Task Maintenance_marker_is_recorded_without_changing_task_state()
+    public void Maintenance_marker_is_recorded_without_changing_task_state()
     {
-        using var dir = new TempRoot();
-        var taskName = $"Antiphon-CARD0245-missing-{Guid.NewGuid():N}"[..40];
-        File.WriteAllText(dir.MarkerFile, "down-on-purpose");
-
-        var run = await RunObserverAsync(dir.Path, taskName);
-        run.ExitCode.ShouldBe(0, run.Output);
-        var state = ReadState(dir.StateFile);
+        using var world = new AppHostWorld();
+        File.WriteAllText(world.LogPath("apphost.down-on-purpose"), "down-on-purpose");
+        Observe(world).ShouldBe(0);
+        var state = ReadState(world);
         state.GetProperty("maintenance").GetBoolean().ShouldBeTrue();
         state.GetProperty("state").GetString().ShouldBe("Missing");
-        state.GetProperty("healthy").GetBoolean().ShouldBeFalse();
-    }
-
-    [Test]
-    public async Task New_condition_gets_a_new_episode()
-    {
-        using var dir = new TempRoot();
-        var missingName = $"Antiphon-CARD0245-missing-{Guid.NewGuid():N}"[..40];
-        var disabledName = $"Antiphon-CARD0245-{Guid.NewGuid():N}"[..40];
-        try
-        {
-            var first = await RunObserverAsync(dir.Path, missingName);
-            first.ExitCode.ShouldBe(0, first.Output);
-            var episode1 = ReadState(dir.StateFile).GetProperty("episodeId").GetString();
-
-            RegisterDisabledTask(disabledName, dir.Path);
-            var second = await RunObserverAsync(dir.Path, disabledName);
-            second.ExitCode.ShouldBe(0, second.Output);
-            var episode2 = ReadState(dir.StateFile).GetProperty("episodeId").GetString();
-            episode2.ShouldNotBe(episode1);
-            ReadState(dir.StateFile).GetProperty("state").GetString().ShouldBe("Disabled");
-        }
-        finally
-        {
-            UnregisterTask(disabledName);
-        }
+        world.Trace.ShouldNotContain(row => row.StartsWith("enable", StringComparison.Ordinal) || row.StartsWith("disable", StringComparison.Ordinal));
     }
 
     [Test]
@@ -115,139 +111,106 @@ public sealed class AppHostWatchdogStateObserverScriptTests
     }
 
     [Test]
-    public async Task Maintenance_helper_writes_marker_before_disable_and_clears_in_reverse()
+    public void Maintenance_helper_writes_marker_before_disable_and_clears_in_reverse()
     {
-        using var dir = new TempRoot();
-        var taskName = $"Antiphon-CARD0245-maint-{Guid.NewGuid():N}"[..40];
+        using var world = new AppHostWorld();
+        world.Tasks[Watchdog] = new AppHostTaskInfo("Enabled", "State=Ready");
+        var enter = Maintain(world);
+        enter.Exit.ShouldBe(0, enter.Text);
+        File.Exists(world.LogPath("apphost.down-on-purpose")).ShouldBeTrue();
+        File.ReadAllText(world.LogPath("apphost.down-on-purpose")).ShouldStartWith("down-on-purpose 2026-11-24T09:00:00");
+        world.Trace.ShouldContain("disable " + Watchdog + " marker=True");
+        enter.Text.ShouldContain("> Entering AppHost maintenance (create marker, then disable '" + Watchdog + "').");
+        enter.Text.ShouldContain("  Watchdog task disabled.");
+        enter.Text.ShouldEndWith("Done. This command does not start or stop the AppHost." + Environment.NewLine);
+        ReadState(world).GetProperty("maintenance").GetBoolean().ShouldBeTrue();
+        ReadState(world).GetProperty("state").GetString().ShouldBe("Disabled");
+
+        var leave = Maintain(world, "--clear");
+        leave.Exit.ShouldBe(0, leave.Text);
+        world.Trace.ShouldContain("enable " + Watchdog + " marker=True", "the watchdog is re-enabled before the marker goes");
+        File.Exists(world.LogPath("apphost.down-on-purpose")).ShouldBeFalse();
+        leave.Text.ShouldContain("  Removed " + world.LogPath("apphost.down-on-purpose"));
+        ReadState(world).GetProperty("healthy").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public void Enter_if_absent_is_create_new_and_refuses_a_present_marker()
+    {
+        using var world = new AppHostWorld();
+        world.Tasks[Watchdog] = new AppHostTaskInfo("Enabled", "State=Ready");
+        var first = Maintain(world, "--enter-if-absent");
+        first.Exit.ShouldBe(0, first.Text);
+        world.Trace.ShouldContain("disable " + Watchdog + " marker=True");
+        world.Tasks[Watchdog] = new AppHostTaskInfo("Enabled", "State=Ready");
+        var again = Maintain(world, "--enter-if-absent");
+        again.Exit.ShouldBe(2, again.Text);
+        again.Text.ShouldContain("  Marker already present. This run did not enter maintenance.");
+        world.Trace.Count(row => row.StartsWith("disable", StringComparison.Ordinal)).ShouldBe(1, "a present marker disables nothing");
+        File.Exists(world.LogPath("apphost.down-on-purpose")).ShouldBeTrue("and removes nothing");
+        var both = Maintain(world, "--clear", "--enter-if-absent");
+        both.Exit.ShouldBe(2);
+        both.Text.ShouldContain("REFUSED: --clear and --enter-if-absent cannot be combined.");
+        using var bare = new AppHostWorld();
+        var unregistered = Maintain(bare);
+        unregistered.Exit.ShouldBe(0);
+        unregistered.Text.ShouldContain("  Watchdog task '" + Watchdog + "' is not registered; marker is in place.");
+    }
+
+    // ---- the Task Scheduler (Windows): a missing name, and a throwaway task read, disabled and enabled ----
+
+    [Test]
+    public void Task_scheduler_reads_a_missing_task_as_missing()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("CARD-0245: the Task Scheduler is a Windows service");
+        var name = $"Antiphon-CARD0245-missing-{Guid.NewGuid():N}"[..40];
+        AppHostTasks.Read(name).State.ShouldBe("Missing");
+        AppHostTasks.Running(name).ShouldBe(false);
+        Should.Throw<InvalidOperationException>(() => AppHostTasks.SetEnabled(name, false));
+    }
+
+    [Test]
+    public void Task_scheduler_disables_and_enables_a_throwaway_task()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("CARD-0245: the Task Scheduler is a Windows service");
+        var name = $"Antiphon-CARD0245-{Guid.NewGuid():N}"[..40];
+        var xml = Path.Combine(Path.GetTempPath(), name + ".xml");
+        File.WriteAllText(xml, """
+            <?xml version="1.0" encoding="UTF-16"?>
+            <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+              <RegistrationInfo><Description>CARD-0245 throwaway</Description></RegistrationInfo>
+              <Triggers><TimeTrigger><StartBoundary>2099-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
+              <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+              <Settings><Enabled>true</Enabled><ExecutionTimeLimit>PT1M</ExecutionTimeLimit></Settings>
+              <Actions Context="Author"><Exec><Command>cmd.exe</Command><Arguments>/c exit 0</Arguments></Exec></Actions>
+            </Task>
+            """, Encoding.Unicode);
         try
         {
-            RegisterEnabledTask(taskName, dir.Path);
-            var enter = await RunMaintenanceAsync(dir.Path, taskName, clear: false);
-            enter.ExitCode.ShouldBe(0, enter.Output);
-            File.Exists(dir.MarkerFile).ShouldBeTrue();
-            GetTaskState(taskName).ShouldBe("Disabled");
-            ReadState(dir.StateFile).GetProperty("maintenance").GetBoolean().ShouldBeTrue();
-
-            var leave = await RunMaintenanceAsync(dir.Path, taskName, clear: true);
-            leave.ExitCode.ShouldBe(0, leave.Output);
-            File.Exists(dir.MarkerFile).ShouldBeFalse();
-            GetTaskState(taskName).ShouldBe("Ready");
+            Schtasks("/Create", "/TN", name, "/XML", xml).ShouldBe(0);
+            AppHostTasks.Read(name).ShouldBe(new AppHostTaskInfo("Enabled", "State=Ready"));
+            AppHostTasks.SetEnabled(name, false);
+            AppHostTasks.Read(name).ShouldBe(new AppHostTaskInfo("Disabled", "State=Disabled"));
+            AppHostTasks.Running(name).ShouldBe(false);
+            AppHostTasks.SetEnabled(name, true);
+            AppHostTasks.Read(name).State.ShouldBe("Enabled");
         }
         finally
         {
-            UnregisterTask(taskName);
+            Schtasks("/Delete", "/TN", name, "/F");
+            File.Delete(xml);
         }
     }
 
-    private static JsonElement ReadState(string path)
+    private static int Schtasks(params string[] arguments)
     {
-        File.Exists(path).ShouldBeTrue(path);
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement;
-    }
-
-    private static Task<(int ExitCode, string Output)> RunObserverAsync(string root, string taskName)
-    {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "apphost-watchdog-state-observer.ps1");
-        return RunPwshAsync(script, "-Root", root, "-TaskName", taskName);
-    }
-
-    private static Task<(int ExitCode, string Output)> RunMaintenanceAsync(string root, string taskName, bool clear)
-    {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "set-apphost-maintenance.ps1");
-        var args = new List<string> { "-Root", root, "-WatchdogTaskName", taskName };
-        if (clear) args.Insert(0, "-Clear");
-        return RunPwshAsync(script, args.ToArray());
-    }
-
-    private static async Task<(int ExitCode, string Output)> RunPwshAsync(string script, params string[] args)
-    {
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(script);
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
+        var start = new ProcessStartInfo("schtasks.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("schtasks did not start");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout + await stderr);
-    }
-
-    private static void RegisterDisabledTask(string taskName, string workingDirectory)
-    {
-        RegisterEnabledTask(taskName, workingDirectory);
-        RunSchtasks("Disable-ScheduledTask", taskName);
-    }
-
-    private static void RegisterEnabledTask(string taskName, string workingDirectory)
-    {
-        var ps = $@"
-$action = New-ScheduledTaskAction -Execute 'pwsh' -Argument '-NoProfile -Command ""exit 0""' -WorkingDirectory '{workingDirectory.Replace("'", "''")}'
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(1)
-$principal = New-ScheduledTaskPrincipal -UserId ""$env:USERDOMAIN\$env:USERNAME"" -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
-if (Get-ScheduledTask -TaskName '{taskName}' -ErrorAction SilentlyContinue) {{ Unregister-ScheduledTask -TaskName '{taskName}' -Confirm:$false }}
-Register-ScheduledTask -TaskName '{taskName}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'CARD-0245 throwaway' | Out-Null
-";
-        RunInline(ps).ExitCode.ShouldBe(0);
-    }
-
-    private static void RunSchtasks(string cmdlet, string taskName) =>
-        RunInline($"{cmdlet} -TaskName '{taskName}' | Out-Null").ExitCode.ShouldBe(0);
-
-    private static string GetTaskState(string taskName)
-    {
-        var run = RunInline($"(Get-ScheduledTask -TaskName '{taskName}').State.ToString()");
-        run.ExitCode.ShouldBe(0, run.Output);
-        return run.Output.Trim();
-    }
-
-    private static void UnregisterTask(string taskName) =>
-        RunInline($"Unregister-ScheduledTask -TaskName '{taskName}' -Confirm:$false -ErrorAction SilentlyContinue");
-
-    private static (int ExitCode, string Output) RunInline(string script)
-    {
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-Command");
-        startInfo.ArgumentList.Add(script);
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(30_000);
-        return (process.ExitCode, stdout + stderr);
-    }
-
-    private sealed class TempRoot : IDisposable
-    {
-        public TempRoot()
-        {
-            Path = Directory.CreateTempSubdirectory("card0245-wd-").FullName;
-            Directory.CreateDirectory(System.IO.Path.Combine(Path, "logs"));
-        }
-
-        public string Path { get; }
-        public string StateFile => System.IO.Path.Combine(Path, "logs", "apphost-watchdog-state.json");
-        public string MarkerFile => System.IO.Path.Combine(Path, "logs", "apphost.down-on-purpose");
-
-        public void Dispose()
-        {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
-        }
+        process.WaitForExit(30_000).ShouldBeTrue("schtasks finished");
+        if (process.ExitCode != 0) Console.Error.WriteLine(stdout.Result + stderr.Result);
+        return process.ExitCode;
     }
 }

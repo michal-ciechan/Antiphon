@@ -20,7 +20,7 @@ First start, with nothing listening on 17202 and no launch already in flight:
 Start-ScheduledTask -TaskName 'Antiphon AppHost'
 ```
 
-The registered action is `scripts/autostart-apphost.ps1`, which waits for Docker
+The registered action is `scripts/autostart-apphost.ps1` (a thin launcher of `scripts\antiphon.cmd autostart-apphost`), which waits for Docker
 and Postgres, then invokes `dev-aspire.ps1 -NoBrowser`. Task Scheduler starts it
 outside the shell that requested the start. If the task is missing, register it
 with `pwsh -File scripts/install-autostart.ps1 -AppHostOnly` under an account
@@ -31,8 +31,8 @@ For the usual case, where AppHost may already be running:
 Orchestrators may perform this restart without human confirmation under [the operational autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
 
 ```powershell
-pwsh -NoProfile -File scripts/restart-apphost.ps1
-pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>
+scripts\antiphon.cmd restart-apphost
+scripts\antiphon.cmd restart-apphost --expected-server-sha <full-intended-head>
 ```
 
 This is the canonical teardown: it stops the AppHost tree and its API, client,
@@ -43,14 +43,14 @@ check. SHA equality is committed-build provenance, not dirty-file attestation.
 Postgres, the runner on 17204, and live detached pty-host / herdr sessions survive.
 Never run a second bare `dev-aspire.ps1`: the old process can keep the ports and
 the new code never goes live. Linked worktrees refuse by default (exit 3);
-return to the main checkout. `-AllowWorktree` deliberately overrides that guard
+return to the main checkout. `--allow-worktree` deliberately overrides that guard
 and controls the shared stack.
 
-`-StopOnly` uses that same graceful stop, the same AppHost port free, and the
+`--stop-only` uses that same graceful stop, the same AppHost port free, and the
 same locks (`logs/apphost.restart.lock` and `logs/apphost.launch.lock`). It then
 exits before `dev-aspire.ps1` and releases the restart lock, because no launch
-child is left behind. Exit 3 stays a refusal and kills nothing. `-StopOnly
--WhatIf` prints the stop and does not POST, take the restart lock, or launch.
+child is left behind. Exit 3 stays a refusal and kills nothing. `--stop-only
+--what-if` prints the stop and does not POST, take the restart lock, or launch.
 Postgres on 17280 and the session runner on 17204 stay up. The cutover script
 is the caller. Start that window with
 `pwsh -File scripts/cutover-postgres-server2.ps1`. Default `-WhatIf`
@@ -91,9 +91,9 @@ Never use `-NoNewWindow`; `wt new-tab` also failed with `0x80070002` for titles
 containing spaces in the recorded incident.
 
 **Checkout limitation (CARD-0381):** the intended restart handoff is
-`restart-apphost.ps1` → `Start-ScheduledTask 'Antiphon AppHost'`, with a task-only
+`restart-apphost` → `Start-ScheduledTask 'Antiphon AppHost'`, with a task-only
 `dev-aspire.ps1 -Direct -NoBrowser` action. The scripts in this checkout do **not**
-implement that handoff: restart still uses `Start-Process pwsh`, `dev-aspire.ps1`
+implement that handoff: restart still starts `pwsh` with `dev-aspire.ps1`
 has no `-Direct` parameter, and `scripts/task-apphost-start.ps1` is absent.
 Run the current restart command from an independent operator PowerShell session,
 outside an agent's kill-on-close job. Do not assume an agent-triggered restart is
@@ -148,7 +148,7 @@ for result JSON, logs and exit codes; these differ from AppHost's table below.
 ## Verify health and the code actually loaded
 
 ```powershell
-pwsh -File verify-dev-stack.ps1 -SkipBrowser
+scripts\antiphon.cmd verify-dev-stack --skip-browser
 Invoke-WebRequest 'http://localhost:17202/health'
 git rev-parse HEAD
 (Invoke-RestMethod 'http://localhost:17204/capabilities').build.commitSha
@@ -179,7 +179,7 @@ show a rebuild after the client change before checking the browser. Use
 |---|---|---|
 | 0 | Dashboard found (the `logs/apphost-dashboard-url.txt` that `dev-aspire.ps1` writes, or an HTTP answer on 17205), API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
 | 1 | Build failed; the launcher exited nonzero or this launch's AppHost exited with nothing on 17202 (both end the wait at once); or the health wait ran out: no launch progress for `-TimeoutSec` (default 150 seconds) or the `-MaxWaitSec` hard cap (default 600 seconds) was reached. The output names the limit that ended the wait and the last progress signal with its age. | Read logs (earlier launches are kept as `logs/apphost.log.1` to `.10`); after a timeout the child may still be launching. Do not immediately rerun. |
-| 3 | Refused on worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock. Nothing is killed. S4 (`e1b42f895`) also makes `scripts/restart-apphost.ps1` and `dev-aspire.ps1` emit `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. `-StopOnly` stays allowed. | Inspect ownership and both locks. Update the canonical checkout if the expected SHA is wrong, or wait for the existing launch. While Linux is the writer, leave the phase-2 file in place and stop. For an approved rollback, follow the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3) and wait for the Linux project to stop and `pg_stat_activity` to show no production-compose client before retrying AppHost. |
+| 3 | Refused on worktree guard, SHA admission (`--expected-server-sha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock. Nothing is killed. S4 (`e1b42f895`) also makes `restart-apphost` and `dev-aspire.ps1` emit `REFUSED: phone-home-config-present` while `C:\Antiphon\runner\phone-home.json` exists. `--stop-only` stays allowed. | Inspect ownership and both locks. Update the canonical checkout if the expected SHA is wrong, or wait for the existing launch. While Linux is the writer, leave the phase-2 file in place and stop. For an approved rollback, follow the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3) and wait for the Linux project to stop and `pg_stat_activity` to show no production-compose client before retrying AppHost. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
 | 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
 
@@ -249,14 +249,14 @@ Before relying on newly landed server behavior:
 2. Confirm the canonical checkout contains it (`git pull --rebase` in
    `C:\src\Antiphon` after out-of-band publication).
 3. From an independent operator shell in the canonical checkout, run
-   `pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>`.
+   `scripts\antiphon.cmd restart-apphost --expected-server-sha <full-intended-head>`.
 4. Require exit 0 and a fresh `GET /api/version` showing that exact SHA and
    `capabilities` containing `land-v2`. Probe the required feature directly when
-   the checkout has tracked edits. `restart-apphost.ps1` also prints a NOTE when
+   the checkout has tracked edits. `restart-apphost` also prints a NOTE when
    `.git/index.lock` is present (and again after its process-tree kill if a lock
    appeared during the kill). That NOTE does not refuse the restart. Do not
    `Remove-Item` the lock while a `git` process older than it is still running;
-   after confirming none, `Remove-Item '<path>'` as printed. `verify-dev-stack.ps1`
+   after confirming none, `Remove-Item '<path>'` as printed. `verify-dev-stack`
    reports an `Git index lock` row (`OK absent` / `OK fresh` / `FAIL stale`)
    without changing its exit code. The watchdog writes one `WARN` per fire while
    a stale lock is present.
@@ -281,7 +281,7 @@ rolled back.
   version-pinned MSIX paths disappear on PowerShell updates. Keep daemon and
   auto-start scripts ASCII-only for Windows PowerShell 5.1 fallback.
 - **Antiphon AppHost Watchdog** runs every two minutes, delayed 15 minutes after
-  logon. Each fire starts `scripts/watchdog-apphost.ps1` from the checkout that
+  logon. Each fire starts `scripts/watchdog-apphost.ps1` (a thin launcher of the `watchdog-apphost` command, which runs `restart-apphost` in its own process) from the checkout that
   registered the task and reads its current scripts. Script-only changes take
   effect on the next fire; an AppHost restart does not reload the watchdog, and
   task re-registration is unnecessary for those changes. It probes API `/health`
@@ -289,15 +289,15 @@ rolled back.
   fresh launch/restart locks (subject to the dead-launch exception below), and
   does not count exit 3 as a restart.
 - To suppress recovery for deliberate downtime, run
-  `pwsh -File scripts/set-apphost-maintenance.ps1` before stopping the stack.
+  `scripts\antiphon.cmd set-apphost-maintenance` before stopping the stack.
   This records intent and disables the watchdog; it does not stop AppHost itself.
-  Do not start the AppHost task while downtime is intended. `-Clear` restores
+  Do not start the AppHost task while downtime is intended. `--clear` restores
   watchdog operation. Directly disabling **Antiphon AppHost Watchdog** also stops
   recovery, but the state observer reports it as unintentional. Postgres stays up.
 
 ## Maintenance is the end state after topology B (CARD-1744)
 
-Once the CARD-1744 window has completed, maintenance on the desktop is the end state: marker present (`logs/apphost.down-on-purpose`), the logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. `scripts/set-apphost-maintenance.ps1 -EnterIfAbsent` is what records that marker and disables the watchdog. The state observer reports that maintenance on purpose. `scripts/restart-apphost.ps1` is the rollback path back to the desktop server, not the production restart. Clearing the marker while the Linux server is the writer would let the watchdog start a second server. Until the window, the deliberate-downtime steps above are unchanged: enter maintenance only for a stop you intend to leave. The operating detail is [Production server on the server2 host (CARD-1744)](docker-stack.md#production-server-on-the-server2-host-card-1744).
+Once the CARD-1744 window has completed, maintenance on the desktop is the end state: marker present (`logs/apphost.down-on-purpose`), the logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. `scripts\antiphon.cmd set-apphost-maintenance --enter-if-absent` (the cutover runs its launcher, `scripts/set-apphost-maintenance.ps1 -EnterIfAbsent`) is what records that marker and disables the watchdog. The state observer reports that maintenance on purpose. `scripts/restart-apphost.ps1` is the rollback path back to the desktop server, not the production restart. Clearing the marker while the Linux server is the writer would let the watchdog start a second server. Until the window, the deliberate-downtime steps above are unchanged: enter maintenance only for a stop you intend to leave. The operating detail is [Production server on the server2 host (CARD-1744)](docker-stack.md#production-server-on-the-server2-host-card-1744).
 
 ## What was measured when doing this wrong
 

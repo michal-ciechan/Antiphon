@@ -1375,7 +1375,7 @@ concurrency tokens and PowerShell's quoting hazards.
 | `scripts/antiphon delegate` | create / `status` / `reply` / `refine` a delegated task |
 | `scripts/antiphon github-sync` | a bidirectional tracker push (`--board-id`, `--notify`) |
 | `scripts/antiphon checkpoint-task` | WIP-commit a stalled task's work without killing it (`--task-id <id> [--push] [--dry-run]`) |
-| `verify-dev-stack.ps1` | health check across the whole stack |
+| `verify-dev-stack` | health check across the whole stack |
 
 Both the card command and `scripts/antiphon delegate` read `ANTIPHON_API`, defaulting to
 `http://localhost:17202`. Inside a running agent session, `ANTIPHON_API` is already set.

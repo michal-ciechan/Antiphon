@@ -48,7 +48,7 @@ public sealed class DelegateScriptBindDiagnosisTests
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("diagnosis: served build aaaaaaa rejected 'Mutation' for 'role'");
         run.Output.ShouldContain("is not a commit this checkout knows");
-        run.Output.ShouldContain("restart-apphost.ps1");
+        run.Output.ShouldContain("scripts/antiphon restart-apphost");
         run.Output.ShouldContain("do not re-dispatch under a different --role");
         run.Output.ShouldContain("could not be converted");
         server.CreateCalls.ShouldBe(1);
@@ -106,7 +106,7 @@ public sealed class DelegateScriptBindDiagnosisTests
         run.ExitCode.ShouldBe(1, run.Output);
         run.Output.ShouldContain("GET " + server.BaseUrl.TrimEnd('/') + "/api/version failed (404)");
         run.Output.ShouldContain("rejected 'Mutation' for 'role'");
-        run.Output.ShouldContain("restart-apphost.ps1");
+        run.Output.ShouldContain("scripts/antiphon restart-apphost");
         server.CreateCalls.ShouldBe(1);
     }
 

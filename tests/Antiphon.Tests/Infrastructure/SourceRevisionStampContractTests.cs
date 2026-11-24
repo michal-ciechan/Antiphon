@@ -77,19 +77,21 @@ public sealed class SourceRevisionStampContractTests
     [Test]
     public void Restart_apphost_refuses_an_unstamped_server()
     {
-        var restart = DockerStackDocuments.Read("scripts/restart-apphost.ps1");
+        // Unit 31 of 2026-11-22-remaining-ps1-to-csharp.md: the restart is the restart-apphost command (scripts/restart-apphost.ps1
+        // is its launcher); AppHostRestartTests.A_different_loaded_sha_is_exit_5_with_the_lock_kept_and_the_child_left_running runs it.
+        var restart = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/AppHostRestart.cs");
         restart.ShouldContain("dev-aspire.ps1");
-        restart.ShouldContain("exit 5");
+        restart.ShouldContain("return 5;");
         restart.ShouldContain("server build unverified");
-        var verified = restart.IndexOf("if ($dashUrl -and $backendOk -and $identityVerified)", StringComparison.Ordinal);
-        var success = restart.IndexOf("exit 0", verified, StringComparison.Ordinal);
+        var verified = restart.IndexOf("if (dashUrl != null && backendOk && verified)", StringComparison.Ordinal);
+        var success = restart.IndexOf("return 0;", verified, StringComparison.Ordinal);
         verified.ShouldBeGreaterThanOrEqualTo(0);
         success.ShouldBeGreaterThan(verified);
 
-        var common = DockerStackDocuments.Read("scripts/apphost-common.ps1");
-        common.ShouldContain("function Resolve-AppHostLoadedIdentity");
-        common.ShouldContain("Reason = 'malformed'");
-        common.ShouldContain("'^[0-9a-fA-F]{40}$'");
+        var common = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/AppHostCommon.cs");
+        common.ShouldContain("public static AppHostLoadedIdentity LoadedIdentity(AppHostHttpAnswer probe)");
+        common.ShouldContain("new AppHostLoadedIdentity(false, sha, \"malformed\")");
+        common.ShouldContain("\"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$\"");
 
         var aspire = DockerStackDocuments.Read("dev-aspire.ps1");
         aspire.ShouldContain("Set-Location '$appHostDir'");

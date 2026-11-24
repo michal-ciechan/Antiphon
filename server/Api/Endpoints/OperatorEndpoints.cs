@@ -45,7 +45,7 @@ public static class OperatorEndpoints
         {
             OperatorCredential.Require(
                 http, settings.Value,
-                "Shutdown requires the operator token (scripts/restart-apphost.ps1 sends it).");
+                "Shutdown requires the operator token (scripts/antiphon restart-apphost sends it).");
             if (body?.Reason is { Length: > 200 })
                 throw new ValidationException("reason", "Shutdown reason must be at most 200 characters.");
             var reason = body?.Reason;

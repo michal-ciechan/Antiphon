@@ -1056,21 +1056,9 @@ function Test-W6 {
     else { Write-Fail 'W-6' ($reasons -join ' || ') }
 }
 
-function Test-W7 {
-    $harness = Join-Path $here 'test-apphost-graceful-stop.ps1'
-    $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
-    $reasons = @()
-    foreach ($id in @('T9', 'T10', 'T12')) {
-        $output = @(& $pwsh -NoProfile -File $harness -Case $id 2>&1 | ForEach-Object { $_.ToString() })
-        $text = $output -join "`n"
-        $code = $LASTEXITCODE
-        if ($code -ne 0 -or $text -notmatch 'PASS ') {
-            $reasons += ("{0} exit={1} {2}" -f $id, $code, $text)
-        }
-    }
-    if ($reasons.Count -eq 0) { Write-Pass 'W-7' }
-    else { Write-Fail 'W-7' ($reasons -join ' || ') }
-}
+# W-7 (restart-apphost -StopOnly -WhatIf, -StopOnly, and -WhatIf without -StopOnly) ran test-apphost-graceful-stop.ps1
+# cases T9, T10 and T12. Since unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md the restart is the
+# restart-apphost command and those cases run in process (AppHostRestartTests.StopOnly_*, WhatIf_without_StopOnly_refuses).
 
 function Test-W8 {
     $files = @(
@@ -2295,7 +2283,7 @@ function Test-W38 {
     else { Write-Fail 'W-38' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38')
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38')
 $script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38')
 function Invoke-C1407Case {
     param([string]$Name)

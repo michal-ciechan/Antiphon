@@ -4,8 +4,8 @@
     Thin launcher for `antiphon-scripts check-daemon-build` (scripts/lib/Antiphon.Nightly/DaemonBuildCheck.cs): warn when
     an adopted daemon was built before a source change in its project closure. Advisory by default.
 
-    Unit 30 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/restart-apphost.ps1 and
-    dev-aspire.ps1 run this file by path. Delete it when they are ported. Agents and operators run
+    Unit 30 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because dev-aspire.ps1 runs this file by path
+    (restart-apphost runs the check in process since unit 31). Delete it when dev-aspire.ps1 is ported. Agents and operators run
     `scripts/antiphon check-daemon-build` (Windows: scripts\antiphon.cmd check-daemon-build) directly.
 
     -FailOnStale is the command's --fail-on-stale. The command's exit code is returned; 9 when the CLI cannot be built or

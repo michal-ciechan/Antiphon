@@ -79,7 +79,7 @@ If an AppHost may already exist (including the logon Scheduled Task), restart
 instead of launching a second copy:
 
 ```powershell
-pwsh -File C:\src\antiphon\scripts\restart-apphost.ps1
+C:\src\antiphon\scripts\antiphon.cmd restart-apphost
 ```
 
 First launch only, when nothing is listening:
@@ -103,8 +103,8 @@ The script will:
 Run the one-shot health check. It covers Docker daemon, HNS network health, Postgres container, all listening ports, HTTP health endpoints, dashboard, and a browser smoke test — and prints a status table:
 
 ```powershell
-pwsh -File C:\src\antiphon\verify-dev-stack.ps1            # full check (Aspire mode)
-pwsh -File C:\src\antiphon\verify-dev-stack.ps1 -SkipBrowser   # faster, no Playwright
+C:\src\antiphon\scripts\antiphon.cmd verify-dev-stack                 # full check (Aspire mode)
+C:\src\antiphon\scripts\antiphon.cmd verify-dev-stack --skip-browser  # faster, no Playwright
 ```
 
 Exit 0 = healthy; exit 1 = it lists exactly which checks failed and the fix hint. **Always prefer this over manual `Get-NetTCPConnection` / `Test-NetConnection` loops** — that's what it's for.

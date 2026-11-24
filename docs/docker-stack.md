@@ -1498,7 +1498,7 @@ Runner image rollback stays the staged rollout above. A control-plane move does 
 phases. It changes which API they call (CARD-1744).
 
 Under B, Aspire does not supervise the production server. The server container's restart policy
-plus CARD-1745's SHA check replace `restart-apphost.ps1` for that process. AppHost remains
+plus CARD-1745's SHA check replace `restart-apphost` for that process. AppHost remains
 installed so rollback can start the desktop server, the Windows runner, and the fake gateway.
 Scheduled Tasks (`docs/bootstrap.md:251-259`) stay the desktop autostart. They are not
 reimplemented as Linux cron in this contract. The embedded `wwwroot` client is the B UI. The
@@ -1509,7 +1509,7 @@ desktop Vite/serve client remains the rollback UI.
 `scripts/restart-linux-server.ps1` is the host-side gate for one configured Linux server
 container. Topology A leaves it off. With no `-Config` and no `ANTIPHON_LINUX_SERVER_CONFIG`,
 the script exits 3, prints that the Linux server is not configured, and does not probe, lock,
-or call docker. `scripts/restart-apphost.ps1` remains the desktop AppHost restart.
+or call docker. `scripts\antiphon.cmd restart-apphost` remains the desktop AppHost restart.
 
 A config file supplies `baseUrl`, `container`, and `lockPath`. The default mode is WhatIf:
 `GET /health` and `GET /api/version` against that base URL, with no docker call. Exit 0
@@ -2210,7 +2210,7 @@ Nothing in this card starts the project. Rollback is to remove the compose proje
 
 This is the topology B operating shape from the [CARD-1744 plan](superpowers/plans/2026-11-08-card-1744-cutover-plan.md). It does not record that the window has run. Topology A above remains the supported production deployment until that window. Nothing here starts a container, edits DNS, or prints a password, token, or key.
 
-The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`. `-Execute` is host-only. Once this container is the control plane, `scripts/restart-linux-server.ps1` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts/restart-apphost.ps1` is the desktop rollback path. Until the window, `scripts/restart-apphost.ps1` remains the desktop production restart.
+The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`. `-Execute` is host-only. Once this container is the control plane, `scripts/restart-linux-server.ps1` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts\antiphon.cmd restart-apphost` is the desktop rollback path. Until the window, `scripts\antiphon.cmd restart-apphost` remains the desktop production restart.
 
 ### O-14 and the board dependencies
 
@@ -2250,15 +2250,15 @@ The operator generates an installation certificate on the host. `KEYRING_CERT_FI
 
 ### Rollback
 
-Do not run `scripts/restart-apphost.ps1` while the Linux server is a writer. Do not delete `antiphon_pgdata`.
+Do not run `scripts\antiphon.cmd restart-apphost` while the Linux server is a writer. Do not delete `antiphon_pgdata`.
 
 | Stage | What is true | Rollback |
 |---|---|---|
-| R-1 | Maintenance is entered, the desktop server is stopped, and the Linux server has not started | Re-add the AppHost user-secret `ConnectionStrings:DefaultConnection`, run `scripts/restart-apphost.ps1` from `C:\src\Antiphon`, run `scripts/set-apphost-maintenance.ps1 -Clear`, and enable the logon task `Antiphon AppHost`. |
+| R-1 | Maintenance is entered, the desktop server is stopped, and the Linux server has not started | Re-add the AppHost user-secret `ConnectionStrings:DefaultConnection`, run `scripts\antiphon.cmd restart-apphost` from `C:\src\Antiphon`, run `scripts\antiphon.cmd set-apphost-maintenance --clear`, and enable the logon task `Antiphon AppHost`. |
 | R-2 | The Linux server has started and the public origin has not switched | On the host, `docker compose -p antiphon-server2-server stop`, then R-1. Restore `Project.LocalRepositoryPath` from the window's before column. |
 | R-3 | The public origin points at server2 | Switch the vhost back to the desktop first, stop the Linux project, confirm `pg_stat_activity` has no production-compose client, then R-1. Sessions launched on Linux are orphaned seats. |
 
-Phase 2 `desktop-win` rollback runs before R-2 and before R-3 when that mode was started. Delete `C:\Antiphon\runner\phone-home.json`, run `scripts\antiphon.cmd restart-session-runner --hard` from `C:\src\Antiphon`, and verify direct mode as specified in the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3). The AppHost restart is parent R-1, after `docker compose -p antiphon-server2-server stop` and after `pg_stat_activity` shows no production-compose client. S4 (`e1b42f895`) is in the serving rc. While the file exists, `scripts/restart-apphost.ps1` exits 3 with `REFUSED: phone-home-config-present` before any stop or launch unless `-StopOnly` is set. `dev-aspire.ps1` checks the same path before launch. While Linux is the writer, leave the phase-2 file and the maintenance marker in place.
+Phase 2 `desktop-win` rollback runs before R-2 and before R-3 when that mode was started. Delete `C:\Antiphon\runner\phone-home.json`, run `scripts\antiphon.cmd restart-session-runner --hard` from `C:\src\Antiphon`, and verify direct mode as specified in the [phase-2 rollback sequence](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md#phase-2-rollback-in-front-of-r-2-and-r-3). The AppHost restart is parent R-1, after `docker compose -p antiphon-server2-server stop` and after `pg_stat_activity` shows no production-compose client. S4 (`e1b42f895`) is in the serving rc. While the file exists, `scripts\antiphon.cmd restart-apphost` exits 3 with `REFUSED: phone-home-config-present` before any stop or launch unless `-StopOnly` is set. `dev-aspire.ps1` checks the same path before launch. While Linux is the writer, leave the phase-2 file and the maintenance marker in place.
 
 Maintenance on the desktop is the end state after a completed window: marker present (`logs/apphost.down-on-purpose`), the AppHost logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. The state observer reports `maintenance=true` on purpose. Clearing the marker is rollback, not the steady state.
 
@@ -2290,7 +2290,7 @@ unconfigured name keeps the Linux behaviour (Codex pinned to `/usr/local/bin/cod
    `RunnerRepository=C:/Antiphon/runner/work/repos/antiphon`, `MaxCapacity=2`, the laptop's
    `ChildClaudeHome`/`ChildCodexHome`/`ChildGrokHome` and `RawExeAllowList:0` (the start script
    prints all of them), `CallbackOrigin=https://antiphon.desktop.codeperf.net` and `SharedSecret`.
-   Restart with `scripts/restart-apphost.ps1`; `GET /api/session-runners` then lists the id.
+   Restart with `scripts\antiphon.cmd restart-apphost`; `GET /api/session-runners` then lists the id.
 2. **Laptop.** Write the same secret to `C:\Antiphon\runner\secrets\phone-home` and run
    `pwsh -NoProfile -File scripts/start-windows-phone-home-runner.ps1 -RunnerId laptop` from a normal
    terminal (an agent shell's Job Object would kill the detached pty hosts). The runner clones its

@@ -381,7 +381,7 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("Runners:server2");
         text.ShouldContain("Runners:server2-temp");
         text.ShouldContain("AllowDelegatedTasks=true");
-        text.ShouldContain("restart-apphost.ps1");
+        text.ShouldContain("restart-apphost");
         text.ShouldContain("scripts/antiphon delegate create --runner server2");
         // The rule that caused CARD-0358: enablement runs from the main checkout, not a worktree.
         text.ShouldContain("never a worktree");
@@ -555,13 +555,13 @@ public sealed class DockerStackDocumentationTests
             "ZombieCensus__Enabled",
             "Serilog__LogPath",
             "scripts/restart-linux-server.ps1",
-            "scripts/restart-apphost.ps1",
+            "restart-apphost",
         })
             section.ShouldContain(pin, Case.Sensitive, "c1779-stack: " + pin);
 
         var agents = Read("AGENTS.md");
         agents.ShouldContain("`scripts/restart-linux-server.ps1` is the production server restart", Case.Sensitive, "c1779-agents-restart");
-        agents.ShouldContain("`scripts/restart-apphost.ps1` is the rollback path", Case.Sensitive, "c1779-agents-rollback");
+        agents.ShouldContain("`scripts/antiphon restart-apphost` is the rollback path", Case.Sensitive, "c1779-agents-rollback");
         agents.ShouldContain("maintenance on the desktop is the end state", Case.Sensitive, "c1779-agents-maintenance");
         agents.ShouldContain("marker present", Case.Sensitive, "c1779-agents-marker");
         agents.ShouldContain("AppHost logon task", Case.Sensitive, "c1779-agents-logon");

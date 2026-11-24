@@ -21,10 +21,13 @@ public sealed class LinuxServerRestartGateTests
     [
         "scripts/restart-apphost.ps1",
         "scripts/apphost-common.ps1",
-        "scripts/start-apphost.ps1",
         "scripts/autostart-apphost.ps1",
         "dev-aspire.ps1",
         "Antiphon.AppHost/Program.cs",
+        // Unit 31 of 2026-11-22-remaining-ps1-to-csharp.md: the desktop restart, its library and the logon start are C#.
+        "scripts/lib/Antiphon.Nightly/AppHostRestart.cs",
+        "scripts/lib/Antiphon.Nightly/AppHostCommon.cs",
+        "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
     ];
 
     [Test]

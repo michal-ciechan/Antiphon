@@ -1,6 +1,7 @@
 // CARD-0604: warn when an adopted daemon was built before a source change in its project closure (unit 30 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md). It replaced the body of scripts/check-daemon-build.ps1,
-// which stays as a thin launcher because restart-apphost.ps1 and dev-aspire.ps1 run it by path. The CLI runs it as
+// which stays as a thin launcher because dev-aspire.ps1 runs it by path (restart-apphost runs this class in process since unit 31).
+// The CLI runs it as
 //
 //   antiphon-scripts check-daemon-build [--fail-on-stale]
 //

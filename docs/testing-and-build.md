@@ -960,8 +960,8 @@ can be missed. Keep candidate diagnostics and record reasoned non-behavior
 exemptions instead of hiding matches.
 
 Check startup impact for either side of a rename/delete touching `dev-aspire.ps1`,
-`scripts/restart-apphost.ps1`, `scripts/build-slot.ps1`, `scripts/lib/**`,
-`scripts/apphost-common.ps1`, `Antiphon.AppHost/**` or a reviewed dependency.
+`scripts/restart-apphost.ps1`, `scripts/build-slot.ps1`, `scripts/lib/**` (the AppHost commands are
+`scripts/lib/Antiphon.Nightly/AppHost*.cs`), `scripts/apphost-common.ps1`, `Antiphon.AppHost/**` or a reviewed dependency.
 Document/test-only changes can say not applicable with their actual census and
 reason. Other matched paths require a native obligation; pending is valid lint
 syntax, not permission for an rc pick. Follow the [native probe and restart
@@ -1152,7 +1152,7 @@ Bash - MSYS rewrites a bare `/work` argument into `C:/Program Files/Git/work` (C
    temp entry stays configured: offline it is unavailable and costs nothing. Also
    `PhoneHomeRunner:Enabled=true`. The legacy `AllowedRunnerId` key is only the import the catalogue
    normalises when the map is empty; do not keep a second shape beside the map.
-2. `pwsh -NoProfile -File scripts/restart-apphost.ps1`.
+2. `scripts\antiphon.cmd restart-apphost`.
 3. Confirm `GET /api/version` is the SHA you just built, then
    `GET /api/session-runners` lists `desktop`, `server2` and `server2-temp`.
    `GET /api/session-runners/server2/status` reports `available: true` and
@@ -1207,8 +1207,8 @@ Only inside `ScratchGitRepo`, `LandingGitFixture` or `LandingSafetyHarness` temp
 Resolve the path with `git rev-parse --path-format=absolute --git-path index.lock` in the
 checkout under test; create it with `File.WriteAllBytes(path, [])`; age it with
 `File.SetLastWriteTimeUtc(path, DateTime.UtcNow - TimeSpan.FromHours(1))`. Never read or
-write `C:\src\Antiphon\.git`. Script coverage: `pwsh -File scripts/test-apphost-git-index-lock.ps1`
-(scratch repo under `$env:TEMP`; does not touch `logs/apphost.*.lock`).
+write `C:\src\Antiphon\.git`. Coverage: `AppHostCommonTests`, in process
+(`AppHostWorld`: a temporary root and a faked `git`; it never touches the checkout's `logs/apphost.*.lock`).
 
 ### CARD-0443 Windows cleanup qualification
 

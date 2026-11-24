@@ -1,20 +1,17 @@
+#requires -Version 5.1
 <#
 .SYNOPSIS
-    One-shot health check for the Antiphon dev stack. Run this INSTEAD of
-    manually probing ports / reading logs every time you want to know if the
-    stack is up.
+    Thin launcher for `antiphon-scripts verify-dev-stack` (scripts/lib/Antiphon.Nightly/DevStackVerify.cs): the one-shot
+    health check of the local dev stack. Aspire mode (default, Windows: ports 1720x) or -SimpleMode (the compose stack: API
+    17281, client 17282, runner 17204). Every check is reported before the verdict.
 
-    Defaults to Windows Aspire AppHost mode (dev-aspire.ps1 — ports 1720x).
-    Use -SimpleMode for the docker-compose stack (dev-start.ps1 — API 17281 / client 17282;
-    session-runner is the always-on daemon on 17204).
+    Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/deploy-local.ps1, restart.ps1
+    and scripts/bootstrap-check.ps1 run this file by path. Agents run `scripts/antiphon verify-dev-stack`; Windows runbooks
+    `scripts\antiphon.cmd verify-dev-stack`.
 
-    Reports a full status table and only throws at the end if something core
-    is down — so you get the whole picture in one run, not a death on the
-    first failure.
-.PARAMETER SimpleMode   Check the docker-compose stack (API 17281 / client 17282; runner 17204) instead of Aspire.
-.PARAMETER SkipBrowser  Skip the Playwright browser smoke test.
-.PARAMETER TimeoutSec   Per-request HTTP timeout (default 10).
-.PARAMETER ProbeListeningPorts  Print listening TCP ports and return. Uses Get-NetTCPConnection when that cmdlet exists, otherwise ss -ltn.
+    The parameters are the script's, passed when given: -SimpleMode, -SkipBrowser, -TimeoutSec, -ProbeListeningPorts. The
+    command's exit code is returned (0 verified, 1 a core check failed); 9 when the CLI cannot be built or started (one
+    stderr line). ASCII-only: parseable under Windows PowerShell 5.1.
 #>
 param(
     [switch]$SimpleMode,
@@ -23,158 +20,11 @@ param(
     [switch]$ProbeListeningPorts
 )
 
-$ErrorActionPreference = "Stop"
-
-function Get-DevStackListeningPorts {
-    # Get-NetTCPConnection is a Windows cmdlet. -ErrorAction does not bind when
-    # the command itself is absent, so Linux lists listeners with ss -ltn.
-    if (Get-Command -Name Get-NetTCPConnection -ErrorAction SilentlyContinue) {
-        return @((Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique)
-    }
-
-    $raw = & ss -ltn 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw ("ss -ltn failed: {0}" -f (($raw | Out-String).Trim()))
-    }
-    $ports = foreach ($line in @($raw)) {
-        $text = [string]$line
-        if ($text -notmatch '^\s*LISTEN\b') { continue }
-        $fields = @($text -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($fields.Count -lt 4) { continue }
-        $local = [string]$fields[3]
-        $colon = $local.LastIndexOf(':')
-        if ($colon -lt 0 -or $colon -ge ($local.Length - 1)) { continue }
-        $portValue = 0
-        if ([int]::TryParse($local.Substring($colon + 1), [ref]$portValue)) { $portValue }
-    }
-    return @($ports | Sort-Object -Unique)
-}
-
-if ($ProbeListeningPorts) {
-    foreach ($port in @(Get-DevStackListeningPorts)) { Write-Output $port }
-    return
-}
-
-if (-not $SimpleMode -and -not $IsWindows) {
-    throw 'desktop-platform-required: Full Aspire dev-stack smoke requires Windows. Use -ProbeListeningPorts for a portable listener-only probe, or explicit -SimpleMode for the compose stack.'
-}
-
-$RepoRoot = $PSScriptRoot
-. (Join-Path $RepoRoot 'scripts\apphost-common.ps1')
-
-# ── Port / URL scheme ──────────────────────────────────────────────────────
-if ($SimpleMode) {
-    $BackendUrl  = "http://localhost:17281"
-    $FrontendUrl = "http://localhost:17282"
-    $RunnerUrl   = "http://localhost:17204"
-    $corePorts   = 17280, 17281, 17282
-    $dashboardUrl = $null
-} else {
-    $BackendUrl  = "http://localhost:17202"
-    $FrontendUrl = "http://localhost:17203"
-    $RunnerUrl   = "http://localhost:17204"
-    $corePorts   = 17200, 17202, 17203, 17204, 17205, 17206
-    $dashboardUrl = "http://localhost:17205"
-}
-
-$results = [System.Collections.Generic.List[object]]::new()
-function Add-Result { param($Name, $Ok, $Detail)
-    $results.Add([pscustomobject]@{ Check = $Name; Status = ($Ok ? 'OK' : 'FAIL'); Detail = $Detail })
-    $color = $Ok ? 'Green' : 'Red'
-    Write-Host ("  {0,-28} {1,-5} {2}" -f $Name, ($Ok ? 'OK' : 'FAIL'), $Detail) -ForegroundColor $color
-}
-
-Write-Host "`n=== Verifying Antiphon dev stack ($($SimpleMode ? 'simple/compose' : 'Aspire')) ===" -ForegroundColor Cyan
-
-# ── 1. Docker daemon + network health (Aspire only — it needs containers) ──
-if (-not $SimpleMode) {
-    $j = Start-Job { docker version 2>&1 | Select-String 'Server:' }
-    $done = $j | Wait-Job -Timeout 12
-    $dockerUp = $done -and (Receive-Job $j)
-    Remove-Job $j -Force
-    Add-Result "Docker daemon" ([bool]$dockerUp) ($dockerUp ? "reachable" : "unreachable — run docker-desktop skill / restart.cmd")
-
-    if ($dockerUp) {
-        # HNS health: docker network create must not hang
-        $testNet = "verify-hns-$(Get-Random)"
-        $nj = Start-Job { param($n) docker network create $n 2>&1 } -ArgumentList $testNet
-        $netDone = $nj | Wait-Job -Timeout 8
-        $hnsOk = $netDone -and $netDone.State -eq 'Completed'
-        Remove-Job $nj -Force -ErrorAction SilentlyContinue
-        if ($hnsOk) { docker network rm $testNet 2>&1 | Out-Null }
-        Add-Result "Docker network (HNS)" $hnsOk ($hnsOk ? "create OK" : "HANGS — restart Docker Desktop (Windows HNS broken)")
-
-        # Postgres container up — always-on external container 'antiphon-postgres'
-        # (docker-compose.dev.yml, restart: unless-stopped). It is NOT the old
-        # Aspire-managed 'DefaultConnection' container, which no longer exists.
-        $pg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
-        Add-Result "Postgres container" ([bool]$pg) ($pg ? "$pg" : "not Up — check 'docker ps -a --filter name=antiphon-postgres'")
-    }
-}
-
-# ── 2. Listening ports ──────────────────────────────────────────────────────
-$listening = @(Get-DevStackListeningPorts)
-foreach ($p in $corePorts) {
-    $open = $listening -contains $p
-    Add-Result "Port $p" $open ($open ? "listening" : "closed")
-}
-
-# ── 3. HTTP health endpoints ────────────────────────────────────────────────
-function Test-Endpoint { param($Name, $Uri, $Method = 'GET', $Expect = '')
-    try {
-        $req = @{ Uri = $Uri; Method = $Method; UseBasicParsing = $true; TimeoutSec = $TimeoutSec }
-        if ($Method -eq 'POST') { $req.ContentType = 'application/json'; $req.Body = '' }
-        $r = Invoke-WebRequest @req
-        $ok = $r.StatusCode -ge 200 -and $r.StatusCode -lt 300 -and (-not $Expect -or $r.Content -like "*$Expect*")
-        Add-Result $Name $ok "HTTP $($r.StatusCode)"
-    } catch {
-        Add-Result $Name $false $_.Exception.Message
-    }
-}
-
-Test-Endpoint "Session runner health" "$($RunnerUrl.TrimEnd('/'))/health"  'GET'  'Healthy'
-Test-Endpoint "Backend health"        "$($BackendUrl.TrimEnd('/'))/health" 'GET'  'Healthy'
-Test-Endpoint "Frontend API proxy"    "$($FrontendUrl.TrimEnd('/'))/api/projects"
-Test-Endpoint "Frontend SignalR"      "$($FrontendUrl.TrimEnd('/'))/hubs/antiphon/negotiate?negotiateVersion=1" 'POST'
-if ($dashboardUrl) { Test-Endpoint "Aspire dashboard" $dashboardUrl }
-
-# ── 4. Optional browser smoke ───────────────────────────────────────────────
-if (-not $SkipBrowser) {
-    try {
-        $debugScript = Join-Path $RepoRoot "tests\Antiphon.E2E\bin\Debug\net9.0\playwright.ps1"
-        if (-not (Test-Path $debugScript)) {
-            dotnet build (Join-Path $RepoRoot "tests\Antiphon.E2E\Antiphon.E2E.csproj") --nologo | Out-Null
-        }
-        if (Test-Path $debugScript) {
-            $shotDir = Join-Path $RepoRoot "tests\Antiphon.E2E\TestOutput\Screenshots"
-            New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
-            $shot = Join-Path $shotDir "dev-stack-smoke.png"
-            & $debugScript screenshot $FrontendUrl.TrimEnd('/') $shot --wait-for-selector "text=Workflows" --wait-for-timeout 5000 --viewport-size "1280,720"
-            Add-Result "Browser smoke" ($LASTEXITCODE -eq 0) ($LASTEXITCODE -eq 0 ? $shot : "playwright exit $LASTEXITCODE")
-        } else {
-            Add-Result "Browser smoke" $false "playwright.ps1 not found"
-        }
-    } catch { Add-Result "Browser smoke" $false $_.Exception.Message }
-}
-
-# CARD-0543: report a present lock; do not fail the stack exit on it.
-$gitIndexLock = Get-AppHostGitIndexLock -SourceRoot $RepoRoot
-if ($null -eq $gitIndexLock) {
-    Add-Result "Git index lock" $true "absent"
-} elseif ($gitIndexLock.Stale) {
-    Add-Result "Git index lock" $false ("stale ({0:n1} min) at {1} — Remove-Item '{1}'" -f $gitIndexLock.AgeMinutes, $gitIndexLock.Path)
-} else {
-    Add-Result "Git index lock" $true ("fresh ({0:n1} min)" -f $gitIndexLock.AgeMinutes)
-}
-
-# ── Summary ─────────────────────────────────────────────────────────────────
-$failed = $results | Where-Object { $_.Status -eq 'FAIL' -and $_.Check -ne 'Git index lock' }
-Write-Host ""
-if ($failed) {
-    Write-Host "Stack NOT healthy — $($failed.Count) check(s) failed:" -ForegroundColor Red
-    $failed | ForEach-Object { Write-Host "  - $($_.Check): $($_.Detail)" -ForegroundColor Red }
-    exit 1
-} else {
-    Write-Host "Antiphon dev stack verified — all checks passed." -ForegroundColor Green
-    exit 0
-}
+$ErrorActionPreference = 'Continue'
+. (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')
+$arguments = @()
+if ($SimpleMode) { $arguments += '--simple-mode' }
+if ($SkipBrowser) { $arguments += '--skip-browser' }
+if ($PSBoundParameters.ContainsKey('TimeoutSec')) { $arguments += @('--timeout-sec', [string]$TimeoutSec) }
+if ($ProbeListeningPorts) { $arguments += '--probe-listening-ports' }
+exit (Invoke-AntiphonCli -Command 'verify-dev-stack' -Arguments $arguments)

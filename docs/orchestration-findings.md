@@ -330,6 +330,6 @@ server on 17202 has not loaded them. `GET /api/distillations/stats` is 404, no
 `DistillationEndpoints`. Shadow/Apply/timeout/recreate are covered by
 `OutputDistillationTests` (11) and `OutputDistillerProvisionerTests` (10). The live canary
 (Shadow distill of a ≥1 500-char `ReplyTo=Session` report, timings vs the 45 s budget, Flag,
-kill-mid-flight, delete-and-recreate) needs `restart-apphost.ps1` from the main checkout.
+kill-mid-flight, delete-and-recreate) needs `scripts/antiphon restart-apphost` from the main checkout.
 `OutputDistillerMode` stays **Shadow**; Apply is the operator flip after a week of ledger,
 not a first-boot switch.

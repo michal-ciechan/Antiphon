@@ -1957,30 +1957,6 @@
   },
   "scriptCensus": [
     {
-      "id": "test-apphost-graceful-stop",
-      "path": "scripts/test-apphost-graceful-stop.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
-      "id": "test-apphost-lock-age",
-      "path": "scripts/test-apphost-lock-age.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
-      "id": "test-apphost-main-worktree-guard",
-      "path": "scripts/test-apphost-main-worktree-guard.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
-      "id": "test-apphost-probe-class",
-      "path": "scripts/test-apphost-probe-class.ps1",
-      "disposition": "unattended",
-      "wildcard": false
-    },
-    {
       "id": "test-client",
       "path": "scripts/test-client.ps1",
       "disposition": "wrapper",

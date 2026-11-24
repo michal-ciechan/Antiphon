@@ -31,6 +31,7 @@ $helperPath = Join-Path $PSScriptRoot 'lib\windows-phone-home-env.ps1'
 $startPath = Join-Path $PSScriptRoot 'start-windows-phone-home-runner.ps1'
 $autostartPath = Join-Path $PSScriptRoot 'autostart-session-runner.ps1'
 $restartPath = Join-Path $PSScriptRoot 'restart-apphost.ps1'
+$restartCsPath = Join-Path $PSScriptRoot 'lib/Antiphon.Nightly/AppHostRestart.cs'
 $aspirePath = Join-Path $repoRoot 'dev-aspire.ps1'
 $script:helperLoaded = $false
 if (Test-Path -LiteralPath $helperPath) {
@@ -361,29 +362,17 @@ function Invoke-ApphostGuard {
         $absent = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent $false -ConfigPath 'C:\Antiphon\runner\phone-home.json'
         Assert-C1744 ($null -eq $absent) 'apphost-guard.absent' ([string]$absent)
     }
-    $restartAst = Get-ScriptAst $restartPath
-    $guard = Get-FirstCommand $restartAst.ast 'Get-WindowsPhoneHomeLaunchRefusal'
-    $work = Get-FirstCommand $restartAst.ast 'Get-AppHostWorktreeClassification'
-    $dangerNames = @('Invoke-WebRequest', 'Invoke-RestMethod', 'Stop-Process', 'New-AppHostRestartLock', 'Start-AppHostDevLaunch', 'Invoke-AppHostGracefulStop', 'Stop-AppHostLaunchChild')
-    $earliestStart = -1
-    foreach ($dangerName in $dangerNames) {
-        $hit = Get-FirstCommand $restartAst.ast $dangerName
-        if ($null -ne $hit) {
-            if ($earliestStart -lt 0 -or $hit.Start -lt $earliestStart) { $earliestStart = [int]$hit.Start }
-        }
-    }
-    $orderOk = $false
-    $orderDetail = 'guard call absent'
-    if ($null -ne $guard -and $null -ne $work) {
-        $afterWork = $guard.Start -gt $work.End
-        $beforeDanger = $true
-        if ($earliestStart -ge 0) { $beforeDanger = $guard.End -lt $earliestStart }
-        $exempt = [bool]$guard.Exempt
-        $orderOk = $afterWork -and $beforeDanger -and $exempt
-        if (-not $orderOk) { $orderDetail = 'after=' + [string]$afterWork + ' before=' + [string]$beforeDanger + ' exempt=' + [string]$exempt }
-        else { $orderDetail = '' }
-    }
-    Assert-C1744 $orderOk 'apphost-guard.restart-order' $orderDetail
+    # Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: restart-apphost.ps1 is a thin launcher of the
+    # restart-apphost command. The refusal runs in C# (WindowsPhoneHome.LaunchRefusal) after the worktree guard and before
+    # the restart lock, the graceful stop and any kill; AppHostRestartTests runs it, this row pins the order in the source.
+    $launcherText = [System.IO.File]::ReadAllText($restartPath)
+    $restartCs = [System.IO.File]::ReadAllText($restartCsPath)
+    $launcherOk = $launcherText.Contains("Invoke-AntiphonCli -Command 'restart-apphost'") -and -not $launcherText.Contains('Stop-Process')
+    $work = $restartCs.IndexOf('AppHostWorktree.Classify(', [System.StringComparison]::Ordinal)
+    $guard = $restartCs.IndexOf('WindowsPhoneHome.LaunchRefusal(', [System.StringComparison]::Ordinal)
+    $danger = $restartCs.IndexOf('AppHostLocks.TakeRestart(', [System.StringComparison]::Ordinal)
+    $orderOk = $launcherOk -and ($work -ge 0) -and ($guard -gt $work) -and ($danger -gt $guard)
+    Assert-C1744 $orderOk 'apphost-guard.restart-order' ('launcher=' + [string]$launcherOk + ' work=' + [string]$work + ' guard=' + [string]$guard + ' lock=' + [string]$danger)
     $aspireAst = Get-ScriptAst $aspirePath
     $aspireGuard = Get-FirstCommand $aspireAst.ast 'Get-WindowsPhoneHomeLaunchRefusal'
     $aspireWork = Get-FirstCommand $aspireAst.ast 'Get-AppHostWorktreeClassification'

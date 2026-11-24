@@ -925,7 +925,7 @@ public sealed class AgentTaskLandService
     internal static string? CanonicalWarning(AgentTaskLanding op) => op.CanonicalAdvanceReason is not { } reason ? null
         : $"Published {op.VerifiedSourceSha} to {op.RemoteName}:{op.DestinationFullRef}, but the canonical checkout "
           + $"{op.TargetCheckoutPath ?? op.RepositoryPath} was not fast-forwarded ({reason}). Fix it there with `git pull --rebase`, "
-          + "then restart with scripts/restart-apphost.ps1 (CARD-0358 runbook). Publication is unaffected.";
+          + "then restart with scripts/antiphon restart-apphost (CARD-0358 runbook). Publication is unaffected.";
 
     internal static string FormatSourceRefusal(AgentTaskLandRequest request, string reason) =>
         LandFailureDiagnostic.AppendInspection(

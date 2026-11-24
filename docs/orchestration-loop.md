@@ -20,7 +20,7 @@ the `scripts/antiphon delegate create --capability` UX live in [ops-http.md](ops
 
 An orchestrator MAY restart or upgrade the AppHost, restart session runners, and run docker-based
 server2 rollouts without asking a human. This includes pulling the canonical checkout with
-`git pull --rebase`, running `scripts/restart-apphost.ps1`, restarting the desktop runner even
+`git pull --rebase`, running `scripts/antiphon restart-apphost`, restarting the desktop runner even
 while detached PtyHosts are active (they are re-adopted), the cold first Seed, and the
 `deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, `drain-temp`, and
 `retire-temp`: its `-DryRun` preview and then, at once, the enabled apply with that preview's

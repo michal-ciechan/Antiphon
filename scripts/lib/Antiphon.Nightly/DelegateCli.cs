@@ -783,7 +783,7 @@ namespace Antiphon.Nightly
                 }
                 if (!hasMarker || !IsLandSha(observed))
                     throw LandFailure("Antiphon land refused: " + safeApi + " does not advertise land-v2 (observed SHA " + observed + "). GET " + safeApi
-                        + "/api/version and run pwsh -NoProfile -File scripts/restart-apphost.ps1 after updating the canonical checkout if needed.");
+                        + "/api/version and run scripts/antiphon restart-apphost after updating the canonical checkout if needed.");
 
                 var body = new JsonObject();
                 if (_o.Text("--verify").Length > 0) body["verify"] = _o.Text("--verify");
@@ -807,7 +807,7 @@ namespace Antiphon.Nightly
                 {
                     if (answer.Status == 404 || answer.Status == 405)
                         throw LandFailure("Antiphon land refused: POST " + safeApi + landPath + " returned " + Number(answer.Status) + " (land-v2). Confirm GET " + safeApi
-                            + "/api/version, then pwsh -NoProfile -File scripts/restart-apphost.ps1.");
+                            + "/api/version, then scripts/antiphon restart-apphost.");
                     throw LandFailure("Antiphon POST " + landPath + " failed: " + FailureDetail(answer));
                 }
                 // CARD-1657: a reply without a land request id is not proof the land was queued.
@@ -1415,7 +1415,7 @@ namespace Antiphon.Nightly
                     }
                     else parts.Add("served build " + served7 + " is not an ancestor of HEAD " + head7);
                 }
-                parts.Add("restart the AppHost from the canonical checkout (pwsh -NoProfile -File scripts/restart-apphost.ps1), confirm GET " + versionUri
+                parts.Add("restart the AppHost from the canonical checkout (scripts/antiphon restart-apphost), confirm GET " + versionUri
                     + ", then re-run this exact command; do not re-dispatch under a different --role");
                 Out.WriteLine(string.Join("; ", parts));
             }

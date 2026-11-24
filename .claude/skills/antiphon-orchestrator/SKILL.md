@@ -196,7 +196,7 @@ in `docs/orchestration-loop.md`.
    A bare `-Update` outside that land path stays forbidden. After a confirmed `Landed` outcome, restart AppHost only when the landed commit is the
    `rc/YYYY-MM-DD` rc tip the hosts run. A master-only land does not restart AppHost or server2.
    When a restart is due, advance the checkout those hosts run to that tip (`git pull --rebase`
-   there; `git fetch` alone moves no local HEAD), then `restart-apphost.ps1 -ExpectedServerSha <sha>`,
+   there; `git fetch` alone moves no local HEAD), then `scripts/antiphon restart-apphost --expected-server-sha <sha>`,
    which refuses with exit 3 when that SHA is not the checkout HEAD, and follow the Post-land
    server activation check (CARD-0495) in `docs/orchestration-loop.md`.
    **Then** close the card with a reason summarizing the whole stage history (defects found, how

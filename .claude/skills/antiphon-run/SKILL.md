@@ -44,8 +44,8 @@ the default. Postgres is the always-on `antiphon-postgres` container on **17280*
 
 If an AppHost may already exist, restart — do not launch a second copy:
 
-```powershell
-pwsh -File scripts/restart-apphost.ps1
+```sh
+scripts/antiphon restart-apphost
 ```
 
 First launch only, when nothing is listening:
@@ -66,7 +66,7 @@ Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspi
 
 | Script               | When                                              |
 |----------------------|---------------------------------------------------|
-| `scripts/restart-apphost.ps1` | Canonical Aspire restart. Use whenever an AppHost may already exist. |
+| `scripts/antiphon restart-apphost` | Canonical Aspire restart. Use whenever an AppHost may already exist. |
 | `.\dev-aspire.ps1`   | First Aspire launch only if nothing is listening. Never a second copy. |
 | `.\dev-start.ps1`    | Simple-mode fallback (API 17281 / client 17282; runner 17204). |
 | `.\dev-stop.ps1`     | Stop server + client; postgres stays up.          |
@@ -102,11 +102,11 @@ Follow [docs/bootstrap.md](../../../docs/bootstrap.md). Short form:
 2. `docker compose -f docker-compose.dev.yml up -d` (Postgres on 17280)
 3. Put LLM keys in `dotnet user-secrets` (`--id antiphon-server`) or the Settings UI after start. Do **not** copy `appsettings.json.example` over the tracked `server/appsettings.json`.
 4. `pwsh -File scripts/install-autostart.ps1`
-5. `pwsh -File scripts/restart-apphost.ps1` (or `Start-Process pwsh … dev-aspire.ps1 -WindowStyle Normal` if nothing is listening)
+5. `scripts/antiphon restart-apphost` (or `Start-Process pwsh … dev-aspire.ps1 -WindowStyle Normal` if nothing is listening)
 6. `pwsh -File scripts/bootstrap-check.ps1`
 
 ### Every day
-1. Aspire is already always-on after `install-autostart.ps1`. If it is down: `pwsh -File scripts/restart-apphost.ps1`
+1. Aspire is already always-on after `install-autostart.ps1`. If it is down: `scripts/antiphon restart-apphost`
 2. Work in the browser at http://localhost:17203 (dashboard http://localhost:17205)
 3. Postgres stays up. Do not run a second `dev-aspire.ps1`.
 
@@ -138,7 +138,7 @@ Prompts for confirmation. Drops volume, wipes worktrees, starts fresh.
 
 ## Status check
 
-Prefer `pwsh -File verify-dev-stack.ps1 -SkipBrowser` (or `-SimpleMode`) over
+Prefer `scripts/antiphon verify-dev-stack --skip-browser` (or `--simple-mode`) over
 hand-rolled port loops.
 
 Check what's listening (Aspire mode; Postgres is 17280):
@@ -172,7 +172,7 @@ Get-ChildItem C:\MavLog\Antiphon -Filter '*.log' | Sort-Object LastWriteTime -De
 
 ### Docker not running
 Start Docker Desktop. Watch the system tray; wait until "Docker Desktop is running".
-Then `pwsh -File scripts/restart-apphost.ps1` (Aspire) or `.\dev-start.ps1` (simple-mode fallback).
+Then `scripts/antiphon restart-apphost` (Aspire) or `.\dev-start.ps1` (simple-mode fallback).
 
 ### Port conflict (stale Aspire dcp.exe)
 Check for a stale `dcpctrl.exe` or `dcp.exe` holding a port in the 17200–17207 range:

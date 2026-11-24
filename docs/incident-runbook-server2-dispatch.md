@@ -60,15 +60,15 @@ Do not delete a worktree, a ledger, a seat, or a lock to clear this. Drain and d
 
 Restart the desktop AppHost from the main checkout (`C:\src\Antiphon`), not from a linked worktree. A worktree refuses with exit 3 and kills nothing (`docs/bootstrap.md`, restart gotcha; `docs/apphost-runbook.md:45-47`).
 
-Check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first. Exit 3 means another restart or launch is in flight. A stamp younger than 15 minutes is still in flight even if the holding pid has exited, unless the dead-launch proof in the AppHost runbook says otherwise. Before the restart, `GET /api/version` must equal `git -C C:\src\Antiphon rev-parse HEAD`: the script builds that checkout and requires the served SHA to match HEAD (`scripts/restart-apphost.ps1:56-57`, `:187-214`, exit 5 at `:426-437`). `-ExpectedServerSha` is refused unless it already equals that HEAD, so it does not preserve an older served build.
+Check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first. Exit 3 means another restart or launch is in flight. A stamp younger than 15 minutes is still in flight even if the holding pid has exited, unless the dead-launch proof in the AppHost runbook says otherwise. Before the restart, `GET /api/version` must equal `git -C C:\src\Antiphon rev-parse HEAD`: the script builds that checkout and requires the served SHA to match HEAD (`scripts/lib/Antiphon.Nightly/AppHostRestart.cs`: the SHA admission and exit 5). `--expected-server-sha` is refused unless it already equals that HEAD, so it does not preserve an older served build.
 
 ```powershell
-pwsh -NoProfile -File scripts/restart-apphost.ps1
+scripts\antiphon.cmd restart-apphost
 ```
 
 What that does, from `docs/apphost-runbook.md:37-47` and `:76-85`, and `docs/bootstrap.md` (the restart gotcha and the watchdog paragraph): the script POSTs `/api/operator/shutdown` with reason `restart-apphost` (`docs/ops-http.md:154`), waits for that server pid to exit (default 20 seconds), then relaunches AppHost. The desktop session runner on port 17204 is not stopped. Postgres stays up. The server2 runner container is not part of this restart. The new server process accepts a new phone-home epoch; the sessions already running in the server2 container stay up, and the new connection's catch-up re-reads them (investigation, recovery option 4). The script reads the operator token and does not print it.
 
-After the CARD-1744 window, production recovery is `scripts/restart-linux-server.ps1` and `scripts/restart-apphost.ps1` is the desktop rollback, and the Docker server's roles soft rollback is a server restart with `Delegation__WorkspaceSlotRoles=none`. That window is not recorded as run, so until then the desktop command above and the section 2 hot reload stay the production path (`docs/docker-stack.md`, Production server on the server2 host, and `docs/docker-stack.md:1064-1065`).
+After the CARD-1744 window, production recovery is `scripts/restart-linux-server.ps1` and `scripts\antiphon.cmd restart-apphost` is the desktop rollback, and the Docker server's roles soft rollback is a server restart with `Delegation__WorkspaceSlotRoles=none`. That window is not recorded as run, so until then the desktop command above and the section 2 hot reload stay the production path (`docs/docker-stack.md`, Production server on the server2 host, and `docs/docker-stack.md:1064-1065`).
 
 Success, all of these:
 

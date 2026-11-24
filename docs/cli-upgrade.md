@@ -281,7 +281,7 @@ From `C:\src\Antiphon`, with HEAD detached at the rc tip (no `git pull`: a pull 
 
 ```powershell
 git -C C:\src\Antiphon rev-parse HEAD
-pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <rc tip>
+scripts\antiphon.cmd restart-apphost --expected-server-sha <rc tip>
 Invoke-RestMethod "$env:ANTIPHON_API/api/version"
 ```
 
@@ -361,8 +361,8 @@ Only after step 6 passes on the new CLI everywhere:
   SHA's own script ([docker-stack.md](docker-stack.md)).
 - CLI pin: revert the `CODEX_VERSION`/`CODEX_SHA512` pair (and `CodexRunnerImageContractTests`) in a
   reviewed change; desktop `npm install -g @openai/codex@<previous>`.
-- AppHost: detach `C:\src\Antiphon` at the previous rc tip and `restart-apphost.ps1
-  -ExpectedServerSha <previous tip>`. Check migrations first: a migration whose `Down` throws
+- AppHost: detach `C:\src\Antiphon` at the previous rc tip and `scripts\antiphon.cmd restart-apphost
+  --expected-server-sha <previous tip>`. Check migrations first: a migration whose `Down` throws
   (for example `20261120091515_AddRequestedModelAlias`) cannot be downgraded.
 - Ladder: put the previous slug back in `ModelLevelAliases`; a hold on the new slug is the
   immediate stop without a restart.

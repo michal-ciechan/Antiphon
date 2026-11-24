@@ -3035,18 +3035,6 @@
       "owner": "CARD-1313",
       "members": [
         {
-          "script": "scripts/test-apphost-graceful-stop.ps1"
-        },
-        {
-          "script": "scripts/test-apphost-lock-age.ps1"
-        },
-        {
-          "script": "scripts/test-apphost-main-worktree-guard.ps1"
-        },
-        {
-          "script": "scripts/test-apphost-probe-class.ps1"
-        },
-        {
           "script": "scripts/test-client.ps1"
         },
         {

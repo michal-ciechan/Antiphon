@@ -225,6 +225,17 @@ namespace Antiphon.Scripts
             // 0 accepted, 1 refused or not accepted. Usage is 2 for each.
             [BuildSlotCommands.BuildSlotName] = BuildSlotCommands.RunBuildSlot,
             [BuildSlotCommands.MeasureLinuxSharedCompiler] = BuildSlotCommands.RunMeasureLinuxSharedCompiler,
+            // The desktop AppHost chain answers every input itself (unit 31). restart-apphost: exit 0 restarted (or --stop-only done),
+            // 1 failed or not Windows, 3 refused (nothing killed), 4 DCP dependency timeout, 5 server build unverified. watchdog-apphost: 0,
+            // 1 an unreadable state file or not Windows. set-apphost-maintenance: 0 done, 2 --clear with --enter-if-absent or the marker
+            // already present, 1 a task change failed. apphost-watchdog-state-observer: 0. autostart-apphost: 0 healthy or already up,
+            // 1 otherwise. verify-dev-stack: 0 verified, 1 a core check failed. Usage is 2 for each.
+            [AppHostCommands.RestartAppHost] = AppHostCommands.RunRestart,
+            [AppHostCommands.WatchdogAppHost] = AppHostCommands.RunWatchdog,
+            [AppHostCommands.SetAppHostMaintenance] = AppHostCommands.RunMaintenance,
+            [AppHostCommands.WatchdogStateObserver] = AppHostCommands.RunObserver,
+            [AppHostCommands.AutostartAppHost] = AppHostCommands.RunAutostart,
+            [AppHostCommands.VerifyDevStack] = AppHostCommands.RunVerifyDevStack,
         };
 
         public static int Main(string[] args)
@@ -262,7 +273,8 @@ namespace Antiphon.Scripts
                 + " | " + LandGraphAuditCommand.Usage + " | " + LandGraphAuditCommand.PrecheckUsage + " | " + LandGraphLandRefreshCommand.Usage
                 + " | " + OperatorCommands.Usage + " | " + CleanupCommands.Usage + " | " + SessionReaperCommands.Usage
                 + " | " + RecoverRepositoryChildrenCommand.Usage + " | " + BoardCommands.Usage + " | " + AgentHelperCommands.Usage + " | " + RoutingWorkspaceCommands.Usage
-                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage);
+                + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
+                + " | " + AppHostCommands.Usage);
             return Usage;
         }
 

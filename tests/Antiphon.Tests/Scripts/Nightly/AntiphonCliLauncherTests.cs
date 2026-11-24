@@ -992,6 +992,113 @@ public sealed class AntiphonCliLauncherTests
         File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "session-runner-restart-health.ps1")).ShouldBeFalse();
     }
 
+    // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
+    // (scripts/cutover-postgres-server2.ps1 and scripts/deploy-local.ps1 start them by path), scripts/watchdog-apphost.ps1,
+    // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks install-autostart.ps1
+    // registers start them by path) and the repository root's verify-dev-stack.ps1 (deploy-local.ps1, restart.ps1 and
+    // bootstrap-check.ps1 run it by path) ----
+
+    private static Dictionary<string, string> Echo(string command, string? exit = null)
+    {
+        var environment = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = command };
+        if (exit != null) environment["CLI_ECHO_EXIT"] = exit;
+        return environment;
+    }
+
+    [Test]
+    public async Task Restart_apphost_launcher_passes_only_the_parameters_given()
+    {
+        using var fixture = CleanupCheckout("restart-apphost.ps1");
+        var entry = fixture.PathOf("scripts", "restart-apphost.ps1");
+        var plain = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: Echo("restart-apphost"));
+        plain.ExitCode.ShouldBe(0, plain.Stderr);
+        plain.Arguments.ShouldNotBeNull(plain.Stdout).ShouldBeEmpty("the command's defaults are the script's");
+        var sha = new string('a', 40);
+        // The cutover's two calls: -StopOnly, and -ExpectedServerSha <sha>.
+        (await NightlyRunHops.LauncherEcho(entry, ["-StopOnly"], fixture.Root, environment: Echo("restart-apphost"))).Arguments.ShouldBe(["--stop-only"]);
+        (await NightlyRunHops.LauncherEcho(entry, ["-ExpectedServerSha", sha], fixture.Root, environment: Echo("restart-apphost"))).Arguments.ShouldBe(["--expected-server-sha", sha]);
+        var all = await NightlyRunHops.LauncherEcho(entry, ["-NoBuild", "-TimeoutSec", "9", "-MaxWaitSec", "700", "-LockMaxAgeMinutes", "5", "-AllowWorktree",
+            "-ExpectedServerSha", sha, "-GracefulStopTimeoutSec", "3", "-SkipGracefulStop", "-StopOnly", "-WhatIf"], fixture.Root, environment: Echo("restart-apphost", "5"));
+        all.ExitCode.ShouldBe(5, "the command's exit is the launcher's: " + all.Stderr);
+        all.Arguments.ShouldBe(["--no-build", "--timeout-sec", "9", "--max-wait-sec", "700", "--lock-max-age-minutes", "5", "--allow-worktree", "--expected-server-sha", sha,
+            "--graceful-stop-timeout-sec", "3", "--skip-graceful-stop", "--stop-only", "--what-if"]);
+        var options = AppHostRestartOptions.Parse(all.Arguments!, "root");
+        (options.NoBuild, options.TimeoutSec, options.MaxWaitSec, options.LockMaxAgeMinutes, options.AllowWorktree, options.ExpectedServerSha, options.GracefulStopTimeoutSec,
+            options.SkipGracefulStop, options.StopOnly, options.WhatIf).ShouldBe((true, 9, 700, 5, true, sha, 3, true, true, true));
+        AssertThinLauncher("restart-apphost.ps1", "    [int]$TimeoutSec = 150,", "    [int]$MaxWaitSec = 600,", "    [string]$ExpectedServerSha,", "    [switch]$StopOnly,",
+            "    [switch]$WhatIf");
+
+        var missing = await NightlyRunHops.LauncherEcho(entry, ["-StopOnly"], fixture.Root,
+            environment: new Dictionary<string, string> { ["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll") });
+        missing.ExitCode.ShouldBe(9, missing.Stderr);
+    }
+
+    [Test]
+    public async Task Maintenance_launcher_passes_its_switches_and_returns_exit_2()
+    {
+        using var fixture = CleanupCheckout("set-apphost-maintenance.ps1");
+        var entry = fixture.PathOf("scripts", "set-apphost-maintenance.ps1");
+        var enter = await NightlyRunHops.LauncherEcho(entry, ["-EnterIfAbsent"], fixture.Root, environment: Echo("set-apphost-maintenance", "2"));
+        enter.ExitCode.ShouldBe(2, "the cutover reads exit 2 as a marker that already existed: " + enter.Stderr);
+        enter.Arguments.ShouldBe(["--enter-if-absent"]);
+        var clear = await NightlyRunHops.LauncherEcho(entry, ["-Clear", "-Root", @"C:\fixture root", "-WatchdogTaskName", "Fixture Watchdog"], fixture.Root,
+            environment: Echo("set-apphost-maintenance"));
+        clear.Arguments.ShouldBe(["--clear", "--root", @"C:\fixture root", "--watchdog-task-name", "Fixture Watchdog"]);
+        var options = AppHostMaintenanceOptions.Parse(clear.Arguments!, "checkout");
+        (options.Clear, options.EnterIfAbsent, options.Root, options.WatchdogTaskName).ShouldBe((true, false, @"C:\fixture root", "Fixture Watchdog"));
+        AssertThinLauncher("set-apphost-maintenance.ps1", "    [switch]$Clear,", "    [switch]$EnterIfAbsent,", "    [string]$Root,",
+            "    [string]$WatchdogTaskName = 'Antiphon AppHost Watchdog'");
+    }
+
+    [Test]
+    public async Task Watchdog_observer_and_autostart_launchers_pass_their_parameters()
+    {
+        using var fixture = CleanupCheckout("watchdog-apphost.ps1");
+        foreach (var other in new[] { "apphost-watchdog-state-observer.ps1", "autostart-apphost.ps1" })
+            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", other), fixture.PathOf("scripts", other));
+        var watchdog = fixture.PathOf("scripts", "watchdog-apphost.ps1");
+        (await NightlyRunHops.LauncherEcho(watchdog, [], fixture.Root, environment: Echo("watchdog-apphost"))).Arguments.ShouldNotBeNull().ShouldBeEmpty();
+        var probe = await NightlyRunHops.LauncherEcho(watchdog, ["-ProbeOnly", "-IntervalSeconds", "5", "-HealthUrl", "http://127.0.0.1:9/health"], fixture.Root,
+            environment: Echo("watchdog-apphost"));
+        probe.Arguments.ShouldBe(["--probe-only", "--interval-seconds", "5", "--health-url", "http://127.0.0.1:9/health"]);
+        AppHostWatchdogOptions.Parse(probe.Arguments!, "root").IntervalSeconds.ShouldBe(5);
+        var stub = await NightlyRunHops.LauncherEcho(watchdog, ["-RestartScript", "stub.ps1"], fixture.Root, environment: Echo("watchdog-apphost"));
+        stub.ExitCode.ShouldBe(2);
+        stub.Stderr.ShouldContain("-RestartScript is not supported");
+        stub.Arguments.ShouldBeNull("nothing reached the command");
+
+        var observer = await NightlyRunHops.LauncherEcho(fixture.PathOf("scripts", "apphost-watchdog-state-observer.ps1"), ["-TaskName", "T", "-Root", "R", "-StateFile", "S"],
+            fixture.Root, environment: Echo("apphost-watchdog-state-observer"));
+        observer.Arguments.ShouldBe(["--task-name", "T", "--root", "R", "--state-file", "S"]);
+        var autostart = await NightlyRunHops.LauncherEcho(fixture.PathOf("scripts", "autostart-apphost.ps1"), ["-NoBuild", "-DockerTimeoutSec", "60"], fixture.Root,
+            environment: Echo("autostart-apphost"));
+        autostart.Arguments.ShouldBe(["--no-build", "--docker-timeout-sec", "60"]);
+        AppHostAutostartOptions.Parse(autostart.Arguments!, "root").DockerTimeoutSec.ShouldBe(60);
+        AssertThinLauncher("watchdog-apphost.ps1", "    [switch]$ProbeOnly,", "    [string]$RestartScript");
+        AssertThinLauncher("apphost-watchdog-state-observer.ps1", "    [string]$TaskName = 'Antiphon AppHost Watchdog',", "    [string]$LogFile");
+        AssertThinLauncher("autostart-apphost.ps1", "    [switch]$NoBuild,", "    [int]$HealthTimeoutSec = 180");
+    }
+
+    [Test]
+    public async Task Root_verify_dev_stack_launcher_passes_the_deploy_flags()
+    {
+        using var fixture = Checkout();
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1"), fixture.PathOf("verify-dev-stack.ps1"));
+        var entry = fixture.PathOf("verify-dev-stack.ps1");
+        // scripts/deploy-local.ps1 runs verify-dev-stack.ps1 -SkipBrowser -TimeoutSec 30.
+        var deploy = await NightlyRunHops.LauncherEcho(entry, ["-SkipBrowser", "-TimeoutSec", "30"], fixture.Root, environment: Echo("verify-dev-stack", "1"));
+        deploy.ExitCode.ShouldBe(1, deploy.Stderr);
+        deploy.Arguments.ShouldBe(["--skip-browser", "--timeout-sec", "30"]);
+        (await NightlyRunHops.LauncherEcho(entry, ["-SimpleMode", "-ProbeListeningPorts"], fixture.Root, environment: Echo("verify-dev-stack"))).Arguments
+            .ShouldBe(["--simple-mode", "--probe-listening-ports"]);
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1")).Replace("\r\n", "\n");
+        text.ShouldStartWith("#requires -Version 5.1");
+        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray()
+            .ShouldBe([". (Join-Path (Join-Path (Join-Path $PSScriptRoot 'scripts') 'lib') 'antiphon-cli.ps1')"]);
+        File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1")).All(b => b < 128).ShouldBeTrue("ASCII only");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "start-apphost.ps1")).ShouldBeFalse();
+    }
+
     // The 5.1 and pwsh parse of the kept launchers, the root restart entries and restart-server.ps1 (it was the deleted
     // RunnerRestartScriptCompatibilityTests.Touched_scripts_parse_as_ascii_on_both_shells): -Command parses, nothing runs.
     [Test]
@@ -1002,7 +1109,8 @@ public sealed class AntiphonCliLauncherTests
         if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
         string[] files = ["scripts/run-daemon.ps1", "scripts/check-daemon-build.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
-            "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1"];
+            "restart-session-runner.ps1", "restart.ps1", "restart-server.ps1", "scripts/restart-apphost.ps1", "scripts/set-apphost-maintenance.ps1",
+            "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1", "scripts/apphost-common.ps1", "verify-dev-stack.ps1"];
         foreach (var file in files)
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, file)).All(b => b < 128).ShouldBeTrue(file + " is ASCII");
         var list = string.Join(",", files.Select(file => "'" + Path.Combine(DelegateScriptRunner.RepoRoot, file).Replace("'", "''") + "'"));

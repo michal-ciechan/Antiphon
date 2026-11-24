@@ -511,10 +511,6 @@ public sealed class NightlyTestsRunTests
     /// </summary>
     private static readonly string[] ScriptCensusInventory =
     [
-        "test-apphost-graceful-stop scripts/test-apphost-graceful-stop.ps1",
-        "test-apphost-lock-age scripts/test-apphost-lock-age.ps1",
-        "test-apphost-main-worktree-guard scripts/test-apphost-main-worktree-guard.ps1",
-        "test-apphost-probe-class scripts/test-apphost-probe-class.ps1",
         "test-client scripts/test-client.ps1",
         "test-deploy-am-service scripts/test-deploy-am-service.ps1",
     ];

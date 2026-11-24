@@ -7,28 +7,10 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LongPathsCheckoutScriptTests
 {
-    // The rc checkout guard, launch refusal, and clone flag. Local git fixtures only.
-    private static Task Run(string name, int rows, string[] required, CancellationToken token) =>
-        ScriptHarness.RunHarnessCaseAsync("test-longpaths-checkout.ps1", "LP", name, rows, required,
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(15)), token);
-
-    [Test, Timeout(180_000)]
-    public Task LP_GuardStderr(CancellationToken token) =>
-        Run(nameof(LP_GuardStderr), 3,
-        [
-            "LP guard exits 1 when worktree add fails",
-            "LP guard failure contains git stderr",
-            "LP guard worktree add passes core.longpaths"
-        ], token);
-
-    [Test, Timeout(180_000)]
-    public Task LP_PathArithmetic(CancellationToken token) =>
-        Run(nameof(LP_PathArithmetic), 3,
-        [
-            "LP guard temp prefix is 105 characters",
-            "LP exactly one tracked path exceeds MAX_PATH under the guard prefix",
-            "LP guard documents the 269 character sum and passes core.longpaths"
-        ], token);
+    // Unit 31 of 2026-11-22-remaining-ps1-to-csharp.md deleted scripts/test-longpaths-checkout.ps1: its last two cases,
+    // LP_GuardStderr and LP_PathArithmetic, checked that scripts/test-apphost-main-worktree-guard.ps1 linked a worktree of this
+    // checkout with core.longpaths and documented the MAX_PATH sum under its temporary prefix. That driver is gone; its rows run
+    // in process (AppHostWorktreeGuardTests) on a one-commit fixture repository, which needs neither, so both cases are dropped.
 
     // In-process since unit 7 of 2026-11-22-remaining-ps1-to-csharp.md (was the test-longpaths-checkout.ps1 case on
     // scripts/qualification/launch-rc.ps1): qualification-launch with real git on a prepared clone refuses

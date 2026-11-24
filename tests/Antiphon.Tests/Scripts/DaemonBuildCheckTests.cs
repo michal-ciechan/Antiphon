@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-0604: the daemon build staleness check (Antiphon.Nightly.DaemonBuildCheck, the body of scripts/check-daemon-build.ps1
-/// since unit 30 of the 2026-11-22 plan; the script is a thin launcher restart-apphost.ps1 and dev-aspire.ps1 run) in
+/// since unit 30 of the 2026-11-22 plan; the script is a thin launcher dev-aspire.ps1 runs, and restart-apphost runs it in process) in
 /// process: the /capabilities reads on a recording transport, git on a FakeGit, the lines and the exit. The runner's path
 /// list is checked against its project reference closure (formerly RunnerCapabilitiesTests, which read the script's text).
 /// </summary>

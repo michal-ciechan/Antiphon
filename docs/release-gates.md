@@ -363,7 +363,7 @@ no baseline refresh.
   make an exclusion legacy. Never derive the expected digest from live policy at runtime
   or approve a mismatch with a hash-only edit.
 
-The default/full `verify-dev-stack.ps1` smoke belongs on the Windows Aspire desktop:
+The default/full `verify-dev-stack` smoke belongs on the Windows Aspire desktop:
 its `antiphon-postgres` check concerns that desktop stack, not an isolated runner
 database. Non-Windows full invocations, including `-SkipBrowser`, refuse with
 `desktop-platform-required` before AppHost imports, jobs, Docker/network operations
@@ -507,8 +507,8 @@ reviewed rc integration procedure; they do not grant merge/publication authority
 
    The fresh wrapper and its absent opt-out assertion remain required. This does
    not stop AppHost, run npm, create another launcher or waive the canonical
-   checkout guard. `restart-apphost.ps1 -StopOnly -WhatIf` only previews stop;
-   it cannot satisfy rehearsal. Bare `-WhatIf` is refused. Do not run
+   checkout guard. `restart-apphost --stop-only --what-if` only previews stop;
+   it cannot satisfy rehearsal. Bare `--what-if` is refused. Do not run
    `dev-aspire.ps1` just to rehearse its restore substep.
 4. Activate only after rehearsal passes, from an independent owning shell under
    the [restart runbook](apphost-runbook.md#first-start-and-apphost-restart), both
