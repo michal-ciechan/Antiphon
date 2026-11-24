@@ -15,7 +15,7 @@
 // --skip-browser in this process, its lines passed through. With --no-stack the Docker network create probe runs instead (the
 // network is removed again): the only side effect.
 //
-// Each check prints "  [PASS|WARN|FAIL] <name, 28 wide> <detail>", then the remedy of a WARN or FAIL, one indented line each.
+// Each check prints "  [PASS|WARN|FAIL|SKIP] <name, 28 wide> <detail>", then the remedy of a WARN or FAIL, one indented line each.
 // The exit code is the number of FAILs; a WARN never counts. Usage errors are NightlyUsageException (the CLI's exit 2). The
 // machine is IBootstrapCheckPlatform (production BootstrapCheckOs); the environment (LOCALAPPDATA, WINDIR, USERPROFILE,
 // ANTIPHON_API, Llm__Providers__anthropic__ApiKey, Llm__Providers__openai__ApiKey, PATH) is the host's Variables. JSON keys
@@ -30,7 +30,6 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Net.Http;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -114,6 +113,7 @@ namespace Antiphon.Nightly
         private const string Pass = "PASS";
         private const string Warn = "WARN";
         private const string Fail = "FAIL";
+        private const string Skip = "SKIP";
         private const string Compose = "docker compose -f docker-compose.dev.yml up -d";
 
         private static readonly Regex UserSecretsKey = new Regex(@"^Llm:Providers:(anthropic|openai):ApiKey\s*=\s*\S",
@@ -265,7 +265,13 @@ namespace Antiphon.Nightly
             }
 
             // ---- 3. Docker postgres and volume (and HNS when Phase B is skipped) ----
-            if (!dockerUp)
+            var skipPostgres = DevPostgresCheck.SkipLocal(host);
+            if (skipPostgres)
+            {
+                report.Check("docker / postgres", Skip, DevPostgresCheck.SkipReason);
+                report.Check("docker / volume", Skip, DevPostgresCheck.SkipReason);
+            }
+            else if (!dockerUp)
             {
                 report.Check("docker / postgres", Fail, "cannot inspect antiphon-postgres (daemon down)", "Start Docker Desktop, then: " + Compose);
                 report.Check("docker / volume", Fail, "cannot inspect antiphon_pgdata (daemon down)", "Start Docker Desktop, then: " + Compose);
@@ -308,18 +314,27 @@ namespace Antiphon.Nightly
             }
 
             // ---- 4. Database TCP (and pg_isready) ----
-            var tcpOpen = platform.TcpOpen("127.0.0.1", 17280, 2000);
-            var composeFile = files.Path.Combine(root, "docker-compose.dev.yml");
-            var ready = "";
-            if (dockerUp && Exists(files, composeFile))
+            if (skipPostgres)
             {
-                var isReady = platform.Run(docker, new[] { "compose", "-f", composeFile, "exec", "-T", "postgres", "pg_isready", "-U", "antiphon", "-d", "antiphon" }, null, 0);
-                if (isReady.Succeeded) ready = "; pg_isready ok";
-                else if (!Blank(isReady.Output)) ready = "; pg_isready: " + Regex.Replace(isReady.Output, @"\s+", " ");
-                else ready = "; pg_isready failed";
+                report.Check("database / localhost:17280", Skip, DevPostgresCheck.SkipReason);
+                var result = DevPostgresCheck.Probe(host, files, root, simpleMode: false, platform.TcpOpen);
+                report.Check("database", result.Ok ? Pass : Fail, result.Detail);
             }
-            if (tcpOpen) report.Check("database", Pass, "TCP localhost:17280 open" + ready);
-            else report.Check("database", Fail, "TCP localhost:17280 closed" + ready, Compose + "  (postgres publishes 17280)");
+            else
+            {
+                var tcpOpen = platform.TcpOpen("127.0.0.1", 17280, 2000);
+                var composeFile = files.Path.Combine(root, "docker-compose.dev.yml");
+                var ready = "";
+                if (dockerUp && Exists(files, composeFile))
+                {
+                    var isReady = platform.Run(docker, new[] { "compose", "-f", composeFile, "exec", "-T", "postgres", "pg_isready", "-U", "antiphon", "-d", "antiphon" }, null, 0);
+                    if (isReady.Succeeded) ready = "; pg_isready ok";
+                    else if (!Blank(isReady.Output)) ready = "; pg_isready: " + Regex.Replace(isReady.Output, @"\s+", " ");
+                    else ready = "; pg_isready failed";
+                }
+                if (tcpOpen) report.Check("database", Pass, "TCP localhost:17280 open" + ready);
+                else report.Check("database", Fail, "TCP localhost:17280 closed" + ready, Compose + "  (postgres publishes 17280)");
+            }
 
             // ---- 5. Scheduled Tasks (WARN only) ----
             var appHostTask = platform.TaskRegistered(AppHostTask);
@@ -673,7 +688,7 @@ namespace Antiphon.Nightly
             {
                 if (status == Pass) Passes++;
                 else if (status == Warn) Warnings++;
-                else Failures++;
+                else if (status == Fail) Failures++;
                 _out.WriteLine(string.Format(CultureInfo.InvariantCulture, "  [{0}] {1,-28} {2}", status, name, detail));
                 if (string.IsNullOrEmpty(remedy) || status == Pass) return;
                 foreach (var line in remedy.Split('\n'))
@@ -728,7 +743,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>One check's status (PASS, WARN or FAIL), detail and remedy.</summary>
+    /// <summary>One check's status (PASS, WARN, FAIL or SKIP), detail and remedy.</summary>
     public sealed record BootstrapCheckLine(string Status, string Detail, string Remedy);
 
     /// <summary>The production IBootstrapCheckPlatform: this machine.</summary>
@@ -811,20 +826,7 @@ namespace Antiphon.Nightly
         }
 
         /// <inheritdoc />
-        public bool TcpOpen(string host, int port, int timeoutMs)
-        {
-            try
-            {
-                using var client = new TcpClient();
-                var connect = client.ConnectAsync(host, port);
-                if (!connect.Wait(timeoutMs)) return false;
-                return client.Connected;
-            }
-            catch (Exception e) when (e is SocketException || e is AggregateException || e is ObjectDisposedException || e is InvalidOperationException)
-            {
-                return false;
-            }
-        }
+        public bool TcpOpen(string host, int port, int timeoutMs) => DevPostgresCheck.TcpOpen(host, port, timeoutMs);
 
         /// <inheritdoc />
         public bool TaskRegistered(string name)
