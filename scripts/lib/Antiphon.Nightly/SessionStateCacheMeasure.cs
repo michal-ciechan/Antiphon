@@ -228,7 +228,7 @@ namespace Antiphon.Nightly
             }
             if (o.Mode == "Compare")
             {
-                if (string.IsNullOrEmpty(o.AfterPath)) throw Refuse("Compare requires AfterPath.");
+                if (string.IsNullOrEmpty(o.AfterPath)) throw Refuse("Compare requires --after-path.");
                 var summary = Compare(ReadJson(files, o.Baseline), ReadJson(files, o.AfterPath), o.Round, o.PlanCard);
                 var output = Path.Combine(o.EvidenceRoot, "compare-" + Guid.NewGuid().ToString("N") + ".json");
                 SaveImmutable(files, output, summary);
