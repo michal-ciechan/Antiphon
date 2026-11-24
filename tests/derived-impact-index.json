@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 351,
+      "classes": 352,
       "reason": "allowlist"
     },
     {
@@ -2174,9 +2174,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
@@ -2190,18 +2190,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 54,
+      "classes": 55,
       "reason": "cap",
-      "owed": 29,
+      "owed": 30,
       "first": [
+        "TestTraceSummaryTests",
         "ToolchainFloorWarningTests",
         "AwayDigestSendTests",
         "C599SnapshotTests",
         "NightlyTestsPlanTests",
         "ReleaseGateE2EEvidenceTests",
         "TestSelectionExecutionTests",
-        "TestTimingReportTests",
-        "DaemonSupervisorTests"
+        "TestTimingReportTests"
       ]
     },
     {
@@ -2222,25 +2222,27 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 32,
+      "classes": 34,
       "reason": "cap",
-      "owed": 7,
+      "owed": 9,
       "first": [
+        "QualificationEtaTests",
+        "QualificationSupervisorTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseStatusTests",
         "RepositoryChildRecoveryCommandTests",
         "StageValueReportTests",
-        "ZombieAgentReaperTests",
-        "NightlyChunkRunnerTests"
+        "ZombieAgentReaperTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/RecordingOperatorHttp.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
+        "RoutingPinScriptTests",
         "DelegateScriptInterruptSwitchTests",
         "DelegateScriptRunnerSwitchTests"
       ]
@@ -2904,6 +2906,7 @@
       "path": "client/tsconfig.node.json",
       "classes": [
         "AntiphonCliLauncherTests",
+        "ClientChecksTests",
         "TestClientFilterTests"
       ]
     },
@@ -25753,6 +25756,8 @@
       "classes": [
         "AntiphonLogsTests",
         "CardCommandTests",
+        "ClientChecksTests",
+        "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
         "KeepSixCommandTests",
@@ -25774,6 +25779,8 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
         "AntiphonLogsTests",
+        "ClientChecksTests",
+        "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
         "KeepSixCommandTests",
@@ -25840,6 +25847,7 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "ClassCostMeasurementTests",
+        "ClientChecksTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "NightlyChunkRunnerTests",
@@ -25861,8 +25869,7 @@
         "ReleaseGatePublicationAuthorityTests",
         "ReleaseGateRunTests",
         "RunnerRestartOsTests",
-        "TestTimingsTwinTests",
-        "TestTraceSummaryTests"
+        "TestTimingsTwinTests"
       ]
     },
     {
@@ -25961,6 +25968,8 @@
         "AntiphonLogsTests",
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
+        "ClientChecksTests",
+        "ClientModeTests",
         "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
         "ExpectedDurationSyncTests",
@@ -25978,8 +25987,6 @@
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "OrchestratorWorkspaceCommandTests",
-        "QualificationEtaTests",
-        "QualificationSupervisorTests",
         "QualificationTimingTests",
         "ReleaseGateLibraryTests",
         "RunnerRestartOsTests"
@@ -26147,6 +26154,7 @@
         "CapabilityScriptTests",
         "CardCommandTests",
         "CheckpointTaskScriptTests",
+        "ClientModeTests",
         "CommitOnSettleScriptTests",
         "DelegateCommandTests",
         "DispatchConcurrencyScriptTests",
@@ -26161,7 +26169,6 @@
         "ProjectCommandTests",
         "ProjectScriptWorkspaceTests",
         "RegisteredCallerScriptTests",
-        "RoutingPinScriptTests",
         "RunnerDrainScriptTests",
         "RunnerSlotsCommandTests",
         "ScheduleCommandTests",
