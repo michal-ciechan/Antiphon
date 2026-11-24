@@ -60,6 +60,13 @@ public sealed class ReviewAgentSettings
     /// <summary>Repos mapped to a project explicitly, ahead of the project URL and path match.</summary>
     public List<ReviewAgentRepo> Repos { get; set; } = [];
 
+    /// <summary>
+    /// The <c>cli</c> transport's own clones: a GitHub repo with no <see cref="ReviewAgentRepo.LocalPath"/> is
+    /// checked out from a bare mirror at <c>{MirrorRoot}/{owner}/{name}.git</c>, created on first use and
+    /// fetched with the code host's credential. Absent, such a reviewer runs with the pack alone.
+    /// </summary>
+    public string? MirrorRoot { get; set; }
+
     public ReviewAgentRepo? FindRepo(string repo) =>
         Repos.FirstOrDefault(r => string.Equals(r.Repo.Trim(), repo, StringComparison.OrdinalIgnoreCase));
 

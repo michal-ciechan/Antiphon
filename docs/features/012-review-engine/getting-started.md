@@ -32,7 +32,7 @@ Read this table before you plan a rollout for more than one person:
 | Workflow | One built-in workflow, compiled into the server. A deployment or a repo cannot supply its own yet. |
 | Per-repo tuning | A repo can add its own checks (`.antiphon/review/checks/`). A repo `policy.yaml`, repo prompts and a repo workflow are designed but not read yet. |
 | Policy | Server configuration (`Review:Policy`), shared by every repo, apart from two per-repo lists: gates switched off, and repos whose authors may decide their own gates. |
-| Docker | The server image builds and runs. No compose file carries review settings yet, and the image has no `claude` CLI (section 6.3). |
+| Docker | `docker-compose.review.yml` runs a review-only stack: the server with the Claude Code CLI, and Postgres. The server clones the repos itself (section 6.3). No image is published; compose builds it. |
 
 ## 2. What you need
 
@@ -198,6 +198,7 @@ user-secrets, and are JSON arrays in appsettings.
 |---|---|
 | `Transport` (`delegation`) | `cli` or `delegation`. Any other value stops the server at startup. |
 | `Repos:<n>:Repo`, `LocalPath`, `Project`, `ProjectId` | Where reviewers get a checkout: a clone for `cli`, or an Antiphon project for `delegation` |
+| `MirrorRoot` (none) | `cli` only: a folder for the server's own clones. A GitHub repo with no `LocalPath` gets a bare mirror at `<MirrorRoot>/<owner>/<name>.git`, made on its first review. Without it, such a reviewer gets no checkout, only the diff. |
 | `Cli:Command` (`claude`), `Cli:Models:deep` (`opus`), `Cli:Models:standard` (`sonnet`), `Cli:MaxParallel` (2) | The `cli` transport |
 | `Kind` (ClaudeCode), `Levels`, `Runner`, `ExpectedMinutes` (20) | The `delegation` transport |
 | `TimeoutMinutes` (90), `InlinePackMaxChars` (16000) | Both transports |
@@ -375,50 +376,62 @@ builds.
 
 ### 6.3 Docker
 
-There is no published image. Build it from the repo root:
+`docker-compose.review.yml` runs the review engine and nothing else. It has three services:
+- **`antiphon`:** the server and its built UI on port 8080, with a health check at `/health`. It runs
+  as user 1654 in the `Production` environment, so user-secrets, demo runs and the viewer header are
+  off. It has no session runner, Hangfire or message broker. The image is built with the Claude Code
+  CLI.
+- **`postgres`:** `postgres:16`, with its own volume.
+- **`state-init`:** runs once before the server and makes the state volume writable for user 1654.
 
-```bash
-docker build -t antiphon-server .
-```
+No image is published; compose builds it from the repo.
 
-What the image does:
-- **Ports and health:** it serves the API and the built UI on port 8080, with a health check at `/health`.
-- **User and environment:** it runs as user 1654 in the `Production` environment. That means
-  user-secrets, demo runs and the viewer header are all off.
-- **Settings it needs:** `ConnectionStrings__DefaultConnection`. Migrations run at startup.
+**Set it up:**
+1. Copy the template and fill it in. `review.env` is ignored by git and left out of the Docker build.
+   ```bash
+   cp docker/review.env.example review.env
+   ```
+   It holds the App (id, installation id, and the key on one line with `\n` for each line break), the
+   repos to watch, the Claude sign-in, the UI's address, the merge method and who is acting. Any other
+   `Review__` setting from section 4.3 can go there too.
+2. Start the stack:
+   ```bash
+   docker compose -f docker-compose.review.yml --env-file review.env up -d --build
+   ```
+3. Open `http://127.0.0.1:8080`. `REVIEW_BIND_ADDRESS` and `REVIEW_BIND_PORT` in `review.env` change
+   where it listens. To let other people in, put a reverse proxy with TLS in front (section 6.4).
 
-`docker-compose.yml` is a self-contained stack: the server, a session runner and Postgres. Its
-placeholders are in `docker/stack.env.example`. **It sets no `Review__` variables**, so add yours in
-an override file:
+**Claude sign-in.** Reviewers, decisions and verification all run `claude -p` inside the server
+container. Set one of these in `review.env`:
+- `CLAUDE_CODE_OAUTH_TOKEN`, for a Claude subscription. Run `claude setup-token` on any machine and
+  paste the token it prints.
+- `ANTHROPIC_API_KEY`, for an API key billed per token.
 
-```yaml
-# docker-compose.review.yml
-services:
-  antiphon:
-    environment:
-      Review__PublicBaseUrl: https://review.example.com
-      Review__DefaultViewerLogin: your-github-login
-      Review__CodeHosts__Hosts__github__App__AppId: Iv23xxxxxxxxxxxxxxxx
-      Review__CodeHosts__Hosts__github__App__InstallationId: "12345678"
-      Review__Secrets__GitHubAppPrivateKey: ${REVIEW_GITHUB_APP_KEY}   # one line, with \n for line breaks
-      Review__Secrets__AnthropicApiKey: ${ANTHROPIC_API_KEY}
-      Review__Polling__Enabled: "true"
-      Review__Polling__Repos__0__Repo: acme/widgets
-```
+The image holds no credential. Deep groups use `opus`, standard groups `sonnet`, and decisions and
+verification `haiku`. `REVIEW_DEEP_MODEL`, `REVIEW_STANDARD_MODEL` and `REVIEW_CHEAP_MODEL` change
+them, and `REVIEW_MAX_PARALLEL` (2) caps the reviewers that run at once.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.review.yml up -d --build
-```
+**Clones.** You don't clone anything. `Review:Agents:MirrorRoot` is `/state/mirrors`. On a repo's first
+review, the server creates a bare mirror there (`/state/mirrors/<owner>/<name>.git`). It fetches each
+PR's head into the mirror with the App's token. The token reaches git only through the git process's
+environment: it is not in its arguments and is never written to the mirror.
 
-**Model calls in Docker.** The server image has no `claude` CLI, so the `cli` reviewer transport and
-the `claude-cli` dialect cannot run in it as shipped. You have two choices:
-- **HTTP providers plus delegation:** use Jev for decisions and `anthropic` for completions, and run
-  reviewers with `delegation` on the stack's session runner, which needs an Antiphon project for each
-  repo.
-- **A derived image:** build an image that adds Node and the Claude Code CLI, and mount a signed-in
-  Claude configuration.
+**Where things are kept.** The `review-state` volume holds the mirrors, the logs (`/state/logs`) and
+the keys that protect sign-in cookies (`/state/keyring`). The `review-pgdata` volume holds the runs.
+`docker compose -f docker-compose.review.yml down` keeps both volumes; adding `-v` deletes them.
 
-Neither route has been tried end to end yet, so treat this section as a starting point.
+**Which settings win.** `docker-compose.review.yml` sets the fixed review-only settings: the
+transport, the mirror root, the model providers and the switches that turn the rest of Antiphon off.
+For those keys it wins over `review.env`.
+
+**The image on its own.** `docker build -t antiphon-server .` builds the server without the CLI; add
+`--build-arg INSTALL_CLAUDE_CODE=true` to include it. `docker-compose.yml` is the full Antiphon stack
+with a session runner, and it has no review settings.
+
+**What has been tested.** Tests cover the mirror against a local git origin, and `docker compose
+config` accepts the compose file with the env template. The image with the CLI has not yet been
+built and started end to end, and no full review has run in Docker against a real GitHub repo with a
+real Claude sign-in. Treat this section as a starting point until then.
 
 ### 6.4 Exposing the UI
 

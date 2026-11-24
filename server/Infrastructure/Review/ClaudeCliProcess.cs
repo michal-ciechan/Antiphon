@@ -182,9 +182,13 @@ public sealed class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILo
 /// +refs/pull/&lt;n&gt;/head:refs/antiphon/review/pull/&lt;n&gt;</c> when the head is missing, then
 /// <c>git -C &lt;repo&gt; worktree add --detach &lt;dir&gt; &lt;sha&gt;</c>; afterwards
 /// <c>worktree remove --force</c> and <c>worktree prune</c>. Calls on one repository run one at a time,
-/// so two reviewer groups never fetch the same ref at once.
+/// so two reviewer groups never fetch the same ref at once. A GitHub remote's fetch carries the code host's
+/// token as an <c>http.&lt;web root&gt;.extraheader</c> given to git through <c>GIT_CONFIG_COUNT</c> /
+/// <c>GIT_CONFIG_KEY_0</c> / <c>GIT_CONFIG_VALUE_0</c> in its environment only, scoped to that host; and a
+/// missing mirror (<c>Review:Agents:MirrorRoot</c>) is first created with <c>git init --bare</c> and an origin
+/// of <c>{web root}/{owner}/{name}.git</c>.
 /// </summary>
-public sealed class GitReviewCheckout(ILogger<GitReviewCheckout> logger) : IReviewCheckout
+public sealed class GitReviewCheckout(ILogger<GitReviewCheckout> logger, IReviewGitCredentials? credentials = null) : IReviewCheckout
 {
     private static readonly TimeSpan LocalTimeout = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(3);
@@ -197,18 +201,28 @@ public sealed class GitReviewCheckout(ILogger<GitReviewCheckout> logger) : IRevi
 
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
 
-    public async Task AddAsync(string repoPath, int? prNumber, string headSha, string directory, CancellationToken ct)
+    public async Task AddAsync(string repoPath, ReviewCheckoutRemote? remote, int? prNumber, string headSha, string directory, CancellationToken ct)
     {
         var gate = Gate(repoPath);
         await gate.WaitAsync(ct);
         try
         {
+            ReviewGitCredential? credential = null;
+            if (remote is { CreateMirror: true } && !Directory.Exists(repoPath))
+            {
+                credential = await MirrorCredentialAsync(remote.Repo, ct);
+                await CreateMirrorAsync(repoPath, new Uri(credential.WebRoot, remote.Repo.Trim() + ".git"), ct);
+            }
+
             if (!await ResolvesAsync(repoPath, headSha, ct))
             {
                 if (prNumber is not { } number || number <= 0)
                     throw new ReviewAgentRunnerException($"The reviewed head {headSha} is not in {repoPath}, and there is no PR number to fetch it by.");
+                if (remote is not null)
+                    credential ??= await CredentialAsync(remote.Repo, ct);
                 var target = $"refs/antiphon/review/pull/{number}";
-                var fetch = await GitAsync(repoPath, ["fetch", "--no-tags", "origin", $"+refs/pull/{number}/head:{target}"], FetchTimeout, ct);
+                var fetch = await GitAsync(repoPath, ["fetch", "--no-tags", "origin", $"+refs/pull/{number}/head:{target}"], FetchTimeout, ct,
+                    FetchEnvironment(credential));
                 if (!fetch.Succeeded)
                     throw new ReviewAgentRunnerException($"Fetching refs/pull/{number}/head from origin into {repoPath} failed: {fetch.Diagnostic}");
                 if (!await ResolvesAsync(repoPath, headSha, ct))
@@ -265,16 +279,89 @@ public sealed class GitReviewCheckout(ILogger<GitReviewCheckout> logger) : IRevi
 
     private SemaphoreSlim Gate(string repoPath) => _gates.GetOrAdd(Path.GetFullPath(repoPath).TrimEnd('\\', '/'), _ => new SemaphoreSlim(1, 1));
 
+    /// <summary>
+    /// The host's credential for a fetch into an existing clone, or none when it cannot be had: the fetch then
+    /// runs without a token, as it did before (a public repo, or a clone with its own credential helper).
+    /// </summary>
+    private async Task<ReviewGitCredential?> CredentialAsync(string repo, CancellationToken ct)
+    {
+        if (credentials is null)
+            return null;
+        try
+        {
+            return await credentials.GetAsync(repo, ct);
+        }
+        catch (CodeHostException ex)
+        {
+            // The message is ours or GitHub's error text; neither carries a token.
+            logger.LogWarning("No git credential for {Repo} ({Reason}); fetching without one", repo, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The credential a new mirror needs for its origin's web root: a host that cannot give one fails the
+    /// reviewer with the reason rather than leave a mirror pointing at the wrong host.
+    /// </summary>
+    private async Task<ReviewGitCredential> MirrorCredentialAsync(string repo, CancellationToken ct)
+    {
+        if (credentials is null)
+            return new ReviewGitCredential(GitHubWebRoot.Default, null);
+        try
+        {
+            return await credentials.GetAsync(repo, ct);
+        }
+        catch (CodeHostException ex)
+        {
+            throw new ReviewAgentRunnerException($"No mirror of {repo} could be made: {ex.Message}");
+        }
+    }
+
+    /// <summary><c>git init --bare</c> plus the origin; a half-made mirror is deleted so the next review tries again.</summary>
+    private async Task CreateMirrorAsync(string repoPath, Uri origin, CancellationToken ct)
+    {
+        var full = Path.GetFullPath(repoPath);
+        var parent = Path.GetDirectoryName(full)!;
+        Directory.CreateDirectory(parent);
+        var init = await GitAsync(parent, ["init", "--bare", "--quiet", full], LocalTimeout, ct);
+        var remote = init.Succeeded ? await GitAsync(full, ["remote", "add", "origin", origin.AbsoluteUri], LocalTimeout, ct) : init;
+        if (!remote.Succeeded)
+        {
+            ReviewChildProcess.TryDeleteDirectory(full);
+            throw new ReviewAgentRunnerException($"Creating the mirror {full} of {origin.AbsoluteUri} failed: {remote.Diagnostic}");
+        }
+
+        logger.LogInformation("Created the reviewer mirror {RepoPath} of {Origin}", full, origin.AbsoluteUri);
+    }
+
+    /// <summary>
+    /// The fetch's environment: with a token, one <c>http.&lt;web root&gt;.extraheader</c> through git's
+    /// <c>GIT_CONFIG_*</c> variables, so the token is never an argument and only goes to that host.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string?> FetchEnvironment(ReviewGitCredential? credential)
+    {
+        if (credential is not { Token: { Length: > 0 } token })
+            return GitEnvironment;
+        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes("x-access-token:" + token));
+        return new Dictionary<string, string?>(GitEnvironment)
+        {
+            ["GIT_CONFIG_COUNT"] = "1",
+            ["GIT_CONFIG_KEY_0"] = $"http.{credential.WebRoot.AbsoluteUri}.extraheader",
+            ["GIT_CONFIG_VALUE_0"] = "AUTHORIZATION: basic " + basic,
+        };
+    }
+
     private async Task<bool> ResolvesAsync(string repoPath, string sha, CancellationToken ct) =>
         (await GitAsync(repoPath, ["rev-parse", "--verify", "--quiet", sha + "^{commit}"], LocalTimeout, ct)).Succeeded;
 
     private static async Task<(bool Succeeded, string Diagnostic)> GitAsync(string repoPath, IReadOnlyList<string> arguments, TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct, IReadOnlyDictionary<string, string?>? environment = null)
     {
         ReviewChildProcess.Outcome outcome;
         try
         {
-            outcome = await ReviewChildProcess.RunAsync("git", ["-C", repoPath, .. arguments], null, Path.GetTempPath(), timeout, GitEnvironment, ct);
+            outcome = await ReviewChildProcess.RunAsync("git", ["-C", repoPath, .. arguments], null, Path.GetTempPath(), timeout,
+                environment ?? GitEnvironment, ct);
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {

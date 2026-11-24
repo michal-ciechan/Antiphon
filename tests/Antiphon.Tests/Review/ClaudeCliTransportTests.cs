@@ -301,10 +301,15 @@ public class ClaudeCliTransportTests
     {
         public List<string> Calls { get; } = [];
 
-        public Task AddAsync(string repoPath, int? prNumber, string headSha, string directory, CancellationToken ct)
+        public List<ReviewCheckoutRemote?> Remotes { get; } = [];
+
+        public Task AddAsync(string repoPath, ReviewCheckoutRemote? remote, int? prNumber, string headSha, string directory, CancellationToken ct)
         {
             lock (Calls)
+            {
                 Calls.Add($"add {repoPath} {prNumber} {headSha} {directory}");
+                Remotes.Add(remote);
+            }
             Directory.CreateDirectory(directory);
             return Task.CompletedTask;
         }

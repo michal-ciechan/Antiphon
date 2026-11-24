@@ -9,6 +9,8 @@
 **/.credentials.json
 **/.env
 **/.env.*
+# docker-compose.review.yml's filled-in settings, with the App key and Claude token.
+review.env
 client/.env*
 **/*.pfx
 **/*.pem

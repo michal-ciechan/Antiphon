@@ -14,8 +14,9 @@ namespace Antiphon.Server.Application.Review;
 /// <see cref="ReviewAgentStatus.Pending"/> at once; a poll with the handle stays Pending until it finishes,
 /// then completes with the answer and its usage, or throws <see cref="ReviewAgentRunnerException"/> with
 /// the reason. The run checks the head out as a detached worktree of the <c>Review:Agents:Repos</c> row's
-/// <c>LocalPath</c> (a local-git subject's own path when there is no row), or runs in an empty folder
-/// with the pack alone and says so. <c>claude</c> gets Read, Grep and Glob only, the group tier's model
+/// <c>LocalPath</c> (a local-git subject's own path when there is no row, a GitHub repo's bare mirror
+/// under <c>Review:Agents:MirrorRoot</c> when that is set), or runs in an empty folder with the pack
+/// alone and says so. <c>claude</c> gets Read, Grep and Glob only, the group tier's model
 /// (<c>Review:Agents:Cli:Models</c>), the brief with the pack always inline, and
 /// <c>Review:Agents:TimeoutMinutes</c>. At most <c>Review:Agents:Cli:MaxParallel</c> run at once. Runs
 /// live in memory: a handle from before a restart is reported lost, and Refresh reruns the review.
@@ -108,8 +109,11 @@ public sealed class CliReviewAgentRunner : IReviewAgentRunner, IDisposable
             acquired = true;
             var directory = Path.Combine(_root, id);
             var repoPath = RepoPath(request, options);
+            var remote = request.Host == ReviewHost.GitHub
+                ? new ReviewCheckoutRemote(request.Repo, CreateMirror: repoPath is not null && repoPath == MirrorPath(options.MirrorRoot, request.Repo))
+                : null;
             if (repoPath is not null)
-                await _checkout.AddAsync(repoPath, request.Host == ReviewHost.GitHub ? request.PrNumber : null, request.HeadSha, directory, stopping);
+                await _checkout.AddAsync(repoPath, remote, request.Host == ReviewHost.GitHub ? request.PrNumber : null, request.HeadSha, directory, stopping);
             else
                 Directory.CreateDirectory(directory);
 
@@ -159,11 +163,29 @@ public sealed class CliReviewAgentRunner : IReviewAgentRunner, IDisposable
         }
     }
 
-    /// <summary>The checkout to cut the worktree from: the repo row's <c>LocalPath</c>, else a local-git subject's own path, else none.</summary>
+    /// <summary>
+    /// The checkout to cut the worktree from: the repo row's <c>LocalPath</c>, else a local-git subject's own
+    /// path, else a GitHub repo's mirror under <c>MirrorRoot</c>, else none.
+    /// </summary>
     public static string? RepoPath(ReviewAgentRequest request, ReviewAgentSettings options) =>
         options.FindRepo(request.Repo)?.LocalPath is { Length: > 0 } configured ? configured
         : request.Host == ReviewHost.Local && !string.IsNullOrWhiteSpace(request.LocalPath) ? request.LocalPath
+        : request.Host == ReviewHost.GitHub ? MirrorPath(options.MirrorRoot, request.Repo)
         : null;
+
+    /// <summary>
+    /// <c>{root}/{owner}/{name}.git</c>, lower-cased (GitHub names are case-insensitive); null without a root
+    /// or for a repo that is not a plain <c>owner/name</c> of letters, digits, <c>-</c>, <c>_</c> and <c>.</c>.
+    /// </summary>
+    public static string? MirrorPath(string? root, string repo)
+    {
+        if (string.IsNullOrWhiteSpace(root))
+            return null;
+        var parts = repo.Trim().ToLowerInvariant().Split('/');
+        if (parts.Length != 2 || parts.Any(p => p.Length == 0 || p is "." or ".." || !p.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.')))
+            return null;
+        return Path.Combine(root.Trim(), parts[0], parts[1] + ".git");
+    }
 
     private void Finish(Run run, string? text, ReviewAgentUsage? usage, string? error)
     {

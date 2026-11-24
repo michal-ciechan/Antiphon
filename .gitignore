@@ -72,3 +72,6 @@ bin-*/
 
 # CARD-0545: untracked nightly watchdog deploy profiles (host details never tracked)
 scripts/nightly-watchdog/*.local.json
+
+# docker-compose.review.yml settings: the GitHub App key and the Claude token (docker/review.env.example)
+/review.env

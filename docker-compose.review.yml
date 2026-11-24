@@ -1,0 +1,117 @@
+# A review-only Antiphon in Docker: the review engine, its UI and Postgres, nothing else.
+# Guide: docs/features/012-review-engine/getting-started.md, section 6.3.
+#
+#   cp docker/review.env.example review.env      # fill it in; review.env is git- and docker-ignored
+#   docker compose -f docker-compose.review.yml --env-file review.env up -d --build
+#
+# review.env is read twice: by compose for POSTGRES_PASSWORD and the REVIEW_* knobs below, and as the
+# server's environment (the Review__* settings and the Claude sign-in). The fixed review-only settings
+# are here; per-company values and secrets are in review.env. The UI and API are on
+# ${REVIEW_BIND_ADDRESS}:${REVIEW_BIND_PORT} (default 127.0.0.1:8080).
+#
+# Reviewers run `claude -p` inside the server container (Review:Agents:Transport = cli), on bare mirrors
+# the server clones itself into /state/mirrors with the GitHub App's token. Decisions and verification
+# run on the same CLI (dialect claude-cli). Claude signs in from CLAUDE_CODE_OAUTH_TOKEN or
+# ANTHROPIC_API_KEY in review.env; no credential is in the image.
+name: antiphon-review
+
+services:
+  state-init:
+    build: &server-build
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        INSTALL_CLAUDE_CODE: "true"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/stack/init-state.sh"]
+    volumes:
+      - review-state:/state
+    restart: "no"
+
+  antiphon:
+    build: *server-build
+    user: "1654:1654"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${REVIEW_BIND_ADDRESS:-127.0.0.1}:${REVIEW_BIND_PORT:-8080}:8080"
+    env_file:
+      - ${REVIEW_ENV_FILE:-review.env}
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required};No Reset On Close=true
+      # Review-only: no session runner, broker, Hangfire or janitor (as scripts/review-standalone.ps1 runs it).
+      SessionRunner__BaseUrl: http://127.0.0.1:1
+      SessionRunner__Enabled: "false"
+      PhoneHomeRunner__Enabled: "false"
+      Delegation__CheckInterpreterEnabled: "false"
+      Delegation__DiagnoseEnabled: "false"
+      Delegation__OutputDistillerEnabled: "false"
+      Delegation__CheckInterpreterWorkingDirectory: /state/check-interpreter
+      Delegation__DiagnoseWorkingDirectory: /state/diagnose
+      Hangfire__ServerEnabled: "false"
+      ZombieCensus__Enabled: "false"
+      Schedules__Enabled: "false"
+      CardFileSync__Enabled: "false"
+      WorktreeResidue__Enabled: "false"
+      WorktreeLegacyRelease__Enabled: "false"
+      RunnerWorktreeRetention__Enabled: "false"
+      AgentTui__ImportProfilesOnStartup: "false"
+      ChannelBridge__Enabled: "false"
+      Digest__Enabled: "false"
+      GitHub__Enabled: "false"
+      AntiphonMessaging__BootstrapServers: 127.0.0.1:1
+      Git__WorkspacePath: /state/work
+      Git__WorktreeBasePath: /state/work/worktrees
+      Serilog__LogPath: /state/logs
+      AgentTui__KeyRingPath: /state/keyring
+      # Reviewers: claude -p in this container, on the server's own mirrors.
+      Review__Agents__Transport: cli
+      Review__Agents__MirrorRoot: /state/mirrors
+      Review__Agents__Cli__MaxParallel: ${REVIEW_MAX_PARALLEL:-2}
+      Review__Agents__Cli__Models__deep: ${REVIEW_DEEP_MODEL:-opus}
+      Review__Agents__Cli__Models__standard: ${REVIEW_STANDARD_MODEL:-sonnet}
+      # Decisions (categorise, select checks, base drift) and verification on the same CLI.
+      Review__Decisions__Providers__claude-cli__Dialect: claude-cli
+      Review__Decisions__Providers__claude-cli__Model: ${REVIEW_CHEAP_MODEL:-haiku}
+      Review__Decisions__Providers__claude-cli__TimeoutSeconds: "120"
+      Review__Decisions__Chains__decisions-default__0__Provider: claude-cli
+      Review__Decisions__Chains__decisions-default__0__Transport: OneShot
+      Review__Completions__Providers__claude-cli__Dialect: claude-cli
+      Review__Completions__Providers__claude-cli__Model: ${REVIEW_CHEAP_MODEL:-haiku}
+      Review__Completions__Providers__claude-cli__TimeoutSeconds: "240"
+      Review__Completions__Chains__completions-cheap__0__Provider: claude-cli
+      Review__Completions__Chains__completions-cheap__0__Transport: OneShot
+      DISABLE_AUTOUPDATER: "1"
+    volumes:
+      - review-state:/state
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: antiphon
+      POSTGRES_USER: antiphon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - review-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antiphon -d antiphon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  review-pgdata:
+  review-state:

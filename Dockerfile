@@ -55,6 +55,26 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates libcurl3-gnutls libexpat1 zlib1g \
  && rm -rf /var/lib/apt/lists/* \
  && curl --version
+# Review engine in Docker (docker-compose.review.yml): optional Claude Code CLI for the cli reviewer
+# transport and the claude-cli decision/completion dialects. Off by default, so a default build is the
+# same image as before. The native linux-x64 binary is pinned by version AND its published SHA-256,
+# the same pair as docker/session-runner-grok/Dockerfile: raise both together, never drop the check.
+# No credential is ever a layer: claude signs in at run time from CLAUDE_CODE_OAUTH_TOKEN
+# (`claude setup-token`) or ANTHROPIC_API_KEY in the container's environment.
+ARG INSTALL_CLAUDE_CODE=false
+ARG CLAUDE_CODE_VERSION=2.1.327
+ARG CLAUDE_CODE_SHA256=343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9
+RUN if [ "${INSTALL_CLAUDE_CODE}" = "true" ]; then \
+      mkdir -p /tmp/claude-install \
+   && curl -fsSL -o /tmp/claude-install/claude "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
+   && echo "${CLAUDE_CODE_SHA256}  /tmp/claude-install/claude" | sha256sum -c - \
+   && install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude \
+   && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
+   && rm -rf /tmp/claude-install; \
+    elif [ "${INSTALL_CLAUDE_CODE}" != "false" ]; then \
+      echo "INSTALL_CLAUDE_CODE must be true or false, not '${INSTALL_CLAUDE_CODE}'" >&2; exit 1; \
+    fi
+ENV DISABLE_AUTOUPDATER=1
 # CARD-1260: the pinned Git (see git-build) replaces Debian's 2.39.5; no apt git is installed.
 COPY --from=git-build /opt/git-root/usr/local/ /usr/local/
 COPY docker/git-minimum-version.sh /usr/local/share/antiphon/git-minimum-version.sh

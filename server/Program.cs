@@ -1033,6 +1033,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Reviewers (design 4.7, Review:Agents): read-only Review delegate tasks in a worktree at the head, or with
     // Review:Agents:Transport = cli, one-shot claude -p on this server in a detached worktree (no session runner).
     builder.Services.AddScoped<IReviewTaskGateway, AgentTaskReviewGateway>();
+    builder.Services.AddSingleton<IReviewGitCredentials, GitHubReviewGitCredentials>();
     builder.Services.AddSingleton<IReviewCheckout, GitReviewCheckout>();
     builder.Services.AddSingleton<CliReviewAgentRunner>();
     builder.Services.AddScoped<DelegationReviewAgentRunner>();
