@@ -40,6 +40,24 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
         catch { _admission.Release(); throw; }
     }
 
+    internal async Task<IAsyncDisposable?> TryAcquireSlotQuarantineRemovalAsync(string path, CancellationToken ct)
+    {
+        if (!await _admission.WaitAsync(0, ct))
+            return null;
+        try
+        {
+            if (_censusReady && !_censusUnknown && !IsRetiring(path) && !HasOwner(path))
+                return new Lease(_admission);
+        }
+        catch
+        {
+            _admission.Release();
+            throw;
+        }
+        _admission.Release();
+        return null;
+    }
+
     public async Task<IAsyncDisposable> AcquireUseAsync(string path, CancellationToken ct)
     {
         await _admission.WaitAsync(ct);

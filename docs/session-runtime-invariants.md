@@ -417,6 +417,15 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   re-homes to `ws-NN-dK` under the same id and lease generation. Two failed replacements mark only that
   slot Failed; more than three re-homes in 24 h retire it; more than four open quarantined directories
   hold the pool (`workspace_slot_pool_degraded`).
+- CARD-2061. The terminal-task reconciler authorizes ongoing checks for a lingering custody
+  quarantine on the exact released lease. Slot maintenance rechecks ownership, process holders,
+  fresh origin reachability and tree cleanliness, and retains task evidence before an automatic
+  `Pushed` removal. The runner holds when Git cannot read the recorded task branch or prove it
+  absent, when index flags make tracked changes invisible to status, or when the tracked index
+  contains a submodule. The quarantine row and
+  the slot's re-home transition share one ledger write. The runner records each hold reason and
+  audits confirmed removal. An operator disposition is still required for quarantines with no
+  terminal-task authorization.
 - A legacy removal never touches a slot: the runner refuses `slot_managed` for any `ws-*` path and the
   server treats that as removed. Ownership ambiguity compares (runner, slot, generation), never the reused
   path. A Claude `--continue` is refused in a slot cwd (`continue_in_shared_workspace`): it would resume

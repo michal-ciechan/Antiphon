@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "0dd0bda3a6c2f8d8a09ca11d6adc8a0842bf1b7bcaa945697fcfe5dc4a52bf35",
+  "policyHash": "98137bf2e9f64fdca05b8ce15b5624d6c0aa30d78138b1b5977c88715456feed",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1584,6 +1584,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: POSIX unreadable-directory status witness; the long-path-config sibling remains required.",
           "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824WorkspaceSlotServerTests",
+          "methods": [
+            "C2061_SettledQuarantineRoundTripWithLinuxHolder"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: observes a real /proc working-directory holder during slot release.",
+          "owner": "CARD-2061"
         },
         {
           "suite": "antiphon",

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
@@ -12,6 +13,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
@@ -270,7 +272,7 @@ public sealed class C0824WorkspaceSlotServerTests
 
         var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceSlotRelease, 1);
         var sent = request.Payload!.Value.Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json)!;
-        sent.ShouldBe(new PhoneHomeWorkspaceSlotReleaseRequest("ws-02", 3, taskId));
+        sent.ShouldBe(new PhoneHomeWorkspaceSlotReleaseRequest("ws-02", 3, taskId, TaskSettled: true));
         (await rig.ReadTaskAsync(taskId)).RemoteWorktreePath.ShouldNotBeNull("the path is cleared only after the reply");
         await rig.Peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceSlotReleaseResponse("released", "ws-02", 3), PhoneHomeFraming.Json)));
@@ -518,6 +520,90 @@ public sealed class C0824WorkspaceSlotServerTests
         task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
         task.RemoteWorkspaceSlotId.ShouldBe(leased.Id);
         task.RemoteWorkspaceSlotGeneration.ShouldBe(leased.LeaseGeneration);
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-2061: observes a real /proc working-directory holder")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C2061_SettledQuarantineRoundTripWithLinuxHolder(CancellationToken ct)
+    {
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        var taskId = await world.SeedAsync();
+        await world.Rig.TickAsync().WaitAsync(Bound, ct);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound, ct);
+        var (_, leased) = await LeasedAsync(world, taskId);
+        await using (var db = world.Rig.NewDb())
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(set => set
+                .SetProperty(t => t.Status, AgentTaskStatus.Succeeded).SetProperty(t => t.CompletedAt, DateTime.UtcNow), ct);
+
+        var journal = new RunnerWorkspaceRemovalJournal(Path.Combine(world.Root, "removal-journal"),
+            world.Rig.Host.StoreId.ToString("D"));
+        void InstallUseGate()
+        {
+            var gate = new RunnerWorkspaceUseGate(journal);
+            gate.CompleteCensus();
+            world.Workspace.WorkspaceUseGate = gate;
+        }
+
+        InstallUseGate();
+        world.RunnerSettings.WorkspaceSlots.LingerRetries = 0;
+        PhoneHomeFrame? release = null;
+        world.Intercept = frame =>
+        {
+            if (frame.Operation == PhoneHomeOperation.WorkspaceSlotRelease)
+                release = frame;
+            return null;
+        };
+
+        async Task RestartAndReplayAsync()
+        {
+            world.StartRunner();
+            InstallUseGate();
+            var reply = await world.Runner.DispatchAsync(release.ShouldNotBeNull() with { RequestId = Guid.NewGuid() }, ct);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceSlotReleaseResponse>(PhoneHomeFraming.Json)!
+                .Outcome.ShouldBe("already_free");
+        }
+
+        using var holder = Process.Start(new ProcessStartInfo("sleep", "120")
+            { WorkingDirectory = leased.Path, UseShellExecute = false }).ShouldNotBeNull();
+        string dirId;
+        try
+        {
+            (await ReconcileAsync(world)).ShouldBe(1);
+            (await world.Rig.ReadTaskAsync(taskId)).RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
+            var quarantine = world.Pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+            dirId = quarantine.DirId;
+            quarantine.TaskId.ShouldBe(taskId);
+            quarantine.SettledLeaseGeneration.ShouldBe(leased.LeaseGeneration);
+            quarantine.Error.ShouldContain($"pid={holder.Id} argv0=sleep kind=cwd");
+            world.Pool.Ledger().Slot(leased.Id)!.Path.ShouldNotBe(leased.Path);
+
+            await RestartAndReplayAsync();
+            quarantine = world.Pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+            quarantine.IsOpen.ShouldBeTrue();
+            quarantine.Outcome.ShouldBe("automatic: holders");
+            Directory.Exists(leased.Path).ShouldBeTrue();
+        }
+        finally
+        {
+            if (!holder.HasExited)
+                holder.Kill();
+            await holder.WaitForExitAsync().WaitAsync(Bound);
+        }
+
+        await RestartAndReplayAsync();
+        await RestartAndReplayAsync();
+        var ledger = world.Pool.Ledger();
+        var closed = ledger.QuarantinedDirectories.ShouldHaveSingleItem();
+        closed.DirId.ShouldBe(dirId);
+        closed.ClosedAt.ShouldNotBeNull();
+        closed.Disposition.ShouldBe("Pushed");
+        ledger.Attention.Where(row => row.Key == WorkspaceSlotCodes.QuarantineAutoReleased)
+            .ShouldHaveSingleItem().Detail.ShouldBe(dirId);
+        Directory.Exists(leased.Path).ShouldBeFalse();
+        C0824SlotTransportWorld.RunGit(world.Clone, ["worktree", "list", "--porcelain"], ct, Bound)
+            .ShouldNotContain("worktree " + leased.Path + "\n");
     }
 
     private static async Task<int> ReconcileAsync(C0824SlotTransportWorld world)

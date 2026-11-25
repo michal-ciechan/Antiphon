@@ -196,17 +196,23 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     /// <param name="epoch">CARD-1960 Debug: wait for the connection minted for this registration.
     /// The server finishes the WebSocket handshake before <c>AcceptConnect</c> installs the new
     /// connection, so a superseded one stays the snapshot for a moment after the client connects.</param>
-    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(TimeSpan? timeout = null, string? runnerId = null, long? epoch = null)
+    /// <param name="adoptedEpoch">When supplied, wait for the real runner to adopt the live server epoch.</param>
+    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(
+        TimeSpan? timeout = null, string? runnerId = null, long? epoch = null, Func<long>? adoptedEpoch = null)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
         PhoneHomeLiveConnection? live = null;
         while (DateTime.UtcNow < deadline)
         {
             live = runnerId is null ? Directory.SnapshotLive() : Directory.SnapshotLive(runnerId);
-            if (live is not null && (epoch is null || live.Epoch == epoch))
+            if (live is not null && (epoch is null || live.Epoch == epoch)
+                && (adoptedEpoch is null || live.Epoch == adoptedEpoch()))
                 return live;
             await Task.Delay(20);
         }
+
+        if (adoptedEpoch is not null && live is not null)
+            throw new TimeoutException($"Phone-home live epoch {live.Epoch} did not match the runner's adopted epoch {adoptedEpoch()}.");
 
         throw new TimeoutException(epoch is null
             ? "Phone-home live connection was not accepted."

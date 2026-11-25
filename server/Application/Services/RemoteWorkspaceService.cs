@@ -423,9 +423,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     /// <summary>CARD-0824 S1 D-B. Releases this task's leased slot by (slot, generation, task).</summary>
-    public Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseSlotAsync(AgentTask task, CancellationToken ct) =>
+    public Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseSlotAsync(AgentTask task, CancellationToken ct, bool taskSettled = false) =>
         Remote(task.RunnerId).ReleaseWorkspaceSlotAsync(new PhoneHomeWorkspaceSlotReleaseRequest(
-            task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id), ct);
+            task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id, taskSettled), ct);
 
     /// <summary>Capture the client before checking the store so reconnect cannot redirect this command to a new store.</summary>
     public Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseSlotAsync(AgentTask task, Guid expectedRunnerStoreId, CancellationToken ct)

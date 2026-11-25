@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.TestSupport;
+using Antiphon.Tests.Scripts;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -94,12 +95,7 @@ public sealed class ZombieCensusPlatformTests
     [Test]
     public void Windows_registration_uses_the_wmi_census()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Skip.Test("A skip is not a pass of the Windows registration branch.");
-            return;
-        }
-
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(ZombieCensusPlatformTests), nameof(Windows_registration_uses_the_wmi_census));
         var services = new ServiceCollection();
         ZombieCensusRegistration.AddProcessCensus(services);
         using var provider = services.BuildServiceProvider();

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
@@ -156,6 +157,260 @@ public sealed class C0824WorkspaceSlotRehomeTests
         pool.Ledger().QuarantinedDirectories.Count(entry => entry.IsOpen).ShouldBe(5);
         var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => pool.LeaseAsync(scratch.RequestB(), ct));
         refusal.Message.ShouldBe(WorkspaceSlotCodes.PoolDegraded);
+    }
+
+    [Test]
+    public async Task C2061_SettledLingeringQuarantineReleasesOnlyWhenPublishedAndClean(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var settings = Settings(settings =>
+        {
+            settings.LingerRetries = 0;
+            settings.MaxQuarantinedDirectories = 0;
+        });
+        var pool = scratch.Pool(settings);
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(lease.Path, "result.txt", "task result");
+        Git(lease.Path, "add", "result.txt");
+        Git(lease.Path, "commit", "-m", "task result");
+        Git(lease.Path, "push", "origin", BranchA);
+        Plant(lease.Path, ".antiphon/reports/task.md", "task evidence");
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            slotId = lease.SlotId,
+            generation = lease.Generation,
+            taskId = TaskA,
+            taskSettled = true,
+        });
+        var release = payload.Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json)!;
+        (await pool.ReleaseAsync(release, ct)).Outcome.ShouldBe("quarantined");
+        (await pool.ReleaseAsync(release, ct)).Outcome.ShouldBe("already_free");
+        var dirId = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().DirId;
+
+        // A fresh runner must retain both the release authority and the work while holders remain.
+        pool = scratch.Pool(settings);
+        await pool.StartAsync(ct);
+        Directory.Exists(lease.Path).ShouldBeTrue();
+        var holderOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+        scratch.Processes.Holders = _ => [];
+
+        Plant(lease.Path, "local.txt", "only copy");
+        Git(lease.Path, "add", "local.txt");
+        Git(lease.Path, "commit", "-m", "local result");
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        File.ReadAllText(Path.Combine(lease.Path, "local.txt")).ShouldBe("only copy");
+        var unpublishedOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+
+        Git(lease.Path, "push", "origin", BranchA);
+        Plant(lease.Path, "dirty.txt", "untracked work");
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        File.ReadAllText(Path.Combine(lease.Path, "dirty.txt")).ShouldBe("untracked work");
+        var dirtyOutcome = pool.Ledger().QuarantinedDirectories.Single().Outcome;
+        File.Delete(Path.Combine(lease.Path, "dirty.txt"));
+
+        // The local origin refs already know the push, but a failed fresh fetch grants no authority.
+        scratch.Faults.Add(new GitFault((_, args) => args is ["-c", "core.longpaths=true", "fetch", "--atomic", ..],
+            "fatal: origin unavailable"));
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        Directory.Exists(lease.Path).ShouldBeTrue();
+        pool.Ledger().QuarantinedDirectories.Single().Outcome.ShouldBe("automatic: origin_unavailable");
+
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        var closed = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        closed.IsOpen.ShouldBeFalse("a settled, holder-free, published and clean directory must close without an operator");
+        closed.Disposition.ShouldBe("Pushed");
+        closed.Outcome.ShouldNotBeNull().ShouldContain("automatic");
+        holderOutcome.ShouldStartWith("automatic: holders");
+        unpublishedOutcome.ShouldStartWith("automatic: unpushed");
+        dirtyOutcome.ShouldStartWith("automatic: dirty");
+        Directory.Exists(lease.Path).ShouldBeFalse();
+        Git(scratch.Clone, "worktree", "list", "--porcelain").ShouldNotContain("worktree " + lease.Path + "\n");
+        File.ReadAllText(Path.Combine(pool.RetainedRoot, TaskA.ToString("N"), lease.Generation.ToString(),
+            ".antiphon", "reports", "task.md")).ShouldBe("task evidence");
+        pool.Ledger().Attention.ShouldContain(entry => entry.Detail != null && entry.Detail.Contains(dirId)
+            && entry.Key == WorkspaceSlotCodes.QuarantineAutoReleased);
+        var next = await pool.LeaseAsync(scratch.RequestB(), ct);
+        next.SlotId.ShouldBe(lease.SlotId);
+        next.Path.ShouldNotBe(lease.Path);
+
+        // A drain or an old server can release a lease without certifying terminal settlement.
+        scratch.Processes.Holders = path => path == next.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await Release(pool, next, TaskB)).Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+        await pool.MaintainAsync(ct);
+        pool.Ledger().QuarantinedDirectories.Single(entry => entry.TaskId == TaskB).IsOpen.ShouldBeTrue();
+        Directory.Exists(next.Path).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("--assume-unchanged", "--no-assume-unchanged")]
+    [Arguments("--skip-worktree", "--no-skip-worktree")]
+    public async Task C2061_HiddenTrackedEditsHoldQuarantine(string hide, string reveal, CancellationToken ct)
+    {
+        using var scratch = Create();
+        var pool = scratch.Pool(Settings(settings => settings.LingerRetries = 0));
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await pool.ReleaseAsync(new(lease.SlotId, lease.Generation, TaskA) { TaskSettled = true }, ct))
+            .Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+
+        Git(lease.Path, "update-index", hide, "a.txt");
+        Plant(lease.Path, "a.txt", "only copy");
+        Git(lease.Path, "status", "--porcelain").ShouldBeEmpty();
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        var held = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        held.IsOpen.ShouldBeTrue("a tracked edit hidden from status must keep the quarantine open");
+        held.Outcome.ShouldBe("automatic: dirty_or_status_unknown");
+        File.ReadAllText(Path.Combine(lease.Path, "a.txt")).ShouldBe("only copy");
+
+        Git(lease.Path, "update-index", reveal, "a.txt");
+        Git(lease.Path, "restore", "a.txt");
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().Disposition.ShouldBe("Pushed");
+    }
+
+    [Test]
+    public async Task C2061_HiddenSubmoduleEditHoldsQuarantine(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var pool = scratch.Pool(Settings(settings => settings.LingerRetries = 0));
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Git(lease.Path, "-c", "protocol.file.allow=always", "submodule", "add", scratch.Origin, "child");
+        Git(lease.Path, "commit", "-m", "add submodule");
+        Git(lease.Path, "push", "origin", BranchA);
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await pool.ReleaseAsync(new(lease.SlotId, lease.Generation, TaskA) { TaskSettled = true }, ct))
+            .Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+
+        var child = Path.Combine(lease.Path, "child");
+        Git(child, "update-index", "--skip-worktree", "README.md");
+        Plant(child, "README.md", "only copy");
+        Git(lease.Path, "-c", "core.fsmonitor=false", "status", "--porcelain", "--ignore-submodules=none").ShouldBeEmpty();
+
+        await pool.MaintainAsync(ct);
+
+        var held = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        held.IsOpen.ShouldBeTrue("the child index can hide the only copy of a tracked edit");
+        held.Outcome.ShouldBe("automatic: dirty_or_status_unknown");
+        File.ReadAllText(Path.Combine(child, "README.md")).ShouldBe("only copy");
+    }
+
+    [Test]
+    public async Task C2061_UnreadableTaskBranchHoldsQuarantine(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var pool = scratch.Pool(Settings(settings => settings.LingerRetries = 0));
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await pool.ReleaseAsync(new(lease.SlotId, lease.Generation, TaskA) { TaskSettled = true }, ct))
+            .Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+
+        // A published detached HEAD does not account for a distinct tip of the recorded task branch.
+        Git(lease.Path, "checkout", "--detach", scratch.ShaA);
+        var branchRef = "refs/heads/" + BranchA;
+        var unpublished = Git(lease.Path, "commit-tree", scratch.ShaA + "^{tree}", "-p", scratch.ShaA, "-m", "unpublished tip").Trim();
+        Git(lease.Path, "update-ref", branchRef, unpublished);
+        var unreadable = new GitFault((directory, args) => directory == lease.Path
+            && args[^1] == branchRef && args[2] is "rev-parse" or "show-ref",
+            "fatal: unable to read branch tip");
+        scratch.Faults.Add(unreadable);
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        unreadable.Hits.ShouldBe(1);
+        var held = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        held.IsOpen.ShouldBeTrue("an unreadable recorded branch tip must keep the quarantine open");
+        held.Outcome.ShouldBe("automatic: unpushed_or_history_unknown");
+        Directory.Exists(lease.Path).ShouldBeTrue();
+
+        // A genuinely absent local branch is allowed after the remaining known commits are proved.
+        Git(lease.Path, "update-ref", "-d", branchRef);
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+        pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().Disposition.ShouldBe("Pushed");
+    }
+
+    [Test]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, false, false)]
+    public async Task C2061_QuarantineRecoveryClosesOneDurableRecord(
+        bool legacyReleasing, bool holderAtRestart, bool settledAuthorization, CancellationToken ct)
+    {
+        using var scratch = Create();
+        var settings = Settings(settings =>
+        {
+            settings.LingerRetries = 0;
+            settings.MaxQuarantinedDirectories = 0;
+        });
+        var pool = scratch.Pool(settings);
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+        pool.PhaseCut = phase =>
+        {
+            if (phase == "quarantine-recorded")
+                throw new InvalidOperationException("restart after quarantine write");
+        };
+        var failure = await Should.ThrowAsync<InvalidOperationException>(() =>
+            pool.ReleaseAsync(new(lease.SlotId, lease.Generation, TaskA) { TaskSettled = true }, ct));
+        failure.Message.ShouldBe("restart after quarantine write");
+        var dirId = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().DirId;
+
+        if (legacyReleasing)
+        {
+            // Before the combined write, a crash could leave the quarantine recorded
+            // while the slot was still Releasing and had not counted this re-home.
+            var ledger = new RunnerWorkspaceSlotLedger(pool.LedgerRoot);
+            var interrupted = ledger.Read();
+            var slot = interrupted.Slot(lease.SlotId)!;
+            slot.State = WorkspaceSlotStates.Releasing;
+            slot.Rehomes.Clear();
+            if (!settledAuthorization)
+                interrupted.QuarantinedDirectories[0].SettledLeaseGeneration = null;
+            ledger.Write(interrupted);
+        }
+
+        if (!holderAtRestart)
+            scratch.Processes.Holders = _ => [];
+        pool = scratch.Pool(settings);
+        await pool.StartAsync(ct);
+        var rehomed = pool.Ledger();
+        rehomed.QuarantinedDirectories.ShouldHaveSingleItem("startup must reuse the durable entry").DirId.ShouldBe(dirId);
+        rehomed.Slot(lease.SlotId)!.Path.ShouldNotBe(lease.Path, "the old worktree already belongs to the quarantine");
+        rehomed.Slot(lease.SlotId)!.Rehomes.Count.ShouldBe(1);
+        scratch.Processes.Holders = _ => [];
+        scratch.Clock.Advance(TimeSpan.FromMinutes(15));
+        await pool.MaintainAsync(ct);
+
+        pool = scratch.Pool(settings);
+        await pool.StartAsync(ct);
+        var recovered = pool.Ledger();
+        var closed = recovered.QuarantinedDirectories.ShouldHaveSingleItem("crash recovery must reuse the durable entry");
+        closed.DirId.ShouldBe(dirId);
+        if (!settledAuthorization)
+        {
+            closed.IsOpen.ShouldBeTrue("recovery cannot grant automatic removal to a historical quarantine");
+            Directory.Exists(lease.Path).ShouldBeTrue();
+            return;
+        }
+
+        closed.Disposition.ShouldBe("Pushed");
+        closed.ClosedAt.ShouldNotBeNull();
+        recovered.Attention.Where(entry => entry.Key == WorkspaceSlotCodes.QuarantineAutoReleased)
+            .ShouldHaveSingleItem().Detail.ShouldBe(dirId);
+        Directory.Exists(lease.Path).ShouldBeFalse();
+        (await pool.LeaseAsync(scratch.RequestB(), ct)).SlotId.ShouldBe(lease.SlotId);
     }
 
     [Test]

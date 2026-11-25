@@ -43,6 +43,7 @@ public sealed class WorkspaceSlotRecord
     public int LingerAttempts { get; set; }
     public DateTimeOffset? NextLingerAt { get; set; }
     public bool ReleaseRequested { get; set; }
+    public bool SettledRelease { get; set; }
     public Guid? LastTaskId { get; set; }
     public string? Detail { get; set; }
 }
@@ -74,6 +75,9 @@ public sealed class QuarantinedDirectoryRecord
     public string? Disposition { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
     public string? Outcome { get; set; }
+    public int? SettledLeaseGeneration { get; set; }
+    public DateTimeOffset? LastAutoCheckAt { get; set; }
+    public bool AutoRemovalStarted { get; set; }
 
     public bool IsOpen => ClosedAt is null;
 }

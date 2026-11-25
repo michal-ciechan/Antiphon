@@ -195,7 +195,7 @@ public sealed class PhoneHomeCommandDispatcher
         // CARD-0824 S1: the pool exists only when the runner flag is on; off keeps task-<id> mirrors.
         if (_settings.WorkspaceSlots.Enabled && _workspace.SlotPool is null)
             _workspace.SlotPool = new RunnerWorkspaceSlotPool(
-                _workspace, _settings.WorkspaceSlots, _capacity.Capacity, _time, activity: _repositoryActivity);
+                _workspace, _settings.WorkspaceSlots, _capacity.Capacity, _time, activity: _repositoryActivity, logger: _logger);
         return _workspace;
     }
 
@@ -213,7 +213,7 @@ public sealed class PhoneHomeCommandDispatcher
 
     /// <summary>
     /// CARD-0824 S1 pool upkeep, run under the mutation lock before a slot operation: crash recovery
-    /// once per process, then maintenance (schedule marks, deferred releases, idle retirement) at
+    /// once per process, then maintenance (including deferred releases and quarantine rechecks) at
     /// most every 15 minutes.
     /// </summary>
     private async Task<RunnerWorkspaceSlotPool> MaintainedSlotPoolAsync(CancellationToken ct)
