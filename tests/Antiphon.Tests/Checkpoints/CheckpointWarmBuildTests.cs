@@ -566,6 +566,46 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task standalone_row_replays_the_producing_layout(bool warm)
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var producer = new SealDriver(fixture);
+        using (var cache = fixture.Open(warm ? null : new FaultSealIo("invalidation")))
+        {
+            var result = await fixture.RunAsync(cache, producer);
+            fixture.AssertGreen(result, producer, "bin-proof", warm);
+        }
+
+        var replay = new SealDriver(fixture)
+        {
+            OnRow = (_, _) =>
+            {
+                using var contender = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit);
+                (contender is null).ShouldBe(warm, "only a warm replay must hold the worktree gate");
+                return Task.CompletedTask;
+            },
+        };
+        using var output = new StringWriter();
+        string[] args =
+        [
+            "row", "--name", "replay", "--project", SealFixture.Project, "--output-path", "bin-proof/",
+            "--filter", "/*/*/Sample/alpha", "--no-build", "--expected-source-sha", fixture.Source.Commit!,
+        ];
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(args, new CheckpointApp.Runtime
+        {
+            RepoRoot = fixture.Root, Driver = replay, Slots = new SealSlots(), Output = output,
+        });
+        exit.ShouldBe(ExitCodes.Green, output.ToString());
+        replay.Builds.ShouldBeEmpty();
+        SealFixture.Properties(replay.Rows.ShouldHaveSingleItem()).ShouldBe(SealFixture.Properties(producer.Builds.Single()));
+        output.ToString().ShouldContain("buildSource=verified");
+        using var reopened = fixture.Open();
+    }
+
+    [Test]
     public async Task overlapping_build_keeps_first_rows_partition()
     {
         var fixture = NewSealFixture();
