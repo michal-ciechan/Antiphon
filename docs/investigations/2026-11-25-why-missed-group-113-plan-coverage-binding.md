@@ -1,10 +1,10 @@
 # Why Full group 113 found stale plan coverage bindings
 
-Windows Full watcher for `b8cbfb24` reported two failures in
+The Windows Full group 113 TRX for `b8cbfb24` recorded two failures in
 `PlanCoverageBindingTests` at `2fd61b643ea4231fa732cd4969b5284d43b33f39`.
-The two repository-backed methods both failed on Linux at that exact pin.
-Each coverage command refused a class removed in unit 20 of the checkpoint
-migration.
+Both methods failed at the same assertions on Linux at that exact pin.
+The Linux replay traced each assertion to a class removed in unit 20 of
+the checkpoint migration.
 
 ## Introducing commit and affected plans
 
@@ -17,10 +17,10 @@ method were identical between the pins. The first failures came from the
 selected class lists after the deletion.
 [Unit 20](../superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md)
 
-| Linux method and top test frame at the base pin | Assertion | Plan row and missing class |
-| --- | --- | --- |
-| `historical_plans_bind_without_suppression`, line 178, 76.878 s | `c1046-real-plans`, expected 0, actual 2 | CARD-1035 CP-2 selects `RunCheckpointScriptTests`, whose file was deleted. |
-| `historical_row_timeout_checklist_binds_the_advisory_method`, local `Bind` line 259, caller line 237, 113.077 s | `c1055-1005`, expected 0, actual 2 | CARD-1005 CP-1 selects `CheckpointNamespaceCensusUsageTests`, removed from `CheckpointTempUsageTests.cs` with the old namespace census. |
+| Method and top test frame at the base pin | Assertion in both TRX records | Windows and Linux durations | Plan row and missing class |
+| --- | --- | --- | --- |
+| `historical_plans_bind_without_suppression`, line 178 | `CheckpointNativeDiagnostics.Coverage(firstExit, CheckpointFixtures.RepoRoot, first)`, `c1046-real-plans`, expected 0, actual 2 | 48.712 s and 76.878 s | CARD-1035 CP-2 selects `RunCheckpointScriptTests`, whose file was deleted. |
+| `historical_row_timeout_checklist_binds_the_advisory_method`, local `Bind` line 259, caller line 237 | `CheckpointNativeDiagnostics.Coverage(exit, root, output)`, `c1055-1005`, expected 0, actual 2 | 84.433 s and 113.077 s | CARD-1005 CP-1 selects `CheckpointNamespaceCensusUsageTests`, removed from `CheckpointTempUsageTests.cs` with the old namespace census. |
 
 `CoverageCommand.Run` enumerates the selected project and requires each
 checkpoint class operand to resolve before analyzing obligations. Both
@@ -44,11 +44,28 @@ The three `MISSING_VALUE` findings were `-Worktree`, `-StartRef` and
 `without -OnAgent`. The first checkpoint recorded one pass, one failure
 and zero skips. [Live refusal assertions](../../tests/Antiphon.Tests/Application/RemotePoolFollowUpAdmissionTests.cs)
 
-The Windows TRX, test log and execution record were unavailable from the Linux
-mirror. The two assertions above come from the Linux TRX and console. The
-method-level outcome in Windows run `acca11ba` and group 113's failed-first
-membership remain unverified. The prior candidate's source establishes class
-availability only.
+## Windows evidence and prior run
+
+The orchestrator extracted the Windows TRX assertions, stacks and stdout
+tails from the desktop. Both stack locations match the pinned source.
+The CARD-1005 stdout reports `INPUT_INVALID` with `unresolved selected class`.
+Its plan hash, `7a61e016999ddda84678e90b25290fc6ff559e27eea47075681be932fb6f586d`,
+matches the pinned plan after CRLF conversion. The accompanying verified read
+of `CheckpointManifestTests.cs` reports 5,102 characters and 116 CRLF line
+endings, also matching the pinned source after conversion.
+
+The CARD-1035 stdout excerpt ends in the diagnostic probe of
+`NativeLinuxWindowsReasonAudit.cs`. That probe runs after the coverage command
+returns and uses its own 32 KiB read cap. The pinned file is 62,483 bytes
+with CRLF, within the coverage command's 1 MiB source limit. The Linux
+console contains the primary coverage report for the same assertion and
+identifies the unresolved class before that probe runs.
+[Diagnostic probe](../../tests/Antiphon.Tests/Checkpoints/CheckpointNativeDiagnostics.cs)
+
+The prior `acca11ba` group 113 lookup returned no outcome for either method.
+The supplied failed-first seed mentions `group-113`. That group identifier
+does not identify the methods included in the seed. The prior source pin
+shows that both selected classes still existed there.
 
 ## Approving reviews
 
