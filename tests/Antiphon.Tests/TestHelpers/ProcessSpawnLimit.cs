@@ -11,7 +11,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// coreutils on a fixture-owned root, with no port, no test-process environment or directory
 /// change, and no checkout-cwd child that writes the checkout, use
 /// <see cref="ScriptModelSpawnLimit"/> (CARD-1984). A checkout-cwd child that writes there
-/// stays here. Other tests are unaffected. Exception: the Codex CLI observation classes hold
+/// stays here. Other tests are unaffected. Exception: the Codex CLI observation classes and DelegateBranchDeliveryTests hold
 /// one slot and run independent worlds (git children only) side by side inside it, at most
 /// Worlds.Degree at once (ANTIPHON_TEST_CODEX_CLI_WORLDS=1 runs them one at a time).
 /// The limiter is per process — it cannot cap a concurrent Antiphon.Agents.Pty.Tests run.

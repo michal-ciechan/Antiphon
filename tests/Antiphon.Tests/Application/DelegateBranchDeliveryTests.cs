@@ -98,9 +98,11 @@ public sealed class DelegateBranchDeliveryTests
     public async Task C1213_QueuedBranchesReachRecipient(CancellationToken ct)
     {
         // derive old ref / bypass mutation wait -> recipient-ref/busy-recipient fail.
-        foreach (var modern in new[] { false, true })
-        foreach (var busy in new[] { false, true })
+        // Each case builds its own world, schema and wire, so the cases run side by side.
+        await Worlds.InParallelAsync(from modern in new[] { false, true } from busy in new[] { false, true } select (modern, busy),
+            c => $"modern={c.modern}/busy={c.busy}", async c =>
         {
+            var (modern, busy) = c;
             await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(cardBranch: modern);
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             await using var wire = await Wire.CreateAsync(world, false, ct);
@@ -127,10 +129,12 @@ public sealed class DelegateBranchDeliveryTests
             (await world.RunAsync(world.Origin, "rev-parse", "master")).ShouldBe(sibling, "unrelated-ref-canary");
             await PersistSyncEvidenceAsync(schema, world.TaskId, synced!, false, ct);
             (await ReadTaskAsync(schema, world.TaskId, ct)).CompletionProgressEvidenceJson.ShouldNotBeNull("durable-sync-proof");
-        }
-        foreach (var modern in new[] { false, true })
-        foreach (var busy in new[] { false, true })
+        });
+        // Each case builds its own world, schema and wire, so the cases run side by side.
+        await Worlds.InParallelAsync(from modern in new[] { false, true } from busy in new[] { false, true } select (modern, busy),
+            c => $"modern={c.modern}/busy={c.busy}", async c =>
         {
+            var (modern, busy) = c;
             await using var park = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, cardBranch: modern);
             await using var wire = await Wire.CreateForParkAsync(park, ct);
             park.RemoteDirectoryOverride = new ParkWireDirectory(park.Directory, wire);
@@ -142,7 +146,7 @@ public sealed class DelegateBranchDeliveryTests
             (await park.RemoteShaAsync()).ShouldBe(tip);
             (await park.VerifyAsync()).Evidence!.SourceSha.ShouldBe(tip);
             (await park.RowAsync()).PublicationReceiptId.ShouldNotBeNull("durable-park-proof");
-        }
+        });
     }
 
     // R5 (CARD-1638): 2x the one measured sample, 277.4s on Windows rc run d47848cc
@@ -152,9 +156,11 @@ public sealed class DelegateBranchDeliveryTests
     public async Task C1213_QueuedBranchRecovery(CancellationToken ct)
     {
         // trust lost ACK / recover with legacy ref -> enqueue-failure/lost-reply/recovered-ref fail.
-        foreach (var modern in new[] { false, true })
-        foreach (var cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" })
+        // Each case builds its own world, schema and wire, so the cases run side by side.
+        await Worlds.InParallelAsync(from modern in new[] { false, true } from cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" } select (modern, cut),
+            c => $"modern={c.modern}/cut={c.cut}", async c =>
         {
+            var (modern, cut) = c;
             await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(cardBranch: modern);
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             await using var wire = await Wire.CreateAsync(world, false, ct);
@@ -219,10 +225,12 @@ public sealed class DelegateBranchDeliveryTests
             await PersistSyncEvidenceAsync(schema, world.TaskId, result, false, ct);
             var facts = TaskProgressJson.TryReadEvidence((await ReadTaskAsync(schema, world.TaskId, ct)).CompletionProgressEvidenceJson)!.RemoteSync!;
             facts.FullRef.ShouldBe(world.FullRef, "durable-recovered-ref"); facts.ConfirmedSha.ShouldBe(tip, "durable-recipient-proof");
-        }
-        foreach (var modern in new[] { false, true })
-        foreach (var cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" })
+        });
+        // Each case builds its own world, schema and wire, so the cases run side by side.
+        await Worlds.InParallelAsync(from modern in new[] { false, true } from cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" } select (modern, cut),
+            c => $"modern={c.modern}/cut={c.cut}", async c =>
         {
+            var (modern, cut) = c;
             await using var park = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, cardBranch: modern);
             await using var wire = await Wire.CreateForParkAsync(park, ct);
             park.RemoteDirectoryOverride = new ParkWireDirectory(park.Directory, wire);
@@ -245,7 +253,7 @@ public sealed class DelegateBranchDeliveryTests
             proof.Request.Binding.FullRef.ShouldBe(park.FullRef);
             proof.Request.Binding.BaselineSha.ShouldBe(park.Baseline);
             (await park.VerifyAsync()).Evidence.ShouldBe(proof, "saved-replay-proof");
-        }
+        });
     }
 
     private static void AssertOwnerStamp(TaskWorktreeMirrorBinding row)
