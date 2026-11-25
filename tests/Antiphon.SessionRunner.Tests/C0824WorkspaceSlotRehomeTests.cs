@@ -292,17 +292,22 @@ public sealed class C0824WorkspaceSlotRehomeTests
         // A published detached HEAD does not account for a distinct tip of the recorded task branch.
         Git(lease.Path, "checkout", "--detach", scratch.ShaA);
         var branchRef = "refs/heads/" + BranchA;
-        var badRef = Path.Combine(scratch.Clone, ".git", branchRef);
-        File.WriteAllText(badRef, "broken ref\n");
+        var unpublished = Git(lease.Path, "commit-tree", scratch.ShaA + "^{tree}", "-p", scratch.ShaA, "-m", "unpublished tip").Trim();
+        Git(lease.Path, "update-ref", branchRef, unpublished);
+        var unreadable = new GitFault((directory, args) => directory == lease.Path
+            && args[^1] == branchRef && args[2] is "rev-parse" or "show-ref",
+            "fatal: unable to read branch tip");
+        scratch.Faults.Add(unreadable);
         scratch.Clock.Advance(TimeSpan.FromMinutes(15));
         await pool.MaintainAsync(ct);
+        unreadable.Hits.ShouldBe(1);
         var held = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
         held.IsOpen.ShouldBeTrue("an unreadable recorded branch tip must keep the quarantine open");
         held.Outcome.ShouldBe("automatic: unpushed_or_history_unknown");
         Directory.Exists(lease.Path).ShouldBeTrue();
 
         // A genuinely absent local branch is allowed after the remaining known commits are proved.
-        File.Delete(badRef);
+        Git(lease.Path, "update-ref", "-d", branchRef);
         scratch.Clock.Advance(TimeSpan.FromMinutes(15));
         await pool.MaintainAsync(ct);
         pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().Disposition.ShouldBe("Pushed");
