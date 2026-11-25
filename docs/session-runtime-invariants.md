@@ -421,7 +421,8 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   quarantine on the exact released lease. Slot maintenance rechecks ownership, process holders,
   fresh origin reachability and tree cleanliness, and retains task evidence before an automatic
   `Pushed` removal. The runner holds when Git cannot read the recorded task branch or prove it
-  absent, or when index flags make tracked changes invisible to status. The quarantine row and
+  absent, when index flags make tracked changes invisible to status, or when the tracked index
+  contains a submodule. The quarantine row and
   the slot's re-home transition share one ledger write. The runner records each hold reason and
   audits confirmed removal. An operator disposition is still required for quarantines with no
   terminal-task authorization.

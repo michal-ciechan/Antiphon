@@ -846,6 +846,13 @@ public sealed class RunnerWorkspaceSlotPool
             var tracked = await SlotGitAsync(path, ct, "ls-files", "-v", "-z");
             if (tracked.ExitCode != 0 || RunnerCompletedCardWorkspaceRemoval.FlaggedTrackedPaths(tracked.Stdout) is not { Count: 0 })
                 return "tracked index flags are present or unreadable";
+
+            // Git status still trusts each submodule's own index, including flags that hide edits.
+            var staged = await SlotGitAsync(path, ct, "ls-files", "--stage", "-z");
+            if (staged.ExitCode != 0 || (staged.Stdout.Length > 0 && staged.Stdout[^1] != '\0'))
+                return "tracked index modes are unreadable";
+            if (staged.Stdout.Split('\0').Any(entry => entry.StartsWith("160000 ", StringComparison.Ordinal)))
+                return "submodule content requires an operator disposition";
         }
         return null;
     }
