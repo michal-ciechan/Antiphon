@@ -397,7 +397,10 @@ public static class CheckpointApp
         ReportWriter.WriteFiles(context, runDirectory, model);
         try
         {
-            EvidenceFolder.Write(runDirectory, model, removeToolCopy: false, context: context);
+            var warmBuilds = state.Builds.Where(build => build.CachePartition is not null)
+                .Select(build => build.Id).ToHashSet(StringComparer.Ordinal);
+            EvidenceFolder.Write(runDirectory, model, removeToolCopy: false, context: context,
+                replayProperties: manifest.Build.Properties, warmBuilds: warmBuilds);
         }
         catch (Exception ex)
         {

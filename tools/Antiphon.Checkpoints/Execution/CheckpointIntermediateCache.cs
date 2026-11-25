@@ -36,7 +36,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
     };
 
     internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected,
-        Action<string>? refuse = null, SealIo? sealIo = null)
+        Action<string>? refuse = null, SealIo? sealIo = null, bool replay = false,
+        CancellationToken cancellationToken = default)
     {
         if (expected is null || source.Commit != expected || source.CaptureStatus != "known"
             || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint))
@@ -45,8 +46,16 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         try
         {
             var home = Home(root);
-            EnsureCacheDirectory(home, root);
             var lockPath = Path.Combine(home, "run.lock");
+            if (replay)
+            {
+                if (SafeWrite.Preflight(root, [lockPath]) is not null)
+                    return null;
+            }
+            else
+            {
+                EnsureCacheDirectory(home, root);
+            }
             // The lock name is never replaced. An untrusted path is left in place and this run builds cold.
             var refusal = TrustedPath(lockPath, out var absent);
             if (refusal is not null)
@@ -55,6 +64,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 return null;
             }
 
+            if (absent && replay)
+                return null;
             if (absent && CreateBlank(lockPath, root) is string created)
             {
                 Note(refuse, created);
@@ -68,14 +79,19 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 return null;
             }
 
-            if (!WriteProps(root, refuse))
+            if (replay ? !CheckReplayProps(root, cancellationToken) : !WriteProps(root, refuse))
                 return null;
             var opened = new CheckpointIntermediateCache(root, source, stream, refuse, sealIo ?? new SealIo());
             stream = null;
             return opened;
         }
-        catch (CheckpointCacheRefusal)
+        catch (CheckpointCacheRefusal) when (!replay)
         {
+            throw;
+        }
+        catch (IOException) when (cancellationToken.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception ex) when (IsCacheFailure(ex))
@@ -87,6 +103,16 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         {
             CloseGate(stream, refuse);
         }
+    }
+
+    private static bool CheckReplayProps(string root, CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(root, ProjectProps);
+        var expected = Encoding.UTF8.GetBytes(PropsText);
+        return SafeWrite.Preflight(root, [path]) is null
+            && TrustedPath(path, out var absent) is null && !absent
+            && OutputCustody.Stat(path)?.Size == (ulong)expected.Length
+            && ReceiptFile.ReadBytes(path, cancellationToken).AsSpan().SequenceEqual(expected);
     }
 
     private static bool WriteProps(string root, Action<string>? refuse)
@@ -132,7 +158,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return Path.Combine(Home(root), Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant());
     }
 
-    internal Entry? Prepare(string project, IReadOnlyList<string> properties, IReadOnlySet<string>? inUse = null)
+    internal Entry? Prepare(string project, IReadOnlyList<string> properties, IReadOnlySet<string>? inUse = null,
+        bool requireSealed = false)
     {
         if (OverridesLayout(properties))
             return null;
@@ -147,7 +174,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             var partition = ReadKind(path, "directory");
             var sealEntry = ReadKind(sealPath, "file");
             if (partition.Kind == "absent" && sealEntry.Kind == "absent")
-                return new Entry(this, path, default, default);
+                return requireSealed ? null : new Entry(this, path, default, default);
             if (partition.Kind == "absent" || sealEntry.Kind == "absent")
                 throw new CheckpointCacheRefusal("partial-partition");
 
@@ -328,7 +355,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         }
     }
 
-    private static bool OverridesLayout(IReadOnlyList<string> properties)
+    internal static bool OverridesLayout(IReadOnlyList<string> properties)
     {
         foreach (var token in properties)
         {

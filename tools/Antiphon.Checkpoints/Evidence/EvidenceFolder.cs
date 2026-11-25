@@ -1,11 +1,14 @@
 using Antiphon.HostCleanup.Checkpoints;
+using System.Globalization;
 using System.Text;
 
 namespace Antiphon.Checkpoints;
 
 public static class EvidenceFolder
 {
-    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null, CheckpointCleanupContext? context = null)
+    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null,
+        CheckpointCleanupContext? context = null, IReadOnlyDictionary<string, string>? replayProperties = null,
+        IReadOnlySet<string>? warmBuilds = null)
     {
         context ??= CheckpointCleanupDefaults.Context;
         var write = new CheckpointWrite(context);
@@ -22,8 +25,7 @@ public static class EvidenceFolder
                 var rerun = new StringBuilder();
                 foreach (var failure in row.Failures)
                 {
-                    var rowCommand = RowCommand(model, row, failure.Name);
-                    var rawCommand = RawCommand(model, row, failure.Name);
+                    var rowCommand = RowCommand(model, row, failure.Name, replayProperties);
                     rowFailures.AppendLine("## " + failure.Name);
                     rowFailures.AppendLine("outcome: Failed");
                     rowFailures.AppendLine("durationSeconds: " + failure.DurationSeconds);
@@ -36,10 +38,15 @@ public static class EvidenceFolder
                     rowFailures.AppendLine(Cap(failure.StdOut));
                     rowFailures.AppendLine("rerun:");
                     rowFailures.AppendLine(rowCommand);
-                    rowFailures.AppendLine(rawCommand);
-                    rowFailures.AppendLine();
                     rerun.AppendLine(rowCommand);
-                    rerun.AppendLine(rawCommand);
+                    // The checkpoint row validates and holds the warm partition for the duration of replay.
+                    if (row.Build is null || warmBuilds?.Contains(row.Build) != true)
+                    {
+                        var rawCommand = RawCommand(model, row, failure.Name);
+                        rowFailures.AppendLine(rawCommand);
+                        rerun.AppendLine(rawCommand);
+                    }
+                    rowFailures.AppendLine();
                 }
 
                 var rowDir = Path.Combine(runDirectory, "rows", row.Id);
@@ -77,13 +84,31 @@ public static class EvidenceFolder
     public static bool IsExecutorImage(string runDirectory, string? imageDirectory = null, CheckpointCleanupContext? context = null) =>
         ExecutorImageGuard.IsExecutorImage(context ?? CheckpointCleanupDefaults.Context, runDirectory, imageDirectory);
 
-    public static string RowCommand(ReportModel model, ReportRow row, string failureName)
+    public static string RowCommand(ReportModel model, ReportRow row, string failureName,
+        IReadOnlyDictionary<string, string>? replayProperties = null)
     {
-        var filter = FilterOf(failureName);
-        return "dotnet run --project tools/Antiphon.Checkpoints -- row --name " + row.Id
-            + " --project " + ProjectOf(model, row)
-            + " --output-path " + OutputOf(model, row)
-            + " --filter \"" + filter + "\" --no-build";
+        var command = new StringBuilder("dotnet run --project tools/Antiphon.Checkpoints -- row --name ")
+            .Append(ShellArgument(row.Id)).Append(" --project ").Append(ShellArgument(ProjectOf(model, row)))
+            .Append(" --output-path ").Append(OutputOf(model, row))
+            .Append(" --filter ").Append(ShellArgument(FilterOf(failureName))).Append(" --no-build");
+        if (row.Source.Start is { CaptureStatus: "known", DirtyFiles: 0, Commit: { } commit })
+            command.Append(" --expected-source-sha ").Append(ShellArgument(commit));
+        if (row.Repeat is { Requested: > 1 } repeat)
+            command.Append(" --repeat ").Append(repeat.Requested.ToString(CultureInfo.InvariantCulture));
+        if (replayProperties is not null)
+        {
+            foreach (var (name, value) in replayProperties)
+                command.Append(" --msbuild-property ").Append(ShellArgument(name + "=" + value));
+        }
+        return command.ToString();
+    }
+
+    private static string ShellArgument(string value)
+    {
+        if (value.Length != 0 && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '/' or '.' or '='))
+            return value;
+        var escapedQuote = OperatingSystem.IsWindows() ? "''" : "'\"'\"'";
+        return "'" + value.Replace("'", escapedQuote, StringComparison.Ordinal) + "'";
     }
 
     public static string RawCommand(ReportModel model, ReportRow row, string failureName)
