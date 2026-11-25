@@ -663,6 +663,49 @@ public sealed class QualificationSupervisorTests
     }
 
     [Test]
+    public void Quiet_test_host_reaches_its_idle_budget_while_the_owner_and_other_logs_are_busy()
+    {
+        using var runs = new Runs();
+        var world = runs.World;
+        var task = world.Directory("idle-task");
+        var logs = world.Directory("idle-logs");
+        var state = world.Directory("idle-state");
+        var runState = State(Run, "tests");
+        runState["logDir"] = logs;
+        Write(Path.Combine(state, "last-run.json"), runState);
+        const int ownerPid = 5200, testHostPid = 5201;
+        world.Seams.OnStart = _ => new QualificationFakeChild(ownerPid, Now, world.Clock)
+        {
+            OnWait = wait =>
+            {
+                if (wait > 21) return true;
+                world.Clock.Advance(TimeSpan.FromMinutes(1));
+                world.Seams.Table.Clear();
+                world.Seams.Table.Add(new QualificationProcess(ownerPid, 1, 10 * wait));
+                world.Seams.Table.Add(new QualificationProcess(testHostPid, ownerPid, 1));
+                File.AppendAllText(Path.Combine(state, "unrelated.log"), "noise\n");
+                QualificationHeartbeat.Write(new QualificationHeartbeatRecord
+                {
+                    ObservedAtUtc = world.Clock.GetUtcNow().UtcDateTime.ToString("o"),
+                    HostCpu = [new QualificationCpuSample(testHostPid, 1)],
+                    IdleMinutes = wait - 1,
+                    IdleBudgetMinutes = 20,
+                    HangSuspected = wait == 21,
+                }, Path.Combine(logs, "active-test-heartbeat.json"));
+                return false;
+            },
+        };
+
+        QualificationSupervise.Run(Supervise(task, logs, state, Run), world.Host(), world.Files).ShouldBe(0);
+
+        var beat = QualificationHeartbeat.Read(Path.Combine(task, "supervisor-heartbeat.json"));
+        beat.IdleMinutes.ShouldBe(20, "the quiet test host owns the idle clock even while the launcher uses 10 CPU seconds/minute");
+        beat.IdleBudgetMinutes.ShouldBe(20);
+        beat.HangSuspected.ShouldBeTrue();
+        beat.HostCpu.Select(sample => sample.Pid).ShouldBe(new[] { testHostPid });
+    }
+
+    [Test]
     public void Preflight_refuses_a_checkout_without_longpaths()
     {
         using var runs = new Runs();
