@@ -196,7 +196,7 @@ Recommended follow-ups (not teardown blockers):
 
 Re-enabling it is an operator step (runbook `:324`, Windmill schedule enable). It takes four steps:
 
-1. Refresh the four runner files from current master and re-pin `SOURCE-SHA`, as described in `scripts/windmill/README.md`.
+1. Refresh the four runner files from current master and re-pin `SOURCE-SHA`, as described in `scripts/windmill/README.md`. (2026-11-25, unit 53 of the remaining-ps1 plan: the snapshot, the job and the status line are C# commands now; the runner takes only the two `invoke-*` launchers, which run `C:\src\Antiphon`'s CLI, and `SOURCE-SHA` pins `C:\src\Antiphon\scripts\postgres-snapshot.ps1`. The README has the current steps.)
 2. Run `Set-SnapshotTarget server2` from the runner copy. It must print `SNAPSHOT TARGET server2`.
 3. The Docker context `antiphon-server2` now exists. Check it with `docker --context antiphon-server2 version`.
 4. Enable `u/lndcobra/antiphon_postgres_snapshot` and `_stale`.

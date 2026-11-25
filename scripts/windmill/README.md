@@ -63,6 +63,17 @@ and not in a script commit. CARD-1405 commit `222610db8` added
 `scripts/postgres-snapshot.ps1` only. CARD-1413 hardened that script. The card
 closed as a script, with the schedule left disabled until a person enabled it.
 
+Since unit 53 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`
+the snapshot, the job, the stale check, the status line and the registration
+are C# commands of `scripts\antiphon.cmd` (`scripts/lib/Antiphon.Nightly/PostgresSnapshot*.cs`,
+`PostgresSnapshotJob.cs`, `RegisterPostgresSnapshot.cs`): `postgres-snapshot`,
+`postgres-snapshot-job`, `postgres-snapshot-stale`, `postgres-snapshot-target`,
+`job-status` and `register-postgres-snapshot`. `scripts/postgres-snapshot.ps1`,
+`scripts/windmill/invoke-postgres-snapshot.ps1` and
+`invoke-postgres-snapshot-stale.ps1` stay as thin launchers with the same
+parameters and exit codes, because the jobs and the runbooks start them by
+path. The steps, refusals, lines, records and exit codes below are unchanged.
+
 `-Plain` on `scripts/postgres-snapshot.ps1` is off unless named. The age path is
 unchanged and still fails closed without a recipient. `-Plain` writes a
 compressed `pg_dump -Fc` file, with no age step, to
@@ -92,24 +103,35 @@ or `failed`), `oneDriveBytes`, and `oneDriveFolder`. The Telegram line ends
 with `+cloud` when the copy succeeded, and with `no cloud copy` as a warning
 when the copy failed or the folder is missing.
 
-`-EnableSchedule` is that human enable. Preview writes nothing.
-`-EnableSchedule` without `-Apply` refuses. The checked-in schedule payload is
-`enabled: true` because the operator asked for the daily job.
+`scripts\antiphon.cmd register-postgres-snapshot` previews both jobs by default
+and contacts nothing. `--apply` registers them on server2 (the Windmill token is
+minted and deleted there), `--enable-schedule` is that human enable and
+`--run-once` runs the job once; both refuse without `--apply`. The checked-in
+schedule payload is `enabled: true` because the operator asked for the daily job.
 
 `u/lndcobra/antiphon_postgres_snapshot` runs at `0 50 7 * * *` Europe/London
 (07:50) on the desktop worker. It SSHes to
 `C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`.
 
-Refresh that runner directory by copying only these four files from the
-checkout that should run: `scripts/postgres-snapshot.ps1`,
-`scripts/windmill/invoke-postgres-snapshot.ps1`,
-`scripts/windmill/invoke-postgres-snapshot-stale.ps1`, and
-`scripts/windmill/job-status.ps1`. There is no refresh script.
-Write SOURCE-SHA in that directory as the sha256 of the copied
-`postgres-snapshot.ps1`: 64 lowercase hex digits, ASCII, no BOM, and no
-trailing newline. The resolver reads SOURCE-SHA only. A candidate is used
-only when its hash matches that pin, so an older checkout is not chosen
-ahead of the pinned bytes.
+Refresh that runner directory by copying only these two launchers from the
+checkout that should run: `scripts/windmill/invoke-postgres-snapshot.ps1` and
+`scripts/windmill/invoke-postgres-snapshot-stale.ps1`. There is no refresh
+script. A runner copy has no checkout around it, so both run the commands of
+`C:\src\Antiphon` (its `scripts/lib/antiphon-cli.ps1` builds the CLI warm into
+`C:\src\Antiphon\bin-launcher`). The resolver's candidates are unchanged: the
+main checkout's `scripts/postgres-snapshot.ps1`, a `postgres-snapshot.ps1` in
+the runner directory, then the CARD-1831 worktree's. Write SOURCE-SHA in that
+directory as the sha256 of `C:\src\Antiphon\scripts\postgres-snapshot.ps1`: 64
+lowercase hex digits, ASCII, no BOM, and no trailing newline. The resolver reads
+SOURCE-SHA only. A candidate is used only when it holds the four source literals
+and its hash matches that pin, so an older checkout is not chosen ahead of the
+pinned bytes. The pin covers the launcher's bytes; what the snapshot does is the
+C# of the `C:\src\Antiphon` checkout, so keep that checkout at the reviewed
+commit. A copy of `postgres-snapshot.ps1` left in the runner directory also runs
+`C:\src\Antiphon`'s CLI. `scripts/windmill/job-status.ps1` is gone: remove a
+runner copy of it. When the CLI cannot be built or started, each launcher exits
+9 with one stderr line and posts nothing (Windmill records the failed run); the
+08:00 check runs through the same CLI.
 Delete SOURCE-SHA.txt if it is present, and do not write SOURCE-SHA.txt again.
 That stale file was a 40-hex git id. A pin left in it does not select a script.
 
@@ -127,7 +149,8 @@ folders, OneDrive copy, `snapshot-status.json` and Telegram line. The source is
 the one word in `C:\Users\lndco\antiphon-snapshot-runner\snapshot-target`:
 
 - `desktop` dumps `antiphon-postgres` on the local daemon, as before.
-- `server2` runs `postgres-snapshot.ps1 -Target server2`. Every docker call
+- `server2` runs `postgres-snapshot.ps1 -Plain -Target server2` (the
+  `postgres-snapshot --plain --target server2` command). Every docker call
   goes through the Docker context `antiphon-server2`, whose endpoint must be
   `ssh://`. A `DOCKER_HOST` of any kind is refused (`docker-host`), a `tcp://`
   context is refused (`docker-context`), and the endpoint is never printed.
@@ -147,7 +170,7 @@ Prerequisite (operator): an SSH key for a server2 account in the `docker` group
 in the `lndco` profile, and
 `docker context create antiphon-server2 --docker host=ssh://<user>@<server2>`,
 checked with `docker --context antiphon-server2 version`. The runner refresh
-also copies the new scripts, re-pins SOURCE-SHA, and writes `desktop` with
+also copies the launchers, re-pins SOURCE-SHA, and writes `desktop` with
 `Set-SnapshotTarget desktop`.
 
 Change the word only through `Set-SnapshotTarget`, dot-sourced from the runner
@@ -157,7 +180,9 @@ copy so the job does not run:
 
 It writes the word ASCII without a BOM, reads it back and must print
 `SNAPSHOT TARGET server2`. Any other word is refused and the file is left as it
-was.
+was. The function runs the `postgres-snapshot-target` command, which is the same
+step from a checkout:
+`scripts\antiphon.cmd postgres-snapshot-target --word server2 --runner-dir C:\Users\lndco\antiphon-snapshot-runner`.
 
 Rollback: every cutover phase 6 rollback that returns production to the
 desktop volume runs `Set-SnapshotTarget desktop` and checks it prints
@@ -182,13 +207,17 @@ than 26 hours. A healthy 07:50 run does not send a second message.
 
 ### Status line
 
-`scripts/windmill/job-status.ps1` and `job-status.schema.json`. A job writes one
+`JobStatus` (`scripts/lib/Antiphon.Nightly/PostgresSnapshotJob.cs`, which replaced
+`scripts/windmill/job-status.ps1`) and `job-status.schema.json`. A job writes one
 JSON object with `job`, `icon`, and `status` (`ok`, `warn`, `fail`, `stale`)
 and an optional `detail`. The renderer prints one line, for example
 `DB backup: OK 0.6 GB`, `DB backup: FAIL exit 3`, or `DB backup: STALE`.
 This job writes `C:\Users\lndco\antiphon-backups\job-status\db-backup.json`.
-Tests call the renderer only. The live post uses `scripts/tg-send.cs` on the
-messaging bus, to Mike's DM, and only the invoke script does that.
+`scripts\antiphon.cmd job-status` is the script's own entry (`--job`, `--icon`,
+`--status`, `--detail`, `--record-path`, `--send`, `--stale-check`). Tests call
+the renderer only. The live post uses ClaudeBot's `scripts/tg-send.cs` on the
+messaging bus, to Mike's DM, and only the jobs do that; tg-send's own receipt
+line is not printed in the job's output.
 
 ### How jobs notify today
 
@@ -210,6 +239,6 @@ These jobs are not changed here.
 ### Later digest
 
 An 08:00 digest can read each `job-status/*.json` file and post one message of
-`Format-JobStatusLine` rows. Until that exists, this backup posts its own line
+`JobStatus.FormatLine` rows. Until that exists, this backup posts its own line
 at 07:50. The 08:00 stale check stays the second signal and stays quiet when a
 success is newer than 26 hours.
