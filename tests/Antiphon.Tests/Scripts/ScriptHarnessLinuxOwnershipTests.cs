@@ -207,11 +207,13 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         LinuxScriptHarnessProcess? owner = null;
         var options = ScriptHarnessProcessFixture.Options() with
         { OwnerFactory = value => { request = value; return owner = new LinuxScriptHarnessProcess(value); } };
-        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "ExitedStdout",
+        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "Race",
             ScriptHarnessProcessFixture.ScriptPath, options, CancellationToken.None);
         var tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, run);
         try
         {
+            // Release the root after observing all three live processes.
+            File.WriteAllText(Path.Combine(tree.ResultsDirectory, "release"), "go");
             var clock = Stopwatch.StartNew();
             while (tree.Root.Executing() && clock.Elapsed < TimeSpan.FromSeconds(3)) await Task.Delay(20);
             tree.Root.Executing().ShouldBeFalse();
@@ -327,11 +329,12 @@ public sealed class ScriptHarnessLinuxOwnershipTests
                 return observedOwner = new RootExitObservedProcess(owner);
             }
         };
-        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "ExitedStdout",
+        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "Race",
             ScriptHarnessProcessFixture.ScriptPath, options, CancellationToken.None);
         var tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, run);
         try
         {
+            File.WriteAllText(Path.Combine(tree.ResultsDirectory, "release"), "go");
             await WaitDeadAsync(tree.Root.Pid);
             // A dead root can precede the supervisor's EXIT frame. Observe that
             // receipt before killing the supervisor so cleanup tests owner loss,
@@ -382,11 +385,12 @@ public sealed class ScriptHarnessLinuxOwnershipTests
                 }));
             }
         };
-        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "ExitedStdout",
+        var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "Race",
             ScriptHarnessProcessFixture.ScriptPath, options, CancellationToken.None);
         var tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, run);
         try
         {
+            File.WriteAllText(Path.Combine(tree.ResultsDirectory, "release"), "go");
             await WaitDeadAsync(tree.Root.Pid);
             var savedGroup = owner!.ConfirmedGroupId;
             original = LinuxScriptHarnessProcess.ReadIdentity(owner.SupervisorId);
