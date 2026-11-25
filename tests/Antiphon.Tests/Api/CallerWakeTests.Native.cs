@@ -60,7 +60,7 @@ public partial class CallerWakeTests
         if (sibling)
         {
             var linked = await ScratchGitRepo.GitInAsync(checkout, "worktree", "add", "--detach", cwd, "HEAD");
-            linked.ExitCode.ShouldBe(0, linked.StdErr);
+            linked.Ok.ShouldBeTrue(linked.StdErr);
         }
         var hooks = Path.Combine(checkout, "scripts", "hooks");
         Directory.CreateDirectory(hooks);
