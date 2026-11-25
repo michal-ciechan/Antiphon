@@ -155,7 +155,7 @@ public sealed class LinuxOwnedGitProcessTests
         Process launched;
         try
         {
-            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "foreign Git");
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn");
             launched = Process.Start(start) ?? throw new InvalidOperationException("Docker did not start");
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
