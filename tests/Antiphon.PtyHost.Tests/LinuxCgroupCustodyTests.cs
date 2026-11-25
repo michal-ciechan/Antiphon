@@ -238,6 +238,10 @@ public class LinuxCgroupCustodyTests
             var status = await world.CustodyAsync(seal: false);
             containment.Missing.ShouldBeTrue("the ordinary post-exit accounting read must have run");
             containment.MissingReads.ShouldBeGreaterThan(0);
+            // Without a placement record (CARD-2060) a fabricated zero would also end Unknown, so
+            // the state alone cannot tell; the real reader itself must refuse the absent tree.
+            containment.MissingPopulations.ShouldBe(0, "a missing tree must never read as a population");
+            containment.MissingReadFailures.ShouldBeGreaterThan(0);
             Directory.Exists(missingTree).ShouldBeFalse();
             Directory.Exists(trackedTree).ShouldBeTrue("the real tracked tree is retained, never removed");
             status.State.ShouldBe(VerificationCustodyState.Unknown);
@@ -615,6 +619,10 @@ public class LinuxCgroupCustodyTests
         public Guid MissingId { get; } = Guid.NewGuid();
         public volatile bool Missing;
         public int MissingReads;
+        /// <summary>Reads of the absent tree that failed closed, as D-10 requires.</summary>
+        public int MissingReadFailures;
+        /// <summary>Reads of the absent tree that returned a population (missing-as-zero).</summary>
+        public int MissingPopulations;
         public int Terminations;
 
         // host-identity.json is written when the journal is created, before the runner places.
@@ -637,7 +645,17 @@ public class LinuxCgroupCustodyTests
             if (!Missing)
                 return Tracked.ReadActive();
             Interlocked.Increment(ref MissingReads);
-            return new LinuxCgroupContainment(MissingId).ReadActive();
+            try
+            {
+                var population = new LinuxCgroupContainment(MissingId).ReadActive();
+                Interlocked.Increment(ref MissingPopulations);
+                return population;
+            }
+            catch (IOException)
+            {
+                Interlocked.Increment(ref MissingReadFailures);
+                throw;
+            }
         }
 
         public PtyTerminationObservation Terminate()
