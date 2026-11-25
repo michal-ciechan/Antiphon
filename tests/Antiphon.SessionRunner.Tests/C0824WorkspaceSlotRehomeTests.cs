@@ -341,7 +341,12 @@ public sealed class C0824WorkspaceSlotRehomeTests
     }
 
     [Test]
-    public async Task C2061_QuarantineRecoveryClosesOneDurableRecord(CancellationToken ct)
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, false, false)]
+    public async Task C2061_QuarantineRecoveryClosesOneDurableRecord(
+        bool legacyReleasing, bool holderAtRestart, bool settledAuthorization, CancellationToken ct)
     {
         using var scratch = Create();
         var settings = Settings(settings =>
@@ -362,8 +367,28 @@ public sealed class C0824WorkspaceSlotRehomeTests
         failure.Message.ShouldBe("restart after quarantine write");
         var dirId = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().DirId;
 
+        if (legacyReleasing)
+        {
+            // Before the combined write, a crash could leave the quarantine recorded
+            // while the slot was still Releasing and had not counted this re-home.
+            var ledger = new RunnerWorkspaceSlotLedger(pool.StateRoot);
+            var interrupted = ledger.Read();
+            var slot = interrupted.Slot(lease.SlotId)!;
+            slot.State = WorkspaceSlotStates.Releasing;
+            slot.Rehomes.Clear();
+            if (!settledAuthorization)
+                interrupted.QuarantinedDirectories[0].SettledLeaseGeneration = null;
+            ledger.Write(interrupted);
+        }
+
+        if (!holderAtRestart)
+            scratch.Processes.Holders = _ => [];
         pool = scratch.Pool(settings);
         await pool.StartAsync(ct);
+        var rehomed = pool.Ledger();
+        rehomed.QuarantinedDirectories.ShouldHaveSingleItem("startup must reuse the durable entry").DirId.ShouldBe(dirId);
+        rehomed.Slot(lease.SlotId)!.Path.ShouldNotBe(lease.Path, "the old worktree already belongs to the quarantine");
+        rehomed.Slot(lease.SlotId)!.Rehomes.Count.ShouldBe(1);
         scratch.Processes.Holders = _ => [];
         scratch.Clock.Advance(TimeSpan.FromMinutes(15));
         await pool.MaintainAsync(ct);
@@ -373,6 +398,13 @@ public sealed class C0824WorkspaceSlotRehomeTests
         var recovered = pool.Ledger();
         var closed = recovered.QuarantinedDirectories.ShouldHaveSingleItem("crash recovery must reuse the durable entry");
         closed.DirId.ShouldBe(dirId);
+        if (!settledAuthorization)
+        {
+            closed.IsOpen.ShouldBeTrue("recovery cannot grant automatic removal to a historical quarantine");
+            Directory.Exists(lease.Path).ShouldBeTrue();
+            return;
+        }
+
         closed.Disposition.ShouldBe("Pushed");
         closed.ClosedAt.ShouldNotBeNull();
         recovered.Attention.Where(entry => entry.Key == WorkspaceSlotCodes.QuarantineAutoReleased)
