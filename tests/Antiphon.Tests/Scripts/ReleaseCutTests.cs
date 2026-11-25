@@ -158,8 +158,14 @@ public sealed class ReleaseCutTests
             var shadowHop = mismatch.World.Runs.Single();
             shadowHop.RequestedSelectionMode = "Incremental";
             shadowHop.SelectionMode = "Shadow";
-            var second = RcIncrementalCut.Execute(shadowHop, roster, Path.Combine(mismatch.World.CandidateRoot, "attempts", "hop-2"), c => throw new InvalidOperationException("no launch"));
-            rows.Check(mismatch.Last()!.Refusal == "incremental-hop-mismatch" && second.Refusal == "incremental-hop-mismatch" && mismatch.Launches.Count == 0 && !cut.Tested,
+            var hop2 = new List<string>();
+            var second = RcIncrementalCut.Execute(shadowHop, roster, Path.Combine(mismatch.World.CandidateRoot, "attempts", "hop-2"), c =>
+            {
+                hop2.Add(c.Id);
+                return new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+            });
+            rows.Check(mismatch.Last()!.Refusal == "incremental-hop-mismatch" && second.Refusal == "incremental-hop-mismatch" && mismatch.Launches.Count == 0 && hop2.Count == 0
+                && !cut.Tested,
                 "s6-hop-mismatch", mismatch.Last()!.Refusal + "/" + second.Refusal);
         }
 
