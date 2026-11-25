@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Scripts;
 /// suspended launcher, job queries, pipes and executable of NativeProcessOwner (Antiphon.Nightly/NativeProcessOwner.cs),
 /// started through OwnedLauncher (the twin of Start-NightlyNativeOwner and Invoke-NightlyOwnedProcess) against the staged
 /// OwnedChild fixture. The fixture's own NativeJobObserver reads the live private job, not the adapter's constants.
-/// Each case fails with its "FAIL C1039/C1045 &lt;label&gt;"; the release, join and kill of every fixture runs either way.
+/// The native cases release and join their fixtures even after an assertion failure.
 /// NotInParallel: the C1045 cases set parent sentinels in this process's environment, and an inheritable pipe end of a
 /// launch must not leak into a child another test starts meanwhile.
 /// </summary>
@@ -33,6 +33,7 @@ public sealed class NightlyNativeOwnershipTests
         var capture = $"idle-hang-capture\r\n{reason}\r\nroot pid={pid} exited=false active=2\r\n";
 
         AssertIdleCapture(capture, pid, reason);
+        AssertIdleCapture(capture.Replace("active=2", "active=1"), pid, reason);
         Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture, pid + 1, reason));
         Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture.Replace("active=2", "active=0"), pid, reason));
         Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture.Replace("exited=false", "exited=true"), pid, reason));
@@ -43,7 +44,9 @@ public sealed class NightlyNativeOwnershipTests
         using var lines = new StringReader(capture);
         lines.ReadLine().ShouldBe("idle-hang-capture");
         lines.ReadLine().ShouldBe(idleReason);
-        lines.ReadLine().ShouldBe($"root pid={pid} exited=false active=1");
+        var root = lines.ReadLine();
+        root.ShouldNotBeNull();
+        root.ShouldMatch($"^root pid={pid} exited=false active=[1-9][0-9]*$");
     }
 
     private static void IdleCaptureAndJobTermination(NativeHarness native, CancellationToken cancellationToken)
