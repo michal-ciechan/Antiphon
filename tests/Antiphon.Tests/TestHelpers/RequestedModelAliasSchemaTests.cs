@@ -37,17 +37,19 @@ public sealed class RequestedModelAliasSchemaTests
             .UseNpgsql(historical.ConnectionString)
             .AddInterceptors(RequestedModelAliasSchema.Interceptor)
             .Options;
+        // Seed the predecessor schema with its own columns plus the alias. The current entity also
+        // maps later additive columns (the caller report receipt), which this schema does not have.
         var id = Guid.NewGuid();
         await using (var fixture = new AppDbContext(fixtureOptions))
         {
-            fixture.AgentTasks.Add(new AgentTask
-            {
-                Id = id,
-                RootTaskId = id,
-                CreatedAt = DateTime.UtcNow,
-                RequestedModelAlias = "gpt-6.2-astra",
-            });
-            await fixture.SaveChangesAsync(ct);
+            await fixture.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "AgentTasks" ("Id", "RootTaskId", "Depth", "Title", "Goal", "Kind", "Role", "ModelLevel",
+                    "Attempt", "MaxAttempts", "Workspace", "WorkingDirectory", "Ephemeral", "Status", "ReplyTo",
+                    "ConcurrencyToken", "CreatedAt", "TokensIn", "TokensOut", "CostUsd", "RequestedModelAlias")
+                VALUES ({id}, {id}, {0}, {"alias"}, {"preserve"}, {0}, {0}, {0}, {1}, {2}, {1},
+                    {"/tmp/requested-model-alias"}, {false}, {0}, {0}, {Guid.NewGuid()}, {DateTime.UtcNow}, {0L}, {0L}, {0m},
+                    {"gpt-6.2-astra"})
+                """, ct);
         }
 
         (await unmodified.AgentTasks.Where(task => task.Id == id).Select(task => task.RequestedModelAlias).SingleAsync(ct))
