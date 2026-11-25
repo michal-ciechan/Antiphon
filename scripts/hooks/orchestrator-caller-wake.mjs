@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const guid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -50,7 +51,13 @@ async function run() {
         const { reportTaskIds, shortfall, idle } = await response.json();
         const ids = Array.isArray(reportTaskIds) ? reportTaskIds.filter(id => typeof id === 'string' && guid.test(id)).slice(0, 16) : [];
         const messages = [];
-        if (ids.length) messages.push('Read the outstanding delegate reports with scripts/antiphon delegate status for each task: ' + ids.join(', ') + '.');
+        if (ids.length) {
+          // A generated orchestrator workspace can sit outside the checkout that owns this hook.
+          const windows = process.platform === 'win32';
+          const launcher = fileURLToPath(new URL(windows ? '../antiphon.cmd' : '../antiphon', import.meta.url));
+          const command = windows ? "& '" + launcher.replaceAll("'", "''") + "'" : "'" + launcher.replaceAll("'", "'\"'\"'") + "'";
+          messages.push('Read the outstanding delegate reports.' + ids.map(id => '\n' + command + ' delegate status ' + id).join(''));
+        }
         if (Number.isSafeInteger(shortfall) && shortfall > 0) messages.push('The keep-six shortfall is ' + shortfall + '. Read the current pipeline and fill the eligible slots or record a hold.');
         if (!messages.length && idle && Date.now() >= renewAt)
           messages.push('The caller notification watch is renewing. End this turn to re-arm the Stop hook.');
