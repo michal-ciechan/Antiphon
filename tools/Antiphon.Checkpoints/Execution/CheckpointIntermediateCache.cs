@@ -135,6 +135,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
 
     public void Dispose() => CloseGate(Interlocked.Exchange(ref heldGate, null), refuse);
 
+    internal bool HoldsGate => Volatile.Read(ref heldGate) is not null;
+
     private static void CloseGate(FileStream? stream, Action<string>? refuse)
     {
         try { stream?.Dispose(); }
@@ -356,18 +358,23 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         }
     }
 
-    internal static bool OverridesLayout(IReadOnlyList<string> properties)
+    internal static bool OverridesLayout(IReadOnlyList<string> properties) =>
+        PropertyNames(properties).Any(LayoutOverrides.Contains);
+
+    internal static bool UsesManagedRoot(IReadOnlyList<string> properties) =>
+        PropertyNames(properties).Contains(RootProperty, StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> PropertyNames(IReadOnlyList<string> properties)
     {
         foreach (var token in properties)
         {
             foreach (var assignment in token["--property:".Length..].Split(';', ','))
             {
                 var equals = assignment.IndexOf('=');
-                if (equals > 0 && LayoutOverrides.Contains(assignment[..equals].Trim()))
-                    return true;
+                if (equals > 0)
+                    yield return assignment[..equals].Trim().Trim('"').Trim();
             }
         }
-        return false;
     }
 
     private bool MatchesSeal(FileStream seal, string path, CancellationToken cancellationToken)

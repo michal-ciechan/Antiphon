@@ -18,6 +18,7 @@ public sealed class RowRequest
     public List<string> Expect { get; init; } = [];
     public List<KeyValuePair<string, string>> Properties { get; init; } = [];
     internal IReadOnlyList<string>? ResolvedBuildProperties { get; init; }
+    internal CheckpointIntermediateCache? IntermediateCache { get; init; }
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
     public int Repeat { get; init; } = 1;
     public string Commit { get; init; } = new string('0', 40);
@@ -140,12 +141,16 @@ public sealed class RowRunner
         CheckpointBuildBinding? binding = null;
         if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
         {
+            var managedLayout = CheckpointIntermediateCache.UsesManagedRoot(properties);
+            if (managedLayout && request.IntermediateCache?.HoldsGate != true)
+                return SourceFailure(request, buffer, combined, "build_cache_unavailable");
             binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, request.Project,
                 request.OutputPath, properties, request.Source.Start);
             if (request.NoBuild)
             {
                 request.Source.BuildSource = binding.Check();
-                if ((request.ExpectedSourceSha is not null || request.Repeat > 1) && request.Source.BuildSource != "verified")
+                if ((managedLayout || request.ExpectedSourceSha is not null || request.Repeat > 1)
+                    && request.Source.BuildSource != "verified")
                     return SourceFailure(request, buffer, combined, "build_source_mismatch");
             }
         }

@@ -230,8 +230,8 @@ public sealed class RunScheduler
                     var buildState = next.IsCommand
                         ? "n/a"
                         : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
-                    var properties = next.IsCommand ? null : buildStates[next.Build!].ResolvedProperties;
-                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, properties, budget, total.Token), rowProgress));
+                    var producer = next.IsCommand ? null : buildStates[next.Build!];
+                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, producer, budget, total.Token), rowProgress));
                 }
             }
 
@@ -711,7 +711,7 @@ public sealed class RunScheduler
         SlotSession session,
         RowProgress progress,
         string buildState,
-        IReadOnlyList<string>? properties,
+        BuildProgress? producer,
         RunBudgetClock budget,
         CancellationToken cancellationToken)
     {
@@ -788,7 +788,8 @@ public sealed class RunScheduler
             Repeat = spec.Repeat,
             Expect = spec.Expect,
             Properties = request.Manifest.Build.Properties.ToList(),
-            ResolvedBuildProperties = properties,
+            ResolvedBuildProperties = producer?.ResolvedProperties,
+            IntermediateCache = producer?.CachePartition is not null ? request.IntermediateCache : null,
             KnownFlaky = spec.Repeat > 1 ? [] : request.KnownFlaky,
             Commit = request.Commit,
             Source = rowSource,
