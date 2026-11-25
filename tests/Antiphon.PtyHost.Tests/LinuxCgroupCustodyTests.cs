@@ -438,6 +438,11 @@ public class LinuxCgroupCustodyTests
         // always holds a transient that exits on its own during the one-second drain below.
         var members = await world.WaitForTreeAsync(atLeast: 2);
         members.ShouldContain(launched.ChildPid);
+        // Identity is pid plus kernel start ticks, captured now, so a failure names every sampled
+        // member and a reused pid can never stand in for the tracked root.
+        var sampled = members.ToDictionary(pid => pid, StartTicksOf);
+        var rootStart = sampled[launched.ChildPid];
+        rootStart.ShouldNotBeNull("the tracked root was a live member when the tree was sampled");
         var procs = LinuxCgroupContainment.ExecutionProcsPath(
             Guid.ParseExact(CurrentNamespace(), "D"), world.Containment.ContainerId);
         new FileInfo(procs).Length.ShouldBe(0L, "a live cgroup.procs seq_file reports size zero");
@@ -449,13 +454,40 @@ public class LinuxCgroupCustodyTests
         var drain = await SpawnAsync("/bin/bash", "-c",
             "source /usr/local/lib/antiphon-custody-common.sh; custody_drain \"$1\" 1",
             "bash", procs);
-        var alive = members.All(pid => Directory.Exists("/proc/" + pid));
+        // CARD-1932: the sample holds the root and its HoldLine `sleep 0.1` children, which exit
+        // on their own inside the drain window. What must hold is the tracked root, the same
+        // process throughout, and a fresh read of the owned tree that still contains it.
+        var rootAfter = StartTicksOf(launched.ChildPid);
+        var fresh = await world.ReadTreeAsync();
+        var fates = string.Join(", ", sampled.Select(m =>
+            m.Key + (m.Key == launched.ChildPid ? "(root)" : "") + " start=" + (m.Value?.ToString() ?? "gone")
+            + " now=" + (StartTicksOf(m.Key)?.ToString() ?? "gone")));
         var markerWritten = File.Exists(marker);
         enter.Code.ShouldNotBe(0);
         enter.Text.ShouldContain("CustodyTreeNotEmpty");
         markerWritten.ShouldBeFalse();
-        drain.Code.ShouldNotBe(0);
-        alive.ShouldBeTrue();
+        drain.Code.ShouldBe(1, "custody_drain returns 1 only for a tree still populated after its bound");
+        rootAfter.ShouldBe(rootStart,
+            "the tracked root must be the same live process after the entry and drain checks; sampled " + fates);
+        fresh.ShouldContain(launched.ChildPid,
+            "a fresh read of the owned tree must still hold the tracked root; fresh [" + string.Join(", ", fresh)
+            + "], sampled " + fates);
+
+        // Field 22 of /proc/<pid>/stat (starttime), parsed after the comm field; null once gone.
+        static ulong? StartTicksOf(int pid)
+        {
+            string stat;
+            try { stat = File.ReadAllText("/proc/" + pid + "/stat"); }
+            catch (IOException)
+            {
+                // Not found, or ESRCH from a process that exited mid-read: either way it is gone.
+                return null;
+            }
+
+            var fields = stat[(stat.LastIndexOf(')') + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // After comm: state(0) ... starttime(19).
+            return ulong.Parse(fields[19]);
+        }
     }
 
     // --- helpers -------------------------------------------------------------------------
