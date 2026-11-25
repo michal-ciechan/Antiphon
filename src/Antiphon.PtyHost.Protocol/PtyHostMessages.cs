@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.Json.Serialization;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost.Protocol;
 
@@ -55,7 +57,29 @@ public sealed record LaunchMessage(
     global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
     global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
     Guid? RunnerStoreId = null,
-    DateTime? AcceptedStartedAt = null) : PtyHostMessage;
+    DateTime? AcceptedStartedAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? LinuxPlacementDeadline = null) : PtyHostMessage;
+
+/// <summary>Private launch extension using the Linux Stopwatch clock (CLOCK_MONOTONIC ns).</summary>
+public static class LinuxPlacementLaunch
+{
+    public const string Feature = "linuxPlacementV1";
+    public static readonly TimeSpan RequestLimit = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReplyReserve = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan PlacementLimit = TimeSpan.FromSeconds(5);
+
+    public static bool AppliesTo(LaunchMessage launch) => OperatingSystem.IsLinux() &&
+        launch.VerificationBinding?.Backend == VerificationCustodyBackends.LinuxCgroup;
+
+    public static long Stamp(long requestStarted, long now) =>
+        Math.Min(Add(now, PlacementLimit), Add(requestStarted, RequestLimit - ReplyReserve));
+
+    public static long ClampAtReceipt(long senderDeadline, long atReceipt) =>
+        Math.Min(senderDeadline, Add(atReceipt, PlacementLimit));
+
+    private static long Add(long timestamp, TimeSpan duration) =>
+        checked(timestamp + (long)duration.TotalSeconds * Stopwatch.Frequency);
+}
 
 /// <summary>Negotiated v1 custody request. Seal is irreversible and never kills a process.</summary>
 public sealed record CustodyRequestMessage(

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
@@ -44,14 +45,22 @@ public sealed class HostSession : IAsyncDisposable
     private int _lingerArmed;
     private Task? _exitObserver;
     private bool _hostOutputFailed;
+    private bool _hasTestContainment;
+    private bool _supplyTestPlacementProof;
     private readonly IVerificationCustodyFiles? _custodyFiles;
 
     /// <summary>Test seam. Production leaves containment null and builds the real Linux cgroup.</summary>
-    internal void UseContainmentForTests(IPtyCustodyContainment containment) =>
-        _runner.UseContainmentForTests(containment);
+    internal void UseContainmentForTests(IPtyCustodyContainment containment, bool supplyPlacementProof = false)
+    {
+        _runner.UseContainmentForTests(containment, capturePlacementIdentity: supplyPlacementProof);
+        _hasTestContainment = true;
+        _supplyTestPlacementProof = supplyPlacementProof;
+    }
 
     /// <summary>CARD-1617 test seam. Production leaves the system clock.</summary>
     internal void UseCustodyClockForTests(TimeProvider clock) => _runner.UseCustodyClockForTests(clock);
+
+    internal Func<int, int, Guid, ulong, CancellationToken, Task>? BeforeLinuxPlacementGoForTests { get; set; }
 
     public HostSession(PtyHostOptions options, HostLog log, IVerificationCustodyFiles? custodyFiles = null)
     {
@@ -111,13 +120,38 @@ public sealed class HostSession : IAsyncDisposable
 
     public async Task<PtyHostMessage> LaunchAsync(LaunchMessage launch, CancellationToken ct)
     {
-        await _admission.WaitAsync(ct);
-        try { return await LaunchCoreAsync(launch, ct); }
-        finally { _admission.Release(); }
+        if (!LinuxPlacementLaunch.AppliesTo(launch) || _hasTestContainment)
+        {
+            await _admission.WaitAsync(ct);
+            try { return await LaunchCoreAsync(launch, null, ct); }
+            finally { _admission.Release(); }
+        }
+
+        var atReceipt = Stopwatch.GetTimestamp();
+        if (launch.LinuxPlacementDeadline is not { } senderDeadline)
+            return new ErrorMessage("verification_custody_unsupported_backend", "The launch requires Linux placement v1.");
+        var cutoff = LinuxPlacementLaunch.ClampAtReceipt(senderDeadline, atReceipt);
+        if (cutoff <= atReceipt)
+            return new ErrorMessage("verification_custody_start_failed", "The Linux placement deadline expired.");
+        using var admission = CancellationTokenSource.CreateLinkedTokenSource(ct, _custodyLifetime.Token);
+        admission.CancelAfter(Stopwatch.GetElapsedTime(atReceipt, cutoff));
+        try
+        {
+            await _admission.WaitAsync(admission.Token);
+            try { return await LaunchCoreAsync(launch, cutoff, admission.Token); }
+            finally { _admission.Release(); }
+        }
+        catch (OperationCanceledException) when (admission.IsCancellationRequested)
+        {
+            return new ErrorMessage("verification_custody_start_failed", "The Linux placement admission expired or was canceled.");
+        }
     }
 
-    private async Task<PtyHostMessage> LaunchCoreAsync(LaunchMessage launch, CancellationToken ct)
+    private async Task<PtyHostMessage> LaunchCoreAsync(LaunchMessage launch, long? cutoff, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+        if (cutoff is { } deadline && Stopwatch.GetTimestamp() >= deadline)
+            return new ErrorMessage("verification_custody_start_failed", "The Linux placement deadline expired.");
         if (_options.CustodyStoreRoot is not null && launch.VerificationBinding is null)
             return new ErrorMessage("verification_custody_binding_required", "Tracked hosts require their reserved execution binding.");
         lock (_gate)
@@ -135,6 +169,7 @@ public sealed class HostSession : IAsyncDisposable
             Path.Combine(Path.GetDirectoryName(_options.ManifestDir)!, "stop-intents"), warning: _log.Warn);
         _runner.OnData += OnData;
 
+        LinuxPlacementAttempt? placement = null;
         try
         {
             if (launch.VerificationBinding is { } binding)
@@ -156,6 +191,14 @@ public sealed class HostSession : IAsyncDisposable
                 _custody = new(store, binding, _hostInstanceId);
                 if (!PlatformAdmitsBackend(binding.Backend))
                     throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+                if (cutoff is { } placementDeadline)
+                {
+                    if (!File.Exists(LinuxCgroupContainment.PlacementStage) ||
+                        File.Exists("/sys/fs/cgroup/cgroup.controllers"))
+                        throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+                    placement = new(new(storeId, binding.ExecutionId, _hostInstanceId,
+                        _custody.ContainerId, _custody.LinuxNamespaceId), placementDeadline, ct);
+                }
             }
             if (launch.GrokRulesReceipt is not null || _custody is not null || launch.AcceptedStartedAt is not null)
             {
@@ -174,7 +217,11 @@ public sealed class HostSession : IAsyncDisposable
                 _custody?.RecordManifest(_manifest, launched: false);
                 _manifest.SaveAtomic(_options.ManifestPath);
             }
-            if (_custody is not null)
+            if (_custody is not null && placement is not null)
+                await _runner.StartTrackedAsync(launch.Exe, launch.Args.ToArray(), launch.Cwd,
+                    launch.Env.ToDictionary(kv => kv.Key, kv => kv.Value), launch.Cols, launch.Rows,
+                    launch.MemoryLimitMb, _custody, placement, BeforeLinuxPlacementGoForTests, placement.Token);
+            else if (_custody is not null)
                 await _runner.StartTrackedAsync(launch.Exe, launch.Args.ToArray(), launch.Cwd,
                     launch.Env.ToDictionary(kv => kv.Key, kv => kv.Value), launch.Cols, launch.Rows,
                     launch.MemoryLimitMb, _custody, ct);
@@ -191,12 +238,16 @@ public sealed class HostSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            placement?.Dispose();
             _log.Error("Launch failed", ex);
             if (_custody is not null)
             {
                 try { _custody.RecordLaunchFailure(ex is PlatformNotSupportedException); }
                 catch (Exception journalError) { _log.Error("Custody failure persistence failed", journalError); }
-                StartLingerExpiry();
+                if (cutoff.HasValue && _runner.Pid is > 0)
+                    _exitObserver = ObserveExitAsync();
+                else
+                    StartLingerExpiry();
                 // Keep the original observer/ledger available even after an uncertain native start.
                 return new ErrorMessage(ex is PlatformNotSupportedException
                     ? "verification_custody_unsupported_backend" : "verification_custody_start_failed",
@@ -208,7 +259,7 @@ public sealed class HostSession : IAsyncDisposable
         }
 
         var childPid = _runner.Pid ?? 0;
-        var childStart = TryGetProcessStartUtc(childPid) ?? _runner.StartedAt;
+        var childStart = _runner.LinuxSpawnRoot?.StartTimeUtc ?? TryGetProcessStartUtc(childPid) ?? _runner.StartedAt;
         _stopChildStart = childStart;
 
         lock (_gate)
@@ -238,8 +289,26 @@ public sealed class HostSession : IAsyncDisposable
             VerificationHost = _custody?.Identity,
             AcceptedStartedAt = launch.AcceptedStartedAt,
         };
-        _custody?.RecordManifest(_manifest, launched: true);
-        _manifest.SaveAtomic(_options.ManifestPath);
+        try
+        {
+            _custody?.RecordManifest(_manifest, launched: true);
+            _manifest.SaveAtomic(_options.ManifestPath);
+            if (placement?.Commit() is { } proof)
+                _custody!.CommitLinuxPlacement(proof);
+            if (_supplyTestPlacementProof && _custody is { } testJournal && _runner.LinuxSpawnRoot is { } testRoot)
+                testJournal.CommitLinuxPlacement(new(
+                    new(testJournal.Identity.RunnerStoreId, testJournal.Binding.ExecutionId, _hostInstanceId,
+                        testJournal.ContainerId, testJournal.LinuxNamespaceId),
+                    testRoot, LinuxPlacementAttempt.V1Controllers));
+        }
+        catch (Exception ex) when (placement is not null &&
+            ex is IOException or UnauthorizedAccessException or VerificationCustodyException)
+        {
+            _log.Error("Required running manifest publication failed", ex);
+            _exitObserver = ObserveExitAsync();
+            return new ErrorMessage("verification_custody_start_failed", "The tracked running manifest could not be published.");
+        }
+        finally { placement?.Dispose(); }
         // Which pseudoconsole this session got is the difference between a 43 KB body arriving whole
         // and arriving clipped at 1 KB, and it is invisible everywhere else — record it per host.
         _log.Info($"Launched {launch.Exe} (child pid {childPid}); pty backend: {_runner.Backend}");
@@ -360,19 +429,21 @@ public sealed class HostSession : IAsyncDisposable
     // the shim placed the child in, not the pseudoconsole implementation.
     public HelloAckMessage GetHelloAck(string hostVersion) =>
         new(PtyHostProtocol.Version, hostVersion, _options.SessionId, Status,
-            AdvertisesCustody ? ["verificationCustodyV1"] : [], _hostInstanceId);
+            AdvertisesCustody
+                ? OperatingSystem.IsLinux() ? ["verificationCustodyV1", LinuxPlacementLaunch.Feature] : ["verificationCustodyV1"]
+                : [], _hostInstanceId);
 
     private static bool PlatformAdmitsBackend(string backend) =>
         OperatingSystem.IsWindows()
             ? backend == VerificationCustodyBackends.WindowsJob
-            : backend == VerificationCustodyBackends.LinuxCgroup;
+            : OperatingSystem.IsLinux() && backend == VerificationCustodyBackends.LinuxCgroup;
 
     private bool AdvertisesCustody => _options.CustodyStoreRoot is not null
         && _options.CustodyBackend is { } backend
         && (OperatingSystem.IsWindows()
             ? backend == VerificationCustodyBackends.WindowsJob
                 && PtyBackendPolicy.Resolve(_options.PtyBackend).Backend == PtyBackend.ModernConPty
-            : backend == VerificationCustodyBackends.LinuxCgroup);
+            : OperatingSystem.IsLinux() && backend == VerificationCustodyBackends.LinuxCgroup);
 
     public Task<VerificationCustodyStatus> GetCustodyAsync(VerificationExecutionBinding binding,
         CancellationToken ct) => GetCustodyAsync(binding, false, ct);

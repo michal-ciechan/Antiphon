@@ -1,10 +1,13 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost.Protocol;
 
 public sealed record CustodyStamp(long Revision, DateTime AtUtc);
-public sealed record CustodyRoot(long Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId);
+public sealed record CustodyRoot(long Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? LinuxBootId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? LinuxStartTicks = null);
 public sealed record CustodyFailure(string Reason, DateTime AtUtc);
 
 /// <summary>
@@ -12,8 +15,10 @@ public sealed record CustodyFailure(string Reason, DateTime AtUtc);
 /// </summary>
 public sealed record LinuxNamespaceRecord(int Revision, Guid NamespaceId, Guid ContainerId);
 
-/// <summary>CARD-1614. Root membership observed while the tracked root was alive. Not a receipt.</summary>
-public sealed record LinuxPlacementRecord(int Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId, Guid NamespaceId);
+/// <summary>Original host's pre-exec placement proof. Revision 1 lacks generation authority.</summary>
+public sealed record LinuxPlacementRecord(int Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId, Guid NamespaceId,
+    Guid StoreId = default, Guid ExecutionId = default, Guid HostInstanceId = default,
+    VerificationSessionGeneration? Generation = null, Guid BootId = default, ulong StartTicks = 0, uint ControllerMask = 0);
 
 /// <summary>
 /// CARD-1614. Explicit Linux release that observed zero when a receipt is impossible.
@@ -171,6 +176,17 @@ public sealed class VerificationCustodyStore
     {
         RequireBinding(binding);
         return Read<T>(PathFor(binding.ExecutionId, name));
+    }
+
+    public bool MatchesLinuxPlacement(VerificationExecutionBinding binding, LinuxPlacementRecord expected)
+    {
+        RequireBinding(binding);
+        var bytes = _files.Read(PathFor(binding.ExecutionId, "linux-placement.json"));
+        if (bytes is null)
+            return false;
+        if (!bytes.AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(expected, _json)))
+            throw new VerificationCustodyException("verification_custody_integrity_error");
+        return true;
     }
 
     public void WriteRecord<T>(VerificationExecutionBinding binding, string name, T value)

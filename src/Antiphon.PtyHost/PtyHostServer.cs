@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Reflection;
 using System.Threading.Channels;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost;
 
@@ -124,7 +125,7 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
 
                 try
                 {
-                    if (await DispatchAsync(message, outbound.Writer, connectionCts.Token))
+                    if (await DispatchAsync(message, outbound.Writer, pipe, connectionCts.Token))
                         return;
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -155,10 +156,18 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
     private async Task<bool> DispatchAsync(
         PtyHostMessage message,
         ChannelWriter<PtyHostMessage> outbound,
+        NamedPipeServerStream pipe,
         CancellationToken ct)
     {
         switch (message)
         {
+            case LaunchMessage launch when LinuxPlacementLaunch.AppliesTo(launch):
+            {
+                await using var watch = new LinuxLaunchPeerWatch(pipe, ct);
+                outbound.TryWrite(await session.LaunchAsync(launch, watch.Token));
+                return false;
+            }
+
             case LaunchMessage launch:
                 outbound.TryWrite(await session.LaunchAsync(launch, ct));
                 return false;
@@ -193,7 +202,14 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
                 return false;
 
             case CustodyRequestMessage custody:
-                outbound.TryWrite(new CustodyReplyMessage(await session.GetCustodyAsync(custody.Binding, custody.Seal, ct)));
+                try
+                {
+                    outbound.TryWrite(new CustodyReplyMessage(await session.GetCustodyAsync(custody.Binding, custody.Seal, ct)));
+                }
+                catch (VerificationCustodyException ex)
+                {
+                    outbound.TryWrite(new ErrorMessage(ex.Code, ex.Message));
+                }
                 return false;
 
             case ShutdownMessage:

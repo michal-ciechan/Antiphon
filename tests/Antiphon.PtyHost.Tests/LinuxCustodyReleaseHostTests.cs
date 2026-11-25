@@ -51,11 +51,15 @@ public sealed class LinuxCustodyReleaseHostTests
             ns.ShouldNotBeNull();
             ns!.NamespaceId.ShouldBe(namespaceId);
 
+            var child = files.Child;
+            child.ShouldNotBeNull();
+            containment.Pids.Add(child!.Id);
+            containment.DuringTerminate = () => child.Kill(entireProcessTree: true);
             store.WriteRecord(binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
-            containment.Pids.Clear();
             var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
             status.State.ShouldBe(VerificationCustodyState.Unknown);
             status.Receipt.ShouldBeNull();
+            containment.Terminations.ShouldBe(1);
             File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeTrue();
             File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
 
@@ -152,7 +156,7 @@ public sealed class LinuxCustodyReleaseHostTests
             CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
             LingerTtl = TimeSpan.FromHours(24),
         }, files);
-        host.Session.UseContainmentForTests(containment);
+        host.Session.UseContainmentForTests(containment, supplyPlacementProof: true);
         var (store, binding) = Reserve(host, files);
         var release = Path.Combine(host.TempDir, "release");
         var child = 0;
@@ -164,6 +168,10 @@ public sealed class LinuxCustodyReleaseHostTests
                 ? error.Code + ": " + error.Message : "launch reply");
             var launched = (LaunchedMessage)reply;
             child = launched.ChildPid;
+            var path = store.PathFor(binding.ExecutionId, "linux-placement.json");
+            File.Exists(path).ShouldBeFalse("launch does not publish optional placement bytes");
+            (await host.Session.GetCustodyAsync(binding, false, CancellationToken.None))
+                .State.ShouldBe(VerificationCustodyState.Tracking);
             var placement = store.ReadRecord<LinuxPlacementRecord>(binding, "linux-placement.json");
             placement.ShouldNotBeNull();
             placement!.NamespaceId.ShouldBe(namespaceId);

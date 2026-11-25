@@ -217,14 +217,11 @@ public sealed class LinuxCgroupContainmentTests
         var marker = Path.Combine(root, "run", "antiphon-custody", "namespace");
         var tree = Path.Combine(cgroup, "pids", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree");
         var procs = Path.Combine(tree, "cgroup.procs");
+        var freezerProcs = Path.Combine(
+            cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree", "cgroup.procs");
         try
         {
-            Directory.CreateDirectory(tree);
-            Directory.CreateDirectory(Path.Combine(
-                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree"));
-            File.WriteAllText(procs, "");
-            File.WriteAllText(Path.Combine(
-                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree", "cgroup.procs"), "");
+            Directory.CreateDirectory(Path.Combine(cgroup, "freezer", "antiphon-custody"));
             var decoyDir = Path.Combine(cgroup, "pids", "antiphon-custody", execution.ToString("D"), "tree");
             Directory.CreateDirectory(decoyDir);
             File.WriteAllText(Path.Combine(decoyDir, "cgroup.procs"), "99\n");
@@ -237,15 +234,17 @@ public sealed class LinuxCgroupContainmentTests
             var placed = await PlaceTreeAsync(root, execution);
             placed.ExitCode.ShouldBe(0, placed.Text);
             placed.Text.ShouldContain("enter_rc=");
-            File.ReadAllText(procs).Trim().ShouldNotBe("");
+            File.Exists(procs).ShouldBeTrue(placed.Text);
+            var writtenPid = File.ReadAllText(procs).Trim();
+            writtenPid.ShouldNotBe("");
+            File.ReadAllText(freezerProcs).Trim().ShouldBe(writtenPid);
 
             var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(cgroup, marker, null));
             var pids = operations.ReadTreePids(execution);
             pids.Count.ShouldBe(1);
             pids[0].ShouldBeGreaterThan(0);
             pids.ShouldNotContain(99);
-            int.Parse(File.ReadAllText(procs).Trim(), System.Globalization.CultureInfo.InvariantCulture)
-                .ShouldBe(pids[0]);
+            int.Parse(writtenPid, System.Globalization.CultureInfo.InvariantCulture).ShouldBe(pids[0]);
             LinuxCustodyOperations.ResolveProcsPath(ns, execution).ShouldContain(ns.ToString("D"));
         }
         finally
@@ -289,6 +288,17 @@ public sealed class LinuxCgroupContainmentTests
             mount --bind "$host/cgroup" /sys/fs/cgroup
             mount --bind "$host/run" /run
             mount --bind "$host/usr" /usr/local
+            # The bind mount is a regular filesystem. Model the kernel-created
+            # file only after the helper itself successfully creates the tree.
+            mkdir() {
+                command mkdir "$@" || return
+                case "${!#}" in
+                    /sys/fs/cgroup/pids/antiphon-custody/*/tree|/sys/fs/cgroup/freezer/antiphon-custody/*/tree)
+                        [ -e "${!#}/cgroup.procs" ] || : > "${!#}/cgroup.procs"
+                        ;;
+                esac
+            }
+            export -f mkdir
             set +e
             bash "$enter" "$id" -- /bin/true
             echo "enter_rc=$?"

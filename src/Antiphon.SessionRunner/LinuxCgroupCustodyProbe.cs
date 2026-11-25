@@ -33,8 +33,8 @@ public static class LinuxCgroupCustodyProbe
         // /proc/self/status reports NoNewPrivs: 1 once the bit is set, and it is irreversible.
         // A runner started under it can never reach sudo, so it must not claim it can.
         if (env.NoNewPrivs != 0) return null;
-        if (!env.HelperProbeSucceeds(EnterHelper)) return null;
-        if (!env.HelperProbeSucceeds(KillHelper)) return null;
+        if (!env.HelperProbeSucceeds(EnterHelper, "--probe-placement-v1")) return null;
+        if (!env.HelperProbeSucceeds(KillHelper, "--probe")) return null;
         return SessionRunner.Contracts.VerificationCustodyBackends.LinuxCgroup;
     }
 }
@@ -50,8 +50,8 @@ public interface ILinuxCustodyEnvironment
     /// <summary>The `NoNewPrivs:` value from /proc/self/status, or -1 when it cannot be read.</summary>
     int NoNewPrivs { get; }
 
-    /// <summary>`sudo -n &lt;helper&gt; --probe` exited 0.</summary>
-    bool HelperProbeSucceeds(string helperPath);
+    /// <summary>The image-owned helper exited successfully for the specified probe.</summary>
+    bool HelperProbeSucceeds(string helperPath, string probeArgument);
 
     /// <summary>True only when this runtime was explicitly qualified for Linux custody.</summary>
     bool Qualified { get; }
@@ -119,13 +119,13 @@ internal sealed class LinuxCustodyEnvironment : ILinuxCustodyEnvironment
         }
     }
 
-    public bool HelperProbeSucceeds(string helperPath)
+    public bool HelperProbeSucceeds(string helperPath, string probeArgument)
     {
         try
         {
             using var process = Process.Start(new ProcessStartInfo("sudo")
             {
-                ArgumentList = { "-n", helperPath, "--probe" },
+                ArgumentList = { "-n", helperPath, probeArgument },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

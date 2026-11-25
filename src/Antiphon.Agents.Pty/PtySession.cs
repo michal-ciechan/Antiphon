@@ -41,13 +41,15 @@ internal sealed class PortaPtySession : IPtySession
     private readonly PortaExitSignalReader _signalReader = new();
     private PtyExitObservation? _exitObservation;
     private readonly PtyStopCallback? _stopSignal;
-    private readonly DateTime? _ownedStartedAtUtc;
+    private DateTime? _ownedStartedAtUtc;
+    private readonly Task<LinuxSpawnIdentity?>? _placementCapture;
 
-    public PortaPtySession(IPtyConnection connection, Action<PortaPtySession>? beforeReplayForTest = null, PtyStopCallback? stopSignal = null)
+    public PortaPtySession(IPtyConnection connection, Action<PortaPtySession>? beforeReplayForTest = null,
+        PtyStopCallback? stopSignal = null, bool capturePlacement = false)
     {
         _connection = connection;
         _stopSignal = stopSignal;
-        if (OperatingSystem.IsLinux())
+        if (OperatingSystem.IsLinux() && !capturePlacement)
         {
             try { using var child = Process.GetProcessById(connection.Pid); _ownedStartedAtUtc = child.StartTime.ToUniversalTime(); }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception) { }
@@ -57,11 +59,25 @@ internal sealed class PortaPtySession : IPtySession
         // Porta sets code/signal, then this event, then calls ProcessExited. An early exit can
         // precede subscription, and callback/replay can overlap. Both share the same one-shot cache.
         if (_connection.WaitForExit(0)) PublishExit(_connection.ExitCode);
+        if (capturePlacement && ReadExitObservation() is null)
+        {
+            var pid = connection.Pid;
+            _placementCapture = Task.Run(() => LinuxSpawnCapture.Read(pid));
+        }
     }
 
     public event Action<PtyExitObservation>? Exited;
 
     public PtyExitObservation? ReadExitObservation() => Volatile.Read(ref _exitObservation);
+
+    public async Task<LinuxSpawnIdentity> RequirePlacementCaptureAsync(CancellationToken ct)
+    {
+        if (_placementCapture is null || ReadExitObservation() is not null ||
+            await _placementCapture.WaitAsync(ct) is not { } root || ReadExitObservation() is not null)
+            throw new IOException("verification_custody_spawn_identity_unavailable");
+        _ownedStartedAtUtc = root.StartTimeUtc;
+        return root;
+    }
 
     private void PublishExit(int exitCode)
     {

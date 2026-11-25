@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using Microsoft.Win32.SafeHandles;
 using Antiphon.PtyHost.Protocol;
@@ -19,6 +20,7 @@ public sealed class PtyHostClient : IAsyncDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _readLoop;
     private TaskCompletionSource<PtyHostMessage>? _pendingReply;
+    private int _retired;
 
     /// <summary>Live output chunk with its host-assigned sequence number.</summary>
     public event Action<long, string>? OnOutput;
@@ -148,6 +150,8 @@ public sealed class PtyHostClient : IAsyncDisposable
     public async Task<LaunchedMessage> LaunchAsync(LaunchMessage launch, CancellationToken ct)
     {
         if (launch.VerificationBinding is not null) RequireCustodySupport();
+        if (LinuxPlacementLaunch.AppliesTo(launch) && Hello.Features?.Contains(LinuxPlacementLaunch.Feature) != true)
+            throw new VerificationCustodyException("verification_custody_unsupported_backend");
         var reply = await RequestAsync(launch, ct);
         return reply switch
         {
@@ -225,15 +229,39 @@ public sealed class PtyHostClient : IAsyncDisposable
 
     private async Task<PtyHostMessage> RequestAsync(PtyHostMessage request, CancellationToken ct)
     {
+        var tracked = request is LaunchMessage launch && LinuxPlacementLaunch.AppliesTo(launch);
+        var requestStarted = tracked ? Stopwatch.GetTimestamp() : 0;
+        var launchWriteStarted = false;
         await _requestGate.WaitAsync(ct);
         try
         {
             var tcs = new TaskCompletionSource<PtyHostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _pendingReply, tcs);
-            await SendAsync(request, ct);
+            await _writeGate.WaitAsync(ct);
+            try
+            {
+                RequireOpenPipe();
+                if (tracked)
+                {
+                    var now = Stopwatch.GetTimestamp();
+                    var deadline = LinuxPlacementLaunch.Stamp(requestStarted, now);
+                    if (deadline <= now)
+                        throw new VerificationCustodyException("verification_custody_start_failed");
+                    request = ((LaunchMessage)request) with { LinuxPlacementDeadline = deadline };
+                    launchWriteStarted = true;
+                }
+                await PtyHostFraming.WriteAsync(_pipe, request, ct);
+            }
+            finally { _writeGate.Release(); }
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            timeoutCts.CancelAfter(LinuxPlacementLaunch.RequestLimit);
             return await tcs.Task.WaitAsync(timeoutCts.Token);
+        }
+        catch (Exception ex) when (launchWriteStarted && ex is OperationCanceledException or IOException)
+        {
+            Interlocked.Exchange(ref _retired, 1);
+            await _pipe.DisposeAsync();
+            throw;
         }
         finally
         {
@@ -247,12 +275,19 @@ public sealed class PtyHostClient : IAsyncDisposable
         await _writeGate.WaitAsync(ct);
         try
         {
+            RequireOpenPipe();
             await PtyHostFraming.WriteAsync(_pipe, message, ct);
         }
         finally
         {
             _writeGate.Release();
         }
+    }
+
+    private void RequireOpenPipe()
+    {
+        if (Volatile.Read(ref _retired) != 0)
+            throw new EndOfStreamException("pty-host launch request connection retired.");
     }
 
     private async Task ReadLoopAsync()

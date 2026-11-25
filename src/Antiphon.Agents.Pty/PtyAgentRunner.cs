@@ -56,16 +56,18 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// the journal's container id.
     /// </summary>
     internal IPtyCustodyContainment? CustodyContainment { get; set; }
+    private bool _captureTestPlacementIdentity;
 
     /// <summary>
     /// Test seam. The host fixture installs a fake containment before launch. Production
     /// leaves this unset and builds a <see cref="LinuxCgroupContainment"/>.
     /// </summary>
-    public void UseContainmentForTests(IPtyCustodyContainment containment)
+    public void UseContainmentForTests(IPtyCustodyContainment containment, bool capturePlacementIdentity = false)
     {
         if (_conn is not null)
             throw new InvalidOperationException("Containment is fixed once the runner has started.");
         CustodyContainment = containment;
+        _captureTestPlacementIdentity = capturePlacementIdentity;
     }
 
     /// <summary>
@@ -96,6 +98,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     public PtyExitReason ExitReason => (PtyExitReason)Volatile.Read(ref _exitReason);
 
     public DateTime StartedAt => _startedAt;
+    public LinuxSpawnIdentity? LinuxSpawnRoot { get; private set; }
 
     /// <summary>Path to the audit directory written for this session.</summary>
     public string? AuditDirectory => _audit?.Directory;
@@ -124,17 +127,25 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         int rows = 30,
         int memoryLimitMb = 0,
         CancellationToken ct = default)
-        => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, null, ct);
+        => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, null, null, null, ct);
 
     public Task StartTrackedAsync(string app, string[] commandLine, string cwd,
         IDictionary<string, string> env, int cols, int rows, int memoryLimitMb,
         IPtyCustodyJournal custody, CancellationToken ct = default)
         => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb,
-            custody ?? throw new ArgumentNullException(nameof(custody)), ct);
+            custody ?? throw new ArgumentNullException(nameof(custody)), null, null, ct);
+
+    public Task StartTrackedAsync(string app, string[] commandLine, string cwd,
+        IDictionary<string, string> env, int cols, int rows, int memoryLimitMb,
+        IPtyCustodyJournal custody, LinuxPlacementAttempt placement,
+        Func<int, int, Guid, ulong, CancellationToken, Task>? beforeGo, CancellationToken ct)
+        => StartCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb,
+            custody, placement, beforeGo, ct);
 
     private async Task StartCoreAsync(string app, string[] commandLine, string? cwd,
         IDictionary<string, string>? env, int cols, int rows, int memoryLimitMb,
-        IPtyCustodyJournal? custody, CancellationToken ct)
+        IPtyCustodyJournal? custody, LinuxPlacementAttempt? placement,
+        Func<int, int, Guid, ulong, CancellationToken, Task>? beforeGo, CancellationToken ct)
     {
         lock (_launchGate)
         {
@@ -145,7 +156,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
         try
         {
-            await LaunchCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, custody, ct);
+            await LaunchCoreAsync(app, commandLine, cwd, env, cols, rows, memoryLimitMb, custody, placement, beforeGo, ct);
         }
         finally
         {
@@ -155,7 +166,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
 
     private async Task LaunchCoreAsync(string app, string[] commandLine, string? cwd,
         IDictionary<string, string>? env, int cols, int rows, int memoryLimitMb,
-        IPtyCustodyJournal? custody, CancellationToken ct)
+        IPtyCustodyJournal? custody, LinuxPlacementAttempt? placement,
+        Func<int, int, Guid, ulong, CancellationToken, Task>? beforeGo, CancellationToken ct)
     {
         if (_conn is not null) throw new InvalidOperationException("Already started");
         if (memoryLimitMb < 0) throw new ArgumentOutOfRangeException(nameof(memoryLimitMb));
@@ -189,8 +201,11 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             UnixPtyArgvGuard.VerifyOrThrow(app, commandLine);
         if (custody is not null && !OperatingSystem.IsWindows())
         {
+            if (CustodyContainment is null && placement is null)
+                throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
             _containment = CustodyContainment ?? new LinuxCgroupContainment(custody.ContainerId);
-            var placed = _containment.Place(new PtyTrackedLaunch(app, commandLine));
+            var payload = new PtyTrackedLaunch(app, commandLine);
+            var placed = placement is null ? _containment.Place(payload) : _containment.Place(payload, placement.Deadline);
             options.App = placed.App;
             options.CommandLine = placed.CommandLine.ToArray();
             app = placed.App;
@@ -227,33 +242,17 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             options.VerbatimCommandLine = true;
         }
 
+        PortaPtySession? trackedPorta = null;
         if (custody is not null && _containment is not null)
         {
             // The Windows spawn records these inside its suspended-launch critical section. On
             // Linux the equivalent boundary is "immediately before the fork that the shim will
             // place", and the tracked pid is the shim's own pid, which is what it execs into.
+            placement?.RequireOpen();
             custody.RecordStartIntent();
-            _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
-            custody.RecordTracking(_conn.Pid);
-            try
-            {
-                var population = _containment.ReadActive();
-                var contained = false;
-                foreach (var member in population.Pids)
-                {
-                    if (member == _conn.Pid)
-                    {
-                        contained = true;
-                        break;
-                    }
-                }
-
-                custody.RecordLinuxPlacement(contained);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Missing accounting is not placement. Natural finality stays Unknown.
-            }
+            placement?.RequireOpen();
+            _conn = trackedPorta = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct),
+                stopSignal: DispatchStopSignal, capturePlacement: placement is not null || _captureTestPlacementIdentity);
         }
         else
         {
@@ -306,6 +305,23 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
 
         _readCts = new CancellationTokenSource();
         _readTask = Task.Run(() => ReadLoopAsync(_readCts.Token));
+
+        // The output and exit observers belong to the attempt even if tracking or the exchange
+        // fails. Nothing can release a real Linux shim until tracking has published.
+        if (trackedPorta is not null && custody is not null)
+        {
+            if (placement is null && !_captureTestPlacementIdentity)
+                custody.RecordTracking(trackedPorta.Pid);
+            else
+            {
+                var identity = await trackedPorta.RequirePlacementCaptureAsync(ct);
+                LinuxSpawnRoot = identity;
+                placement?.RequireOpen();
+                custody.RecordTracking(identity);
+                if (placement is not null)
+                    await placement.ExchangeAsync(trackedPorta, identity, beforeGo, ct);
+            }
+        }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)

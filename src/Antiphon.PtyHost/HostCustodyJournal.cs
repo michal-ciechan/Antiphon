@@ -14,6 +14,8 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     private bool _nativeIntent;
     private string? _failure;
     private bool _unsupported;
+    private LinuxPlacementRecord? _committedPlacement;
+    private LinuxPlacementRecord? _materializedPlacement;
 
     public VerificationExecutionBinding Binding { get; }
     public VerificationHostIdentity Identity { get; }
@@ -85,15 +87,43 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         _root = tracking;
     }
 
-    public void RecordLinuxPlacement(bool containedRoot)
+    public void RecordTracking(LinuxSpawnIdentity root)
     {
-        if (!containedRoot || _root is null || Binding.Backend != VerificationCustodyBackends.LinuxCgroup)
+        var tracking = new CustodyRoot(2, root.Pid, root.StartTimeUtc, Identity.ContainerId, root.BootId, root.StartTicks);
+        _store.WriteRecord(Binding, "tracking.json", tracking);
+        _root = tracking;
+    }
+
+    internal void CommitLinuxPlacement(LinuxPlacementProof proof)
+    {
+        var bound = proof.Binding;
+        var root = proof.Root;
+        if (Binding.Backend != VerificationCustodyBackends.LinuxCgroup ||
+            bound != new LinuxPlacementBinding(_store.StoreId, Binding.ExecutionId, Identity.HostInstanceId,
+                Identity.ContainerId, LinuxNamespaceId) ||
+            root.ParentPid != Identity.HostPid || root.Pid <= 0 || root.BootId == Guid.Empty || root.StartTicks == 0 ||
+            proof.ControllerMask != LinuxPlacementAttempt.V1Controllers ||
+            _root != new CustodyRoot(2, root.Pid, root.StartTimeUtc, Identity.ContainerId, root.BootId, root.StartTicks))
             return;
+
+        _committedPlacement = new(2, root.Pid, root.StartTimeUtc, bound.ContainerId, bound.NamespaceId,
+            bound.StoreId, bound.ExecutionId, bound.HostInstanceId, Binding.Generation, root.BootId,
+            root.StartTicks, proof.ControllerMask);
+    }
+
+    private void MaterializeLinuxPlacement()
+    {
+        if (_committedPlacement is not { } placement)
+            return;
+        // Only a live original host can supply the offer. An ordinary observer
+        // consumes it once even when optional storage cannot publish it.
+        _committedPlacement = null;
         var ns = _store.ReadRecord<LinuxNamespaceRecord>(Binding, "linux-namespace.json");
-        if (ns is null || ns.NamespaceId == Guid.Empty || ns.ContainerId != Identity.ContainerId)
+        if (ns is not { Revision: 1 } || ns.NamespaceId != placement.NamespaceId ||
+            ns.ContainerId != Identity.ContainerId || !NativeTrackingIntact())
             return;
-        _store.WriteRecord(Binding, "linux-placement.json",
-            new LinuxPlacementRecord(1, _root.Pid, _root.StartTimeUtc, Identity.ContainerId, ns.NamespaceId));
+        _store.WriteRecord(Binding, "linux-placement.json", placement);
+        _materializedPlacement = placement;
     }
 
     public void RecordSeal()
@@ -201,14 +231,13 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     private async Task<VerificationCustodyStatus> ObserveLinuxOrdinaryAsync(PtyAgentRunner runner,
         Func<bool> hostOutputFailed, CancellationToken ct)
     {
-        if (_root is not null && RootAlive(_root.Pid))
-            return new(Binding, VerificationCustodyState.Tracking, null, Identity);
-        if (_root is null && _seal is null)
-            return new(Binding, VerificationCustodyState.Tracking, null, Identity);
-        if (BeforeOrdinaryAccountingForTests.Value is { } beforeAccounting)
-            await beforeAccounting();
         try
         {
+            MaterializeLinuxPlacement();
+            if (!runner.Completion.IsCompletedSuccessfully)
+                return new(Binding, VerificationCustodyState.Tracking, null, Identity);
+            if (BeforeOrdinaryAccountingForTests.Value is { } beforeAccounting)
+                await beforeAccounting();
             var population = await runner.ObserveLinuxAccountingAsync(fence: false, ct);
             if (population.ActiveProcesses != 0)
                 return new(Binding, VerificationCustodyState.Draining, "descendants_running", Identity);
@@ -228,7 +257,7 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         {
             return new(Binding, VerificationCustodyState.Unknown, "observation_canceled", Identity);
         }
-        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception
             or PlatformNotSupportedException)
         {
             return new(Binding, VerificationCustodyState.Unknown, "observation_failed", Identity);
@@ -284,46 +313,18 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         return new(Binding, VerificationCustodyState.Unknown, _failure, Identity);
     }
 
-    private bool CanNaturalFinalize()
-    {
-        if (_root is null || RootAlive(_root.Pid))
-            return false;
-        var placement = _store.ReadRecord<LinuxPlacementRecord>(Binding, "linux-placement.json");
-        var ns = _store.ReadRecord<LinuxNamespaceRecord>(Binding, "linux-namespace.json");
-        return placement is { Revision: 1 }
-            && placement.Pid == _root.Pid
-            && placement.StartTimeUtc == _root.StartTimeUtc
-            && placement.ContainerId == Identity.ContainerId
-            && ns is not null
-            && ns.NamespaceId != Guid.Empty
-            && placement.NamespaceId == ns.NamespaceId
-            && ns.ContainerId == Identity.ContainerId
-            && _store.ReadRecord<CustodyRoot>(Binding, "tracking.json") == _root
-            && _store.ReadRecord<CustodyStamp>(Binding, "native-start-intent.json") is { Revision: 1 };
-    }
+    private bool CanNaturalFinalize() =>
+        _materializedPlacement is { Revision: 2 } placement && NativeTrackingIntact() &&
+        _store.MatchesLinuxPlacement(Binding, placement);
 
     private bool ExitedIdentityIntact() =>
-        _root is not null && _seal is not null
-        && _store.ReadRecord<CustodyRoot>(Binding, "tracking.json") == _root
-        && _store.ReadRecord<CustodyStamp>(Binding, "producer-seal.json") == _seal
-        && _store.ReadRecord<CustodyStamp>(Binding, "native-start-intent.json") is { Revision: 1 };
+        _seal is not null && NativeTrackingIntact()
+        && _store.ReadRecord<CustodyStamp>(Binding, "producer-seal.json") == _seal;
 
-    private static bool RootAlive(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            return false;
-        }
-        catch
-        {
-            return true;
-        }
-    }
+    private bool NativeTrackingIntact() =>
+        _root is not null
+        && _store.ReadRecord<CustodyRoot>(Binding, "tracking.json") == _root
+        && _store.ReadRecord<CustodyStamp>(Binding, "native-start-intent.json") is { Revision: 1 };
 
     private void TryWriteReleaseDisposition()
     {

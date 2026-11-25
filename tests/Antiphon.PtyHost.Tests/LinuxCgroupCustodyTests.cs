@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost;
@@ -147,6 +148,181 @@ public class LinuxCgroupCustodyTests
         receipt.ActiveProcesses.ShouldBe(0u);
         receipt.TerminationSucceeded.ShouldBe(true);
         Directory.Exists("/proc/" + daemonPid).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C2060_Preexec_placement_identifies_the_first_root()
+    {
+        RequireLinuxCustody();
+        if (File.Exists("/sys/fs/cgroup/cgroup.controllers") ||
+            !Directory.Exists(Path.Combine("/sys/fs/cgroup/freezer", CustodyRootName, CurrentNamespace())))
+            throw new SkipTestException("Requires the delegated v1 pids and freezer hierarchies.");
+
+        await using var world = await CustodyWorld.StartAsync();
+        var marker = Path.Combine(world.Scratch, "root-identity");
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonce = Guid.NewGuid().ToString("N");
+        var daemonNonce = Path.Combine(world.Scratch, nonce);
+        var held = new TaskCompletionSource<(int Pid, int Parent, Guid Boot, ulong Ticks)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        HostSession originalHost = world.Host.Session;
+        originalHost.BeforeLinuxPlacementGoForTests = async (pid, parent, boot, ticks, ct) =>
+        {
+            held.SetResult((pid, parent, boot, ticks));
+            await go.Task.WaitAsync(ct);
+        };
+
+        var payloadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = new FileSystemWatcher(world.Scratch, Path.GetFileName(marker));
+        watch.Created += (_, _) => payloadStarted.TrySetResult();
+        watch.Renamed += (_, _) => payloadStarted.TrySetResult();
+        watch.EnableRaisingEvents = true;
+        if (File.Exists(marker))
+            payloadStarted.TrySetResult();
+
+        var launch = world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, daemonNonce),
+            "IFS= read -r stat </proc/self/stat || exit 21",
+            "IFS= read -r boot </proc/sys/kernel/random/boot_id || exit 22",
+            "set -- ${stat##*) }",
+            "(set -C; printf '%s %s %s %s\\n' \"$$\" \"$2\" \"$boot\" \"${20}\" > \"" + marker + ".tmp\") || exit 23",
+            "mv \"" + marker + ".tmp\" \"" + marker + "\"",
+            world.WaitForNonce(daemonNonce),
+            "exit 0");
+        (int Pid, int Parent, Guid Boot, ulong Ticks) proof;
+        try
+        {
+            if (File.Exists(marker))
+                payloadStarted.TrySetResult();
+            using var boundaryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var first = await Task.WhenAny(held.Task, payloadStarted.Task).WaitAsync(boundaryTimeout.Token);
+            first.ShouldBe(held.Task, "validated hold reached before first payload marker");
+            proof = await held.Task;
+            File.Exists(marker).ShouldBeFalse("a held shim has executed no payload instructions");
+            proof.Parent.ShouldBe(Environment.ProcessId);
+
+            var tracking = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+            var host = world.Store.ReadRecord<VerificationHostIdentity>(world.Binding, "host-identity.json")!;
+            tracking.Pid.ShouldBe(proof.Pid);
+            tracking.ContainerId.ShouldBe(host.ContainerId);
+            var hierarchies = ActiveHierarchyMembers(host.ContainerId).ToArray();
+            hierarchies.Length.ShouldBe(2);
+            foreach (var members in hierarchies)
+                members.ShouldBe(new[] { proof.Pid });
+        }
+        finally
+        {
+            go.TrySetResult();
+            await launch;
+            originalHost.BeforeLinuxPlacementGoForTests = null;
+        }
+
+        using var payloadTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await payloadStarted.Task.WaitAsync(payloadTimeout.Token);
+        var parts = (await File.ReadAllTextAsync(marker, payloadTimeout.Token)).Trim().Split(' ');
+        (int.Parse(parts[0]), int.Parse(parts[1]), Guid.Parse(parts[2]), ulong.Parse(parts[3]))
+            .ShouldBe(proof, "the original generation survives exec");
+        (await launch).ChildPid.ShouldBe(proof.Pid);
+        var daemon = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
+        File.ReadAllText(daemonNonce).Trim().ShouldBe("ready");
+        SessionIdOf(daemon).ShouldBe(daemon);
+        var draining = await world.CustodyAsync();
+        draining.State.ShouldBe(VerificationCustodyState.Draining);
+        draining.Receipt.ShouldBeNull();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+        var track = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+        var manifest = world.Store.ReadRecord<PtyHostManifest>(world.Binding, "running-manifest.json")!;
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(world.StorePath("linux-placement.json")));
+        var placement = document.RootElement;
+        placement.GetProperty("revision").GetInt32().ShouldBe(2);
+        placement.GetProperty("pid").GetInt32().ShouldBe(proof.Pid);
+        placement.GetProperty("bootId").GetGuid().ShouldBe(proof.Boot);
+        placement.GetProperty("startTicks").GetUInt64().ShouldBe(proof.Ticks);
+        placement.GetProperty("namespaceId").GetGuid().ShouldBe(Guid.Parse(CurrentNamespace()));
+        placement.GetProperty("containerId").GetGuid().ShouldBe(track.ContainerId);
+        placement.GetProperty("controllerMask").GetUInt32().ShouldBe(3u);
+        placement.GetProperty("startTimeUtc").GetDateTime().ShouldBe(track.StartTimeUtc);
+        manifest.ChildStartTimeUtc.ShouldBe(track.StartTimeUtc);
+        manifest.ChildPid.ShouldBe(proof.Pid);
+        track.LinuxBootId.ShouldBe(proof.Boot);
+        track.LinuxStartTicks.ShouldBe(proof.Ticks);
+
+        await File.WriteAllTextAsync(world.ReleasePath, "release");
+        using var receiptTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        VerificationCustodyStatus final;
+        do
+        {
+            final = await world.CustodyAsync();
+            if (final.Receipt is null)
+                await Task.Delay(100, receiptTimeout.Token);
+        } while (final.Receipt is null);
+        var receipt = world.Validate(final);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.OutputDrained.ShouldBeTrue();
+        receipt.TerminationSucceeded.ShouldBeNull();
+        receipt.TerminationError.ShouldBeNull();
+        Directory.Exists("/proc/" + daemon).ShouldBeFalse();
+        (await world.CustodyAsync()).Receipt.ShouldBe(final.Receipt);
+    }
+
+    [Test]
+    public async Task PipeHangupWinsBeforeGo()
+    {
+        RequireLinuxCustody();
+        if (File.Exists("/sys/fs/cgroup/cgroup.controllers"))
+            throw new SkipTestException("Requires the delegated v1 pids and freezer hierarchies.");
+
+        await using var world = await CustodyWorld.StartAsync();
+        HostSession originalHost = world.Host.Session;
+        var held = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceledAt = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        originalHost.BeforeLinuxPlacementGoForTests = async (pid, _, _, _, ct) =>
+        {
+            held.SetResult(pid);
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                canceledAt.SetResult(Stopwatch.GetTimestamp());
+                throw;
+            }
+        };
+
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var pipe = new NamedPipeClientStream(".", world.Host.Options.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await pipe.ConnectAsync(bound.Token);
+        await PtyHostFraming.WriteAsync(pipe, new HelloMessage(PtyHostProtocol.Version), bound.Token);
+        var hello = (await PtyHostFraming.ReadAsync(pipe, bound.Token)).ShouldBeOfType<HelloAckMessage>();
+        hello.Features.ShouldNotBeNull();
+        hello.Features!.ShouldContain(LinuxPlacementLaunch.Feature);
+        var marker = Path.Combine(world.Scratch, "started");
+        var launch = world.Spec(world.Binding, "echo started > \"" + marker + "\"");
+        await PtyHostFraming.WriteAsync(pipe, launch, bound.Token);
+        var pid = await held.Task.WaitAsync(bound.Token);
+        var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+        tracked.Pid.ShouldBe(pid);
+        var hierarchies = ActiveHierarchyMembers(tracked.ContainerId).ToArray();
+        hierarchies.Length.ShouldBe(2);
+        foreach (var members in hierarchies)
+            members.ShouldBe(new[] { pid });
+        File.Exists(marker).ShouldBeFalse();
+
+        await pipe.DisposeAsync();
+        var observed = await canceledAt.Task.WaitAsync(bound.Token);
+        // Timer resolution can round the placement cutoff down. Require a distinct
+        // pre-cutoff observation so an expired placement cannot satisfy the test.
+        Stopwatch.GetElapsedTime(observed, launch.LinuxPlacementDeadline!.Value)
+            .ShouldBeGreaterThan(TimeSpan.FromMilliseconds(10));
+        await world.WaitForRootExitAsync();
+        foreach (var members in ActiveHierarchyMembers(tracked.ContainerId))
+            members.ShouldBeEmpty();
+        var ordinary = await originalHost.GetCustodyAsync(world.Binding, false, bound.Token);
+        ordinary.State.ShouldBe(VerificationCustodyState.Unknown);
+        ordinary.Receipt.ShouldBeNull();
+        File.Exists(marker).ShouldBeFalse();
+        File.Exists(world.StorePath("linux-placement.json")).ShouldBeFalse();
     }
 
     [Test]
@@ -614,7 +790,7 @@ public class LinuxCgroupCustodyTests
         return int.Parse(line[(key.Length + 1)..].Trim());
     }
 
-    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId)
+    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId, bool allowMissing = false)
     {
         var id = containerId.ToString("D");
         var roots = File.Exists("/sys/fs/cgroup/cgroup.controllers")
@@ -627,6 +803,11 @@ public class LinuxCgroupCustodyTests
         foreach (var root in roots)
         {
             var procs = Path.Combine(root, CurrentNamespace(), id, "tree", "cgroup.procs");
+            if (allowMissing && !File.Exists(procs))
+            {
+                yield return [];
+                continue;
+            }
             yield return File.ReadAllLines(procs)
                 .Where(line => line.Length != 0)
                 .Select(int.Parse)
@@ -737,7 +918,8 @@ public class LinuxCgroupCustodyTests
         // deleted) and opens a successor store at that root invalidates this binding; cleanup must
         // still find and drain the tree it owns instead of re-reading through the dead identity.
         private Guid? TrackedContainerId => _trackedContainerId
-            ??= Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
+            ??= Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId
+                ?? Store.ReadRecord<VerificationHostIdentity>(Binding, "host-identity.json")?.ContainerId;
 
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
@@ -782,12 +964,16 @@ public class LinuxCgroupCustodyTests
             {
                 VerificationBinding = binding,
                 RunnerStoreId = Store.StoreId,
+                LinuxPlacementDeadline = LinuxPlacementLaunch.Stamp(Stopwatch.GetTimestamp(), Stopwatch.GetTimestamp()),
             };
         }
 
         public async Task<LaunchedMessage> LaunchAsync(params string[] lines)
         {
             var reply = await Host.Session.LaunchAsync(Spec(Binding, lines), CancellationToken.None);
+            // A failed reply can still leave a tracked native attempt to join.
+            RootPid = Host.Session.GetStatus().ChildPid ?? 0;
+            _ = TrackedContainerId;
             var launched = reply.ShouldBeOfType<LaunchedMessage>();
             RootPid = launched.ChildPid;
             return launched;
@@ -882,18 +1068,15 @@ public class LinuxCgroupCustodyTests
 
         private async Task<bool> WaitUntilGoneAsync(TimeSpan bound)
         {
-            if (RootPid <= 0)
+            var container = TrackedContainerId;
+            if (RootPid <= 0 && container is null)
                 return true;
             var deadline = DateTime.UtcNow + bound;
             while (DateTime.UtcNow < deadline)
             {
-                var rootGone = !Directory.Exists("/proc/" + RootPid);
-                var treeEmpty = true;
-                if (TrackedContainerId is not null)
-                {
-                    var pids = await ReadTreeAsync();
-                    treeEmpty = pids.Count == 0;
-                }
+                var rootGone = RootPid <= 0 || !Directory.Exists("/proc/" + RootPid);
+                var treeEmpty = container is null || ActiveHierarchyMembers(container.Value, allowMissing: true)
+                    .All(members => members.Length == 0);
 
                 if (rootGone && treeEmpty)
                     return true;

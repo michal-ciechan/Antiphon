@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "98137bf2e9f64fdca05b8ce15b5624d6c0aa30d78138b1b5977c88715456feed",
+  "policyHash": "900e9ea1124ef963669911fdd75849147fda16ee34e94b9028b5436aeb96c4dd",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1468,6 +1468,27 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Inbox PTY launch and Linux custody host witnesses.",
           "owner": "CARD-1614"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card2060PlacementHandshakeTests",
+          "methods": [
+            "OldHostGetsNoTrackedLaunch",
+            "CancelledClientRetiresSentStream",
+            "PlacementIoStartsOnOrdinaryRead",
+            "FailedPlacementCannotPromoteLater",
+            "ConflictingPlacementPreservesFirstBytes",
+            "HostChecksSpawnPeer",
+            "MismatchedPlacedWithholdsGo",
+            "LostAckRetainsLaunchedChild",
+            "MixedFreezerCannotAttest",
+            "StageWaitsForGo",
+            "FailedReleaseSendSuppressesExec",
+            "DropPreservesPayloadBoundary"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the tracked custody requests use real Unix pipes and the Linux PTY, and the placement exchange uses abstract Unix sockets, peer credentials and procfs. Portable codec and validator cases remain required.",
+          "owner": "CARD-2060"
         },
         {
           "suite": "agents-pty",
