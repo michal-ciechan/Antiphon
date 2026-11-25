@@ -62,7 +62,9 @@ async function run() {
         if (!messages.length && idle && Date.now() >= renewAt)
           messages.push('The caller notification watch is renewing. End this turn to re-arm the Stop hook.');
         if (messages.length && (await readFile(marker, 'utf8')) === owner) {
-          process.stderr.write('[Antiphon] ' + messages.join(' ') + '\n');
+          // Each status command is a whole line the caller runs as given. Another notice on
+          // that line would become extra CLI arguments and the report read would be refused.
+          process.stderr.write('[Antiphon] ' + messages.join('\n') + '\n');
           process.exitCode = 2;
           return;
         }
