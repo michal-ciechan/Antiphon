@@ -371,7 +371,7 @@ public sealed class C0824WorkspaceSlotRehomeTests
         {
             // Before the combined write, a crash could leave the quarantine recorded
             // while the slot was still Releasing and had not counted this re-home.
-            var ledger = new RunnerWorkspaceSlotLedger(pool.StateRoot);
+            var ledger = new RunnerWorkspaceSlotLedger(pool.LedgerRoot);
             var interrupted = ledger.Read();
             var slot = interrupted.Slot(lease.SlotId)!;
             slot.State = WorkspaceSlotStates.Releasing;
