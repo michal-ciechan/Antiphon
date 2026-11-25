@@ -420,12 +420,14 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         var session = await holder.ProbeAsync(CancellationToken.None);
         await using var held = await holder.AcquireAsync(session, "held-control", CancellationToken.None);
         held.State.ShouldBe("granted");
-        var now = DateTimeOffset.UtcNow;
-        // A loaded host (Windows rc b8cbfb24) answered the first queued acquire after the 1 s wait.
+        // The 1 s admission deadline runs on the same controlled clock as the retry delay. A loaded
+        // host (Windows rc b8cbfb24) answered the first queued acquire after a real 1.5 s; real time
+        // must not decide whether the deadline fires before the busy answer is observed.
+        var clock = new ControlledTimeProvider();
         var queued = new BuildSlotClient(new SlowFirstAcquire(broker.Recording(), TimeSpan.FromMilliseconds(1500)),
             endpoint, pid: 101, processStartUtc: start,
-            wait: TimeSpan.FromSeconds(1), clock: () => now,
-            delay: (_, _) => { now += TimeSpan.FromSeconds(1); return Task.CompletedTask; });
+            wait: TimeSpan.FromSeconds(1), timeProvider: clock,
+            delay: (_, _) => { clock.Advance(TimeSpan.FromSeconds(1)); return Task.CompletedTask; });
         var root = TempDir();
         Directory.CreateDirectory(Path.Combine(root, "tests", "Proof"));
         var manifest = new CheckpointManifest
