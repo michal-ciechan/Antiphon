@@ -224,15 +224,22 @@ public sealed class CodexCliObservationTests
     [Test]
     public async Task C959_Retry_and_cancellation_recheck()
     {
+        // The save-cancellation check needs none of the vectors; it runs first so a red vector cannot hide it.
+        using (var cancel = new CancellationTokenSource())
+        {
+            await using var k = await Kit.CreateAsync(cancel);
+            await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
+            (await k.Db.AgentTasks.AsNoTracking().CountAsync()).ShouldBe(0, "C959-v22-save-cancellation-no-insert");
+            k.Local.Requests.ShouldBeEmpty("C959-v22-cancellation-no-probe");
+        }
         // Each vector builds its own schema, repository, clock and kits, so the vectors run side by side.
         var vectors = from version in new[] { "0.156.1", "unknown" }
                       from busy in new[] { false, true }
                       from worktree in new[] { false, true }
-                      select (version, busy, worktree);
-        await Worlds.InParallelAsync(vectors, c => $"lost-claim/{c.version}/busy={c.busy}/worktree={c.worktree}", async c =>
+                      select (version, busy, worktree, vector: $"lost-claim/{version}/busy={busy}/worktree={worktree}");
+        await Worlds.InParallelAsync(vectors, c => c.vector, async c =>
         {
-            var (version, busy, worktree) = c;
-            var vector = $"lost-claim/{version}/busy={busy}/worktree={worktree}";
+            var (version, busy, worktree, vector) = c;
             using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             using var git = worktree ? new ScratchGitRepo("c959-recovery") : null;
@@ -324,11 +331,6 @@ public sealed class CodexCliObservationTests
                     if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, recursive: true);
             }
         });
-        using var cancel = new CancellationTokenSource();
-        await using var k = await Kit.CreateAsync(cancel);
-        await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
-        (await k.Db.AgentTasks.AsNoTracking().CountAsync()).ShouldBe(0, "C959-v22-save-cancellation-no-insert");
-        k.Local.Requests.ShouldBeEmpty("C959-v22-cancellation-no-probe");
     }
 
     [Test]
