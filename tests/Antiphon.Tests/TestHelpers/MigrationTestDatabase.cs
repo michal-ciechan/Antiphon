@@ -49,7 +49,8 @@ internal static class MigrationTestDatabase
     /// <summary>
     /// Drops additive objects whose Down methods throw, and their history rows, so a cloned tip
     /// can return to <see cref="LastReversibleMigration"/> before an older reversible migration runs.
-    /// Empty review engine tables are detached first, then an empty requested-model alias, then an
+    /// Empty caller report receipts are detached first, then empty review engine tables, then an
+    /// empty requested-model alias, then an
     /// empty land-verification addition.
     /// A stored value is refused with the migration's own message and is not dropped.
     /// Historical seeds that insert the current <c>AgentTask</c> shape into a pre-alias schema are
@@ -58,6 +59,7 @@ internal static class MigrationTestDatabase
     /// </summary>
     public static async Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default)
     {
+        await DetachCallerReportReceiptAsync(db, ct);
         await DetachReviewEngineAsync(db, ct);
         await DetachRequestedModelAliasAsync(db, ct);
         await DetachLandVerificationFailureAsync(db, ct);
@@ -87,6 +89,46 @@ internal static class MigrationTestDatabase
                 '20261107104114_HostLoadRetentionCatchup',
                 '20261108121426_Card1773TranscriptPromptStampIndex',
                 '20261110213738_Card1294ShadowCohort');
+            """, ct);
+    }
+
+    /// <summary>The caller report receipt migration. Its Down throws, so a rewind detaches an empty copy instead.</summary>
+    public const string CallerReportReceiptMigration = "20261125151517_AddCallerReportSettlementReceipt";
+
+    /// <summary>The message <c>AddCallerReportSettlementReceipt.Down</c> throws, which the detach repeats for stored receipts.</summary>
+    public const string CallerReportReceiptDowngradeRefusal = "A caller's settlement receipt cannot be discarded by a downgrade.";
+
+    /// <summary>
+    /// <c>AddCallerReportSettlementReceipt.Down</c> always throws. A tip clone that never recorded a
+    /// receipt drops the three empty columns and the history row here, so its schema is exactly the
+    /// predecessor's. A stored receipt is refused with the migration's own message and is not dropped.
+    /// </summary>
+    public static async Task DetachCallerReportReceiptAsync(AppDbContext db, CancellationToken ct = default)
+    {
+        var present = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'AgentTasks'
+              AND column_name = 'ReceivedReportCompletedAt'
+            """).SingleAsync(ct);
+        if (present == 0)
+            return;
+
+        var recorded = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM "AgentTasks"
+            WHERE "ReceivedReportCompletedAt" IS NOT NULL
+               OR "ReceivedReportSessionId" IS NOT NULL
+               OR "ReceivedReportPromptSequence" IS NOT NULL
+            """).SingleAsync(ct);
+        if (recorded > 0)
+            throw new NotSupportedException(CallerReportReceiptDowngradeRefusal);
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            ALTER TABLE "AgentTasks" DROP COLUMN IF EXISTS "ReceivedReportPromptSequence";
+            ALTER TABLE "AgentTasks" DROP COLUMN IF EXISTS "ReceivedReportSessionId";
+            ALTER TABLE "AgentTasks" DROP COLUMN IF EXISTS "ReceivedReportCompletedAt";
+            DELETE FROM "__EFMigrationsHistory"
+            WHERE "MigrationId" = '20261125151517_AddCallerReportSettlementReceipt';
             """, ct);
     }
 
