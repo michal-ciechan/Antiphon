@@ -1259,4 +1259,154 @@ public sealed class AntiphonCliLauncherTests
         foreach (var gone in new[] { Path.Combine("scripts", "verify-card0660-codex-image.ps1"), Path.Combine("scripts", "fixtures", "c913-image-wrapper.ps1") })
             File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, gone)).ShouldBeFalse(gone);
     }
+
+    // ---- unit 53: scripts/postgres-snapshot.ps1 (the snapshot job's runner resolves it by path; the cutover runbooks and
+    // deploy-server2-postgres.ps1 name it) and scripts/windmill/invoke-postgres-snapshot.ps1 and invoke-postgres-snapshot-stale.ps1
+    // (Windmill's u/lndcobra/antiphon_postgres_snapshot and _stale start their runner copies by path) ----
+
+    /// <summary>A temporary checkout root holding the three snapshot launchers beside scripts/lib/antiphon-cli.ps1.</summary>
+    private static NightlyFixture SnapshotCheckout()
+    {
+        var fixture = Checkout();
+        Directory.CreateDirectory(fixture.PathOf("scripts", "windmill"));
+        foreach (var entry in new[] { "postgres-snapshot.ps1", Path.Combine("windmill", "invoke-postgres-snapshot.ps1"), Path.Combine("windmill", "invoke-postgres-snapshot-stale.ps1") })
+            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", entry), fixture.PathOf("scripts", entry));
+        return fixture;
+    }
+
+    private static void AssertSnapshotLauncher(string entry, string libLine)
+    {
+        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", entry);
+        File.ReadAllBytes(path).All(b => b < 128 && b != (byte)'\r').ShouldBeTrue(entry + " is ASCII with LF line ends");
+        var text = File.ReadAllText(path);
+        text.ShouldStartWith("#requires -Version 5.1\n");
+        text.ShouldContain(libLine + "\n");
+        // A runner copy has no checkout around it: it runs the main checkout's CLI.
+        text.ShouldContain("if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { $cli = 'C:\\src\\Antiphon\\scripts\\lib\\antiphon-cli.ps1' }\n");
+        text.Split('\n').Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\s*\.\s")).ToArray().ShouldBe([". $cli"]);
+        text.ShouldNotContain("[Antiphon.");
+        text.ShouldNotContain("Invoke-SnapshotNative");
+    }
+
+    [Test]
+    public async Task Postgres_snapshot_launcher_passes_every_parameter_and_its_strings_verbatim()
+    {
+        using var fixture = SnapshotCheckout();
+        var entry = fixture.PathOf("scripts", "postgres-snapshot.ps1");
+        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "postgres-snapshot" };
+
+        // No parameters: every default as its flag, the strings verbatim (blank ones included), no --container.
+        var defaults = await NightlyRunHops.LauncherEcho(entry, [], fixture.Root, environment: echo);
+        defaults.ExitCode.ShouldBe(0, defaults.Stderr);
+        defaults.Arguments.ShouldBe(["--one-drive-retain", "7", "--retain", "14", "--minimum-dump-bytes", "1048576", "--stale-run-minutes", "360", "--target", "desktop",
+            "--database", "antiphon", "--staging-path", "", "--destination", "", "--sync-root", "", "--recipient-file", "", "--recipient-ref", "", "--identity-file", "",
+            "--identity-ref", "", "--scratch-container", "antiphon-postgres-drill", "--scratch-database", "antiphon_drill", "--scratch-volume", "antiphon-postgres-drill-pgdata",
+            "--source-volume", "antiphon_pgdata", "--scratch-image", "postgres:16"]);
+        JsonSerializer.Serialize(PostgresSnapshotOptions.Parse(defaults.Arguments!)).ShouldBe(JsonSerializer.Serialize(PostgresSnapshotOptions.Parse([])));
+
+        // The scheduled child's command line (PostgresSnapshotJob.ChildArguments).
+        var child = await NightlyRunHops.LauncherEcho(entry, ["-Plain", "-Execute", "-OneDriveCopy", "-StagingPath", @"C:\Users\lndco\antiphon-snapshot-staging", "-Target", "server2"],
+            fixture.Root, environment: echo);
+        child.ExitCode.ShouldBe(0, child.Stderr);
+        JsonSerializer.Serialize(PostgresSnapshotOptions.Parse(child.Arguments.ShouldNotBeNull(child.Stdout + child.Stderr))).ShouldBe(JsonSerializer.Serialize(
+            PostgresSnapshotOptions.Parse(["--plain", "--execute", "--one-drive-copy", "--staging-path", @"C:\Users\lndco\antiphon-snapshot-staging", "--target", "server2"])));
+
+        // Every parameter; an explicitly blank -Container is bound (server2 refuses it) and a trailing backslash survives.
+        string[] every = ["-WhatIf", "-Execute", "-Plain", "-OneDriveCopy", "-OneDriveRetain", "3", "-RestoreDrill", "-Container", "", "-Database", "db", "-StagingPath",
+            @"C:\stage dir\", "-Destination", @"C:\dest", "-SyncRoot", @"C:\one drive", "-RecipientFile", "r.txt", "-RecipientRef", "REF", "-IdentityFile", "i.txt",
+            "-IdentityRef", "IREF", "-Retain", "2", "-MinimumDumpBytes", "5000000000", "-KeepScratch", "-ScratchContainer", "sc", "-ScratchDatabase", "sd", "-ScratchVolume", "sv",
+            "-SourceVolume", "so", "-ScratchImage", "img:1", "-AllowRemoteDocker", "-StaleRunMinutes", "9", "-Target", "desktop"];
+        var all = await NightlyRunHops.LauncherEcho(entry, every, fixture.Root, environment: echo);
+        all.ExitCode.ShouldBe(0, all.Stderr);
+        var received = PostgresSnapshotOptions.Parse(all.Arguments.ShouldNotBeNull(all.Stdout + all.Stderr));
+        JsonSerializer.Serialize(received).ShouldBe(JsonSerializer.Serialize(PostgresSnapshotOptions.Parse(["--what-if", "--execute", "--plain", "--one-drive-copy",
+            "--one-drive-retain", "3", "--restore-drill", "--container", "", "--database", "db", "--staging-path", @"C:\stage dir\", "--destination", @"C:\dest", "--sync-root",
+            @"C:\one drive", "--recipient-file", "r.txt", "--recipient-ref", "REF", "--identity-file", "i.txt", "--identity-ref", "IREF", "--retain", "2", "--minimum-dump-bytes",
+            "5000000000", "--keep-scratch", "--scratch-container", "sc", "--scratch-database", "sd", "--scratch-volume", "sv", "--source-volume", "so", "--scratch-image", "img:1",
+            "--allow-remote-docker", "--stale-run-minutes", "9", "--target", "desktop"])));
+        (received.ContainerGiven, received.Container, received.StagingPath).ShouldBe((true, "", @"C:\stage dir\"));
+
+        // ValidateSet('desktop', 'server2', IgnoreCase = $false) and [int] binding still refuse before the CLI runs.
+        foreach (var bad in new[] { new[] { "-Target", "Server2" }, ["-Retain", "x"], ["-Bogus"] })
+        {
+            var refused = await NightlyRunHops.LauncherEcho(entry, bad, fixture.Root, environment: echo);
+            refused.ExitCode.ShouldBe(1, string.Join(" ", bad));
+            refused.Arguments.ShouldBeNull("the CLI never ran");
+        }
+
+        var exit = await NightlyRunHops.LauncherEcho(entry, ["-WhatIf"], fixture.Root, environment: new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "postgres-snapshot", ["CLI_ECHO_EXIT"] = "9" });
+        exit.ExitCode.ShouldBe(9, "the command's exit code is returned");
+        AssertSnapshotLauncher("postgres-snapshot.ps1", "$cli = Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1'");
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "postgres-snapshot.ps1"));
+        foreach (var line in new[] { "    [switch]$WhatIf,", "    [int]$OneDriveRetain = 7,", "    [string]$Container = 'antiphon-postgres',", "    [int64]$MinimumDumpBytes = 1048576,",
+                     "    [ValidateSet('desktop', 'server2', IgnoreCase = $false)]", "    [string]$Target = 'desktop'" })
+            text.ShouldContain(line + "\n");
+    }
+
+    [Test]
+    public async Task Snapshot_job_and_stale_launchers_run_their_commands_and_keep_set_snapshot_target()
+    {
+        using var fixture = SnapshotCheckout();
+        var windmill = fixture.PathOf("scripts", "windmill");
+        var job = await NightlyRunHops.LauncherEcho(Path.Combine(windmill, "invoke-postgres-snapshot.ps1"), [], fixture.Root, environment: Echo("postgres-snapshot-job", "9"));
+        job.ExitCode.ShouldBe(9, job.Stderr);
+        job.Arguments.ShouldNotBeNull(job.Stdout + job.Stderr).Length.ShouldBe(2);
+        job.Arguments![0].ShouldBe("--runner-dir");
+        Path.GetFullPath(job.Arguments[1]).TrimEnd('\\', '/').ShouldBe(windmill.TrimEnd('\\', '/'), StringCompareShould.IgnoreCase);
+        var stale = await NightlyRunHops.LauncherEcho(Path.Combine(windmill, "invoke-postgres-snapshot-stale.ps1"), [], fixture.Root, environment: Echo("postgres-snapshot-stale", "1"));
+        stale.ExitCode.ShouldBe(1, stale.Stderr);
+        stale.Arguments.ShouldBe([]);
+
+        // The operator's flip and rollback: dot-sourced, the job does not run; Set-SnapshotTarget answers the word, or '' when refused.
+        foreach (var (exitCode, expected) in new[] { ("0", "RETURN=server2"), ("1", "RETURN=") })
+        {
+            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+                         ". '" + Path.Combine(windmill, "invoke-postgres-snapshot.ps1").Replace("'", "''") + "'; $r = Set-SnapshotTarget server2; 'RETURN=' + $r" })
+                start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedEcho;
+            start.Environment["CLI_ECHO_COMMAND"] = "postgres-snapshot-target";
+            start.Environment["CLI_ECHO_EXIT"] = exitCode;
+            var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+            run.Exit.ShouldBe(0, run.Stderr);
+            var lines = run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            lines.Count(line => line.StartsWith('{')).ShouldBe(1, "one CLI call: the target, not the job");
+            lines[^1].ShouldBe(expected);
+            var arguments = Arguments(run.Echo());
+            arguments.Take(3).ShouldBe(["--word", "server2", "--runner-dir"]);
+            Path.GetFullPath(arguments[3]).TrimEnd('\\', '/').ShouldBe(windmill.TrimEnd('\\', '/'), StringCompareShould.IgnoreCase);
+        }
+
+        AssertSnapshotLauncher(Path.Combine("windmill", "invoke-postgres-snapshot.ps1"), "$cli = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib') 'antiphon-cli.ps1'");
+        AssertSnapshotLauncher(Path.Combine("windmill", "invoke-postgres-snapshot-stale.ps1"), "$cli = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib') 'antiphon-cli.ps1'");
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "windmill", "job-status.ps1")).ShouldBeFalse("the status library is C# (JobStatus)");
+        // The jobs start the runner copies by path; their definitions are unchanged.
+        foreach (var (job_, script) in new[] { ("antiphon-postgres-snapshot.json", "invoke-postgres-snapshot.ps1"), ("antiphon-postgres-snapshot-stale.json", "invoke-postgres-snapshot-stale.ps1") })
+            JsonDocument.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "windmill", job_))).RootElement.GetProperty("content").GetString()!
+                .ShouldContain(@"-File C:\Users\lndco\antiphon-snapshot-runner\" + script);
+    }
+
+    [Test]
+    public async Task Snapshot_launchers_that_cannot_start_the_cli_exit_9()
+    {
+        using var fixture = SnapshotCheckout();
+        foreach (var entry in new[] { fixture.PathOf("scripts", "postgres-snapshot.ps1"), fixture.PathOf("scripts", "windmill", "invoke-postgres-snapshot.ps1"),
+                     fixture.PathOf("scripts", "windmill", "invoke-postgres-snapshot-stale.ps1") })
+        {
+            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", entry })
+                start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_SCRIPTS_DLL"] = fixture.PathOf("missing", "Antiphon.Scripts.dll");
+            var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start"));
+            run.Exit.ShouldBe(9, run.Stderr);
+            run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
+            run.Stdout.Trim().ShouldBeEmpty();
+        }
+    }
 }

@@ -3,23 +3,22 @@
 .SYNOPSIS
     08:00 check. Posts one STALE line when no plain success is newer than 26 hours.
     A fresh success prints JOB STATUS fresh and sends nothing.
-    ASCII-only.
-#>
-$ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'job-status.ps1')
 
-$now = [datetime]::UtcNow
-$statusPath = 'C:\Users\lndco\antiphon-backups\snapshot-status.json'
-$dumpDir = 'C:\Users\lndco\antiphon-backups'
-$fresh = (Test-SnapshotStatusFresh -Path $statusPath -NowUtc $now -MaxAgeHours 26) -or (Test-SnapshotDumpFresh -Dir $dumpDir -NowUtc $now -MaxAgeHours 26)
-if ($fresh) {
-    Write-Output 'JOB STATUS fresh'
-    exit 0
+    Thin launcher for `antiphon-scripts postgres-snapshot-stale` (scripts/lib/Antiphon.Nightly/PostgresSnapshotJob.cs), unit 53
+    of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md. Kept because Windmill's
+    u/lndcobra/antiphon_postgres_snapshot_stale (08:00, desktop tag, SSH bridge) starts the runner copy,
+    C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot-stale.ps1, by path; the job definition is unchanged. It reads
+    C:\Users\lndco\antiphon-backups\snapshot-status.json and the plain dumps beside it, writes job-status\db-backup-stale.json
+    when stale and returns the send's exit (0 when fresh); 9 when the CLI cannot be built or started (one stderr line).
+    The checkout's scripts/lib/antiphon-cli.ps1 runs the command; the runner copy runs C:\src\Antiphon's.
+    ASCII-only: parseable under Windows PowerShell 5.1.
+#>
+$ErrorActionPreference = 'Continue'
+$cli = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib') 'antiphon-cli.ps1'
+if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { $cli = 'C:\src\Antiphon\scripts\lib\antiphon-cli.ps1' }
+if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) {
+    [Console]::Error.WriteLine('antiphon-cli: no scripts\lib\antiphon-cli.ps1 above this file or in C:\src\Antiphon')
+    exit 9
 }
-$record = New-JobStatusRecord -Job 'db-backup' -Icon 'STALE' -Status 'stale'
-$recordDir = 'C:\Users\lndco\antiphon-backups\job-status'
-if (-not (Test-Path -LiteralPath $recordDir)) { New-Item -ItemType Directory -Path $recordDir | Out-Null }
-[void](Write-JobStatusRecord -Record $record -Path (Join-Path $recordDir 'db-backup-stale.json'))
-$line = Format-JobStatusLine $record
-Write-Output $line
-exit (Send-JobStatusLine -Line $line)
+. $cli
+exit (Invoke-AntiphonCli -Command 'postgres-snapshot-stale')

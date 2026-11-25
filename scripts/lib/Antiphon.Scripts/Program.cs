@@ -320,8 +320,14 @@ namespace Antiphon.Scripts
             // Usage is 2.
             [Server2RepositoryMirrorsCommand.Name] = Server2RepositoryMirrorsCommand.Run,
             // The CARD-1405 Postgres snapshot answers every input itself (unit 53): postgres-snapshot exits its result line's reason code (0 the
-            // plan or ok, 2-9 a refusal or failed step), 1 an unexpected failure. Usage is 2.
+            // plan or ok, 2-9 a refusal or failed step), 1 an unexpected failure. postgres-snapshot-job: the child's exit, 9 target-invalid, 1
+            // missing-script, or the send's. postgres-snapshot-stale: 0 fresh or the send's. postgres-snapshot-target: 0 written, 1 refused.
+            // job-status: 0, 2 bad-record, or the send's. Usage is 2 for each.
             [PostgresSnapshotCommands.SnapshotName] = PostgresSnapshotCommands.RunSnapshot,
+            [PostgresSnapshotCommands.JobName] = PostgresSnapshotCommands.RunJob,
+            [PostgresSnapshotCommands.StaleName] = PostgresSnapshotCommands.RunStale,
+            [PostgresSnapshotCommands.TargetName] = PostgresSnapshotCommands.RunTarget,
+            [PostgresSnapshotCommands.JobStatusName] = PostgresSnapshotCommands.RunJobStatus,
         };
 
         public static int Main(string[] args)
