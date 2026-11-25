@@ -63,7 +63,9 @@ public sealed class C1722GitTimeoutBudgetTests
     [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_SettledLingeringQuarantineReleasesOnlyWhenPublishedAndClean), 1.724)]
     [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_HiddenTrackedEditsHoldQuarantine), 0.443)]
     [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_UnreadableTaskBranchHoldsQuarantine), 0.995)]
-    [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_QuarantineRecoveryClosesOneDurableRecord), 0.357)]
+    // CARD-2061 round 3: provisional maxima from the focused Linux green runs.
+    [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_HiddenSubmoduleEditHoldsQuarantine), 5.080)]
+    [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_QuarantineRecoveryClosesOneDurableRecord), 2.091)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_LeaseResetsToExactShaFromUnrelatedState), 0.843)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_VerifyQuarantinesSilentCheckout), 1.182)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_WarmResetWipesEveryNonKeepListClass), 2.884)]
