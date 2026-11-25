@@ -125,13 +125,23 @@ public sealed class RcForcedFullTests
             && undeclared.Of("ServerTests").Decision == "carry" && undeclared.Of("RunnerTests").Decision == "carry", "s3-undeclared-consumer", Show(undeclared));
 
         // Review r1 D-5(b): packages live in each .csproj here; a project file or an imported .props/.targets change voids trust.
-        var bump = Decide([Own()], paths: [.. privateChange, "src/Messaging/Messaging.csproj"]);
-        var imported = Decide([Own()], paths: [.. privateChange, "build/Common.targets"]);
+        // Review r2 A-9 (N11): a voided project keeps no trust entry, so a gated decision that cannot resolve its gate is a failed row, not a crash.
+        (RcTrustDecision? Decision, string Crash) Gated(Func<RcTrustDecision> decide)
+        {
+            try { return (decide(), ""); }
+            catch (KeyNotFoundException e) { return (null, e.GetType().Name); }
+        }
         var bumpFirst = Decide(null, paths: [.. privateChange, "src/Messaging/Messaging.csproj"]);
-        bool Voided(RcTrustDecision d) => new[] { "ServerTests", "RunnerTests" }.All(id => d.Of(id).Decision == "execute"
-            && d.Of(id).Reasons.Any(r => r.StartsWith("consumer:" + Messaging + ":trust-void", StringComparison.Ordinal)));
-        rows.Check(Voided(bump) && Voided(imported) && Voided(bumpFirst) && bump.Reasons.Contains("trust-void:" + Messaging + ":src/Messaging/Messaging.csproj")
-            && imported.Reasons.Contains("trust-void:" + Messaging + ":build/Common.targets"), "s3-csproj-package-bump", Show(bump) + " || " + Show(imported));
+        var bump = Gated(() => Decide([Own()], paths: [.. privateChange, "src/Messaging/Messaging.csproj"]));
+        var imported = Gated(() => Decide([Own()], paths: [.. privateChange, "build/Common.targets"]));
+        bool Voided(RcTrustDecision? d) => d != null && new[] { "ServerTests", "RunnerTests" }.All(id => d.Of(id).Decision == "execute"
+            && d.Of(id).Reasons.Any(r => r.StartsWith("consumer:" + Messaging + ":trust-void", StringComparison.Ordinal))
+            && !d.Of(id).Reasons.Any(r => r.StartsWith("held:", StringComparison.Ordinal)));
+        string ShowGated((RcTrustDecision? Decision, string Crash) g) => g.Decision == null ? "crash:" + g.Crash : Show(g.Decision);
+        rows.Check(Voided(bump.Decision) && Voided(imported.Decision) && Voided(bumpFirst)
+            && bump.Decision!.Reasons.Contains("trust-void:" + Messaging + ":src/Messaging/Messaging.csproj")
+            && imported.Decision!.Reasons.Contains("trust-void:" + Messaging + ":build/Common.targets"), "s3-csproj-package-bump",
+            ShowGated(bump) + " || " + ShowGated(imported) + " || first " + Show(bumpFirst));
 
         // M6: an own-test roster missing a listed case fails the gate.
         var caseMissing = Decide([Own(cases: ["m1"])]);
