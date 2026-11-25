@@ -28,19 +28,12 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Per_kind_receipts()
     {
-        var failures = new List<Exception>();
-        async Task Case(string name, Func<Task> body)
-        {
-            try { await body(); }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
-                failures.Add(new InvalidOperationException(name, ex));
-            }
-        }
+        // Each case owns its world, so the cases run side by side (Worlds.InParallelAsync reports every failure).
+        var cases = new List<(string Name, Func<Task> Body)>();
+        void Case(string name, Func<Task> body) => cases.Add((name, body));
         foreach (var remote in new[] { false, true })
         foreach (var busy in new[] { false, true })
-        await Case($"grok/remote={remote}/busy={busy}", async () =>
+        Case($"grok/remote={remote}/busy={busy}", async () =>
         {
             await using var w = await World.CreateAsync(busy: busy, kind: AgentKind.Grok, remote: remote);
             w.Recipient.Ready = false;
@@ -101,7 +94,7 @@ public sealed class CodexCliObservationGapTests
         });
         foreach (var busy in new[] { false, true })
         foreach (var spill in new[] { false, true })
-        await Case($"claude/busy={busy}/spill={spill}", async () =>
+        Case($"claude/busy={busy}/spill={spill}", async () =>
         {
             await using var w = await World.CreateAsync(busy: busy, kind: AgentKind.ClaudeCode);
             var id = await w.CreateTaskAsync(Body + (spill ? "\n" + new string('x', 4000) : ""));
@@ -125,8 +118,8 @@ public sealed class CodexCliObservationGapTests
         foreach (var remote in new[] { false, true })
         foreach (var busy in new[] { false, true })
         foreach (var after in new[] { false, true })
-            await Case($"grok-fault/remote={remote}/busy={busy}/after={after}", () => GrokFaultAsync(remote, busy, after));
-        if (failures.Count > 0) throw new AggregateException("C1029 per-kind receipt cases failed", failures);
+            Case($"grok-fault/remote={remote}/busy={busy}/after={after}", () => GrokFaultAsync(remote, busy, after));
+        await Worlds.InParallelAsync(cases);
     }
 
     private static async Task GrokFaultAsync(bool remote, bool busy, bool after)
@@ -186,9 +179,11 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Enqueue_fault_and_retry_keep_identity()
     {
-        foreach (var remote in new[] { false, true })
-        foreach (var after in new[] { false, true })
+        // Each case owns its world, so the cases run side by side.
+        var cases = from remote in new[] { false, true } from after in new[] { false, true } select (remote, after);
+        await Worlds.InParallelAsync(cases, async c =>
         {
+            var (remote, after) = c;
             await using var w = await World.CreateAsync(busy: true, remote: remote);
             var id = await w.CreateTaskAsync(Body);
             w.Fault.TaskId = id; w.Fault.AfterSave = after;
@@ -242,13 +237,14 @@ public sealed class CodexCliObservationGapTests
                 (await finalDb.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Retried)).ShouldBe(1);
                 (await finalDb.TranscriptEntries.CountAsync(e => e.AgentSessionId == oldSession && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
             }
-        }
+        });
     }
 
     [Test]
     public async Task C1029_Old_generation_does_not_confirm()
     {
-        foreach (var remote in new[] { false, true })
+        // Each case owns its world, so the cases run side by side.
+        await Worlds.InParallelAsync(new[] { false, true }, async remote =>
         {
             // A separately owned, actually launched prior generation supplies the negative.
             // Its current task is irrelevant; only its actual captured UserPrompt is copied.
@@ -307,13 +303,14 @@ public sealed class CodexCliObservationGapTests
             await AssertRetainedAsync(w, task);
             await ReleaseAsync(w, session, held);
             await AssertReceiptAsync(w, task, observed, "prior-generation-floor/remote=" + remote);
-        }
+        });
     }
 
     [Test]
     public async Task C1029_Unobservable_screen_retains_spill()
     {
-        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
+        // Each case owns its world, so the cases run side by side.
+        await Worlds.InParallelAsync(new[] { AgentKind.ClaudeCode, AgentKind.Codex }, async kind =>
         {
             await using var w = await World.CreateAsync(kind: kind);
             var id = await w.CreateTaskAsync(Body);
@@ -341,15 +338,18 @@ public sealed class CodexCliObservationGapTests
             await AssertRetainedAsync(w, task);
             await ReleaseAsync(w, task.AgentSessionId!.Value, held);
             await AssertReceiptAsync(w, task, observed, "unobservable-screen");
-        }
+        });
     }
 
     [Test]
     public async Task C1029_Unobservable_timestamp_floor_is_original()
     {
-        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
-        foreach (var variant in new[] { "older", "null", "equal", "newer" })
+        var cases = from kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex }
+                    from variant in new[] { "older", "null", "equal", "newer" } select (kind, variant);
+        // Each case owns its world (schema, repository, origin, recipient root), so the cases run side by side.
+        await Worlds.InParallelAsync(cases, async c =>
         {
+            var (kind, variant) = c;
             await using var w = await World.CreateAsync(kind: kind);
             var id = await w.CreateTaskAsync(Body);
             await w.DispatchAsync();
@@ -409,13 +409,14 @@ public sealed class CodexCliObservationGapTests
             else await w.FlushAsync(task.AgentSessionId.Value);
             await AssertReceiptAsync(w, task, observed, "timestamp/" + variant);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(started, "C959-pc-246 settled original floor");
-        }
+        });
     }
 
     [Test]
     public async Task C1029_Durable_spill_survives_recreated_graph()
     {
-        foreach (var busy in new[] { false, true })
+        // Each case owns its world, so the cases run side by side.
+        await Worlds.InParallelAsync(new[] { false, true }, async busy =>
         {
             // Hold the boot flush; the recovery recipient may become eligible before or after recreation.
             await using var w = await World.CreateAsync(busy: true);
@@ -440,13 +441,14 @@ public sealed class CodexCliObservationGapTests
             if (busy) await w.EligibleAsync(task.AgentSessionId.Value);
             await w.FlushAsync(task.AgentSessionId.Value);
             await AssertReceiptAsync(w, task, observed, "recreated/busy=" + busy);
-        }
+        });
     }
 
     [Test]
     public async Task C1029_Post_input_crash_late_confirms_once()
     {
-        foreach (var busyAfterRecreate in new[] { false, true })
+        // Each case owns its world, so the cases run side by side.
+        await Worlds.InParallelAsync(new[] { false, true }, async busyAfterRecreate =>
         {
             await using var w = await World.CreateAsync(busy: true);
             var id = await w.CreateTaskAsync(Body);
@@ -496,7 +498,7 @@ public sealed class CodexCliObservationGapTests
             settled.Id.ShouldBe(row.Id);
             settled.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed, "C959-pc-220 settled same interrupted row");
             TaskBodies(w, task.AgentSessionId.Value).Count.ShouldBe(1, "C959-pc-220 no duplicate submit");
-        }
+        });
     }
 
     private static async Task AssertClaudeInlineFollowupAsync(World w, AgentTask task, bool busy)
@@ -675,5 +677,29 @@ public sealed class CodexCliObservationGapTests
         q.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
         if (w.Remote) q.RemoteSpillBody.ShouldBeNull("C1029 receipt releases durable E " + vector);
         Console.WriteLine("C1029 VECTOR " + vector + $" task={task.Id} queue={q.Id} session={session.Id} receipt=complete submits=1");
+    }
+}
+
+/// <summary>Runs independent C1029 world cases side by side; every case runs and every failure is reported.</summary>
+internal static class Worlds
+{
+    public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases, int degree = 4) =>
+        InParallelAsync(cases.Select(c => new Named(c.Name, c.Body)), c => c.Body(), degree);
+
+    private sealed record Named(string Name, Func<Task> Body) { public override string ToString() => Name; }
+
+    public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, Task> body, int degree = 4)
+    {
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = degree }, async (c, _) =>
+        {
+            try { await body(c); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"C1029 CASE FAILED {c}: {ex.GetType().Name}: {ex.Message}");
+                failures.Enqueue(new InvalidOperationException(c?.ToString(), ex));
+            }
+        });
+        if (!failures.IsEmpty) throw new AggregateException(failures);
     }
 }
