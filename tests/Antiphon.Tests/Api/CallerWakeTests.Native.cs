@@ -154,8 +154,9 @@ public partial class CallerWakeTests
         });
         await using var runner = new DirectSessionRunnerClient(Path.Combine(world.CallerDirectory, "native-runner"),
             ptyBackend: "modern", claudeTranscript: true);
-        // The Unix pty inherits its host environment. Remove the outer delegate identity
-        // and provider credentials before exec so Claude sees exactly this standing caller.
+        // The Unix pty inherits its host environment. Remove the outer delegate identity and
+        // every inherited CLAUDE*/ANTHROPIC* variable before exec so Claude sees exactly this
+        // standing caller, whatever session launched the test (CARD-2074).
         string[] args = ["Say ready and wait.", "--session-id", sessionId.ToString(),
             "--permission-mode", "bypassPermissions", "--tools", shellTool];
         var exe = "claude";
@@ -279,13 +280,22 @@ public partial class CallerWakeTests
         name.StartsWith("CLAUDE", StringComparison.OrdinalIgnoreCase)
         || name.StartsWith("ANTHROPIC", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The native caller's launch environment and the names removed before exec on Unix.</summary>
+    /// <summary>
+    /// The native caller's launch environment and the names removed before exec on Unix. Every
+    /// inherited or overlay <c>CLAUDE*</c>/<c>ANTHROPIC*</c> name without an overlay value is
+    /// emptied (the Windows pty merge removes an empty value) and listed for <c>env -u</c>, as are
+    /// the overlay's other emptied names (the outer delegate identity). Overlay values are kept.
+    /// </summary>
     private static (Dictionary<string, string> Env, string[] Unset) IsolateNativeCaller(
         IReadOnlyDictionary<string, string> overlay, IEnumerable<string> inherited)
     {
-        _ = inherited;
-        return (new Dictionary<string, string>(overlay),
-            ["ANTIPHON_TASK_ID", "ANTIPHON_TASK_KIND", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]);
+        var env = new Dictionary<string, string>(overlay, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in inherited.Where(IsProviderVariable))
+            if (!env.TryGetValue(name, out var value) || value.Length == 0)
+                env[name] = "";
+        var unset = env.Where(pair => pair.Value.Length == 0).Select(pair => pair.Key)
+            .Order(StringComparer.Ordinal).ToArray();
+        return (env, unset);
     }
 
     private static JsonElement? ReadStatusResult(IEnumerable<string> lines)

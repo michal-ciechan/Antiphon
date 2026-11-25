@@ -758,8 +758,12 @@ public sealed partial class SessionMessageQueueService
             }
 
             // CARD-0320: the per-session queue lock serialises two EnqueueAsync calls but used
-            // to let both insert. A Delegation note with the same SourceTaskId+ContentDigest
-            // is the same completion, not a second turn. The task stamp survives queue retention.
+            // to let both insert. One caller completion note per settlement: a note with the same
+            // SourceTaskId+ContentDigest queued at or after the task's current CompletedAt is that
+            // settlement's note, not a second turn. A later settlement (a new CompletedAt) owes its
+            // own note even when the report is unchanged (CARD-1486 S3 D-4, CARD-2074). Other
+            // Delegation notes keep the plain SourceTaskId+ContentDigest identity. The task stamp
+            // survives queue retention.
             // An existing unstamped row is the partial-enqueue hole: repair the stamp here
             // rather than treating the queue row as proof the stamp already exists.
             if (origin == QueuedMessageOrigin.Delegation

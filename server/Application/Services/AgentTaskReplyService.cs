@@ -4357,10 +4357,10 @@ public sealed partial class AgentTaskReplyService
 
     /// <summary>
     /// CARD-1503 (review D-1). A question asked after a Reply Blocks with the retained report, whose
-    /// note the caller already holds; a digest over that report alone is dropped as a duplicate
-    /// (CARD-0320). Its note identity is the report plus this settlement's Blocked event: a replay of
-    /// the same settlement is still one note, and the next genuine completion of the same report
-    /// keeps its plain digest. Keyed (durable) notes are already one per settlement event and keep
+    /// note the caller already holds. The contract is one caller note per settlement (CARD-0320 as
+    /// amended by CARD-2074): its note identity is the report plus this settlement's Blocked event, so
+    /// a replay of the same settlement is still one note, and the next genuine completion of the same
+    /// report keeps its plain digest. Keyed (durable) notes are already one per settlement event and keep
     /// the plain digest the park and distillation identity checks read.
     /// </summary>
     private sealed record RetainedQuestionBlock(Guid SettlementEventId, string Question)
@@ -4653,7 +4653,9 @@ public sealed partial class AgentTaskReplyService
             return;
 
         // CARD-1486 S3 (D-4): the waiting turn cannot replace a report that stands. The Block keeps
-        // the retained Result and evidence class, and the caller gets the retained report.
+        // the retained Result and evidence class. It is a new settlement, so the caller gets exactly
+        // one note for it, carrying the retained report: one note per settlement (CARD-0320 drops
+        // only a same-settlement re-enqueue; CARD-2074).
         var keepRetained = RetainedReportStands(task) || AddsNothingToRetainedReport(task, turn.Report);
         var body = keepRetained ? task.Result! : turn.Report ?? string.Empty;
         var shortId = DelegationReportFormatter.Short(task.Id);
