@@ -314,7 +314,8 @@ namespace Antiphon.Nightly
                         if (ledger.TryGetValue(chunk.ContentDigest, out var origin) && origin.Row != null && RcChunkReceipt.IsSha(PsValue.Str(origin.Row["sha"]))
                             && RcChunkReceipt.IsDigest(PsValue.Str(origin.Row["contentDigest"]))) strictCarries++;
                         if (chunk.PriorWallSeconds.HasValue) carriedSeconds += chunk.PriorWallSeconds.Value; else unpriced++;
-                        // RED WITNESS (naive): carries are not scored.
+                        if (actual == "FAIL") missed.Add(entry);
+                        if (actual != "clean") unsafeCarries.Add(entry);
                     }
                     else if (actual == "FAIL") caught.Add(entry);
                     trace.Append(JsonSerializer.Serialize(new { run = run.RunId, chunk = chunk.Chunk, contentDigest = chunk.ContentDigest, decision = predicted, reasons = (string[])p["reasons"], actual }))
@@ -493,7 +494,7 @@ namespace Antiphon.Nightly
                     var trxPath = trxName.Length == 0 ? "" : Path.Combine(run.Dir, "logs", trxName);
                     var trx = trxPath.Length == 0 ? null : RcChunkReceipt.ReadTrx(trxPath);
                     outcome.Trx = trx == null ? "" : "runs/" + run.Run8 + "/logs/" + trxName;
-                    if (trx == null) outcome.Outcome = "clean";
+                    if (trx == null) outcome.Outcome = "unknown";
                     else
                     {
                         var reuse = RcChunkReceipt.Reusable(row, trx, chunk.Cases);
