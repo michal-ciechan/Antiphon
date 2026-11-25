@@ -17929,6 +17929,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.GitInProcess/GitRemoteConfigView.cs",
+      "classes": [
+        "LibGit2VsGitDifferentialTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.GitInProcess/GitStatusConfigAgreement.cs",
       "classes": [
         "LibGit2VsGitWorkingTreeVerdictTests"
@@ -17936,6 +17942,18 @@
     },
     {
       "path": "src/Antiphon.GitInProcess/InProcessGitReads.More.cs",
+      "classes": [
+        "GitInProcessAssemblyTests",
+        "InProcessGitCommandsTests",
+        "LibGit2VsGitDifferentialTests",
+        "LibGit2VsGitJunctionTests",
+        "LibGit2VsGitWorkingTreeVerdictTests",
+        "LibGit2VsGitWorktreeListTests",
+        "ServerGitProcessTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.GitInProcess/InProcessGitReads.RemoteUrl.cs",
       "classes": [
         "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
@@ -20567,11 +20585,7 @@
       "path": "src/Antiphon.SessionRunner/RunnerRepositoryMaintenance.cs",
       "classes": [
         "C1817RunnerRepositoryMaintenanceTests",
-        "C1818GcOwnerRobustnessTests",
-        "NightlyRunParityTests",
-        "NightlyTestsParityTests",
-        "TaskReportFloorIndexTests",
-        "TaskReportTurnSelectorTests"
+        "C1818GcOwnerRobustnessTests"
       ]
     },
     {
@@ -27722,6 +27736,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/LibGit2ConfigIsolation.cs",
       "classes": [
         "LandingSourceOptionalLockTests",
+        "LibGit2VsGitDifferentialTests",
         "LibGit2VsGitWorkingTreeVerdictTests"
       ]
     },
