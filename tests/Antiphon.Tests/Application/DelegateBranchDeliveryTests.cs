@@ -71,7 +71,8 @@ public sealed class DelegateBranchDeliveryTests
     public async Task C1213_OldRunnerReceivesLegacy(CancellationToken ct)
     {
         // ignore receiver capability -> old-peer-receipt new ref; capable control goes red before S1.
-        foreach (var old in new[] { false, true })
+        // Each case builds its own world, schema and wire, so the two run side by side.
+        await Worlds.InParallelAsync(new[] { false, true }, o => $"old={o}", ct, async old =>
         {
             await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync();
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -96,7 +97,7 @@ public sealed class DelegateBranchDeliveryTests
             (await world.RunAsync(row.WorktreePath, "rev-parse", "HEAD")).ShouldBe(task.WorktreeBaseSha);
             wire.Workspace.OpenBindingStore().Read(row.PreparationId).Kind.ShouldBe(BindingReadKind.Complete);
             AssertOwnerStamp(row);
-        }
+        });
     }
 
     [Test]
