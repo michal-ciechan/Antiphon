@@ -31,7 +31,7 @@ Two of the drivers are in-process twins of C# that already exists: `ToolchainFlo
 
 ## What is left (2026-11-24, after unit 43)
 
-Snapshot: `wip/next` after units 1-50 (unit 20 and unit 45 by the owner's decisions), on master `ef39d3231`. There are **85 tracked `.ps1` files**, from 356 on 2026-11-22. Master added `scripts/lib/desktop-postgres.ps1` (`ed338d6b2`, a W8 library for `deploy-local`, and for `pg-qps` until unit 46) after unit 20; unit 49 deleted it with `deploy-local.ps1`.
+Snapshot: `wip/next` after units 1-50 (unit 20 and unit 45 by the owner's decisions), on master `3198fa2e5`. There are **85 tracked `.ps1` files**, from 356 on 2026-11-22. Master added `scripts/lib/desktop-postgres.ps1` (`ed338d6b2`, a W8 library for `deploy-local`, and for `pg-qps` until unit 46) after unit 20; unit 49 deleted it with `deploy-local.ps1`.
 Nearly everything left either is a thin launcher on purpose or waits on an owner decision. Units 40-42 (the SessionRunner
 `CodexVersionChild.ps1` fixture, the derived impact index wrapper and the review engine scripts) were the last ports
 that needed none. Unit 43 deleted the ten repository-root launchers that nothing started by path.
