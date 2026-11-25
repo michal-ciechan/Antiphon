@@ -166,8 +166,8 @@ namespace Antiphon.Nightly
             }
 
             // Trust comes from B only, and only when A carries the identical policy.
-            var trusted = Entries(policyA, refused); // RED WITNESS (naive): trust read at A.
-            if (false)
+            var trusted = Entries(policyB, refused);
+            if (decision.PolicyDigestA != decision.PolicyDigestB)
             {
                 reasons.Add("trust-policy-changed");
                 Entries(policyA, refused);
@@ -233,10 +233,6 @@ namespace Antiphon.Nightly
         /// <summary>null when the gate passed; otherwise why it failed (own-missing, own-red, own-skip, own-timeout, own-case-missing, contract-absent, contract-drift).</summary>
         static string GateFailure(RcTrustEntry entry, IReadOnlyList<RcOwnResult> ownResults, IReadOnlyList<RcContractReceipt> contracts)
         {
-            // RED WITNESS (naive): only a FAIL fails the gate; hashes compare as given.
-            if (ownResults.Any(r => r.Result == "FAIL")) return "own-red";
-            if ((contracts ?? Array.Empty<RcContractReceipt>()).Where(c => c.Side == "B").Select(c => c.ContractHash).FirstOrDefault() != (contracts ?? Array.Empty<RcContractReceipt>()).Where(c => c.Side == "A").Select(c => c.ContractHash).FirstOrDefault()) return "contract-drift";
-            if (ownResults != null) return null;
             foreach (var own in entry.OwnedTests)
             {
                 var result = ownResults.FirstOrDefault(r => r.Chunk == own.Key);
