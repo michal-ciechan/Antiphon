@@ -172,6 +172,12 @@ namespace Antiphon.Nightly
         /// <summary>The run's shadow evidence recorder (Get-NightlyRcRunEvidence); null records nothing.</summary>
         public RcRunEvidenceRecorder RcEvidence { get; set; }
 
+        /// <summary>
+        /// CARD-1836 S1: 2 stamps each observed row with its execution sha, content digest and disposition (RcChunkReceipt);
+        /// 0 (the default) writes the rows exactly as before. Diagnostic only: it never changes what runs.
+        /// </summary>
+        public int ChunkReceiptVersion { get; set; }
+
         // ---- the run state the chunk starts from -------------------------------------------------------------------
 
         public int ActiveNative { get; set; }
@@ -832,6 +838,13 @@ namespace Antiphon.Nightly
             terminal.Terminal = true;
             if (!run.TimedOut) terminal.CompletedAt = Stamp(host.UtcNow);
             QualificationTiming.Update(terminal, host.UtcNow);
+            if (c.ChunkReceiptVersion == RcChunkReceipt.Version)
+            {
+                var receiptClasses = PsValue.IsTrue(PsValue.Prop(chunk, "classes")) ? PsValue.AsArray(PsValue.Prop(chunk, "classes")).Select(PsValue.Str).ToArray() : new string[0];
+                var assembly = s.Host == null ? suiteId : Path.GetFileNameWithoutExtension(s.Host.AssemblyPath ?? suiteId);
+                var roster = s.IsNative && nativeVerdict != null ? RcChunkReceipt.RosterFromNodes(assembly, PsValue.Prop(nativeVerdict, "discoveryNodes"), receiptClasses) : new RcCaseIdentity[0];
+                RcChunkReceipt.Stamp(suiteRow, c.Sha, RcChunkReceipt.ContentDigest(suiteId, s.IsNative ? "native" : "command", roster));
+            }
             o.Row = suiteRow;
         }
 
