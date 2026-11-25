@@ -16,9 +16,10 @@ namespace Antiphon.Tests.Application;
 /// warm-reuse and remote-delivery legs sample wall-clock time, the remote one before its world is built. Those
 /// vectors (clock-skew 2 minutes ahead, staleness past 15 minutes) need a margin of minutes over world creation.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
-/// another's routing cache; that costs a re-resolve from its own database, never a wrong answer. The old-runner
-/// test's dispatch graph also reaches the process-wide GitCommonDirectory cache, which is keyed by path, so each
-/// world reads only its own entries.
+/// another's routing cache; that costs a re-resolve from its own database, never a wrong answer. Every C1213
+/// world (LandingGit's mutating path, and the old-runner test's dispatch graph) also shares the process-wide
+/// GitCommonDirectory cache: it is keyed by path, but it is cleared when full, so another world can evict this
+/// world's entries, which costs a re-resolve from git, never a wrong answer.
 /// </summary>
 internal static class Worlds
 {
