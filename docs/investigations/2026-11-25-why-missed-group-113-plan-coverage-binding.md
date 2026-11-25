@@ -13,8 +13,8 @@ checkpoint fixtures. It belongs to unit 20 of the PowerShell-to-C# migration.
 The commit has no card number. Both named classes existed at the previous
 candidate pin, `6ed4cb58cd75fe386e94965165d96752452431a8`. The seven plans
 read by the class, the coverage implementation and the advisory timeout
-method were identical between the pins. The stale dependency is the selected
-class list after the deletion.
+method were identical between the pins. The first failures came from the
+selected class lists after the deletion.
 [Unit 20](../superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md)
 
 | Linux method and top test frame at the base pin | Assertion | Plan row and missing class |
@@ -31,6 +31,19 @@ The gated Linux run executed two tests with two failures and zero skips.
 [Binding tests](../../tests/Antiphon.Tests/Checkpoints/PlanCoverageBindingTests.cs)
 · [Coverage command](../../tools/Antiphon.Checkpoints/Coverage/CoverageCommand.cs)
 
+The first repair checkpoint at `8b5a34e4a2daf1b7aed62eecd70a1ee023c52bc9`
+passed the CARD-1005 method and then exposed a second failure inside
+`historical_plans_bind_without_suppression`. After CARD-1035 resolved, that
+method reached CARD-1037 and expected exit 0 but received exit 1.
+Unit 28's `2159d023d917593a1cb1a5f96d4bcd7a82386bd8` changed the live
+refusal hint and its test assertions from PowerShell parameter spellings to
+CLI flags. The CARD-1037 verification row and its three literal value
+bindings still named the PowerShell parameters. An isolated coverage
+replay with the base-pin plan and sources matched 20 of 23 obligations.
+The three `MISSING_VALUE` findings were `-Worktree`, `-StartRef` and
+`without -OnAgent`. The first checkpoint recorded one pass, one failure
+and zero skips. [Live refusal assertions](../../tests/Antiphon.Tests/Application/RemotePoolFollowUpAdmissionTests.cs)
+
 The Windows TRX, test log and execution record were unavailable from the Linux
 mirror. The two assertions above come from the Linux TRX and console. The
 method-level outcome in Windows run `acca11ba` and group 113's failed-first
@@ -40,7 +53,7 @@ availability only.
 ## Approving reviews
 
 The approving Review task, Full or Interim scope and executed selection for
-unit 20 were unavailable in the retained evidence. The recorded recut
+units 20 and 28 were unavailable in the retained evidence. The recorded recut
 selections CP-1 through CP-4 omit `PlanCoverageBindingTests`. The graph and
 derived-index gates in that record check their respective build and selector
 inputs. [Recut gate evidence](2026-11-25-rc-cut-gates-at-4022b30f6.md)
@@ -60,8 +73,9 @@ for this deletion. [Short Merge policy](../orchestration-loop.md#merge-verificat
 
 CARD-1035 CP-2 selects the current no-build, MSBuild-forwarding and launcher
 ASCII witnesses. R-3 preserves the original selection for its historical
-receipts. The CARD-1035 and CARD-1037 positive controls still bind to their
-current assertion sources.
+receipts. CARD-1037 V-1 and its checklist now use `--worktree`,
+`--start-ref` and `without --on-agent`. The isolated replay matched all
+23 obligations and retained all three static positive-control bindings.
 
 The old CARD-1005 census's fixed namespace count was retired along with its
 PowerShell consumer. The binding test stages the current plan and the thirteen
@@ -91,6 +105,8 @@ test sources with their historical plan projections.
 | `tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs` | `/*/*/PlanCoverageBindingTests/*` |
 | `docs/superpowers/plans/2026-10-04-card-1035-checkpoint-child-cwd-plan.md` | `/*/*/PlanCoverageBindingTests/*` |
 | `docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md` | `/*/*/PlanCoverageBindingTests/*` |
+| `docs/superpowers/plans/2026-10-04-card-1037-remote-follow-up-launch-guard-plan.md` | `/*/*/PlanCoverageBindingTests/*` |
+| `tests/Antiphon.Tests/Application/RemotePoolFollowUpAdmissionTests.cs` | `/*/*/PlanCoverageBindingTests/*` |
 
 Ordinary `impacted-classes --path … --json` over those paths returned
 `PlanCoverageBindingTests`. The short Merge subset for unit 20's deletion did

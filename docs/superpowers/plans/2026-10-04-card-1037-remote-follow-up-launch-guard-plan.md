@@ -82,8 +82,8 @@ not claim a transcript-confirmed successful remote pool continuation.
 - **D-5 — Give actionable failure text without performing recovery.** Use the
   four-argument `ValidationException` constructor so `Message` and field error
   carry the explanation. Name predecessor short ID and canonical runner ID;
-  suggest a fresh `-Worktree -StartRef <published-sha>` request **without
-  `-OnAgent`**, after publishing the intended source. The placeholder is guidance,
+  suggest a fresh `--worktree --start-ref <published-sha>` request **without
+  `--on-agent`**, after publishing the intended source. The placeholder is guidance,
   not a claim that the predecessor's original base is its latest tip. Do not
   resolve/push a branch, cancel a task, stop a session or retry automatically.
 - **D-6 — No data repair or provider-policy expansion.** Leave the five failed
@@ -166,7 +166,7 @@ TUnit result each; internal case loops are not additional executions.
 
 | ID | Test | Cases and decisive assertions |
 |---|---|---|
-| V-1 | `RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert` | Base case: real remote Worktree predecessor, extant pool agent, omitted runner/workspace. Loop omitted/Shared/ReadOnly across Grok/ClaudeCode/Codex (9 cases). Add individual cases for blank agent runner inheriting prior remote, differing agent/prior remote (agent wins), unknown/disabled remote binding, and explicit local request against the remote process (4 cases). For each: `ValidationException.StatusCode == 422`, Code `follow_up_remote_pool_unsupported`, error field `FollowUpOnTask`, text contains predecessor short ID, actual runner, `-Worktree`, `-StartRef`, `-OnAgent`; fresh-context task/event/session counts unchanged and no Added follow-up entry. Assert the refusal with label `remote-pool-refused-before-insert`. |
+| V-1 | `RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert` | Base case: real remote Worktree predecessor, extant pool agent, omitted runner/workspace. Loop omitted/Shared/ReadOnly across Grok/ClaudeCode/Codex (9 cases). Add individual cases for blank agent runner inheriting prior remote, differing agent/prior remote (agent wins), unknown/disabled remote binding, and explicit local request against the remote process (4 cases). For each: `ValidationException.StatusCode == 422`, Code `follow_up_remote_pool_unsupported`, error field `FollowUpOnTask`, text contains predecessor short ID, actual runner, `--worktree`, `--start-ref`, `--on-agent`; fresh-context task/event/session counts unchanged and no Added follow-up entry. Assert the refusal with label `remote-pool-refused-before-insert`. |
 | V-2 | `RemotePoolFollowUpAdmissionTests.Local_pool_follow_up_keeps_admission` | Agent/prior runner null, whitespace, local, mixed-case DESKTOP, and an explicitly local agent over a remote predecessor (5 internal cases); request runner omitted. Real Create succeeds with same AgentId/FollowUpOfTaskId, Shared workspace and same working directory. Do not add normalization changes to stored legacy alias behavior. Label `local-pool-follow-up-admitted`. |
 | V-3 | `RemotePoolFollowUpAdmissionTests.Explicit_worktree_follow_up_keeps_existing_conflict` | Extant remote pool agent plus explicit Worktree still throws 422 `workspace_existing_agent_conflict`; task/event/session counts unchanged. Establishes the D-3 location, rather than changing an existing error contract. |
 
@@ -259,25 +259,25 @@ Typed mappings retain the exact legacy clauses above as assertion expectations.
       "id": "V-1",
       "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
       "kind": "value",
-      "name": "-Worktree",
+      "name": "--worktree",
       "planLine": 169,
-      "maps": "-Worktree"
+      "maps": "--worktree"
     },
     {
       "id": "V-1",
       "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
       "kind": "value",
-      "name": "-StartRef",
+      "name": "--start-ref",
       "planLine": 169,
-      "maps": "-StartRef"
+      "maps": "--start-ref"
     },
     {
       "id": "V-1",
       "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
       "kind": "value",
-      "name": "without -OnAgent",
+      "name": "without --on-agent",
       "planLine": 169,
-      "maps": "-OnAgent"
+      "maps": "--on-agent"
     },
     {
       "id": "V-3",
