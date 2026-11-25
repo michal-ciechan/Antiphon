@@ -80,7 +80,7 @@ public static class ProjectWriteRoots
         directories.Add(Path.GetFullPath(Path.Combine(projectDirectory, "obj")));
     }
 
-    private static bool TryFindProjectFile(string projectFull, out string? file, out bool failed)
+    internal static bool TryFindProjectFile(string projectFull, out string? file, out bool failed)
     {
         file = null;
         failed = false;

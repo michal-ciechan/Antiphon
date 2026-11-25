@@ -1778,10 +1778,11 @@
     },
     {
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
-      "classes": 29,
+      "classes": 30,
       "reason": "cap",
-      "owed": 4,
+      "owed": 5,
       "first": [
+        "ScriptsLaneRepairTests",
         "C1307ToolRemovalTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointShadowCustodyTests",
@@ -2115,9 +2116,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
@@ -2131,9 +2132,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 86,
+      "classes": 87,
       "reason": "cap",
-      "owed": 61,
+      "owed": 62,
       "first": [
         "CheckpointManifestTests",
         "CheckpointOrFilterTests",
@@ -2147,18 +2148,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 63,
+      "classes": 64,
       "reason": "cap",
-      "owed": 38,
+      "owed": 39,
       "first": [
+        "TimingJournalTests",
         "CheckpointRecoveryWindowsTests",
         "PlanCoverageCommandTests",
         "RowStreamingTests",
         "RunCheckpointSourceScriptTests",
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
-        "CheckpointToolCopyCleanupTests",
-        "WaitCommandTests"
+        "CheckpointToolCopyCleanupTests"
       ]
     },
     {
@@ -18157,6 +18158,7 @@
         "CheckpointRecoveryWindowsTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointToolCopyCleanupTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "EvidenceFolderTests",
@@ -18254,6 +18256,7 @@
         "CheckpointSelectedOutputTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointToolCopyCleanupTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "EvidenceFolderTests",
@@ -18264,7 +18267,6 @@
         "OutputCleanupTests",
         "PhaseJournalKillDiagnosticTests",
         "RowRunnerTests",
-        "ScriptsLaneRepairTests",
         "UnsafeDeleteRecoveryTests",
         "WaitCommandTests"
       ]
@@ -25317,6 +25319,7 @@
         "CheckpointStatePublicationTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
+        "CheckpointWarmBuildTests",
         "OutputCleanupTests",
         "PhaseJournalKillDiagnosticTests",
         "RerunPolicyTests",
@@ -25324,8 +25327,7 @@
         "RowVerbTests",
         "RunSchedulerTests",
         "TestSetTimingTests",
-        "TimeoutTests",
-        "TimingJournalTests"
+        "TimeoutTests"
       ]
     },
     {
@@ -27884,6 +27886,7 @@
       "classes": [
         "C599SnapshotTests",
         "ChannelReplyAttachmentReaderTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "QualificationCheckoutSourceTests",
         "RcDirtyOrderCSharpTests",

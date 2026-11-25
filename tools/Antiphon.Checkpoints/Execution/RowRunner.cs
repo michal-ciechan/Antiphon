@@ -17,6 +17,7 @@ public sealed class RowRequest
     public int MinExecuted { get; init; } = 1;
     public List<string> Expect { get; init; } = [];
     public List<KeyValuePair<string, string>> Properties { get; init; } = [];
+    internal IReadOnlyList<string>? ResolvedBuildProperties { get; init; }
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
     public int Repeat { get; init; } = 1;
     public string Commit { get; init; } = new string('0', 40);
@@ -128,8 +129,9 @@ public sealed class RowRunner
             return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "invalid");
         }
         var fileName = request.DotnetFileName ?? "dotnet";
-        var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows, request.Repeat,
-            request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null).ToList();
+        var properties = (request.ResolvedBuildProperties ?? BuildStep.PropertyArguments(
+            request.Properties, _platform.IsWindows, request.Repeat,
+            request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null)).ToList();
         var runOutput = request.OutputPath ?? "";
         if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
             runOutput = BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, request.Project, request.OutputPath).Owned;

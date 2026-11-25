@@ -178,16 +178,33 @@ public static class BuildConfinement
         return new Admission(Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false), hashed);
     }
 
-    public static Settlement VerifyLedger(Ledger ledger)
+    public static Settlement VerifyLedger(Ledger ledger, int parallelism = 1)
     {
+        var entries = ledger.Files.ToArray();
+        var after = new string?[entries.Length];
+        void Read(int index)
+        {
+            var entry = entries[index];
+            if (!IsUnreadable(entry.Value))
+                after[index] = ledger.Stamp(Combine(ledger.Repository, entry.Key));
+        }
+
+        // Keep the complete content check after slot release. A warm compiler leaves
+        // enough time for this scan to dominate, especially with retained build products.
+        if (parallelism > 1)
+            Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, Read);
+        else
+            for (var index = 0; index < entries.Length; index++) Read(index);
+
         var changed = new List<string>();
         var unreadable = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var pair in ledger.Files)
+        for (var index = 0; index < entries.Length; index++)
         {
-            if (IsUnreadable(pair.Value))
+            var pair = entries[index];
+            if (after[index] is not { } current)
                 unreadable[pair.Key] = ReasonOf(pair.Value);
             else
-                Compare(pair.Key, pair.Value, ledger.Stamp(Combine(ledger.Repository, pair.Key)), changed, unreadable);
+                Compare(pair.Key, pair.Value, current, changed, unreadable);
         }
         return Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false);
     }
@@ -238,7 +255,8 @@ public static class BuildConfinement
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken,
-        Ledger? ledger = null)
+        Ledger? ledger = null,
+        int graphEvaluationParallelism = 1)
     {
         if (!TryFindOutput(arguments, out var outputValue))
             return new Prepared(null, "", arguments, null);
@@ -280,7 +298,8 @@ public static class BuildConfinement
         WalkResult walked;
         try
         {
-            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment,
+                cancellationToken, Math.Max(1, graphEvaluationParallelism));
         }
         catch (OperationCanceledException)
         {
@@ -590,7 +609,8 @@ public static class BuildConfinement
         IReadOnlyList<string> forwarded,
         string workingDirectory,
         IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int parallelism)
     {
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var seen = new HashSet<string>(comparer);
@@ -599,20 +619,35 @@ public static class BuildConfinement
         queue.Enqueue(projectFull);
         while (queue.Count > 0)
         {
-            var current = Path.GetFullPath(queue.Dequeue());
-            if (!seen.Add(current))
-                continue;
-            if (projects.Count >= WalkCap)
-                return new WalkResult([], "walk cap exceeded");
-            projects.Add(current);
-            var eval = Evaluate(current, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
-            if (eval.Error is not null)
-                return new WalkResult([], eval.Error);
-            foreach (var reference in eval.References)
+            var batch = new List<string>();
+            while (batch.Count < parallelism && queue.TryDequeue(out var path))
             {
-                if (!File.Exists(reference))
-                    return new WalkResult([], "referenced project missing: " + reference);
-                queue.Enqueue(reference);
+                var current = Path.GetFullPath(path);
+                if (!seen.Add(current))
+                    continue;
+                if (projects.Count >= WalkCap)
+                    return new WalkResult([], "walk cap exceeded");
+                projects.Add(current);
+                batch.Add(current);
+            }
+            // These probes evaluate projects without running targets. Keep them within the
+            // slot's CPU grant and join every probe before the actual build can start.
+            EvalResult Probe(string project) =>
+                Evaluate(project, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            var evaluated = batch.Count == 1
+                ? [Probe(batch[0])]
+                : Task.WhenAll(batch.Select(project => Task.Run(() => Probe(project), cancellationToken)))
+                    .GetAwaiter().GetResult();
+            foreach (var eval in evaluated)
+            {
+                if (eval.Error is not null)
+                    return new WalkResult([], eval.Error);
+                foreach (var reference in eval.References)
+                {
+                    if (!File.Exists(reference))
+                        return new WalkResult([], "referenced project missing: " + reference);
+                    queue.Enqueue(reference);
+                }
             }
         }
 
