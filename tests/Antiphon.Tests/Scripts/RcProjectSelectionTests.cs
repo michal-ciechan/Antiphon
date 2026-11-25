@@ -213,6 +213,7 @@ public sealed class RcProjectSelectionTests
             Chunk("Other", "tests/Other/Other.csproj", "OtherTests"), Chunk("NewEdge", "tests/Other/Other.csproj", "NewEdgeTests"),
             Chunk("AmbiguousServer", "tests/Server/Server.csproj", "Ns.Server.Ambiguous"), Chunk("AmbiguousOther", "tests/Other/Other.csproj", "Ns.Other.Ambiguous"),
             Chunk("FixtureReader", "tests/Other/Other.csproj", "FixtureReaderTests"), Chunk("StartupReader", "tests/Other/Other.csproj", "StartupReaderTests"),
+            Chunk("IndexReader", "tests/Other/Other.csproj", "IndexReaderTests"),
         };
         var receipts = chunks.Select(c => (IDictionary)new OrderedDictionary
         {
@@ -222,6 +223,7 @@ public sealed class RcProjectSelectionTests
         RcReaderCensusEntry[] census =
         [
             new() { Reader = "FixtureReaderTests", Globs = ["tests/fixtures/data/**"] }, new() { Reader = "StartupReaderTests", Globs = ["scripts/test-*-startup.ps1"] },
+            new() { Reader = "IndexReaderTests", Globs = [Index] },
         ];
         RcChunkSelectionResult Select(string baseline, string candidate, RcReaderCensusEntry[]? withCensus = null) =>
             RcChunkSelection.Select(fx.Root, baseline, candidate, chunks, receipts, withCensus ?? census, Admit);
@@ -298,8 +300,51 @@ public sealed class RcProjectSelectionTests
             && s6Bare.FallbackReasons.Contains("unknown-path:scripts/test-x-startup.ps1"), "s2-assembled-name-reader",
             s6.Mode + " " + string.Join(",", s6.FallbackReasons) + " | " + string.Join(",", s6Bare.FallbackReasons));
 
-        rows.ShouldAllPass(10, "s2-old-only-edge", "s2-deleted-linked-reader", "s2-unrelated-carry", "s2-new-only-hit", "s2-ambiguous-name", "s2-cap",
-            "s2-index-unbound", "s2-index-binding", "s2-runtime-reader", "s2-assembled-name-reader");
+        // Review r1 D-4(a): a census glob over compiled project source (scripts/lib/** over Antiphon.Nightly) keeps the project closure.
+        fx.Git("checkout", "-q", "--detach", b);
+        fx.Put("src/Messaging/Message.cs", "census");
+        var s7 = Select(b, fx.Commit(), [.. census, new RcReaderCensusEntry { Reader = "MessagingReaderTests", Globs = ["src/Messaging/**"] }]);
+        rows.Check(s7.Mode == "Scoped" && Runs(s7, "ServerHarness", "project-closure:B:src/Messaging/Message.cs") && Runs(s7, "RunnerLinked", "project-closure:A:src/Messaging/Message.cs")
+            && s7.Of("Other").Decision == "carry", "s2-census-keeps-closure", s7.Mode + " " + Reasons(s7, "ServerHarness") + " | " + Reasons(s7, "RunnerLinked"));
+
+        // Review r1 D-4(b): an index of another schema, or without its edges or cappedPaths arrays, is malformed and forces Full.
+        string Raw(object schema, bool edges, bool capped)
+        {
+            var doc = new Dictionary<string, object> { ["schema"] = schema, ["cap"] = 25 };
+            if (capped) doc["cappedPaths"] = Array.Empty<object>();
+            if (edges) doc["edges"] = new[] { Edge("tests/Server/Harness.cs", "ServerHarnessTests") };
+            return JsonSerializer.Serialize(doc);
+        }
+        RcChunkSelectionResult IndexAt(string text)
+        {
+            fx.Git("checkout", "-q", "--detach", b);
+            fx.Put(Index, text);
+            fx.Put("src/Messaging/Wire.cs", "index-shape");
+            return Select(b, fx.Commit());
+        }
+        var schema2 = IndexAt(Raw(2, true, true));
+        var noEdges = IndexAt(Raw(1, false, true));
+        var noCapped = IndexAt(Raw(1, true, false));
+        rows.Check(new[] { schema2, noEdges, noCapped }.All(s => s.Mode == "Full" && s.FallbackReasons.Contains("index-malformed:A") && s.Decisions.All(d => d.Decision == "execute")),
+            "s2-index-schema-unknown", string.Join(" | ", new[] { schema2, noEdges, noCapped }.Select(s => s.Mode + ":" + string.Join(",", s.FallbackReasons))));
+
+        // Review r1 D-4(c): an index-only regeneration that removes an edge selects the removed class and the index's own readers.
+        fx.Git("checkout", "-q", "--detach", b);
+        fx.Put(Index, IndexJson([], []));
+        var s8 = Select(b, fx.Commit());
+        rows.Check(s8.Mode == "Scoped" && Runs(s8, "ServerHarness", "index-edge-changed:ServerHarnessTests") && Runs(s8, "IndexReader", "runtime-reader:" + Index)
+            && s8.Of("Other").Decision == "carry" && s8.Of("RunnerLinked").Decision == "carry", "s2-index-readers",
+            s8.Mode + " " + string.Join(",", s8.FallbackReasons) + " " + Reasons(s8, "ServerHarness") + " | " + Reasons(s8, "IndexReader"));
+
+        // A change to a non-edge index field (cap, allowlist, windowsOnly, linuxOnly) changes what every edge means: Full.
+        fx.Git("checkout", "-q", "--detach", b);
+        fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests")], []).Replace("\"cap\":25", "\"cap\":30", StringComparison.Ordinal));
+        var s9 = Select(b, fx.Commit());
+        rows.Check(s9.Mode == "Full" && s9.FallbackReasons.Contains("index-fields-changed"), "s2-index-field-change", s9.Mode + " " + string.Join(",", s9.FallbackReasons));
+
+        rows.ShouldAllPass(14, "s2-old-only-edge", "s2-deleted-linked-reader", "s2-unrelated-carry", "s2-new-only-hit", "s2-ambiguous-name", "s2-cap",
+            "s2-index-unbound", "s2-index-binding", "s2-runtime-reader", "s2-assembled-name-reader", "s2-census-keeps-closure", "s2-index-schema-unknown",
+            "s2-index-readers", "s2-index-field-change");
     }
 
     private static RcPlannedChunk Chunk(string id, string project, string cls) => new()
