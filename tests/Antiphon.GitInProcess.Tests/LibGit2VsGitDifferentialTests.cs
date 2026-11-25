@@ -862,8 +862,16 @@ public sealed class LibGit2VsGitDifferentialTests
                 "[url \"https://programdata.invalid/\"]\n\tinsteadOf = https://\n");
             // Older Git for Windows reads it (then it is git's); 2.56 no longer does (then the answer is git's anyway).
             var programDataRead = await GitInAsync(Path.GetTempPath(), programDataChild, "config", "--get-regexp", "^url\\.");
-            await CaseAsync(failures, "ProgramData config appears, cached view", () => CompareRemoteUrlAsync(repo,
-                programDataRead.Result.ExitCode == 0 ? Expect.Fallback : Expect.Answered, programDataChild, "origin"));
+            // Whatever this git reads, the cached view must ask git again once the file appears.
+            var relisted = 0;
+            GitRemoteConfigView.AfterListing.Value = () => relisted++;
+            try
+            {
+                await CaseAsync(failures, "ProgramData config appears, cached view", () => CompareRemoteUrlAsync(repo,
+                    programDataRead.Result.ExitCode == 0 ? Expect.Fallback : Expect.Answered, programDataChild, "origin"));
+            }
+            finally { GitRemoteConfigView.AfterListing.Value = null; }
+            if (relisted == 0) failures.Add("ProgramData config appears: the cached view was not listed again");
             File.Delete(Path.Combine(programData, "Git", "config"));
             await CaseAsync(failures, "ProgramData config gone again",
                 () => CompareRemoteUrlAsync(repo, Expect.Answered, programDataChild, "origin"));
