@@ -105,7 +105,8 @@ public sealed class CallerWakeService(
                 && t.Result != null && t.Result != "" && t.CompletedAt <= cutoff
                 && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Failed
                     || t.Status == AgentTaskStatus.Blocked || t.Status == AgentTaskStatus.Canceled)
-                && (t.LastPolledResultAt == null || t.LastPolledResultAt < t.CompletedAt));
+                && (t.ReceivedReportCompletedAt == null || t.ReceivedReportCompletedAt != t.CompletedAt
+                    || t.ReceivedReportSessionId != t.ParentSessionId));
         if (callerId is Guid id) candidates = candidates.Where(t => t.ParentSessionId == id);
         else
         {
@@ -115,29 +116,9 @@ public sealed class CallerWakeService(
 
         // Only observations belonging to this settlement can close it. A task may have
         // returned Blocked, received a Reply and produced a different final report.
-        var notifications = from task in candidates
-                            join n in db.AgentTaskLandNotifications on task.Id equals n.TaskId
-                            where n.Kind == LandNotificationKind.TaskCompletion && n.ParentSessionId == task.ParentSessionId
-                                && n.CreatedAt >= task.CompletedAt
-                            select n;
-        var queued = from task in candidates
-                     join m in db.SessionQueuedMessages on (Guid?)task.Id equals m.SourceTaskId
-                     where m.AgentSessionId == task.ParentSessionId && m.CreatedAt >= task.CompletedAt
-                         && m.Origin == QueuedMessageOrigin.Delegation && m.SourceLandNotificationId == null
-                         && m.ConversationKey != null && m.ConversationKey.StartsWith("task:")
-                     select m;
-        var profiledIds = notifications.Select(n => n.TaskId);
-        var openProfiled = notifications.Where(n => n.ConfirmedAt == null
-                && (n.State == LandNotificationState.Queued || n.State == LandNotificationState.RetryPending
-                    || n.State == LandNotificationState.AwaitingReceipt || n.State == LandNotificationState.DestinationUnavailable))
-            .Select(n => n.TaskId);
-        var openQueued = queued.Where(m => m.Status == QueuedMessageStatus.Pending
-                || (m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict != DeliveryVerdict.Delivered
-                    && m.DeliveryVerdict != DeliveryVerdict.LateConfirmed))
-            .Select(m => m.SourceTaskId!.Value).Except(profiledIds);
-        var neverQueued = candidates.Where(t => t.CompletionNoteQueuedAt == null || t.CompletionNoteQueuedAt < t.CompletedAt)
-            .Select(t => t.Id).Except(profiledIds).Except(queued.Select(m => m.SourceTaskId!.Value));
-        var owed = openProfiled.Concat(openQueued).Concat(neverQueued);
-        return candidates.Where(t => owed.Contains(t.Id));
+        return candidates.Where(t => !db.AgentTaskLandNotifications.Any(n =>
+            n.TaskId == t.Id && n.ParentSessionId == t.ParentSessionId
+            && n.Kind == LandNotificationKind.TaskCompletion && db.AgentTaskEvents.Any(e =>
+                e.Id == n.SourceEventId && e.AgentTaskId == t.Id && e.At == t.CompletedAt) && n.ConfirmedAt != null && n.ConfirmingPromptSequence != null));
     }
 }

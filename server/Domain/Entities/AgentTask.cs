@@ -436,6 +436,11 @@ public class AgentTask
     /// </summary>
     public AgentTaskFailureCode? FailureCode { get; set; }
 
+    /// <summary>Settlement and recipient for a full submitted completion or authenticated parent read.</summary>
+    public DateTime? ReceivedReportCompletedAt { get; set; }
+    public Guid? ReceivedReportSessionId { get; set; }
+    public long? ReceivedReportPromptSequence { get; set; }
+
     /// <summary>The normalized digest of the settled report last read by this task's parent session.</summary>
     public string? LastPolledResultHash { get; set; }
 

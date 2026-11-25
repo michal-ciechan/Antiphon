@@ -2916,7 +2916,12 @@ public sealed class AgentTaskService
         {
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             await _db.AgentTasks.Where(t => t.Id == id && t.Status == task.Status && t.CompletedAt == task.CompletedAt
-                && t.ConcurrencyToken == task.ConcurrencyToken).ExecuteUpdateAsync(setters => setters
+                && t.ParentSessionId == pollingSessionId && t.ConcurrencyToken == task.ConcurrencyToken).ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.ReceivedReportCompletedAt, task.CompletedAt)
+                .SetProperty(t => t.ReceivedReportPromptSequence, t =>
+                    t.ReceivedReportCompletedAt == task.CompletedAt && t.ReceivedReportSessionId == pollingSessionId
+                        ? t.ReceivedReportPromptSequence : null)
+                .SetProperty(t => t.ReceivedReportSessionId, pollingSessionId)
                 .SetProperty(t => t.LastPolledResultHash, DelegationNoteDigest.Compute(report))
                 .SetProperty(t => t.LastPolledResultAt, now), ct);
 

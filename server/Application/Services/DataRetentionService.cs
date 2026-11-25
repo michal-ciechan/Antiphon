@@ -419,6 +419,7 @@ public sealed class DataRetentionService
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
         var outboundSources = ChannelOutboundEvidence.ProtectedSources(_db);
         var supervision = TaskSupervisionNoticeService.Unresolved(_db);
+        await CompletionNoteStamp.RecoverReceiptsAsync(_db, _db.SessionQueuedMessages.Where(m => m.CreatedAt < cutoff), ct);
         await CompletionNoteStamp.RepairFromAsync(
             _db,
             _db.SessionQueuedMessages.Where(m =>
