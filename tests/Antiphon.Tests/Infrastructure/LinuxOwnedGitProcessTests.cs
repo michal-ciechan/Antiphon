@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using Antiphon.Server.Infrastructure.Git;
@@ -121,6 +122,216 @@ public sealed class LinuxOwnedGitProcessTests
         foreach (var stranger in fixture.Strangers) stranger.HasExited.ShouldBeFalse();
         (await owner.StandardOutput.ReadToEndAsync(ct)).ShouldBeEmpty();
         (await owner.StandardError.ReadToEndAsync(ct)).ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(45_000)]
+    [NativeLinuxOnly("A foreign-UID Git process must be visible in the Linux census.")]
+    public async Task Unrelated_foreign_uid_git_does_not_prevent_join(CancellationToken ct)
+    {
+        if (File.ReadLines("/proc/self/status").Single(line => line.StartsWith("Uid:", StringComparison.Ordinal))
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Contains("999"))
+        {
+            Skip.Test("The second-UID witness needs a test user distinct from UID 999.");
+            return;
+        }
+        using var fixture = new OwnedProcessContainmentFixture();
+        await using var owner = new OwnedGitProcess(new LinuxOwnedGitProcess());
+        using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn"))
+            owner.Start(fixture.StartInfo(closed: true)).State.ShouldBe(OwnedGitLaunchState.Started);
+        await fixture.ReadyAsync(ct);
+        var rootTicks = owner.Root.ShouldNotBeNull().LinuxStartTicks.ShouldNotBeNull();
+
+        var start = new ProcessStartInfo("docker")
+        {
+            UseShellExecute = false, RedirectStandardInput = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        string[] arguments = ["run", "--rm", "-i", "--pull=never", "--user", "999:999", "--pid=host",
+            "--network", "none", "--cap-drop", "ALL", "--entrypoint", "/usr/bin/timeout", "node:22-bookworm",
+            "30", "/bin/sh", "-c", "printf '%s %s\\n' \"$$\" \"$(readlink /proc/self/ns/pid)\"; exec git hash-object --stdin"];
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+
+        Process launched;
+        try
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn");
+            launched = Process.Start(start) ?? throw new InvalidOperationException("Docker did not start");
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
+        {
+            Skip.Test("Docker is required for the second-UID witness.");
+            return;
+        }
+        using var foreign = launched;
+        try
+        {
+            var ready = await foreign.StandardOutput.ReadLineAsync(ct);
+            if (ready is null)
+            {
+                var error = await foreign.StandardError.ReadToEndAsync(ct);
+                if (error.Contains("No such image", StringComparison.Ordinal)
+                    || error.Contains("Cannot connect to the Docker daemon", StringComparison.Ordinal))
+                {
+                    Skip.Test("The second-UID witness needs local Docker with node:22-bookworm cached.");
+                    return;
+                }
+                throw new InvalidOperationException("The foreign Git fixture exited before reporting its PID.");
+            }
+
+            var fields = ready.Split(' ');
+            fields.Length.ShouldBe(2);
+            if (fields[1] != new FileInfo("/proc/self/ns/pid").LinkTarget)
+            {
+                Skip.Test("The Docker daemon must share the test runner's PID namespace.");
+                return;
+            }
+            var pid = int.Parse(fields[0], CultureInfo.InvariantCulture);
+            using (var readiness = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                readiness.CancelAfter(TimeSpan.FromSeconds(5));
+                while ((await File.ReadAllTextAsync($"/proc/{pid}/comm", readiness.Token)).Trim() != "git")
+                    await Task.Delay(10, readiness.Token);
+            }
+            File.ReadLines($"/proc/{pid}/status").Single(line => line.StartsWith("Uid:", StringComparison.Ordinal))
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ShouldBe(["Uid:", "999", "999", "999", "999"]);
+            LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull().StartTicks.ShouldBeGreaterThanOrEqualTo(rootTicks);
+            try
+            {
+                using var stream = File.OpenRead($"/proc/{pid}/environ");
+                Skip.Test("The second-UID witness requires the kernel to deny the environment read.");
+                return;
+            }
+            catch (UnauthorizedAccessException) { }
+
+            owner.StandardInput.Close();
+            (await owner.WaitForRootExitAsync(ct)).ShouldBeTrue();
+            OwnedGitCleanup result;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "cleanup"))
+                result = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(6));
+            OwnedProcessContainmentFixture.IsAlive(fixture.SurvivorPid).ShouldBeFalse("before fixture rescue");
+            OwnedProcessContainmentFixture.IsAlive(pid).ShouldBeTrue("the unrelated Git process must remain alive");
+            result.Joined.ShouldBeTrue($"rootExited={result.RootExited} members={result.Members.State}/{result.Members.Survivors} " +
+                $"reason={result.Reason} signals={result.SignalsAttempted} duration={result.Duration}");
+        }
+        finally
+        {
+            foreign.StandardInput.Close();
+            await foreign.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(35));
+        }
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [NativeLinuxOnly("Linux procfs must keep a live child visible after its environment becomes unreadable.")]
+    public async Task Previously_proved_unreadable_child_prevents_native_join(CancellationToken ct)
+    {
+        using var safety = DescendantLeakScope.Create();
+        await using var owner = new OwnedGitProcess(new LinuxOwnedGitProcess());
+        var control = OwnedTempRoot.CreateOwned();
+        var restrict = Path.Combine(control, "restrict");
+        var release = Path.Combine(control, "release");
+        LinuxProcIdentity? child = null;
+        var started = false;
+        try
+        {
+            var start = new ProcessStartInfo("/bin/sh")
+            {
+                UseShellExecute = false, RedirectStandardInput = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            string[] arguments = ["-c", """ "$@" </dev/null & read -r line """, "containment-root",
+                "pwsh", "-NoProfile", "-NonInteractive", "-Command", """
+                $ErrorActionPreference = 'Stop'
+                Add-Type -TypeDefinition @'
+                using System;
+                using System.Runtime.InteropServices;
+                public static class ProcPermissionFixture
+                {
+                    [DllImport("libc", EntryPoint = "prctl")]
+                    private static extern int Prctl(int option, UIntPtr arg2, UIntPtr arg3, UIntPtr arg4, UIntPtr arg5);
+                    public static bool Restrict() =>
+                        Prctl(4, UIntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero) == 0; // PR_SET_DUMPABLE
+                }
+                '@
+                $control = $env:ANTIPHON_TEST_CONTAINMENT_CONTROL
+                $clock = [Diagnostics.Stopwatch]::StartNew()
+                $restricted = $false
+                [Console]::WriteLine($PID)
+                while ($clock.Elapsed.TotalSeconds -lt 20 -and ![IO.File]::Exists("$control/release")) {
+                    if (!$restricted -and [IO.File]::Exists("$control/restrict")) {
+                        if (![ProcPermissionFixture]::Restrict()) { throw 'PR_SET_DUMPABLE failed' }
+                        $restricted = $true
+                        [Console]::WriteLine('restricted')
+                    }
+                    Start-Sleep -Milliseconds 10
+                }
+                """];
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_TEST_CONTAINMENT_CONTROL"] = control;
+            safety.Apply(start);
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn"))
+                started = owner.Start(start).State == OwnedGitLaunchState.Started;
+            started.ShouldBeTrue();
+
+            var root = owner.Root.ShouldNotBeNull();
+            string? line;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "wait"))
+                line = await owner.StandardOutput.ReadLineAsync(ct);
+            int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
+                .ShouldBeTrue("the fixture must report its child PID");
+            child = LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull();
+            child.Alive.ShouldBeTrue();
+            child.ParentPid.ShouldBe(root.Pid);
+            (await owner.ProbeMembersAsync(Deadline(), ct)).Survivors.ShouldBe(2);
+
+            File.WriteAllText(restrict, "");
+            (await owner.StandardOutput.ReadLineAsync(ct)).ShouldBe("restricted");
+            try
+            {
+                using var stream = File.OpenRead($"/proc/{pid}/environ");
+                Skip.Test("The native fixture requires the kernel to deny the environment read.");
+                return;
+            }
+            catch (UnauthorizedAccessException) { }
+
+            owner.StandardInput.Close();
+            (await owner.WaitForRootExitAsync(ct)).ShouldBeTrue();
+            OwnedGitCleanup result;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "cleanup"))
+                result = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(2));
+
+            var surviving = LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull();
+            surviving.Alive.ShouldBeTrue("the owned child must survive until the cleanup verdict");
+            surviving.StartTicks.ShouldBe(child.StartTicks);
+            surviving.ParentPid.ShouldNotBe(root.Pid);
+            result.RootExited.ShouldBeTrue();
+            result.Joined.ShouldBeFalse();
+            result.Members.Survivors.ShouldBe(1);
+            result.SignalsAttempted.ShouldBe(0);
+        }
+        finally
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "cleanup");
+            try
+            {
+                File.WriteAllText(release, "");
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                if (started)
+                {
+                    owner.StandardInput.Close();
+                    await owner.WaitForRootExitAsync(cleanup.Token);
+                }
+                while (child is not null && LinuxProcOperations.ReadIdentityFile(child.Pid) is { Alive: true } current
+                    && current.StartTicks == child.StartTicks)
+                    await Task.Delay(10, cleanup.Token);
+            }
+            finally
+            {
+                safety.KillAll();
+                OwnedTempRoot.Release(control);
+            }
+        }
     }
 
     [Test]
@@ -264,6 +475,116 @@ public sealed class LinuxOwnedGitProcessTests
     }
 
     [Test]
+    [Arguments("unrelated", nameof(OwnedGitMembershipState.Empty))]
+    [Arguments("descendant", nameof(OwnedGitMembershipState.Live))]
+    [Arguments("shared-uid", nameof(OwnedGitMembershipState.Unknown))]
+    [Arguments("unreadable-status", nameof(OwnedGitMembershipState.Unknown))]
+    [Arguments("changed-parent", nameof(OwnedGitMembershipState.Unknown))]
+    [Arguments("marker-only", nameof(OwnedGitMembershipState.Unknown))]
+    [Arguments("unknown-root-start", nameof(OwnedGitMembershipState.Unknown))]
+    public async Task Permission_denial_requires_stable_separate_credentials_and_root_identity(
+        string shape, string expected)
+    {
+        var descendant = shape == "descendant";
+        var io = new FakeProc
+        {
+            Entries = descendant ? ["100", "40"] : ["100"],
+            Stat = pid => new(pid, descendant && pid == 100 ? 40 : 1, pid, 'S'),
+            EnvironmentRead = read => read == 1 ? throw new UnauthorizedAccessException() : [],
+            DisjointUserIds = _ => shape == "unreadable-status"
+                ? throw new UnauthorizedAccessException() : shape != "shared-uid"
+        };
+        if (shape == "changed-parent")
+            io.Stat = pid => new(pid, io.StatReads == 1 ? 1 : 2, pid, 'S');
+        var root = new OwnedGitRoot(shape == "marker-only" ? 0 : 40, null, shape == "unknown-root-start" ? null : 40);
+        using var members = Census(io);
+        var result = await members.ProbeAsync(root, Deadline(), default);
+        result.State.ToString().ShouldBe(expected);
+        result.Survivors.ShouldBe(descendant ? 2 : 0);
+    }
+
+    [Test]
+    public async Task Known_unreadable_child_prevents_empty_after_root_exit()
+    {
+        var io = new FakeProc
+        {
+            Entries = ["100", "40", "101"],
+            Stat = pid => new(pid, pid == 100 ? 40 : 1, pid, 'S'),
+            EnvironmentRead = _ => throw new UnauthorizedAccessException(),
+            DisjointUserIds = _ => true,
+            OnSignal = pid =>
+            {
+                if (pid == 100) throw new UnauthorizedAccessException();
+            }
+        };
+        var root = new OwnedGitRoot(40, null, 40);
+        using var members = Census(io);
+
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(2);
+        io.Signals.ShouldBe([100, 40]);
+
+        // The root is gone, but the denied child has the same PID and start ticks.
+        io.Entries = ["100", "101"];
+        io.Stat = pid => pid == 40 ? null : new(pid, 1, pid, 'S');
+        var reparented = await members.ProbeAsync(root, Deadline(), default);
+        reparented.State.ShouldBe(OwnedGitMembershipState.Live);
+        reparented.Survivors.ShouldBe(1);
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(0);
+
+        // An omitted entry or an unreadable stat is not proof of death.
+        io.Entries = ["101"];
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Live);
+        io.Stat = pid => pid == 100 ? throw new UnauthorizedAccessException() : new(pid, 1, pid, 'S');
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Unknown);
+        io.Stat = pid => new(pid, 1, pid, 'S');
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Live);
+
+        // The PID now belongs to an unrelated foreign-UID process, like PID 101 throughout.
+        io.Entries = ["100", "101"];
+        io.Stat = pid => new(pid, 1, pid == 100 ? 1100 : pid, 'S');
+        var replaced = await members.ProbeAsync(root, Deadline(), default);
+        replaced.State.ShouldBe(OwnedGitMembershipState.Empty);
+        replaced.Survivors.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Reused_pid_keeps_newly_proved_child_after_stat_failure()
+    {
+        var child = new LinuxProcIdentity(100, 40, 100, 'S');
+        var io = new FakeProc
+        {
+            Entries = ["100", "40"],
+            Stat = pid => pid == child.Pid ? child : new(pid, 1, 40, 'S'),
+            EnvironmentBytes = []
+        };
+        var root = new OwnedGitRoot(40, null, 40);
+        using var members = Census(io);
+        (await members.ProbeAsync(root, Deadline(), default)).Survivors.ShouldBe(2);
+
+        // The census proves the replacement by ancestry before the remembered PID's reread fails.
+        child = child with { StartTicks = 200 };
+        var childStatReads = 0;
+        io.Stat = pid => pid != child.Pid ? new(pid, 1, 40, 'S')
+            : ++childStatReads == 1 ? child : throw new IOException();
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Unknown);
+        childStatReads.ShouldBe(2);
+
+        child = child with { ParentPid = 1 };
+        io.Entries = ["100"];
+        io.Stat = pid => pid == child.Pid ? child : null;
+        io.EnvironmentRead = _ => throw new UnauthorizedAccessException();
+        io.DisjointUserIds = _ => true;
+        var surviving = await members.ProbeAsync(root, Deadline(), default);
+        surviving.State.ShouldBe(OwnedGitMembershipState.Live);
+        surviving.Survivors.ShouldBe(1);
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(0);
+        io.Signals.ShouldBeEmpty();
+
+        io.Stat = _ => null;
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Empty);
+    }
+
+    [Test]
     public async Task Ancestry_backstop_revalidates_unmarked_children_and_every_parent()
     {
         var io = new FakeProc { Entries = ["100", "101"], EnvironmentBytes = [] };
@@ -312,14 +633,22 @@ public sealed class LinuxOwnedGitProcessTests
         internal IEnumerable<string> Entries = ["100"];
         internal byte[] EnvironmentBytes = Encoding.UTF8.GetBytes("ANTIPHON_REPOSITORY_CHILD=mine\0");
         internal Func<int, LinuxProcIdentity?> Stat = pid => new(pid, 1, 100, 'S');
+        internal Func<int, bool> DisjointUserIds = _ => false;
         internal Func<int, byte[]>? EnvironmentRead;
+        internal Action<int>? OnSignal;
         internal readonly List<int> Signals = [];
         public bool HidesProcesses() => Hidden;
         public IEnumerable<string> EnumerateEntries() => ListFailure ? throw new IOException() : Entries;
         public LinuxProcIdentity? ReadIdentity(int pid) { StatReads++; return Stat(pid); }
+        public bool HasDisjointUserIds(int pid) => DisjointUserIds(pid);
         public ValueTask<byte[]> ReadEnvironmentAsync(int pid, CancellationToken token) =>
             ValueTask.FromResult(EnvironmentRead?.Invoke(++EnvironmentReads) ?? EnvironmentBytes);
-        public ValueTask SignalAsync(int pid, CancellationToken token) { Signals.Add(pid); return ValueTask.CompletedTask; }
+        public ValueTask SignalAsync(int pid, CancellationToken token)
+        {
+            Signals.Add(pid);
+            OnSignal?.Invoke(pid);
+            return ValueTask.CompletedTask;
+        }
     }
     private sealed class LateForkOperations(OwnedProcessContainmentFixture fixture) : ILinuxProcOperations
     {
@@ -328,6 +657,7 @@ public sealed class LinuxOwnedGitProcessTests
         public bool HidesProcesses() => _native.HidesProcesses();
         public IEnumerable<string> EnumerateEntries() => _native.EnumerateEntries();
         public LinuxProcIdentity? ReadIdentity(int pid) => _native.ReadIdentity(pid);
+        public bool HasDisjointUserIds(int pid) => _native.HasDisjointUserIds(pid);
         public ValueTask<byte[]> ReadEnvironmentAsync(int pid, CancellationToken token) => _native.ReadEnvironmentAsync(pid, token);
         public async ValueTask SignalAsync(int pid, CancellationToken token)
         {
