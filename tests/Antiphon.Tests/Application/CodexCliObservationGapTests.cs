@@ -681,7 +681,7 @@ public sealed class CodexCliObservationGapTests
 }
 
 /// <summary>
-/// Runs independent C1029 world cases side by side; every case runs and every failure is reported under its label.
+/// Runs independent Codex CLI (C959/C1029) world cases side by side; every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
 /// in-process fakes), but each also has a Kestrel host, a harness and a schema, so this class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_C1029_WORLDS

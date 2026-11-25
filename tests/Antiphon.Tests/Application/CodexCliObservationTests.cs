@@ -136,11 +136,15 @@ public sealed class CodexCliObservationTests
     public async Task C959_Compatible_launch_keeps_model_and_runner()
     {
         // Claude is first: its measured paste path must retain the literal LF body.
-        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
-        foreach (var busy in new[] { false, true })
-        foreach (var worktree in kind == AgentKind.Codex ? new[] { true, false } : new[] { false })
-        foreach (var version in kind == AgentKind.Codex ? new[] { "0.159.1", "0.160.0" } : new[] { "0.160.0" })
+        var local = from kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex }
+                    from busy in new[] { false, true }
+                    from worktree in kind == AgentKind.Codex ? new[] { true, false } : new[] { false }
+                    from version in kind == AgentKind.Codex ? new[] { "0.159.1", "0.160.0" } : new[] { "0.160.0" }
+                    select (kind, busy, worktree, version);
+        // Each vector builds its own schema, repository and harness (and each remote vector its own world).
+        await Worlds.InParallelAsync(local, c => $"{c.kind}/busy={c.busy}/worktree={c.worktree}/{c.version}", async c =>
         {
+            var (kind, busy, worktree, version) = c;
             var vector = $"{kind}/busy={busy}/worktree={worktree}/{version}";
             using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
             using var git = worktree ? new ScratchGitRepo("c959-launch") : null;
@@ -205,14 +209,16 @@ public sealed class CodexCliObservationTests
             receipts.Single().Text.ShouldBe(expected, "C959-v21-receipt " + vector);
             receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, "C959-v21-baseline " + vector);
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("codex_cli_version"))).ShouldBe(0, "C959-no-cli-warning " + vector);
-        }
+        });
+        var remote = new List<(string Name, Func<Task> Body)>();
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         foreach (var busy in new[] { false, true })
-            await CodexCliRemoteDeliveryFixture.RunAsync(Body, version, busy);
+            remote.Add(($"remote/{version}/busy={busy}", () => CodexCliRemoteDeliveryFixture.RunAsync(Body, version, busy)));
         foreach (var negative in new[] { "ack-only", "clipped", "baseline", "other-session", "write-failure" })
-            await CodexCliRemoteDeliveryFixture.RunAsync(Body,
+            remote.Add(($"remote/negative={negative}", () => CodexCliRemoteDeliveryFixture.RunAsync(Body,
                 new RunnerCodexCliVersionDto("0.156.1", DateTimeOffset.UtcNow, null, new string('a',64)),
-                busy: true, negative: negative);
+                busy: true, negative: negative)));
+        await Worlds.InParallelAsync(remote);
     }
 
     [Test]
@@ -324,21 +330,22 @@ public sealed class CodexCliObservationTests
     [Test]
     public async Task C959_Probe_failure_never_refuses()
     {
-        foreach (var error in new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" })
-            await NeverRefusesAsync(now => new(null, now, error, new string('a', 64)), 225, error);
+        // Each vector builds its own schemas, repositories and worlds, so the vectors run side by side.
+        await Worlds.InParallelAsync(new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" }, e => e,
+            error => NeverRefusesAsync(now => new(null, now, error, new string('a', 64)), 225, error));
     }
 
     [Test]
     public async Task C959_Stale_sample_never_refuses()
     {
-        foreach (var age in new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) })
-            await NeverRefusesAsync(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString());
+        await Worlds.InParallelAsync(new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) },
+            a => a.ToString(), age => NeverRefusesAsync(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString()));
     }
 
     [Test]
     public async Task C959_Unknown_version_never_refuses()
     {
-        foreach (var (name, sample) in new (string, Func<DateTimeOffset, RunnerCodexCliVersionDto?>)[]
+        await Worlds.InParallelAsync(new (string Name, Func<DateTimeOffset, RunnerCodexCliVersionDto?> Sample)[]
         {
             ("legacy", _ => null),
             ("null-version", now => new(null, now, null, new string('a', 64))),
@@ -346,13 +353,13 @@ public sealed class CodexCliObservationTests
             ("missing-time", _ => new("0.160.0", null, null, new string('a', 64))),
             ("fingerprint", now => new("0.160.0", now, null, "bad")),
             ("clock-skew", now => new("0.160.0", now.AddMinutes(2), null, new string('a', 64))),
-        }) await NeverRefusesAsync(sample, 231, name);
+        }, c => c.Name, c => NeverRefusesAsync(c.Sample, 231, c.Name));
     }
 
     [Test]
     public async Task C959_Old_version_with_floor_never_refuses()
     {
-        foreach (var version in new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" })
+        await Worlds.InParallelAsync(new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" }, v => v, async version =>
         {
             await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
             foreach (var (level, exact, expected) in new[] {
@@ -376,7 +383,7 @@ public sealed class CodexCliObservationTests
                         await CodexCliRemoteDeliveryFixture.RunAsync(Body,
                             new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a',64)), busy, level);
             }
-        }
+        });
     }
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
