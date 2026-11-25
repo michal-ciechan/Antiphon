@@ -604,10 +604,19 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _observations = new();
         public string? ThrowOnce;
         public string? HoldAt;
+        /// <summary>C488: wakeup hints this boundary drops, as a crash cut that kills their process would.</summary>
+        public HashSet<string> Drop { get; } = [];
+        public ConcurrentQueue<(string Boundary, Guid Identity)> Dropped { get; } = new();
         public int Throws;
         public TaskCompletionSource Held { get; } = Signal();
         public TaskCompletionSource Release { get; } = Signal();
         public int Count(string boundary) => _reached.Count(b => b == boundary);
+        public override bool DropWakeup(string boundary, Guid identity)
+        {
+            if (!Drop.Contains(boundary)) return false;
+            Dropped.Enqueue((boundary, identity));
+            return true;
+        }
         public Task Observe(string boundary)
         { var signal = Signal(); _observations[boundary] = signal; return signal.Task; }
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
