@@ -180,7 +180,8 @@ public sealed class PhoneHomeCompletedCardTransportTests
                 new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto("test", null, DateTime.UtcNow, DateTime.UtcNow)), settings, identity: _identity),
                 runtime, new Factory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance, identity: _identity);
             await Connection.StartAsync(_stop.Token); adoption.SignalReady();
-            var live = await Host.WaitLiveAsync(TimeSpan.FromSeconds(30));
+            var live = await Host.WaitLiveAsync(TimeSpan.FromSeconds(30), runnerId: Host.AllowedRunnerId,
+                adoptedEpoch: () => Connection.Epoch);
             Client = new(live);
         }
         public async Task Reconnect()
