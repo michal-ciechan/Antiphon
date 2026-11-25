@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -211,7 +212,9 @@ public partial class CallerWakeTests
             Body = first, ContentDigest = DelegationNoteDigest.Compute(first),
             CreatedAt = now.AddDays(-2).AddMinutes(1), Status = QueuedMessageStatus.Sent,
             SentAt = now.AddDays(-2).AddMinutes(2), DeliveryVerdict = DeliveryVerdict.Delivered,
+            LastDeliveryBaselineSequence = 0, ChannelReplyDiscoveryClosedAt = now.AddDays(-2).AddMinutes(3),
         };
+        await BridgeQueueHarness.InsertEntryAsync(caller, "QueuedUserPrompt", first, connectionString: rig.World.Schema.ConnectionString);
         db.Add(message);
         await db.SaveChangesAsync();
         (await Owed()).ShouldBeTrue("a screen verdict cannot close an ordinary completion");
@@ -242,6 +245,8 @@ public partial class CallerWakeTests
         await rig.FlushAsync();
         (await rig.CallerPromptsAsync()).ShouldContain(p => p.Text != null && p.Text.Contains(second));
         (await Owed()).ShouldBeFalse("the complete submitted prompt closes this settlement");
+        await db.SessionQueuedMessages.Where(m => m.SourceTaskId == id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(m => m.ChannelReplyDiscoveryClosedAt, settled));
         rig.World.Clock.Advance(TimeSpan.FromDays(2));
         (await retention.PruneQueuedMessagesAsync(default)).ShouldBeGreaterThan(0);
         (await Owed()).ShouldBeFalse("the receipt outlives its queue row");
