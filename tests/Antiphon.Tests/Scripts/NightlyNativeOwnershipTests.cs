@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Scripts;
 /// suspended launcher, job queries, pipes and executable of NativeProcessOwner (Antiphon.Nightly/NativeProcessOwner.cs),
 /// started through OwnedLauncher (the twin of Start-NightlyNativeOwner and Invoke-NightlyOwnedProcess) against the staged
 /// OwnedChild fixture. The fixture's own NativeJobObserver reads the live private job, not the adapter's constants.
-/// Each case fails with its "FAIL C1039/C1045 &lt;label&gt;"; the release, join and kill of every fixture runs either way.
+/// The native cases release and join their fixtures even after an assertion failure.
 /// NotInParallel: the C1045 cases set parent sentinels in this process's environment, and an inheritable pipe end of a
 /// launch must not leak into a child another test starts meanwhile.
 /// </summary>
@@ -25,6 +25,30 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyNativeOwnershipTests
 {
+    [Test]
+    public void Idle_capture_identifies_the_live_root_of_a_populated_job()
+    {
+        const int pid = 42;
+        const string reason = "test hosts idle for 0.08 minutes";
+        var capture = $"idle-hang-capture\r\n{reason}\r\nroot pid={pid} exited=false active=2\r\n";
+
+        AssertIdleCapture(capture, pid, reason);
+        AssertIdleCapture(capture.Replace("active=2", "active=1"), pid, reason);
+        Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture, pid + 1, reason));
+        Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture.Replace("active=2", "active=0"), pid, reason));
+        Should.Throw<ShouldAssertException>(() => AssertIdleCapture(capture.Replace("exited=false", "exited=true"), pid, reason));
+    }
+
+    private static void AssertIdleCapture(string capture, int pid, string idleReason)
+    {
+        using var lines = new StringReader(capture);
+        lines.ReadLine().ShouldBe("idle-hang-capture");
+        lines.ReadLine().ShouldBe(idleReason);
+        var root = lines.ReadLine();
+        root.ShouldNotBeNull();
+        root.ShouldMatch($"^root pid={pid} exited=false active=[1-9][0-9]*$");
+    }
+
     private static void IdleCaptureAndJobTermination(NativeHarness native, CancellationToken cancellationToken)
     {
         var root = native.NewRoot("idle test host");
@@ -51,7 +75,7 @@ public sealed class NightlyNativeOwnershipTests
         rootHandle.HasExited.ShouldBeTrue();
         File.Exists(trx).ShouldBeFalse();
         result.HangCapturePath.ShouldBe(capture);
-        File.ReadAllText(capture).ShouldContain("root pid=" + result.Pid + " exited=false active=1");
+        AssertIdleCapture(File.ReadAllText(capture), result.Pid, result.IdleHangReason);
         QualificationHeartbeat.Read(heartbeat).HangSuspected.ShouldBeTrue();
     }
 
