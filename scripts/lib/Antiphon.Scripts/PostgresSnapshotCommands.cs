@@ -7,6 +7,8 @@
 //   invoke-postgres-snapshot-stale.ps1.
 // - postgres-snapshot-target: Set-SnapshotTarget, the only writer of the runner's snapshot-target word.
 // - job-status: scripts/windmill/job-status.ps1 run as a script.
+// - register-postgres-snapshot: the preview or registration of both jobs (RegisterPostgresSnapshot); it replaced
+//   scripts/register-postgres-snapshot.ps1, which nothing started by path.
 // Each runs on the production host (this process's console and environment) and the real file system. ASCII only.
 using System;
 using System.Linq;
@@ -26,10 +28,12 @@ namespace Antiphon.Scripts
 
         internal const string JobStatusName = "job-status";
 
+        internal const string RegisterName = "register-postgres-snapshot";
+
         internal const string TargetUsage = "postgres-snapshot-target --word <desktop|server2> [--runner-dir <dir>]";
 
         internal const string Usage = PostgresSnapshotOptions.Usage + " | " + PostgresSnapshotJobOptions.Usage + " | " + PostgresSnapshotStaleOptions.Usage + " | " + TargetUsage
-            + " | " + JobStatusOptions.Usage;
+            + " | " + JobStatusOptions.Usage + " | " + RegisterPostgresSnapshotOptions.Usage;
 
         private static NightlyHost Host => NightlyHost.Production(Console.Out, Console.Error);
 
@@ -54,5 +58,8 @@ namespace Antiphon.Scripts
         // 0 the line (or fresh), 2 bad-record, or the send's exit with --send; usage 2.
         internal static int RunJobStatus(string[] args) => JobStatusOptions.Run(JobStatusOptions.Parse(args.Skip(1).ToArray()), Host);
 
+        // 0 previewed or registered, 3 refused, 1 an upload step failed, or the remote registration's exit; usage 2.
+        internal static int RunRegister(string[] args) =>
+            RegisterPostgresSnapshot.Run(RegisterPostgresSnapshotOptions.Parse(args.Skip(1).ToArray(), SourceCheckout.Root() ?? Environment.CurrentDirectory), Host);
     }
 }
