@@ -797,21 +797,31 @@ public sealed class RunnerWorkspaceSlotPool
         }
         if (branch is not null)
         {
-            var tip = await SlotGitAsync(path, ct, "rev-parse", "-q", "--verify", "refs/heads/" + branch);
+            var fullRef = "refs/heads/" + branch;
+            var tip = quarantineHead is null
+                ? await SlotGitAsync(path, ct, "rev-parse", "-q", "--verify", fullRef)
+                : await SlotGitAsync(path, ct, "show-ref", "--verify", "--hash", "--", fullRef);
             if (tip.ExitCode == 0)
                 shas.Add(tip.Stdout.Trim());
+            else if (quarantineHead is not null)
+            {
+                // 2 is proven absence. An unreadable ref or a Git without --exists cannot certify it.
+                var exists = await SlotGitAsync(path, ct, "show-ref", "--exists", fullRef);
+                if (exists.ExitCode != 2 || (await SlotGitAsync(path, ct, "check-ref-format", fullRef)).ExitCode != 0)
+                    return "quarantine task branch is unreadable";
+            }
         }
 
+        if (quarantineHead is not null && shas.Any(sha => !IsFullSha(sha)))
+            return "quarantine commit history is unreadable";
         shas.RemoveWhere(sha => sha.Length == 0);
         if (shas.Count == 0)
             return null;
-        string[] args = ["rev-list", "--max-count=1", .. shas.Order(StringComparer.Ordinal), "--not", "--remotes=origin"];
-        if (quarantineHead is not null)
-        {
-            if (shas.Any(sha => !IsFullSha(sha)))
-                return "quarantine commit history is unreadable";
-            args = ["--no-replace-objects", .. args];
-        }
+        var commits = shas.Order(StringComparer.Ordinal);
+        string[] args = quarantineHead is null
+            ? ["rev-list", "--max-count=1", .. commits, "--not", "--remotes=origin"]
+            : ["--no-replace-objects", "rev-list", "--max-count=1", .. commits.Select(sha => sha + "^{commit}"),
+                "--not", "--remotes=origin"];
         var missing = await SlotGitAsync(path, ct, args);
         if (missing.ExitCode != 0)
             return "unpushed check failed: " + Bound(missing.Stderr);
@@ -821,12 +831,23 @@ public sealed class RunnerWorkspaceSlotPool
 
     private static bool IsFullSha(string value) => value.Length == 40 && value.All(Uri.IsHexDigit);
 
-    private async Task<string?> DirtAsync(string path, CancellationToken ct)
+    private async Task<string?> DirtAsync(string path, CancellationToken ct, bool verifyTrackedIndex = false)
     {
-        var status = await SlotGitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+        string[] statusArgs = ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+        if (verifyTrackedIndex)
+            statusArgs = ["-c", "core.fsmonitor=false", .. statusArgs, "--ignore-submodules=none"];
+        var status = await SlotGitAsync(path, ct, statusArgs);
         if (status.ExitCode != 0)
             return "status failed: " + Bound(status.Stderr);
-        return status.Stdout.Length == 0 ? null : Bound(status.Stdout.Replace('\0', ' ').Trim());
+        if (status.Stdout.Length != 0)
+            return Bound(status.Stdout.Replace('\0', ' ').Trim());
+        if (verifyTrackedIndex)
+        {
+            var tracked = await SlotGitAsync(path, ct, "ls-files", "-v", "-z");
+            if (tracked.ExitCode != 0 || RunnerCompletedCardWorkspaceRemoval.FlaggedTrackedPaths(tracked.Stdout) is not { Count: 0 })
+                return "tracked index flags are present or unreadable";
+        }
+        return null;
     }
 
     private bool BranchCheckedOut(string branch, string? except)
@@ -915,10 +936,10 @@ public sealed class RunnerWorkspaceSlotPool
     /// </summary>
     private async Task QuarantineAndRehomeAsync(WorkspaceSlotRecord slot, string cls, string reason, string error, CancellationToken ct)
     {
-        await QuarantineDirectoryAsync(slot, cls, reason, error, ct);
-        PhaseCut?.Invoke("quarantine-recorded");
+        var quarantine = await PrepareQuarantineAsync(slot, cls, reason, error, ct);
         var retired = await MutateAsync(state =>
         {
+            RecordQuarantine(state, quarantine);
             var record = state.Slot(slot.Id)!;
             var now = _clock.GetUtcNow();
             record.Rehomes.RemoveAll(at => at < now - TimeSpan.FromHours(24));
@@ -936,11 +957,13 @@ public sealed class RunnerWorkspaceSlotPool
             record.State = WorkspaceSlotStates.Rehoming;
             return false;
         });
+        PhaseCut?.Invoke("quarantine-recorded");
         if (!retired)
             await RehomeAsync(slot.Id, ct);
     }
 
-    private async Task QuarantineDirectoryAsync(WorkspaceSlotRecord slot, string cls, string reason, string error, CancellationToken ct)
+    private async Task<QuarantinedDirectoryRecord> PrepareQuarantineAsync(
+        WorkspaceSlotRecord slot, string cls, string reason, string error, CancellationToken ct)
     {
         string? head = null, branch = null;
         if (Directory.Exists(slot.Path) && File.Exists(slot.Path + "/.git"))
@@ -962,31 +985,33 @@ public sealed class RunnerWorkspaceSlotPool
         long bytes = 0;
         try { bytes = _disk.Measure(slot.Path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        await MutateAsync(state =>
+        return new QuarantinedDirectoryRecord
         {
-            state.QuarantinedDirectories.Add(new QuarantinedDirectoryRecord
-            {
-                DirId = Guid.NewGuid().ToString("N")[..12],
-                Path = slot.Path,
-                SlotId = slot.Id,
-                DirectoryGeneration = slot.DirectoryGeneration,
-                Class = cls,
-                Reason = reason,
-                Error = error.Length > ErrorLimit ? error[..ErrorLimit] : error,
-                Branch = slot.SettledRelease ? slot.Branch ?? branch : branch ?? slot.Branch,
-                Head = head,
-                TaskId = slot.TaskId,
-                SettledLeaseGeneration = slot.SettledRelease && cls == "custody" && reason == "lingering"
-                    ? slot.LeaseGeneration : null,
-                Bytes = bytes,
-                Locked = locked.ExitCode == 0,
-                LockError = locked.ExitCode == 0 ? null : Bound(locked.Stderr),
-                At = _clock.GetUtcNow(),
-            });
-            if (cls == "custody")
-                Attention(state, WorkspaceSlotCodes.Quarantined, slot.Id, slot.Path, reason);
-            Attention(state, WorkspaceSlotCodes.Rehomed, slot.Id, slot.Path, cls + " " + reason);
-        });
+            DirId = Guid.NewGuid().ToString("N")[..12],
+            Path = slot.Path,
+            SlotId = slot.Id,
+            DirectoryGeneration = slot.DirectoryGeneration,
+            Class = cls,
+            Reason = reason,
+            Error = error.Length > ErrorLimit ? error[..ErrorLimit] : error,
+            Branch = slot.SettledRelease ? slot.Branch ?? branch : branch ?? slot.Branch,
+            Head = head,
+            TaskId = slot.TaskId,
+            SettledLeaseGeneration = slot.SettledRelease && cls == "custody" && reason == "lingering"
+                ? slot.LeaseGeneration : null,
+            Bytes = bytes,
+            Locked = locked.ExitCode == 0,
+            LockError = locked.ExitCode == 0 ? null : Bound(locked.Stderr),
+            At = _clock.GetUtcNow(),
+        };
+    }
+
+    private void RecordQuarantine(WorkspaceSlotLedgerState state, QuarantinedDirectoryRecord entry)
+    {
+        state.QuarantinedDirectories.Add(entry);
+        if (entry.Class == "custody")
+            Attention(state, WorkspaceSlotCodes.Quarantined, entry.SlotId, entry.Path, entry.Reason);
+        Attention(state, WorkspaceSlotCodes.Rehomed, entry.SlotId, entry.Path, entry.Class + " " + entry.Reason);
     }
 
     private async Task RehomeAsync(string slotId, CancellationToken ct)
@@ -1093,6 +1118,8 @@ public sealed class RunnerWorkspaceSlotPool
         MutateAsync(state =>
         {
             var record = state.QuarantinedDirectories.First(item => item.DirId == entry.DirId);
+            if (!record.IsOpen)
+                return;
             record.Disposition = disposition;
             record.ClosedAt = _clock.GetUtcNow();
             record.Outcome = "removed: " + reason;
@@ -1198,9 +1225,10 @@ public sealed class RunnerWorkspaceSlotPool
             return "origin_unavailable";
         }
 
-        if (entry.Head is null || await UnpushedAsync(entry.Path, entry.Branch, ct, fetch: false, quarantineHead: entry.Head) is not null)
+        if (entry.Head is null || string.IsNullOrEmpty(entry.Branch)
+            || await UnpushedAsync(entry.Path, entry.Branch, ct, fetch: false, quarantineHead: entry.Head) is not null)
             return "unpushed_or_history_unknown";
-        if (MarkerIn(owned.AdminDir) is not null || await DirtAsync(entry.Path, ct) is not null)
+        if (MarkerIn(owned.AdminDir) is not null || await DirtAsync(entry.Path, ct, verifyTrackedIndex: true) is not null)
             return "dirty_or_status_unknown";
 
         try { RetainEvidence(lease, entry.TaskId!.Value); }
@@ -1434,10 +1462,12 @@ public sealed class RunnerWorkspaceSlotPool
                     failure = new Failure("filesystem", "retire", "worktree remove: " + Bound(remove.Stderr));
             }
 
-            if (failure is not null)
-                await QuarantineDirectoryAsync(candidate, failure.Class, failure.Reason, failure.Detail, ct);
+            var quarantine = failure is null ? null
+                : await PrepareQuarantineAsync(candidate, failure.Class, failure.Reason, failure.Detail, ct);
             await MutateAsync(state =>
             {
+                if (quarantine is not null)
+                    RecordQuarantine(state, quarantine);
                 var record = state.Slot(candidate.Id)!;
                 record.State = WorkspaceSlotStates.Retired;
                 record.Detail = failure is null ? "idle retirement" : "retired; directory quarantined";

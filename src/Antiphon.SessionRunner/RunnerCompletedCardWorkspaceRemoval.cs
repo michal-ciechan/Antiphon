@@ -48,12 +48,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
             if (shallow == "true") return Held("shallow_repository", head);
             if (shallow != "false") return Held("inspection_unreadable", head);
             var tracked = await ReadAsync(binding.WorktreePath, ct, "ls-files", "-v", "-z");
-            var flaggedPaths = new List<string>();
-            foreach (var entry in tracked.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (entry.Length < 3 || entry[1] != ' ') return Held("inspection_unreadable", head);
-                if (char.IsLower(entry[0]) || entry[0] == 'S') flaggedPaths.Add(entry[2..]);
-            }
+            if (FlaggedTrackedPaths(tracked) is not { } flaggedPaths) return Held("inspection_unreadable", head);
             if (flaggedPaths.Count != 0) return Held("tracked_index_flags", head) with
             { HeldPaths = flaggedPaths.Order(StringComparer.Ordinal).ToArray() };
             var staged = await ReadAsync(binding.WorktreePath, ct, "ls-files", "--stage", "-z");
@@ -82,6 +77,21 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
         {
             return Held("inspection_unreadable");
         }
+    }
+
+    // ls-files -v marks skip-worktree with S and assume-unchanged with a lowercase tag.
+    // Either can hide changed bytes from status. Null means the inventory could not be parsed.
+    internal static List<string>? FlaggedTrackedPaths(string tracked)
+    {
+        var paths = new List<string>();
+        if (tracked.Length == 0) return paths;
+        if (tracked[^1] != '\0') return null;
+        foreach (var entry in tracked[..^1].Split('\0'))
+        {
+            if (entry.Length < 3 || entry[1] != ' ' || !char.IsAsciiLetter(entry[0])) return null;
+            if (char.IsLower(entry[0]) || entry[0] == 'S') paths.Add(entry[2..]);
+        }
+        return paths;
     }
 
     /// <summary>
