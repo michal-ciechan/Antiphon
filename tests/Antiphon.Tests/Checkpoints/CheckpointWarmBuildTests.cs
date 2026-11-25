@@ -237,32 +237,39 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         Directory.CreateDirectory(Path.Combine(root, "App"));
         var forwarded = BuildStep.PropertyArguments(new Dictionary<string, string> { ["UseAppHost"] = "false" },
             OperatingSystem.IsWindows());
-        using var cache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit);
-        cache.ShouldNotBeNull();
-        var seal = CheckpointIntermediateCache.PathFor(root, project, forwarded, source) + ".seal";
-        Directory.CreateDirectory(Path.GetDirectoryName(seal)!);
+        var refusals = new List<string>();
+        using var cache = CheckpointIntermediateCache.TryOpen(root, source, source.Commit, refusals.Add).ShouldNotBeNull();
+        var partition = CheckpointIntermediateCache.PathFor(root, project, forwarded, source);
+        var seal = partition + ".seal";
+        Directory.CreateDirectory(partition);
+        Directory.Exists(partition).ShouldBeTrue();
         try
         {
             MkFifo(seal, 0x180).ShouldBe(0, "mkfifo errno " + Marshal.GetLastPInvokeError());
-            Exception? crash = null;
-            CheckpointIntermediateCache.Entry? entry = null;
-            try
-            {
-                entry = cache.Prepare(project, forwarded);
-            }
-            catch (Exception ex)
-            {
-                crash = ex;
-            }
-
-            crash.ShouldBeNull(crash?.ToString() ?? "");
+            var clock = Stopwatch.StartNew();
+            var entry = cache.Prepare(project, forwarded);
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
             entry.ShouldBeNull("a non-regular seal cannot seed a verified build");
+            refusals.ShouldBe(["checkpoint cache refused: prepare: untrusted-seal"]);
         }
         finally
         {
             try { File.Delete(seal); }
             catch (Exception deleteFailure) when (deleteFailure is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    [Test]
+    public void existing_partition_without_a_seal_is_a_partial_pair()
+    {
+        var fixture = NewSealFixture();
+        var refusals = new List<string>();
+        using var cache = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit,
+            refusals.Add).ShouldNotBeNull();
+        Directory.CreateDirectory(fixture.Partition);
+        File.Exists(fixture.Seal).ShouldBeFalse();
+        fixture.Prepare(cache).ShouldBeNull();
+        refusals.ShouldBe(["checkpoint cache refused: prepare: partial-partition"]);
     }
 
     [Test]
