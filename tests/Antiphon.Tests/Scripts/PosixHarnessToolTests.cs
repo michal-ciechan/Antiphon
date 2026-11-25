@@ -49,35 +49,10 @@ public sealed class PosixHarnessToolTests
         }
     }
 
-    [Test]
-    public void Snapshot_cases_complete_without_chmod_or_stat_on_path()
-        => RunSnapshotCases(OperatingSystem.IsWindows());
-
-    [Test]
-    public void Snapshot_windows_selection_runs_link_and_acl_assertions_without_posix_tools()
-    {
-        SnapshotCases(windows: true).ShouldBe(["StagingRefusesLink", "WindowsAclRules"],
-            "Windows must run assertions instead of the script's POSIX-only SKIP cases");
-        RunSnapshotCases(windows: true);
-    }
-
-    private static string[] SnapshotCases(bool windows)
-        // The harness skips Unix ownership and extensionless sh fakes on Windows;
-        // its ACL scenario exercises the Windows staging protection instead.
-        => windows ? ["StagingRefusesLink", "WindowsAclRules"]
-            : ["StagingRefusesLink", "StagingRefusesForeignRoot", "DrillRefusesIdPrefix"];
-
-    private static void RunSnapshotCases(bool windows)
-    {
-        using var hidden = HiddenPath.Without("chmod", "stat");
-        foreach (var scenario in SnapshotCases(windows))
-        {
-            var result = Run("test-postgres-snapshot.ps1", hidden.DirectoryPath, 90_000, "-Case", scenario);
-            result.Exit.ShouldBe(0, scenario + "\n" + result.Stdout + result.Stderr);
-            AssertNoMissingCommand(result);
-            result.Stdout.ShouldContain("PASS ");
-        }
-    }
+    // Unit 53 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the CARD-1405 snapshot cases ran
+    // scripts/test-postgres-snapshot.ps1 here with chmod and stat hidden. The snapshot is C# now (PostgresSnapshotTests): it reads
+    // owners and modes through geteuid and statx and creates owner-only directories through the .NET mode API, so it starts no
+    // POSIX tool at all, and its cases run in process on both systems.
 
     // W2-nightly S16: the qualification timing witnesses (the capture identity, the capture shell resolver and the FIFO,
     // mode and link cases) are in-process QualificationTimingTests; they make FIFOs and set modes through libc and start

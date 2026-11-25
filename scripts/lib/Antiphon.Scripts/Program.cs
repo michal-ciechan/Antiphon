@@ -319,6 +319,9 @@ namespace Antiphon.Scripts
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.
             [Server2RepositoryMirrorsCommand.Name] = Server2RepositoryMirrorsCommand.Run,
+            // The CARD-1405 Postgres snapshot answers every input itself (unit 53): postgres-snapshot exits its result line's reason code (0 the
+            // plan or ok, 2-9 a refusal or failed step), 1 an unexpected failure. Usage is 2.
+            [PostgresSnapshotCommands.SnapshotName] = PostgresSnapshotCommands.RunSnapshot,
         };
 
         public static int Main(string[] args)
@@ -360,7 +363,7 @@ namespace Antiphon.Scripts
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
                 + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage
-                + " | " + Server2RepositoryMirrorsCommand.Usage);
+                + " | " + Server2RepositoryMirrorsCommand.Usage + " | " + PostgresSnapshotCommands.Usage);
             return Usage;
         }
 
