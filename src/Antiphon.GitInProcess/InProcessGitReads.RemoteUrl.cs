@@ -4,7 +4,8 @@ using LibGit2Sharp;
 namespace Antiphon.GitInProcess;
 
 /// <summary>
-/// <c>remote get-url &lt;name&gt;</c> answered in process: the one exception to "config is never read" (operator,
+/// <c>remote get-url [--push] [--all] &lt;name&gt;</c> answered in process (the options only where the remote has no
+/// <c>pushurl</c>, so every form prints the one URL): the one exception to "config is never read" (operator,
 /// 2026-11-24), kept as narrow as git's own rule for it. git prints the remote's first <c>remote.&lt;name&gt;.url</c>
 /// in config order (system, global/XDG, local, worktree, command), after <c>url.&lt;base&gt;.insteadOf</c>
 /// rewriting, or reads <c>$GIT_DIR/remotes/&lt;name&gt;</c> and <c>$GIT_DIR/branches/&lt;name&gt;</c> for a remote
@@ -39,9 +40,27 @@ internal static partial class InProcessGitReads
         "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
     ];
 
-    /// <summary>Whether <paramref name="arguments"/> is <c>[--no-optional-locks] remote get-url &lt;name&gt;</c>.</summary>
-    internal static bool IsRemoteGetUrl(IReadOnlyList<string> arguments) =>
-        arguments is ["remote", "get-url", _] or ["--no-optional-locks", "remote", "get-url", _];
+    /// <summary>
+    /// Whether <paramref name="arguments"/> is <c>[--no-optional-locks] remote get-url [--push] [--all] &lt;name&gt;</c>
+    /// (the two options at most once each, in either order, before the name).
+    /// </summary>
+    internal static bool IsRemoteGetUrl(IReadOnlyList<string> arguments) => GetUrlOptions(arguments) is not null;
+
+    /// <summary>The options of a <see cref="IsRemoteGetUrl"/> shape (Push, All), or null for any other command.</summary>
+    private static (bool Push, bool All)? GetUrlOptions(IReadOnlyList<string> arguments)
+    {
+        var start = arguments.Count > 0 && arguments[0] == "--no-optional-locks" ? 1 : 0;
+        if (arguments.Count < start + 3 || arguments[start] != "remote" || arguments[start + 1] != "get-url"
+            || arguments[^1].StartsWith('-')) return null;
+        bool push = false, all = false;
+        for (var i = start + 2; i < arguments.Count - 1; i++)
+        {
+            if (arguments[i] == "--push" && !push) push = true;
+            else if (arguments[i] == "--all" && !all) all = true;
+            else return null;
+        }
+        return (push, all);
+    }
 
     /// <summary>
     /// git's output for <c>remote get-url &lt;name&gt;</c> (always exit 0, nothing on stderr) run in
@@ -50,7 +69,7 @@ internal static partial class InProcessGitReads
     internal static LandingGitResult? TryAnswerRemoteUrl(string repository, IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string?> childEnvironment)
     {
-        if (!Enabled || !IsRemoteGetUrl(arguments)) return null;
+        if (!Enabled || GetUrlOptions(arguments) is not { } options) return null;
         var name = arguments[^1];
         if (!RemoteName.IsMatch(name)) return null;
         foreach (var redirect in RepositoryRedirects)
@@ -84,7 +103,9 @@ internal static partial class InProcessGitReads
             if (ConfigOf(repo) is not { } view) return null;
             try
             {
-                if (LocalUrl(view.Config, name) is not { } url) return null;
+                // --push prints the push URLs when the remote has any, else the fetch URL; --all prints every URL
+                // instead of the first. With one url and no pushurl every form prints that one line.
+                if (LocalUrl(view.Config, name, refusePushUrl: options.Push) is not { } url) return null;
                 // The child's own non-repository levels, last: the one step that may start git (once per environment).
                 // git's remote.c reads every remote.* and branch.* key of every level and dies or warns on a bad one.
                 if (GitRemoteConfigView.Refusal(childEnvironment, view.Config) is not null) return null;
@@ -123,9 +144,11 @@ internal static partial class InProcessGitReads
     /// url.*, include* or per-worktree key in the repository's own levels, or any remote.* or branch.* entry git's
     /// remote.c could die or warn on: a bare (valueless) key, a remote name starting with '/', a remote variable
     /// other than url, pushurl and fetch, a fetch refspec other than the default
-    /// <c>[+]refs/heads/*:refs/remotes/&lt;remote&gt;/*</c>, or a branch variable other than remote and merge.
+    /// <c>[+]refs/heads/*:refs/remotes/&lt;remote&gt;/*</c>, or a branch variable other than remote and merge. With
+    /// <paramref name="refusePushUrl"/> (a <c>--push</c> read), also null when the remote has a <c>pushurl</c> under any
+    /// spelling of its name: git would print that instead.
     /// </summary>
-    private static string? LocalUrl(Configuration config, string name)
+    private static string? LocalUrl(Configuration config, string name, bool refusePushUrl = false)
     {
         string? url = null;
         var count = 0;
@@ -152,7 +175,11 @@ internal static partial class InProcessGitReads
             }
             var (subsection, variable) = (rest[..dot], rest[(dot + 1)..]);
             if (subsection.Length == 0 || subsection[0] == '/' || entry.Value is null) return null;
-            if (variable.Equals("pushurl", StringComparison.OrdinalIgnoreCase)) continue;
+            if (variable.Equals("pushurl", StringComparison.OrdinalIgnoreCase))
+            {
+                if (refusePushUrl && subsection.Equals(name, StringComparison.OrdinalIgnoreCase)) return null;
+                continue;
+            }
             if (variable.Equals("fetch", StringComparison.OrdinalIgnoreCase))
             {
                 var refspec = entry.Value.StartsWith('+') ? entry.Value[1..] : entry.Value;

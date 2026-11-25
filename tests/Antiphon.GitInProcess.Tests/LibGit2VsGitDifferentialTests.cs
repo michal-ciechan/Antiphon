@@ -296,7 +296,7 @@ public sealed class LibGit2VsGitDifferentialTests
             ["show-ref", "--verify", "--hash", "refs/heads/no-such"],
             ["show-ref", "--verify", "--hash", "refs/heads//master"],    // git refuses, libgit2 would normalise
             ["symbolic-ref", "-q", "refs/heads/no-such"],
-            ["remote", "get-url", "--push", "--all", "origin"],          // config is never read in process
+            ["remote", "get-url", "--push", "--all", "origin"],          // never without the child's environment
             ["status", "--porcelain=v1", "-z"],
             ["worktree", "list"],                                         // only the porcelain listings are answered
         ];
@@ -527,12 +527,35 @@ public sealed class LibGit2VsGitDifferentialTests
     /// <c>remote get-url &lt;name&gt;</c> in process against git under the same child environment: answered means
     /// git's exit 0, byte-identical stdout and an empty stderr. Returns git's own result (for cases that show git's
     /// answer would differ from the plain local value). Never answered without a child environment.
+    /// The option forms (<c>--push</c>, <c>--all</c>, both) are checked in process against the plain answer: with no
+    /// pushurl git prints that same one URL for each (<see cref="Remote_get_url_options_match_git"/> asks git), and
+    /// <paramref name="push"/> overrides the expectation of the <c>--push</c> forms (a pushurl is git's to print).
     /// </summary>
     private static async Task<(LandingGitResult Result, string Error)> CompareRemoteUrlAsync(string cwd, Expect expect,
-        IReadOnlyDictionary<string, string?> env, string name)
+        IReadOnlyDictionary<string, string?> env, string name, Expect? push = null)
     {
-        string[] args = ["remote", "get-url", name];
-        var shape = "remote get-url " + name + " @ " + cwd;
+        var plain = await CompareGetUrlFormAsync(cwd, expect, env, ["remote", "get-url", name]);
+        var plainAnswer = InProcessGitReads.TryAnswerRemoteUrl(cwd, ["remote", "get-url", name], env);
+        foreach (var options in GetUrlOptionForms)
+        {
+            string[] form = ["remote", "get-url", .. options, name];
+            var expected = expect == Expect.Fallback ? Expect.Fallback
+                : options.Contains("--push") ? push ?? expect : expect;
+            var answer = InProcessGitReads.TryAnswerRemoteUrl(cwd, form, env);
+            var shape = string.Join(' ', form) + " @ " + cwd;
+            if (expected == Expect.Fallback) answer.ShouldBeNull("must fall back to git: " + shape);
+            else answer.ShouldNotBeNull(shape).Output.ShouldBe(plainAnswer.ShouldNotBeNull(shape).Output, shape);
+        }
+        return plain;
+    }
+
+    private static readonly string[][] GetUrlOptionForms = [["--push"], ["--all"], ["--push", "--all"], ["--all", "--push"]];
+
+    /// <summary>One <c>remote get-url</c> form in process against git under the same child environment.</summary>
+    private static async Task<(LandingGitResult Result, string Error)> CompareGetUrlFormAsync(string cwd, Expect expect,
+        IReadOnlyDictionary<string, string?> env, string[] args)
+    {
+        var shape = string.Join(' ', args) + " @ " + cwd;
         var answer = InProcessGitReads.TryAnswerRemoteUrl(cwd, args, env);
         var silent = InProcessGitReads.TryAnswerSilently(cwd, args, env);
         (silent is null).ShouldBe(answer is null, shape);
@@ -575,6 +598,57 @@ public sealed class LibGit2VsGitDifferentialTests
     }
 
     [Test]
+    public async Task Remote_get_url_options_match_git()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var env = RemoteChild(fixture);
+        // No pushurl: every option form prints git's one URL, in the checkout and in a linked worktree.
+        foreach (var cwd in new[] { repo, fixture.Source })
+            foreach (var options in GetUrlOptionForms)
+            {
+                var (git, _) = await CompareGetUrlFormAsync(cwd, Expect.Answered, env, ["remote", "get-url", .. options, "origin"]);
+                git.Output.ShouldBe(fixture.Remote + "\n");
+            }
+        // Spellings git parses but this reader does not take: repeated options, an option after the name, "--".
+        foreach (var args in new[]
+        {
+            new[] { "remote", "get-url", "--push", "--push", "origin" }, ["remote", "get-url", "--all", "--all", "origin"],
+            ["remote", "get-url", "origin", "--push"], ["remote", "get-url", "--", "origin"], ["remote", "get-url", "--push"],
+        })
+        {
+            InProcessGitReads.IsRemoteGetUrl(args).ShouldBeFalse(string.Join(' ', args));
+            await CompareGetUrlFormAsync(repo, Expect.Fallback, env, args);
+        }
+
+        // One pushurl: --push prints it, so the --push forms are git's; --all still prints the one fetch URL.
+        await ConfigAsync(repo, env, "remote", "set-url", "--push", "origin", "https://push.invalid/one.git");
+        var (one, _) = await CompareGetUrlFormAsync(repo, Expect.Fallback, env, ["remote", "get-url", "--push", "origin"]);
+        one.Output.ShouldBe("https://push.invalid/one.git\n");
+        await CompareGetUrlFormAsync(repo, Expect.Answered, env, ["remote", "get-url", "--all", "origin"]);
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin", push: Expect.Fallback);
+        // Two pushurls: --push --all prints both.
+        await ConfigAsync(repo, env, "config", "--add", "remote.origin.pushurl", "https://push.invalid/two.git");
+        var (both, _) = await CompareGetUrlFormAsync(repo, Expect.Fallback, env, ["remote", "get-url", "--push", "--all", "origin"]);
+        both.Output.ShouldBe("https://push.invalid/one.git\nhttps://push.invalid/two.git\n");
+        // Removed again: answered again.
+        await ConfigAsync(repo, env, "config", "--unset-all", "remote.origin.pushurl");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin");
+
+        // A pushurl in the child's global config, or a pushInsteadOf there: git's (the child's levels refuse remote.* and url.*).
+        var global = env["GIT_CONFIG_GLOBAL"]!;
+        await File.WriteAllTextAsync(global, "[remote \"origin\"]\n\tpushurl = https://global-push.invalid/\n");
+        var (globalPush, _) = await CompareGetUrlFormAsync(repo, Expect.Fallback, env, ["remote", "get-url", "--push", "origin"]);
+        globalPush.Output.ShouldBe("https://global-push.invalid/\n");
+        await File.WriteAllTextAsync(global, $"[url \"https://rewritten.invalid/\"]\n\tpushInsteadOf = {fixture.Remote[..3]}\n");
+        var (rewritten, _) = await CompareGetUrlFormAsync(repo, Expect.Fallback, env, ["remote", "get-url", "--push", "origin"]);
+        rewritten.Output.ShouldStartWith("https://rewritten.invalid/");
+        await File.WriteAllTextAsync(global, "");
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin");
+    }
+
+    [Test]
     public async Task Remote_get_url_falls_back_for_repository_config_git_reads_otherwise()
     {
         await using var fixture = new LandingGitFixture();
@@ -593,8 +667,6 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "PLAIN");
         await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "-plain");
         await CompareRemoteUrlAsync(repo, Expect.Fallback, env, "pl*");
-        InProcessGitReads.TryAnswerRemoteUrl(repo, ["remote", "get-url", "--push", "plain"], env).ShouldBeNull();
-        InProcessGitReads.TryAnswerRemoteUrl(repo, ["remote", "get-url", "--all", "plain"], env).ShouldBeNull();
 
         // Two values: git prints the first.
         await ConfigAsync(repo, env, "config", "--add", "remote.plain.url", "https://example.invalid/second.git");
@@ -761,7 +833,8 @@ public sealed class LibGit2VsGitDifferentialTests
             + "[remote \"two\"]\n\turl = https://two.invalid/\n\tfetch = refs/heads/*:refs/remotes/two/*\n\tpushurl = https://push.invalid/\n"
             + "[branch \"main\"]\n\tremote = two\n\tmerge = refs/heads/main\n[remote]\n\tpushdefault = two\n");
         await CaseAsync(failures, "plain shapes", () => CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin"));
-        await CaseAsync(failures, "plain shapes two", () => CompareRemoteUrlAsync(repo, Expect.Answered, env, "two"));
+        // two's own pushurl is what --push prints: git's. origin's --push is still answered beside another remote's pushurl.
+        await CaseAsync(failures, "plain shapes two", () => CompareRemoteUrlAsync(repo, Expect.Answered, env, "two", push: Expect.Fallback));
         failures.ShouldBeEmpty();
     }
 

@@ -219,6 +219,14 @@ public class LandingGit : ILandingGit
             Scope?.Profile.InProcessHit();
             return cached;
         }
+        // One local url and no pushurl: libgit2 reads it with no child at all (InProcessGitReads.TryAnswerRemoteUrl).
+        if (InProcessAnswer(repository, arguments) is { } inProcess)
+        {
+            ct.ThrowIfCancellationRequested();
+            Scope?.Profile.InProcessHit(arguments);
+            ServerGitProcess.Span("landing", arguments)?.SetTag("git.spawned", false).Dispose();
+            return inProcess;
+        }
         (string Path, string Hash)[]? before = null;
         try
         {
@@ -274,9 +282,10 @@ public class LandingGit : ILandingGit
             return AnswerWorkingTreeReadsInProcess
                 ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment,
                     GitTreeVerdict.IsVerdictOnly(arguments)) : null;
-        // remote get-url <name> reads config: judged against the child environment kept here, never this process's.
+        // remote get-url [--push] [--all] <name> reads config: judged against the child environment kept here, never this process's.
         if (InProcessGitReads.IsRemoteGetUrl(arguments))
-            return _childEnvironment is { } child ? InProcessGitReads.TryAnswerRemoteUrl(repository, arguments, child) : null;
+            return AnswerRemoteUrlsInProcess && _childEnvironment is { } child
+                ? InProcessGitReads.TryAnswerRemoteUrl(repository, arguments, child) : null;
         return arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess
             ? InProcessGitReads.TryAnswer(repository, arguments) : null;
     }
@@ -292,6 +301,10 @@ public class LandingGit : ILandingGit
     /// <summary>Whether <c>ls-remote</c> of a local-path remote may be answered in process (URL remotes never are).
     /// A test that must exercise git's own ls-remote turns it off.</summary>
     protected virtual bool AnswerRemoteReadsInProcess => true;
+
+    /// <summary>Whether <c>remote get-url [--push] [--all] &lt;name&gt;</c> may be answered in process. A test that must
+    /// exercise git's own answer and the push-URL cache in front of it (<see cref="GitPushUrlCache"/>) turns it off.</summary>
+    protected virtual bool AnswerRemoteUrlsInProcess => true;
 
     private async Task<LandingGitResult> ExecuteScopedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)

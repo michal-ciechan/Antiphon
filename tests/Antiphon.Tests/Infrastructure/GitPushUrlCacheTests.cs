@@ -10,7 +10,8 @@ namespace Antiphon.Tests.Infrastructure;
 /// <see cref="GitPushUrlCache"/> through <see cref="LandingGit"/>: the push URL is git's own answer,
 /// replayed only while the config files that decide it are unchanged, and asked again after any
 /// change, including one that only a rewrite rule in the (isolated) global config makes.
-/// Also covers the in-process <c>check-ref-format</c> answer for the land's own ref names.
+/// Also covers the in-process <c>check-ref-format</c> answer for the land's own ref names, and the in-process push URL
+/// read that comes first in production (one local url, no pushurl), which these cache cases otherwise turn off.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
@@ -18,9 +19,13 @@ public sealed class GitPushUrlCacheTests
 {
     private static readonly string[] GetUrl = ["remote", "get-url", "--push", "--all", "origin"];
 
-    /// <summary>The fixture's git, counting the git children it starts per subcommand.</summary>
-    private sealed class CountingFixtureGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId)
+    /// <summary>
+    /// The fixture's git, counting the git children it starts per subcommand. The in-process URL read is off unless
+    /// <paramref name="inProcessUrls"/>, so the cache cases see git's own answer behind the cache.
+    /// </summary>
+    private sealed class CountingFixtureGit(string home, Guid taskId, bool inProcessUrls = false) : LandingGitFixture.FixtureGit(home, taskId)
     {
+        protected override bool AnswerRemoteUrlsInProcess => inProcessUrls;
         private readonly List<string> _started = [];
         public int Started(params string[] prefix)
         {
@@ -42,6 +47,33 @@ public sealed class GitPushUrlCacheTests
 
     private static async Task<string> UrlAsync(LandingGit git, string repo) =>
         (await git.RunAsync(repo, GetUrl, CancellationToken.None)).Output;
+
+    [Test]
+    public async Task One_local_url_is_read_in_process_and_anything_git_could_read_differently_asks_git()
+    {
+        var (fixture, _) = await CreateAsync();
+        await using var __ = fixture;
+        var git = new CountingFixtureGit(Path.Combine(fixture.Root, "home"), fixture.TaskId, inProcessUrls: true);
+        for (var i = 0; i < 3; i++)
+            (await UrlAsync(git, fixture.Repository)).ShouldBe(fixture.Remote + "\n");
+        (await UrlAsync(git, fixture.Source)).ShouldBe(fixture.Remote + "\n", "a linked worktree reads the common config");
+        git.Started("remote get-url").ShouldBe(0, "one local url and no pushurl: no git child");
+
+        // A pushurl is what --push prints: git's answer, never the fetch url.
+        var elsewhere = Path.Combine(fixture.Root, "elsewhere.git");
+        await fixture.RequiredAsync(fixture.Repository, "remote", "set-url", "--push", "origin", elsewhere);
+        (await UrlAsync(git, fixture.Repository)).Trim().ShouldBe(elsewhere);
+        git.Started("remote get-url").ShouldBe(1);
+        await fixture.RequiredAsync(fixture.Repository, "config", "--unset-all", "remote.origin.pushurl");
+        (await UrlAsync(git, fixture.Repository)).ShouldBe(fixture.Remote + "\n");
+        git.Started("remote get-url").ShouldBe(1, "the pushurl is gone: in process again");
+
+        // A pushInsteadOf in the child's (isolated) global config rewrites git's push url.
+        var global = Path.Combine(fixture.Root, "home", "empty-config");
+        await File.AppendAllTextAsync(global, $"[url \"C:/rewritten/\"]\n\tpushInsteadOf = {fixture.Remote[..3]}\n");
+        (await UrlAsync(git, fixture.Repository)).Trim().ShouldStartWith("C:/rewritten/");
+        git.Started("remote get-url").ShouldBe(2);
+    }
 
     [Test]
     public async Task Repeated_reads_replay_gits_answer_without_starting_git()
