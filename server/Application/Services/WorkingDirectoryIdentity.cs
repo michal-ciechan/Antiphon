@@ -13,7 +13,8 @@ namespace Antiphon.Server.Application.Services;
 /// direction that matches a stored path against another stored path: project readiness (agents
 /// whose working directory is the project's checkout) and setup's reverse lookup (the project that
 /// owns a working directory, CARD-0558). It is intended for the orchestrator-workspace lookup too
-/// (CARD-2058).
+/// (CARD-2058), and <c>AgentService.PathsMatch</c> and the attention worktree-cwd test follow it
+/// (CARD-2070).
 /// <para>
 /// The rule, decided purely from the spelling of the path:
 /// </para>

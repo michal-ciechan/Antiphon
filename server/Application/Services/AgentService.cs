@@ -1328,15 +1328,14 @@ public sealed class AgentService
         return project;
     }
 
-    internal static bool PathsMatch(string? left, string? right)
-    {
-        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
-            return false;
-        return string.Equals(
-            DelegationWorkspaceResolver.NormalizeSeparators(left),
-            DelegationWorkspaceResolver.NormalizeSeparators(right),
-            StringComparison.OrdinalIgnoreCase);
-    }
+    /// <summary>
+    /// True when two stored paths name the same directory. Stored paths come from the Windows
+    /// server and from Linux runners, so this uses the spelling-based rule of
+    /// <see cref="WorkingDirectoryIdentity"/> and never this host's separator or case rules
+    /// (CARD-2070).
+    /// </summary>
+    internal static bool PathsMatch(string? left, string? right) =>
+        WorkingDirectoryIdentity.Same(left, right);
 
     private static Board BuildAgentBoard(Project project, string name, DateTime now)
     {
