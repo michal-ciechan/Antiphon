@@ -1887,9 +1887,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
-      "classes": 102,
+      "classes": 103,
       "reason": "cap",
-      "owed": 77,
+      "owed": 78,
       "first": [
         "CheckNoteDeliveryHandoffTests",
         "CompactionContinuationWireTests",
@@ -1919,17 +1919,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/VerificationCustody.cs",
-      "classes": 32,
+      "classes": 34,
       "reason": "cap",
-      "owed": 7,
+      "owed": 9,
       "first": [
+        "RunnerCustodyTests",
+        "SourceLandingAdmissionTests",
         "PostLandMutationCustodyTests",
         "HttpResilienceRegistrationTests",
         "LinuxCustodyProbeTests",
         "RemoteVerificationWorkspaceTests",
         "C1022BackendCapabilitiesTests",
-        "PhoneHomeRollingRunnerTests",
-        "PostLandMutationWorktreeTests"
+        "PhoneHomeRollingRunnerTests"
       ]
     },
     {
@@ -3107,6 +3108,12 @@
     },
     {
       "path": "docker/session-runner-grok/antiphon-custody-kill.sh",
+      "classes": [
+        "CustodyHelperContractTests"
+      ]
+    },
+    {
+      "path": "docker/session-runner-grok/antiphon-custody-placement.c",
       "classes": [
         "CustodyHelperContractTests"
       ]
@@ -17600,6 +17607,7 @@
       "classes": [
         "Card1681PtyHangupRunnerTests",
         "Card1685LinuxCustodyRunnerTests",
+        "Card2060PlacementHandshakeTests",
         "HostCustodyPlatformTests",
         "LinuxCgroupContainmentTests",
         "LinuxCgroupCustodyTests",
@@ -17620,6 +17628,7 @@
       "classes": [
         "Card1681PtyHangupRunnerTests",
         "Card1685LinuxCustodyRunnerTests",
+        "Card2060PlacementHandshakeTests",
         "LinuxCgroupContainmentTests",
         "LinuxCgroupCustodyTests",
         "LinuxCustodyReleaseHostTests",
@@ -17636,6 +17645,18 @@
         "DelegateLaunchArgvIntegrityTests",
         "FakeClaudeContractTests",
         "LaunchArgvGuardTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Agents.Pty/LinuxPlacementAttempt.cs",
+      "classes": [
+        "Card2060PlacementHandshakeTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Agents.Pty/LinuxSpawnCapture.cs",
+      "classes": [
+        "Card2060PlacementHandshakeTests"
       ]
     },
     {
@@ -18834,6 +18855,7 @@
         "Card1619RunnerExitTests",
         "Card1653PeerCheckTests",
         "Card1653SocketDirTests",
+        "Card2060PlacementHandshakeTests",
         "DirectSessionRunnerClientDisposalTests",
         "HostCustodyTests",
         "RunnerCustodyCrashTests"
@@ -18886,9 +18908,18 @@
       ]
     },
     {
+      "path": "src/Antiphon.PtyHost.Protocol/PtyHostMessages.cs",
+      "classes": [
+        "Card2060PlacementHandshakeTests",
+        "LinuxCgroupCustodyTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.PtyHost.Protocol/VerificationCustodyStore.cs",
       "classes": [
         "Card1619LinuxCustodyStopIntentTests",
+        "Card2060PlacementHandshakeTests",
+        "Card2060PlacementLedgerTests",
         "CustodyReceiptBackendTests",
         "HostCustodyPlatformTests",
         "HostCustodyTests",
@@ -18910,6 +18941,7 @@
     {
       "path": "src/Antiphon.PtyHost/HostCustodyJournal.cs",
       "classes": [
+        "Card2060PlacementHandshakeTests",
         "HostCustodyTests",
         "LinuxCgroupCustodyTests",
         "LinuxCustodyReleaseHostTests",
@@ -18925,7 +18957,8 @@
     {
       "path": "src/Antiphon.PtyHost/HostSession.cs",
       "classes": [
-        "Card1619StopIntentTests"
+        "Card1619StopIntentTests",
+        "LinuxCgroupCustodyTests"
       ]
     },
     {
@@ -19615,6 +19648,8 @@
         "AgentSessionLaunchFailureTests",
         "BootWedgeRelaunchParityTests",
         "Card1653PeerCheckTests",
+        "Card2060PlacementHandshakeTests",
+        "Card2060PlacementLedgerTests",
         "CustodyReceiptBackendTests",
         "DefaultRunnerPinTests",
         "HostCustodyPlatformTests",
@@ -19631,8 +19666,6 @@
         "RunnerCustodyCrashTests",
         "RunnerCustodyLedgerBackendTests",
         "RunnerCustodyReleaseTests",
-        "RunnerCustodyTests",
-        "SourceLandingAdmissionTests",
         "UnixPtyArgvAdmissionTests",
         "VerificationCleanupServiceTests",
         "VerificationCustodyStoreTests",
@@ -20266,6 +20299,7 @@
     {
       "path": "src/Antiphon.SessionRunner/LinuxCgroupCustodyProbe.cs",
       "classes": [
+        "Card2060PlacementLedgerTests",
         "LinuxCustodyProbeTests"
       ]
     },
@@ -22018,6 +22052,7 @@
     {
       "path": "tests/Antiphon.PtyHost.Tests/HostHarness.cs",
       "classes": [
+        "Card2060PlacementHandshakeTests",
         "HostCustodyPlatformTests",
         "HostCustodyTests",
         "HostSessionPipeTests",
@@ -22629,7 +22664,8 @@
     {
       "path": "tests/Antiphon.SessionRunner.Tests/RunnerCustodyReleaseTests.cs",
       "classes": [
-        "Card1619LinuxStopIntentTests"
+        "Card1619LinuxStopIntentTests",
+        "Card2060PlacementLedgerTests"
       ]
     },
     {
@@ -22642,6 +22678,7 @@
     {
       "path": "tests/Antiphon.SessionRunner.Tests/RunnerInProcessGitTests.cs",
       "classes": [
+        "Card2060PlacementHandshakeTests",
         "PostLandEarlyWarningTests"
       ]
     },
