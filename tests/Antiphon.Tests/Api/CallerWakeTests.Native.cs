@@ -122,7 +122,7 @@ public partial class CallerWakeTests
             ["ANTIPHON_SESSION_ID"] = sessionId.ToString(), ["ANTIPHON_SESSION_GENERATION"] = session.StartedAt.ToString("O"),
             ["ANTIPHON_API"] = relay.Urls.Single(), ["ANTIPHON_HOOK_STATE_DIR"] = world.CallerDirectory,
             ["WAKE_TEST_CLI"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll"),
-            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1",
+            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1", ["ANTHROPIC_AUTH_TOKEN"] = "", ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
         };
         var reportId = Guid.Empty;
         var sawNotice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -149,8 +149,7 @@ public partial class CallerWakeTests
         await using var runner = new DirectSessionRunnerClient(Path.Combine(world.CallerDirectory, "native-runner"),
             ptyBackend: "modern", claudeTranscript: true);
         var spec = new AgentLaunchSpec("wake", AgentKind.ClaudeCode, "claude",
-            ["--session-id", sessionId.ToString(), "--permission-mode", "bypassPermissions", "--tools", "Bash",
-             "Say ready and wait."], env, cwd, 120, 40, AcceptedStartedAt: session.StartedAt);
+            ["Say ready and wait.", "--session-id", sessionId.ToString(), "--permission-mode", "bypassPermissions", "--tools", "Bash"], env, cwd, 120, 40, AcceptedStartedAt: session.StartedAt);
         await runner.StartAsync(sessionId, spec, ct);
         try
         {
@@ -186,7 +185,9 @@ public partial class CallerWakeTests
                 await Task.Delay(200, ct);
                 var path = Directory.EnumerateFiles(transcript, sessionId + ".jsonl", SearchOption.AllDirectories).Single();
                 lines = await File.ReadAllLinesAsync(path, ct);
-            } while (!lines.Any(l => l.Contains("tool_result") && l.Contains("toolu_native_status") && l.Contains(marker)));
+            } while (!lines.Any(l => l.Contains("tool_result") && l.Contains("toolu_native_status")));
+            lines.ShouldContain(l => l.Contains("tool_result") && l.Contains("toolu_native_status") && l.Contains(marker),
+                "the native tool result must contain the report from the real status command");
             lines.ShouldContain(l => l.Contains("tool_use") && l.Contains("delegate status") && l.Contains(reportId.ToString()));
             (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == reportId, ct)).LastPolledResultAt.ShouldNotBeNull();
             (await rig.NotificationAsync(reportId))!.ConfirmingPromptSequence.ShouldBeNull();
