@@ -42,6 +42,11 @@ internal static class RowCommand
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex FullObjectId = new("^(?:[0-9a-f]{40}|[0-9a-f]{64})$", RegexOptions.CultureInvariant);
     private static readonly Regex OutputPathGuard = new(ManifestValidator.OutputPathPattern, RegexOptions.CultureInvariant);
+    private static readonly HashSet<string> GeneratedLayoutProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ArtifactsPath", "UseArtifactsOutput", "CustomBeforeDirectoryBuildProps",
+        "AntiphonCheckpointRepositoryRoot", CheckpointIntermediateCache.RootProperty,
+    };
 
     public static async Task<int> RunAsync(Program.ArgSet options, string repo, CheckpointApp.Runtime runtime)
     {
@@ -212,14 +217,22 @@ internal static class RowCommand
         var cold = original.ToList();
         BuildStep.AppendSharedLayout(cold, repo, project, outputPath);
         var coldCheck = CheckpointBuildBinding.Expected(repo, project, outputPath, cold, source).Check();
-        if (coldCheck == "verified")
+        var explicitWarmRoot = input.Properties.Any(pair =>
+            string.Equals(pair.Key, CheckpointIntermediateCache.RootProperty, StringComparison.OrdinalIgnoreCase));
+        if (coldCheck == "verified" && !explicitWarmRoot)
             return new Replay(coldCheck, Properties: cold);
 
-        if (source.DirtyFiles == 0 && !CheckpointIntermediateCache.OverridesLayout(original))
+        // Explicit producing properties still require the gate if they identify a managed layout.
+        // Strip the generated properties for key derivation only after the supplied values match the receipt.
+        var warmInputs = explicitWarmRoot && coldCheck == "verified"
+            ? BuildStep.PropertyArguments(input.Properties.Where(pair => !GeneratedLayoutProperties.Contains(pair.Key)),
+                platform.IsWindows, input.Repeat, input.CanonicalProject)
+            : original;
+        if (source.DirtyFiles == 0 && !CheckpointIntermediateCache.OverridesLayout(warmInputs))
         {
             // Derive both layouts from the request. A receipt cannot supply paths or MSBuild arguments.
-            var warm = original.ToList();
-            var partition = CheckpointIntermediateCache.PathFor(repo, project, original, source);
+            var warm = warmInputs.ToList();
+            var partition = CheckpointIntermediateCache.PathFor(repo, project, warmInputs, source);
             BuildStep.AppendSharedLayout(warm, repo, project, outputPath, partition);
             if (CheckpointBuildBinding.Expected(repo, project, outputPath, warm, source).Check() == "verified")
             {
@@ -227,7 +240,7 @@ internal static class RowCommand
                     cancellationToken: cancellationToken);
                 try
                 {
-                    if (cache?.Prepare(project, original, requireSealed: true, cancellationToken: cancellationToken) is not null)
+                    if (cache?.Prepare(project, warmInputs, requireSealed: true, cancellationToken: cancellationToken) is not null)
                     {
                         var admitted = new Replay("verified", Properties: warm, Cache: cache);
                         cache = null;
@@ -239,6 +252,8 @@ internal static class RowCommand
             }
         }
 
+        if (coldCheck == "verified")
+            return new Replay(coldCheck, Properties: cold);
         var strict = input.ExpectedSourceSha is not null || input.Repeat > 1;
         return new Replay(coldCheck, strict ? "build_source_mismatch" : null);
     }
