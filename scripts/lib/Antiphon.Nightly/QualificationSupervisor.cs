@@ -408,7 +408,7 @@ namespace Antiphon.Nightly
         /// <summary>Minutes between PROGRESS lines, 1 to 120.</summary>
         public int ProgressMinutes { get; init; } = 10;
 
-        /// <summary>The idle budget of a chunk with no planned cost, 1 to 600 minutes (observe only).</summary>
+        /// <summary>The idle budget of a chunk with no planned cost, 1 to 600 minutes.</summary>
         public double HangMinutes { get; init; } = 20;
 
         /// <summary>The PowerShell 7 that runs scripts/nightly-run.ps1 for the launch (under the launch's build slot).</summary>
@@ -595,14 +595,15 @@ namespace Antiphon.Nightly
     {
         /// <summary>The variable that hands the launch its bound run id (qualification-launch refuses a record with another -RunId).</summary>
         public const string RunIdVariable = "ANTIPHON_QUALIFICATION_RUN_ID";
+        internal const string HangMinutesVariable = "ANTIPHON_QUALIFICATION_HANG_MINUTES";
 
         /// <summary>
         /// Records its identity (supervisor-identity.json: pid, start, run id, CLI, launch record, platform, detach, session,
         /// console), starts `qualification-launch --config &lt;launch record&gt;` (its own console on Windows, this session on Unix;
         /// output in commission-console.log and commission-stderr.log; the run id in ANTIPHON_QUALIFICATION_RUN_ID), records
         /// launch-child.json, then every PollSeconds copies its run's last-run.json (SaveOwnRunState), writes the heartbeat
-        /// (QualificationHeartbeatMonitor: the launch child's subtree, this process excluded), an observation-only
-        /// HANG_SUSPECTED flag and a PROGRESS line every ProgressMinutes; at the child's exit it copies the state once more and
+        /// with the active test-host sample when available, a HANG_SUSPECTED flag and a PROGRESS line every ProgressMinutes;
+        /// at the child's exit it copies the state once more and
         /// writes EXIT &lt;code&gt; and commission-exit.txt. Lines go to supervisor.log one flushed line at a time. A failed poll
         /// logs HEARTBEAT-ERROR and the next poll retries. Exit 0, or 1 after SUPERVISOR-ERROR (the message on host.Error).
         /// It never stops, signals or restarts a process and never clears a lock.
@@ -657,7 +658,11 @@ namespace Antiphon.Nightly
                 var arguments = cli.Skip(1).Concat(new[] { "qualification-launch", "--config", options.LaunchRecord, "--powershell-path", options.PowerShellPath }).ToArray();
                 using var child = seams.Start(new QualificationStart(cli[0], arguments, files.Path.Combine(options.TaskRoot, "commission-console.log"),
                     files.Path.Combine(options.TaskRoot, "commission-stderr.log"), SameSession: true,
-                    Environment: new Dictionary<string, string> { [RunIdVariable] = options.RunId }));
+                    Environment: new Dictionary<string, string>
+                    {
+                        [RunIdVariable] = options.RunId,
+                        [HangMinutesVariable] = options.HangMinutes.ToString(CultureInfo.InvariantCulture),
+                    }));
                 var childStart = child.StartTimeUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
                 QualificationFiles.WriteRecord(files, files.Path.Combine(options.TaskRoot, "launch-child.json"),
                     RcQualificationRecords.Compact(new JsonObject { ["pid"] = child.Pid, ["processStartedAt"] = childStart, ["runId"] = options.RunId }));
@@ -670,17 +675,42 @@ namespace Antiphon.Nightly
                     SaveOwn();
                     try
                     {
-                        var observed = Files(files, options.LogRoot).Concat(Files(files, options.StateRoot)).ToArray();
+                        var observed = Files(files, options.LogRoot).Concat(Files(files, options.StateRoot))
+                            .Where(file => file.Name != NightlyChunkIdleMonitor.HeartbeatFile
+                                && file.Name != NightlyChunkIdleMonitor.HeartbeatFile + ".tmp").ToArray();
                         var bytes = observed.Sum(file => file.Length);
                         var trx = observed.Count(file => string.Equals(file.Extension, ".trx", StringComparison.OrdinalIgnoreCase));
                         var newest = observed.OrderByDescending(file => file.LastWriteTimeUtc).FirstOrDefault()?.Name ?? "";
-                        // The host's clock and the qualification process table; the previous heartbeat is kept once its file is written.
-                        monitor ??= new QualificationHeartbeatMonitor(host.Clock, seams.ProcessTable, options.HangMinutes);
-                        var beat = monitor.Beat(heartbeat, child.Pid, new[] { self }, trx, bytes, newest);
+                        var ownState = RcQualificationRecords.Read(files, files.Path.GetFullPath(files.Path.Combine(options.TaskRoot, "own-last-run.json")));
+                        var runLog = RcQualificationRecords.Text(RcQualificationRecords.Member(ownState.Record, "logDir"));
+                        var inTests = ownState.Ok && RcQualificationRecords.Text(RcQualificationRecords.Member(ownState.Record, "runId")) == options.RunId
+                            && RcQualificationRecords.Text(RcQualificationRecords.Member(ownState.Record, "phase")) == "tests" && !string.IsNullOrWhiteSpace(runLog);
+                        QualificationHeartbeatRecord beat;
+                        bool fromTestHost = false;
+                        if (inTests)
+                        {
+                            monitor = null;
+                            beat = ReadTestHostHeartbeat(files.Path.Combine(runLog, NightlyChunkIdleMonitor.HeartbeatFile),
+                                child.StartTimeUtc, host.UtcNow, options.PollSeconds);
+                            fromTestHost = beat != null;
+                            beat ??= new QualificationHeartbeatRecord { IdleBudgetMinutes = options.HangMinutes, IdleBudgetSource = "default-unknown-group" };
+                            // Keep the run-wide progress fields. The idle clock and CPU are supplied by the chunk's owner.
+                            beat.Trx = trx;
+                            beat.Bytes = bytes;
+                            beat.Newest = newest;
+                            beat.ObservedAtUtc = host.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+                            QualificationHeartbeat.Write(beat, heartbeat);
+                        }
+                        else
+                        {
+                            monitor ??= new QualificationHeartbeatMonitor(host.Clock, seams.ProcessTable, options.HangMinutes);
+                            beat = monitor.Beat(heartbeat, child.Pid, new[] { self }, trx, bytes, newest);
+                        }
                         if (beat.HangSuspected && !hangReported)
                         {
                             hangReported = true;
-                            var line = "HANG_SUSPECTED idleMinutes=" + beat.IdleMinutes.ToString(CultureInfo.InvariantCulture) + " reason=" + beat.HangReason + " (observe only; nothing is stopped)";
+                            var line = "HANG_SUSPECTED idleMinutes=" + beat.IdleMinutes.ToString(CultureInfo.InvariantCulture) + " reason=" + beat.HangReason
+                                + (fromTestHost ? " (test-host heartbeat from the job owner)" : " (observe only; nothing is stopped)");
                             QualificationFiles.WriteRecord(files, files.Path.Combine(options.TaskRoot, "hang-suspected.txt"), line);
                             Line(line);
                         }
@@ -714,6 +744,21 @@ namespace Antiphon.Nightly
                 Quietly("SUPERVISOR-END");
             }
             return 0;
+        }
+
+        private static QualificationHeartbeatRecord ReadTestHostHeartbeat(string path, DateTime launchStart, DateTime now, int pollSeconds)
+        {
+            try
+            {
+                var beat = QualificationHeartbeat.Read(path);
+                if (DateTime.TryParse(beat.ObservedAtUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var stamp)
+                    && stamp >= launchStart && stamp <= now
+                    && now - stamp <= TimeSpan.FromSeconds(pollSeconds) + TimeSpan.FromMilliseconds(2 * NightlyChunkIdleMonitor.PollMilliseconds)
+                    && beat.HostCpu.Length == 1 && beat.HostCpu[0].Pid > 0)
+                    return beat;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is JsonException || e is FormatException) { }
+            return null;
         }
 
         // Get-ChildItem -Recurse -File -Force -ErrorAction SilentlyContinue: every file (hidden ones too), inaccessible

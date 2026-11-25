@@ -28,6 +28,8 @@ namespace Antiphon.Nightly
         public string DiagnosticDirectory { get; set; } = "";
         public int ExecutionGraceMilliseconds { get; set; } = NightlyCompletionGrace.DefaultMilliseconds;
         public string HangCapturePath { get; set; } = "";
+        public NightlyChunkIdleMonitor IdleMonitor { get; set; }
+        public string ActiveHeartbeatPath { get; set; } = "";
         internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
         {
             if (!Barriers.Contains(phase)) return;
@@ -68,6 +70,7 @@ namespace Antiphon.Nightly
         public int[] MissedDescendantPids { get; set; } = Array.Empty<int>();
         public bool JobEmptyObserved { get; set; }
         public bool CompletedButHung { get; set; }
+        public string IdleHangReason { get; set; } = "";
         public string HangCapturePath { get; set; } = "";
         public string HangCaptureError { get; set; } = "";
         public long ExecutionFinishedAtMilliseconds { get; set; } = -1;
@@ -125,8 +128,15 @@ namespace Antiphon.Nightly
             var clock = Stopwatch.StartNew();
             bool resumed = false;
             string stdoutPath = logPath + ".stdout.tmp", stderrPath = logPath + ".stderr.tmp";
+            void ClearActiveHeartbeat()
+            {
+                if (string.IsNullOrEmpty(_hooks.ActiveHeartbeatPath)) return;
+                try { File.Delete(_hooks.ActiveHeartbeatPath); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+            }
             try
             {
+                ClearActiveHeartbeat();
                 job = CreateJobObjectW(IntPtr.Zero, null);
                 Check(job != IntPtr.Zero, "CreateJobObject");
                 JobHandle = job;
@@ -188,6 +198,19 @@ namespace Antiphon.Nightly
                 int grace = _hooks.ExecutionGraceMilliseconds > 0 ? _hooks.ExecutionGraceMilliseconds : NightlyCompletionGrace.DefaultMilliseconds;
                 bool watchEvidence = !string.IsNullOrEmpty(_hooks.TrxPath) && !string.IsNullOrEmpty(_hooks.DiagnosticDirectory);
                 DateTime notBefore = Observation.RootStartedAtUtc;
+                QualificationHeartbeatRecord SampleIdle()
+                {
+                    double? cpuSeconds = null;
+                    if (GetProcessTimes(root, out _, out var exit, out var kernel, out var user) && exit == 0)
+                        cpuSeconds = (kernel + user) / (double)TimeSpan.TicksPerSecond;
+                    var beat = _hooks.IdleMonitor.Sample(Observation.Pid, cpuSeconds);
+                    if (beat != null && !string.IsNullOrEmpty(_hooks.ActiveHeartbeatPath))
+                    {
+                        try { QualificationHeartbeat.Write(beat, _hooks.ActiveHeartbeatPath); }
+                        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+                    }
+                    return beat;
+                }
                 CompletionGraceResult graceResult = NightlyCompletionGrace.Wait(
                     () =>
                     {
@@ -201,7 +224,8 @@ namespace Antiphon.Nightly
                     watchEvidence ? (Func<bool>)(() => ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore)) : null,
                     grace,
                     timeout,
-                    10);
+                    10,
+                    _hooks.IdleMonitor != null ? SampleIdle : null);
                 // A host that exits inside the probe interval still has the markers on disk.
                 if (graceResult.ExecutionFinishedAtMilliseconds < 0 && watchEvidence && Observation.ChildrenExited
                     && ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore))
@@ -209,6 +233,7 @@ namespace Antiphon.Nightly
                     graceResult.ExecutionFinishedAtMilliseconds = graceResult.ElapsedMilliseconds;
                 }
                 Observation.ExecutionFinishedAtMilliseconds = graceResult.ExecutionFinishedAtMilliseconds;
+                Observation.IdleHangReason = graceResult.IdleHangReason;
                 if (graceResult.CompletedButHung)
                 {
                     Observation.TimedOut = true;
@@ -310,6 +335,8 @@ namespace Antiphon.Nightly
             }
             finally
             {
+                // Retain the idle verdict for the observer's next poll or until the next native chunk starts.
+                if (string.IsNullOrEmpty(Observation.IdleHangReason)) ClearActiveHeartbeat();
                 // Join test-operation barriers too, including when a broken verdict is
                 // deliberately exercised. The observer can see that broken verdict.
                 if (stdout != null && stderr != null)
@@ -464,7 +491,8 @@ namespace Antiphon.Nightly
                 return;
             }
             var text = new StringBuilder();
-            text.AppendLine("completed-hang-capture");
+            if (string.IsNullOrEmpty(Observation.IdleHangReason)) text.AppendLine("completed-hang-capture");
+            else text.AppendLine("idle-hang-capture").AppendLine(Observation.IdleHangReason);
             bool rootExited = false;
             try { rootExited = root != IntPtr.Zero && RootExited(root); } catch (Exception) { rootExited = false; }
             int active = -1;
@@ -838,6 +866,7 @@ namespace Antiphon.Nightly
     {
         public bool TimedOut { get; set; }
         public bool CompletedButHung { get; set; }
+        public string IdleHangReason { get; set; } = "";
         public long ElapsedMilliseconds { get; set; }
         public long ExecutionFinishedAtMilliseconds { get; set; } = -1;
     }
@@ -850,14 +879,17 @@ namespace Antiphon.Nightly
         public const int DefaultMilliseconds = 60000;
         public const int ProbeIntervalMilliseconds = 500;
 
-        public static CompletionGraceResult Wait(Func<bool> childrenExited, Func<bool> evidenceFinished, int graceMilliseconds, int watchdogMilliseconds, int pollMilliseconds)
+        public static CompletionGraceResult Wait(Func<bool> childrenExited, Func<bool> evidenceFinished, int graceMilliseconds, int watchdogMilliseconds,
+            int pollMilliseconds, Func<QualificationHeartbeatRecord> sampleIdle = null)
         {
             if (pollMilliseconds < 1) pollMilliseconds = 1;
             var clock = Stopwatch.StartNew();
             long finishedAt = -1;
             long lastProbe = -500;
+            long lastIdleProbe = -NightlyChunkIdleMonitor.PollMilliseconds;
             bool timedOut = false;
             bool hung = false;
+            var idleHangReason = "";
             while (true)
             {
                 bool gone = false;
@@ -881,12 +913,25 @@ namespace Antiphon.Nightly
                     timedOut = true;
                     break;
                 }
+                if (sampleIdle != null && finishedAt < 0 && now - lastIdleProbe >= NightlyChunkIdleMonitor.PollMilliseconds)
+                {
+                    lastIdleProbe = now;
+                    var beat = sampleIdle();
+                    if (beat?.HangSuspected == true)
+                    {
+                        if (childrenExited?.Invoke() == true) break;
+                        idleHangReason = beat.HangReason;
+                        timedOut = true;
+                        break;
+                    }
+                }
                 Thread.Sleep(pollMilliseconds);
             }
             return new CompletionGraceResult
             {
                 TimedOut = timedOut,
                 CompletedButHung = hung,
+                IdleHangReason = idleHangReason,
                 ElapsedMilliseconds = clock.ElapsedMilliseconds,
                 ExecutionFinishedAtMilliseconds = finishedAt
             };

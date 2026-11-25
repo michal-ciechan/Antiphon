@@ -26,6 +26,37 @@ namespace Antiphon.Tests.Scripts;
 public sealed class NightlyNativeOwnershipTests
 {
     [Test, Timeout(120_000)]
+    public Task C2051_IdleCaptureAndJobTermination(CancellationToken cancellationToken) => RunAsync(nameof(C2051_IdleCaptureAndJobTermination), native =>
+    {
+        var root = native.NewRoot("idle test host");
+        var heartbeat = Path.Combine(root, NightlyChunkIdleMonitor.HeartbeatFile);
+        var capture = Path.Combine(root, "native.log.hang.txt");
+        var trx = Path.Combine(root, "run.trx");
+        var hooks = new NativeProcessHooks
+        {
+            TrxPath = trx,
+            DiagnosticDirectory = root,
+            HangCapturePath = capture,
+            ActiveHeartbeatPath = heartbeat,
+            IdleMonitor = new NightlyChunkIdleMonitor(TimeProvider.System, trx, root, 1.0 / 60, null),
+        };
+        var owner = native.Launcher.Start(new NightlyLaunch(Fixture, [root, "root-held"], root, 30000, null,
+            Path.Combine(root, "native.log"), NightlyCustody.Owned, hooks));
+        native.Owners.Add(owner);
+        native.WaitFor(() => File.Exists(Path.Combine(root, "started")), "test host running");
+        var rootHandle = native.Hold(Process.GetProcessById(owner.Observation.Pid));
+        var result = owner.Completion.WaitAsync(TimeSpan.FromSeconds(25), cancellationToken).GetAwaiter().GetResult();
+        result.IdleHangReason.ShouldNotBeNullOrEmpty();
+        (result.TimedOut, result.TerminationSucceeded, result.CleanupComplete, result.CompletedButHung).ShouldBe((true, true, true, false));
+        result.ExitCode.ShouldNotBe(0);
+        rootHandle.HasExited.ShouldBeTrue();
+        File.Exists(trx).ShouldBeFalse();
+        result.HangCapturePath.ShouldBe(capture);
+        File.ReadAllText(capture).ShouldContain("root pid=" + result.Pid + " exited=false active=1");
+        QualificationHeartbeat.Read(heartbeat).HangSuspected.ShouldBeTrue();
+    }, cancellationToken);
+
+    [Test, Timeout(120_000)]
     public Task C1039_AssignBeforeResume(CancellationToken cancellationToken) => RunAsync(nameof(C1039_AssignBeforeResume), native =>
     {
         string[] tokens = ["path with spaces", "", "a\"b", @"C:\tail\", "/*/*/(A)|(B)/*", "*", "$literal"];

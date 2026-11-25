@@ -673,25 +673,53 @@ public sealed class QualificationSupervisorTests
         var runState = State(Run, "tests");
         runState["logDir"] = logs;
         Write(Path.Combine(state, "last-run.json"), runState);
+
+        var diagnosticDirectory = world.Directory("idle-chunk-execution");
+        var diagnostic = Path.Combine(diagnosticDirectory, "test-host.diag");
+        var trx = Path.Combine(logs, "chunk.trx");
+        var timing = world.Directory("idle-timing");
+        const string suite = "antiphon", chunk = "all-group-47", attempt = "1";
+        var plan = Path.Combine(timing, "groups-planned-" + suite + ".json");
+        File.WriteAllText(plan, QualificationHeartbeatTests.PlanJson(suite, Run, attempt, (chunk, 1800)));
+        File.WriteAllText(Path.Combine(timing, "groups-planned-index.json"), QualificationHeartbeatTests.IndexJson(Run, attempt, suite));
+        QualificationHeartbeat.WriteActiveChunkIdentity(timing, suite, chunk, Run, attempt).Written.ShouldBeTrue();
+        var planned = QualificationHeartbeat.PlannedCost(plan, chunk, suite, Run, attempt).Seconds;
+        planned.ShouldBe(1800);
+
         const int ownerPid = 5200, testHostPid = 5201;
+        var pricedMonitor = new NightlyChunkIdleMonitor(world.Clock, trx, diagnosticDirectory, 20, planned);
+        pricedMonitor.Sample(testHostPid, 1).IdleBudgetMinutes.ShouldBe(30);
+        QualificationHeartbeat.WriteActiveChunkIdentity(timing, suite, chunk, Run, attempt, "Idle").Written.ShouldBeTrue();
+        var unknown = QualificationHeartbeat.PlannedCost(plan, chunk, suite, Run, attempt).Seconds;
+        unknown.ShouldBeNull();
+        var monitor = new NightlyChunkIdleMonitor(world.Clock, trx, diagnosticDirectory, 20, unknown);
+        const int deadline = 76;
+        var hostCpu = 1.0;
         world.Seams.OnStart = _ => new QualificationFakeChild(ownerPid, Now, world.Clock)
         {
             OnWait = wait =>
             {
-                if (wait > 21) return true;
-                world.Clock.Advance(TimeSpan.FromMinutes(1));
+                if (wait > deadline) return true;
+                // WaitForExit advances the final second of each minute before the supervisor reads the sample.
+                world.Clock.Advance(TimeSpan.FromSeconds(59));
+                if (wait <= 22) hostCpu += 10;
+                else if (wait <= 44) File.AppendAllText(diagnostic, "heartbeat without a TestNodeUid\n");
+                if (wait == 55) File.WriteAllText(trx, "partial");
+                if (wait == 56) File.Delete(trx);
                 world.Seams.Table.Clear();
                 world.Seams.Table.Add(new QualificationProcess(ownerPid, 1, 10 * wait));
-                world.Seams.Table.Add(new QualificationProcess(testHostPid, ownerPid, 1));
+                world.Seams.Table.Add(new QualificationProcess(testHostPid, ownerPid, hostCpu));
                 File.AppendAllText(Path.Combine(state, "unrelated.log"), "noise\n");
-                QualificationHeartbeat.Write(new QualificationHeartbeatRecord
+                var sample = monitor.Sample(testHostPid, hostCpu);
+                sample.HangSuspected.ShouldBe(wait == deadline, "active host and file progress defer idle until 20 minutes of silence");
+                QualificationHeartbeat.Write(sample, Path.Combine(logs, NightlyChunkIdleMonitor.HeartbeatFile));
+                if (wait == deadline)
                 {
-                    ObservedAtUtc = world.Clock.GetUtcNow().UtcDateTime.ToString("o"),
-                    HostCpu = [new QualificationCpuSample(testHostPid, 1)],
-                    IdleMinutes = wait - 1,
-                    IdleBudgetMinutes = 20,
-                    HangSuspected = wait == 21,
-                }, Path.Combine(logs, "active-test-heartbeat.json"));
+                    var outcome = NightlyCompletionGrace.Wait(() => false, null, 1000, 1000, 10, () => sample);
+                    outcome.TimedOut.ShouldBeTrue();
+                    outcome.CompletedButHung.ShouldBeFalse();
+                    outcome.IdleHangReason.ShouldBe(sample.HangReason);
+                }
                 return false;
             },
         };
