@@ -705,6 +705,118 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_DIR", Path.Combine(fixture.Observer, ".git"))), "origin");
     }
 
+    /// <summary>Runs <paramref name="check"/>, recording its failure under <paramref name="name"/> so one case does not hide the next.</summary>
+    private static async Task CaseAsync(List<string> failures, string name, Func<Task> check)
+    {
+        try { await check(); }
+        catch (Exception ex) { failures.Add(name + ": " + ex.Message); }
+    }
+
+    [Test]
+    public async Task Remote_get_url_falls_back_for_config_git_parses_or_rejects_otherwise()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var config = Path.Combine(repo, ".git", "config");
+        var env = RemoteChild(fixture);
+        await CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin");
+        var original = await File.ReadAllTextAsync(config);
+        var failures = new List<string>();
+
+        async Task FallsBackAsync(string name, string appended, string remote, int exitCode, bool warns)
+        {
+            await File.WriteAllTextAsync(config, original + appended);
+            await CaseAsync(failures, name, async () =>
+            {
+                var (git, error) = await CompareRemoteUrlAsync(repo, Expect.Fallback, env, remote);
+                git.ExitCode.ShouldBe(exitCode, name + ": " + error);
+                if (warns) error.ShouldNotBeEmpty(name);
+            });
+        }
+
+        // A continued line followed by a comment line: git ends the value at the comment, libgit2 joins the next line.
+        await FallsBackAsync("continuation", "[remote \"cont\"]\n\turl = https://a.invalid/\\\n; note\npushurl=https://p.invalid/\n",
+            "cont", 0, warns: false);
+        // remote.c reads every remote.* and branch.* key: a bare value, a bad boolean, a bad refspec die; a remote
+        // name starting with '/' warns.
+        await FallsBackAsync("bare branch merge", "[branch \"main\"]\n\tmerge\n", "origin", 128, warns: true);
+        await FallsBackAsync("bare pushurl", "[remote \"origin\"]\n\tpushurl\n", "origin", 128, warns: true);
+        await FallsBackAsync("bare pushdefault", "[remote]\n\tpushdefault\n", "origin", 128, warns: true);
+        await FallsBackAsync("bad prune", "[remote \"origin\"]\n\tprune = maybe\n", "origin", 128, warns: true);
+        await FallsBackAsync("bad refspec", "[remote \"origin\"]\n\tfetch = refs/heads/*:refs/x/*/*\n", "origin", 128, warns: true);
+        await FallsBackAsync("slash remote", "[remote \"/bad\"]\n\turl = x\n", "origin", 0, warns: true);
+        // Other keys git may read are git's: another remote variable, another branch variable, another refspec shape.
+        await FallsBackAsync("other remote key", "[remote \"origin\"]\n\ttagopt = --no-tags\n", "origin", 0, warns: false);
+        await FallsBackAsync("other branch key", "[branch \"main\"]\n\trebase = true\n", "origin", 0, warns: false);
+        await FallsBackAsync("other refspec", "[remote \"origin\"]\n\tfetch = +refs/tags/*:refs/tags/*\n", "origin", 0, warns: false);
+
+        // Still answered: the shapes git writes itself (remote add, branch --set-upstream-to, remote.pushDefault).
+        await File.WriteAllTextAsync(config, original
+            + "[remote \"two\"]\n\turl = https://two.invalid/\n\tfetch = refs/heads/*:refs/remotes/two/*\n\tpushurl = https://push.invalid/\n"
+            + "[branch \"main\"]\n\tremote = two\n\tmerge = refs/heads/main\n[remote]\n\tpushdefault = two\n");
+        await CaseAsync(failures, "plain shapes", () => CompareRemoteUrlAsync(repo, Expect.Answered, env, "origin"));
+        await CaseAsync(failures, "plain shapes two", () => CompareRemoteUrlAsync(repo, Expect.Answered, env, "two"));
+        failures.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Remote_get_url_reads_the_child_s_global_files_as_git_finds_them()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var failures = new List<string>();
+        const string fromGlobal = "[remote \"origin\"]\n\turl = https://global.invalid/origin.git\n";
+
+        // Git for Windows: HOME, else HOMEDRIVE+HOMEPATH, else USERPROFILE. A file created under the second candidate
+        // after the child's view was cached must be seen.
+        if (OperatingSystem.IsWindows())
+        {
+            var driveHome = Path.Combine(fixture.Root, "drive-home");
+            var profile = Path.Combine(fixture.Root, "profile-home");
+            Directory.CreateDirectory(driveHome);
+            Directory.CreateDirectory(profile);
+            var drive = Path.GetPathRoot(driveHome)!.TrimEnd('\\');
+            var candidates = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", null), ("HOME", null),
+                ("HOMEDRIVE", drive), ("HOMEPATH", driveHome[drive.Length..]), ("USERPROFILE", profile));
+            await CaseAsync(failures, "candidates before", () => CompareRemoteUrlAsync(repo, Expect.Answered, candidates, "origin"));
+            await File.WriteAllTextAsync(Path.Combine(driveHome, ".gitconfig"), fromGlobal);
+            await CaseAsync(failures, "HOMEDRIVE+HOMEPATH .gitconfig", async () =>
+                (await CompareRemoteUrlAsync(repo, Expect.Fallback, candidates, "origin")).Result.Output
+                    .ShouldBe("https://global.invalid/origin.git\n"));
+        }
+
+        // A global file edited while git lists the child's config: the view read before the edit is not kept.
+        var global = Path.Combine(fixture.Root, "home", "remote-url-racing-global");
+        await File.WriteAllTextAsync(global, "");
+        var racing = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", global));
+        GitStatusConfigAgreement.AfterListing.Value = () => File.WriteAllText(global, fromGlobal);
+        try
+        {
+            await CaseAsync(failures, "edited during the listing", () => CompareRemoteUrlAsync(repo, Expect.Fallback, racing, "origin"));
+        }
+        finally { GitStatusConfigAgreement.AfterListing.Value = null; }
+        await CaseAsync(failures, "edited during the listing, next read", () => CompareRemoteUrlAsync(repo, Expect.Fallback, racing, "origin"));
+
+        // A relative global file or home is read against the child's working directory, not the probe's.
+        await File.WriteAllTextAsync(Path.Combine(repo, "relative-global"), fromGlobal);
+        await CaseAsync(failures, "relative GIT_CONFIG_GLOBAL", async () =>
+            (await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", "relative-global")), "origin"))
+                .Result.Output.ShouldBe("https://global.invalid/origin.git\n"));
+        Directory.CreateDirectory(Path.Combine(repo, "relative-home"));
+        await File.WriteAllTextAsync(Path.Combine(repo, "relative-home", ".gitconfig"), fromGlobal);
+        await CaseAsync(failures, "relative HOME", () => CompareRemoteUrlAsync(repo, Expect.Fallback,
+            RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", null), ("HOME", "relative-home")), "origin"));
+
+        // safe.* the child reads and libgit2 here does not: git's to judge.
+        var safeGlobal = Path.Combine(fixture.Root, "home", "remote-url-safe-global");
+        await File.WriteAllTextAsync(safeGlobal, "[safe]\n\tdirectory = *\n");
+        await CaseAsync(failures, "safe.directory", () =>
+            CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", safeGlobal)), "origin"));
+        failures.ShouldBeEmpty();
+    }
+
     [Test]
     public async Task A_land_scope_answers_reads_in_process_and_counts_them()
     {

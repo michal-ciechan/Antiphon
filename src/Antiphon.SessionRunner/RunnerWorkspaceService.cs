@@ -1093,7 +1093,8 @@ public sealed partial class RunnerWorkspaceService
             // CARD-1441: non-inspection children append the same two keys. Inspection already
             // sets them inside the isolated list above and must not be appended again.
             // CARD-1817: an invalid count is a named refusal, and it is raised only once an
-            // in-process read has had its chance. Those reads do not consult the count.
+            // in-process read has had its chance. Those reads do not consult the count, except remote get-url,
+            // which reads the child's injected keys and itself falls back (runs git) on a count git would refuse.
             try
             {
                 RunnerGitProcess.DisableAutoMaintenance(psi);

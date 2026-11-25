@@ -15,9 +15,12 @@ namespace Antiphon.GitInProcess;
 /// reads, <see cref="ConfigOf"/>), non-empty printable ASCII, the remote name spelled with the same case;</item>
 /// <item>no <c>url.*</c>, <c>include.*</c> or <c>includeIf.*</c> key in that file, and no per-worktree config
 /// (<c>config.worktree</c>, <c>extensions.worktreeConfig</c>);</item>
-/// <item>no <c>remote.&lt;name&gt;.*</c>, <c>url.*</c>, <c>include.*</c> or <c>includeIf.*</c> key in the system,
-/// global, XDG or command levels the git child itself reads, asked of git once per distinct child environment
-/// (<see cref="GitStatusConfigAgreement.ChildRemoteKeys"/>; GIT_CONFIG_PARAMETERS and GIT_CONFIG refuse outright);</item>
+/// <item>no line of that file continued with a backslash (libgit2 and git end such a value differently), and every
+/// remote.* and branch.* entry in it one git's remote.c reads without dying or warning (<see cref="LocalUrl"/>);</item>
+/// <item>no <c>remote.*</c>, <c>branch.*</c>, <c>url.*</c>, <c>include.*</c> or <c>includeIf.*</c> key in the system,
+/// global, XDG or command levels the git child itself reads, asked of git once per distinct child environment, and
+/// the same safe.* entries there as libgit2 reads here (<see cref="GitStatusConfigAgreement.ChildRemoteKeys"/>;
+/// GIT_CONFIG_PARAMETERS, GIT_CONFIG and a relative config or home path refuse outright);</item>
 /// <item>no <c>remotes/&lt;name&gt;</c> or <c>branches/&lt;name&gt;</c> entry in the git or common directory, no
 /// variable in the child's environment that redirects the repository, and nothing <see cref="Unusual"/>.</item>
 /// </list>
@@ -72,13 +75,27 @@ internal static partial class InProcessGitReads
                     if (File.Exists(path) || Directory.Exists(path)) return null;
                 }
             }
-            if (LocalUrl(repo, name) is not { } url) return null;
-            // The child's own non-repository levels, last: the one step that may start git (once per environment).
-            if (GitStatusConfigAgreement.ChildRemoteKeys(childEnvironment) is not { } inherited
-                || inherited.Any(key => key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
-                    || key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
-                    || key.StartsWith("remote." + name + ".", StringComparison.OrdinalIgnoreCase))) return null;
-            return Ok(url + "\n");
+            // A line continued with a backslash: libgit2 and git disagree on where the value ends (git stops at a comment
+            // line that follows, libgit2 joins the next line into the value), so any continued line is git's to read.
+            if (HasContinuedLine(Path.Combine(common, "config"))) return null;
+            if (ConfigOf(repo) is not { } view) return null;
+            try
+            {
+                if (LocalUrl(view.Config, name) is not { } url) return null;
+                // The child's own non-repository levels, last: the one step that may start git (once per environment).
+                // git's remote.c reads every remote.* and branch.* key of every level and dies or warns on a bad one;
+                // those levels are only listed by name, so any such key there is git's.
+                if (GitStatusConfigAgreement.ChildRemoteKeys(childEnvironment, view.Config) is not { } inherited
+                    || inherited.Any(key => key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith("branch.", StringComparison.OrdinalIgnoreCase))) return null;
+                return Ok(url + "\n");
+            }
+            finally
+            {
+                if (view.Owned) view.Config.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
@@ -104,41 +121,80 @@ internal static partial class InProcessGitReads
 
     /// <summary>
     /// The one <c>remote.&lt;name&gt;.url</c> of the repository's local config file as git reads it, or null when there
-    /// is none, more than one, one under another spelling of the name, an empty or non-printable-ASCII value, or any
-    /// url.*, include* or per-worktree key in the repository's own levels.
+    /// is none, more than one, one under another spelling of the name, an empty or non-printable-ASCII value, any
+    /// url.*, include* or per-worktree key in the repository's own levels, or any remote.* or branch.* entry git's
+    /// remote.c could die or warn on: a bare (valueless) key, a remote name starting with '/', a remote variable
+    /// other than url, pushurl and fetch, a fetch refspec other than the default
+    /// <c>[+]refs/heads/*:refs/remotes/&lt;remote&gt;/*</c>, or a branch variable other than remote and merge.
     /// </summary>
-    private static string? LocalUrl(Repository repo, string name)
+    private static string? LocalUrl(Configuration config, string name)
     {
-        if (ConfigOf(repo) is not { } view) return null;
+        string? url = null;
+        var count = 0;
+        foreach (var entry in config)
+        {
+            if (entry.Level == ConfigurationLevel.Worktree) return null;
+            if (entry.Level != ConfigurationLevel.Local) continue;
+            var key = entry.Key;
+            if (key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("extensions.worktreeconfig", StringComparison.OrdinalIgnoreCase)) return null;
+            if (key.StartsWith("branch.", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!PlainBranchEntry(key, entry.Value)) return null;
+                continue;
+            }
+            if (!key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase)) continue;
+            var rest = key["remote.".Length..];
+            var dot = rest.LastIndexOf('.');
+            if (dot < 0)
+            {
+                if (!rest.Equals("pushdefault", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(entry.Value)) return null;
+                continue;
+            }
+            var (subsection, variable) = (rest[..dot], rest[(dot + 1)..]);
+            if (subsection.Length == 0 || subsection[0] == '/' || entry.Value is null) return null;
+            if (variable.Equals("pushurl", StringComparison.OrdinalIgnoreCase)) continue;
+            if (variable.Equals("fetch", StringComparison.OrdinalIgnoreCase))
+            {
+                var refspec = entry.Value.StartsWith('+') ? entry.Value[1..] : entry.Value;
+                if (!refspec.Equals("refs/heads/*:refs/remotes/" + subsection + "/*", StringComparison.Ordinal)) return null;
+                continue;
+            }
+            if (!variable.Equals("url", StringComparison.OrdinalIgnoreCase)) return null;
+            if (!subsection.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            // Another case of the name is another remote to git (the subsection is case-sensitive), but libgit2's
+            // spelling of it is not proven here: git's.
+            if (!subsection.Equals(name, StringComparison.Ordinal)) return null;
+            count++;
+            url = entry.Value;
+        }
+        // An empty value resets git's list (git 2.46+) and a bare key is a config error: both git's.
+        if (count != 1 || string.IsNullOrEmpty(url) || url.Any(c => c < 0x20 || c > 0x7e)) return null;
+        return url;
+    }
+
+    /// <summary><c>branch.&lt;name&gt;.remote</c> or <c>branch.&lt;name&gt;.merge</c> with a non-empty value.</summary>
+    private static bool PlainBranchEntry(string key, string? value)
+    {
+        var rest = key["branch.".Length..];
+        var dot = rest.LastIndexOf('.');
+        if (dot <= 0 || string.IsNullOrEmpty(value)) return false;
+        var variable = rest[(dot + 1)..];
+        return variable.Equals("remote", StringComparison.OrdinalIgnoreCase) || variable.Equals("merge", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Whether the config file has a line ending in a backslash (or cannot be read).</summary>
+    private static bool HasContinuedLine(string configFile)
+    {
         try
         {
-            string? url = null;
-            var count = 0;
-            foreach (var entry in view.Config)
-            {
-                if (entry.Level == ConfigurationLevel.Worktree) return null;
-                if (entry.Level != ConfigurationLevel.Local) continue;
-                var key = entry.Key;
-                if (key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
-                    || key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
-                    || key.Equals("extensions.worktreeconfig", StringComparison.OrdinalIgnoreCase)) return null;
-                if (!key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase)
-                    || !key.EndsWith(".url", StringComparison.OrdinalIgnoreCase)) continue;
-                var subsection = key["remote.".Length..^".url".Length];
-                if (!subsection.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
-                // Another case of the name is another remote to git (the subsection is case-sensitive), but libgit2's
-                // spelling of it is not proven here: git's.
-                if (!subsection.Equals(name, StringComparison.Ordinal)) return null;
-                count++;
-                url = entry.Value;
-            }
-            // An empty value resets git's list (git 2.46+) and a bare key is a config error: both git's.
-            if (count != 1 || string.IsNullOrEmpty(url) || url.Any(c => c < 0x20 || c > 0x7e)) return null;
-            return url;
+            using var stream = new FileStream(configFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+            while (reader.ReadLine() is { } line)
+                if (line.EndsWith('\\')) return true;
+            return false;
         }
-        finally
-        {
-            if (view.Owned) view.Config.Dispose();
-        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
     }
 }
