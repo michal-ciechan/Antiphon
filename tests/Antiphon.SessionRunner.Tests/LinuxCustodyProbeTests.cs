@@ -1,5 +1,6 @@
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.PtyHost.Protocol;
 using Shouldly;
 using TUnit.Core;
 
@@ -131,5 +132,78 @@ public sealed class Card2060PlacementLedgerTests
         environment.HelperProbeSucceeds(LinuxCgroupCustodyProbe.EnterHelper, "--probe").ShouldBeTrue();
         environment.HelperProbeSucceeds(LinuxCgroupCustodyProbe.KillHelper, "--probe").ShouldBeTrue();
         LinuxCgroupCustodyProbe.Detect(environment).ShouldBeNull();
+    }
+
+    [Test]
+    public async Task DeadHostPlacementAloneStaysUnknown()
+    {
+        await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
+        var boot = Guid.NewGuid();
+        var root = new CustodyRoot(2, 12345, world.Host.HostStartTimeUtc, world.ContainerId, boot, 123u);
+        world.Store.WriteRecord(world.Binding, "tracking.json", root);
+        world.Store.WriteRecord(world.Binding, "linux-placement.json", new LinuxPlacementRecord(2, root.Pid,
+            root.StartTimeUtc, world.ContainerId, world.NamespaceId, world.Store.StoreId,
+            world.Binding.ExecutionId, world.Host.HostInstanceId, world.Binding.Generation, boot, 123, 3));
+        world.Recovery.Gone = true;
+        world.Recovery.Pids = [];
+
+        var status = await world.Runtime.ReadCustodyAsync(world.Binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Receipt.ShouldBeNull();
+        world.Recovery.Kills.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task ImportRequiresOriginalBytes()
+    {
+        await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
+        var at = world.Host.HostStartTimeUtc;
+        var tracking = new CustodyRoot(2, 12345, at, world.ContainerId);
+        world.Store.WriteRecord(world.Binding, "runner-start-intent.json", new CustodyStamp(1, at));
+        world.Store.WriteRecord(world.Binding, "tracking.json", tracking);
+        world.Store.WriteRecord(world.Binding, "producer-seal.json", new CustodyStamp(3, at));
+        var receipt = new VerificationCustodyReceipt(1, world.Binding, world.Host, 4, at, at,
+            VerificationCustodyBackends.CgroupProcsEmpty, 0, true, VerificationCustodyState.Exited,
+            tracking.Pid, tracking.StartTimeUtc);
+        var producer = world.Store.SaveProducer(receipt);
+        byte[] altered = [.. producer, (byte)'\n'];
+        world.Store.ValidateReceipt(altered, world.Binding, world.Host).ShouldBe(receipt);
+        var status = new VerificationCustodyStatus(world.Binding, VerificationCustodyState.Exited,
+            null, world.Host, altered);
+        Should.Throw<VerificationCustodyException>(() => world.Runtime.CustodyForTests.Accept(status))
+            .Code.ShouldBe("verification_custody_integrity_error");
+        world.Store.ReadReceipt(world.Binding, world.Host, accepted: true).ShouldBeNull();
+
+        (await world.Runtime.ReadCustodyAsync(world.Binding, false, CancellationToken.None))
+            .Receipt.ShouldBe(producer);
+        world.Store.ReadReceipt(world.Binding, world.Host, accepted: true).ShouldBe(producer);
+    }
+
+    [Test]
+    public async Task ExplicitReleaseRefusesLiveCustodian()
+    {
+        await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
+        world.Recovery.Gone = false;
+        world.Recovery.Pids = [];
+        var status = await world.Runtime.ReadCustodyAsync(world.Binding, true, CancellationToken.None);
+        world.Recovery.Kills.ShouldBeEmpty();
+        status.Reason.ShouldBe("custody_host_still_present");
+        status.Receipt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task OrdinaryReadNeverInvokesRecoveryKill()
+    {
+        await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
+        world.Store.WriteRecord(world.Binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+        world.Recovery.Gone = true;
+        world.Recovery.Pids = [];
+        var status = await world.Runtime.ReadCustodyAsync(world.Binding, false, CancellationToken.None);
+        world.Recovery.Kills.ShouldBeEmpty();
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Receipt.ShouldBeNull();
+
+        (await world.Runtime.ReadCustodyAsync(world.Binding, true, CancellationToken.None)).Receipt.ShouldBeNull();
+        world.Recovery.Kills.ShouldBe([world.ContainerId]);
     }
 }

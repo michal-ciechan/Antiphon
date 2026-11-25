@@ -436,14 +436,14 @@ public sealed class HostSession : IAsyncDisposable
     private static bool PlatformAdmitsBackend(string backend) =>
         OperatingSystem.IsWindows()
             ? backend == VerificationCustodyBackends.WindowsJob
-            : backend == VerificationCustodyBackends.LinuxCgroup;
+            : OperatingSystem.IsLinux() && backend == VerificationCustodyBackends.LinuxCgroup;
 
     private bool AdvertisesCustody => _options.CustodyStoreRoot is not null
         && _options.CustodyBackend is { } backend
         && (OperatingSystem.IsWindows()
             ? backend == VerificationCustodyBackends.WindowsJob
                 && PtyBackendPolicy.Resolve(_options.PtyBackend).Backend == PtyBackend.ModernConPty
-            : backend == VerificationCustodyBackends.LinuxCgroup);
+            : OperatingSystem.IsLinux() && backend == VerificationCustodyBackends.LinuxCgroup);
 
     public Task<VerificationCustodyStatus> GetCustodyAsync(VerificationExecutionBinding binding,
         CancellationToken ct) => GetCustodyAsync(binding, false, ct);

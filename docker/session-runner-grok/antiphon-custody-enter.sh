@@ -119,6 +119,7 @@ claim_tree_v1() {
   local primary="$V1_PIDS_ROOT/$1/$2" freezer="$V1_FREEZER_ROOT/$1/$2"
   require_under_root "$primary" "$V1_PIDS_ROOT"
   require_under_root "$freezer" "$V1_FREEZER_ROOT"
+  mkdir -p -- "$V1_PIDS_ROOT/$1" "$V1_FREEZER_ROOT/$1" || refuse CustodyNamespaceUnavailable
   if [ -e "$primary" ] || [ -e "$freezer" ] || [ -L "$primary" ] || [ -L "$freezer" ]; then
     refuse_existing_v1 "$primary" "$freezer"
   fi

@@ -161,7 +161,7 @@ public sealed class LinuxPlacementAttempt : IDisposable
         return body;
     }
 
-    private static bool Matches(ReadOnlySpan<byte> attestation, ReadOnlySpan<byte> tuple, LinuxSpawnIdentity root) =>
+    internal static bool Matches(ReadOnlySpan<byte> attestation, ReadOnlySpan<byte> tuple, LinuxSpawnIdentity root) =>
         attestation[..TupleSize].SequenceEqual(tuple) &&
         BinaryPrimitives.ReadInt32BigEndian(attestation[104..]) == root.Pid &&
         BinaryPrimitives.ReadInt32BigEndian(attestation[108..]) == root.ParentPid &&
