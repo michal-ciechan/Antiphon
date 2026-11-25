@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Antiphon.Nightly;
-using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -9,9 +8,8 @@ using static Antiphon.Tests.Scripts.CardListSearchScriptTests;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// The status snapshot (StatusSnapshot, `antiphon-scripts status-snapshot`), in-process since it replaced
-/// scripts/status-snapshot.ps1 (plan 2026-11-22-remaining-ps1-to-csharp.md, unit 7): the production HTTP transport against a
-/// loopback stub and the production git reader against a scratch repository with a bare origin.
+/// The status snapshot runs in process with a recording HTTP transport and the production git reader against a scratch
+/// repository with a bare origin. RegisteredCallerScriptTests exercises the production HTTP transport on an ephemeral port.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -113,7 +111,7 @@ public sealed class StatusSnapshotScriptTests
     }
 
     internal static (int ExitCode, string Stdout) Run(Stub stub, string repository, params string[] args) =>
-        RunWith(NightlyReport.HttpTransport(timeout: StatusSnapshot.Deadline), stub.BaseUrl, repository, args);
+        RunWith(stub.Transport, stub.BaseUrl, repository, args);
 
     internal static (int ExitCode, string Stdout) RunWith(NightlyReportHttp http, string api, string repository, params string[] args)
     {
