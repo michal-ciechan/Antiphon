@@ -185,6 +185,129 @@ public sealed class RcProjectSelectionTests
         rows.ShouldAllPass(3);
     }
 
+    // CARD-1836 S2 (CP-2, V-2, R-2, R-3, G-5..G-7): both index blobs and both project graphs select; the unrelated chunk carries.
+    [Test, Timeout(60_000)]
+    public void Removed_harness_edges_select_both_graphs_and_keep_the_unrelated_chunk(CancellationToken cancellationToken)
+    {
+        using var fx = new Repo();
+        fx.Baseline();
+        const string Index = "tests/derived-impact-index.json";
+        string IndexJson(object[] edges, object[] capped) => JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["schema"] = 1, ["cap"] = 25, ["byteLimit"] = 2000000, ["allowlist"] = Array.Empty<string>(), ["windowsOnly"] = Array.Empty<string>(),
+            ["linuxOnly"] = Array.Empty<string>(), ["cappedPaths"] = capped, ["edges"] = edges,
+        });
+        object Edge(string path, params string[] classes) => new Dictionary<string, object> { ["path"] = path, ["classes"] = classes };
+        const string RunnerLinked = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Runner/Runner.csproj\" /><Compile Include=\"../Server/Linked.cs\" />";
+        fx.Put("tests/Runner/Runner.csproj", RunnerLinked + "<Compile Include=\"../Server/Harness.cs\" /></ItemGroup></Project>");
+        fx.Put("tests/Server/Harness.cs", "harness");
+        fx.Put("tests/fixtures/data/one.txt", "1");
+        fx.Put("tests/fixtures/data/two.txt", "2");
+        fx.Put("scripts/test-x-startup.ps1", "startup");
+        fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests")], []));
+        var b = fx.Commit();
+
+        var chunks = new[]
+        {
+            Chunk("ServerHarness", "tests/Server/Server.csproj", "ServerHarnessTests"), Chunk("RunnerLinked", "tests/Runner/Runner.csproj", "RunnerLinkedTests"),
+            Chunk("Other", "tests/Other/Other.csproj", "OtherTests"), Chunk("NewEdge", "tests/Other/Other.csproj", "NewEdgeTests"),
+            Chunk("AmbiguousServer", "tests/Server/Server.csproj", "Ns.Server.Ambiguous"), Chunk("AmbiguousOther", "tests/Other/Other.csproj", "Ns.Other.Ambiguous"),
+            Chunk("FixtureReader", "tests/Other/Other.csproj", "FixtureReaderTests"), Chunk("StartupReader", "tests/Other/Other.csproj", "StartupReaderTests"),
+        };
+        var receipts = chunks.Select(c => (IDictionary)new OrderedDictionary
+        {
+            ["id"] = "antiphon", ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0, ["sha"] = b, ["contentDigest"] = c.ContentDigest, ["disposition"] = "executed",
+        }).ToArray();
+        RcReuse Admit(IDictionary row) => new() { Reusable = PsValue.Str(row["result"]) == "pass" && PsValue.Str(row["sha"]) == b };
+        RcReaderCensusEntry[] census =
+        [
+            new() { Reader = "FixtureReaderTests", Globs = ["tests/fixtures/data/**"] }, new() { Reader = "StartupReaderTests", Globs = ["scripts/test-*-startup.ps1"] },
+        ];
+        RcChunkSelectionResult Select(string baseline, string candidate, RcReaderCensusEntry[]? withCensus = null) =>
+            RcChunkSelection.Select(fx.Root, baseline, candidate, chunks, receipts, withCensus ?? census, Admit);
+        string Reasons(RcChunkSelectionResult s, string chunk) => s.Of(chunk).Decision + ":" + string.Join(",", s.Of(chunk).Reasons);
+        bool Runs(RcChunkSelectionResult s, string chunk, string reason) => s.Of(chunk).Decision == "execute" && s.Of(chunk).Reasons.Contains(reason);
+        var rows = new NightlyCaseRows();
+
+        // A1: delete the harness and its linked Compile together; the A index drops the edge.
+        File.Delete(fx.PathOf("tests", "Server", "Harness.cs"));
+        fx.Put("tests/Runner/Runner.csproj", RunnerLinked + "</ItemGroup></Project>");
+        fx.Put(Index, IndexJson([], []));
+        var a1 = fx.Commit();
+        var s1 = Select(b, a1);
+        rows.Check(s1.Mode == "Scoped" && Runs(s1, "ServerHarness", "index-edge:B:tests/Server/Harness.cs"), "s2-old-only-edge",
+            s1.Mode + " " + string.Join(",", s1.FallbackReasons) + " " + Reasons(s1, "ServerHarness"));
+        rows.Check(Runs(s1, "RunnerLinked", "project-closure:B:tests/Server/Harness.cs"), "s2-deleted-linked-reader", Reasons(s1, "RunnerLinked"));
+        rows.Check(s1.Mode == "Scoped" && s1.Of("Other").Decision == "carry" && PsValue.Str(s1.Of("Other").Origin["sha"]) == b
+            && s1.Decisions.Count(d => d.Decision == "carry") > 0, "s2-unrelated-carry", Reasons(s1, "Other"));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // A2 (from B): a new file gets an A-only edge to NewEdgeTests and to a simple name two projects share.
+        fx.Git("checkout", "-q", "--detach", b);
+        fx.Put("src/Messaging/Wire.cs", "wire");
+        fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests"), Edge("src/Messaging/Wire.cs", "NewEdgeTests", "Ambiguous")], []));
+        var a2 = fx.Commit();
+        var s2 = Select(b, a2);
+        rows.Check(s2.Mode == "Scoped" && Runs(s2, "NewEdge", "index-edge:A:src/Messaging/Wire.cs") && s2.Of("Other").Decision == "carry", "s2-new-only-hit", Reasons(s2, "NewEdge"));
+        rows.Check(Runs(s2, "AmbiguousServer", "index-edge:A:src/Messaging/Wire.cs") && Runs(s2, "AmbiguousOther", "index-edge:A:src/Messaging/Wire.cs"), "s2-ambiguous-name",
+            Reasons(s2, "AmbiguousServer") + " | " + Reasons(s2, "AmbiguousOther"));
+
+        // Capped at B: an owned path widens to its project closure; an unowned capped path forces Full.
+        fx.Git("checkout", "-q", "--detach", b);
+        fx.Put("docs/capped.md", "baseline");
+        fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests")], [new Dictionary<string, object> { ["path"] = "src/Messaging/Message.cs", ["reason"] = "cap" }, "docs/capped.md"]));
+        var bc = fx.Commit();
+        fx.Put("src/Messaging/Message.cs", "changed");
+        var a3 = fx.Commit();
+        var s3 = Select(bc, a3);
+        fx.Git("checkout", "-q", "--detach", bc);
+        fx.Put("docs/capped.md", "changed");
+        var s3b = Select(bc, fx.Commit());
+        rows.Check(s3.Mode == "Scoped" && Runs(s3, "AmbiguousServer", "index-capped-closure:src/Messaging/Message.cs:B") && s3b.Mode == "Full"
+            && s3b.FallbackReasons.Contains("index-capped:docs/capped.md:B"), "s2-cap", s3.Mode + " " + string.Join(",", s3b.FallbackReasons));
+
+        // No index blob at B.
+        fx.Git("checkout", "-q", "--detach", b);
+        File.Delete(fx.PathOf("tests", "derived-impact-index.json"));
+        var b0 = fx.Commit();
+        fx.Put("src/Messaging/Message.cs", "changed again");
+        var s4 = Select(b0, fx.Commit());
+        rows.Check(s4.Mode == "Full" && s4.FallbackReasons.Contains("index-unbound:B") && s4.Decisions.All(d => d.Decision == "execute"), "s2-index-unbound",
+            string.Join(",", s4.FallbackReasons));
+
+        string Blob(string sha) => fx.Git("rev-parse", sha + ":" + Index).Trim();
+        string Sha(string sha) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new UTF8Encoding(false).GetBytes(fx.Git("cat-file", "blob", Blob(sha))))).ToLowerInvariant();
+        rows.Check(s1.Index.Length == 2 && s1.Index[0].Side == "B" && s1.Index[0].Blob == Blob(b) && s1.Index[0].Sha256 == Sha(b) && s1.Index[1].Side == "A"
+            && s1.Index[1].Blob == Blob(a1) && s1.Index[1].Sha256 == Sha(a1) && Blob(b) != Blob(a1), "s2-index-binding");
+
+        // R-2: every file under a directory a reader lists is deleted.
+        fx.Git("checkout", "-q", "--detach", b);
+        File.Delete(fx.PathOf("tests", "fixtures", "data", "one.txt"));
+        File.Delete(fx.PathOf("tests", "fixtures", "data", "two.txt"));
+        var s5 = Select(b, fx.Commit());
+        rows.Check(s5.Mode == "Scoped" && Runs(s5, "FixtureReader", "runtime-reader:tests/fixtures/data/**") && s5.Of("Other").Decision == "carry", "s2-runtime-reader",
+            s5.Mode + " " + string.Join(",", s5.FallbackReasons) + " " + Reasons(s5, "FixtureReader"));
+
+        // R-3: an assembled-name reader of a deleted driver, no index edge on either side.
+        fx.Git("checkout", "-q", "--detach", b);
+        File.Delete(fx.PathOf("scripts", "test-x-startup.ps1"));
+        var a6 = fx.Commit();
+        var s6 = Select(b, a6);
+        var s6Bare = Select(b, a6, []);
+        rows.Check(s6.Mode == "Scoped" && Runs(s6, "StartupReader", "runtime-reader:scripts/test-*-startup.ps1") && s6Bare.Mode == "Full"
+            && s6Bare.FallbackReasons.Contains("unknown-path:scripts/test-x-startup.ps1"), "s2-assembled-name-reader",
+            s6.Mode + " " + string.Join(",", s6.FallbackReasons) + " | " + string.Join(",", s6Bare.FallbackReasons));
+
+        rows.ShouldAllPass(10, "s2-old-only-edge", "s2-deleted-linked-reader", "s2-unrelated-carry", "s2-new-only-hit", "s2-ambiguous-name", "s2-cap",
+            "s2-index-unbound", "s2-index-binding", "s2-runtime-reader", "s2-assembled-name-reader");
+    }
+
+    private static RcPlannedChunk Chunk(string id, string project, string cls) => new()
+    {
+        Id = id, Project = project, Classes = [cls],
+        ContentDigest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("content/" + id))).ToLowerInvariant(),
+    };
+
     private static (int Code, string Out, string Error) Run(SelectRcProjectBatchesOptions options)
     {
         var output = new StringWriter();
