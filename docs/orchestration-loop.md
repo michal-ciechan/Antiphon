@@ -666,7 +666,7 @@ renders a row only when that row is enabled or held. A reminder names the shortf
 up to that shortfall under the same pipeline rules, or declare a hold with
 `scripts/antiphon keep-six` (`scripts\antiphon.cmd keep-six` on Windows). The server does not dispatch.
 
-A Claude orchestrator also arms a native notification hook on SessionStart and Stop. An overdue Session report can wake the caller after ten minutes. Read each named report with `scripts/antiphon delegate status <id>` using the caller’s credential. A recurring shortfall can wake an idle standing caller after the ordinary 15-minute backoff even when the terminal reminder is still pending. The attention feed groups overdue unread reports by caller.
+A Claude orchestrator also arms a native notification hook on SessionStart and Stop. An overdue Session report can wake the caller after ten minutes. Read each named report with `scripts/antiphon delegate status <id>` using the caller’s credential. The job queues the first reminder. An idle caller can receive a native repeat when that same reminder has been withheld for delivery and 15 minutes have elapsed since its last enqueue or repeat. Acknowledgement, a hold or a refill to target retires the outstanding reminder. The attention feed groups overdue unread reports by caller.
 
 <a id="standing-operating-rules"></a>
 ### Standing operating rules (operator, 2026-10-22; CARD-1469)
