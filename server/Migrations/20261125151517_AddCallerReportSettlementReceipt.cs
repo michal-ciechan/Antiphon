@@ -11,6 +11,8 @@ namespace Antiphon.Server.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql("SET LOCAL lock_timeout = '5s';");
+
             migrationBuilder.AddColumn<DateTime>(
                 name: "ReceivedReportCompletedAt",
                 table: "AgentTasks",
@@ -33,17 +35,8 @@ namespace Antiphon.Server.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "ReceivedReportCompletedAt",
-                table: "AgentTasks");
-
-            migrationBuilder.DropColumn(
-                name: "ReceivedReportPromptSequence",
-                table: "AgentTasks");
-
-            migrationBuilder.DropColumn(
-                name: "ReceivedReportSessionId",
-                table: "AgentTasks");
+            throw new NotSupportedException(
+                "A caller's settlement receipt cannot be discarded by a downgrade.");
         }
     }
 }
