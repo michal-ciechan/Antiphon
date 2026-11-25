@@ -213,7 +213,14 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         {
             var drop = options.Cut == "lost-flush" && boundary == "completion"
                 || options.Cut == "idle-lost-wakeup" && boundary == "completion"
-                || options.Cut == "lost-request" && boundary == "land-request";
+                || options.Cut == "lost-request" && boundary == "land-request"
+                // rc b8cbfb24 e2e-all-split-8: this child is killed while held at
+                // queue-committed-before-wakeup, so it must not wake the caller at all. The queue
+                // insert schedules its own completion flush (CARD-1360) and the 5 s scan wakes a
+                // linked unattempted row; either could claim the row and type it before the kill,
+                // leaving the CARD-1892 unknown attempt a Grok caller holds instead of the crash
+                // this cut models. The restarted child recovers through its own sweep and scan.
+                || options.Cut == "review-before-wakeup" && boundary is "completion" or "completion-schedule";
             // CARD-1305: record each dropped wakeup so a test can witness that its cut fired for the
             // identity it later sees delivered through the remaining recovery sources.
             if (drop)
