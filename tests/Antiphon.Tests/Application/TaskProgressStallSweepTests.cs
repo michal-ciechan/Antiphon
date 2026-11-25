@@ -228,6 +228,36 @@ public class TaskProgressStallSweepTests
     }
 
     /// <summary>
+    /// The race half of the group-86 shape: the agent row exists when the sweep checks it and is
+    /// deleted before the incident insert. That write fails, but it must leave nothing tracked, so
+    /// the same tick still decides its queued task and the next pass records the stall.
+    /// </summary>
+    [Test]
+    public async Task An_agent_row_deleted_under_the_stall_insert_does_not_poison_the_tick()
+    {
+        await using var scenario = new Scenario();
+        var deleter = new DeleteAgentBeforeIncidentInsert();
+        var (harness, _) = CreateHarness(interceptor: deleter);
+        await scenario.SeedStalledAsync();
+        var queued = await scenario.SeedQueuedAsync();
+        deleter.Arm(scenario.AgentId);
+
+        await harness.TickAsync(CancellationToken.None);
+
+        deleter.Fired.ShouldBeTrue("the agent row vanished between the existence check and the insert");
+        (await scenario.IncidentsAsync()).ShouldBeEmpty("that tick's stall write failed");
+        await using (var db = CreateContext())
+        {
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued)).Status
+                .ShouldNotBe(AgentTaskStatus.Queued, "the failed stall write did not reach the dispatch's save");
+        }
+
+        await harness.DetectStalledProgressAsync(CancellationToken.None);
+        (await scenario.IncidentsAsync()).ShouldHaveSingleItem().AgentId
+            .ShouldBeNull("the next pass records the stall without the vanished agent");
+    }
+
+    /// <summary>
     /// CARD-1072. The sweep used to probe every open task before the stall gates.
     /// One tick must probe a past-stall mid-turn directory once, and must not probe
     /// a younger task, an idle session, or a runner-bound desktop checkout.
@@ -458,6 +488,8 @@ public class TaskProgressStallSweepTests
         private readonly Guid _sessionId = Guid.NewGuid();
         private readonly Guid _agentId = Guid.NewGuid();
         private readonly List<Guid> _tasks = [];
+
+        public Guid AgentId => _agentId;
         private readonly List<Guid> _channels = [];
         private long _seq;
 
@@ -851,6 +883,34 @@ public class TaskProgressStallSweepTests
 
         private static StringComparer PathComparer { get; } =
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    }
+
+    /// <summary>One shot: deletes the armed agent row just before the next AgentIncidents insert runs.</summary>
+    private sealed class DeleteAgentBeforeIncidentInsert : DbCommandInterceptor
+    {
+        private Guid? _agentId;
+
+        public bool Fired { get; private set; }
+
+        public void Arm(Guid agentId) => _agentId = agentId;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_agentId is Guid agentId
+                && command.CommandText.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal))
+            {
+                _agentId = null;
+                await using var db = CreateContext();
+                await db.Agents.Where(a => a.Id == agentId).ExecuteDeleteAsync(cancellationToken);
+                Fired = true;
+            }
+
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>Counts <c>session-state.fallback</c> reads whose session-id parameter names one session.</summary>
