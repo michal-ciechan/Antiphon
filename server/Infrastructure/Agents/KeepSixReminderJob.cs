@@ -21,8 +21,8 @@ public sealed class KeepSixReminderJob(
     ILogger<KeepSixReminderJob> logger)
 {
     public const string RecurringJobId = "antiphon:keep-six";
-    public const int GraceMinutes = 3;
-    public const int BackoffMinutes = 15;
+    public const int GraceMinutes = KeepSixShortfall.GraceMinutes;
+    public const int BackoffMinutes = KeepSixShortfall.BackoffMinutes;
     public const string AdvisoryLockKey = "antiphon.keep-six.reminder";
 
     [AutomaticRetry(Attempts = 0)]
@@ -107,13 +107,13 @@ public sealed class KeepSixReminderJob(
                 continue;
             if (ParseSession(agent.PersistentSessionId) is not Guid sessionId)
                 continue;
-            if (!sessions.TryGetValue(sessionId, out var session) || !Accepts(agent, session))
+            if (!sessions.TryGetValue(sessionId, out var session) || !KeepSixShortfall.Accepts(agent, session))
                 continue;
             if (agent.BoardId is not Guid boardId || !boardProjects.TryGetValue(boardId, out var projectId))
                 continue;
-            if (!GraceElapsed(row, count, now))
+            if (!KeepSixShortfall.GraceElapsed(row, count, now))
                 continue;
-            if (InBackoff(row, count, now))
+            if (KeepSixShortfall.InBackoff(row, count, now))
                 continue;
             if (await PendingAsync(db, sessionId, ct).ConfigureAwait(false))
                 continue;
@@ -192,43 +192,6 @@ public sealed class KeepSixReminderJob(
             count.TopCards,
             hosts,
             stages);
-    }
-
-    private static bool Accepts(Agent agent, AgentSession session) =>
-        session.Status == SessionStatus.Running
-        && session.SessionBackend == SessionBackend.PtyHost
-        && session.CardId is null
-        && agent.PolicyRefreshMode != PolicyRefreshMode.Off;
-
-    private static bool GraceElapsed(KeepSixOrchestrator row, KeepSixShortfall.Counts count, DateTime now)
-    {
-        var anchor = Latest(row.EnabledAt, count.LastDispatchAt, count.LastCompletionAt);
-        return anchor is DateTime from && now >= from.AddMinutes(GraceMinutes);
-    }
-
-    private static bool InBackoff(KeepSixOrchestrator row, KeepSixShortfall.Counts count, DateTime now)
-    {
-        if (row.LastReminderEnqueuedAt is not DateTime enqueued)
-            return false;
-        var createdAfter = count.LastDispatchAt is DateTimeOffset created && created.UtcDateTime > enqueued;
-        return now < enqueued.AddMinutes(BackoffMinutes) && !createdAfter;
-    }
-
-    private static DateTime? Latest(DateTime? enabledAt, DateTimeOffset? lastCreate, DateTimeOffset? lastCompletion)
-    {
-        DateTime? latest = enabledAt;
-        void Consider(DateTimeOffset? value)
-        {
-            if (value is not DateTimeOffset instant)
-                return;
-            var utc = instant.UtcDateTime;
-            if (latest is null || utc > latest)
-                latest = utc;
-        }
-
-        Consider(lastCreate);
-        Consider(lastCompletion);
-        return latest;
     }
 
     private static async Task<bool> PendingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>

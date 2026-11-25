@@ -178,17 +178,17 @@ public sealed class KeepSixService(
         return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
     }
 
-    private async Task<List<Agent>> LoadPopulationAsync(CancellationToken ct)
+    private Task<List<Agent>> LoadPopulationAsync(CancellationToken ct) => StandingOrchestrators(db).ToListAsync(ct);
+
+    internal static IQueryable<Agent> StandingOrchestrators(AppDbContext db)
     {
         var bundleIds = db.AgentBundleAttachments.AsNoTracking()
             .Where(attachment => attachment.BundleKey == InstructionBundles.Orchestrator)
             .Select(attachment => attachment.AgentId);
-        return await db.Agents.AsNoTracking()
+        return db.Agents.AsNoTracking()
             .Where(agent => bundleIds.Contains(agent.Id) && !agent.IsPoolDelegate)
             .Where(agent => agent.StandingSpecialistRole == null
-                || agent.StandingSpecialistRole != StandingSpecialistSeatPolicy.Role)
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
+                || agent.StandingSpecialistRole != StandingSpecialistSeatPolicy.Role);
     }
 
     private async Task<Dictionary<Guid, KeepSixOrchestrator>> LoadRowsAsync(

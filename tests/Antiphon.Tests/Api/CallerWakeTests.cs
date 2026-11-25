@@ -72,6 +72,7 @@ public class CallerWakeTests
         builder.Services.AddSingleton<TimeProvider>(rig.World.Clock);
         builder.Services.AddScoped<DispatchConcurrencySettingsService>();
         builder.Services.AddScoped<KeepSixShortfall>();
+        builder.Services.AddScoped<CallerWakeService>();
         builder.Services.AddScoped<KeepSixService>();
         builder.Services.AddMemoryCache();
         await using var app = builder.Build();
@@ -80,7 +81,11 @@ public class CallerWakeTests
 
         using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         var path = $"/api/orchestrators/{agentId}/caller-wake";
+        using (var anonymous = await http.PostAsync(path, null))
+            anonymous.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         http.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, token);
+        using (var other = await http.PostAsync($"/api/orchestrators/{Guid.NewGuid()}/caller-wake", null))
+            other.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         async Task<JsonElement> PollAsync()
         {
             using var response = await http.PostAsync(path, null);
@@ -92,6 +97,13 @@ public class CallerWakeTests
         early.GetProperty("shortfall").GetInt32().ShouldBe(0);
 
         rig.World.Clock.Advance(TimeSpan.FromMinutes(11));
+        async Task<bool> HasAttentionAsync()
+        {
+            await using var db = rig.World.CreateContext();
+            var items = await AttentionService.BuildUnreadReportItemsAsync(db, rig.World.Clock.GetUtcNow().UtcDateTime, default);
+            return items.Any(i => i.SessionId == rig.World.CallerSessionId);
+        }
+        (await HasAttentionAsync()).ShouldBeTrue();
         var checkout = C1514Support.RepoRoot();
         using var settings = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(checkout, ".claude", "settings.json")));
         var stop = settings.RootElement.GetProperty("hooks").GetProperty("Stop")[0].GetProperty("hooks")[0];
@@ -105,6 +117,7 @@ public class CallerWakeTests
         start.ArgumentList.Add(script);
         start.Environment["ANTIPHON_ORCHESTRATOR"] = "1";
         start.Environment.Remove("ANTIPHON_TASK_ID");
+        start.Environment["ANTIPHON_HOOK_STATE_DIR"] = rig.World.CallerDirectory;
         start.Environment["ANTIPHON_AGENT_ID"] = agentId.ToString();
         start.Environment["ANTIPHON_TASK_TOKEN"] = token;
         start.Environment["ANTIPHON_API"] = http.BaseAddress!.ToString();
@@ -135,6 +148,7 @@ public class CallerWakeTests
         rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
         var afterRead = await PollAsync();
         afterRead.GetProperty("reportTaskIds").GetArrayLength().ShouldBe(0);
+        (await HasAttentionAsync()).ShouldBeFalse();
         afterRead.GetProperty("shortfall").GetInt32().ShouldBeGreaterThan(0);
         rig.Caller.SubmittedBodies.ShouldBeEmpty();
         (await rig.RowAsync(taskId)).Status.ShouldBe(QueuedMessageStatus.Pending);

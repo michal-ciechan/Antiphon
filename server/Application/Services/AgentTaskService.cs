@@ -2909,13 +2909,14 @@ public sealed class AgentTaskService
             ?? throw new NotFoundException(nameof(AgentTask), id);
 
         var report = !string.IsNullOrEmpty(task.Result) ? task.Result : task.FailureReason;
-        if (IsSettled(task.Status)
+        if ((IsSettled(task.Status) || (task.Status == AgentTaskStatus.Blocked && !string.IsNullOrEmpty(task.Result)))
             && !string.IsNullOrEmpty(report)
             && pollingSessionId is not null
             && pollingSessionId == task.ParentSessionId)
         {
             var now = _timeProvider.GetUtcNow().UtcDateTime;
-            await _db.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(setters => setters
+            await _db.AgentTasks.Where(t => t.Id == id && t.Status == task.Status && t.CompletedAt == task.CompletedAt
+                && t.ConcurrencyToken == task.ConcurrencyToken).ExecuteUpdateAsync(setters => setters
                 .SetProperty(t => t.LastPolledResultHash, DelegationNoteDigest.Compute(report))
                 .SetProperty(t => t.LastPolledResultAt, now), ct);
 

@@ -16,6 +16,46 @@ public sealed class KeepSixShortfall(
     DispatchConcurrencySettingsService concurrency,
     TimeProvider clock)
 {
+    internal const int GraceMinutes = 3;
+    internal const int BackoffMinutes = 15;
+
+    internal static bool Accepts(Agent agent, AgentSession session) =>
+        session.Status == SessionStatus.Running
+        && session.SessionBackend == SessionBackend.PtyHost
+        && session.CardId is null
+        && agent.PolicyRefreshMode != PolicyRefreshMode.Off;
+
+    internal static bool GraceElapsed(KeepSixOrchestrator row, KeepSixShortfall.Counts count, DateTime now)
+    {
+        var anchor = Latest(row.EnabledAt, count.LastDispatchAt, count.LastCompletionAt);
+        return anchor is DateTime from && now >= from.AddMinutes(GraceMinutes);
+    }
+
+    internal static bool InBackoff(KeepSixOrchestrator row, KeepSixShortfall.Counts count, DateTime now)
+    {
+        if (row.LastReminderEnqueuedAt is not DateTime enqueued)
+            return false;
+        var createdAfter = count.LastDispatchAt is DateTimeOffset created && created.UtcDateTime > enqueued;
+        return now < enqueued.AddMinutes(BackoffMinutes) && !createdAfter;
+    }
+
+    private static DateTime? Latest(DateTime? enabledAt, DateTimeOffset? lastCreate, DateTimeOffset? lastCompletion)
+    {
+        DateTime? latest = enabledAt;
+        void Consider(DateTimeOffset? value)
+        {
+            if (value is not DateTimeOffset instant)
+                return;
+            var utc = instant.UtcDateTime;
+            if (latest is null || utc > latest)
+                latest = utc;
+        }
+
+        Consider(lastCreate);
+        Consider(lastCompletion);
+        return latest;
+    }
+
     public const string BadgeOff = "off";
     public const string BadgeHealthy = "healthy";
     public const string BadgeUnderTarget = "under-target";
