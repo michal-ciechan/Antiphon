@@ -12,11 +12,11 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.PtyHost.Tests;
 
 [Category("Integration")]
-[NativeLinuxOnly("Linux placement negotiation runs on the Unix request pipe.")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class Card2060PlacementHandshakeTests
 {
     [Test]
+    [NativeLinuxOnly("Linux placement negotiation runs on the Unix request pipe.")]
     public async Task OldHostGetsNoTrackedLaunch()
     {
         RequireLinux();
@@ -66,6 +66,7 @@ public sealed class Card2060PlacementHandshakeTests
     }
 
     [Test]
+    [NativeLinuxOnly("Linux placement cancellation retires the Unix request pipe.")]
     public async Task CancelledClientRetiresSentStream()
     {
         RequireLinux();
@@ -183,6 +184,7 @@ public sealed class Card2060PlacementHandshakeTests
     }
 
     [Test]
+    [NativeLinuxOnly("The original Linux PTY host materializes the committed placement.")]
     public async Task PlacementIoStartsOnOrdinaryRead()
     {
         RequireLinux();
@@ -197,6 +199,7 @@ public sealed class Card2060PlacementHandshakeTests
     }
 
     [Test]
+    [NativeLinuxOnly("The original Linux PTY host reads the committed placement.")]
     public async Task FailedPlacementCannotPromoteLater()
     {
         RequireLinux();
@@ -211,6 +214,7 @@ public sealed class Card2060PlacementHandshakeTests
     }
 
     [Test]
+    [NativeLinuxOnly("The original Linux PTY host publishes the placement integrity error.")]
     public async Task ConflictingPlacementPreservesFirstBytes()
     {
         RequireLinux();

@@ -1470,6 +1470,20 @@
           "owner": "CARD-1614"
         },
         {
+          "suite": "pty-host",
+          "class": "Card2060PlacementHandshakeTests",
+          "methods": [
+            "OldHostGetsNoTrackedLaunch",
+            "CancelledClientRetiresSentStream",
+            "PlacementIoStartsOnOrdinaryRead",
+            "FailedPlacementCannotPromoteLater",
+            "ConflictingPlacementPreservesFirstBytes"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the tracked custody requests use real Unix pipes and the Linux PTY. Portable codec and validator cases remain required.",
+          "owner": "CARD-2060"
+        },
+        {
           "suite": "agents-pty",
           "class": "Card1685LinuxCustodyRunnerTests",
           "methods": [
