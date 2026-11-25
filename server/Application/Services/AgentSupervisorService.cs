@@ -950,6 +950,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     /// the episode (<see cref="StandingBootAttentionProjection.CurrentEpisodeKeysAsync"/>). When those
     /// keys cannot be read, every <c>standingBoot:v1;</c> receipt is retained this pass: uncertainty
     /// never deletes dedup evidence. Nothing here touches restart or counter logic.</para>
+    ///
+    /// <para>CARD-2074: the per-agent cap never deletes a pending runner slot release intent.</para>
     /// </summary>
     public async Task<int> PruneIncidentsAsync(CancellationToken ct)
     {
@@ -975,6 +977,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         var cutoff = UtcNow().AddDays(-_settings.IncidentRetentionDays);
         var removed = await prunable.Where(i => i.CreatedAt < cutoff).ExecuteDeleteAsync(ct);
 
+        // CARD-2074: every incident with a null AgentId shares one cap bucket (fleet notices, stall
+        // incidents whose agent row is gone, runner slot release intents). A PENDING release intent
+        // is not history: it is the only durable record of a release audit or deferred kill that
+        // RunnerSlotService.ReconcilePendingReleasesAsync still owes, so newer unrelated rows never
+        // cap it away. It still counts toward the kept rows, and age retention above still applies.
+        var cappable = prunable.Where(i => i.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
+            || i.FailureReason == null
+            || !i.FailureReason.StartsWith(RunnerSlotService.PendingIntentPrefix));
         var overCap = await _db.AgentIncidents
             .GroupBy(i => i.AgentId)
             .Where(g => g.Count() > _settings.IncidentCapPerAgent)
@@ -987,7 +997,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 .OrderByDescending(i => i.CreatedAt)
                 .Take(_settings.IncidentCapPerAgent)
                 .Select(i => i.Id);
-            removed += await prunable
+            removed += await cappable
                 .Where(i => i.AgentId == agentId && !keepIds.Contains(i.Id))
                 .ExecuteDeleteAsync(ct);
         }

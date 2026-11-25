@@ -263,6 +263,9 @@ public static class RunnerSlotService
     }
 
     private const string PendingPrefix = "pending:";
+
+    /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes (CARD-2074 prune exemption).</summary>
+    internal const string PendingIntentPrefix = PendingPrefix;
     private const string KillGenerationMarker = "kill-generation:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";

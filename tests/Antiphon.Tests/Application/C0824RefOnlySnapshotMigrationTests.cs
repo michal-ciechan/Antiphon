@@ -81,8 +81,19 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         AssertChain([.. db.Database.GetMigrations(), "29991231235959_C2074FutureMigration"]);
     }
 
-    private static void AssertChain(string[] chain) =>
-        chain.TakeLast(12).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias, ReviewEngine, CallerReportReceipt }, "linear-after-master-with-original-ids");
+    private static void AssertChain(string[] chain)
+    {
+        string[] window = [Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias, ReviewEngine, CallerReportReceipt];
+        var start = Array.IndexOf(chain, Debt);
+        start.ShouldBeGreaterThan(0, "the debt migration follows its predecessor");
+        chain[start - 1].ShouldBe(Previous, "linear-after-master-with-original-ids");
+        chain.Skip(start).Take(window.Length).ShouldBe(window, "linear-after-master-with-original-ids");
+        // CARD-2074: the tip is derived. Every later migration is newer than this window and
+        // linear, so the next card's migration needs no edit here.
+        var later = chain.Skip(start + window.Length).ToArray();
+        later.ShouldAllBe(id => string.CompareOrdinal(id, CallerReportReceipt) > 0, "later-migrations-are-newer-than-the-window");
+        later.ShouldBe(later.Order(StringComparer.Ordinal).ToArray(), "later-migrations-are-linear");
+    }
 
     [Test]
     public async Task Additive_upgrade_and_empty_downgrade_preserve_legacy_rows(CancellationToken ct)
