@@ -331,21 +331,21 @@ public sealed class CodexCliObservationTests
     public async Task C959_Probe_failure_never_refuses()
     {
         // Each vector builds its own schemas, repositories and worlds, so the vectors run side by side.
-        await Worlds.InParallelAsync(new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" }
-            .SelectMany(error => NeverRefusesCases(now => new(null, now, error, new string('a', 64)), 225, error)));
+        await Worlds.InParallelAsync(HeavyFirst(new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" }
+            .SelectMany(error => NeverRefusesCases(now => new(null, now, error, new string('a', 64)), 225, error))));
     }
 
     [Test]
     public async Task C959_Stale_sample_never_refuses()
     {
-        await Worlds.InParallelAsync(new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) }
-            .SelectMany(age => NeverRefusesCases(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString())));
+        await Worlds.InParallelAsync(HeavyFirst(new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) }
+            .SelectMany(age => NeverRefusesCases(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString()))));
     }
 
     [Test]
     public async Task C959_Unknown_version_never_refuses()
     {
-        await Worlds.InParallelAsync(new (string Name, Func<DateTimeOffset, RunnerCodexCliVersionDto?> Sample)[]
+        await Worlds.InParallelAsync(HeavyFirst(new (string Name, Func<DateTimeOffset, RunnerCodexCliVersionDto?> Sample)[]
         {
             ("legacy", _ => null),
             ("null-version", now => new(null, now, null, new string('a', 64))),
@@ -353,7 +353,7 @@ public sealed class CodexCliObservationTests
             ("missing-time", _ => new("0.160.0", null, null, new string('a', 64))),
             ("fingerprint", now => new("0.160.0", now, null, "bad")),
             ("clock-skew", now => new("0.160.0", now.AddMinutes(2), null, new string('a', 64))),
-        }.SelectMany(c => NeverRefusesCases(c.Sample, 231, c.Name)));
+        }.SelectMany(c => NeverRefusesCases(c.Sample, 231, c.Name))));
     }
 
     [Test]
@@ -390,8 +390,13 @@ public sealed class CodexCliObservationTests
                             new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a',64)), busy, level)));
             }
         }
-        await Worlds.InParallelAsync(cases);
+        await Worlds.InParallelAsync(HeavyFirst(cases));
     }
+
+    // The never-refuses legs (two create kits, a cold dispatch with a repository, a retry and a warm reuse) are the
+    // longest cases; start them first so none of them starts last and runs on alone. OrderBy is stable.
+    private static IEnumerable<(string Name, Func<Task> Body)> HeavyFirst(IEnumerable<(string Name, Func<Task> Body)> cases) =>
+        cases.OrderBy(c => c.Name.StartsWith("never-refuses/", StringComparison.Ordinal) ? 0 : 1);
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
     {

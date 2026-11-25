@@ -713,6 +713,7 @@ internal static class Worlds
         await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree }, async (c, _) =>
         {
             var name = label(c);
+            using var span = TestTrace.Span("world case", "world.case", name);
             try { await body(c); }
             catch (Exception ex)
             {
