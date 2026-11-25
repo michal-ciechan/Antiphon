@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -93,7 +94,7 @@ public class KeepSixReminderTests
     }
 
     [Test]
-    public async Task after_delivery_a_tick_inside_the_backoff_enqueues_nothing_until_a_dispatch_or_fifteen_minutes()
+    public async Task after_delivery_a_tick_waits_fifteen_minutes_even_if_a_dispatch_intervenes()
     {
         var quiet = await ReadyAsync("ks-backoff", "KS20-QUIET", DateTime.UtcNow.AddMinutes(-30));
         await RunAsync();
@@ -129,9 +130,7 @@ public class KeepSixReminderTests
         await TaskAsync(dispatched.ProjectId!.Value, AgentTaskRole.Code, AgentTaskStatus.Queued,
             DateTime.UtcNow.AddMinutes(-4));
         await RunAsync();
-        var waived = await RemindersAsync(dispatched.SessionId);
-        waived.Count.ShouldBe(2);
-        AssertReminder(waived.Single(message => message.Status == QueuedMessageStatus.Pending), "KS20-DISPATCH");
+        (await RemindersAsync(dispatched.SessionId)).ShouldHaveSingleItem().Id.ShouldBe(dispatchedFirst.Id);
     }
 
     [Test]
@@ -179,13 +178,13 @@ public class KeepSixReminderTests
         acknowledged.ShouldBeGreaterThan(before);
         var stillPending = (await RemindersAsync(seated.SessionId)).ShouldHaveSingleItem();
         stillPending.Id.ShouldBe(pending.Id);
-        stillPending.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stillPending.Status.ShouldBe(QueuedMessageStatus.Canceled);
 
         await RunAsync();
 
         var after = (await RemindersAsync(seated.SessionId)).ShouldHaveSingleItem();
         after.Id.ShouldBe(pending.Id);
-        after.Status.ShouldBe(QueuedMessageStatus.Pending);
+        after.Status.ShouldBe(QueuedMessageStatus.Canceled);
     }
 
     [Test]
@@ -231,6 +230,72 @@ public class KeepSixReminderTests
         canceled.Id.ShouldBe(pending.Id);
         canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
         canceled.DeliveryAttempts.ShouldBe(1);
+    }
+
+
+    [Test]
+    public async Task Native_fallback_shares_the_jobs_outstanding_reminder_through_ack_and_refill()
+    {
+        var agent = await ReadyAsync("ks-native", "KS-NATIVE", DateTime.UtcNow.AddHours(-1));
+        var (token, hash) = AgentTaskService.NewToken();
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == agent.SessionId);
+        session.DelegationTokenHash = hash;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = session.Id, Kind = "TurnEnd", Sequence = 1, CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, token);
+        var route = $"/api/orchestrators/{agent.AgentId}/caller-wake?conversationId={session.Id}&generation={Uri.EscapeDataString(session.StartedAt.ToString("O"))}";
+        async Task<int> Poll()
+        {
+            using var response = await client.PostAsync(route, null);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("shortfall").GetInt32();
+        }
+        (await Poll()).ShouldBe(0, "the job owns the first enqueue");
+        await RunAsync();
+        var original = (await RemindersAsync(session.Id)).ShouldHaveSingleItem();
+        (await Poll()).ShouldBe(0, "the original enqueue starts the shared interval");
+        await db.SessionQueuedMessages.Where(m => m.Id == original.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(m => m.WithholdCount, 1)
+            .SetProperty(m => m.FirstWithheldAt, DateTime.UtcNow)
+            .SetProperty(m => m.LastWithheldAt, DateTime.UtcNow)
+            .SetProperty(m => m.LastWithholdReason, DialogDeliveryAdmission.AdoptedSession));
+        await EditRowAsync(agent.AgentId, r => r.LastReminderEnqueuedAt = DateTime.UtcNow.AddMinutes(-16));
+        (await Poll()).ShouldBeGreaterThan(0);
+        await RunAsync();
+        (await Poll()).ShouldBe(0);
+        (await RemindersAsync(session.Id)).ShouldHaveSingleItem().Id.ShouldBe(original.Id);
+        await EditRowAsync(agent.AgentId, r => r.LastReminderEnqueuedAt = DateTime.UtcNow.AddMinutes(-16));
+        (await Poll()).ShouldBeGreaterThan(0, "a continuing withheld shortfall repeats after the interval");
+
+        await AckAsync(agent.AgentId);
+        await RunAsync();
+        (await Poll()).ShouldBe(0);
+        (await RemindersAsync(session.Id)).ShouldHaveSingleItem().Status.ShouldBe(QueuedMessageStatus.Canceled);
+        (await db.KeepSixOrchestrators.AsNoTracking().SingleAsync(r => r.AgentId == agent.AgentId)).OutstandingMessageId.ShouldBeNull();
+
+        await EditRowAsync(agent.AgentId, r =>
+        {
+            r.LastReminderEnqueuedAt = DateTime.UtcNow.AddMinutes(-17);
+            r.LastAcknowledgedAt = DateTime.UtcNow.AddMinutes(-16);
+            r.Target = 1;
+            r.HoldUntil = DateTime.UtcNow.AddHours(1);
+        });
+        await RunAsync();
+        (await Poll()).ShouldBe(0);
+        (await RemindersAsync(session.Id)).Count.ShouldBe(1);
+        await EditRowAsync(agent.AgentId, r => r.HoldUntil = null);
+        await RunAsync();
+        (await RemindersAsync(session.Id)).Count(m => m.Status == QueuedMessageStatus.Pending).ShouldBe(1);
+        await TaskAsync(agent.ProjectId!.Value, AgentTaskRole.Code, AgentTaskStatus.Queued, DateTime.UtcNow);
+        await RunAsync();
+        (await RemindersAsync(session.Id)).Count(m => m.Status == QueuedMessageStatus.Pending).ShouldBe(0);
+        (await db.KeepSixOrchestrators.AsNoTracking().SingleAsync(r => r.AgentId == agent.AgentId)).OutstandingMessageId.ShouldBeNull();
     }
 
     private async Task<SeedBoard> BoardAsync(string name)

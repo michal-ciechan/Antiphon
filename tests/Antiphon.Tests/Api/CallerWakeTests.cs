@@ -49,7 +49,9 @@ public class CallerWakeTests
             {
                 Id = Guid.NewGuid(), AgentSessionId = session.Id, Sequence = row.Sequence + 1,
                 Origin = QueuedMessageOrigin.System, NoteHeader = KeepSixReminderText.NoteHeader,
-                CreatedAt = now.AddDays(-12), Body = "Old shortfall",
+                CreatedAt = now.AddDays(-12), Body = "Old shortfall", WithholdCount = 1,
+                FirstWithheldAt = now.AddDays(-12), LastWithheldAt = now.AddDays(-12),
+                LastWithholdReason = DialogDeliveryAdmission.AdoptedSession,
             };
             db.AddRange(new Agent
             {
