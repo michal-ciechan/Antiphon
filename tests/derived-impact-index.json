@@ -18013,6 +18013,7 @@
         "CheckpointAdmissionContractTests",
         "CheckpointExecutorLogTests",
         "CheckpointStatePublicationTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "HostCleanupCheckpointCompatibilityTests",
@@ -25067,6 +25068,7 @@
       "classes": [
         "CheckpointExecutorLogTests",
         "CheckpointStatePublicationTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "TempRootSweepAnchoredDeleteTests"
       ]
