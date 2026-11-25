@@ -91,17 +91,16 @@ internal static class RowCommand
             return row.Fail(ExitCodes.Invalid, "source_unknown");
         if (input.ExpectedSourceSha is not null && (start.DirtyFiles != 0 || start.Commit != input.ExpectedSourceSha))
             return row.Fail(ExitCodes.Invalid, start.DirtyFiles != 0 ? "source_dirty" : "source_mismatch");
-        if (input.NoBuild)
+        var replay = input.NoBuild
+            ? ResolveReplay(input, repo, project, outputPath, start, platform, cancellationToken)
+            : null;
+        using var replayCache = replay?.Cache;
+        if (replay is not null)
         {
             row.Build = "reused";
-            if (input.ExpectedSourceSha is not null || input.Repeat > 1)
-            {
-                var properties = BuildStep.PropertyArguments(input.Properties, platform.IsWindows, input.Repeat, input.CanonicalProject).ToList();
-                BuildStep.AppendSharedLayout(properties, repo, project, outputPath);
-                source.BuildSource = CheckpointBuildBinding.Expected(repo, project, outputPath, properties, start).Check();
-                if (source.BuildSource != "verified")
-                    return row.Fail(ExitCodes.Invalid, "build_source_mismatch");
-            }
+            source.BuildSource = replay.BuildSource;
+            if (replay.Refusal is not null)
+                return row.Fail(ExitCodes.Invalid, replay.Refusal);
         }
         var guard = new SourceRunGuard(repo, source, runtime.SourceCapture);
         if (!guard.Observe())
@@ -160,6 +159,7 @@ internal static class RowCommand
                 Repeat = input.Repeat,
                 Expect = input.Expect,
                 Properties = input.Properties,
+                ResolvedBuildProperties = replay?.Properties,
                 Commit = row.Commit,
                 Source = source,
                 SourceBoundary = guard.Observe,
@@ -200,6 +200,47 @@ internal static class RowCommand
             if (held)
                 await lease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private sealed record Replay(string BuildSource, string? Refusal = null,
+        IReadOnlyList<string>? Properties = null, CheckpointIntermediateCache? Cache = null);
+
+    private static Replay ResolveReplay(Inputs input, string repo, string project, string outputPath,
+        SourceObservation source, IPlatform platform, CancellationToken cancellationToken)
+    {
+        var original = BuildStep.PropertyArguments(input.Properties, platform.IsWindows, input.Repeat, input.CanonicalProject);
+        var cold = original.ToList();
+        BuildStep.AppendSharedLayout(cold, repo, project, outputPath);
+        var coldCheck = CheckpointBuildBinding.Expected(repo, project, outputPath, cold, source).Check();
+        if (coldCheck == "verified")
+            return new Replay(coldCheck, Properties: cold);
+
+        if (source.DirtyFiles == 0 && !CheckpointIntermediateCache.OverridesLayout(original))
+        {
+            // Derive both layouts from the request. A receipt cannot supply paths or MSBuild arguments.
+            var warm = original.ToList();
+            var partition = CheckpointIntermediateCache.PathFor(repo, project, original, source);
+            BuildStep.AppendSharedLayout(warm, repo, project, outputPath, partition);
+            if (CheckpointBuildBinding.Expected(repo, project, outputPath, warm, source).Check() == "verified")
+            {
+                var cache = CheckpointIntermediateCache.TryOpen(repo, source, source.Commit, replay: true,
+                    cancellationToken: cancellationToken);
+                try
+                {
+                    if (cache?.Prepare(project, original, requireSealed: true) is not null)
+                    {
+                        var admitted = new Replay("verified", Properties: warm, Cache: cache);
+                        cache = null;
+                        return admitted;
+                    }
+                }
+                finally { cache?.Dispose(); }
+                return new Replay("verified", "build_cache_unavailable");
+            }
+        }
+
+        var strict = input.ExpectedSourceSha is not null || input.Repeat > 1;
+        return new Replay(coldCheck, strict ? "build_source_mismatch" : null);
     }
 
     private sealed record Inputs(

@@ -594,10 +594,22 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             "row", "--name", "replay", "--project", SealFixture.Project, "--output-path", "bin-proof/",
             "--filter", "/*/*/Sample/alpha", "--no-build", "--expected-source-sha", fixture.Source.Commit!,
         ];
-        var exit = await Antiphon.Checkpoints.Program.RunAsync(args, new CheckpointApp.Runtime
+        var runtime = new CheckpointApp.Runtime
         {
             RepoRoot = fixture.Root, Driver = replay, Slots = new SealSlots(), Output = output,
-        });
+        };
+        if (warm)
+        {
+            using (var holder = fixture.Open())
+            {
+                var contended = await Antiphon.Checkpoints.Program.RunAsync(args, runtime);
+                contended.ShouldBe(ExitCodes.Invalid, output.ToString());
+                output.ToString().ShouldContain("reason=build_cache_unavailable");
+                replay.Rows.ShouldBeEmpty();
+            }
+            output.GetStringBuilder().Clear();
+        }
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(args, runtime);
         exit.ShouldBe(ExitCodes.Green, output.ToString());
         replay.Builds.ShouldBeEmpty();
         SealFixture.Properties(replay.Rows.ShouldHaveSingleItem()).ShouldBe(SealFixture.Properties(producer.Builds.Single()));
