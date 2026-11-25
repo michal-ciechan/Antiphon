@@ -105,4 +105,19 @@ is the A-2 proof.
 
 ## Receipt
 
-Pending the green run.
+Checkpoint run `20261125-191731-1f24` at source `9e3af113b6034c1d8ddf12ae0bb93011cc2b88e7`
+(server2, Debian 12, 24 cores). The source was clean and the build source was verified. The
+run did one cold build of 275 s and no other build or test command.
+
+```
+CHECKPOINT CP-1 ... filter=/*/*/ReleaseImpactRelationTests/* executed=5 passed=5 failed=0 skipped=0 ... sourceState=clean buildSource=verified
+CHECKPOINT CP-2 ... filter=/*/*/DerivedImpactIndexTests/regenerate_command_reports_changed_then_unchanged executed=1 passed=1 failed=0 skipped=0 ... sourceState=clean buildSource=verified
+CHECKPOINT CP-3 ... filter=/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder executed=1 passed=1 failed=0 skipped=0 ... sourceState=clean buildSource=verified
+wall: 11m28s  sequential-equivalent: 1m14s  builds: 1  rows: 3 green 0 red 0 skipped
+verdict: GREEN exit=0
+CHECKPOINT SOURCE VALID source=9e3af113b6034c1d8ddf12ae0bb93011cc2b88e7 rows=3
+```
+
+`scripts/antiphon evidence-diff --base bdca854ff5ec...` over commits=3 found entries=0 and
+violations=0. `git merge-tree --write-tree origin/master HEAD` was clean after a fresh fetch.
+This commit adds only the receipt text to this doc.
