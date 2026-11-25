@@ -1,6 +1,7 @@
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -13,9 +14,9 @@ public sealed class CallerWakeService(
     internal static readonly TimeSpan ReportInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ReminderInterval = TimeSpan.FromMinutes(KeepSixShortfall.BackoffMinutes);
     private static readonly object ClaimLock = new();
-    public sealed record Wake(IReadOnlyList<Guid> ReportTaskIds, int Shortfall);
+    public sealed record Wake(IReadOnlyList<Guid> ReportTaskIds, int Shortfall, bool Idle = true);
 
-    public async Task<Wake?> PollAsync(Guid agentId, string? token, CancellationToken ct)
+    public async Task<Wake?> PollAsync(Guid agentId, Guid? conversationId, DateTime? generation, string? token, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
         var hash = AgentTaskService.HashToken(token);
@@ -41,7 +42,15 @@ public sealed class CallerWakeService(
             session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s =>
                 ownSessions.Contains(s.Id) && s.Status == SessionStatus.Running, ct);
         }
-        if (session is null || session.AgentKind != AgentKind.ClaudeCode) return null;
+        if (session is null || session.AgentKind != AgentKind.ClaudeCode || session.Id != conversationId
+            || !SessionGeneration.Equal(session.StartedAt, generation)) return null;
+
+        // An empty transcript and a restart boundary both look non-working to the queue.
+        // A wake needs positive end-of-turn evidence from this process before it spends a claim.
+        if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == session.Id
+                && e.Kind == TranscriptKinds.TurnEnd && (e.Timestamp ?? e.CreatedAt) >= session.StartedAt, ct)
+            || await SessionMessageQueueService.IsWorkingAsync(db, session.Id, ct))
+            return new([], 0, Idle: false);
 
         var now = clock.GetUtcNow().UtcDateTime;
         var reportsKey = (session.Id, "caller-wake-reports");

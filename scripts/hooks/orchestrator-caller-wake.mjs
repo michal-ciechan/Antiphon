@@ -17,9 +17,12 @@ async function run() {
   for await (const chunk of process.stdin) input += chunk;
   const hook = JSON.parse(input);
   if (hook.agent_id || !guid.test(hook.session_id) || !['SessionStart', 'Stop'].includes(hook.hook_event_name)) return;
+  if (hook.session_id.toLowerCase() !== env.ANTIPHON_SESSION_ID?.toLowerCase() || !env.ANTIPHON_SESSION_GENERATION) return;
 
   const url = new URL('/api/orchestrators/' + env.ANTIPHON_AGENT_ID + '/caller-wake', env.ANTIPHON_API);
   if (!['http:', 'https:'].includes(url.protocol)) return;
+  url.searchParams.set('conversationId', hook.session_id);
+  url.searchParams.set('generation', env.ANTIPHON_SESSION_GENERATION);
 
   // A fresh Stop, resume or compaction takes over from the previous hook for this provider
   // conversation. Atomic replacement also recovers from a killed hook on Windows.
@@ -44,11 +47,13 @@ async function run() {
       });
       if (response.status === 401 || response.status === 403) return;
       if (response.ok) {
-        const { reportTaskIds, shortfall } = await response.json();
+        const { reportTaskIds, shortfall, idle } = await response.json();
         const ids = Array.isArray(reportTaskIds) ? reportTaskIds.filter(id => typeof id === 'string' && guid.test(id)).slice(0, 16) : [];
         const messages = [];
         if (ids.length) messages.push('Read the outstanding delegate reports with scripts/antiphon delegate status for each task: ' + ids.join(', ') + '.');
         if (Number.isSafeInteger(shortfall) && shortfall > 0) messages.push('The keep-six shortfall is ' + shortfall + '. Read the current pipeline and fill the eligible slots or record a hold.');
+        if (!messages.length && idle && Date.now() >= renewAt)
+          messages.push('The caller notification watch is renewing. End this turn to re-arm the Stop hook.');
         if (messages.length && (await readFile(marker, 'utf8')) === owner) {
           process.stderr.write('[Antiphon] ' + messages.join(' ') + '\n');
           process.exitCode = 2;
@@ -56,11 +61,6 @@ async function run() {
         }
       }
     } catch { /* The server may be restarting. The next poll uses the same bound credential. */ }
-    if (Date.now() >= renewAt && (await readFile(marker, 'utf8')) === owner) {
-      process.stderr.write('[Antiphon] The caller notification watch is renewing. End this turn to re-arm the Stop hook.\n');
-      process.exitCode = 2;
-      return;
-    }
     await delay(60_000);
   }
 }
