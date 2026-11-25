@@ -817,7 +817,7 @@ public sealed class BlockedReplyReportRetentionTests
         await world.SettleAsync(reopenedTurn, prompt: wire.Body, closingVerdict: false);
         world.Task.Status.ShouldBe(AgentTaskStatus.Working, "fixture: the reopened turn is asked once");
         var ask = world.Task.ReportNudgeMessageId.ShouldNotBeNull("fixture: the ask is recorded");
-        int notesBefore;
+        List<Guid> notesBefore;
         await using (var db = world.CreateContext())
         {
             (await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask))
@@ -825,7 +825,7 @@ public sealed class BlockedReplyReportRetentionTests
             var row = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
             row.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-6);
             await db.SaveChangesAsync();
-            notesBefore = await CallerNotesAsync(db, world);
+            notesBefore = await CallerNoteIdsAsync(db, world);
         }
 
         await world.Services.GetRequiredService<AgentTaskReplyService>()
@@ -841,17 +841,65 @@ public sealed class BlockedReplyReportRetentionTests
         {
             (await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask))
                 .Status.ShouldBe(QueuedMessageStatus.Canceled, "the never-typed ask is canceled at the Block");
-            // The Block delivers the retained report, which the caller already holds: the queue drops
-            // a same-task, same-digest Delegation note (CARD-0320). The waiting turn would add a row.
+            // The waiting deadline is a new settlement (a new CompletedAt and Blocked event), and a
+            // later settlement owes its caller its own note even when the report is the one the
+            // caller already holds: exactly one more note, carrying the retained report, never the
+            // waiting turn (round-4 D-1, operator option (a)).
             (await CallerNotesAsync(db, world)).ShouldBe(
-                notesBefore, "the caller note is the retained report, never the waiting turn");
-            (await db.SessionQueuedMessages.AsNoTracking()
-                    .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
-                    .Select(m => m.Body).ToListAsync())
-                .ShouldContain(b => b.Contains(RetainedBody), "the caller note carries the retained report");
+                notesBefore.Count + 1, "one note for the waiting-deadline settlement, and no more");
+            var note = await NewCallerNoteAsync(db, world, notesBefore);
+            note.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            note.Body.ShouldContain(RetainedBody, Case.Sensitive, "the caller note carries the retained report");
+            note.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(retained.Result!),
+                "the note is the retained report's digest");
+            note.ContentDigest.ShouldNotBe(DelegationNoteDigest.Compute(reopenedTurn),
+                "never the waiting turn's digest");
+            if (!retained.Result!.Contains(reopenedTurn, StringComparison.Ordinal))
+                note.Body.ShouldNotContain(reopenedTurn, Case.Sensitive, "the caller note is never the waiting turn");
+            var settledAt = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == world.TaskId)).CompletedAt;
+            note.CreatedAt.ShouldBeGreaterThanOrEqualTo(settledAt.ShouldNotBeNull(),
+                "the new note belongs to the waiting-deadline settlement");
         }
         (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Completed)
             .ShouldBe(0, "no Succeeded publication");
+    }
+
+    /// <summary>
+    /// Round-4 D-1 witness. One note per settlement is the limit: a second enqueue of the same
+    /// settlement's note (same task, session and digest, after the same CompletedAt) is still the
+    /// CARD-0320 duplicate and is dropped, so a retained-report re-Block never streams notes.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Same_settlement_retained_report_note_is_deduped()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await AssertWaitingDeadlineKeepsRetainedReportAsync(world, "Acknowledged. Stopping.");
+
+        SessionQueuedMessage note;
+        List<Guid> notes;
+        await using (var db = world.CreateContext())
+        {
+            var settledAt = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == world.TaskId)).CompletedAt;
+            notes = await CallerNoteIdsAsync(db, world);
+            note = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId
+                    && m.CreatedAt >= settledAt)
+                .SingleAsync();
+        }
+
+        var queue = world.Services.GetRequiredService<SessionMessageQueueService>();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await queue.EnqueueAsync(
+                world.CallerSessionId, note.Body, MessageSendMode.WhenIdle, CancellationToken.None,
+                QueuedMessageOrigin.Delegation, note.ConversationKey, world.TaskId, note.ContentDigest,
+                note.NoteHeader, deliverIfIdle: false);
+        }
+
+        await using (var db = world.CreateContext())
+            (await CallerNoteIdsAsync(db, world)).ShouldBe(notes, ignoreOrder: true,
+                "the same settlement's note is never queued twice");
     }
 
     private const string QuestionAfterReplyReason = "question-after-reply";
