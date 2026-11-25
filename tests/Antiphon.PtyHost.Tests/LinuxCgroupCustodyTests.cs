@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost;
@@ -264,6 +265,64 @@ public class LinuxCgroupCustodyTests
         receipt.TerminationError.ShouldBeNull();
         Directory.Exists("/proc/" + daemon).ShouldBeFalse();
         (await world.CustodyAsync()).Receipt.ShouldBe(final.Receipt);
+    }
+
+    [Test]
+    public async Task PipeHangupWinsBeforeGo()
+    {
+        RequireLinuxCustody();
+        if (File.Exists("/sys/fs/cgroup/cgroup.controllers"))
+            throw new SkipTestException("Requires the delegated v1 pids and freezer hierarchies.");
+
+        await using var world = await CustodyWorld.StartAsync();
+        HostSession originalHost = world.Host.Session;
+        var held = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceledAt = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        originalHost.BeforeLinuxPlacementGoForTests = async (pid, _, _, _, ct) =>
+        {
+            held.SetResult(pid);
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                canceledAt.SetResult(Stopwatch.GetTimestamp());
+                throw;
+            }
+        };
+
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var pipe = new NamedPipeClientStream(".", world.Host.Options.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await pipe.ConnectAsync(bound.Token);
+        await PtyHostFraming.WriteAsync(pipe, new HelloMessage(PtyHostProtocol.Version), bound.Token);
+        var hello = (await PtyHostFraming.ReadAsync(pipe, bound.Token)).ShouldBeOfType<HelloAckMessage>();
+        hello.Features.ShouldNotBeNull();
+        hello.Features!.ShouldContain(LinuxPlacementLaunch.Feature);
+        var marker = Path.Combine(world.Scratch, "started");
+        var launch = world.Spec(world.Binding, "echo started > \"" + marker + "\"");
+        await PtyHostFraming.WriteAsync(pipe, launch, bound.Token);
+        var pid = await held.Task.WaitAsync(bound.Token);
+        var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+        tracked.Pid.ShouldBe(pid);
+        var hierarchies = ActiveHierarchyMembers(tracked.ContainerId).ToArray();
+        hierarchies.Length.ShouldBe(2);
+        foreach (var members in hierarchies)
+            members.ShouldBe(new[] { pid });
+        File.Exists(marker).ShouldBeFalse();
+
+        await pipe.DisposeAsync();
+        var observed = await canceledAt.Task.WaitAsync(bound.Token);
+        // Timer resolution can round the placement cutoff down. Require a distinct
+        // pre-cutoff observation so an expired placement cannot satisfy the test.
+        Stopwatch.GetElapsedTime(observed, launch.LinuxPlacementDeadline!.Value)
+            .ShouldBeGreaterThan(TimeSpan.FromMilliseconds(10));
+        await world.WaitForRootExitAsync();
+        foreach (var members in ActiveHierarchyMembers(tracked.ContainerId))
+            members.ShouldBeEmpty();
+        var ordinary = await originalHost.GetCustodyAsync(world.Binding, false, bound.Token);
+        ordinary.State.ShouldBe(VerificationCustodyState.Unknown);
+        ordinary.Receipt.ShouldBeNull();
+        File.Exists(marker).ShouldBeFalse();
+        File.Exists(world.StorePath("linux-placement.json")).ShouldBeFalse();
     }
 
     [Test]
