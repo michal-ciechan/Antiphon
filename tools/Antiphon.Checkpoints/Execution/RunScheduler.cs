@@ -194,7 +194,14 @@ public sealed class RunScheduler
                     if (nextBuild is not null)
                     {
                         var buildSpec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
-                        buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, budget, total.Token);
+                        // An earlier row can evaluate the restored assets while this build waits for a slot.
+                        var activePartitions = pending.Concat(running.Select(item => item.Spec))
+                            .Select(row => !row.IsCommand && row.Build is { } id && buildStates.TryGetValue(id, out var dependency)
+                                ? dependency.CachePartition : null)
+                            .OfType<string>()
+                            .ToHashSet(StringComparer.Ordinal);
+                        buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, budget,
+                            activePartitions, total.Token);
                         Publish(request);
                     }
                 }
@@ -400,6 +407,7 @@ public sealed class RunScheduler
         BuildProgress progress,
         SlotSession session,
         RunBudgetClock budget,
+        IReadOnlySet<string> activePartitions,
         CancellationToken cancellationToken)
     {
         using var activity = budget.Work();
@@ -425,23 +433,19 @@ public sealed class RunScheduler
             request.State.Builds.Count(item => item.State == "building"));
         Publish(request);
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
-        var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
-            repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
-        CheckpointIntermediateCache.Entry? opened = null;
-        try
+        var originalProperties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
+            repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null);
+        var candidate = request.IntermediateCache?.Prepare(build.Project, originalProperties, activePartitions);
+        List<string> LayoutProperties(string? intermediateRoot)
         {
-            opened = request.IntermediateCache?.Prepare(build.Project, properties);
-            opened?.Invalidate();
+            var arguments = originalProperties.ToList();
+            if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
+                BuildStep.AppendSharedLayout(arguments, request.WorkingDirectory, build.Project, build.OutputPath, intermediateRoot);
+            return arguments;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
-        {
-            request.IntermediateCache?.Report(ex);
-            opened?.Dispose();
-            opened = null;
-        }
-        using var intermediate = opened;
-        if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
-            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath, intermediate?.Path);
+        var coldProperties = LayoutProperties(null);
+        var properties = coldProperties;
+        CheckpointIntermediateCache.Entry? intermediate = null;
         var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
         // CARD-1241: files outside the write roots are stamped before the slot is taken, re-checked once
         // it is granted (AdmitLedger) and verified after release (VerifyLedger).
@@ -464,7 +468,7 @@ public sealed class RunScheduler
 
         CheckpointBuildBinding? built = null;
         DriverResult? result = null;
-        var launched = false;
+        var verifyLedger = false;
         var sourceOk = true;
         var verificationParallelism = 1;
         var started = DateTimeOffset.UtcNow;
@@ -489,6 +493,11 @@ public sealed class RunScheduler
 
             admittedAt = _buildTimeProvider.GetTimestamp();
             cancellationToken.ThrowIfCancellationRequested();
+            if (lease.State == "granted" && !string.IsNullOrEmpty(lease.LeaseId) && candidate is not null)
+            {
+                intermediate = candidate;
+                properties = LayoutProperties(intermediate.Path);
+            }
             var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
                 properties, request.State.Source.Start);
             if (request.SourceGuard?.Observe() == false)
@@ -519,12 +528,11 @@ public sealed class RunScheduler
             }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
             verificationParallelism = intermediate is null ? 1 : cpu;
-            var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
-            var admitted = ledger is not null ? BuildConfinement.AdmitLedger(ledger, request.Manifest.Build.AdmissionHash == "strict").Settlement : null;
-            if (admitted?.Kind is not null)
+            var admitted = AdmitOriginalLedger();
+            if (admitted is not null)
             {
                 ProcessDriver.AppendLog(log, admitted.Detail);
                 progress.AdmissionExitCode = ExitCodes.Invalid;
@@ -533,28 +541,93 @@ public sealed class RunScheduler
                 Publish(request);
                 return;
             }
-            launched = true;
+            verifyLedger = true;
             built = binding;
             result = await RowTimeout.RunWithDeadlineAsync(
-                _driver,
-                new DriverRequest("dotnet", args, request.WorkingDirectory, log)
-                {
-                    Ledger = ledger,
-                    GraphEvaluationParallelism = verificationParallelism,
-                },
+                RunBuildAsync,
                 TimeSpan.FromMinutes(deadlineMinutes),
                 _buildTimeProvider,
                 cancellationToken).ConfigureAwait(false);
             sourceOk = request.SourceGuard?.Observe() != false;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            async Task<DriverResult> RunBuildAsync(CancellationToken token)
+            {
+                var first = await DriveAsync(intermediate is null ? null : AtLaunch, token).ConfigureAwait(false);
+                if (!first.CacheTransitionRefused)
+                    return first;
+
+                // Only a refused cache transition before Process.Start can retry. Preserve the single
+                // lease, output reservation and deadline, and re-admit the pre-wait source ledger.
+                intermediate = null;
+                verificationParallelism = 1;
+                properties = coldProperties;
+                built = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
+                    properties, request.State.Source.Start);
+                if (await CheckLaunchAsync(token).ConfigureAwait(false) is { } refusal)
+                    return refusal;
+                if (ProjectWriteRoots.Preflight(request.WorkingDirectory, build.Project, build.OutputPath) is string coldWriteRefusal)
+                    return new DriverResult(ExitCodes.Invalid, "", "refused: " + coldWriteRefusal);
+                if (!SafeWrite.MatchesCreation(built.OutputPath))
+                    return new DriverResult(ExitCodes.Invalid, "", "refused: output-identity-mismatch");
+                if (AdmitOriginalLedger() is { } declined)
+                {
+                    ProcessDriver.AppendLog(log, declined.Detail);
+                    return new DriverResult(ExitCodes.Invalid, "", declined.Detail);
+                }
+                return await DriveAsync(CheckLaunchAsync, token).ConfigureAwait(false);
+            }
+
+            async Task<DriverResult?> AtLaunch(CancellationToken token)
+            {
+                if (await CheckLaunchAsync(token).ConfigureAwait(false) is { } refusal)
+                    return refusal;
+                return intermediate!.Invalidate(token) ? null
+                    : new DriverResult(ExitCodes.Invalid, "", "") { CacheTransitionRefused = true };
+            }
+
+            async Task<DriverResult?> CheckLaunchAsync(CancellationToken token)
+            {
+                if (request.BeforeLaunch is not null)
+                    await request.BeforeLaunch(token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                return request.SourceGuard?.Observe() == false ? new DriverResult(ExitCodes.Invalid, "", "") : null;
+            }
+
+            async Task<DriverResult> DriveAsync(Func<CancellationToken, Task<DriverResult?>>? beforeStart,
+                CancellationToken token)
+            {
+                var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
+                // The real driver defers this check through graph evaluation and log preparation.
+                // In-process drivers have no such preflight before their build body.
+                var defersLaunch = _driver is ProcessDriver;
+                if (!defersLaunch && beforeStart is not null
+                    && await beforeStart(token).ConfigureAwait(false) is { } refused)
+                    return refused;
+                return await _driver.RunAsync(new DriverRequest("dotnet", args, request.WorkingDirectory, log)
+                {
+                    Ledger = ledger,
+                    GraphEvaluationParallelism = verificationParallelism,
+                    BeforeBuildStart = defersLaunch ? beforeStart : null,
+                }, token).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
+            result = null;
             progress.State = "failed";
             progress.TerminalReason = budget.Reason;
             progress.AdmissionExitCode = ExitCodes.Timeout;
         }
 
-        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger, verificationParallelism) : null;
+        BuildConfinement.Settlement? AdmitOriginalLedger()
+        {
+            var admission = ledger is not null
+                ? BuildConfinement.AdmitLedger(ledger, request.Manifest.Build.AdmissionHash == "strict").Settlement : null;
+            return admission?.Kind is not null ? admission : null;
+        }
+
+        var outside = verifyLedger && ledger is not null ? BuildConfinement.VerifyLedger(ledger, verificationParallelism) : null;
         if (outside?.Kind is not null)
             ProcessDriver.AppendLog(log, outside.Detail);
         if (result is not null)
@@ -575,7 +648,8 @@ public sealed class RunScheduler
                 }
                 else
                 {
-                    intermediate?.Publish();
+                    intermediate?.Publish(cancellationToken);
+                    progress.CachePartition = intermediate?.Path;
                     progress.ResolvedProperties = properties;
                 }
             }

@@ -208,7 +208,7 @@ public static class CheckpointApp
                     {
                         intermediateCache = CheckpointIntermediateCache.TryOpen(repo, source.Start, request.ExpectedSourceSha, Note);
                     }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
+                    catch (Exception ex) when (CheckpointIntermediateCache.IsCacheFailure(ex))
                     {
                         Note("checkpoint cache refused: " + (ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name));
                     }

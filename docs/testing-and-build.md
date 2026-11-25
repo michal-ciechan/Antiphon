@@ -711,10 +711,24 @@ Source-qualified plan runs keep MSBuild intermediates in the worktree's
 and build properties. The tool writes the per-project `BaseIntermediateOutputPath`
 import to the untracked `.antiphon/checkpoint-obj/CheckpointIntermediates.props`
 when it opens the cache. Each build still creates, seals and cleans its own binary
-output. A worktree lock serializes cache use when that lock is a single-link
-regular file owned by this process. A missing or changed cache seal, an untrusted
-lock or seal, or a cache I/O failure leaves the planted file untouched and that
-run builds cold. Warm slot resets retain the cache. To reset it,
+output. The executor holds the stable, owned, single-link `obj/run.lock` while
+scheduled builds and their no-build hosts use the cache. A later build ID uses
+its private layout while earlier rows can still evaluate the same partition.
+The warm layout requires a positive broker grant and a verified partition or
+an absent partition and seal. An existing partition with missing, empty or
+mismatched evidence builds cold.
+
+The driver invalidates a reusable seal after source, output, owner, ledger and
+graph preflight, immediately before starting the SDK build. Refused preflight
+preserves the seal. If the cache transition itself refuses, the driver prepares
+the private layout under the same lease and deadline, rechecks the original
+ledger and uses the cold properties for the build receipt and test host.
+
+After a successful build, source verification and the owned-output receipt,
+the tool writes the 32-byte digest into an exclusive sibling file, flushes and
+closes it, then atomically replaces the empty seal. A publication fault leaves
+the owned binary usable and the partition unavailable for the next build.
+Warm slot resets retain the cache. To reset it,
 use the workspace slot's cold reset or remove `.antiphon/checkpoint-obj/`
 while the worktree is idle.
 

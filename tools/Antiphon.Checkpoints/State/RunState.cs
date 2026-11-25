@@ -74,6 +74,7 @@ public sealed class RunState
 public sealed class BuildProgress
 {
     internal IReadOnlyList<string>? ResolvedProperties { get; set; }
+    internal string? CachePartition { get; set; }
     public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
     public string State { get; set; } = "pending";

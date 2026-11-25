@@ -70,14 +70,11 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
         var forwarded = BuildStep.PropertyArguments(new Dictionary<string, string> { ["UseAppHost"] = "false" },
             OperatingSystem.IsWindows());
-        using (var entry = cacheOwner!.Prepare(project, forwarded))
-        {
-            entry.ShouldNotBeNull();
-            entry!.Path.ShouldBe(first.Cache);
-            entry.Invalidate();
-            File.WriteAllText(assets, "{}");
-            entry.Publish();
-        }
+        var entry = cacheOwner!.Prepare(project, forwarded).ShouldNotBeNull();
+        entry.Path.ShouldBe(first.Cache);
+        entry.Invalidate().ShouldBeTrue();
+        File.WriteAllText(assets, "{}");
+        entry.Publish();
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(first.Owned, SafeWrite.Under(root)));
         var binary = Path.Combine(first.Owned, "App.dll");
         SafeWrite.Require(SafeWrite.Text(binary, "build output", SafeWrite.Under(first.Owned)));
@@ -91,10 +88,9 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         File.ReadAllText(assets).ShouldBe("{}");
         File.ReadAllText(props).ShouldBe(CheckpointIntermediateCache.PropsText);
 
-        using (var reused = cacheOwner.Prepare(project, forwarded))
-            reused.ShouldNotBeNull("a matching sealed partition is reusable");
+        cacheOwner.Prepare(project, forwarded).ShouldNotBeNull("a matching sealed partition is reusable");
         File.WriteAllText(assets, "{\"changed\":true}");
-        using var changedCache = cacheOwner.Prepare(project, forwarded);
+        var changedCache = cacheOwner.Prepare(project, forwarded);
         changedCache.ShouldBeNull("unsealed intermediate bytes cannot seed a verified build");
         File.Exists(assets).ShouldBeTrue("cold fallback leaves the cache in place");
     }
@@ -387,8 +383,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         File.ReadAllBytes(fixture.Seal).ShouldBeEmpty();
         Directory.GetFiles(Path.GetDirectoryName(fixture.Seal)!, "*.tmp").ShouldBeEmpty();
         using var reopened = fixture.Open();
-        using var entry = fixture.Prepare(reopened);
-        entry.ShouldBeNull("a failed publication cannot grant reuse, even if it staged the complete digest");
+        fixture.Prepare(reopened).ShouldBeNull("a failed publication cannot grant reuse, even if it staged the complete digest");
     }
 
     [Test]
@@ -617,8 +612,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         secondBuildEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
         driver.Builds.Count.ShouldBe(2);
         using var reopened = fixture.Open();
-        using (var entry = fixture.Prepare(reopened))
-            entry.ShouldNotBeNull().Path.ShouldBe(fixture.Partition);
+        fixture.Prepare(reopened).ShouldNotBeNull().Path.ShouldBe(fixture.Partition);
         File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
     }
 
@@ -672,8 +666,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         io.PublicationWrites.ShouldBe(0);
         File.ReadAllBytes(fixture.Seal).ShouldBeEmpty();
         using var reopened = fixture.Open();
-        using var entry = fixture.Prepare(reopened);
-        entry.ShouldBeNull();
+        fixture.Prepare(reopened).ShouldBeNull();
     }
 
     private static string Describe(SchedulerResult result) =>
@@ -725,8 +718,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         internal void Seed()
         {
             using var cache = Open();
-            using var entry = Prepare(cache).ShouldNotBeNull();
-            entry.Invalidate();
+            var entry = Prepare(cache).ShouldNotBeNull();
+            entry.Invalidate().ShouldBeTrue();
             File.WriteAllText(Asset, "seeded intermediates");
             entry.Publish();
         }

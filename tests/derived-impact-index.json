@@ -79,18 +79,18 @@
     },
     {
       "path": ".gitignore",
-      "classes": 157,
+      "classes": 158,
       "reason": "cap",
-      "owed": 132,
+      "owed": 133,
       "first": [
+        "CardFilePrivacyOwnershipTests",
         "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
-        "NightlyCoreGoldenTests",
-        "NightlyVerificationContractTests"
+        "NightlyCoreGoldenTests"
       ]
     },
     {
@@ -2304,9 +2304,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
@@ -2681,7 +2681,6 @@
         "CardFileIgnoreTests",
         "CardFilePrivacyGitTests",
         "CardFilePrivacyOwnershipAcceptanceTests",
-        "CardFilePrivacyOwnershipTests",
         "CardFilePrivacySyncAcceptanceTests",
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
@@ -2689,6 +2688,7 @@
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
+        "CheckpointWarmBuildTests",
         "DelegationWorktreeTests",
         "GatedCommitServiceTests",
         "GitIgnorePreviewTests",
@@ -18046,6 +18046,7 @@
         "CheckpointExecutorLogTests",
         "CheckpointOwnedOutputTests",
         "CheckpointStatePublicationTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "HostCleanupCheckpointCustodyTests",
@@ -18205,6 +18206,7 @@
         "CheckpointLargeStampTests",
         "CheckpointReadStallWitnessTests",
         "CheckpointReceiptStallBudgetTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsReadModeTests",
         "HostCleanupCheckpointCustodyTests",
         "HostCleanupCheckpointReadDeadlineTests",

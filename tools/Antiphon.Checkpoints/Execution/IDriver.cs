@@ -21,6 +21,8 @@ public sealed record DriverRequest(
     // Stamps of files outside the build's write roots, taken before the build slot; the build stamps the others inside it.
     public BuildConfinement.Ledger? Ledger { get; init; }
     internal int GraphEvaluationParallelism { get; init; } = 1;
+    // A non-null result refuses the already prepared request before the build child starts.
+    internal Func<CancellationToken, Task<DriverResult?>>? BeforeBuildStart { get; init; }
 
     // Inherited environment names starting with one of these (ignoring case) are removed before Environment is applied.
     public IReadOnlyList<string> ClearedEnvironmentPrefixes { get; init; } = [];
@@ -30,6 +32,7 @@ public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bo
 {
     // Set only by a driver that observed the child exit and its redirected output close (CARD-1242).
     public DateTimeOffset? Exited { get; init; }
+    internal bool CacheTransitionRefused { get; init; }
 }
 
 public interface IDriver

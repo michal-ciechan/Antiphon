@@ -851,25 +851,30 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpoi
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetAce(IntPtr acl, int index, out IntPtr ace);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EqualSid(IntPtr left, IntPtr right);
     // fstat of a handle the caller already opened. Never disposes that handle and never replaces the path.
-    public static string? Untrusted(SafeFileHandle handle)
+    public static string? Untrusted(SafeFileHandle handle) => Untrusted(handle, out _);
+
+    public static string? Untrusted(SafeFileHandle handle, out FilesystemIdentity identity)
     {
+        identity = default;
         if (handle.IsClosed || handle.IsInvalid)
             return "unreadable-link-count";
         if (OperatingSystem.IsLinux())
-            return LinuxUntrusted(handle);
+            return LinuxUntrusted(handle, out identity);
         if (OperatingSystem.IsWindows())
-            return WindowsUntrusted(handle);
+            return WindowsUntrusted(handle, out identity);
         return "unreadable-link-count";
     }
 
-    private static string? LinuxUntrusted(SafeFileHandle handle)
+    private static string? LinuxUntrusted(SafeFileHandle handle, out FilesystemIdentity identity)
     {
+        identity = default;
         var added = false;
         handle.DangerousAddRef(ref added);
         try
         {
-            const uint mask = 0x000F; // STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_UID
-            if (Statx(handle.DangerousGetHandle().ToInt32(), "", 0x1000, mask, out var stat) != 0
+            const uint mask = 0x010F; // STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_UID | STATX_INO
+            const uint birthTime = 0x0800;
+            if (Statx(handle.DangerousGetHandle().ToInt32(), "", 0x1000, mask | birthTime, out var stat) != 0
                 || (stat.Mask & mask) != mask)
                 return "unreadable-link-count";
             if ((stat.Mode & 0xF000) != 0x8000)
@@ -878,7 +883,8 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpoi
                 return "multiple-links";
             if (stat.Uid != GetEuid())
                 return "foreign-owner";
-            return null;
+            identity = IdentityFromLinux(stat);
+            return identity.IsBound ? null : "unbound-identity";
         }
         finally
         {
@@ -888,8 +894,9 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpoi
     }
 
     [SupportedOSPlatform("windows")]
-    private static string? WindowsUntrusted(SafeFileHandle handle)
+    private static string? WindowsUntrusted(SafeFileHandle handle, out FilesystemIdentity identity)
     {
+        identity = default;
         if (GetFileType(handle) != 1)
             return "not-regular";
         if (!GetFileInformationByHandle(handle, out var info))
@@ -910,8 +917,40 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpoi
             return "unreadable-link-count";
         }
 
-        return null;
+        if (!GetFileInformationByHandleEx(handle, FileBasicInformation, out var basic, (uint)Marshal.SizeOf<FileBasicInfo>()))
+            return "unbound-identity";
+        identity = new FilesystemIdentity(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow, FileTimeToUnixNs(basic.CreationTime));
+        return identity.IsBound ? null : "unbound-identity";
     }
+
+    // Both paths are confined siblings. Neither syscall requests a copy on cross-volume failure.
+    public static void ReplaceSameVolumeFile(string source, string destination)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            if (RenameFile(source, destination) == 0)
+                return;
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            const uint replaceExisting = 1;
+            if (MoveFileEx(source, destination, replaceExisting))
+                return;
+        }
+        else
+        {
+            throw new IOException("atomic cache replacement unsupported");
+        }
+
+        throw new IOException("atomic cache replacement failed: " + Marshal.GetLastPInvokeError());
+    }
+
+    [DllImport("libc", EntryPoint = "rename", SetLastError = true)]
+    private static extern int RenameFile(string source, string destination);
+
+    [DllImport("kernel32.dll", EntryPoint = "MoveFileExW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileEx(string source, string destination, uint flags);
 
     private const int FileBasicInformation = 0;
     private const int SeFileObject = 6;
