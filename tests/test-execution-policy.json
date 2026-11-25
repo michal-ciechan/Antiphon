@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "22c197130da98fb5c0e95e60e16535486fd506de9f9585ecfe95344fcdfa5b60",
+  "policyHash": "2aa120db87e5bc6bbe1a772801275e4857c368c17abb8181d1d6680c66726932",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1527,10 +1527,11 @@
             "Existing_marker_factory_observes_live_then_empty_membership",
             "Termination_kills_reparented_member_before_rescue",
             "Unrelated_foreign_uid_git_does_not_prevent_join",
+            "Previously_proved_unreadable_child_prevents_native_join",
             "A_child_born_during_signaling_is_joined_by_a_later_pass"
           ],
           "platform": "windows",
-          "reason": "Linux-only by construction: native managed pipes, setsid orphan, procfs UID permissions and late-fork containment; Windows transport is owed by S3.",
+          "reason": "Linux-only by construction: native managed pipes, setsid orphan, procfs permissions and late-fork containment; Windows transport is owed by S3.",
           "owner": "CARD-1850"
         },
         {

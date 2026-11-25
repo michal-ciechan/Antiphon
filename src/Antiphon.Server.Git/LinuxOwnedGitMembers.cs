@@ -201,7 +201,14 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
             foreach (var member in observed)
             {
                 var identity = member.Identity;
-                if (_knownMembers.ContainsKey(identity.Pid)) continue;
+                if (_knownMembers.TryGetValue(identity.Pid, out var rememberedStartTicks))
+                {
+                    // A proved replacement supersedes the remembered instance even when its
+                    // reconciliation read fails. An older concurrent scan cannot replace it.
+                    if (identity.StartTicks > rememberedStartTicks)
+                        _knownMembers[identity.Pid] = identity.StartTicks;
+                    continue;
+                }
                 if (_knownMembers.Count == MaxMembers) { memberLimitExceeded = true; break; }
                 _knownMembers.Add(identity.Pid, identity.StartTicks);
             }

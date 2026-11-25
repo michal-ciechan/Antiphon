@@ -27946,6 +27946,7 @@
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "LinuxOwnedGitProcessTests",
         "NightlyProbeSupervisorTests",
         "OwnedTempLeakTests",
         "RcIncrementalShadowTests",

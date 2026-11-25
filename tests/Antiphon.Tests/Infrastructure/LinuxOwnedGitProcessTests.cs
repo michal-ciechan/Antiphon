@@ -222,6 +222,119 @@ public sealed class LinuxOwnedGitProcessTests
     }
 
     [Test]
+    [Timeout(15_000)]
+    [NativeLinuxOnly("Linux procfs must keep a live child visible after its environment becomes unreadable.")]
+    public async Task Previously_proved_unreadable_child_prevents_native_join(CancellationToken ct)
+    {
+        using var safety = DescendantLeakScope.Create();
+        await using var owner = new OwnedGitProcess(new LinuxOwnedGitProcess());
+        var control = OwnedTempRoot.CreateOwned();
+        var restrict = Path.Combine(control, "restrict");
+        var release = Path.Combine(control, "release");
+        LinuxProcIdentity? child = null;
+        var started = false;
+        try
+        {
+            var start = new ProcessStartInfo("/bin/sh")
+            {
+                UseShellExecute = false, RedirectStandardInput = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            string[] arguments = ["-c", """ "$@" </dev/null & read -r line """, "containment-root",
+                "pwsh", "-NoProfile", "-NonInteractive", "-Command", """
+                $ErrorActionPreference = 'Stop'
+                Add-Type -TypeDefinition @'
+                using System;
+                using System.Runtime.InteropServices;
+                public static class ProcPermissionFixture
+                {
+                    [DllImport("libc", EntryPoint = "prctl")]
+                    private static extern int Prctl(int option, UIntPtr arg2, UIntPtr arg3, UIntPtr arg4, UIntPtr arg5);
+                    public static bool Restrict() =>
+                        Prctl(4, UIntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero) == 0; // PR_SET_DUMPABLE
+                }
+                '@
+                $control = $env:ANTIPHON_TEST_CONTAINMENT_CONTROL
+                $clock = [Diagnostics.Stopwatch]::StartNew()
+                $restricted = $false
+                [Console]::WriteLine($PID)
+                while ($clock.Elapsed.TotalSeconds -lt 20 -and ![IO.File]::Exists("$control/release")) {
+                    if (!$restricted -and [IO.File]::Exists("$control/restrict")) {
+                        if (![ProcPermissionFixture]::Restrict()) { throw 'PR_SET_DUMPABLE failed' }
+                        $restricted = $true
+                        [Console]::WriteLine('restricted')
+                    }
+                    Start-Sleep -Milliseconds 10
+                }
+                """];
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_TEST_CONTAINMENT_CONTROL"] = control;
+            safety.Apply(start);
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "spawn"))
+                started = owner.Start(start).State == OwnedGitLaunchState.Started;
+            started.ShouldBeTrue();
+
+            var root = owner.Root.ShouldNotBeNull();
+            string? line;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "wait"))
+                line = await owner.StandardOutput.ReadLineAsync(ct);
+            int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
+                .ShouldBeTrue("the fixture must report its child PID");
+            child = LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull();
+            child.Alive.ShouldBeTrue();
+            child.ParentPid.ShouldBe(root.Pid);
+            (await owner.ProbeMembersAsync(Deadline(), ct)).Survivors.ShouldBe(2);
+
+            File.WriteAllText(restrict, "");
+            (await owner.StandardOutput.ReadLineAsync(ct)).ShouldBe("restricted");
+            try
+            {
+                using var stream = File.OpenRead($"/proc/{pid}/environ");
+                Skip.Test("The native fixture requires the kernel to deny the environment read.");
+                return;
+            }
+            catch (UnauthorizedAccessException) { }
+
+            owner.StandardInput.Close();
+            (await owner.WaitForRootExitAsync(ct)).ShouldBeTrue();
+            OwnedGitCleanup result;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "cleanup"))
+                result = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(2));
+
+            var surviving = LinuxProcOperations.ReadIdentityFile(pid).ShouldNotBeNull();
+            surviving.Alive.ShouldBeTrue("the owned child must survive until the cleanup verdict");
+            surviving.StartTicks.ShouldBe(child.StartTicks);
+            surviving.ParentPid.ShouldNotBe(root.Pid);
+            result.RootExited.ShouldBeTrue();
+            result.Joined.ShouldBeFalse();
+            result.Members.Survivors.ShouldBe(1);
+            result.SignalsAttempted.ShouldBe(0);
+        }
+        finally
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "cleanup");
+            try
+            {
+                File.WriteAllText(release, "");
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                if (started)
+                {
+                    owner.StandardInput.Close();
+                    await owner.WaitForRootExitAsync(cleanup.Token);
+                }
+                while (child is not null && LinuxProcOperations.ReadIdentityFile(child.Pid) is { Alive: true } current
+                    && current.StartTicks == child.StartTicks)
+                    await Task.Delay(10, cleanup.Token);
+            }
+            finally
+            {
+                safety.KillAll();
+                OwnedTempRoot.Release(control);
+            }
+        }
+    }
+
+    [Test]
     [Timeout(10_000)]
     [NativeLinuxOnly("A real Linux fork is released after the census and before the first signal.")]
     public async Task A_child_born_during_signaling_is_joined_by_a_later_pass(CancellationToken ct)
