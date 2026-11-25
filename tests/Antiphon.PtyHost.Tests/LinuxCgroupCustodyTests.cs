@@ -150,6 +150,117 @@ public class LinuxCgroupCustodyTests
     }
 
     [Test]
+    public async Task C2060_Preexec_placement_identifies_the_first_root()
+    {
+        RequireLinuxCustody();
+        if (File.Exists("/sys/fs/cgroup/cgroup.controllers") ||
+            !Directory.Exists(Path.Combine("/sys/fs/cgroup/freezer", CustodyRootName, CurrentNamespace())))
+            throw new SkipTestException("Requires the delegated v1 pids and freezer hierarchies.");
+
+        await using var world = await CustodyWorld.StartAsync();
+        var marker = Path.Combine(world.Scratch, "root-identity");
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonce = Guid.NewGuid().ToString("N");
+        var daemonNonce = Path.Combine(world.Scratch, nonce);
+        var held = new TaskCompletionSource<(int Pid, int Parent, Guid Boot, ulong Ticks)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Host.Session.BeforeLinuxPlacementGoForTests = async (pid, parent, boot, ticks, ct) =>
+        {
+            held.SetResult((pid, parent, boot, ticks));
+            await go.Task.WaitAsync(ct);
+        };
+
+        var payloadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = new FileSystemWatcher(world.Scratch, Path.GetFileName(marker));
+        watch.Created += (_, _) => payloadStarted.TrySetResult();
+        watch.Renamed += (_, _) => payloadStarted.TrySetResult();
+        watch.EnableRaisingEvents = true;
+        if (File.Exists(marker))
+            payloadStarted.TrySetResult();
+
+        var launch = world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, daemonNonce),
+            "IFS= read -r stat </proc/self/stat || exit 21",
+            "IFS= read -r boot </proc/sys/kernel/random/boot_id || exit 22",
+            "set -- ${stat##*) }",
+            "(set -C; printf '%s %s %s %s\\n' \"$$\" \"$2\" \"$boot\" \"${20}\" > \"" + marker + ".tmp\") || exit 23",
+            "mv \"" + marker + ".tmp\" \"" + marker + "\"",
+            world.WaitForNonce(daemonNonce),
+            "exit 0");
+        (int Pid, int Parent, Guid Boot, ulong Ticks) proof;
+        try
+        {
+            if (File.Exists(marker))
+                payloadStarted.TrySetResult();
+            using var boundaryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var first = await Task.WhenAny(held.Task, payloadStarted.Task).WaitAsync(boundaryTimeout.Token);
+            first.ShouldBe(held.Task, "validated hold reached before first payload marker");
+            proof = await held.Task;
+            File.Exists(marker).ShouldBeFalse("a held shim has executed no payload instructions");
+            proof.Parent.ShouldBe(Environment.ProcessId);
+
+            var tracking = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+            var host = world.Store.ReadRecord<VerificationHostIdentity>(world.Binding, "host-identity.json")!;
+            tracking.Pid.ShouldBe(proof.Pid);
+            tracking.ContainerId.ShouldBe(host.ContainerId);
+            var hierarchies = ActiveHierarchyMembers(host.ContainerId).ToArray();
+            hierarchies.Length.ShouldBe(2);
+            foreach (var members in hierarchies)
+                members.ShouldBe(new[] { proof.Pid });
+        }
+        finally
+        {
+            go.TrySetResult();
+            await launch;
+            world.Host.Session.BeforeLinuxPlacementGoForTests = null;
+        }
+
+        using var payloadTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await payloadStarted.Task.WaitAsync(payloadTimeout.Token);
+        var parts = (await File.ReadAllTextAsync(marker, payloadTimeout.Token)).Trim().Split(' ');
+        (int.Parse(parts[0]), int.Parse(parts[1]), Guid.Parse(parts[2]), ulong.Parse(parts[3]))
+            .ShouldBe(proof, "the original generation survives exec");
+        (await launch).ChildPid.ShouldBe(proof.Pid);
+        var daemon = await WaitForPidFileAsync(daemonPidFile);
+        File.ReadAllText(daemonNonce).Trim().ShouldBe("ready");
+        SessionIdOf(daemon).ShouldBe(daemon);
+        await world.WaitForRootExitAsync();
+        var draining = await world.CustodyAsync();
+        draining.State.ShouldBe(VerificationCustodyState.Draining);
+        draining.Receipt.ShouldBeNull();
+        var track = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+        var manifest = world.Store.ReadRecord<PtyHostManifest>(world.Binding, "running-manifest.json")!;
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(world.StorePath("linux-placement.json")));
+        var placement = document.RootElement;
+        placement.GetProperty("revision").GetInt32().ShouldBe(2);
+        placement.GetProperty("pid").GetInt32().ShouldBe(proof.Pid);
+        placement.GetProperty("bootId").GetGuid().ShouldBe(proof.Boot);
+        placement.GetProperty("startTicks").GetUInt64().ShouldBe(proof.Ticks);
+        placement.GetProperty("namespaceId").GetGuid().ShouldBe(Guid.Parse(CurrentNamespace()));
+        placement.GetProperty("containerId").GetGuid().ShouldBe(track.ContainerId);
+        placement.GetProperty("controllerMask").GetUInt32().ShouldBe(3u);
+        placement.GetProperty("startTimeUtc").GetDateTime().ShouldBe(track.StartTimeUtc);
+        manifest.ChildStartTimeUtc.ShouldBe(track.StartTimeUtc);
+
+        await File.WriteAllTextAsync(world.ReleasePath, "release");
+        using var receiptTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        VerificationCustodyStatus final;
+        do
+        {
+            final = await world.CustodyAsync();
+            if (final.Receipt is null)
+                await Task.Delay(100, receiptTimeout.Token);
+        } while (final.Receipt is null);
+        var receipt = world.Validate(final);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.OutputDrained.ShouldBeTrue();
+        receipt.TerminationSucceeded.ShouldBeNull();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+        (await world.CustodyAsync()).Receipt.ShouldBe(final.Receipt);
+    }
+
+    [Test]
     public async Task C1614_Natural_descendant_exit_finalizes_without_release()
     {
         RequireLinuxCustody();
