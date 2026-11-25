@@ -405,10 +405,12 @@ public sealed class Card2060PlacementHandshakeTests
         {
             var exchange = world.ExchangeAsync(bound.Token);
             using var peer = world.Connect();
-            var frames = await ReadUntilEofAsync(peer, bound.Token);
+            var first = await ReadFrameAsync(peer, bound.Token);
+            peer.Dispose();
+            (first is { Kind: ProveKind }).ShouldBeFalse("an unauthenticated peer received PROVE");
+            first.ShouldBeNull();
             (await Should.ThrowAsync<IOException>(async () => await exchange))
                 .Message.ShouldBe("verification_custody_placement_refused");
-            frames.Count(frame => frame.Kind == ProveKind).ShouldBe(0);
             world.Attempt.Commit().ShouldBeNull();
         }
     }
@@ -451,9 +453,11 @@ public sealed class Card2060PlacementHandshakeTests
             var exchange = world.ExchangeAsync(bound.Token);
             using var peer = world.Connect();
             var next = await world.ProveAndPlaceAsync(peer, mutate, bound.Token);
+            peer.Dispose();
+            (next is { Kind: GoKind }).ShouldBeFalse(label + ": GO released a mismatched PLACED");
+            next.ShouldBeNull(label);
             (await Should.ThrowAsync<IOException>(async () => await exchange, label))
                 .Message.ShouldBe("verification_custody_placement_refused", label);
-            next.ShouldBeNull(label + ": no GO frame");
             world.Attempt.Commit().ShouldBeNull(label);
         }
     }
@@ -486,7 +490,7 @@ public sealed class Card2060PlacementHandshakeTests
             go.Value.Kind.ShouldBe(GoKind);
             peer.Dispose();
             // The launch reply stays LaunchedMessage: the exchange does not become a start failure.
-            await exchange;
+            await Should.NotThrowAsync(async () => await exchange);
             world.Attempt.Commit().ShouldBeNull();
         }
     }
@@ -509,9 +513,11 @@ public sealed class Card2060PlacementHandshakeTests
 
         await using var stage = await StageDriver.StartAsync(bound.Token);
         await stage.ProveAsync(freezerExtra: Environment.ProcessId, bound.Token);
-        var frames = await ReadUntilEofAsync(stage.Peer, bound.Token);
+        var reply = await ReadFrameAsync(stage.Peer, bound.Token);
+        stage.Peer.Shutdown(SocketShutdown.Send);
         var joined = await stage.JoinAsync(bound.Token);
-        frames.Count(frame => frame.Kind == PlacedKind).ShouldBe(0);
+        (reply is { Kind: PlacedKind }).ShouldBeFalse("a mixed freezer tree produced PLACED");
+        reply.ShouldBeNull();
         joined.ExitCode.ShouldBe(3);
         joined.Stderr.ShouldContain("C2060_CUSTODY_REFUSED PlacementExchange");
     }
@@ -524,27 +530,28 @@ public sealed class Card2060PlacementHandshakeTests
         RequireLinux();
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
-        await using (var control = await StageDriver.StartAsync(bound.Token))
+        // Decisive arm first: withhold GO while the stage holds the original PID.
+        await using (var stage = await StageDriver.StartAsync(bound.Token))
         {
-            var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
-            await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
-            await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
-            (await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token)).ShouldBe(challenge);
-            var released = await control.JoinAsync(bound.Token);
-            released.ExitCode.ShouldBe(0);
-            released.Exec.ShouldBe(StageDriver.ExpectedDrop);
+            await stage.ProveAsync(freezerExtra: null, bound.Token);
+            await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
+            stage.Peer.Shutdown(SocketShutdown.Send);
+            var after = await ReadUntilEofAsync(stage.Peer, bound.Token);
+            var joined = await stage.JoinAsync(bound.Token);
+            after.Count(frame => frame.Kind == ReleasingKind).ShouldBe(0);
+            joined.Exec.ShouldBeEmpty();
+            joined.ExitCode.ShouldBe(3);
         }
 
-        await using var stage = await StageDriver.StartAsync(bound.Token);
-        await stage.ProveAsync(freezerExtra: null, bound.Token);
-        await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
-        // Withhold GO: the host's write side ends while the stage holds the original PID.
-        stage.Peer.Shutdown(SocketShutdown.Send);
-        var after = await ReadUntilEofAsync(stage.Peer, bound.Token);
-        var joined = await stage.JoinAsync(bound.Token);
-        after.Count(frame => frame.Kind == ReleasingKind).ShouldBe(0);
-        joined.Exec.ShouldBeEmpty();
-        joined.ExitCode.ShouldBe(3);
+        // Control: the same stage releases on a timely GO.
+        await using var control = await StageDriver.StartAsync(bound.Token);
+        var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
+        await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
+        await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
+        (await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token)).ShouldBe(challenge);
+        var released = await control.JoinAsync(bound.Token);
+        released.ExitCode.ShouldBe(0);
+        released.Exec.ShouldBe(StageDriver.ExpectedDrop);
     }
 
     // PC-14. A RELEASING that cannot be sent leaves the stage unreleased, even after a valid GO.
