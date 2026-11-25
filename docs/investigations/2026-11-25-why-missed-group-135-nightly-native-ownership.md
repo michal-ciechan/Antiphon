@@ -1,41 +1,46 @@
 # Windows Full group 135 native ownership investigation
 
-The watcher reported one failure in `NightlyNativeOwnershipTests` in
-`antiphon-all-group-135` of Windows Full run `b8cbfb24`, pinned at
-`2fd61b643ea4231fa732cd4969b5284d43b33f39` on `rc/2026-12-05`. The failure
-record and failed-first seed are on the desktop. The Linux worktree has no
-copy of those files, so the failed method, assertion, stack and cause are
-still open. The watcher reports counts by class.
+`C1039_DescendantExit` was the sole failure in `antiphon-all-group-135`
+of Windows Full run `b8cbfb24`, pinned at
+`2fd61b643ea4231fa732cd4969b5284d43b33f39` on `rc/2026-12-05`. The operator
+supplied the failed TRX row from the desktop. After 7.039 seconds the
+test reported that `File.ReadAllText(capture)` did not contain
+`root pid=138656 exited=false active=1`. The stack entered the fixture's
+failure wrapper at `NightlyNativeOwnershipTests.cs:402`. The capture
+excerpt begins with `idle-hang-capture` and reports a quiet interval of
+0.08 minutes and CPU use of 2.06 seconds per minute. The excerpt ends
+before the root and descendant records.
 
-The [prior run's native evidence](2026-11-24-group-136-native-evidence.md)
-records that groups 133 through 135 passed in `acca11ba` at
-`6ed4cb58cd75fe386e94965165d96752452431a8`. That observation establishes
-the previous group verdict. Comparing the same test across runs requires
-the per-method TRX row. Seed membership requires the actual seed entry and
-the chunk identity mapping because group ordinals can change between runs.
+The operator confirmed that the same case passed in group 135 of
+`acca11ba` at `6ed4cb58cd75fe386e94965165d96752452431a8` and that
+`seed-from-acca11ba.json` mentions `group-135`. The earlier pin had no
+idle-capture subcase. [Prior run evidence](2026-11-24-group-136-native-evidence.md)
 
 ## Introducing commit/card
 
-The introducing commit for this failure is open. The native owner, test
-class and child fixture at the failing pin are byte-identical to those at
-master base `f98e61aca24b6f0e99baa4c604b1dfa9a39d0310`. Between `acca11ba`
-and `b8cbfb24`, CARD-2051 changed the owner in
-`a3d4090eedf862a4e8ec5c22a6b7824cca5c17dd`, and
-`59db3604598e9b8a3bbbd6dba9b0086a91bd8875` added an idle-capture check to
-`C1039_DescendantExit`. A prior pass of that method would cover its older
-ownership assertions. [CARD-2051 investigation](2026-11-25-why-missed-quiet-host-hang.md)
+CARD-2051 introduced the failed assertion in the native idle-capture
+witness at `0095d1fd01dcf3b4e5e7861223316a22424626ba`. Master commit
+`6fb8fa343a27dbbb75ca736e85bc48544c1369ab` folded that witness into
+`C1039_DescendantExit`. The failing candidate includes
+that change as `59db3604598e9b8a3bbbd6dba9b0086a91bd8875`, following
+`a3d4090eedf862a4e8ec5c22a6b7824cca5c17dd`, which added the native idle
+cutoff to the owner. The native owner, test class and child fixture at the
+failing pin were byte-identical to master base
+`f98e61aca24b6f0e99baa4c604b1dfa9a39d0310`.
+[CARD-2051 investigation](2026-11-25-why-missed-quiet-host-hang.md)
 
 ## Approving reviews
 
-The approving review for the group 135 failure cannot be identified until
-the failed assertion identifies the introducing change. The CARD-2051 note
-records a portable red and green on
+The CARD-2051 verification note records a portable red and green on
 `/*/*/QualificationSupervisorTests/Quiet_test_host_reaches_its_idle_budget_while_the_owner_and_other_logs_are_busy`
-and an outstanding Windows replay of `C1039_DescendantExit`. The review
+on Linux. The Windows replay of `C1039_DescendantExit` was pending at
+land. The review
 `230d1f5d-22d1-46bb-b83c-fbdc59968364` cited there was a Full-scope round
 3 of the earlier CARD-1667 supervisor. Its executed selections were the
 qualification-supervisor and orchestration-watchers scripts and
-`/*/*/(RcQualificationWatcherScriptTests*)/*` on Linux.
+`/*/*/(RcQualificationWatcherScriptTests*)/*` on Linux. It predates the
+CARD-2051 witness. No approving CARD-2051 review receipt was available
+for this investigation.
 
 ## Outside the selection
 
@@ -55,15 +60,14 @@ count from that private job. A concurrent qualification process affects the
 size of the system handle snapshot, while its PID does not enter the job
 count through that snapshot.
 
-The neighboring assignment and PowerShell cases also open the fixture PID
-from `child.pid`. The retained-writer case reads `writer.handle`. Those
-reads already use `LiveFixtureText` from the earlier marker-sharing repair.
-The assignment case still reads `argv.json` directly, after waiting for the
-descendant marker. The fixture writes and closes `argv.json` before it
-starts that descendant. The drain and environment cases read outputs after
-owner completion. The new idle check separately depends on system-clock
-sampling and a 25-second completion wait around a held root. The Windows
-failure record is needed to distinguish those paths.
+The idle subcase intentionally holds the root and sets a one-second idle
+budget. A five-second sampler tick can therefore trigger the cutoff. The
+test had already observed an idle reason, successful termination and
+cleanup, a nonzero exit, a signaled root handle and the expected capture
+path before it reached the failed text assertion. The neighboring cases
+exercise assignment, child exit, drain, or environment handling without
+setting an idle monitor. Their live marker reads already use `LiveFixtureText`
+from the earlier sharing repair.
 
 ## Cheapest pre-land check
 
@@ -74,10 +78,10 @@ failure record is needed to distinguish those paths.
 method from the TRX for the incident replay. For the CARD-2051 addition,
 that filter is `/*/*/NightlyNativeOwnershipTests/C1039_DescendantExit` with
 the existing 120-second case budget and a build-slot-gated run on an
-isolated Windows runner. No build or test was run for this investigation.
+isolated Windows runner.
 
 ## Exemption
 
-Open. The assertion and stack are needed to decide whether this is the
-[previous marker-sharing failure](2026-11-22-why-missed-c1039-native-ownership-sharing.md)
-or a new cause.
+None. The file read succeeded and returned a capture. The previous
+[marker-sharing failure](2026-11-22-why-missed-c1039-native-ownership-sharing.md)
+occurred while reading child-published marker files.
