@@ -3,14 +3,14 @@ using Antiphon.Tests.TestHelpers;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// Runs independent world cases side by side (Codex CLI C959/C1029 worlds, C1213 branch-delivery worlds); every case runs and every failure is reported under its label.
+/// Runs independent world cases side by side (Codex CLI C959/C1029 worlds, C1213 branch-delivery worlds); unless the caller's token is cancelled, every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
 /// in-process fakes), but each also has a Kestrel host, a harness and a schema, so a calling class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
 /// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for every caller
 /// (the C959 and C1029 classes and the C1213 queued-branch tests), and 1 runs the cases one at a time
 /// (docs/testing-and-build.md, process-spawning lanes). For a caller that passes its test token (the C1213 tests), a
-/// cancelled token stops new cases from starting and the failures recorded before it are still reported; the
+/// cancelled token stops new cases from starting, names the cases it stopped and writes the failures recorded before it; the
 /// no-token overloads (the C959 and C1029 classes) run every case.
 /// C959 sample timing: a never-refuses create leg reads its kit's fake clock after the kit exists, but the dispatch,
 /// warm-reuse and remote-delivery legs sample wall-clock time, the remote one before its world is built. Those
@@ -46,7 +46,13 @@ internal static class Worlds
                 var name = label(c);
                 using var span = TestTrace.Span("world case", "world.case", name);
                 try { await body(c); }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; } // the run's cancellation, not this case's failure
+                catch (OperationCanceledException ex) when (ct.IsCancellationRequested && ex.CancellationToken == ct)
+                {
+                    // The run's cancellation, not this case's failure; still name the world that was running.
+                    span?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, "canceled");
+                    Console.WriteLine($"WORLD CASE CANCELLED {name}");
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     span?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, ex.GetType().Name);
@@ -56,11 +62,13 @@ internal static class Worlds
             });
         }
         catch (OperationCanceledException ex) when (ct.IsCancellationRequested) { canceled = ex; }
-        // Cancellation keeps the labelled failures recorded before it: they are reported with it, not dropped.
+        // Cancellation keeps the labelled failures recorded before it. A test timeout may report before this throw
+        // is observed, so they are also written to the console here.
         if (canceled is not null)
         {
             if (failures.IsEmpty) throw canceled;
-            throw new AggregateException($"{failures.Count} world case(s) failed before cancellation", failures.Append(canceled));
+            foreach (var failure in failures) Console.WriteLine("WORLD CASE FAILED BEFORE CANCELLATION " + failure.Message);
+            throw new AggregateException($"{failures.Count} world case(s) failed, then the run was cancelled", failures);
         }
         if (!failures.IsEmpty)
             throw new AggregateException($"{failures.Count} world case(s) failed", failures);
