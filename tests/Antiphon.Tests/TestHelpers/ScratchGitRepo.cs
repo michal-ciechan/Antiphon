@@ -46,10 +46,11 @@ public sealed class ScratchGitRepo : IDisposable
     /// built once per process (per file and content) by those same steps, which saves their seven git processes per
     /// repository; the copy has the template's commit id, and its origin remote names the copy's own bare origin (the
     /// template rewrites its root path; the copy's <c>remote.origin.url</c> is checked against
-    /// <see cref="BareOrigin"/>). The repository is <c>&lt;temp&gt;/&lt;prefix&gt;-seeded-*/repo</c> with the origin
-    /// beside it at <c>origin</c>. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or any failure to build, copy or check the
-    /// template (a build or check failure is remembered for the rest of the process), runs the git steps for this
-    /// repository instead.
+    /// <see cref="BareOrigin"/>). A template copy is <c>&lt;temp&gt;/&lt;prefix&gt;-seeded-*/repo</c> with the origin
+    /// beside it at <c>origin</c>. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or an expected failure to build, copy or check
+    /// the template (I/O, access, git or process start, the manifest, the copy check; a build or check failure is
+    /// remembered for the rest of the process), runs the git steps instead, which make
+    /// <c>&lt;temp&gt;/&lt;prefix&gt;-repo*</c> and a separate origin. Any other exception is a bug and is thrown.
     /// </summary>
     public static Task<ScratchGitRepo> CreateSeededWithOriginAsync(string prefix, string relativePath, string content) =>
         CreateSeededWithOriginAsync(prefix, relativePath, content, GitTreeTemplate.Enabled);
@@ -64,6 +65,12 @@ public sealed class ScratchGitRepo : IDisposable
     };
 
     // Seeded-template keys whose build or copy check failed: later repositories go straight to the git steps.
+    // The failures the template can meet as a matter of course; anything else is a bug and must not hide behind the
+    // slower git steps.
+    private static bool ExpectedTemplateFailure(Exception ex) => ex is IOException or UnauthorizedAccessException
+        or InvalidOperationException or InvalidDataException or System.Text.Json.JsonException
+        or System.ComponentModel.Win32Exception or LibGit2Sharp.LibGit2SharpException or Shouldly.ShouldAssertException;
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SeededTemplateFailed =
         new(StringComparer.Ordinal);
 
@@ -94,7 +101,7 @@ public sealed class ScratchGitRepo : IDisposable
                     return [];
                 });
             }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
+            catch (Exception ex) when (ExpectedTemplateFailure(ex))
             {
                 SeededTemplateFailed[key] = true;
                 if (builtRoot is not null) GitTreeTemplate.DeleteTree(builtRoot);
@@ -122,9 +129,11 @@ public sealed class ScratchGitRepo : IDisposable
                     var worktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
                     return new ScratchGitRepo(repo, worktreeRoot, origin, cloneRoot);
                 }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
+                catch (Exception ex) when (ExpectedTemplateFailure(ex))
                 {
-                    Console.Error.WriteLine($"git-template disabled for this seeded scratch repo: {ex.GetType().Name}: {ex.Message}");
+                    Console.Error.WriteLine(SeededTemplateFailed.ContainsKey(key)
+                        ? $"git-template disabled for seeded scratch repos for the rest of this process: {ex.GetType().Name}: {ex.Message}"
+                        : $"git-template disabled for this seeded scratch repo: {ex.GetType().Name}: {ex.Message}");
                     if (cloneRoot is not null) GitTreeTemplate.DeleteTree(cloneRoot);
                 }
             }

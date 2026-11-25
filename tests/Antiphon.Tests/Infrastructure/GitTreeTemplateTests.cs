@@ -178,6 +178,8 @@ public sealed class GitTreeTemplateTests
     [Test]
     public async Task ScratchGitRepo_seeded_copy_is_the_repository_the_git_steps_make()
     {
+        // ANTIPHON_TEST_GIT_TEMPLATE=off keeps every template out of the run, this test's too.
+        if (!GitTreeTemplate.Enabled) Skip.Test("ANTIPHON_TEST_GIT_TEMPLATE=off");
         const string file = "seed.txt", content = "C959 seeded origin\n";
         using var copied = await ScratchGitRepo.CreateSeededWithOriginAsync("antiphon-seeded-tpl", file, content, useTemplate: true);
         using var stepped = await ScratchGitRepo.CreateSeededWithOriginAsync("antiphon-seeded-git", file, content, useTemplate: false);
