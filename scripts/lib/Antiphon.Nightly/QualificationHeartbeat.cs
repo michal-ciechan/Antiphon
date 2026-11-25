@@ -18,6 +18,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -207,6 +208,92 @@ namespace Antiphon.Nightly
             QualificationHeartbeat.Write(beat, path);
             Previous = beat;
             return beat;
+        }
+    }
+
+    /// <summary>A per-launch idle clock over the owned test host and its diagnostic and TRX files.</summary>
+    public sealed class NightlyChunkIdleMonitor
+    {
+        public const string HeartbeatFile = "active-test-heartbeat.json";
+        public const int PollMilliseconds = 5000;
+
+        private readonly TimeProvider _clock;
+        private readonly string _trxPath;
+        private readonly string _diagnosticDirectory;
+        private readonly double _defaultIdleMinutes;
+        private readonly double? _plannedSeconds;
+        private readonly DateTime _startedAt;
+        private readonly long _startedTimestamp;
+        private QualificationHeartbeatRecord _previous;
+        private (long Length, DateTime LastWriteUtc)? _trx;
+        private (string Path, long Length, DateTime LastWriteUtc)[] _diagnostics =
+            Array.Empty<(string, long, DateTime)>();
+
+        public NightlyChunkIdleMonitor(TimeProvider clock, string trxPath, string diagnosticDirectory,
+            double defaultIdleMinutes, double? plannedSeconds)
+        {
+            _clock = clock;
+            _trxPath = trxPath;
+            _diagnosticDirectory = diagnosticDirectory;
+            _defaultIdleMinutes = defaultIdleMinutes;
+            _plannedSeconds = plannedSeconds;
+            _startedAt = clock.GetUtcNow().UtcDateTime;
+            _startedTimestamp = clock.GetTimestamp();
+        }
+
+        /// <summary>Unknown CPU or unreadable progress breaks the interval. No idle verdict is carried over that gap.</summary>
+        public QualificationHeartbeatRecord Sample(int pid, double? cpuSeconds)
+        {
+            if (!cpuSeconds.HasValue)
+            {
+                _previous = null;
+                return null;
+            }
+            try
+            {
+                (long Length, DateTime LastWriteUtc)? trx;
+                try
+                {
+                    var file = new FileInfo(_trxPath);
+                    trx = (file.Length, file.LastWriteTimeUtc);
+                }
+                catch (FileNotFoundException) { trx = null; }
+
+                var diagnostics = Directory.EnumerateFiles(_diagnosticDirectory, "*.diag")
+                    .OrderBy(path => path, StringComparer.Ordinal)
+                    .Select(path =>
+                    {
+                        var file = new FileInfo(path);
+                        return (Path: path, Length: file.Length, LastWriteUtc: file.LastWriteTimeUtc);
+                    }).ToArray();
+                var diagnosticBytes = diagnostics.Sum(file => file.Length);
+                var beat = QualificationHeartbeat.Update(new QualificationHeartbeatInput
+                {
+                    NowUtc = _startedAt + _clock.GetElapsedTime(_startedTimestamp),
+                    Processes = new[] { new QualificationProcess(pid, 0, cpuSeconds.Value) },
+                    ChunkRootPid = pid,
+                    Previous = _trx == trx ? _previous : null,
+                    Trx = trx.HasValue ? 1 : 0,
+                    Bytes = diagnosticBytes,
+                    Newest = Path.GetFileName(diagnostics.OrderByDescending(file => file.LastWriteUtc).FirstOrDefault().Path),
+                    PlannedSeconds = _plannedSeconds,
+                    DefaultIdleMinutes = _defaultIdleMinutes,
+                    DiagnosticProgress = new QualificationDiagnosticProgress
+                    {
+                        Offset = diagnosticBytes,
+                        Grew = !_diagnostics.SequenceEqual(diagnostics),
+                    },
+                });
+                _trx = trx;
+                _diagnostics = diagnostics;
+                _previous = beat;
+                return beat;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                _previous = null;
+                return null;
+            }
         }
     }
 
@@ -473,7 +560,9 @@ namespace Antiphon.Nightly
         /// <summary>Read-QualificationSupervisorHeartbeat: the record a heartbeat file holds (strict UTF-8).</summary>
         public static QualificationHeartbeatRecord Read(string path)
         {
-            var text = File.ReadAllText(path, new UTF8Encoding(false, true));
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, new UTF8Encoding(false, true));
+            var text = reader.ReadToEnd();
             var root = BindingJson.Parse(text);
             var record = new QualificationHeartbeatRecord
             {

@@ -483,6 +483,7 @@ namespace Antiphon.Nightly
             }
 
             NightlyLaunchResult run;
+            var idleHang = false;
             var execDiagDir = "";
             var queueWaitSeconds = Math.Round(host.Clock.GetElapsedTime(queueStart).TotalSeconds, 3);
             var chunkDiscoverySeconds = NightlyTestsPlan.ChunkDiscoverySeconds(s.DiscoverySeconds, null, false).ChunkDiscoverySeconds;
@@ -570,11 +571,24 @@ namespace Antiphon.Nightly
                 // S6b shadow: join the build seal before the timed launch. A refusal stays unproven and does not change the verdict.
                 c.RcEvidence?.Launch(c.RcEvidenceRoot, c.LogRoot, suiteId, chunkId, Path.GetDirectoryName(s.Host.AssemblyPath ?? ""), nativeArgs.ToArray(), "", c.RepoRoot, c.Sha);
                 var phaseStart = host.Clock.GetTimestamp();
-                run = Launch(OwnedLaunch(s.Host.FilePath, nativeArgs, c.RepoRoot, PsOps.ToInt(PsValue.Prop(admission, "WatchdogMilliseconds")), phaseEnv, logPath,
-                    trxPath, execDiagDir, logPath + ".hang.txt", c.CompletionGraceMilliseconds));
+                var nativeLaunch = OwnedLaunch(s.Host.FilePath, nativeArgs, c.RepoRoot, PsOps.ToInt(PsValue.Prop(admission, "WatchdogMilliseconds")), phaseEnv, logPath,
+                    trxPath, execDiagDir, logPath + ".hang.txt", c.CompletionGraceMilliseconds);
+                if (nativeLaunch.Hooks != null && c.Profile == "rc" && !string.IsNullOrEmpty(c.InvocationId)
+                    && host.Variables(QualificationSupervise.RunIdVariable) == c.InvocationId)
+                {
+                    var minutes = 20.0;
+                    if (double.TryParse(host.Variables(QualificationSupervise.HangMinutesVariable), NumberStyles.Float, CultureInfo.InvariantCulture, out var configured)
+                        && configured >= 1 && configured <= 600) minutes = configured;
+                    var provenSeconds = string.IsNullOrEmpty(c.TimingRoot) ? null : QualificationHeartbeat.PlannedCost(
+                        Path.Combine(c.TimingRoot, "groups-planned-" + suiteId + ".json"), chunkId, suiteId, c.InvocationId, c.Attempt).Seconds;
+                    nativeLaunch.Hooks.IdleMonitor = new NightlyChunkIdleMonitor(host.Clock, trxPath, execDiagDir, minutes, provenSeconds);
+                    nativeLaunch.Hooks.ActiveHeartbeatPath = Path.Combine(c.LogRoot, NightlyChunkIdleMonitor.HeartbeatFile);
+                }
+                run = Launch(nativeLaunch);
+                idleHang = run.TimedOut && !string.IsNullOrEmpty(run.Owner?.IdleHangReason);
                 var hostWallSeconds = host.Clock.GetElapsedTime(phaseStart).TotalSeconds;
                 recordNativeChunk = true;
-                try { Publish(c, run, trxPath, suiteId, chunkId, hostWallSeconds, o.CoverageComplete, o.TestsPassed); }
+                try { Publish(c, run, trxPath, suiteId, chunkId, hostWallSeconds, o.CoverageComplete && !idleHang, o.TestsPassed && !idleHang); }
                 catch (Exception) { WriteFailureMarker(c, "phase-summary-failed"); }
             }
             var runWallSeconds = Math.Round(host.Clock.GetElapsedTime(runStart).TotalSeconds, 3);
@@ -724,7 +738,7 @@ namespace Antiphon.Nightly
                 var rootPid = 0;
                 var pid = PsValue.Property(observed, "Pid", out var hasPid);
                 if (hasPid && pid != null) rootPid = PsOps.ToInt(pid);
-                if (s.IsNative)
+                if (s.IsNative && !idleHang)
                 {
                     var hangDiag = NightlyDiagnosticLog.Latest(execDiagDir);
                     try { finished = NightlyWatchdog.ExecutionFinished(trxPath, hangDiag); } catch (Exception) { finished = false; }
@@ -775,7 +789,14 @@ namespace Antiphon.Nightly
                 else
                 {
                     o.TestsOutcome = NightlyTestsPlan.Outcome(o.TestsOutcome, "TIMEOUT");
-                    o.ReasonList.Add("timeout " + suiteId);
+                    o.ReasonList.Add(idleHang ? "idle-hang " + suiteId : "timeout " + suiteId);
+                    if (idleHang)
+                    {
+                        suiteRow["result"] = "FAIL";
+                        suiteRow["coverageComplete"] = false;
+                        suiteRow["detail"] = "idle-hang";
+                        if (!string.IsNullOrEmpty(run.Owner.HangCapturePath)) suiteRow["hangCapture"] = run.Owner.HangCapturePath;
+                    }
                 }
             }
             else if (run.ExitCode != 0 && !exitTolerated)
@@ -799,6 +820,7 @@ namespace Antiphon.Nightly
             else if (isScripts && run.ExitCode != 0) timingWhy = "script-failed";
             else if (isScripts) timingWhy = "no-trx:scripts";
             if (completedHang) timingWhy = "completed-but-hung";
+            if (idleHang) timingWhy = "idle-hang";
             var terminal = Timing(c, suiteId, chunkId);
             terminal.LastPhase = timingPhase;
             terminal.Why = timingWhy;
