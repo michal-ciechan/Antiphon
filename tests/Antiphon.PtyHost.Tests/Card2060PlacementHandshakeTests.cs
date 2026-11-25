@@ -1,4 +1,10 @@
+using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost;
 using Antiphon.PtyHost.Client;
@@ -371,4 +377,458 @@ public sealed class Card2060PlacementHandshakeTests
         if (!OperatingSystem.IsLinux())
             throw new SkipTestException("Requires Linux placement negotiation.");
     }
+
+    // ---- CARD-2060 round 2 (Review 6e6013b4 D-1): reachable host and stage decisions ----
+
+    // PC-5. The host authenticates the exact spawned child before it issues any challenge.
+    [Test]
+    [NativeLinuxOnly("Linux placement authenticates the stage with Unix peer credentials.")]
+    public async Task HostChecksSpawnPeer()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Control: the fixture peer is the tracked root, so the host challenges it.
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var prove = await ReadFrameAsync(peer, bound.Token);
+            prove.ShouldNotBeNull();
+            prove.Value.Kind.ShouldBe(ProveKind);
+            peer.Dispose();
+            await Should.ThrowAsync<IOException>(async () => await exchange);
+        }
+
+        // The same UID with a distinct peer PID gets no challenge.
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId + 1))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var frames = await ReadUntilEofAsync(peer, bound.Token);
+            (await Should.ThrowAsync<IOException>(async () => await exchange))
+                .Message.ShouldBe("verification_custody_placement_refused");
+            frames.Count(frame => frame.Kind == ProveKind).ShouldBe(0);
+            world.Attempt.Commit().ShouldBeNull();
+        }
+    }
+
+    // Q2 host validator fault fixture. A PLACED that differs from the original capture, the
+    // challenge or both v1 controllers withholds GO; the stage can never be released.
+    [Test]
+    [NativeLinuxOnly("Linux placement validates PLACED from a Unix socket peer.")]
+    public async Task MismatchedPlacedWithholdsGo()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        // Control: the unmodified attestation is released and committed.
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var go = await world.ProveAndPlaceAsync(peer, _ => { }, bound.Token);
+            go.ShouldNotBeNull();
+            go.Value.Kind.ShouldBe(GoKind);
+            await WriteFrameAsync(peer, ReleasingKind, go.Value.Body, bound.Token);
+            await exchange;
+            world.Attempt.Commit().ShouldNotBeNull();
+        }
+
+        (string Case, Action<byte[]> Mutate)[] cases =
+        [
+            ("challenge", frame => frame[0] ^= 0x01),
+            ("namespace", frame => frame[80] ^= 0x01),
+            ("pid", frame => BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(104), Environment.ProcessId + 1)),
+            ("parent", frame => BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(108), 1)),
+            ("start ticks", frame => BinaryPrimitives.WriteUInt64BigEndian(frame.AsSpan(112), HostAttemptWorld.Ticks + 1)),
+            ("boot", frame => frame[120] ^= 0x01),
+            ("single v1 controller", frame => BinaryPrimitives.WriteUInt32BigEndian(frame.AsSpan(136), 1)),
+        ];
+        foreach (var (label, mutate) in cases)
+        {
+            using var world = HostAttemptWorld.Start(Environment.ProcessId);
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var next = await world.ProveAndPlaceAsync(peer, mutate, bound.Token);
+            (await Should.ThrowAsync<IOException>(async () => await exchange, label))
+                .Message.ShouldBe("verification_custody_placement_refused", label);
+            next.ShouldBeNull(label + ": no GO frame");
+            world.Attempt.Commit().ShouldBeNull(label);
+        }
+    }
+
+    // PC-22. GO may have started the payload, so a lost RELEASING keeps the launch, never the placement.
+    [Test]
+    [NativeLinuxOnly("Linux placement releases the stage over a Unix socket.")]
+    public async Task LostAckRetainsLaunchedChild()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Control: a timely RELEASING commits the validated offer.
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var go = await world.ProveAndPlaceAsync(peer, _ => { }, bound.Token);
+            await WriteFrameAsync(peer, ReleasingKind, go!.Value.Body, bound.Token);
+            await exchange;
+            world.Attempt.Commit().ShouldNotBeNull();
+        }
+
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var go = await world.ProveAndPlaceAsync(peer, _ => { }, bound.Token);
+            go.ShouldNotBeNull();
+            go.Value.Kind.ShouldBe(GoKind);
+            peer.Dispose();
+            // The launch reply stays LaunchedMessage: the exchange does not become a start failure.
+            await exchange;
+            world.Attempt.Commit().ShouldBeNull();
+        }
+    }
+
+    // PC-4. Both v1 hierarchies must hold only the stage; a freezer-only extra member refuses.
+    [Test]
+    [NativeLinuxOnly("The placement stage fixture uses Linux abstract sockets and procfs.")]
+    public async Task MixedFreezerCannotAttest()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        await using (var control = await StageDriver.StartAsync(bound.Token))
+        {
+            await control.ProveAsync(freezerExtra: null, bound.Token);
+            await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
+            control.Peer.Shutdown(SocketShutdown.Send);
+            (await control.JoinAsync(bound.Token)).ExitCode.ShouldBe(3);
+        }
+
+        await using var stage = await StageDriver.StartAsync(bound.Token);
+        await stage.ProveAsync(freezerExtra: Environment.ProcessId, bound.Token);
+        var frames = await ReadUntilEofAsync(stage.Peer, bound.Token);
+        var joined = await stage.JoinAsync(bound.Token);
+        frames.Count(frame => frame.Kind == PlacedKind).ShouldBe(0);
+        joined.ExitCode.ShouldBe(3);
+        joined.Stderr.ShouldContain("C2060_CUSTODY_REFUSED PlacementExchange");
+    }
+
+    // PC-13. The stage holds the payload after PLACED until it reads GO.
+    [Test]
+    [NativeLinuxOnly("The placement stage fixture uses Linux abstract sockets and procfs.")]
+    public async Task StageWaitsForGo()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        await using (var control = await StageDriver.StartAsync(bound.Token))
+        {
+            var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
+            await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
+            await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
+            (await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token)).ShouldBe(challenge);
+            var released = await control.JoinAsync(bound.Token);
+            released.ExitCode.ShouldBe(0);
+            released.Exec.ShouldBe(StageDriver.ExpectedDrop);
+        }
+
+        await using var stage = await StageDriver.StartAsync(bound.Token);
+        await stage.ProveAsync(freezerExtra: null, bound.Token);
+        await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
+        // Withhold GO: the host's write side ends while the stage holds the original PID.
+        stage.Peer.Shutdown(SocketShutdown.Send);
+        var after = await ReadUntilEofAsync(stage.Peer, bound.Token);
+        var joined = await stage.JoinAsync(bound.Token);
+        after.Count(frame => frame.Kind == ReleasingKind).ShouldBe(0);
+        joined.Exec.ShouldBeEmpty();
+        joined.ExitCode.ShouldBe(3);
+    }
+
+    // PC-14. A RELEASING that cannot be sent leaves the stage unreleased, even after a valid GO.
+    [Test]
+    [NativeLinuxOnly("The placement stage fixture uses Linux abstract sockets and procfs.")]
+    public async Task FailedReleaseSendSuppressesExec()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        await using (var control = await StageDriver.StartAsync(bound.Token))
+        {
+            var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
+            await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
+            await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
+            await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token);
+            (await control.JoinAsync(bound.Token)).Exec.ShouldBe(StageDriver.ExpectedDrop);
+        }
+
+        await using var stage = await StageDriver.StartAsync(bound.Token);
+        var go = await stage.ProveAsync(freezerExtra: null, bound.Token);
+        await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
+        // Refuse only the stage's next write (EPIPE), then deliver a valid, timely GO.
+        stage.Peer.Shutdown(SocketShutdown.Receive);
+        await WriteFrameAsync(stage.Peer, GoKind, go, bound.Token);
+        var joined = await stage.JoinAsync(bound.Token);
+        joined.Exec.ShouldBeEmpty();
+        joined.ExitCode.ShouldBe(3);
+        joined.Stderr.ShouldContain("C2060_CUSTODY_REFUSED PlacementExchange");
+    }
+
+    // PC-15. The only exec is the fixed privilege drop, and user argv follows its literal separator.
+    [Test]
+    [NativeLinuxOnly("The placement stage fixture uses Linux abstract sockets and procfs.")]
+    public async Task DropPreservesPayloadBoundary()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        string[] payload = ["/bin/echo", "--reuid=0", "-n", "--", "x"];
+        await using var stage = await StageDriver.StartAsync(bound.Token, payload);
+        var challenge = await stage.ProveAsync(freezerExtra: null, bound.Token);
+        await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
+        await WriteFrameAsync(stage.Peer, GoKind, challenge, bound.Token);
+        await ExpectFrameAsync(stage.Peer, ReleasingKind, bound.Token);
+        var joined = await stage.JoinAsync(bound.Token);
+        joined.ExitCode.ShouldBe(0);
+        joined.Exec.ShouldBe(StageDriver.FixedDrop.Concat(payload).ToArray());
+    }
+
+    private const byte ProveKind = 1, PlacedKind = 2, GoKind = 3, ReleasingKind = 4;
+
+    /// <summary>The original host's attempt against a fixture socket peer in this process.</summary>
+    private sealed class HostAttemptWorld : IDisposable
+    {
+        public const ulong Ticks = 654321;
+        private static readonly Guid Boot = Guid.Parse("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+
+        private HostAttemptWorld(LinuxPlacementBinding binding, LinuxSpawnIdentity root, LinuxPlacementAttempt attempt)
+        {
+            Binding = binding;
+            Root = root;
+            Attempt = attempt;
+        }
+
+        public LinuxPlacementBinding Binding { get; }
+        public LinuxSpawnIdentity Root { get; }
+        public LinuxPlacementAttempt Attempt { get; }
+
+        public static HostAttemptWorld Start(int rootPid)
+        {
+            var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+            var root = new LinuxSpawnIdentity(rootPid, Environment.ProcessId, Boot, Ticks, DateTime.UtcNow);
+            var deadline = Stopwatch.GetTimestamp() + 10 * Stopwatch.Frequency;
+            return new(binding, root, new LinuxPlacementAttempt(binding, deadline, CancellationToken.None)
+            {
+                ExpectedPeerUid = GetUid(),
+            });
+        }
+
+        public Task ExchangeAsync(CancellationToken ct) => Attempt.ExchangeAsync(() => false, Root, null, ct);
+
+        public Socket Connect()
+        {
+            var peer = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            peer.Connect(new UnixDomainSocketEndPoint("\0antiphon-custody-v1-" + Binding.ContainerId.ToString("D")));
+            return peer;
+        }
+
+        /// <summary>Reads PROVE, answers with an honest PLACED after <paramref name="mutate"/>, returns the next frame.</summary>
+        public async Task<(byte Kind, byte[] Body)?> ProveAndPlaceAsync(Socket peer, Action<byte[]> mutate, CancellationToken ct)
+        {
+            var prove = await ReadFrameAsync(peer, ct);
+            prove.ShouldNotBeNull();
+            prove.Value.Kind.ShouldBe(ProveKind);
+            prove.Value.Body.Length.ShouldBe(104);
+            var placed = new byte[140];
+            prove.Value.Body.CopyTo(placed, 0);
+            BinaryPrimitives.WriteInt32BigEndian(placed.AsSpan(104), Root.Pid);
+            BinaryPrimitives.WriteInt32BigEndian(placed.AsSpan(108), Root.ParentPid);
+            BinaryPrimitives.WriteUInt64BigEndian(placed.AsSpan(112), Root.StartTicks);
+            Root.BootId.TryWriteBytes(placed.AsSpan(120, 16), bigEndian: true, out _).ShouldBeTrue();
+            BinaryPrimitives.WriteUInt32BigEndian(placed.AsSpan(136), LinuxPlacementAttempt.V1Controllers);
+            mutate(placed);
+            await WriteFrameAsync(peer, PlacedKind, placed, ct);
+            return await ReadFrameAsync(peer, ct);
+        }
+
+        public void Dispose() => Attempt.Dispose();
+    }
+
+    /// <summary>
+    /// The test-only build of the real stage source, run unprivileged as a direct child of this
+    /// listener, with private cgroup and namespace files and an inert exec recorder.
+    /// </summary>
+    private sealed class StageDriver : IAsyncDisposable
+    {
+        public static readonly string[] FixedDrop =
+            ["/usr/bin/setpriv", "--reuid=1654", "--regid=1654", "--clear-groups", "--no-new-privs", "--"];
+        private static readonly string[] Payload = ["/bin/true", "--payload"];
+        public static readonly string[] ExpectedDrop = [.. FixedDrop, .. Payload];
+
+        private readonly DirectoryInfo _root;
+        private readonly Process _stage;
+        private readonly Task<string> _stdout, _stderr;
+        private readonly Guid _container, _namespace;
+        private readonly long _deadline;
+
+        private StageDriver(DirectoryInfo root, Process stage, Socket peer, Guid container, Guid ns, long deadline)
+        {
+            _root = root;
+            _stage = stage;
+            Peer = peer;
+            _container = container;
+            _namespace = ns;
+            _deadline = deadline;
+            _stdout = stage.StandardOutput.ReadToEndAsync();
+            _stderr = stage.StandardError.ReadToEndAsync();
+        }
+
+        public Socket Peer { get; }
+
+        public static async Task<StageDriver> StartAsync(CancellationToken ct, string[]? payload = null)
+        {
+            var binary = Environment.GetEnvironmentVariable("ANTIPHON_PLACEMENT_FIXTURE_STAGE") is { Length: > 0 } configured
+                ? configured
+                : "/opt/antiphon-tests/antiphon-custody-placement-fixture";
+            if (!File.Exists(binary))
+                throw new SkipTestException("Requires the placement stage fixture build (session-testing image).");
+
+            var root = Directory.CreateTempSubdirectory("c2060-stage-");
+            var container = Guid.NewGuid();
+            var ns = Guid.NewGuid();
+            Directory.CreateDirectory(Path.Combine(root.FullName, "run", "antiphon-custody"));
+            File.WriteAllText(Path.Combine(root.FullName, "run", "antiphon-custody", "namespace"), ns.ToString("D") + "\n");
+            using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            listener.Bind(new UnixDomainSocketEndPoint("\0antiphon-custody-v1-" + container.ToString("D")));
+            listener.Listen(1);
+
+            var deadline = Stopwatch.GetTimestamp() + 15 * Stopwatch.Frequency;
+            var start = new ProcessStartInfo(binary)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var argument in (string[])[container.ToString("D"), deadline.ToString(CultureInfo.InvariantCulture), "--", .. payload ?? Payload])
+                start.ArgumentList.Add(argument);
+            start.Environment["ANTIPHON_PLACEMENT_FIXTURE_ROOT"] = root.FullName;
+            var stage = Process.Start(start)!;
+            try
+            {
+                var peer = await listener.AcceptAsync(ct);
+                return new(root, stage, peer, container, ns, deadline);
+            }
+            catch
+            {
+                try { stage.Kill(); } catch (InvalidOperationException) { }
+                await stage.WaitForExitAsync(CancellationToken.None);
+                stage.Dispose();
+                root.Delete(recursive: true);
+                throw;
+            }
+        }
+
+        /// <summary>Publishes both memberships for the connected stage PID, then sends PROVE.</summary>
+        public async Task<byte[]> ProveAsync(int? freezerExtra, CancellationToken ct)
+        {
+            WriteMembers("pids", $"{_stage.Id}\n");
+            WriteMembers("freezer", freezerExtra is { } extra ? $"{_stage.Id}\n{extra}\n" : $"{_stage.Id}\n");
+            var challenge = RandomNumberGenerator.GetBytes(16);
+            var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), _container, _namespace);
+            await WriteFrameAsync(Peer, ProveKind, LinuxPlacementAttempt.BuildProveBody(binding, _deadline, challenge), ct);
+            return challenge;
+        }
+
+        private void WriteMembers(string controller, string members)
+        {
+            var tree = Path.Combine(_root.FullName, "sys", "fs", "cgroup", controller, "antiphon-custody",
+                _namespace.ToString("D"), _container.ToString("D"), "tree");
+            Directory.CreateDirectory(tree);
+            File.WriteAllText(Path.Combine(tree, "cgroup.procs"), members);
+        }
+
+        public async Task<(int ExitCode, IReadOnlyList<string> Exec, string Stderr)> JoinAsync(CancellationToken ct)
+        {
+            await _stage.WaitForExitAsync(ct);
+            var exec = (await _stdout).Split('\n')
+                .Where(line => line.StartsWith("C2060_FIXTURE_EXEC ", StringComparison.Ordinal))
+                .Select(line => line["C2060_FIXTURE_EXEC ".Length..])
+                .ToArray();
+            return (_stage.ExitCode, exec, await _stderr);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Peer.Dispose();
+            if (!_stage.HasExited)
+            {
+                try { _stage.Kill(); } catch (InvalidOperationException) { }
+            }
+            await _stage.WaitForExitAsync(CancellationToken.None);
+            _stage.Dispose();
+            _root.Delete(recursive: true);
+        }
+    }
+
+    private static async Task WriteFrameAsync(Socket socket, byte kind, byte[] body, CancellationToken ct)
+    {
+        var frame = new byte[4 + body.Length];
+        frame[0] = 1;
+        frame[1] = kind;
+        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(2), (ushort)body.Length);
+        body.CopyTo(frame, 4);
+        for (var sent = 0; sent < frame.Length;)
+            sent += await socket.SendAsync(frame.AsMemory(sent), SocketFlags.None, ct);
+    }
+
+    /// <summary>One frame, or null at a clean end of stream before its first byte.</summary>
+    private static async Task<(byte Kind, byte[] Body)?> ReadFrameAsync(Socket socket, CancellationToken ct)
+    {
+        var header = new byte[4];
+        if (!await ReadExactlyAsync(socket, header, ct))
+            return null;
+        header[0].ShouldBe((byte)1);
+        var body = new byte[BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(2))];
+        (await ReadExactlyAsync(socket, body, ct)).ShouldBeTrue("truncated frame body");
+        return (header[1], body);
+    }
+
+    private static async Task<byte[]> ExpectFrameAsync(Socket socket, byte kind, CancellationToken ct)
+    {
+        var frame = await ReadFrameAsync(socket, ct);
+        frame.ShouldNotBeNull($"expected frame kind {kind}, got end of stream");
+        frame.Value.Kind.ShouldBe(kind);
+        return frame.Value.Body;
+    }
+
+    private static async Task<List<(byte Kind, byte[] Body)>> ReadUntilEofAsync(Socket socket, CancellationToken ct)
+    {
+        var frames = new List<(byte Kind, byte[] Body)>();
+        while (await ReadFrameAsync(socket, ct) is { } frame)
+            frames.Add(frame);
+        return frames;
+    }
+
+    private static async Task<bool> ReadExactlyAsync(Socket socket, Memory<byte> target, CancellationToken ct)
+    {
+        var first = true;
+        while (!target.IsEmpty)
+        {
+            int count;
+            try { count = await socket.ReceiveAsync(target, SocketFlags.None, ct); }
+            catch (SocketException ex) when (first && ex.SocketErrorCode == SocketError.ConnectionReset) { return false; }
+            if (count == 0)
+            {
+                if (first) return false;
+                throw new EndOfStreamException("A placement frame was truncated.");
+            }
+            first = false;
+            target = target[count..];
+        }
+        return true;
+    }
+
+    [DllImport("libc", EntryPoint = "getuid")]
+    private static extern uint GetUid();
 }

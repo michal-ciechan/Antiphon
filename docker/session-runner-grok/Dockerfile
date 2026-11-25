@@ -50,6 +50,10 @@ COPY docker/session-runner-grok/antiphon-custody-placement.c /src/antiphon-custo
 RUN cc -std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 \
       -fstack-protector-strong -fPIE -pie -Wl,-z,relro,-z,now \
       /src/antiphon-custody-placement.c -o /antiphon-custody-placement
+# CARD-2060 D-1: the unprivileged placement driver runs the same source as a test-only build.
+# It honours a private fixture root and records its exec; it is never the installed stage.
+RUN cc -std=c11 -O2 -Wall -Wextra -Werror -DANTIPHON_PLACEMENT_FIXTURE \
+      /src/antiphon-custody-placement.c -o /antiphon-custody-placement-fixture
 
 # CARD-0913: SDK 10 knows the net9 9.0.20 packs but does not ship them. Extract only
 # the net9 reference and linux-x64 apphost packs from Microsoft's pinned SDK 9.0.318
@@ -255,6 +259,7 @@ COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiph
 # targets must never carry them, which is what Default_runtime_excludes_custody_helpers guards.
 COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter
 COPY --from=custody-placement-build --chown=0:0 /antiphon-custody-placement /usr/local/lib/antiphon-custody-placement
+COPY --from=custody-placement-build --chown=0:0 /antiphon-custody-placement-fixture /opt/antiphon-tests/antiphon-custody-placement-fixture
 COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill
 COPY docker/session-runner-grok/antiphon-custody-common.sh /usr/local/lib/antiphon-custody-common.sh
 COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody

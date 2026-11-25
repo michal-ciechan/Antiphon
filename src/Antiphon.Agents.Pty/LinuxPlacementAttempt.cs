@@ -35,6 +35,10 @@ public sealed class LinuxPlacementAttempt : IDisposable
     public long Deadline { get; }
     public CancellationToken Token => _budget.Token;
 
+    /// <summary>The kernel UID the accepted stage must hold. Root in production; an unprivileged
+    /// socket fixture names its own UID so the host decisions after authentication are reachable.</summary>
+    internal uint ExpectedPeerUid { get; init; }
+
     public LinuxPlacementAttempt(LinuxPlacementBinding binding, long deadline, CancellationToken ct,
         TimeProvider? clock = null)
     {
@@ -73,7 +77,13 @@ public sealed class LinuxPlacementAttempt : IDisposable
                 throw new OperationCanceledException("verification_custody_placement_expired", Token);
     }
 
-    internal async Task ExchangeAsync(PortaPtySession session, LinuxSpawnIdentity root,
+    internal Task ExchangeAsync(PortaPtySession session, LinuxSpawnIdentity root,
+        Func<int, int, Guid, ulong, CancellationToken, Task>? beforeGo,
+        CancellationToken ct) =>
+        ExchangeAsync(() => session.ReadExitObservation() is not null, root, beforeGo, ct);
+
+    /// <summary>The exchange against any root whose replayable exit the caller owns.</summary>
+    internal async Task ExchangeAsync(Func<bool> rootExited, LinuxSpawnIdentity root,
         Func<int, int, Guid, ulong, CancellationToken, Task>? beforeGo,
         CancellationToken ct)
     {
@@ -89,14 +99,14 @@ public sealed class LinuxPlacementAttempt : IDisposable
             RequireOpen();
             using var peer = await _listener.AcceptAsync(ct);
             _listener.Dispose();
-            if (!PeerMatches(peer.SafeHandle, root.Pid) || root.ParentPid != Environment.ProcessId ||
-                session.ReadExitObservation() is not null)
+            if (!PeerMatches(peer.SafeHandle, root.Pid, ExpectedPeerUid) ||
+                root.ParentPid != Environment.ProcessId || rootExited())
                 throw Refused();
 
             var tuple = BuildProveBody(_binding, Deadline, RandomNumberGenerator.GetBytes(ChallengeSize));
             await SendFrameAsync(peer, Prove, tuple, ct);
             var attestation = await ReceiveFrameAsync(peer, Placed, ProofSize, ct);
-            if (!Matches(attestation, tuple, root) || session.ReadExitObservation() is not null)
+            if (!Matches(attestation, tuple, root) || rootExited())
                 throw Refused();
 
             if (beforeGo is not null)
@@ -104,7 +114,7 @@ public sealed class LinuxPlacementAttempt : IDisposable
 
             lock (_gate)
             {
-                if (!CanProceed() || session.ReadExitObservation() is not null)
+                if (!CanProceed() || rootExited())
                     throw Refused();
                 // A failed async write cannot distinguish a fragmented write from a delivered GO.
                 _goMayHaveReachedPeer = true;
@@ -206,11 +216,11 @@ public sealed class LinuxPlacementAttempt : IDisposable
         }
     }
 
-    private static bool PeerMatches(SafeSocketHandle handle, int pid)
+    private static bool PeerMatches(SafeSocketHandle handle, int pid, uint uid)
     {
         uint size = (uint)Marshal.SizeOf<PeerCredentials>();
         return GetSocketOption(handle, 1, 17, out var credentials, ref size) == 0 &&
-            size == Marshal.SizeOf<PeerCredentials>() && credentials.Uid == 0 && credentials.Pid == pid;
+            size == Marshal.SizeOf<PeerCredentials>() && credentials.Uid == uid && credentials.Pid == pid;
     }
 
     private static IOException Refused() => new("verification_custody_placement_refused");

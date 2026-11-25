@@ -21,6 +21,27 @@ enum {
     BOOT_OFFSET = 120, CONTROLLER_OFFSET = 136
 };
 
+#ifdef ANTIPHON_PLACEMENT_FIXTURE
+/* Test-only build, installed beside the tests and never as the stage. The unprivileged driver
+ * supplies private cgroup/namespace roots, listens as its own UID and receives the fixed
+ * privilege-drop argv on stdout where the stage would exec. Production builds read no
+ * environment and keep the absolute roots. */
+static const char *root_prefix(void)
+{
+    const char *root = getenv("ANTIPHON_PLACEMENT_FIXTURE_ROOT");
+    return root && root[0] == '/' ? root : "/nonexistent";
+}
+#define LISTENER_UID getuid()
+#define REQUIRE_ROOT 0
+#else
+static const char *root_prefix(void)
+{
+    return "";
+}
+#define LISTENER_UID APP_UID
+#define REQUIRE_ROOT 1
+#endif
+
 static int refused(void)
 {
     fputs("C2060_CUSTODY_REFUSED PlacementExchange\n", stderr);
@@ -164,9 +185,11 @@ static int self_stat(uint64_t deadline, pid_t pid, pid_t parent, uint64_t *ticks
 static int singleton(const char *controller, const char *ns, const char *id,
                      pid_t pid, uint64_t deadline)
 {
-    char path[160], members[32], expected[32];
-    snprintf(path, sizeof path, "/sys/fs/cgroup/%s/antiphon-custody/%s/%s/tree/cgroup.procs",
-             controller, ns, id);
+    char path[512], members[32], expected[32];
+    int length = snprintf(path, sizeof path, "%s/sys/fs/cgroup/%s/antiphon-custody/%s/%s/tree/cgroup.procs",
+                          root_prefix(), controller, ns, id);
+    if (length < 0 || (size_t)length >= sizeof path)
+        return 0;
     snprintf(expected, sizeof expected, "%d\n", pid);
     return read_input(path, members, sizeof members, deadline) && !strcmp(members, expected);
 }
@@ -237,7 +260,7 @@ static int connect_to_parent(int fd, const char *id, pid_t parent, uint64_t dead
     struct ucred peer;
     socklen_t size = sizeof peer;
     return getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &size) == 0 &&
-        size == sizeof peer && peer.uid == APP_UID && peer.pid == parent &&
+        size == sizeof peer && peer.uid == (uid_t)LISTENER_UID && peer.pid == parent &&
         getppid() == parent && now_ns() < deadline;
 }
 
@@ -245,13 +268,15 @@ static int exchange(int fd, const char *id, const unsigned char *container, uint
 {
     pid_t pid = getpid(), parent = getppid();
     unsigned char proof[PROOF], go[CHALLENGE], ns_id[16];
-    char ns[40], boot[40];
+    char ns[40], boot[40], ns_path[512];
     uint64_t ticks;
-    if (parent <= 1 || !connect_to_parent(fd, id, parent, deadline) ||
+    int ns_length = snprintf(ns_path, sizeof ns_path, "%s/run/antiphon-custody/namespace", root_prefix());
+    if (ns_length < 0 || (size_t)ns_length >= sizeof ns_path ||
+        parent <= 1 || !connect_to_parent(fd, id, parent, deadline) ||
         !receive_frame(fd, PROVE, proof, TUPLE, deadline) ||
         memcmp(proof + CONTAINER_OFFSET, container, 16) != 0 ||
         read_be(proof + DEADLINE_OFFSET, 8) != deadline ||
-        !read_guid("/run/antiphon-custody/namespace", ns, ns_id, deadline) ||
+        !read_guid(ns_path, ns, ns_id, deadline) ||
         memcmp(proof + NAMESPACE_OFFSET, ns_id, 16) != 0 ||
         !self_stat(deadline, pid, parent, &ticks) ||
         !read_guid("/proc/sys/kernel/random/boot_id", boot, proof + BOOT_OFFSET, deadline) ||
@@ -277,7 +302,7 @@ int main(int argc, char **argv)
     }
     unsigned char container[16];
     uint64_t deadline;
-    if (argc < 5 || geteuid() != 0 || !guid(argv[1], container) ||
+    if (argc < 5 || (REQUIRE_ROOT && geteuid() != 0) || !guid(argv[1], container) ||
         !number(argv[2], &deadline) || strcmp(argv[3], "--") != 0 ||
         now_ns() >= deadline)
         return refused();
@@ -299,6 +324,12 @@ int main(int argc, char **argv)
     int released = exchange(fd, argv[1], container, deadline);
     close(fd);
     if (!released) return refused();
+#ifdef ANTIPHON_PLACEMENT_FIXTURE
+    for (char **arg = drop; *arg; ++arg)
+        printf("C2060_FIXTURE_EXEC %s\n", *arg);
+    return fflush(stdout) == 0 ? 0 : refused();
+#else
     execv(drop[0], drop);
     return refused();
+#endif
 }
