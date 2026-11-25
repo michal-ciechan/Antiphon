@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "9f8cd7091a7267cb5b8255c00d354931e79e1778967fab6c962b3cb9f77c2e42",
+  "policyHash": "019f77cb77e7bcfb0e4f39a05f63396aac95f161ded633293117d03516745df6",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1477,10 +1477,17 @@
             "CancelledClientRetiresSentStream",
             "PlacementIoStartsOnOrdinaryRead",
             "FailedPlacementCannotPromoteLater",
-            "ConflictingPlacementPreservesFirstBytes"
+            "ConflictingPlacementPreservesFirstBytes",
+            "HostChecksSpawnPeer",
+            "MismatchedPlacedWithholdsGo",
+            "LostAckRetainsLaunchedChild",
+            "MixedFreezerCannotAttest",
+            "StageWaitsForGo",
+            "FailedReleaseSendSuppressesExec",
+            "DropPreservesPayloadBoundary"
           ],
           "platform": "windows",
-          "reason": "Linux-only by construction: the tracked custody requests use real Unix pipes and the Linux PTY. Portable codec and validator cases remain required.",
+          "reason": "Linux-only by construction: the tracked custody requests use real Unix pipes and the Linux PTY, and the placement exchange uses abstract Unix sockets, peer credentials and procfs. Portable codec and validator cases remain required.",
           "owner": "CARD-2060"
         },
         {
