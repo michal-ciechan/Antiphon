@@ -3331,14 +3331,18 @@ public sealed partial class AttentionService
         return items;
     }
 
+    /// <summary>
+    /// True when a segment of the stored working directory is <c>.worktrees</c>. The segments
+    /// follow the spelling rule of <see cref="WorkingDirectoryIdentity"/>, not this host's: a
+    /// Windows-spelled path splits on <c>\</c> and <c>/</c>, a POSIX path on <c>/</c> only, so
+    /// the Windows server and a Linux runner agree (CARD-2070).
+    /// </summary>
     internal static bool IsWorktreeCwd(string? workingDirectory)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory))
             return false;
-        var normalized = DelegationWorkspaceResolver.NormalizeSeparators(workingDirectory);
-        var parts = normalized.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries);
+        char[] separators = WorkingDirectoryIdentity.IsWindowsPath(workingDirectory) ? ['\\', '/'] : ['/'];
+        var parts = workingDirectory.Split(separators, StringSplitOptions.RemoveEmptyEntries);
         return parts.Any(p => p.Equals(".worktrees", StringComparison.OrdinalIgnoreCase));
     }
 
