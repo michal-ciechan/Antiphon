@@ -24,8 +24,8 @@ namespace Antiphon.Nightly
         public string Impact { get; set; } = "mandatory";
         public double? PriorWallSeconds { get; set; }
         public double? MemberSeconds { get; set; }
-        /// <summary>For a held consumer: the gate obligation's key.</summary>
-        public string Gate { get; set; } = "";
+        /// <summary>For a held consumer: the key of every gate obligation that holds it (each changed trusted project it consumes).</summary>
+        public string[] Gates { get; set; } = Array.Empty<string>();
         /// <summary>For a gate: its B and A contract hashes were both present and equal.</summary>
         public bool ContractsEqual { get; set; }
         public string Origin { get; set; } = "";
@@ -69,7 +69,7 @@ namespace Antiphon.Nightly
             {
                 if (string.IsNullOrWhiteSpace(o.Key) || byKey.ContainsKey(o.Key)) throw new InvalidOperationException("duplicate-obligation");
                 if (o.Disposition != "Dirty" && o.Disposition != "Held" && o.Disposition != "Carry") throw new InvalidOperationException("invalid-disposition");
-                if (o.Disposition == "Held" && (string.IsNullOrEmpty(o.Gate) || !obligations.Any(g => g.Key == o.Gate && g.Disposition == "Dirty")))
+                if (o.Disposition == "Held" && (string.IsNullOrEmpty(o.Gates.FirstOrDefault()) || !obligations.Any(g => g.Key == o.Gates.FirstOrDefault() && g.Disposition == "Dirty")))
                     throw new InvalidOperationException("held-without-gate");
                 byKey.Add(o.Key, o);
             }
@@ -88,7 +88,7 @@ namespace Antiphon.Nightly
                 if (o.Disposition == "Carry") run.Carried.Add(new RcImpactCarry { Key = o.Key, Origin = o.Origin });
                 else if (o.Disposition == "Held")
                 {
-                    if (!waiting.TryGetValue(o.Gate, out var list)) waiting[o.Gate] = list = new List<RcImpactObligation>();
+                    if (!waiting.TryGetValue(o.Gates.First(), out var list)) waiting[o.Gates.First()] = list = new List<RcImpactObligation>();
                     list.Add(o);
                 }
                 else ready.Add(o);

@@ -23,7 +23,7 @@ public sealed class RcDirtyOrderCSharpTests
             var tip = Git("rev-parse", "HEAD");
             RcImpactObligation O(string key, string impact, double? wall, string disposition = "Dirty", string gate = "", double? members = null, bool equal = false) => new()
             {
-                Key = key, Impact = impact, PriorWallSeconds = wall, MemberSeconds = members, Disposition = disposition, Gate = gate, ContractsEqual = equal,
+                Key = key, Impact = impact, PriorWallSeconds = wall, MemberSeconds = members, Disposition = disposition, Gates = gate.Length == 0 ? [] : [gate], ContractsEqual = equal,
                 Origin = disposition == "Carry" ? "receipt:" + key : "",
             };
             RcImpactObligation[] Obligations(bool contractsEqual, string f1Disposition = "Dirty") =>
@@ -68,10 +68,27 @@ public sealed class RcDirtyOrderCSharpTests
                 && green.Launches.Single(l => l.Key == "M").CostSource == "member-sum" && green.Launches.Single(l => l.Key == "U").CostSource == "unknown"
                 && green.Launches.Single(l => l.Key == "U").Cost == null, "s4-cost-source-recorded",
                 string.Join(",", green.Launches.Select(l => l.Rank + ":" + l.Key + ":" + l.CostSource)));
+
+            // Review r1 D-6: a consumer held by two changed trusted projects carries only when both gates pass; one red gate expands it.
+            RcImpactObligation[] TwoGates() =>
+            [
+                O("G1", "direct", 10, equal: true), O("G2", "direct", 20, equal: true),
+                new() { Key = "H", Impact = "transitive", PriorWallSeconds = 5, Disposition = "Held", Gates = ["G1", "G2"] },
+            ];
+            RcImpactRun Two(string first, string second) => RcImpactQueue.Dispatch(TwoGates(), Array.Empty<object>(), Array.Empty<object>(), repo, tip,
+                key => key == "G1" ? first : key == "G2" ? second : "pass");
+            var secondRed = Two("pass", "FAIL");
+            var firstRed = Two("FAIL", "pass");
+            var bothGreen = Two("pass", "pass");
+            rows.Check(Keys(secondRed) == "G1,G2,H" && secondRed.Expanded.SequenceEqual(["H"]) && secondRed.Carried.Count == 0
+                && Keys(firstRed) == "G1,G2,H" && firstRed.Expanded.SequenceEqual(["H"]) && firstRed.Carried.Count == 0
+                && Keys(bothGreen) == "G1,G2" && bothGreen.Carried.Count == 1 && bothGreen.Carried[0].Key == "H" && bothGreen.Carried[0].Origin == "trust-gate-passed:G1,G2",
+                "s4-two-gates-one-red", Keys(secondRed) + " carried=" + string.Join(",", secondRed.Carried.Select(c => c.Key + "<-" + c.Origin)) + " | " + Keys(firstRed)
+                + " | " + Keys(bothGreen) + " carried=" + string.Join(",", bothGreen.Carried.Select(c => c.Key + "<-" + c.Origin)));
             cancellationToken.ThrowIfCancellationRequested();
         });
-        rows.ShouldAllPass(7, "s4-exact-sequence", "s4-expansion-launches-held", "s4-gate-pass-carries-held", "s4-no-duplicate-no-missing", "s4-open-failure-not-carried",
-            "s4-same-tip-pass-no-discharge", "s4-cost-source-recorded");
+        rows.ShouldAllPass(8, "s4-exact-sequence", "s4-expansion-launches-held", "s4-gate-pass-carries-held", "s4-no-duplicate-no-missing", "s4-open-failure-not-carried",
+            "s4-same-tip-pass-no-discharge", "s4-cost-source-recorded", "s4-two-gates-one-red");
     }
 
     [Test]
