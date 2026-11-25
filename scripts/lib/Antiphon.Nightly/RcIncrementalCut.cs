@@ -99,22 +99,35 @@ namespace Antiphon.Nightly
 
             var comparisonPath = Path.Combine(dir, "comparison.json");
             if (!File.Exists(comparisonPath)) return No("comparison-absent");
-            string baseline, inventoryPath, inventoryDigest;
+            string baseline, inventoryPath, inventoryDigest, owedDigest;
+            Dictionary<string, string> owed = null;
             try
             {
                 using var comparison = JsonDocument.Parse(File.ReadAllBytes(comparisonPath));
                 baseline = Text(comparison.RootElement, "sha");
                 inventoryPath = Text(comparison.RootElement, "inventoryPath");
                 inventoryDigest = Text(comparison.RootElement, "inventoryDigest");
+                owedDigest = Text(comparison.RootElement, "owedDigest");
+                if (comparison.RootElement.ValueKind == JsonValueKind.Object && comparison.RootElement.TryGetProperty("owed", out var owedElement)
+                    && owedElement.ValueKind == JsonValueKind.Object && owedElement.EnumerateObject().All(p => p.Value.ValueKind == JsonValueKind.String))
+                    owed = owedElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "", StringComparer.Ordinal);
             }
             catch (JsonException) { return No("comparison-unreadable"); }
             if (!RcChunkReceipt.IsSha(baseline)) return No("comparison-sha");
+            // Review r1 D-3: the comparison carries the D-1 later-open obligations, bound by digest; none recorded is no binding.
+            if (owed == null) return No("comparison-owed-absent");
+            if (RcComparisonBaseline.OwedDigest(owed) != owedDigest) return No("comparison-owed-digest");
             var inventory = RcChunkReceipt.Read(inventoryPath, inventoryDigest);
             if (inventory.Refusal.Length > 0) return No("comparison-" + inventory.Refusal);
+            // The inventory must have been sealed at the commit the comparison names, and that commit must be in the candidate's history.
+            if (!string.Equals(inventory.Sha, baseline, StringComparison.Ordinal)) return No("comparison-inventory-sha");
+            if (string.IsNullOrEmpty(repositoryRoot)) return No("comparison-ancestry-unknown");
+            if (TestSelectionGit.Run(repositoryRoot, new[] { "merge-base", "--is-ancestor", baseline, candidateSha }, new[] { 0, 1, 128 }).Exit != 0)
+                return No("comparison-not-ancestor");
             return new RcIncrementalAdmission
             {
                 Admitted = true, ApprovalDigest = RcChunkReceipt.Hex(SHA256.HashData(approvalBytes)), BaselineSha = baseline, InventoryPath = inventoryPath,
-                InventoryDigest = inventoryDigest,
+                InventoryDigest = inventoryDigest, Owed = owed, OwedDigest = owedDigest,
             };
         }
 
@@ -136,16 +149,19 @@ namespace Antiphon.Nightly
                 return Refuse(answer, "incremental-hop-mismatch");
             if (!bound)
             {
-                // Full: the whole roster, in roster order.
+                // Full: the whole roster, in roster order; green only when every launched row is a pass (Review r1 D-3).
+                var launchedRows = new List<IDictionary>();
                 foreach (var chunk in roster)
                 {
-                    launch(chunk);
+                    launchedRows.Add(launch(chunk));
                     answer.Launched.Add(chunk.Id);
                 }
                 answer.Reconciled = true;
-                answer.AllGreen = true;
+                answer.AllGreen = launchedRows.All(r => r != null && PsValue.Str(r["result"]) == "pass");
                 return answer;
             }
+            var owed = run.IncrementalOwed ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            if (RcComparisonBaseline.OwedDigest(owed) != run.IncrementalOwedDigest) return Refuse(answer, "incremental-hop-mismatch:owed");
 
             var inventory = RcChunkReceipt.Read(run.IncrementalInventoryPath, run.IncrementalInventoryDigest);
             if (inventory.Refusal.Length > 0) return Refuse(answer, "incremental-plan-stale:" + inventory.Refusal);
@@ -160,7 +176,7 @@ namespace Antiphon.Nightly
                 using var doc = JsonDocument.Parse(bytes);
                 var root = doc.RootElement;
                 if (Text(root, "inventoryDigest") != run.IncrementalInventoryDigest || Text(root, "candidateSha") != run.ExpectedSha
-                    || Text(root, "rosterDigest") != RosterDigest(roster)) return Refuse(answer, "incremental-plan-stale:binding");
+                    || Text(root, "rosterDigest") != RosterDigest(roster) || Text(root, "owedDigest") != run.IncrementalOwedDigest) return Refuse(answer, "incremental-plan-stale:binding");
                 entries = root.GetProperty("entries").EnumerateArray().Select(e => (OrderedDictionary)RcChunkReceipt.FromJson(e)).ToArray();
                 answer.PlanDigest = RcChunkReceipt.Hex(SHA256.HashData(bytes));
             }
@@ -175,17 +191,28 @@ namespace Antiphon.Nightly
                     return RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(trx), chunk?.Cases ?? Array.Empty<string>(), scope);
                 });
                 var sameSource = string.Equals(run.IncrementalBaselineSha, run.ExpectedSha, StringComparison.Ordinal);
-                entries = matches.Select(m => new OrderedDictionary(StringComparer.Ordinal)
+                entries = matches.Select(m =>
                 {
-                    { "chunk", m.Chunk }, { "contentDigest", m.ContentDigest },
-                    { "decision", m.Decision == "carry" && sameSource ? "carry" : "execute" },
-                    { "reasons", m.Decision == "carry" ? (sameSource ? Array.Empty<string>() : new[] { "source-changed-unverified" }) : m.Reasons },
-                    { "origin", m.Decision == "carry" && sameSource ? m.Origin : null },
+                    // Review r1 D-3: a carry needs the same source, an origin executed at the bound baseline (a carried-of-carried
+                    // row is re-executed), and no later open obligation for its content.
+                    var carry = m.Decision == "carry";
+                    var reasons = carry ? new List<string>() : new List<string>(m.Reasons);
+                    if (!sameSource) reasons.Add("source-changed-unverified");
+                    var originSha = carry ? PsValue.Str(m.Origin["sha"]) : "";
+                    if (carry && !string.Equals(originSha, run.IncrementalBaselineSha, StringComparison.Ordinal)) reasons.Add("origin-sha:" + originSha);
+                    if (owed.TryGetValue(m.ContentDigest ?? "", out var open)) reasons.Add(open);
+                    var carried = carry && reasons.Count == 0;
+                    return new OrderedDictionary(StringComparer.Ordinal)
+                    {
+                        { "chunk", m.Chunk }, { "contentDigest", m.ContentDigest }, { "decision", carried ? "carry" : "execute" },
+                        { "reasons", reasons.ToArray() }, { "origin", carried ? m.Origin : null },
+                    };
                 }).ToArray();
                 var plan = new OrderedDictionary(StringComparer.Ordinal)
                 {
                     { "format", PlanFormat }, { "candidateSha", run.ExpectedSha }, { "baselineSha", run.IncrementalBaselineSha }, { "approvalDigest", run.IncrementalApprovalDigest },
-                    { "inventoryDigest", run.IncrementalInventoryDigest }, { "rosterDigest", RosterDigest(roster) }, { "entries", entries.Cast<object>().ToArray() },
+                    { "inventoryDigest", run.IncrementalInventoryDigest }, { "owedDigest", run.IncrementalOwedDigest }, { "rosterDigest", RosterDigest(roster) },
+                    { "entries", entries.Cast<object>().ToArray() },
                 };
                 var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(plan));
                 using (var stream = new FileStream(planPath, FileMode.CreateNew, FileAccess.Write)) stream.Write(bytes, 0, bytes.Length);
@@ -219,7 +246,7 @@ namespace Antiphon.Nightly
                 {
                     row = launch(chunk) ?? throw new NightlyRefusal("incremental-launch-no-row:" + id);
                     row["chunk"] = id;
-                    RcChunkReceipt.Stamp(row, run.ExpectedSha, chunk.ContentDigest);
+                    RcChunkReceipt.Stamp(row, run.ExpectedSha, chunk.ContentDigest, scope);
                     File.AppendAllText(journalPath, JsonSerializer.Serialize(Plain(row)) + "\n", new UTF8Encoding(false));
                     executed[id] = row;
                     answer.Launched.Add(id);

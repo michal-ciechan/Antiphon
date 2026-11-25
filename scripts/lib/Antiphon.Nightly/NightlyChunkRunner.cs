@@ -843,7 +843,8 @@ namespace Antiphon.Nightly
                 var receiptClasses = PsValue.IsTrue(PsValue.Prop(chunk, "classes")) ? PsValue.AsArray(PsValue.Prop(chunk, "classes")).Select(PsValue.Str).ToArray() : new string[0];
                 var assembly = s.Host == null ? suiteId : Path.GetFileNameWithoutExtension(s.Host.AssemblyPath ?? suiteId);
                 var roster = s.IsNative && nativeVerdict != null ? RcChunkReceipt.RosterFromNodes(assembly, PsValue.Prop(nativeVerdict, "discoveryNodes"), receiptClasses) : new RcCaseIdentity[0];
-                RcChunkReceipt.Stamp(suiteRow, c.Sha, RcChunkReceipt.ContentDigest(suiteId, s.IsNative ? "native" : "command", roster));
+                RcChunkReceipt.Stamp(suiteRow, c.Sha, RcChunkReceipt.ContentDigest(suiteId, s.IsNative ? "native" : "command", roster),
+                    new RcReceiptScope { Platform = c.Platform ?? "", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = c.Profile ?? "" });
             }
             o.Row = suiteRow;
         }

@@ -169,13 +169,19 @@ namespace Antiphon.Nightly
 
         // ---- rows ------------------------------------------------------------------------------------------------
 
-        /// <summary>Stamps an observed (executed) row: execution sha (lowercase 40-hex or null) and content digest (or null when unproven).</summary>
-        public static void Stamp(IDictionary row, string executionSha, string contentDigest)
+        /// <summary>
+        /// Stamps an observed (executed) row: execution sha (lowercase 40-hex or null), content digest (or null when unproven)
+        /// and where it ran (platform, architecture, profile; blank when unknown, which is never reusable).
+        /// </summary>
+        public static void Stamp(IDictionary row, string executionSha, string contentDigest, RcReceiptScope ranOn)
         {
             var sha = (executionSha ?? "").Trim().ToLowerInvariant();
             row["sha"] = IsSha(sha) ? sha : null;
             row["contentDigest"] = IsDigest(contentDigest) ? contentDigest : null;
             row["disposition"] = "executed";
+            row["platform"] = ranOn?.Platform ?? "";
+            row["architecture"] = ranOn?.Architecture ?? "";
+            row["profile"] = ranOn?.Profile ?? "";
         }
 
         /// <summary>A scheduled chunk with no observed row: disposition missing, null execution sha, its planned content where known.</summary>
@@ -204,8 +210,10 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// D-3.1: a reusable pass is an executed row with an execution sha and content digest, result pass, skipped false, exit
-        /// 0, no timeout or tolerated exit, empty evidenceReasons, and a TRX with a positive executed count, zero failed and
-        /// zero skipped/NotExecuted cases, and every required case present and passed. Anything else owes execution.
+        /// 0, no timeout or tolerated exit, empty evidenceReasons, coverage not marked incomplete, no freshness/hang detail,
+        /// stamped with the expected platform, architecture and profile, and a TRX with a positive executed count, zero failed
+        /// and zero skipped/NotExecuted cases, and every case of a non-empty required roster present and passed. Anything else
+        /// owes execution: a null or empty roster is no-case-roster (never "no cases required"), a null scope scope-unbound.
         /// </summary>
         public static RcReuse Reusable(IDictionary row, IReadOnlyList<RcTrxCase> trx, IEnumerable<string> requiredCases, RcReceiptScope expected)
         {
@@ -225,6 +233,21 @@ namespace Antiphon.Nightly
             if (row.Contains("processExitTolerated") && PsValue.IsTrue(row["processExitTolerated"])) reasons.Add("tolerated-exit");
             if (row.Contains("evidenceReasons") && PsValue.AsArray(row["evidenceReasons"]).Any(r => !string.IsNullOrWhiteSpace(PsValue.Str(r))))
                 reasons.Add("evidence-reasons");
+            // NightlyChunkRunner keeps a pass label while it marks coverage incomplete or records a freshness/hang detail.
+            if (row.Contains("coverageComplete") && !(row["coverageComplete"] is bool complete && complete)) reasons.Add("coverage-incomplete");
+            var detail = PsValue.Str(row["detail"]);
+            if (!string.IsNullOrWhiteSpace(detail)) reasons.Add("detail:" + detail);
+            if (expected == null || string.IsNullOrEmpty(expected.Platform) || string.IsNullOrEmpty(expected.Architecture) || string.IsNullOrEmpty(expected.Profile))
+                reasons.Add("scope-unbound");
+            else
+                foreach (var (field, want) in new[] { ("platform", expected.Platform), ("architecture", expected.Architecture), ("profile", expected.Profile) })
+                {
+                    var got = PsValue.Str(row[field]);
+                    if (got.Length == 0) reasons.Add(field + "-absent");
+                    else if (!string.Equals(got, want, StringComparison.Ordinal)) reasons.Add(field + ":" + got);
+                }
+            var roster = (requiredCases ?? Enumerable.Empty<string>()).ToArray();
+            if (roster.Length == 0) reasons.Add("no-case-roster");
             if (trx == null) reasons.Add("no-trx");
             else
             {
@@ -236,7 +259,7 @@ namespace Antiphon.Nightly
                 if (skipped > 0) reasons.Add("skipped-cases:" + skipped.ToString(CultureInfo.InvariantCulture));
                 if (other > 0) reasons.Add("other-cases:" + other.ToString(CultureInfo.InvariantCulture));
                 var passed = new HashSet<string>(trx.Where(c => c.Outcome == "Passed").Select(c => c.CaseKey), StringComparer.Ordinal);
-                foreach (var required in requiredCases ?? Enumerable.Empty<string>())
+                foreach (var required in roster)
                     if (!passed.Contains(required)) reasons.Add("case-missing:" + required);
             }
             return new RcReuse { Reusable = reasons.Count == 0, Reasons = reasons.ToArray() };
